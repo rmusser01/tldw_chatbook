@@ -59,12 +59,15 @@ only by the global cap. That case keeps the existing explicit refusal.
 
 ### 4.1 Action lifecycle
 
-The composer action has three relevant labels:
+The composer action has four relevant labels:
 
 - `Preparing...` while the current send is still validating and has not crossed
   the accepted-turn boundary. Queueing is unavailable.
 - `Queue` after the turn is accepted, or whenever that session already has
   queue-owned future work, including a paused queue or a pre-accept claim.
+- `Queue full` when `queued + claimed == 10`. Adjacent reason copy reads
+  `10/10 · Manage to make room`; Enter repeats the full-queue refusal without
+  clearing or rewriting the draft.
 - `Send` when the session has no active turn and no paused queue controlling
   order.
 
@@ -97,7 +100,7 @@ one state-dependent primary action plus `Manage`:
 | Failed turn | Retry | `Queue paused · Turn failed · 3 waiting` |
 | Stopped turn | Resume next | `Queue paused · Turn stopped · 3 waiting` |
 | Dispatch refused | Try again | `Queue paused · Next message could not start` |
-| Branch changed | Review | `Conversation changed · review 3 queued` |
+| Context changed | Review | `Conversation changed · review 3 queued` |
 
 Secondary recovery actions live in the manager so the shelf remains usable at
 80 columns. Clear is never a shelf action.
@@ -122,7 +125,9 @@ previews. Normal buttons and Tab navigation expose:
 - Remove with the repository's guarded destructive-action convention.
 - Retry a stopped turn.
 - Skip a failed turn and resume.
-- Clear all with confirmation.
+- Use current context and resume after a context-change review.
+- Clear waiting with confirmation. A prompt already labeled `Starting...` is
+  not cleared or canceled.
 - Close with Esc.
 
 The active or already accepted prompt is not a future queue entry and cannot be
@@ -135,6 +140,12 @@ edit that would turn an entry into a recognized slash command is refused
 intact; commands are never smuggled into the automatic drain through the
 manager.
 
+The edit surface materializes only the selected entry and uses the composer's
+existing large-text safeguards. Queue rows and previews never mount the full
+prompt body. Preview normalization strips terminal control characters, escapes
+Rich markup, preserves no hidden newlines, and truncates by display-cell width,
+including wide and combining Unicode.
+
 The manager consumes live revisioned snapshots. Selection follows stable entry
 IDs. If the selected entry starts or is removed, selection moves to the next
 surviving entry. An edit or reorder callback revalidates its entry ID and queue
@@ -143,9 +154,9 @@ and may offer to add it as a new entry if capacity remains.
 
 ### 4.4 Refusals and feedback
 
-Queue acceptance clears the exact captured draft and updates the shelf without
-an additional toast. Refusal preserves the exact composer stash, including the
-canonical content behind collapsed paste tokens.
+Successful queue admission clears the exact captured draft and updates the shelf
+without an additional toast. Refusal preserves the exact composer stash,
+including the canonical content behind collapsed paste tokens.
 
 Required visible refusals include:
 
@@ -153,6 +164,12 @@ Required visible refusals include:
 - `Attachments cannot be queued yet. Remove the attachment or wait for this turn to finish.`
 - Equivalent explicit copy when staged Library/RAG evidence is present.
 - The existing global-cap refusal when resuming a queue cannot reacquire a slot.
+
+Attachments and manually staged evidence are checked both at admission and
+again immediately before a queued claim is submitted. If either was added
+after queueing, the claim returns to the head, the queue pauses, and the rider
+remains untouched for a later manual send. The recovery copy names that the
+queued turn did not consume it.
 
 Voice and programmatic dispatch use a screen-facing outcome with `sent`,
 `queued`, or `refused`. Hands-free acknowledgement for a queued send names the
@@ -181,10 +198,14 @@ one paused/failure signal.
 - Exact canonical text.
 - Owning session ID or ownership through its registry bucket.
 - Insertion order.
-- The queue's expected branch epoch when admitted.
 
 It contains no attachment, evidence bundle, provider selection, secret, widget,
 task, or persistence identifier.
+
+Admission reuses `MAX_CONSOLE_DRAFT_LENGTH` (currently 100,000 characters), so
+the ten-entry limit also bounds queued text to at most 1,000,000 characters per
+session, excluding ordinary object overhead. No second queue-specific text
+limit or truncation is introduced.
 
 ### 5.2 Per-session queue state
 
@@ -195,7 +216,7 @@ task, or persistence identifier.
 - Monotonic queue revision.
 - Mode: `draining`, `pause_after_turn`, or `paused`.
 - Pause reason: manual, failed, stopped, context changed, or dispatch refused.
-- Expected branch epoch.
+- Expected conversation-context epoch.
 - Whether the session reserves an agent slot.
 
 The hard limit counts `queued + claimed`. Once a claimed entry is accepted as a
@@ -216,27 +237,54 @@ Every submission carries:
 - Draft text.
 - Queue entry ID for queued origin.
 - Composer stash only for manual origin.
+- The conversation-context epoch of the provider payload committed for that
+  turn.
 
 Only an accepted manual submission may consume or clear its own captured
 composer stash. An automatic queued submission never touches the live composer
 or another session's draft.
 
-### 5.4 Branch epoch
+The existing no-argument `on_submission_accepted` callback remains compatible
+and is invoked only for manual-origin sends. Queued-origin acceptance is
+reported through a separate content-free coordinator event carrying session ID
+and queue entry ID. That event may request transcript/UI synchronization but
+cannot clear composer text or undo history.
 
-`ConsoleChatStore` owns `branch_epoch(session_id)` because it owns the message
-tree and active leaf. The epoch changes only when active lineage changes:
+The per-session chain records the active turn's payload context epoch at the
+accepted boundary even when its queue is still empty. A first entry admitted
+later inherits that chain baseline rather than sampling the store again. Thus a
+history edit made during the response cannot be hidden by queueing only after
+the edit; the terminal comparison still pauses for review.
+
+### 5.4 Conversation-context epoch
+
+`ConsoleChatStore` owns `conversation_context_epoch(session_id)` because it owns
+the provider-relevant message history, message tree, active leaf, and summary
+boundary. The epoch changes when the effective conversation context changes
+outside the queue coordinator's ordinary linear turn append:
 
 - Rewind or direct active-leaf selection.
 - Sibling or variant navigation that selects another branch.
 - Edit-and-resend or regeneration that creates/selects a branch.
 - Deletion that changes the active path.
+- Editing user or assistant content on the active path.
+- Selecting a different textual response variant on the active path.
+- Changing or clearing the active conversation summary boundary.
 
 Ordinary linear message appends, streaming updates, status changes, persistence,
-feedback, and display overlays do not change it.
+feedback, off-path edits, and display overlays do not change it. Session/provider
+settings are intentionally excluded because each queued turn resolves the
+latest settings at its own dispatch boundary.
+
+No-op mutations do not advance the epoch: selecting the already-active leaf or
+variant, writing identical content, and reapplying the same summary are stable.
+This keeps harmless UI re-selection from spuriously pausing a queue.
 
 A queue-authorized failed retry or stopped regeneration may legitimately change
 the epoch. On successful recovery the coordinator adopts the resulting epoch
-before draining continues. Any unrelated mismatch pauses for review.
+before draining continues. Any unrelated mismatch pauses for review. Store
+mutation tests must cover every provider-relevant mutation seam so a new edit or
+branch feature cannot silently bypass this invariant.
 
 ## 6. Architecture and ownership
 
@@ -247,6 +295,12 @@ registry. It implements FIFO admission, validation results, the limit, claims,
 revision checks, edits, moves, removals, pause/resume transitions, reservations,
 session removal, and shutdown. It has no Textual, provider, persistence, or
 widget dependency.
+
+Registry transitions are synchronous, contain no `await`, and run on the
+Textual event-loop thread. Worker-thread callbacks marshal to that thread before
+touching queue state. This confinement, plus revision-checked registry methods,
+is the atomicity boundary; no second ad hoc lock or widget-owned mutation path is
+introduced.
 
 ### 6.2 Controller and coordinator
 
@@ -268,33 +322,66 @@ Busy count, global-cap enforcement, run markers, fleet summary, transcript
 polling, completion notifications, and navigation warnings derive from this
 projection rather than duplicating queue awareness.
 
-### 6.3 Per-session provider selection
+### 6.3 Per-session turn execution context
 
-Background dispatch resolves a `ConsoleProviderSelection` for the queue's owning
-session ID. The resolver reads that session's stored settings, workspace
-binding, and current provider configuration. It never reuses the viewed tab's
-controller projection.
+At claim time, background dispatch resolves one immutable
+`ConsoleTurnExecutionContext` for the queue's owning session ID. It contains the
+`ConsoleProviderSelection`, effective model capabilities, system prompt,
+workspace context and roots, generation parameters, and other values that the
+provider payload and tool bridge read during that turn. The resolver reads the
+owning session's stored settings and current app/provider configuration. It
+never reuses the viewed tab's controller projection.
 
 Provider, model, system prompt, workspace, RAG defaults, tools, and other
 ordinary settings are resolved at dispatch time. The queue stores only text.
-Pinned and one-shot prefill keep their existing session-level next-send
-semantics.
+The immutable context is threaded through provider resolution, payload
+construction, capability checks, caching/fingerprinting, and stream execution,
+so a tab switch or settings edit cannot produce a half-old, half-new turn.
+Changes completed after a claim apply to the following queued turn. Pinned and
+one-shot prefill keep their existing session-level next-send semantics.
+
+The execution context contains configuration, not durable authority: it stores
+no API key, approval grant, skill-trust grant, or reusable permission decision.
+Credentials resolve through the provider gateway, and tools, skills, and
+approvals revalidate at their existing execution boundaries. Revocation during
+a queued turn therefore remains effective.
+
+Manual staged evidence is never part of a queued-origin context. The existing
+RAG capture seam becomes session-targeted and origin-aware. A queued text turn
+may run Auto-RAG only when the owning session's settings enable it; that
+retrieval is generated specifically for this dispatch and cannot read or clear
+the screen's resident staged-evidence slot. Evidence staged while a queue is
+draining remains labeled for the next manual send.
 
 ### 6.4 Screen dispatch
 
-`UI/Console_Modules/message.py` extends the existing visible-send dispatcher. It
-returns the screen-facing `sent | queued | refused` result, starts one exact
-per-session Textual worker, and awaits `controller.run_prompt_chain(...)`. It
-does not interpret queue phases or terminal statuses itself.
+Composer and command dispatch currently belong to `ChatScreen`, not
+`UI/Console_Modules/message.py`; that module explicitly excludes visible-send
+orchestration. The existing `_dispatch_console_draft_send` name stays as a thin
+compatibility wrapper for callers and tests, delegating queue-aware routing to a
+new UI controller in `UI/Console_Modules/prompt_queue.py` constructed from
+`wiring.py`.
+
+The UI controller owns draft transactions and returns the screen-facing
+`sent | queued | refused` result. It starts one exact per-session Textual worker
+for a new chain and awaits `controller.run_prompt_chain(...)`, but it does not
+interpret queue phases or terminal statuses. Existing `message.py` ownership is
+unchanged, and the extraction must lower or preserve the `chat_screen.py`
+ratchets.
 
 ### 6.5 Queue region and modal
 
-`UI/Console_Modules/prompt_queue.py` owns shelf pixels, responsive presentation,
-focus restoration, and typed UI intents. The manager is a focused modal in
+`UI/Console_Modules/prompt_queue.py` contains two explicit owners:
+`ConsolePromptQueueRegion` owns shelf pixels, responsive presentation, focus
+restoration, and typed UI intents; `ConsolePromptQueueUIController` owns draft
+transactions and worker dispatch but has no DOM. The manager is a focused modal in
 `Widgets/Console/console_prompt_queue_modal.py`.
 
 Both render immutable snapshots. Unchanged queue revisions produce no update or
-recompose during the Console's 0.2-second active-run poll.
+recompose during the Console's 0.2-second active-run poll. Render snapshots
+contain stable IDs, counts, state, and precomputed safe previews, never full
+prompt bodies. The manager requests full text only for the one entry entering
+edit mode.
 
 Construction and named late-binding callbacks live in
 `UI/Console_Modules/wiring.py`. Queue work does not increase the
@@ -309,6 +396,10 @@ then sets the app shutdown flag and runs existing cleanup only after approval.
 
 Choosing Stay or encountering a confirmation error fails closed, clears the
 guard, and preserves the mounted queue manager, edited text, runs, and queues.
+This guarantee covers user-initiated in-app quit paths. Forced process
+termination, terminal kill, or `SIGKILL` cannot offer an interactive
+confirmation and remains an unavoidable loss boundary for process-memory-only
+queues.
 
 ## 7. Send and drain flow
 
@@ -344,13 +435,14 @@ per-session chain:
 1. Await the current real turn.
 2. Inspect its accepted and terminal outcome.
 3. On successful completion, honor `pause_after_turn` first.
-4. Verify the store branch epoch.
+4. Verify the store conversation-context epoch.
 5. Atomically claim the FIFO head.
-6. Resolve the owning session's current provider and workspace selection.
-7. Submit with queued origin.
-8. At the accepted boundary, settle the claim and let normal message
+6. Resolve the owning session's immutable turn execution context.
+7. Recheck attachments and manually staged evidence without consuming either.
+8. Submit with queued origin.
+9. At the accepted boundary, settle the claim and let normal message
    persistence own the user turn.
-9. Repeat until the queue empties or pauses.
+10. Repeat until the queue empties or pauses.
 
 No user input event can claim the released slot between queued turns. The
 reservation remains visible to global cap and fleet derivation for the whole
@@ -389,7 +481,7 @@ Stop cancels only the current session's live response and immediately pauses
 its queue. `Resume next` accepts the stopped partial as history and dispatches
 the next prompt after reacquiring a slot. `Retry stopped turn` uses the existing
 regeneration path, retaining the partial stopped response as a sibling. Success
-adopts the new branch epoch and continues.
+adopts the new conversation-context epoch and continues.
 
 ### 8.4 Resume after reservation release
 
@@ -397,7 +489,20 @@ A paused queue holds no global agent slot. Resume, retry, and retry-stopped must
 reacquire one. If the cap is full, the operation refuses visibly and leaves the
 queue paused. It never registers a hidden global waiter.
 
-### 8.5 Approval waits
+### 8.5 Context-change review
+
+`Review` opens the manager with a warning that conversation history changed
+after the active turn's payload was committed. The queue has no stale context
+snapshot to diff or restore. After reviewing or editing the waiting prompts,
+the user may choose `Use current context & resume`; that explicit action
+revalidates the queue revision and current context epoch, adopts the epoch, and
+then attempts to reacquire a slot. If either value changes during confirmation,
+the queue stays paused and asks for review again.
+
+Ordinary Resume, Retry, Skip, and Resume next do not silently adopt an
+unrelated context change. They transition to the context-review pause first.
+
+### 8.6 Approval waits
 
 An approval or skill confirmation is still part of the current accepted turn.
 It does not pause the queue by itself. The shelf names the waiting approval,
@@ -405,11 +510,37 @@ and the user may edit, reorder, remove, or request pause while the turn waits.
 Normal approval denial may still let the agent finish; only the final turn
 outcome decides whether draining continues.
 
+### 8.7 Competing generation actions
+
+The queue coordinator is the sole next-turn authority whenever a session has
+queue-owned future work. The existing transcript Retry action for the failed
+turn and Regenerate action for the stopped turn delegate to the same queue
+recovery operations as the shelf/manager, so recovery cannot run beside or
+ahead of the chain.
+
+Unrelated provider or response-generating actions, including Continue,
+Regenerate another message, Edit & resend, and Summarize up to, use the same
+queue-aware activity gate and refuse with copy directing the user to resume,
+review, or clear the queue first. They never bypass older entries.
+Command-specific gates remain authoritative for slash-command work.
+Non-generating history actions may still run; provider-relevant mutations
+advance the context epoch and force review as specified above.
+
 ## 9. Session, navigation, and shutdown lifecycle
 
 Queues are keyed by session ID. Switching tabs or workspaces changes only the
 rendered snapshot. Closing a session removes only that session's queue after a
-confirmation that includes its exact unsent count.
+single combined confirmation that includes transcript-loss impact, whether one
+turn is live, and the exact unsent queue count. The flow never stacks a legacy
+message dialog and a second queue dialog, and a live or queued session confirms
+even when its transcript is still empty.
+
+After confirmation, controller close first marks that session as closing and
+tombstones its chain. Claim, enqueue, resume, and terminal-drain callbacks for
+that session then refuse or no-op. Only afterward may the existing close path
+signal Stop, cancel the stream, remove queue state, and remove the store
+session. A Stop transition caused by close can therefore never dispatch one
+more prompt.
 
 Navigation and quit guards count:
 
@@ -469,7 +600,13 @@ inside the viewport.
 - Edit, move, remove, clear, pause, resume, and keep-draining transitions.
 - Stable entry IDs and stale revision rejection.
 - Session isolation and exact session removal.
-- Branch-epoch behavior: linear append stable, lineage mutation increments.
+- Conversation-context epoch behavior: ordinary linear appends stay stable;
+  active-path edit, selected textual variant, summary, deletion, and lineage
+  mutations increment; off-path and display-only changes stay stable.
+- Idempotent re-selection or identical-value writes do not increment the
+  context epoch.
+- The first queued entry inherits the active turn's committed payload epoch;
+  an edit before that first admission still causes a terminal pause.
 - Shutdown prevents all new claims.
 
 ### 12.2 Controller and joined async tests
@@ -477,16 +614,30 @@ inside the viewport.
 - Three queued prompts create three ordered user/assistant pairs.
 - A drain retains exactly one global slot until empty or paused.
 - Other sessions remain independent.
-- Background dispatch uses its owning session's provider, model, system prompt,
-  and workspace roots while a different session is viewed.
+- Background dispatch uses one immutable owning-session turn context for
+  provider, model, system prompt, capabilities, generation parameters, and
+  workspace roots while a different session is viewed or settings change.
 - Activity projection drives busy count, markers, fleet summary, polling, cap,
   notifications, and navigation consistently.
 - Intermediate completions create no Finished marker or completion toast.
+- The legacy no-argument acceptance hook fires for manual origin only; the
+  queued acceptance event is content-free and never clears composer or undo
+  state.
 - Approval waits retain queue state.
-- Failed, stopped, branch-changed, dispatch-refused, and unexpected-exception
+- An attachment or manually staged evidence added after admission pauses the
+  queue before acceptance and remains unconsumed.
+- Queued Auto-RAG uses only the owning session's dispatch-generated retrieval;
+  a different tab's resident staged evidence is never read or cleared.
+- A queued turn never snapshots credentials or approval/trust grants; runtime
+  revocation is honored by the existing authority checks.
+- Failed, stopped, context-changed, dispatch-refused, and unexpected-exception
   paths pause without duplication or loss.
 - Failed retry, skip, stopped regeneration, and resume-next start exactly one
   following turn.
+- Transcript recovery actions join the coordinator, while unrelated Continue,
+  Regenerate, and Edit & resend cannot bypass a nonempty queue.
+- Context review adopts the current epoch only through explicit confirmation;
+  a stale review or an ordinary recovery action leaves the queue paused.
 - A paused queue refused by the global cap remains paused.
 - Shutdown cannot dispatch after cancellation wakes a terminal transition.
 - Hands-free and queue completion cannot start duplicate turns.
@@ -494,9 +645,14 @@ inside the viewport.
 ### 12.3 Mounted UI tests
 
 - `Preparing...`, `Queue`, and `Send` appear only at their correct boundaries.
+- `Queue full` and its adjacent `10/10` recovery reason appear before submit;
+  Enter preserves the exact draft and repeats the refusal.
 - Enter, button, voice, and programmatic paths report honest outcomes.
 - Full-queue and non-text-rider refusals restore exact composer transactions.
 - Shelf count, state, primary action, preview escaping, and compact labels.
+- Preview safety covers ANSI/control text, multiline input, wide glyphs, and
+  combining characters; large-entry editing mounts only the selected body.
+- Shelf and polling snapshots never contain full queued prompt bodies.
 - Collapsed composer privacy.
 - Live manager snapshots, stable selection, and stale-edit recovery.
 - Background labels remain session-correct.
@@ -508,6 +664,10 @@ inside the viewport.
 - Stay preserves live runs, queues, manager state, and edited text.
 - Leave and quit proceed only after confirmation.
 - Warnings report exact live-run, queued-session, and queued-prompt counts.
+- Closing a queued session tombstones its chain before Stop/cancel; the induced
+  terminal transition cannot dispatch another prompt.
+- Session close uses one combined confirmation for transcript, live-turn, and
+  queued-prompt impact, including the empty-transcript validation window.
 - Repeated quit requests produce one dialog and one cleanup pass.
 - Confirmation failure fails closed.
 - Unsent queue text is absent from snapshots, persistence, history, and logs.
@@ -519,10 +679,11 @@ At minimum, deliberately break and confirm a red test for:
 
 - The ten-entry limit.
 - Origin-aware composer clearing.
+- Legacy acceptance-hook compatibility and queued-event isolation.
 - Stale revision rejection.
-- Branch epoch checking.
+- Conversation-context epoch checking, including active-path in-place edits.
 - Shutdown claim suppression.
-- Owning-session provider selection.
+- Owning-session immutable turn-context selection.
 - Intermediate completion notification suppression.
 
 ### 12.6 Live verification
@@ -546,9 +707,9 @@ system prompts and workspace roots:
 9. Exercise session-close, leave, and quit warnings.
 10. Inspect compositor output at 80x24 and a normal terminal size.
 
-Provider-selection isolation across different provider/model combinations is
-proved deterministically in automated tests rather than requiring multiple paid
-credentials for the live smoke.
+Turn-execution-context isolation across different provider/model combinations
+and a mid-validation settings change is proved deterministically in automated
+tests rather than requiring multiple paid credentials for the live smoke.
 
 ## 13. Documentation and compatibility
 

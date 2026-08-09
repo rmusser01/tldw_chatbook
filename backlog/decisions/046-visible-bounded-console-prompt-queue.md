@@ -25,6 +25,11 @@ coordinator owns claiming, submission, pause, retry, slot reservation, terminal
 state, and shutdown behavior. The screen starts one per-session worker and
 awaits that coordinator.
 
+Queue transitions are synchronous and confined to the Textual event-loop
+thread. Worker-thread callbacks marshal before queue access. Revision-checked
+registry methods are the atomicity boundary; widgets never acquire their own
+locks or mutate the queue directly.
+
 One draining session retains its existing global agent slot across queued
 turns. The reservation ends when the queue empties or pauses. A paused queue
 must explicitly reacquire a slot on resume or retry; if the global cap is full,
@@ -35,18 +40,30 @@ The queue is process-memory-only and scoped to the mounted Console screen. It
 survives session, tab, and workspace switching inside that screen, but it is not
 serialized, persisted, restored after leaving Console, or replayed after an app
 restart. Closing a queued session, leaving Console, or quitting the app requires
-a count-aware confirmation before unsent prompts are discarded.
+a count-aware confirmation before unsent prompts are discarded. This guarantee
+applies to user-initiated in-app exits; forced process termination cannot offer
+interactive confirmation.
+
+Confirmed session close marks that session's queue chain closing before it
+signals Stop or cancels the active stream. Terminal callbacks caused by close
+cannot claim another prompt. One combined close confirmation reports transcript,
+live-turn, and queued-prompt impact instead of stacking dialogs.
 
 Queueing begins only after the active turn crosses the existing accepted-send
 boundary. During provider and skill validation the action remains unavailable
 and reads `Preparing...`. Once accepted, the normal `Send` action becomes
 `Queue`; Enter and the button both enqueue the exact canonical text draft.
-Queue acceptance, not an attempted enqueue, clears the captured draft.
+Successful queue admission, not an attempted enqueue, clears the captured draft.
 
 Queued entries contain text only. Drafts carrying staged attachments or staged
 Library/RAG evidence are refused intact. Recognized slash commands are never
 queued; each command keeps its existing command-specific execution or refusal
 rules. Large pasted text and `$skill` messages remain valid text prompts.
+Attachments and manually staged evidence are rechecked before automatic
+submission, so a rider added after admission pauses the queue and remains
+unconsumed. Session-targeted Auto-RAG may still run for a queued text turn when
+enabled, but it is generated for that owning session at dispatch and cannot
+consume the screen's resident staged-evidence slot.
 
 The queue pauses after a failed, stopped, context-invalidated, or pre-accept
 refused turn. Failed turns retry their existing assistant response before
@@ -56,17 +73,46 @@ the retry uses the existing regeneration path and keeps the stopped partial in
 history. A user may also request `Pause after this turn` without stopping the
 current response.
 
-Conversation lineage safety is based on a dedicated branch epoch owned by
-`ConsoleChatStore`, the authority for the active leaf and message tree. Linear
-user/assistant appends do not change that epoch. Rewind, sibling selection,
-delete, edit-and-resend, and branch creation do. A mismatch pauses the queue for
-review rather than silently sending prompts against a different branch.
+Conversation safety is based on a dedicated conversation-context epoch owned by
+`ConsoleChatStore`, the authority for provider-relevant history, summary
+boundary, active leaf, and message tree. Linear user/assistant appends do not
+change that epoch. Active-path content edits, selected textual variants,
+summary changes, rewind, sibling selection, active-path delete,
+edit-and-resend, and branch creation do. A mismatch pauses the queue for review
+rather than silently sending prompts against changed context.
 
-Background queue turns resolve provider, model, system prompt, workspace, and
-other per-turn settings for their owning session ID, never from the currently
-viewed tab. Intermediate queued completions do not emit finished markers or
+The chain records the context epoch of the active turn's committed provider
+payload even while the queue is empty. A later first entry inherits that
+baseline, so an edit made during the response cannot be masked by queueing only
+after the edit.
+
+Resuming after an unrelated context mismatch requires an explicit
+`Use current context & resume` confirmation that revalidates both queue revision
+and context epoch before adopting the new baseline. Other recovery actions do
+not silently adopt unrelated edits.
+
+Background queue turns resolve one immutable turn execution context containing
+provider, model, capabilities, system prompt, generation settings, workspace,
+and other per-turn values for their owning session ID, never from the currently
+viewed tab. The same snapshot is threaded through payload construction and
+stream execution so a tab switch or settings change cannot produce a mixed
+turn. Intermediate queued completions do not emit finished markers or
 completion toasts. The session remains visibly running until the whole drain
 finishes or pauses.
+
+The immutable execution context stabilizes configuration only. Credentials,
+tool approvals, skill trust, and other authority are revalidated through their
+existing runtime seams and are never retained as queue state.
+
+The existing no-argument `on_submission_accepted` callback remains a
+manual-origin compatibility seam. Queued acceptance uses a separate
+content-free coordinator event and cannot clear the visible composer or its
+undo history.
+
+Whenever queue-owned future work exists, the coordinator is the sole next-turn
+authority. Existing transcript Retry/Regenerate recovery for the failed or
+stopped turn delegates into it; unrelated Continue, Regenerate, and Edit &
+resend actions cannot bypass older queued prompts.
 
 ## Context
 
@@ -86,16 +132,19 @@ Several existing boundaries make an implicit implementation unsafe:
 - The accepted-send callback is currently origin-agnostic and can clear the
   visible composer. An automatic queued submission must never erase a new draft
   the user is typing.
-- Provider selection is projected from the viewed session. A background queued
-  turn must resolve settings by owning session to prevent cross-tab leakage.
+- Provider execution inputs are projected from the viewed session and read by
+  multiple payload helpers. A background queued turn must resolve one immutable
+  owning-session execution context and thread it through the whole turn to
+  prevent cross-tab or mid-validation leakage.
 - Run completion currently stamps background markers and toasts per turn. A
   ten-prompt drain must not produce ten completion notifications or flicker
   between finished and running.
 - Navigation guards currently count live runs only, and the app quit action does
   not consult Console. Paused queues can contain unsent private text with no
   active run.
-- The chat store already owns branching. A parallel queue-specific view of
-  lineage would drift from that authority.
+- The chat store already owns provider-relevant history, summary, and branching.
+  A parallel queue-specific view of conversation context would drift from that
+  authority.
 
 These are long-lived Console UX, application lifecycle, cross-module interface,
 and state-ownership decisions, so a canonical ADR is required.
@@ -131,11 +180,13 @@ and state-ownership decisions, so a canonical ADR is required.
 
 - A ten-message drain may occupy one configured agent slot for a substantial
   time.
-- Queues are lost after confirmed Console exit or app quit.
+- Queues are lost after confirmed Console exit or in-app quit, and cannot be
+  protected from forced process termination.
 - Attachments and staged evidence cannot be queued in the first version.
 - The app needs a generic asynchronous pre-quit confirmation seam and
   reentrancy guard.
-- The chat store needs a branch epoch distinct from its broad payload revision.
+- The chat store needs a conversation-context epoch distinct from its broad
+  payload revision.
 - Existing fleet and run-state derivations must become queue-aware through one
   controller activity projection.
 
@@ -145,7 +196,8 @@ The feature requires pure queue-state tests, joined controller tests, mounted
 Textual tests, application leave/quit tests, and isolated live verification.
 The most important guards must be mutation-checked: the limit, origin-aware
 composer clearing, stale-revision rejection, shutdown suppression,
-owning-session provider selection, and intermediate notification suppression.
+owning-session immutable turn-context selection, context-epoch coverage, and
+intermediate notification suppression.
 
 Unsent queue state must be absent from database persistence, prompt history,
 screen snapshots, and logs. Once an entry is accepted as a real turn, normal
