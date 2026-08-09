@@ -17,6 +17,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSRequest,
 )
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
+from tldw_chatbook.TTS.audio_cpp_supervisor import _AudioCppGenerationChanged
 from tldw_chatbook.TTS.effective_settings import (
     NativeCapabilityReader,
     TTSCharacterProfileSelection,
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.TTS.TTS_Generation import (
         TTSService,
         _AdmittedTTSOperation,
+        _AudioCppPreparation,
         _OperationCapacityReservation,
     )
 
@@ -150,7 +152,7 @@ class TTSRequestAdmissionCoordinator:
                 voice_id,
             )
         model_ids = (model_id,) if voice_id is not None else ()
-        return await self._service.get_native_capability_snapshot(
+        return await self._service._get_native_capability_snapshot_already_prepared(
             provider_id,
             model_ids,
         )
@@ -244,82 +246,125 @@ class TTSRequestAdmissionCoordinator:
         operation: _AdmittedTTSOperation | None = None
         try:
             reservation = await self._service._reserve_operation_capacity()
-            async with self._gate.read():
-                preferences = self._preferences
-                if preferences is None:
-                    if higher_scope_provider is None:
-                        raise TTSProviderUnavailableError(
-                            "TTS default provider is not configured"
-                        )
-
-                if studio_request:
-                    assert studio_preferences is not None
-                    loader = self._studio_preferences_loader
-                    if loader is None:
-                        raise TTSEffectiveResolutionError(
-                            code="revision_incoherent",
-                            axis="studio_preferences",
-                            source=(
-                                TTSSelectionSource.STUDIO_DRAFT
-                                if studio_draft is not None
-                                else TTSSelectionSource.STUDIO_SAVED
-                            ),
-                        )
-                    try:
-                        current_studio_preferences = loader()
-                    except Exception:
-                        raise TTSEffectiveResolutionError(
-                            code="revision_incoherent",
-                            axis="studio_preferences",
-                            source=(
-                                TTSSelectionSource.STUDIO_DRAFT
-                                if studio_draft is not None
-                                else TTSSelectionSource.STUDIO_SAVED
-                            ),
-                        ) from None
-                    if (
-                        type(current_studio_preferences)
-                        is not StudioTTSPreferencesSnapshot
-                        or current_studio_preferences != studio_preferences
-                    ):
-                        raise TTSEffectiveResolutionError(
-                            code="revision_incoherent",
-                            axis="studio_preferences",
-                            source=(
-                                TTSSelectionSource.STUDIO_DRAFT
-                                if studio_draft is not None
-                                else TTSSelectionSource.STUDIO_SAVED
-                            ),
-                        )
-                    selection = await self._effective_settings.resolve_studio(
-                        studio_draft=studio_draft,
-                        studio_preferences=current_studio_preferences,
-                        global_preferences=preferences,
-                        global_preferences_revision=self._preferences_generation,
-                        provider_revision_reader=(self._service.configuration_revision),
-                        catalog_reader=self._service.get_catalog,
-                        native_capability_reader=self._read_native_capability,
-                    )
-                else:
-                    selection = await self._effective_settings.resolve_non_studio(
-                        explicit=explicit,
-                        character_profile=character_profile,
-                        default_profile=default_profile,
-                        global_preferences=preferences,
-                        global_preferences_revision=self._preferences_generation,
-                        provider_revision_reader=(self._service.configuration_revision),
-                        catalog_reader=self._service.get_catalog,
-                        native_capability_reader=self._read_native_capability,
-                    )
-                request = self._build_request(selection, text=text)
-                operation = await self._service._admit_reserved(
-                    request,
-                    reservation,
-                    expected_configuration_revision=(
-                        selection.revisions.provider_configuration
-                    ),
+            while True:
+                projected_provider = self._effective_settings.project_provider(
+                    global_preferences=self._preferences,
+                    explicit=explicit,
+                    character_profile=character_profile,
+                    default_profile=default_profile,
+                    studio_preferences=studio_preferences,
+                    studio_draft=studio_draft,
                 )
-                operation.claim()
+                try:
+                    async with self._service._prepared_provider_read(
+                        projected_provider,
+                        deliberate=True,
+                    ):
+                        preferences = self._preferences
+                        if preferences is None and higher_scope_provider is None:
+                            raise TTSProviderUnavailableError(
+                                "TTS default provider is not configured"
+                            )
+                        if (
+                            self._effective_settings.project_provider(
+                                global_preferences=preferences,
+                                explicit=explicit,
+                                character_profile=character_profile,
+                                default_profile=default_profile,
+                                studio_preferences=studio_preferences,
+                                studio_draft=studio_draft,
+                            )
+                            != projected_provider
+                        ):
+                            continue
+
+                        if studio_request:
+                            assert studio_preferences is not None
+                            loader = self._studio_preferences_loader
+                            if loader is None:
+                                raise TTSEffectiveResolutionError(
+                                    code="revision_incoherent",
+                                    axis="studio_preferences",
+                                    source=(
+                                        TTSSelectionSource.STUDIO_DRAFT
+                                        if studio_draft is not None
+                                        else TTSSelectionSource.STUDIO_SAVED
+                                    ),
+                                )
+                            try:
+                                current_studio_preferences = loader()
+                            except Exception:
+                                raise TTSEffectiveResolutionError(
+                                    code="revision_incoherent",
+                                    axis="studio_preferences",
+                                    source=(
+                                        TTSSelectionSource.STUDIO_DRAFT
+                                        if studio_draft is not None
+                                        else TTSSelectionSource.STUDIO_SAVED
+                                    ),
+                                ) from None
+                            if (
+                                type(current_studio_preferences)
+                                is not StudioTTSPreferencesSnapshot
+                                or current_studio_preferences != studio_preferences
+                            ):
+                                raise TTSEffectiveResolutionError(
+                                    code="revision_incoherent",
+                                    axis="studio_preferences",
+                                    source=(
+                                        TTSSelectionSource.STUDIO_DRAFT
+                                        if studio_draft is not None
+                                        else TTSSelectionSource.STUDIO_SAVED
+                                    ),
+                                )
+                            selection = await self._effective_settings.resolve_studio(
+                                studio_draft=studio_draft,
+                                studio_preferences=current_studio_preferences,
+                                global_preferences=preferences,
+                                global_preferences_revision=(
+                                    self._preferences_generation
+                                ),
+                                provider_revision_reader=(
+                                    self._service.configuration_revision
+                                ),
+                                catalog_reader=(
+                                    self._service._get_catalog_already_prepared
+                                ),
+                                native_capability_reader=(self._read_native_capability),
+                            )
+                        else:
+                            selection = (
+                                await self._effective_settings.resolve_non_studio(
+                                    explicit=explicit,
+                                    character_profile=character_profile,
+                                    default_profile=default_profile,
+                                    global_preferences=preferences,
+                                    global_preferences_revision=(
+                                        self._preferences_generation
+                                    ),
+                                    provider_revision_reader=(
+                                        self._service.configuration_revision
+                                    ),
+                                    catalog_reader=(
+                                        self._service._get_catalog_already_prepared
+                                    ),
+                                    native_capability_reader=(
+                                        self._read_native_capability
+                                    ),
+                                )
+                            )
+                        request = self._build_request(selection, text=text)
+                        operation = await self._service._admit_reserved(
+                            request,
+                            reservation,
+                            expected_configuration_revision=(
+                                selection.revisions.provider_configuration
+                            ),
+                        )
+                        operation.claim()
+                    break
+                except _AudioCppGenerationChanged:
+                    continue
         except BaseException as error:
             if operation is None:
                 if reservation is not None:
@@ -381,11 +426,15 @@ class TTSRequestAdmissionCoordinator:
     async def acquire_native_capability_lease(
         self,
         provider_id: str,
-    ) -> tuple[int, TTSAdapterLease]:
-        """Acquire one revision-matched lease without retaining the read gate."""
+    ) -> tuple[int, TTSAdapterLease, _AudioCppPreparation | None]:
+        """Acquire one revision-matched lease and passive process fence."""
         lease: TTSAdapterLease | None = None
+        preparation: _AudioCppPreparation | None = None
         try:
-            async with self._gate.read():
+            async with self._service._prepared_provider_read(
+                provider_id,
+                deliberate=False,
+            ) as preparation:
                 revision = self._service.configuration_revision(provider_id)
                 lease = await self._service.registry.acquire(
                     provider_id,
@@ -400,7 +449,7 @@ class TTSRequestAdmissionCoordinator:
             raise
 
         assert lease is not None
-        return revision, lease
+        return revision, lease, preparation
 
     async def synthesize_exact(
         self,

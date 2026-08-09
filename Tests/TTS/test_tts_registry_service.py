@@ -39,6 +39,7 @@ from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.adapters import audio_cpp as audio_cpp_module
 from tldw_chatbook.TTS.adapters.audio_cpp import AudioCppAdapter
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
+from tldw_chatbook.TTS.audio_cpp_supervisor import AudioCppSupervisor
 from tldw_chatbook.TTS.legacy_bridge import legacy_provider_specs
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.studio_preferences import (
@@ -1752,6 +1753,67 @@ def test_default_bootstrap_prepends_audio_cpp_without_changing_legacy_specs(
     assert service.registry._slots["audio_cpp"].spec.exclusive_reconfigure is True
     assert all(slot.active is None for slot in service.registry._slots.values())
     assert all(factory.calls == 0 for factory in factories.values())
+
+
+def test_default_service_constructs_one_supervisor_without_launch() -> None:
+    service = build_default_tts_service({})
+
+    supervisor = service._audio_cpp_supervisor
+    snapshot = supervisor.snapshot()
+
+    assert isinstance(supervisor, AudioCppSupervisor)
+    assert snapshot.state == "stopped"
+    assert snapshot.process_generation == 0
+    assert snapshot.endpoint is None
+    assert service.registry._slots["audio_cpp"].active is None
+
+
+@pytest.mark.asyncio
+async def test_reconfigured_audio_cpp_adapters_share_the_app_supervisor() -> None:
+    service = build_default_tts_service({})
+    first_lease = await service.registry.acquire("audio_cpp")
+    first_adapter = cast(AudioCppAdapter, first_lease.adapter)
+    await first_lease.release()
+    snapshot = await service.registry.provider_configuration_snapshot("audio_cpp")
+    replacement_config = {
+        **dict(snapshot.applied_config),
+        "base_url": "http://127.0.0.1:18081",
+    }
+
+    try:
+        assert (
+            await service.reconfigure_provider("audio_cpp", replacement_config)
+            is ReconfigureResult.CHANGED
+        )
+        second_lease = await service.registry.acquire("audio_cpp")
+        try:
+            second_adapter = cast(AudioCppAdapter, second_lease.adapter)
+            assert second_adapter is not first_adapter
+            assert first_adapter._supervisor is service._audio_cpp_supervisor
+            assert second_adapter._supervisor is service._audio_cpp_supervisor
+        finally:
+            await second_lease.release()
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_legacy_provider_materialization_never_touches_supervisor() -> None:
+    service = build_default_tts_service({})
+    supervisor = service._audio_cpp_supervisor
+    before = supervisor.snapshot()
+
+    try:
+        lease = await service.registry.acquire("openai")
+        await lease.release()
+        after = supervisor.snapshot()
+
+        assert after == before
+        assert service.registry._slots["audio_cpp"].active is None
+    finally:
+        await service.close()
+        await service.wait_closed()
 
 
 def test_default_bootstrap_parses_supplied_preferences_exactly_once(

@@ -1689,6 +1689,51 @@ async def test_pre_replacement_failure_changes_no_preferences_or_provider() -> N
 
 
 @pytest.mark.asyncio
+async def test_durable_save_advances_saved_generation_when_runtime_staging_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = _CapturingAdapter("audio_cpp", generation="one")
+    old_snapshot = _snapshot(model_id="Model/One")
+    saved_snapshot = _snapshot(model_id="Model/Two")
+    service, registry = _native_service(adapter, old_snapshot)
+
+    async def fail_runtime_stage(
+        _provider_id: str,
+        _config: Mapping[str, Any],
+        *,
+        generation: int,
+    ) -> str | None:
+        del generation
+        raise RuntimeError("private runtime transition failure")
+
+    monkeypatch.setattr(service, "_stage_managed_boundary", fail_runtime_stage)
+    ticket = service.begin_preferences_publication(
+        saved_snapshot,
+        {"audio_cpp": {"generation": "two"}},
+        lambda: generation_module.TTSSettingsPersistenceOutcome(
+            True,
+            True,
+            None,
+        ),
+        foreground_timeout_seconds=0,
+    )
+
+    try:
+        completion = await asyncio.shield(ticket.completion)
+
+        assert completion.published is True
+        assert completion.provider_statuses == {"audio_cpp": "unavailable"}
+        assert service.preferences_snapshot() == saved_snapshot
+        assert service.saved_configuration_revision("audio_cpp") == ticket.generation
+        assert service.applied_configuration_revision("audio_cpp") == 0
+        with pytest.raises(TTSProviderUnavailableError):
+            await registry.acquire("audio_cpp")
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
 async def test_first_publication_cannot_collide_with_compatibility_reconfigure() -> (
     None
 ):

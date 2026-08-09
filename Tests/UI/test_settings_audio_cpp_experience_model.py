@@ -13,14 +13,36 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSProviderCatalog,
     TTSVoiceDiscoveryResult,
 )
+from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.UI.Screens.settings_speech_tts import (
     AudioCppExactChoiceState,
+    GLOBAL_TTS_PROVIDER_FIELD_IDS,
     GlobalSpeechTTSValidationError,
     audio_cpp_transport_warning,
     build_global_speech_tts_save_proposal,
     load_global_speech_tts_state,
     project_audio_cpp_global_choices,
 )
+
+
+def test_slice_four_audio_cpp_settings_model_is_external_only() -> None:
+    projected = AudioCppConfig().to_mapping()
+    state = load_global_speech_tts_state({}, environment={})
+    managed_fields = {
+        "managed_binary_path",
+        "managed_server_json_path",
+        "managed_startup_timeout_seconds",
+        "managed_health_check_interval_seconds",
+        "managed_termination_grace_seconds",
+    }
+
+    assert projected["mode"] == "external"
+    assert state.providers["audio_cpp"] == projected
+    assert set(GLOBAL_TTS_PROVIDER_FIELD_IDS["audio_cpp"]) == (
+        set(projected) - {"mode"}
+    )
+    assert managed_fields.isdisjoint(projected)
+    assert managed_fields.isdisjoint(GLOBAL_TTS_PROVIDER_FIELD_IDS["audio_cpp"])
 
 
 def _observation(

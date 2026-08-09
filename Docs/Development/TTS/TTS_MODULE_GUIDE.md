@@ -35,7 +35,9 @@ tldw_chatbook/TTS/
 ├── adapter_registry.py      # Sealed app-scoped provider registry
 ├── adapter_bootstrap.py     # Application service construction
 ├── legacy_bridge.py         # Temporary provider-scoped compatibility adapters
-├── audio_cpp_config.py      # Immutable external-server configuration
+├── audio_cpp_config.py      # Immutable active-mode audio.cpp configuration
+├── audio_cpp_managed_config.py # Managed launch validation and child environment
+├── audio_cpp_supervisor.py  # One app-scoped managed audio.cpp child
 ├── audio_cpp_contract.py    # Pinned JSON and PCM16 WAV validation
 ├── preferences.py           # Immutable global defaults and config mutations
 ├── request_admission.py     # Atomic preference/revision/lease admission
@@ -49,7 +51,7 @@ tldw_chatbook/TTS/
 ├── profile_service.py       # Native profile validation and capability overlay
 ├── playground_types.py      # Immutable Playground request/artifact contracts
 ├── adapters/
-│   └── audio_cpp.py         # Native external audio.cpp adapter
+│   └── audio_cpp.py         # Native audio.cpp HTTP adapter
 ├── audio_schemas.py         # Pydantic schemas for requests/responses
 ├── TTS_Generation.py        # Main TTS service orchestration
 ├── TTS_Backends.py          # Legacy bridge manager and base class
@@ -371,6 +373,101 @@ run was unavailable because the installed `audio-cpp 0.4` binary had no
 running process, listener, or healthy endpoint. Chatbook intentionally did not
 launch it; external-process ownership remains with the user.
 
+### Dormant managed audio.cpp runtime core (Slice 4)
+
+External mode remains the default, the current visible Settings and Speech Lab
+experience, and the owner of no server process. Slice 4 adds a dormant Managed
+runtime behind service APIs and tests only. It does not mount a mode selector,
+binary or `server.json` picker, lifecycle action, process status, or diagnostic
+panel. Existing audio.cpp and legacy-provider behavior is unchanged.
+
+The application constructs one provider-specific `AudioCppSupervisor` beside
+the sealed registry and service. A Managed configuration carries one absolute
+user-supplied executable path, one absolute user-supplied `server.json` path,
+and bounded startup, health-interval, and termination-grace values. Validation
+requires an executable file, a readable strict UTF-8 JSON object no larger than
+1 MiB, no duplicate keys or non-finite constants, `host` exactly
+`127.0.0.1`, and an integer port from 1 through 65,535. Validation and passive
+snapshots do not launch, probe, discover, or adopt a process.
+
+Only a deliberate audio.cpp service operation may start Managed mode. Native
+synthesis admission, an explicit catalog or voice refresh, and
+`start_and_test_audio_cpp()` all pass through the same preparation seam.
+`restart_audio_cpp()` drains and stops the current generation, applies the
+latest eligible staged settings, and starts only when the resulting mode is
+Managed. `shutdown_audio_cpp()` drains and stops without itself launching a
+replacement. Passive process/capability snapshots, descriptor reads, and
+non-refresh cache reads never launch a child.
+
+Launch is always the exact argv
+`<user executable> --config <user server.json>`, without a shell, with the JSON
+directory as the working directory. A fail-closed loopback-port preflight runs
+immediately before spawn. The child receives a fixed runtime/platform
+environment allowlist after known provider credential names and secret-like
+names are removed. Chatbook never scans for an existing server, attaches to an
+unowned PID, appends arbitrary arguments, or runs an automatic restart loop.
+
+Concurrent first use shares one shielded startup. Publication and admission
+gates order configuration saves and applications against startup; lifecycle
+epochs and process generations fence stop, restart, shutdown, and stale work.
+One exit monitor is the sole reaper for each exact child. Process generations
+bind the child, health work, output drains, and generation-local adapter HTTP
+client together. Only one health probe may run for a generation; periodic and
+on-demand callers share it. Adapter retirement closes that generation's HTTP
+resources before a replacement generation can be published.
+
+Configuration and runtime identity use separate monotonic values:
+
+- **Saved generation** identifies the latest durably published settings.
+- **Applied generation** identifies the settings currently owned by the
+  registry slot; a save may be staged while speech is still using the prior
+  generation, and each newer save atomically supersedes or clears the older
+  stage.
+- **Process generation** identifies one exact app-owned child. An observation
+  version may advance as that same child changes state or health.
+
+All deliberate operations acquire the registry/admission side before entering
+the supervisor. Explicit transitions publish Draining, reject new leases, wait
+for admitted work, stop and reap only the owned child, and then retire the
+generation-local adapter before promoting a replacement. Applying External
+uses the same transition and cannot allow an older staged Managed mapping to
+reappear. Terminal service shutdown uses one outer deadline: registry
+admission seals immediately, leases/adapters drain first, and the running
+child's terminate/kill grace is capped by that shared deadline. `close()` is
+bounded; definitive cleanup remains retained after the foreground budget when
+necessary, and `wait_closed()` cannot succeed while a child, startup, health,
+reaper, output-drain, or generation-client task remains.
+
+The immutable process snapshot reports `stopped`, `starting`, `running`,
+`unhealthy`, `draining`, `stopping`, or `unavailable`, along with safe failure
+metadata. Stable managed failure codes are `configuration_invalid`,
+`port_in_use`, `process_spawn_failed`, `process_startup_timeout`,
+`process_exited`, `contract_incompatible`, and `runtime_unhealthy`. Health or
+exit failure never triggers a restart. A later deliberate operation may retry
+from the latest eligible saved mode, and a successful replacement clears the
+sealed Unavailable failure.
+
+Stdout and stderr are continuously drained into a memory-only ring bounded by
+line count, retained bytes, and bytes per line. ANSI/control sequences and
+recognizable credential assignments are best-effort sanitized, home paths are
+abbreviated, Rich markup is escaped, and an eviction count makes truncation
+truthful. Raw output is not copied into general logs, configuration, or
+persistence. Cleanup has bounded drain joining and closes only the parent's
+pipe transports when a descendant retains inherited descriptors; it never
+signals or adopts that descendant.
+
+Managed mode reuses the existing native HTTP adapter and multi-model catalog.
+It still validates and returns one complete PCM16 WAV item through the
+asynchronous response interface; Slice 4 does not add incremental streaming or
+change playback behavior.
+
+Slice 5 owns the Managed Settings and Speech Lab experience, user setup and
+recovery documentation, and live real-binary audible UAT. It must not expose
+Managed mode on Windows until native Windows CI proves direct execution of a
+user-supplied binary, graceful termination and force-kill, sole child reaping,
+and bounded parent-pipe closure. External audio.cpp remains available on
+Windows, and injected supervisor coverage remains mandatory on every platform.
+
 ### Catalog-driven STTS Playground (Slice 3)
 
 TASK-569 implements the external audio.cpp Playground vertical. Opening the
@@ -411,8 +508,8 @@ do not expose submitted text, configured origins or values, credentials, raw
 remote bodies, or unsafe remote identifiers.
 
 Slice 3 connects only to an existing externally managed `audiocpp_server`.
-User-provided binary and user-provided `server.json` launch, supervision, and
-managed Playground controls remain deferred to Slices 4–5.
+Slice 4 adds the dormant managed runtime described above; Managed Settings and
+Speech Lab controls remain deferred to Slice 5.
 
 #### 3. Audio Service (`audio_service.py`)
 Handles audio format conversion with:

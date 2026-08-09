@@ -28,6 +28,28 @@ from tldw_chatbook.TTS.studio_preferences import (
 )
 
 
+@pytest.mark.asyncio
+async def test_provider_only_projection_matches_full_resolution_precedence() -> None:
+    resolver = TTSEffectiveSettingsResolver()
+    runtime = _ResolutionRuntime()
+    global_preferences = _global_preferences(provider_id="openai")
+    explicit = TTSSelectionOverrides(provider_id="chatterbox")
+
+    projected = resolver.project_provider(
+        global_preferences=global_preferences,
+        explicit=explicit,
+    )
+    resolved = await resolver.resolve_non_studio(
+        global_preferences=global_preferences,
+        global_preferences_revision=7,
+        provider_revision_reader=runtime.provider_revision,
+        catalog_reader=runtime.read_catalog,
+        explicit=explicit,
+    )
+
+    assert projected == resolved.provider_id == "chatterbox"
+
+
 def _global_preferences(
     *,
     provider_id: str = "openai",

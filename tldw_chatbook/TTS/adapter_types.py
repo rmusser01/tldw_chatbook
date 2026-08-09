@@ -25,6 +25,11 @@ TTSOperationCode = Literal[
     "generation_failed",
     "audio_response_invalid",
     "generation_timeout",
+    "port_in_use",
+    "process_spawn_failed",
+    "process_startup_timeout",
+    "process_exited",
+    "runtime_unhealthy",
 ]
 VoiceDiscoveryState = Literal["complete", "model_missing", "unverified"]
 CapabilitySnapshotState = Literal["complete", "unverified"]

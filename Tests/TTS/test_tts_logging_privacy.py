@@ -49,6 +49,7 @@ from tldw_chatbook.TTS.adapter_types import (
 from tldw_chatbook.TTS.adapters import audio_cpp as audio_cpp_module
 from tldw_chatbook.TTS.adapters.audio_cpp import AudioCppAdapter
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
+from tldw_chatbook.TTS import audio_cpp_managed_config as managed_config_module
 from tldw_chatbook.TTS.legacy_bridge import LEGACY_ROUTES
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.TTS_Generation import (
@@ -58,6 +59,39 @@ from tldw_chatbook.TTS.TTS_Generation import (
 
 GUIDE_PATH = Path(__file__).parents[2] / "Docs/Development/TTS/TTS_MODULE_GUIDE.md"
 _TEST_WAIT_SECONDS = 2.0
+
+
+def test_audio_cpp_child_environment_values_and_omissions_never_log(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    allowed_value = "SYNTHETIC_ALLOWED_ENV_VALUE"
+    omitted_name = "SYNTHETIC_APPLICATION_PRIVATE_NAME"
+    omitted_value = "SYNTHETIC_APPLICATION_PRIVATE_VALUE"
+    credential_value = "SYNTHETIC_PROVIDER_CREDENTIAL_VALUE"
+    loguru_messages: list[str] = []
+    caplog.set_level(logging.DEBUG)
+    sink_id = logger.add(loguru_messages.append, level="DEBUG", format="{message}")
+    try:
+        child = managed_config_module.build_audio_cpp_child_environment(
+            {
+                "LANG": allowed_value,
+                omitted_name: omitted_value,
+                "OPENAI_API_KEY": credential_value,
+            },
+            provider_credential_names=frozenset({"OPENAI_API_KEY"}),
+        )
+    finally:
+        logger.remove(sink_id)
+
+    assert child == {"LANG": allowed_value}
+    rendered_logs = caplog.text + "\n".join(loguru_messages)
+    for private_value in (
+        allowed_value,
+        omitted_name,
+        omitted_value,
+        credential_value,
+    ):
+        assert private_value not in rendered_logs
 
 
 class _PrivacyStream(httpx.AsyncByteStream):
@@ -154,6 +188,13 @@ async def _cleanup_audio_cpp_privacy_resources(
 def test_tts_package_exports_only_stable_adapter_service_api() -> None:
     expected = {
         "AssignedTTSProfileSnapshot",
+        "AudioCppDiagnosticLine",
+        "AudioCppProcessAdmissionSnapshot",
+        "AudioCppProcessFailure",
+        "AudioCppProcessSnapshot",
+        "AudioCppProcessState",
+        "AudioCppReadyEndpoint",
+        "AudioCppTTSCapability",
         "CapabilitySnapshotState",
         "CharacterRef",
         "CharacterTTSRequestResolution",

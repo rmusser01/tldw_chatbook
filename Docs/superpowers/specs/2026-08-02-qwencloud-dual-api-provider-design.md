@@ -3,7 +3,7 @@
 Date: 2026-08-02
 Revised: 2026-08-07
 Status: Architecture approved; pending final document review
-Backlog task: [TASK-3603](../../../backlog/tasks/task-3603%20-%20Add-QwenCloud-dual-API-provider-support.md)
+Backlog task: [TASK-3771](../../../backlog/tasks/task-3771%20-%20Add-QwenCloud-dual-API-provider-support.md)
 Architecture decision: [ADR-045](../../../backlog/decisions/045-qwencloud-dual-api-provider-boundary.md)
 
 ## Purpose

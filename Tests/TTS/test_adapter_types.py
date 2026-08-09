@@ -347,6 +347,11 @@ def test_tts_operation_code_contains_only_stable_values() -> None:
         "generation_failed",
         "audio_response_invalid",
         "generation_timeout",
+        "port_in_use",
+        "process_spawn_failed",
+        "process_startup_timeout",
+        "process_exited",
+        "runtime_unhealthy",
     )
 
 

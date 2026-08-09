@@ -145,6 +145,47 @@ def _mutation_outcome(
     )
 
 
+def _audio_cpp_preferences(
+    *,
+    model_mode: str = "first_available",
+    model_id: str | None = None,
+) -> TTSPreferencesSnapshot:
+    return TTSPreferencesSnapshot(
+        provider_id="audio_cpp",
+        model_mode=model_mode,  # type: ignore[arg-type]
+        model_id=model_id,
+        voice_mode="server_default",
+        voice_id=None,
+        response_format="wav",
+        speed=1.0,
+    )
+
+
+def _managed_audio_cpp_config(label: str) -> dict[str, Any]:
+    return AudioCppConfig(
+        mode="managed",
+        managed_binary_path=f"/private/tmp/{label}/audiocpp_server",
+        managed_server_json_path=f"/private/tmp/{label}/server.json",
+    ).to_mapping()
+
+
+async def _publish_audio_cpp_config(
+    service: TTSService,
+    config: Mapping[str, Any],
+    *,
+    preferences: TTSPreferencesSnapshot | None = None,
+) -> TTSSettingsPublication:
+    ticket = service.begin_preferences_publication(
+        preferences or _audio_cpp_preferences(),
+        {"audio_cpp": config},
+        _mutation_outcome,
+        foreground_timeout_seconds=0,
+    )
+    result = await asyncio.wait_for(ticket.completion, timeout=1)
+    await ticket.foreground
+    return result
+
+
 PROVIDER_SETTING_KEYS = {
     "openai": ("openai_api_key",),
     "elevenlabs": (
@@ -1125,6 +1166,256 @@ async def test_changed_audio_cpp_config_retires_only_audio_cpp(
 
     await service.close()
     await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_managed_save_while_running_finishes_as_pending_without_stopping_child() -> (
+    None
+):
+    external = AudioCppConfig().to_mapping()
+    managed = _managed_audio_cpp_config("pending")
+    factory = RecordingFactory("audio_cpp")
+    registry = TTSAdapterRegistry(
+        specs=(provider_spec("audio_cpp", factory, external, exclusive=True),),
+        aliases={},
+    )
+    service = TTSService(registry, preferences_snapshot=_audio_cpp_preferences())
+    lease = await registry.acquire("audio_cpp")
+    active_adapter = lease.adapter
+    await lease.release()
+
+    try:
+        result = await _publish_audio_cpp_config(service, managed)
+        snapshot = await registry.provider_configuration_snapshot("audio_cpp")
+
+        assert result.provider_statuses == {"audio_cpp": "pending"}
+        assert active_adapter.close_calls == 0
+        assert registry._slots["audio_cpp"].active is not None
+        assert dict(snapshot.applied_config) == external
+        assert dict(snapshot.staged_config or {}) == managed
+        assert snapshot.revision == 1
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_latest_managed_save_wins_before_explicit_apply() -> None:
+    external = AudioCppConfig().to_mapping()
+    managed_b = _managed_audio_cpp_config("managed-b")
+    managed_c = _managed_audio_cpp_config("managed-c")
+    registry = TTSAdapterRegistry(
+        specs=(
+            provider_spec(
+                "audio_cpp",
+                RecordingFactory("audio_cpp"),
+                external,
+                exclusive=True,
+            ),
+        ),
+        aliases={},
+    )
+    service = TTSService(registry, preferences_snapshot=_audio_cpp_preferences())
+
+    try:
+        first = await _publish_audio_cpp_config(service, managed_b)
+        second = await _publish_audio_cpp_config(service, managed_c)
+        snapshot = await registry.provider_configuration_snapshot("audio_cpp")
+
+        assert first.provider_statuses == {"audio_cpp": "pending"}
+        assert second.provider_statuses == {"audio_cpp": "pending"}
+        assert snapshot.staged_generation == second.generation
+        assert dict(snapshot.staged_config or {}) == managed_c
+        assert dict(snapshot.applied_config) == external
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_external_to_managed_save_is_staged_until_deliberate_operation() -> None:
+    external = AudioCppConfig().to_mapping()
+    managed = _managed_audio_cpp_config("external-to-managed")
+    factory = RecordingFactory("audio_cpp")
+    registry = TTSAdapterRegistry(
+        specs=(provider_spec("audio_cpp", factory, external, exclusive=True),),
+        aliases={},
+    )
+    service = TTSService(registry, preferences_snapshot=_audio_cpp_preferences())
+
+    try:
+        result = await _publish_audio_cpp_config(service, managed)
+        snapshot = await registry.provider_configuration_snapshot("audio_cpp")
+
+        assert result.provider_statuses == {"audio_cpp": "pending"}
+        assert factory.calls == 0
+        assert snapshot.applied_generation == 0
+        assert snapshot.staged_generation == result.generation
+        assert dict(snapshot.applied_config) == external
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_external_to_external_save_keeps_existing_immediate_handoff() -> None:
+    external_a = AudioCppConfig().to_mapping()
+    external_b = AudioCppConfig(base_url="http://127.0.0.1:18082").to_mapping()
+    factory = RecordingFactory("audio_cpp")
+    registry = TTSAdapterRegistry(
+        specs=(provider_spec("audio_cpp", factory, external_a, exclusive=True),),
+        aliases={},
+    )
+    service = TTSService(registry, preferences_snapshot=_audio_cpp_preferences())
+    lease = await registry.acquire("audio_cpp")
+    old_adapter = lease.adapter
+    await lease.release()
+
+    try:
+        result = await _publish_audio_cpp_config(service, external_b)
+        snapshot = await registry.provider_configuration_snapshot("audio_cpp")
+
+        assert result.provider_statuses == {"audio_cpp": "applied"}
+        assert old_adapter.close_calls == 1
+        assert snapshot.staged_config is None
+        assert dict(snapshot.applied_config) == external_b
+        assert snapshot.revision == 2
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_external_a_staged_managed_b_then_external_c_cannot_retain_b() -> None:
+    external_a = AudioCppConfig().to_mapping()
+    managed_b = _managed_audio_cpp_config("managed-b")
+    external_c = AudioCppConfig(base_url="http://127.0.0.1:18083").to_mapping()
+    registry = TTSAdapterRegistry(
+        specs=(
+            provider_spec(
+                "audio_cpp",
+                RecordingFactory("audio_cpp"),
+                external_a,
+                exclusive=True,
+            ),
+        ),
+        aliases={},
+    )
+    service = TTSService(registry, preferences_snapshot=_audio_cpp_preferences())
+
+    try:
+        staged = await _publish_audio_cpp_config(service, managed_b)
+        applied = await _publish_audio_cpp_config(service, external_c)
+        snapshot = await registry.provider_configuration_snapshot("audio_cpp")
+
+        assert staged.provider_statuses == {"audio_cpp": "pending"}
+        assert applied.provider_statuses == {"audio_cpp": "applied"}
+        assert snapshot.staged_config is None
+        assert snapshot.staged_generation is None
+        assert dict(snapshot.applied_config) == external_c
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_reverting_a_stage_to_applied_values_finishes_unchanged() -> None:
+    external = AudioCppConfig().to_mapping()
+    managed = _managed_audio_cpp_config("reverted")
+    registry = TTSAdapterRegistry(
+        specs=(
+            provider_spec(
+                "audio_cpp",
+                RecordingFactory("audio_cpp"),
+                external,
+                exclusive=True,
+            ),
+        ),
+        aliases={},
+    )
+    service = TTSService(registry, preferences_snapshot=_audio_cpp_preferences())
+
+    try:
+        await _publish_audio_cpp_config(service, managed)
+        reverted = await _publish_audio_cpp_config(service, external)
+        snapshot = await registry.provider_configuration_snapshot("audio_cpp")
+
+        assert reverted.provider_statuses == {"audio_cpp": "unchanged"}
+        assert snapshot.staged_config is None
+        assert snapshot.applied_generation == reverted.generation
+        assert snapshot.revision == 1
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_staged_exact_selection_is_unverified_against_active_catalog() -> None:
+    external = AudioCppConfig().to_mapping()
+    managed = _managed_audio_cpp_config("exact-unverified")
+    factory = RecordingFactory("audio_cpp")
+    registry = TTSAdapterRegistry(
+        specs=(provider_spec("audio_cpp", factory, external, exclusive=True),),
+        aliases={},
+    )
+    service = TTSService(
+        registry,
+        preferences_snapshot=_audio_cpp_preferences(
+            model_mode="exact",
+            model_id="model",
+        ),
+    )
+
+    try:
+        await _publish_audio_cpp_config(
+            service,
+            managed,
+            preferences=_audio_cpp_preferences(
+                model_mode="exact",
+                model_id="model",
+            ),
+        )
+        snapshot = await service.get_native_capability_snapshot("audio_cpp", ())
+
+        assert snapshot.state == "unverified"
+        assert snapshot.catalog is None
+        assert factory.calls == 0
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_dynamic_selection_can_continue_against_clearly_applied_generation() -> (
+    None
+):
+    external = AudioCppConfig().to_mapping()
+    managed = _managed_audio_cpp_config("dynamic")
+    factory = RecordingFactory("audio_cpp")
+    registry = TTSAdapterRegistry(
+        specs=(provider_spec("audio_cpp", factory, external, exclusive=True),),
+        aliases={},
+    )
+    preferences = _audio_cpp_preferences()
+    service = TTSService(registry, preferences_snapshot=preferences)
+
+    try:
+        staged = await _publish_audio_cpp_config(
+            service,
+            managed,
+            preferences=preferences,
+        )
+        response, selection = await service.synthesize_effective(text="still active")
+        await response.aclose()
+
+        assert staged.provider_statuses == {"audio_cpp": "pending"}
+        assert selection.revisions.provider_configuration == 1
+        assert service.saved_configuration_revision("audio_cpp") == staged.generation
+        assert service.applied_configuration_revision("audio_cpp") == 0
+        assert factory.instances[0].synthesize_calls == 1
+    finally:
+        await service.close()
+        await service.wait_closed()
 
 
 @pytest.mark.asyncio

@@ -36,6 +36,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSProviderCatalog,
     TTSVoiceDiscoveryResult,
 )
+from tldw_chatbook.TTS.audio_cpp_supervisor import AudioCppSupervisor
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Lab_Modules import lab_speech_status as lab_speech_status_module
 from tldw_chatbook.UI.Screens import settings_screen as settings_screen_module
@@ -1417,15 +1418,34 @@ async def test_panel_exposes_path_pickers_and_no_managed_audio_cpp_controls() ->
             for node in screen.query("#settings-speech-provider-audio_cpp Static")
         ).lower()
         for forbidden in (
+            "managed mode",
             "binary path",
             "server.json",
             "bind address",
+            "use detected",
             "launch server",
+            "start & test",
             "restart server",
             "supervise",
             "stop server",
+            "process status",
+            "diagnostics",
         ):
             assert forbidden not in audio_text
+        for forbidden_id in (
+            "settings-speech-audio-cpp-managed-binary-path",
+            "settings-speech-audio-cpp-managed-server-json-path",
+            "settings-speech-audio-cpp-managed-startup-timeout-seconds",
+            "settings-speech-audio-cpp-managed-health-check-interval-seconds",
+            "settings-speech-audio-cpp-managed-termination-grace-seconds",
+            "settings-speech-audio-cpp-use-detected",
+            "settings-speech-audio-cpp-start-test",
+            "settings-speech-audio-cpp-restart",
+            "settings-speech-audio-cpp-shutdown",
+            "settings-speech-audio-cpp-process-status",
+            "settings-speech-audio-cpp-diagnostics",
+        ):
+            assert not screen.query(f"#{forbidden_id}")
 
 
 @pytest.mark.asyncio
@@ -1452,6 +1472,33 @@ async def test_normal_panel_actions_do_not_contact_or_initialize_tts(
         await pilot.pause()
 
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_mounting_external_audio_cpp_settings_never_starts_managed_child(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launches: list[str] = []
+
+    async def forbidden_start(self, *_args, **_kwargs):
+        del self
+        launches.append("ensure_running")
+        raise AssertionError("Settings launched managed audio.cpp")
+
+    monkeypatch.setattr(AudioCppSupervisor, "ensure_running", forbidden_start)
+    host = DestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = await _open_speech_tts(host, pilot)
+        configure = screen.query_one("#settings-speech-configure-provider", Select)
+        configure.value = "audio_cpp"
+        await _wait_for_selector(
+            screen,
+            pilot,
+            "#settings-speech-provider-audio_cpp",
+            timeout=4.0,
+        )
+
+    assert launches == []
 
 
 @pytest.mark.asyncio
