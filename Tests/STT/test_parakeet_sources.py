@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +41,7 @@ from tldw_chatbook.STT.parakeet_external import (
 )
 from tldw_chatbook.STT.parakeet_sources import (
     ParakeetSourceError,
+    ParakeetSourceErrorCode,
     ParakeetSourceKey,
     ParakeetSourcePreference,
     ParakeetSourceService,
@@ -794,6 +796,49 @@ def test_managed_copy_is_noop_if_install_completes_after_consent(
     assert service.records()[key].preferred_source is ParakeetSourcePreference.EXTERNAL
     assert len(config.writes) == 1
     assert (root / "model.onnx").read_bytes() == b"model"
+    service.close()
+
+
+def test_managed_copy_failure_is_stable_and_hides_external_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Managed install failures do not expose user-owned source paths."""
+    key = ParakeetSourceKey.V2_INT8
+    root = tmp_path / "private-external-model"
+    _materialize(root)
+    managed = ModelArtifactService(tmp_path / "managed-store")
+    service = ParakeetSourceService(
+        verifier=ExternalParakeetVerifier(),
+        read_setting=_Config().read,
+        write_settings=lambda _values: True,
+        descriptor_for=lambda model, precision: _descriptor(
+            ParakeetSourceKey.from_values(model, precision)
+        ),
+        active_managed=lambda _model, _precision: None,
+        dispatch_resolver=lambda **_kwargs: _dispatch(key, managed=False),
+        vad_ready=lambda: True,
+        managed_service=managed,
+    )
+    verified = service.prepare_external(key, root).verified
+    consent = service.plan_managed_copy(verified).grant()
+    private_path = str(root.absolute())
+    private_detail = f"managed install exploded for {private_path}"
+    monkeypatch.setattr(
+        managed,
+        "install",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError(private_detail)),
+    )
+
+    with pytest.raises(ParakeetSourceError) as caught:
+        service.copy_into_managed(verified, consent)
+
+    rendered = "".join(traceback.format_exception(caught.value))
+    assert caught.value.code is ParakeetSourceErrorCode.COPY_FAILED
+    assert caught.value.__cause__ is None
+    assert caught.value.__suppress_context__ is True
+    assert private_path not in rendered
+    assert private_detail not in rendered
     service.close()
 
 

@@ -80,6 +80,7 @@ class ParakeetSourceErrorCode(str, Enum):
     CONFIG_WRITE_FAILED = "config_write_failed"
     CONFIG_MISMATCH = "config_commit_mismatch"
     COPY_CONSENT_MISMATCH = "managed_copy_consent_mismatch"
+    COPY_FAILED = "managed_copy_failed"
     COPY_INSUFFICIENT_SPACE = "managed_copy_insufficient_space"
 
 
@@ -358,11 +359,14 @@ class ParakeetSourceService:
         if consent != plan.grant():
             raise ParakeetSourceError(ParakeetSourceErrorCode.COPY_CONSENT_MISMATCH)
         _, descriptor = self._validated_external(verified)
-        return self._managed_store_service().install(
-            descriptor,
-            verified.directory,
-            declared_files_only=True,
-        )
+        try:
+            return self._managed_store_service().install(
+                descriptor,
+                verified.directory,
+                declared_files_only=True,
+            )
+        except (ArtifactError, OSError):
+            raise ParakeetSourceError(ParakeetSourceErrorCode.COPY_FAILED) from None
 
     def stop_using_external(self, key: ParakeetSourceKey) -> None:
         """Forget the directory without erasing a managed preference."""

@@ -605,19 +605,12 @@ class LLMManagementWindow(Container):
                 legacy_dir = Path(str(configured)).expanduser()
 
         await curated.mount(CuratedView(id="curated-models-view"))
+        source_service = self.app_instance._ensure_parakeet_source_service()
         await installed.mount(
             InstalledView(
                 legacy_dir=legacy_dir,
-                on_root_activated=lambda reference: (
-                    self.app_instance._ensure_parakeet_source_service().on_root_activated(
-                        reference
-                    )
-                ),
-                may_delete=lambda reference: (
-                    self.app_instance._ensure_parakeet_source_service().may_delete(
-                        reference
-                    )
-                ),
+                on_root_activated=source_service.on_root_activated,
+                may_delete=source_service.may_delete,
                 id="installed-models-view",
             )
         )

@@ -39,7 +39,9 @@ async def test_models_host_lazily_wires_parakeet_activation_and_deletion(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The production Models host delegates ownership policy to its app service."""
+    """The Models host binds its app service on the Textual UI thread."""
+    import threading
+
     from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
     from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
     from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
@@ -48,9 +50,26 @@ async def test_models_host_lazily_wires_parakeet_activation_and_deletion(
 
     root = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
     vad = ArtifactRef("silero-vad", "immutable-revision", "f32")
-    source = MagicMock()
-    source.may_delete.return_value = "Managed dependency is in use."
-    ensure_source = MagicMock(return_value=source)
+    ui_thread = threading.get_ident()
+    lifecycle_threads: list[tuple[str, int]] = []
+
+    class _Source:
+        def __init__(self) -> None:
+            self.activated: list[ArtifactRef] = []
+            self.deletion_checks: list[ArtifactRef] = []
+
+        def release_scopes_except(self, scopes: set[str]) -> None:
+            assert scopes == set()
+            lifecycle_threads.append(("release", threading.get_ident()))
+
+        def on_root_activated(self, reference: ArtifactRef) -> None:
+            self.activated.append(reference)
+
+        def may_delete(self, reference: ArtifactRef) -> str:
+            self.deletion_checks.append(reference)
+            return "Managed dependency is in use."
+
+    source = _Source()
 
     class _Core:
         def activate(self, reference: ArtifactRef) -> ArtifactRef:
@@ -63,7 +82,21 @@ async def test_models_host_lazily_wires_parakeet_activation_and_deletion(
 
     monkeypatch.setattr("tldw_chatbook.app.get_cli_setting", no_splash)
     app = _build_test_app()
-    monkeypatch.setattr(app, "_ensure_parakeet_source_service", ensure_source)
+
+    def create_source_service() -> _Source:
+        lifecycle_threads.append(("construct", threading.get_ident()))
+        return source
+
+    def add_listener(_listener) -> None:
+        lifecycle_threads.append(("listener", threading.get_ident()))
+
+    def read_jobs() -> tuple[object, ...]:
+        lifecycle_threads.append(("read", threading.get_ident()))
+        return ()
+
+    monkeypatch.setattr(app, "_create_parakeet_source_service", create_source_service)
+    monkeypatch.setattr(app.library_ingest_jobs, "add_listener", add_listener)
+    monkeypatch.setattr(app.library_ingest_jobs, "jobs", read_jobs)
     async with app.run_test(size=(235, 52)) as pilot:
         await pilot.pause()
         screen = LLMScreen(app)
@@ -73,19 +106,34 @@ async def test_models_host_lazily_wires_parakeet_activation_and_deletion(
 
         screen.query_one(LLMManagementWindow)
         view = screen.query_one(InstalledView)
-        assert ensure_source.call_count == 0
+        assert [name for name, _thread in lifecycle_threads] == [
+            "construct",
+            "listener",
+            "read",
+            "release",
+        ]
+        assert all(thread == ui_thread for _name, thread in lifecycle_threads)
+
+        ensure_after_mount = MagicMock(
+            side_effect=AssertionError("activation must use the bound source service")
+        )
+        monkeypatch.setattr(
+            app,
+            "_ensure_parakeet_source_service",
+            ensure_after_mount,
+        )
 
         view._service_factory = _Core
         view._legacy_dir = tmp_path
         view._apply_lifecycle_result = MagicMock()
         await view._activate_model(root).wait()
         view._apply_lifecycle_result.assert_called_once_with("activate", None)
-        source.on_root_activated.assert_called_once_with(root)
-        assert ensure_source.call_count == 1
+        assert source.activated == [root]
+        ensure_after_mount.assert_not_called()
 
         assert view._may_delete(vad) == "Managed dependency is in use."
-        source.may_delete.assert_called_once_with(vad)
-        assert ensure_source.call_count == 2
+        assert source.deletion_checks == [vad]
+        ensure_after_mount.assert_not_called()
 
 
 def test_unmanaged_scan_is_bounded_and_labels_supported_model_files(
