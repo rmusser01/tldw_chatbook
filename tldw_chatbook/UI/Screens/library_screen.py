@@ -14966,13 +14966,20 @@ class LibraryScreen(BaseAppScreen):
                 f"Failed to load Library prompt detail for {prompt_id!r}."
             )
             detail = None
-        if expected_history_scope is not None and not (
-            self._library_prompt_history_controller.matches_scope(
-                prompt_uuid=expected_history_scope[0],
-                scope_token=expected_history_scope[1],
-            )
-        ):
-            return
+        if expected_history_scope is not None:
+            state = self._library_prompt_history_controller.state
+            if not (
+                state is not None
+                and self._library_prompt_history_controller.matches_scope(
+                    prompt_uuid=expected_history_scope[0],
+                    scope_token=expected_history_scope[1],
+                )
+            ):
+                return
+            # The disclosure may have changed while the detail call was awaited.
+            # Adopt the live, still-matching scope state rather than the caller's
+            # pre-await Boolean.
+            open_history = state.is_open
         # Discard out-of-order results: the same stale-race guard as
         # ``_refresh_library_note_detail``.
         if (
@@ -15307,10 +15314,8 @@ class LibraryScreen(BaseAppScreen):
                 notify(outcome.message)
             prompt_id = self._selected_prompt_id
             if isinstance(prompt_id, int):
-                state = self._library_prompt_history_controller.state
                 await self._refresh_library_prompt_detail(
                     prompt_id,
-                    open_history=bool(state is not None and state.is_open),
                     expected_history_scope=(request.prompt_uuid, request.scope_token),
                 )
             return

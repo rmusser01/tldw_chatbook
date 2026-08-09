@@ -2539,19 +2539,21 @@ async def test_library_prompt_history_restore_refresh_rejects_same_id_aba_scope(
 
 
 @pytest.mark.asyncio
-async def test_library_prompt_history_collapse_does_not_cancel_started_restore(
+async def test_library_prompt_history_collapse_during_restore_detail_fetch_stays_closed(
     tmp_path,
 ):
-    """Collapse hides page state while an accepted restore still settles."""
+    """Collapse during post-restore fetch stays closed after detail adoption."""
     db, real_service = _real_prompt_scope_service(tmp_path)
     prompt_id, _prompt_uuid, _message = db.add_prompt(
         name="Collapse restore", author="", details="v1", user_prompt="source"
     )
     db.update_prompt_by_id(prompt_id, {"details": "v2"}, expected_version=1)
-    restore_gate = threading.Event()
+    detail_gate = threading.Event()
+    detail_started = threading.Event()
     service = _RecordingHistoryPromptScopeService(
         real_service,
-        restore_gate=restore_gate,
+        post_restore_detail_gate=detail_gate,
+        post_restore_detail_started=detail_started,
     )
     app = _build_test_app()
     _wire_empty_non_prompt_services(app)
@@ -2584,11 +2586,15 @@ async def test_library_prompt_history_collapse_does_not_cancel_started_restore(
             await pilot.pause()
             assert isinstance(host.screen, ConfirmationDialog)
             host.screen.query_one("#confirm-button", Button).press()
-            for _ in range(150):
-                if service.restore_calls:
+            for _ in range(200):
+                if detail_started.is_set():
                     break
                 await pilot.pause(0.02)
             assert len(service.restore_calls) == 1
+            assert detail_started.is_set()
+            persisted = db.fetch_prompt_details(prompt_id)
+            assert persisted is not None and persisted["version"] == 3
+            assert screen._library_prompt_version == 2
 
             disclosure = screen.query_one(
                 "#library-prompt-history-collapsible", Collapsible
@@ -2604,9 +2610,10 @@ async def test_library_prompt_history_collapse_does_not_cancel_started_restore(
             assert collapsed.is_open is False
             assert collapsed.rows == ()
             assert collapsed.selected is None
-            assert collapsed.restore_request is not None
+            assert collapsed.restore_request is None
+            assert collapsed.restore_refresh_pending is True
 
-            restore_gate.set()
+            detail_gate.set()
             for _ in range(250):
                 persisted = db.fetch_prompt_details(prompt_id)
                 current = screen._library_prompt_history_state
@@ -2635,7 +2642,7 @@ async def test_library_prompt_history_collapse_does_not_cancel_started_restore(
             )
             assert disclosure.collapsed is True
     finally:
-        restore_gate.set()
+        detail_gate.set()
 
 
 @pytest.mark.asyncio
