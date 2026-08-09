@@ -2,7 +2,7 @@
 
 TASK-3996. `RAGService._keyword_search` joined `media_fts` and nothing else,
 so the keyword half of hybrid search could only ever return media rows: on
-the P1 fixture corpus, 28 of 48 documents (notes + conversations) were
+the P1 fixture corpus, 29 of 49 documents (notes + conversations) were
 structurally unreachable through that leg no matter what the query said.
 
 The fix adds two read-only sub-legs over the ChaChaNotes DB (notes,

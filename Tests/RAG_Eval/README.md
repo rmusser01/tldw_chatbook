@@ -256,7 +256,7 @@ Two columns need context before you read the P/R/MRR/NDCG numbers as
 
 - **`docs`** is the mean number of documents each query actually returned.
   Precision here divides by `min(k, len(retrieved))`, not by `k` — so
-  plain's 0.4 docs/query and P=0.867-on-keyword means "when it returned
+  plain's 0.4 docs/query and P=0.875-on-keyword means "when it returned
   anything it was almost always right," not "it ranked ten results well."
   Compare `docs` before comparing precision across modes.
 - **Plain's MRR and NDCG track recall, not ranking.** The four-seam keyword

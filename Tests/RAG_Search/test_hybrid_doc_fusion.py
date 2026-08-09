@@ -286,13 +286,25 @@ def test_merged_citations_survive_a_leg_without_citations():
     assert [c.chunk_id for c in fused[0].citations] == ["media_15_chunk_0"]
 
 
-def test_fts_only_docs_can_enter_the_top_k():
-    """The starvation fix: chunk-level keys let the vector leg fill every slot.
+def test_fts_only_docs_enter_when_the_vector_leg_has_fewer_than_top_k_documents():
+    """Document-level keys stop one document's chunks from eating every slot.
 
-    Five chunks of two documents used to be five fusion keys, each outscoring
-    an FTS-only document (0.7/(k+r) > 0.3/(k+1) up to vector rank ~82), so the
-    keyword leg's best hit never survived top-k. Collapsed to two document
-    keys, it does.
+    What this pins: five chunks of two documents used to be five fusion keys
+    and consumed all three top-k slots; collapsed to two document keys they
+    consume two, and the free third slot goes to the FTS-only row. That is the
+    id-space/dedup fix (TASK-3994) observed through its effect on slot
+    occupancy -- nothing more.
+
+    **This is NOT the starvation fix, and must not be cited as evidence for
+    one.** The keyword-only row gets in here only because the vector leg
+    supplies FEWER DISTINCT DOCUMENTS than top_k (2 < 3), leaving a slot no
+    vector row wants. The real defect is that whenever the vector leg returns
+    k or more distinct documents -- the normal case -- an FTS-only row scores
+    (1-alpha)/(rrf_k+1) = 0.00492 under the shipped defaults and is beaten by
+    every vector row ranked better than about 82, so it is structurally
+    unreachable. That is TASK-4110, whose description carries the corrected
+    "k or more distinct documents" mechanism and whose AC #1 explicitly
+    disqualifies this thin-vector-leg case as evidence.
     """
     semantic = [
         _vector_row(7, 0, "Doc Seven", "seven a", 0.91),

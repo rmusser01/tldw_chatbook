@@ -863,7 +863,7 @@ class RAGService:
         TASK-3996: this leg used to join ``media_fts`` and nothing else, so
         the keyword half of hybrid search could only ever return media rows
         -- notes and conversations were structurally unreachable through it
-        no matter what the query said (28 of the P1 fixture corpus's 48
+        no matter what the query said (29 of the P1 fixture corpus's 49
         documents). It is now three sub-legs over two databases:
 
         * media -- ``media_fts`` in the media DB, via the connection pool;

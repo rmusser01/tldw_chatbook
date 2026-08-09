@@ -264,7 +264,7 @@ def _build_config(
     # Same reasoning for the notes/conversation sub-legs of that leg
     # (TASK-3996). Without this override they resolve the *real* user
     # ChaChaNotes DB: under pytest's env isolation that path does not exist,
-    # so the FTS leg would silently measure media only (28 of the 48 fixture
+    # so the FTS leg would silently measure media only (29 of the 49 fixture
     # docs unreachable, exactly the defect being fixed); outside it, the
     # harness would read the developer's own notes and conversations.
     config.search.chachanotes_db_path = chachanotes_db_path
