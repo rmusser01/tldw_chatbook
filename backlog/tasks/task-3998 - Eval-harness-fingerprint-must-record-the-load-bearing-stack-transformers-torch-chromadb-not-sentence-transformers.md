@@ -3,9 +3,10 @@ id: TASK-3998
 title: >-
   Eval-harness fingerprint must record the load-bearing stack
   (transformers/torch/chromadb), not sentence-transformers
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-09 14:48'
+updated_date: '2026-08-09 17:19'
 labels:
   - rag
   - eval
@@ -25,3 +26,9 @@ Found by the P1 final review (TASK-3894): the harness's real embedding path is E
 - [ ] #2 The sentence-transformers key's retention or removal is decided and documented
 - [ ] #3 Baselines are re-stamped in the same commit with both old and new fingerprints shown
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+See Docs/superpowers/plans/2026-08-09-rag-port-hybrid-fusion-fixes.md (Task 2) and Docs/superpowers/specs/2026-08-09-rag-port-hybrid-fusion-fixes-design.md for the fingerprint-keys design (transformers/torch/chromadb compared, sentence-transformers informational).
+<!-- SECTION:PLAN:END -->

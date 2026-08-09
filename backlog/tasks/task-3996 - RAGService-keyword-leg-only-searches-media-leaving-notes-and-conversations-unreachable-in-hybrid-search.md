@@ -3,9 +3,10 @@ id: TASK-3996
 title: >-
   RAGService keyword leg only searches media, leaving notes and conversations
   unreachable in hybrid search
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-09 05:17'
+updated_date: '2026-08-09 17:19'
 labels:
   - rag
   - retrieval
@@ -26,3 +27,9 @@ Found by the P1 eval harness (TASK-3894). RAGService._perform_fts5_search (rag_s
 - [ ] #2 A regression test with a notes-only or conversations-only relevant document confirms it is reachable through hybrid search FTS leg.
 - [ ] #3 The P1 eval harness baselines are re-stamped in the same PR, with before and after numbers included in the PR description.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+See Docs/superpowers/plans/2026-08-09-rag-port-hybrid-fusion-fixes.md (Task 5) and Docs/superpowers/specs/2026-08-09-rag-port-hybrid-fusion-fixes-design.md for the read-only notes/conversations sub-leg design.
+<!-- SECTION:PLAN:END -->

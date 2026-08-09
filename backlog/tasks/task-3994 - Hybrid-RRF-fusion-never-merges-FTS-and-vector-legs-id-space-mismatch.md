@@ -1,9 +1,10 @@
 ---
 id: TASK-3994
 title: Hybrid RRF fusion never merges FTS and vector legs (id-space mismatch)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-09 05:16'
+updated_date: '2026-08-09 17:19'
 labels:
   - rag
   - retrieval
@@ -25,3 +26,9 @@ Found by the P1 eval harness (TASK-3894). RRF fusion matches on SearchResult.id 
 - [ ] #3 The P1 eval harness baselines (Tests/RAG_Eval/baselines/hybrid.json) are re-stamped in the same PR as this fix, with the before and after numbers included in the PR description.
 - [ ] #4 A regression test pins that a document found by both legs receives a fused score reflecting both contributions, not only the vector one.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+See Docs/superpowers/plans/2026-08-09-rag-port-hybrid-fusion-fixes.md (Task 4) and Docs/superpowers/specs/2026-08-09-rag-port-hybrid-fusion-fixes-design.md for the fuse-on-document-identity design; re-stamp AC completes in plan Task 6, not this fix's commit.
+<!-- SECTION:PLAN:END -->

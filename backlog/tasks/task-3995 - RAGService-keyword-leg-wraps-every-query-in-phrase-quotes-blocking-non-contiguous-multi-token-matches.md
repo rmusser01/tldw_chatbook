@@ -3,9 +3,10 @@ id: TASK-3995
 title: >-
   RAGService keyword leg wraps every query in phrase quotes, blocking
   non-contiguous multi-token matches
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-09 05:16'
+updated_date: '2026-08-09 17:19'
 labels:
   - rag
   - retrieval
@@ -27,3 +28,9 @@ Found by the P1 eval harness (TASK-3894). RAGService._escape_fts5_query (rag_ser
 - [ ] #3 Regression tests cover both the non-contiguous-match case and the injection-safety case against real corpus content.
 - [ ] #4 The P1 eval harness baselines are re-stamped in the same PR if hybrid or keyword numbers move, with before and after numbers included in the PR description.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+See Docs/superpowers/plans/2026-08-09-rag-port-hybrid-fusion-fixes.md (Task 3) and Docs/superpowers/specs/2026-08-09-rag-port-hybrid-fusion-fixes-design.md for the per-token FTS5 quoting design (AND-of-terms, safety preserved).
+<!-- SECTION:PLAN:END -->
