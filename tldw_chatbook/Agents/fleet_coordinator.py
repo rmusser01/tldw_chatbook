@@ -2,7 +2,7 @@
 
 No DB, Textual, app, or I/O imports — stdlib only (threading, dataclasses, uuid,
 typing) plus agent_models constants. The impure thread-launching lives in
-agent_service. Thread-safe: every public method holds an RLock.
+agent_service. Thread-safe: every public method holds a Lock.
 """
 
 from __future__ import annotations
@@ -81,7 +81,7 @@ class FleetCoordinator:
         """
         self._max_live = max_live
         self._clock = clock
-        self._lock = threading.RLock()
+        self._lock = threading.Lock()  # No reentrant calls, lock to catch bugs
         self._handles: dict[str, FleetHandle] = {}
         self._live_ids: set[str] = set()  # handle_ids with status != terminal
         self._events: list[FleetEvent] = []
@@ -136,7 +136,7 @@ class FleetCoordinator:
             run_id: The run ID to attach.
         """
         with self._lock:
-            if handle_id in self._handles:
+            if handle_id in self._handles and handle_id in self._live_ids:
                 self._handles[handle_id].run_id = run_id
 
     def finish(
@@ -160,11 +160,15 @@ class FleetCoordinator:
             if handle_id not in self._handles:
                 return
 
-            handle = self._handles[handle_id]
-
-            # First-writer-wins: ignore if already terminal
-            if handle.status in TERMINAL_RUN_STATUSES:
+            # First-writer-wins: ignore if handle is no longer live.
+            # This check is based on liveness, not status vocabulary, so it
+            # protects against any status (e.g., "timeout") that a Task 6
+            # abandonment handler might use, not just the closed set in
+            # TERMINAL_RUN_STATUSES.
+            if handle_id not in self._live_ids:
                 return
+
+            handle = self._handles[handle_id]
 
             # Transition to terminal
             finished_at = self._clock()

@@ -104,3 +104,17 @@ def test_concurrent_reserve_never_exceeds_cap():
         t.join()
     assert sum(1 for h in got if h is not None) == 5
     assert c.live_count() == 5
+
+
+def test_finish_guard_survives_a_status_outside_the_terminal_vocabulary():
+    # The guard must not rely on status vocabulary membership. A handle that
+    # finishes with "timeout" (not in TERMINAL_RUN_STATUSES) should reject a
+    # later finish with RUN_DONE. This tests the idempotency guard's use of
+    # liveness, not status membership.
+    c = _coord()
+    h = c.reserve(task="a", agent=None)
+    c.finish(h.handle_id, "timeout")
+    c.finish(h.handle_id, RUN_DONE, result="late answer")
+    assert c.get(h.handle_id).status == "timeout"
+    assert c.get(h.handle_id).result == ""
+    assert c.live_count() == 0
