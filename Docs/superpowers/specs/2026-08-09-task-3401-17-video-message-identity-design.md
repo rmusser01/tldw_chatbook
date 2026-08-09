@@ -14,15 +14,24 @@ and metadata in the message row. The Console preallocates a UUID before generati
 and writes the bytes under that UUID. `ConsoleChatStore.append_video_message()`
 uses the same UUID for the live message, but `_persist_new_message()` currently
 requests an explicit database ID only for image-generation messages. The database
-therefore assigns a different ID to video messages. After reload, the durable ID
-becomes the restored Console message ID and no longer addresses the existing file.
+therefore assigns a different ID to video messages. On reload, the durable ID is
+preserved in `ConsoleChatMessage.persisted_message_id`, while the Console tree
+intentionally allocates a fresh native `message.id` for branch reconstruction.
+Current video-card, play, and save-copy resolution incorrectly use that fresh native
+ID and therefore cannot address retained bytes.
 
 ## Decision
 
-Reuse the existing stable-message-ID persistence seam. When a message carries
-`video_metadata`, `_persist_new_message()` will pass `message.id` as the explicit
-`message_id` to `ChatPersistenceService.create_message()`, exactly as it already
-does for generation messages and callers using `force_stable_message_id`.
+Use the existing two identities for their intended jobs:
+
+1. Reuse the stable-message-ID persistence seam. When a message carries
+   `video_metadata`, `_persist_new_message()` passes `message.id` as the explicit
+   `message_id` to `ChatPersistenceService.create_message()`, exactly as it already
+   does for generation messages and callers using `force_stable_message_id`.
+2. At every video-file resolution boundary, use
+   `message.persisted_message_id or message.id`. The durable ID owns the store
+   directory after persistence/restart; the native ID remains the fallback for a
+   current, non-persisted message.
 
 No new identifier, metadata field, schema, file move, fallback scan, or migration
 is introduced. Existing video rows remain valid tombstones; this change guarantees
@@ -35,15 +44,22 @@ identity only for newly persisted generated videos.
 3. `append_video_message(..., message_id=uuid, persist=True)` creates the live
    Console message with that UUID.
 4. `_persist_new_message()` forwards that UUID to the existing persistence API.
-5. On restart, the durable row restores with the same UUID and `VideoStore.resolve()`
-   reconstructs the original path directly.
+5. On restart, the durable row restores that UUID as `persisted_message_id`, while
+   its fresh native `id` remains available for Console tree navigation.
+6. Card construction, playback, and save-copy resolve the file with
+   `persisted_message_id` first and reconstruct the original path directly.
 
 ## Failure and Compatibility Behavior
 
 - Explicit-ID conflicts continue to fail through the existing database conflict
   handling; the fix adds no retry or overwrite behavior.
-- Persistence failures retain the current deferred/error behavior and do not rename
-  or duplicate video bytes.
+- A synchronous persistence failure currently propagates after registering the live
+  node and after bytes have been written. This task deliberately preserves that
+  behavior: the existing ephemeral file remains subject to retention cleanup and no
+  overwrite, rename, or speculative rollback is added. A focused conflict test pins
+  propagation and proves an existing row is not replaced. Cleanup/transactional
+  generation persistence would be a separate product behavior and is not required by
+  this identity-repair task.
 - Session retention remains unchanged and is owned by TASK-3401.19.
 - Preview/player behavior remains unchanged and is owned by TASK-3401.18.
 - Existing rows whose IDs already diverge are not repaired because the storage key
@@ -56,9 +72,15 @@ identity only for newly persisted generated videos.
 - A real SQLite integration test saves bytes under a preallocated ID, persists the
   video message, reconstructs the Console store from the durable conversation tree,
   creates a fresh TTL-configured `VideoStore`, and resolves the retained bytes using
-  the restored message ID and slug.
-- The new assertion is mutation-checked by removing the video stable-ID condition and
-  confirming the focused test fails for the expected identity mismatch.
+  the restored message's `persisted_message_id` and slug while confirming its native
+  `id` is fresh.
+- Focused card/action tests prove ready-state, playback, and save-copy use the durable
+  key after reload rather than the fresh native ID.
+- The new assertions are mutation-checked independently by removing the video
+  stable-ID condition and by changing durable-first resolution back to `message.id`;
+  each mutation must fail its corresponding focused test for the expected reason.
+- A focused explicit-ID conflict test proves persistence failure propagates without
+  replacing the existing row; no cleanup semantics are introduced.
 - Only test files that exercise the touched persistence/store paths are run.
 
 ## Alternatives Rejected
