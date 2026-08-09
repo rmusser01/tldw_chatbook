@@ -861,6 +861,74 @@ def test_h3_requires_exact_documented_control_titles(adapter, node_id, title, ma
         adapter._parameterize_workflow(graph, _request(), None)
 
 
+@pytest.mark.parametrize("duplicate_title", ["Prompt Width Height", "Unrelated"])
+def test_h3_rejects_ambiguous_generation_nodes(adapter, duplicate_title):
+    graph = _h3_workflow()
+    graph["duplicate-generation"] = copy.deepcopy(graph["gen"])
+    graph["duplicate-generation"]["_meta"]["title"] = duplicate_title
+
+    with pytest.raises(
+        VideoGenerationError,
+        match="prompt.*Prompt Width Height.*MiniMaxH3ImageToVideo.*exactly one",
+    ):
+        adapter._parameterize_workflow(graph, _request(), None)
+
+
+def test_h3_rejects_wrong_class_generation_title_decoy(adapter):
+    graph = _h3_workflow()
+    graph["generation-decoy"] = copy.deepcopy(graph["gen"])
+    graph["generation-decoy"]["class_type"] = "OtherGenerationNode"
+
+    with pytest.raises(
+        VideoGenerationError,
+        match="prompt.*Prompt Width Height.*MiniMaxH3ImageToVideo.*OtherGenerationNode",
+    ):
+        adapter._parameterize_workflow(graph, _request(), None)
+
+
+@pytest.mark.parametrize(
+    ("node_id", "control", "field", "title", "expected_class"),
+    [
+        ("seed", "seed", "seed", "Seed", "RandomNoise"),
+        ("duration", "duration", "duration", "Duration", "PrimitiveFloat"),
+        ("video", "native_fps", "native FPS", "Native FPS", "CreateVideo"),
+    ],
+)
+def test_h3_rejects_duplicate_support_controls(
+    adapter, node_id, control, field, title, expected_class
+):
+    graph = _h3_workflow()
+    graph[f"duplicate-{control}"] = copy.deepcopy(graph[node_id])
+
+    with pytest.raises(
+        VideoGenerationError,
+        match=rf"{field}.*{title}.*{expected_class}.*exactly one",
+    ):
+        adapter._parameterize_workflow(graph, _request(), None)
+
+
+@pytest.mark.parametrize(
+    ("node_id", "control", "field", "title", "expected_class"),
+    [
+        ("seed", "seed", "seed", "Seed", "RandomNoise"),
+        ("duration", "duration", "duration", "Duration", "PrimitiveFloat"),
+        ("video", "native_fps", "native FPS", "Native FPS", "CreateVideo"),
+    ],
+)
+def test_h3_rejects_wrong_class_support_title_decoys(
+    adapter, node_id, control, field, title, expected_class
+):
+    graph = _h3_workflow()
+    graph[f"decoy-{control}"] = copy.deepcopy(graph[node_id])
+    graph[f"decoy-{control}"]["class_type"] = "WrongControlNode"
+
+    with pytest.raises(
+        VideoGenerationError,
+        match=rf"{field}.*{title}.*{expected_class}.*WrongControlNode",
+    ):
+        adapter._parameterize_workflow(graph, _request(), None)
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [

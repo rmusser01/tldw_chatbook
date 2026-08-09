@@ -366,15 +366,46 @@ class ComfyUIVideoAdapter:
 
     def _h3_generation_inputs(self, graph: dict[str, Any]) -> dict[str, Any]:
         """Find the H3 generation node and enforce its exact title contract."""
-        for node in graph.values():
-            if not isinstance(node, dict) or node.get("class_type") != "MiniMaxH3ImageToVideo":
-                continue
-            inputs = node.get("inputs")
-            if isinstance(inputs, dict) and {"prompt", "width", "height"} <= self._title_controls(node):
-                return inputs
-        raise VideoGenerationError(
-            "ComfyUI prompt requires a direct 'Prompt Width Height' control"
+        expected_class = "MiniMaxH3ImageToVideo"
+        expected_controls = {"prompt", "width", "height"}
+        generation_nodes = [
+            node
+            for node in graph.values()
+            if isinstance(node, dict) and node.get("class_type") == expected_class
+        ]
+        if len(generation_nodes) != 1:
+            raise VideoGenerationError(
+                "ComfyUI prompt 'Prompt Width Height' control requires "
+                f"{expected_class}; expected exactly one generation node, found "
+                f"{len(generation_nodes)}"
+            )
+
+        wrong_classes = sorted(
+            {
+                str(node.get("class_type") or "<missing>")
+                for node in graph.values()
+                if isinstance(node, dict)
+                and expected_controls <= self._title_controls(node)
+                and node.get("class_type") != expected_class
+            }
         )
+        if wrong_classes:
+            raise VideoGenerationError(
+                "ComfyUI prompt 'Prompt Width Height' control requires class "
+                f"{expected_class}; found {', '.join(wrong_classes)}"
+            )
+
+        node = generation_nodes[0]
+        inputs = node.get("inputs")
+        if (
+            not isinstance(inputs, dict)
+            or not expected_controls <= self._title_controls(node)
+        ):
+            raise VideoGenerationError(
+                "ComfyUI prompt requires a direct 'Prompt Width Height' control "
+                f"on class {expected_class}"
+            )
+        return inputs
 
     def _h3_control_inputs(
         self,
@@ -382,17 +413,42 @@ class ComfyUIVideoAdapter:
         control: str,
         request_field: str,
         expected_title: str,
+        expected_class: str,
     ) -> dict[str, Any]:
         """Return inputs for an exact H3 support control or raise clearly."""
-        for node in graph.values():
-            if not isinstance(node, dict) or control not in self._title_controls(node):
-                continue
-            inputs = node.get("inputs")
-            if isinstance(inputs, dict):
-                return inputs
-        raise VideoGenerationError(
-            f"ComfyUI {request_field} requires a direct {expected_title!r} control"
+        titled_nodes = [
+            node
+            for node in graph.values()
+            if isinstance(node, dict) and control in self._title_controls(node)
+        ]
+        wrong_classes = sorted(
+            {
+                str(node.get("class_type") or "<missing>")
+                for node in titled_nodes
+                if node.get("class_type") != expected_class
+            }
         )
+        if wrong_classes:
+            raise VideoGenerationError(
+                f"ComfyUI {request_field} {expected_title!r} control requires class "
+                f"{expected_class}; found {', '.join(wrong_classes)}"
+            )
+        matching_nodes = [
+            node for node in titled_nodes if node.get("class_type") == expected_class
+        ]
+        if len(matching_nodes) != 1:
+            raise VideoGenerationError(
+                f"ComfyUI {request_field} {expected_title!r} control requires "
+                f"{expected_class}; expected exactly one node, found "
+                f"{len(matching_nodes)}"
+            )
+        inputs = matching_nodes[0].get("inputs")
+        if not isinstance(inputs, dict):
+            raise VideoGenerationError(
+                f"ComfyUI {request_field} requires a direct {expected_title!r} control "
+                f"on class {expected_class}"
+            )
+        return inputs
 
     @staticmethod
     def _parse_ratio(ratio: str) -> float:
@@ -442,7 +498,9 @@ class ComfyUIVideoAdapter:
                     "Prompt Width Height",
                 )
 
-        seed_inputs = self._h3_control_inputs(graph, "seed", "seed", "Seed")
+        seed_inputs = self._h3_control_inputs(
+            graph, "seed", "seed", "Seed", "RandomNoise"
+        )
         if resolved_seed is not None:
             self._require_injection(
                 self._set_input(seed_inputs, ("noise_seed", "seed"), resolved_seed),
@@ -455,7 +513,9 @@ class ComfyUIVideoAdapter:
         if isinstance(effective_seed, bool) or not isinstance(effective_seed, int) or effective_seed < 0:
             raise VideoGenerationError("ComfyUI seed requires a non-negative integer 'Seed' control")
 
-        duration_inputs = self._h3_control_inputs(graph, "duration", "duration", "Duration")
+        duration_inputs = self._h3_control_inputs(
+            graph, "duration", "duration", "Duration", "PrimitiveFloat"
+        )
         if request.duration_seconds is not None:
             self._require_injection(
                 self._set_input(duration_inputs, ("value", "duration_seconds"), request.duration_seconds),
@@ -476,7 +536,9 @@ class ComfyUIVideoAdapter:
                 "ComfyUI H3 duration must be finite and greater than 0"
             )
 
-        fps_inputs = self._h3_control_inputs(graph, "native_fps", "native FPS", "Native FPS")
+        fps_inputs = self._h3_control_inputs(
+            graph, "native_fps", "native FPS", "Native FPS", "CreateVideo"
+        )
         fps = self._require_number(
             self._require_direct_value(
                 self._direct_value(fps_inputs, ("fps", "frame_rate")),
