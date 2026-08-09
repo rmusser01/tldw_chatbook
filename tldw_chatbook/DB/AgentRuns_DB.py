@@ -34,7 +34,7 @@ def _now_iso() -> str:
 class AgentRunsDB(BaseDB):
     """Run records for the agent runtime (vertical-slice spec data model)."""
 
-    _CURRENT_SCHEMA_VERSION = 5
+    _CURRENT_SCHEMA_VERSION = 3
     _swept_paths: set[str] = set()  # DB files already reconciled this process
 
     #: Liveness-ping gate (mirrors ChaChaNotes/WorkspaceDB, task-261/3011):

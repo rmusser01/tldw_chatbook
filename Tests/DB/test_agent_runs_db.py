@@ -5,6 +5,7 @@ from contextlib import contextmanager
 
 import pytest
 
+from tldw_chatbook.Agents.agent_models import AgentDefinition
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
@@ -525,9 +526,6 @@ def test_count_runs_does_not_materialize_rows_beyond_a_single_count(db, monkeypa
 
 
 # --- agent_definitions CRUD tests (Task 2: fleet spec §4) ---
-
-
-from tldw_chatbook.Agents.agent_models import AgentDefinition
 
 
 def _defn(**overrides):
