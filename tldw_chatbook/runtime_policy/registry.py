@@ -631,9 +631,7 @@ AUDITED_CAPABILITY_SEEDS = (
         "Library Collections (local agent reads)",
         "library_collections",
         sources=LOCAL_ONLY_SOURCES,
-        resources=(
-            _resource("library.collections", actions=(LIST, DETAIL)),
-        ),
+        resources=(_resource("library.collections", actions=(LIST, DETAIL)),),
     ),
     _capability(
         "watchlists",
@@ -658,7 +656,9 @@ AUDITED_CAPABILITY_SEEDS = (
             # still needed by the consumers named above.)
             _resource("watchlists.items", actions=(LIST, DETAIL, UPDATE)),
             _resource("watchlists.alert_rules", actions=CRUD_ACTIONS),
-            _resource("watchlists.runs", actions=(LIST, DETAIL, LAUNCH, OBSERVE, CANCEL)),
+            _resource(
+                "watchlists.runs", actions=(LIST, DETAIL, LAUNCH, OBSERVE, CANCEL)
+            ),
         ),
     ),
     _capability(
