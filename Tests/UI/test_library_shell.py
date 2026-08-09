@@ -11592,6 +11592,12 @@ async def test_library_shell_blank_note_escape_key_returns_to_list_without_crash
     assertion a race (it passed only when a loaded full-file run kept the
     delete from landing inside the window, which is why it failed alone
     8/8 but survived some whole-suite runs).
+
+    Rebase note (task-4021): this branch's own follow-up commit fixed the
+    same root cause independently (the create seam's literal seed title
+    must count as blank for the check to fire at all) and pinned the same
+    "row GC'd" end state -- no behavior conflict, so the pin above stands
+    unchanged.
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
@@ -12075,6 +12081,105 @@ async def test_library_shell_blank_title_save_round_trip_agrees_with_the_row(
             f"the persisted row's name ({patched[0]['title']!r} vs "
             "'Untitled')."
         )
+
+
+@pytest.mark.asyncio
+async def test_library_shell_blank_note_untouched_is_gc_from_real_db_on_rail_switch(
+    tmp_path,
+):
+    """task-4021 AC#1 (rail-switch exit path, real DB): the untouched-blank
+    GC fix lives in ``_flush_library_note_save``, the one seam shared by
+    every notes-editor exit -- Back, Escape, rail switch, and screen leave.
+    The Back/Escape paths already have dedicated real-DB coverage; this
+    pins the rail-switch path (``_select_library_rail_row_after_source_
+    admission``, exercised here via a real rail-row press to
+    "browse-media") the same way, so the fix is proven at each of the exit
+    seams AC#1 enumerates rather than only the two most-obvious ones."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    app.notes_scope_service = _real_notes_scope_service(tmp_path)
+    app.media_reading_scope_service = StaticLibraryMediaScopeService(_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-create-note").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        screen.query_one("#library-notes-create-blank").press()
+        await _wait_for_selector(screen, pilot, "#library-note-title")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert (
+            await app.notes_scope_service.count_notes(
+                scope="local_note", user_id="default_user"
+            )
+            == 1
+        )
+
+        # Leave via a rail-row press (not Back/Escape) without ever typing.
+        screen.query_one("#library-row-browse-media").press()
+        for _ in range(150):
+            if (
+                await app.notes_scope_service.count_notes(
+                    scope="local_note", user_id="default_user"
+                )
+                == 0
+            ):
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                "The untouched blank note was never GC'd from the real DB "
+                "via a rail-row switch."
+            )
+        assert screen._library_selected_row_id == "browse-media"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_blank_note_untouched_is_gc_from_real_db_on_screen_leave(
+    tmp_path,
+):
+    """task-4021 AC#1 (screen-leave exit path, real DB): mirrors the
+    rail-switch test above for ``flush_pending_work`` -- the app's
+    nav-away hook called from ``handle_screen_navigation`` before this
+    screen instance is discarded (e.g. switching main-nav tabs away from
+    Library). An untouched session-blank note must not survive that path
+    either."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    app.notes_scope_service = _real_notes_scope_service(tmp_path)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-create-note").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        screen.query_one("#library-notes-create-blank").press()
+        await _wait_for_selector(screen, pilot, "#library-note-title")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert (
+            await app.notes_scope_service.count_notes(
+                scope="local_note", user_id="default_user"
+            )
+            == 1
+        )
+
+        allowed = await screen.flush_pending_work()
+        assert allowed is True
+
+        assert (
+            await app.notes_scope_service.count_notes(
+                scope="local_note", user_id="default_user"
+            )
+            == 0
+        ), "The untouched blank note was never GC'd from the real DB via flush_pending_work (screen leave)."
 
 
 @pytest.mark.asyncio

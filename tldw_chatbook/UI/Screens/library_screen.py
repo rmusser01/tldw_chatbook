@@ -446,10 +446,13 @@ LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS = 5.0
 LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS = 2.0
 LIBRARY_NOTES_AUTOSAVE_SECONDS = 2.0
 LIBRARY_NOTE_CONTENT_MAX_CHARS = 2_000_000
-# The literal title a just-created "Blank note" row is seeded with (LIB-14).
-# The editor presents it placeholder-only (empty Input, "Untitled"
-# placeholder), and the untouched-blank GC gate treats it as blank -- both
-# must agree with the create seed in ``handle_library_notes_create_blank``.
+# The literal title a just-created "Blank note" row is seeded with (LIB-14,
+# task-4021). The editor presents it placeholder-only (empty Input,
+# "Untitled" placeholder -- see ``_library_note_pending_blank_gc_id``), and
+# the untouched-blank GC gate (``_flush_library_note_save``) treats a
+# snapshot title equal to this literal as blank too -- both call sites and
+# the create seed in ``handle_library_notes_create_blank`` must agree on
+# the one constant rather than three independently-typed string literals.
 LIBRARY_NOTE_BLANK_SEED_TITLE = "Untitled"
 
 
@@ -705,6 +708,9 @@ class _LibraryDatabaseNoteSessionPort:
                 # ``_patch_library_note_list_from_session`` applies the
                 # same one to the snapshot, so the row name the session
                 # reports and the row name on disk can no longer disagree.
+                # (rebase note: task-4021's untouched-blank GC gate depends
+                # on this same fallback -- both features now share the one
+                # helper instead of two independently-typed literals.)
                 title=library_note_persisted_title(payload.title),
                 content=payload.body,
                 note_id=note_id,
@@ -10467,6 +10473,12 @@ class LibraryScreen(BaseAppScreen):
                 # cannot tell the create seam's default from the same
                 # letters typed by a human, so the provenance marker
                 # decides. An emptied-out title is blank either way.
+                # (rebase note: task-4021 independently re-derived this
+                # same root cause -- the literal seed must count as blank
+                # too, or this GC branch is unreachable -- but its version
+                # lacked the ``_library_note_title_user_edited`` provenance
+                # guard below; dev's fuller check is kept as-is and covers
+                # task-4021's reachability claim too.)
                 title_blank = not raw_title.strip() or (
                     raw_title == LIBRARY_NOTE_BLANK_SEED_TITLE
                     and not self._library_note_title_user_edited

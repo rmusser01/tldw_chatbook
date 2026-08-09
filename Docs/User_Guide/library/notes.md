@@ -215,3 +215,12 @@ title against the seed's spelling, so typing that exact word destroyed
 the note with no prompt and no undo. It now keys on whether you touched
 the title field at all, and the "Untitled" a blank title is saved under
 matches what the notes list shows for that row.*
+
+*Re-verified against fix/library-recritique-p1s — 2026-08-09 (task-4021:
+the "Blank note no longer leaves a stray Untitled row" behavior described
+above had silently regressed on dev -- the GC's emptiness check compared
+against the create seam's literal seeded title, which is never blank, so
+the branch was unreachable by any exit path. Restored: the check now
+treats that literal seed as blank too, and the fix is proven at every exit
+seam (Back, Escape, rail switch, screen leave), not just the two this
+paragraph's prose already covered).*
