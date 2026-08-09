@@ -79,6 +79,7 @@ def _send_action(console) -> Button:
 async def test_a_draft_emptying_key_disables_the_workbench_send_action(
     seed, keys, expected_draft
 ):
+    """A key that empties the draft must disable the Workbench Send action."""
     _, host = _ready_host()
     async with host.run_test(size=APP_SIZE) as pilot:
         console, composer = await _console(host, pilot, seed)
@@ -96,6 +97,7 @@ async def test_a_draft_emptying_key_disables_the_workbench_send_action(
 
 @pytest.mark.asyncio
 async def test_a_printable_key_enables_the_workbench_send_action():
+    """A printable key that adds text must enable the Workbench Send action."""
     _, host = _ready_host()
     async with host.run_test(size=APP_SIZE) as pilot:
         console, composer = await _console(host, pilot)
@@ -133,6 +135,7 @@ async def test_a_newline_key_resyncs_the_send_action_without_enabling_it(key):
 @pytest.mark.parametrize("key", ["shift+enter", "ctrl+j"])
 @pytest.mark.asyncio
 async def test_a_newline_after_real_text_leaves_the_send_action_enabled(key):
+    """shift+enter after real text keeps Send enabled (still a non-empty draft)."""
     _, host = _ready_host()
     async with host.run_test(size=APP_SIZE) as pilot:
         console, composer = await _console(host, pilot, "hi")
@@ -166,6 +169,7 @@ async def test_a_partial_deletion_leaves_the_send_action_enabled():
 
 @pytest.mark.asyncio
 async def test_typing_a_slash_opens_the_command_popup():
+    """A lone '/' opens the slash-command popup once its DraftChanged lands."""
     _, host = _ready_host()
     async with host.run_test(size=APP_SIZE) as pilot:
         console, composer = await _console(host, pilot)
@@ -235,6 +239,7 @@ async def test_an_arrow_queued_behind_the_slash_still_navigates_the_popup():
 @pytest.mark.parametrize("keys", [("a",), ("shift+enter",), ("ctrl+j",)])
 @pytest.mark.asyncio
 async def test_an_insertion_key_dismisses_the_first_run_guidance(keys):
+    """Text-ADDING keys retire the first-run guidance (is_insertion=True)."""
     _, host = _ready_host()
     async with host.run_test(size=APP_SIZE) as pilot:
         console, _composer = await _console(host, pilot)
@@ -258,6 +263,7 @@ async def test_an_insertion_key_dismisses_the_first_run_guidance(keys):
 )
 @pytest.mark.asyncio
 async def test_a_deletion_key_leaves_the_first_run_guidance_alone(seed, keys):
+    """Deletions never dismiss guidance: only an insertion claims composing."""
     _, host = _ready_host()
     async with host.run_test(size=APP_SIZE) as pilot:
         console, composer = await _console(host, pilot, seed)

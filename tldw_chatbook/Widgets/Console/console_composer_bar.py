@@ -355,7 +355,15 @@ class ConsoleComposerBar(Horizontal):
 
         @property
         def control(self) -> "ConsoleComposerBar":
-            """The composer that posted this message (Textual convention)."""
+            """The composer that posted this message.
+
+            Textual's `@on(..., selector)` filtering resolves against
+            `control`, so this property is what lets a subscriber narrow to
+            one composer instance.
+
+            Returns:
+                ConsoleComposerBar: The posting composer.
+            """
             return self.composer
 
     DEFAULT_STATUS = "No active Console session."
