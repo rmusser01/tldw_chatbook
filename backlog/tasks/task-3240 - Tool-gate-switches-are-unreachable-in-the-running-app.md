@@ -1,9 +1,11 @@
 ---
 id: TASK-3240
 title: Tool gate switches are unreachable in the running app
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-07 20:15'
+updated_date: '2026-08-09 02:40'
 labels:
   - settings
   - ux
@@ -24,6 +26,12 @@ Fix-shape options (owner decision): (a) a gate affordance in the MCP hub — arg
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 A user can discover and flip [tools] registration gates (including gates currently OFF) through the running app's navigation after first run
-- [ ] #2 All [tools] gate switches (gateable builtins + web_deep_search) are present there and round-trip to config.toml
+- [ ] #2 All [tools] gate switches (gateable builtins + web_deep_search) plus the [console] local_tools_enabled master switch are present there and round-trip to config.toml (amended 2026-08-08: the master switch declared as an intentional extension — it masters the local group the gates live in)
 - [ ] #3 Gates that need an app restart to apply state that where shown
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Premise-check on latest dev (done — valid; MCP hub redesign is COMPLETE not pending; greyed-matrix-rows sketch structurally wrong)\n2. Spec: gate checkboxes in Servers-mode source detail (builtin + local), unified all-gates enumerator, save path mirroring _save_builtin_flag, empty-state breadcrumbs\n3. Adversarial spec review, implement, opus review, PR
+<!-- SECTION:PLAN:END -->
