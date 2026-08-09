@@ -3621,7 +3621,7 @@ def test_prepare_roleplay_refresh_materializes_live_before_immutable_persistence
 
 
 @pytest.mark.parametrize("execute_b", (True, False), ids=("b-applied", "b-skipped"))
-def test_serialized_roleplay_sync_rebases_c_from_completed_b_outbox_hash(
+def test_accepted_roleplay_sync_rebases_c_from_latest_owned_outbox_hash(
     tmp_path, execute_b
 ):
     class ChatTarget:
@@ -3676,24 +3676,24 @@ def test_serialized_roleplay_sync_rebases_c_from_completed_b_outbox_hash(
         session.id, global_default="Bravo"
     )
     assert plan_b is not None
-    result_b = (
-        store.persist_roleplay_projection_plan(
-            store.rebase_roleplay_projection_plan_sync(plan_b)
+    result_b = store.persist_roleplay_projection_plan(plan_b)
+    assert len(
+        repository.list_pending_sync_v2_outbox_envelopes(
+            server_profile_id="profile-1",
+            authenticated_principal_id=None,
+            workspace_scope=None,
+            dataset_id="dataset-1",
         )
-        if execute_b
-        else None
-    )
+    ) == 1
+    if execute_b:
+        assert store.accept_roleplay_projection_persistence_result(result_b) is True
     plan_c = store.prepare_session_roleplay_projection_refresh(
         session.id, global_default="Commander Cecelia"
     )
     assert plan_c is not None
-    if result_b is not None:
+    if not execute_b:
         assert store.accept_roleplay_projection_persistence_result(result_b) is False
-    else:
-        assert store.is_roleplay_projection_plan_current(plan_b) is False
-    result_c = store.persist_roleplay_projection_plan(
-        store.rebase_roleplay_projection_plan_sync(plan_c)
-    )
+    result_c = store.persist_roleplay_projection_plan(plan_c)
     assert store.accept_roleplay_projection_persistence_result(result_c) is True
 
     entries = repository.list_pending_sync_v2_outbox_envelopes(
@@ -3715,6 +3715,179 @@ def test_serialized_roleplay_sync_rebases_c_from_completed_b_outbox_hash(
     ] == ["applied"] * len(envelopes)
     assert target.messages[stable_key]["content"] == "Hello Commander Cecelia."
     assert target.conflicts == []
+
+
+def test_stale_projection_after_manual_greeting_edit_never_enqueues_sync(tmp_path):
+    class ChatTarget:
+        def __init__(self) -> None:
+            self.hashes: dict[str, str] = {}
+            self.messages: dict[str, dict] = {}
+            self.conflicts: list[dict] = []
+
+        def get_chat_message_hash(self, stable_key: str) -> str | None:
+            return self.hashes.get(stable_key)
+
+        def append_chat_message(
+            self, stable_key: str, payload: dict, payload_hash: str
+        ) -> None:
+            self.hashes[stable_key] = payload_hash
+            self.messages[stable_key] = payload
+
+        def record_conflict(self, conflict: dict) -> None:
+            self.conflicts.append(conflict)
+
+    store, _persistence, session, greeting = _seeded_roleplay_store()
+    repository = SyncStateRepository(tmp_path / "manual-edit-sync-state.db")
+    dataset_key = generate_dataset_key()
+    repository.set_sync_v2_profile_state(
+        server_profile_id="profile-1",
+        authenticated_principal_id=None,
+        workspace_scope=None,
+        profile_mode="local_first",
+        device_id="device-1",
+        dataset_id="dataset-1",
+    )
+    producer = ChatSyncV2OutboxProducer(
+        state_repository=repository,
+        dataset_keys={"dataset-1": dataset_key},
+    )
+    store.sync_v2_chat_producer = producer
+    store.sync_v2_server_profile_id = "profile-1"
+    stable_key = (
+        f"{session.persisted_conversation_id}:{greeting.persisted_message_id}"
+    )
+    baseline = producer.enqueue_chat_message(
+        server_profile_id="profile-1",
+        conversation_id=session.persisted_conversation_id,
+        message_id=greeting.persisted_message_id,
+        role="assistant",
+        content="Hello User.",
+    )
+    store._sync_v2_message_versions[stable_key] = baseline["outbox_entry"][
+        "envelope"
+    ]["payload_hash"]
+
+    plan_b = store.prepare_session_roleplay_projection_refresh(
+        session.id, global_default="Bravo"
+    )
+    assert plan_b is not None
+    result_b = store.persist_roleplay_projection_plan(plan_b)
+    store.update_message_content(greeting.id, "Manual greeting.")
+    assert store.accept_roleplay_projection_persistence_result(result_b) is False
+
+    entries = repository.list_pending_sync_v2_outbox_envelopes(
+        server_profile_id="profile-1",
+        authenticated_principal_id=None,
+        workspace_scope=None,
+        dataset_id="dataset-1",
+    )
+    envelopes = [entry["envelope"] for entry in entries]
+    assert len(envelopes) == 2
+    assert envelopes[1]["base_version"] == envelopes[0]["payload_hash"]
+    target = ChatTarget()
+    applier = SyncEnvelopeApplier(dataset_key=dataset_key, local_store=target)
+    assert [
+        applier.apply(SyncV2Envelope.model_validate(envelope))["status"]
+        for envelope in envelopes
+    ] == ["applied", "applied"]
+    assert target.messages[stable_key]["content"] == "Manual greeting."
+    assert target.conflicts == []
+
+
+@pytest.mark.parametrize(
+    "failed_component",
+    ("system", "message"),
+    ids=("system-fails", "message-fails"),
+)
+def test_partial_projection_failure_retains_real_durable_ancestor_for_repair(
+    tmp_path, failed_component
+):
+    db = CharactersRAGDB(tmp_path / f"partial-{failed_component}.db", "task-5")
+    service = ChatPersistenceService(db)
+    conversation_id = service.create_conversation(
+        assistant_kind="generic",
+        assistant_id="console",
+        system_prompt="Speak with Alpha.",
+    )
+    service.update_conversation_roleplay_context(
+        conversation_id=conversation_id,
+        user_name_override=None,
+        character_system_template="Speak with {{user}}.",
+    )
+    metadata = MessageMetadata(
+        template_kind="character_greeting",
+        template_source="Hello {{user}}.",
+    )
+    class PartialPersistence:
+        def __init__(self) -> None:
+            self.fail_system = failed_component == "system"
+            self.fail_message = failed_component == "message"
+
+        def create_message(self, **kwargs):
+            return service.create_message(**kwargs)
+
+        def update_conversation_system_prompt(self, **kwargs):
+            if self.fail_system:
+                return False
+            return service.update_conversation_system_prompt(**kwargs)
+
+        def update_message_content(self, **kwargs):
+            if self.fail_message:
+                return False
+            return service.update_message_content(**kwargs)
+
+    persistence = PartialPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(
+        settings=ConsoleSessionSettings(
+            provider="llama_cpp", system_prompt="Speak with Alpha."
+        ),
+        assistant_kind="character",
+        character_name="Alraune",
+    )
+    session.persisted_conversation_id = conversation_id
+    session.character_system_template = "Speak with {{user}}."
+    greeting = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Hello Alpha.",
+        persist=True,
+        metadata=metadata,
+    )
+    persisted_message_id = greeting.persisted_message_id
+    assert persisted_message_id is not None
+
+    plan_b = store.prepare_session_roleplay_projection_refresh(
+        session.id, global_default="Bravo"
+    )
+    assert plan_b is not None
+    result_b = store.persist_roleplay_projection_plan(plan_b)
+    assert result_b.persisted is False
+    assert store.accept_roleplay_projection_persistence_result(result_b) is True
+    durable_b_system = db.get_conversation_by_id(conversation_id)["system_prompt"]
+    durable_b_message = db.get_message_by_id(persisted_message_id)["content"]
+    assert (durable_b_system, durable_b_message) == (
+        ("Speak with Alpha.", "Hello Bravo.")
+        if failed_component == "system"
+        else ("Speak with Bravo.", "Hello Alpha.")
+    )
+
+    persistence.fail_system = False
+    persistence.fail_message = False
+    plan_c = store.prepare_session_roleplay_projection_refresh(
+        session.id, global_default="Cecelia"
+    )
+    assert plan_c is not None
+    result_c = store.persist_roleplay_projection_plan(plan_c)
+    assert result_c.persisted is True
+    assert store.accept_roleplay_projection_persistence_result(result_c) is True
+    assert db.get_conversation_by_id(conversation_id)["system_prompt"] == (
+        "Speak with Cecelia."
+    )
+    assert db.get_message_by_id(persisted_message_id)["content"] == (
+        "Hello Cecelia."
+    )
+    db.close_connection()
 
 
 def test_stale_refresh_keeps_live_projection_when_durable_write_refuses_or_raises():

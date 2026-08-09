@@ -104,6 +104,7 @@ class _RoleplaySyncWrite:
 @dataclass(frozen=True, slots=True)
 class _RoleplayMessageProjectionWrite:
     writer: Callable[..., object] = field(repr=False, compare=False)
+    native_message_id: str
     message_id: str
     content: str
     image_data: bytes | None
@@ -116,6 +117,16 @@ class _RoleplayMessageProjectionWrite:
     expected_message_contents: tuple[str, ...]
     accepts_template_source_guard: bool
     accepts_message_contents_guard: bool
+    sync_write: _RoleplaySyncWrite | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _RoleplayMessageProjectionPersistenceOutcome:
+    """One durable greeting outcome plus its owner-accepted Sync intent."""
+
+    native_message_id: str
+    content: str
+    persisted: bool
     sync_write: _RoleplaySyncWrite | None = None
 
 
@@ -136,7 +147,12 @@ class ConsoleRoleplayProjectionPersistenceResult:
     session_id: str
     generation: int
     persisted: bool
-    sync_versions: tuple[tuple[str, str], ...] = ()
+    system_prompt_attempted: bool
+    system_prompt: str | None
+    system_prompt_persisted: bool
+    message_outcomes: tuple[
+        _RoleplayMessageProjectionPersistenceOutcome, ...
+    ] = ()
 
 
 class ConsoleChatPersistence(Protocol):
@@ -2442,6 +2458,7 @@ class ConsoleChatStore:
         )
         return _RoleplayMessageProjectionWrite(
             writer=writer,
+            native_message_id=message.id,
             message_id=message.persisted_message_id,
             content=message.content,
             image_data=message.image_data,
@@ -2544,8 +2561,8 @@ class ConsoleChatStore:
     ) -> ConsoleRoleplayProjectionPersistenceResult:
         """Consume one frozen plan without reading or mutating a live store."""
         persisted = True
-        sync_versions: list[tuple[str, str]] = []
         system_write = plan.system_prompt_write
+        system_prompt_persisted = True
         if system_write is not None:
             try:
                 system_kwargs: dict[str, object] = {
@@ -2563,12 +2580,15 @@ class ConsoleChatStore:
                 if not system_write.writer(
                     **system_kwargs,
                 ):
+                    system_prompt_persisted = False
                     persisted = False
             except Exception:
+                system_prompt_persisted = False
                 persisted = False
                 logger.bind(session_id=plan.session_id).exception(
                     "Failed to persist Console roleplay system prompt projection."
                 )
+        message_outcomes: list[_RoleplayMessageProjectionPersistenceOutcome] = []
         for message_write in plan.message_writes:
             kwargs: dict[str, object] = {
                 "message_id": message_write.message_id,
@@ -2604,31 +2624,26 @@ class ConsoleChatStore:
                 )
             if not message_persisted:
                 persisted = False
-                continue
-            sync_write = message_write.sync_write
-            if sync_write is None:
-                continue
-            try:
-                sync_result = sync_write.writer(**dict(sync_write.kwargs))
-                if isinstance(sync_result, dict) and sync_result.get("status") == "enqueued":
-                    entry = sync_result.get("outbox_entry")
-                    envelope = entry.get("envelope") if isinstance(entry, dict) else None
-                    payload_hash = (
-                        envelope.get("payload_hash")
-                        if isinstance(envelope, dict)
-                        else None
-                    )
-                    if isinstance(payload_hash, str) and payload_hash:
-                        sync_versions.append((sync_write.stable_key, payload_hash))
-            except Exception:
-                logger.bind(message_id=message_write.message_id).exception(
-                    "Failed to enqueue Sync v2 chat message after local mutation"
+            message_outcomes.append(
+                _RoleplayMessageProjectionPersistenceOutcome(
+                    native_message_id=message_write.native_message_id,
+                    content=message_write.content,
+                    persisted=message_persisted,
+                    sync_write=(
+                        message_write.sync_write if message_persisted else None
+                    ),
                 )
+            )
         return ConsoleRoleplayProjectionPersistenceResult(
             session_id=plan.session_id,
             generation=plan.generation,
             persisted=persisted,
-            sync_versions=tuple(sync_versions),
+            system_prompt_attempted=system_write is not None,
+            system_prompt=(
+                system_write.system_prompt if system_write is not None else None
+            ),
+            system_prompt_persisted=system_prompt_persisted,
+            message_outcomes=tuple(message_outcomes),
         )
 
     def accept_roleplay_projection_persistence_result(
@@ -2636,20 +2651,51 @@ class ConsoleChatStore:
         result: ConsoleRoleplayProjectionPersistenceResult,
     ) -> bool:
         """Apply completion bookkeeping only for the still-current generation."""
-        for stable_key, payload_hash in result.sync_versions:
-            self._sync_v2_message_versions[stable_key] = payload_hash
         session = self._sessions.get(result.session_id)
         if session is None or session.identity_revision != result.generation:
             return False
-        if session.settings is not None:
+        if result.system_prompt_attempted and result.system_prompt_persisted:
             self._roleplay_system_projection_candidates[session.id] = (
-                session.settings.system_prompt,
+                result.system_prompt,
             )
-        for message in self._nodes_by_session.get(session.id, {}).values():
-            self._roleplay_message_projection_candidates[message.id] = (
-                message.content,
-            )
+        for outcome in result.message_outcomes:
+            if not outcome.persisted:
+                continue
+            self._roleplay_message_projection_candidates[
+                outcome.native_message_id
+            ] = (outcome.content,)
+            self._enqueue_accepted_roleplay_sync(outcome)
         return True
+
+    def _enqueue_accepted_roleplay_sync(
+        self, outcome: _RoleplayMessageProjectionPersistenceOutcome
+    ) -> None:
+        """Emit Sync only after this owner accepts the projection generation."""
+        sync_write = outcome.sync_write
+        if sync_write is None:
+            return
+        kwargs = dict(sync_write.kwargs)
+        kwargs["base_version"] = self._sync_v2_message_versions.get(
+            sync_write.stable_key
+        )
+        try:
+            sync_result = sync_write.writer(**kwargs)
+            if not (
+                isinstance(sync_result, dict)
+                and sync_result.get("status") == "enqueued"
+            ):
+                return
+            entry = sync_result.get("outbox_entry")
+            envelope = entry.get("envelope") if isinstance(entry, dict) else None
+            payload_hash = (
+                envelope.get("payload_hash") if isinstance(envelope, dict) else None
+            )
+            if isinstance(payload_hash, str) and payload_hash:
+                self._sync_v2_message_versions[sync_write.stable_key] = payload_hash
+        except Exception:
+            logger.bind(message_id=outcome.native_message_id).exception(
+                "Failed to enqueue Sync v2 chat message after local mutation"
+            )
 
     def _persist_message_projection(self, message: ConsoleChatMessage) -> bool:
         if self.persistence is None or message.persisted_message_id is None:

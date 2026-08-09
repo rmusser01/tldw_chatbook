@@ -1985,20 +1985,21 @@ class ChatScreen(BaseAppScreen):
         self,
         plan: ConsoleRoleplayProjectionPersistencePlan,
     ) -> None:
-        """Serialize immutable durable writes without off-thread store access."""
+        """Persist one current immutable plan without off-thread store access."""
         store = self._ensure_console_chat_store()
-        lock = self._console_roleplay_persistence_lock
-        if lock is None:
-            lock = asyncio.Lock()
-            self._console_roleplay_persistence_lock = lock
-        async with lock:
-            if not store.is_roleplay_projection_plan_current(plan):
-                return
-            plan = store.rebase_roleplay_projection_plan_sync(plan)
-            result = await asyncio.to_thread(
-                store.persist_roleplay_projection_plan, plan
-            )
-            accepted = store.accept_roleplay_projection_persistence_result(result)
+        if not store.is_roleplay_projection_plan_current(plan):
+            return
+        persistence_task = asyncio.create_task(
+            asyncio.to_thread(store.persist_roleplay_projection_plan, plan)
+        )
+        try:
+            result = await asyncio.shield(persistence_task)
+        except asyncio.CancelledError:
+            # Once an immutable writer has started it cannot be cancelled
+            # safely. Finish and accept it before the drain advances to the
+            # replaceable latest pending plan.
+            result = await persistence_task
+        accepted = store.accept_roleplay_projection_persistence_result(result)
         if accepted and not result.persisted:
             self.app_instance.notify(
                 "Your chat name is active, but updated character templates may not "
@@ -2007,6 +2008,31 @@ class ChatScreen(BaseAppScreen):
             )
         if accepted and store.active_session_id == plan.session_id:
             self._sync_console_identity_surfaces()
+
+    async def _drain_console_roleplay_persistence(self) -> None:
+        """Drain one active and one replaceable latest projection plan."""
+        plan: ConsoleRoleplayProjectionPersistencePlan | None = None
+        try:
+            while self._console_roleplay_pending_plan is not None:
+                plan = self._console_roleplay_pending_plan
+                self._console_roleplay_pending_plan = None
+                self._console_roleplay_active_plan = plan
+                await self._refresh_console_roleplay_projections(plan)
+                self._console_roleplay_active_plan = None
+                plan = None
+        except asyncio.CancelledError:
+            if (
+                self._console_roleplay_pending_plan is None
+                and plan is not None
+                and self._ensure_console_chat_store().is_roleplay_projection_plan_current(
+                    plan
+                )
+            ):
+                self._console_roleplay_pending_plan = plan
+            raise
+        finally:
+            self._console_roleplay_active_plan = None
+            self._console_roleplay_drain_scheduled = False
 
     async def _await_console_roleplay_persistence_task(
         self, task: asyncio.Task[None]
@@ -2017,25 +2043,59 @@ class ChatScreen(BaseAppScreen):
         except asyncio.CancelledError:
             return
 
-    def _forget_console_roleplay_persistence_task(
+    def _finish_console_roleplay_persistence_task(
         self, task: asyncio.Task[None]
     ) -> None:
         """Release a drained task and consume any unexpected exception."""
-        self._console_roleplay_persistence_tasks.discard(task)
+        if self._console_roleplay_persistence_task is task:
+            self._console_roleplay_persistence_task = None
         if task.cancelled():
+            error = None
+        else:
+            error = task.exception()
+            if error is not None:
+                logger.error(
+                    "Console roleplay projection persistence task failed: {!r}",
+                    error,
+                )
+        if self._console_roleplay_pending_plan is not None and self.is_mounted:
+            self._start_console_roleplay_persistence_drain()
+
+    def _start_console_roleplay_persistence_drain(self) -> None:
+        """Start the sole retained persistence drain when work is pending."""
+        if self._console_roleplay_pending_plan is None:
             return
-        error = task.exception()
-        if error is not None:
-            logger.error(
-                "Console roleplay projection persistence task failed: {!r}",
-                error,
+        task = self._console_roleplay_persistence_task
+        if task is not None and not task.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            if self._console_roleplay_drain_scheduled:
+                return
+            self._console_roleplay_drain_scheduled = True
+            self.run_worker(
+                self._drain_console_roleplay_persistence(),
+                exclusive=False,
+                group="console-roleplay-refresh",
             )
+            return
+        self._console_roleplay_drain_scheduled = True
+        task = loop.create_task(self._drain_console_roleplay_persistence())
+        self._console_roleplay_persistence_task = task
+        task.add_done_callback(self._finish_console_roleplay_persistence_task)
+        self.run_worker(
+            partial(self._await_console_roleplay_persistence_task, task),
+            exclusive=False,
+            group="console-roleplay-refresh",
+        )
 
     def _dispatch_active_console_roleplay_refresh(self) -> bool:
         """Coalesce refresh writes by active session and effective global name."""
         store = self._console_chat_store
         if store is None or store.active_session_id is None:
             return False
+        self._start_console_roleplay_persistence_drain()
         global_user_display_name = self._global_chat_display_name()
         refresh_key = (store.active_session_id, global_user_display_name)
         if refresh_key == self._last_console_roleplay_refresh_key:
@@ -2050,33 +2110,8 @@ class ChatScreen(BaseAppScreen):
             return False
         self._sync_console_identity_surfaces()
         if plan is not None:
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = None
-            if loop is None:
-                # Synchronous legacy callers have no running event loop.
-                self.run_worker(
-                    self._refresh_console_roleplay_projections(plan),
-                    exclusive=False,
-                    group="console-roleplay-refresh",
-                )
-                return True
-            persistence_task = loop.create_task(
-                self._refresh_console_roleplay_projections(plan)
-            )
-            self._console_roleplay_persistence_tasks.add(persistence_task)
-            persistence_task.add_done_callback(
-                self._forget_console_roleplay_persistence_task
-            )
-            self.run_worker(
-                partial(
-                    self._await_console_roleplay_persistence_task,
-                    persistence_task,
-                ),
-                exclusive=False,
-                group="console-roleplay-refresh",
-            )
+            self._console_roleplay_pending_plan = plan
+            self._start_console_roleplay_persistence_drain()
         return True
 
     def request_console_identity_refresh(self, generation: int | None = None) -> bool:
@@ -2678,8 +2713,14 @@ class ChatScreen(BaseAppScreen):
         )
         self._console_chat_store: ConsoleChatStore | None = None
         self._last_console_roleplay_refresh_key: tuple[str, str] | None = None
-        self._console_roleplay_persistence_lock: asyncio.Lock | None = None
-        self._console_roleplay_persistence_tasks: set[asyncio.Task[None]] = set()
+        self._console_roleplay_persistence_task: asyncio.Task[None] | None = None
+        self._console_roleplay_active_plan: (
+            ConsoleRoleplayProjectionPersistencePlan | None
+        ) = None
+        self._console_roleplay_pending_plan: (
+            ConsoleRoleplayProjectionPersistencePlan | None
+        ) = None
+        self._console_roleplay_drain_scheduled = False
         self._console_identity_refresh_generation = 0
         # task-9: cache of persisted-conversation RAG retrieval scopes,
         # keyed by conversation id -- populated off-loop at resume time and
