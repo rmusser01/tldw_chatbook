@@ -179,6 +179,10 @@ class FakeLocalPromptService:
         self.calls.append(("delete_prompt", prompt_identifier))
         return True
 
+    def count_prompt_versions(self, prompt_identifier):
+        self.calls.append(("count_prompt_versions", prompt_identifier))
+        return 6
+
     def list_prompt_versions(
         self, prompt_identifier, *, page_size=25, before_change_id=None
     ):
@@ -429,6 +433,110 @@ async def test_prompt_scope_lists_local_and_server_prompts_with_stable_ids():
     assert server_result["items"][0]["backend"] == "server"
     assert server_result["current_page"] == 2
     assert policy.actions == ["prompts.list.local", "prompts.list.server"]
+
+
+@pytest.mark.asyncio
+async def test_prompt_scope_count_prompt_versions_uses_real_index_only_count(
+    monkeypatch,
+):
+    database = PromptsDatabase(":memory:", client_id="scope-history-count")
+    try:
+        prompt_id, prompt_uuid, _message = database.add_prompt(
+            name="Retained count", author=None, details="v1"
+        )
+        database.update_prompt_by_id(prompt_id, {"details": "v2"}, expected_version=1)
+        assert database.soft_delete_prompt(prompt_id) is True
+        database.add_prompt(name="Unrelated", author=None, details="other")
+
+        count_calls = []
+        real_count = database.get_prompt_history_count
+
+        def count_only(entity_uuid):
+            count_calls.append(entity_uuid)
+            return real_count(entity_uuid)
+
+        monkeypatch.setattr(database, "get_prompt_history_count", count_only)
+        monkeypatch.setattr(
+            database,
+            "get_prompt_history_entries",
+            lambda *_args, **_kwargs: pytest.fail("history page must not be read"),
+        )
+        monkeypatch.setattr(
+            database,
+            "_decode_prompt_history_row",
+            lambda *_args, **_kwargs: pytest.fail(
+                "history payload must not be decoded"
+            ),
+        )
+        service = PromptScopeService(
+            local_service=LocalPromptService(database),
+            server_service=FakeServerPromptService(),
+        )
+
+        count = await service.count_prompt_versions(
+            mode="local", prompt_identifier=prompt_uuid
+        )
+
+        assert count == 2
+        assert count_calls == [prompt_uuid]
+    finally:
+        database.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_prompt_scope_count_prompt_versions_routes_policy_and_local_adapter():
+    policy = FakePolicyEnforcer()
+    local = FakeLocalPromptService()
+    service = PromptScopeService(
+        local_service=local,
+        server_service=FakeServerPromptService(),
+        policy_enforcer=policy,
+    )
+
+    count = await service.count_prompt_versions(
+        mode="local", prompt_identifier="local-uuid-7"
+    )
+
+    assert count == 6
+    assert local.calls == [("count_prompt_versions", "local-uuid-7")]
+    assert policy.actions == ["prompts.versions.list.local"]
+
+
+@pytest.mark.asyncio
+async def test_prompt_scope_count_prompt_versions_fails_truthfully_for_server():
+    policy = FakePolicyEnforcer()
+    server = FakeServerPromptService()
+    service = PromptScopeService(
+        local_service=FakeLocalPromptService(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    with pytest.raises(PromptCapabilityError, match="server.*retained history count"):
+        await service.count_prompt_versions(
+            mode="server", prompt_identifier="server-uuid-9"
+        )
+
+    assert server.calls == []
+    assert policy.actions == ["prompts.versions.list.server"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid_count", [True, -1, "2", 1.5, None])
+async def test_prompt_scope_count_prompt_versions_rejects_invalid_local_counts(
+    invalid_count,
+):
+    local = FakeLocalPromptService()
+    local.count_prompt_versions = lambda _identifier: invalid_count
+    service = PromptScopeService(
+        local_service=local,
+        server_service=FakeServerPromptService(),
+    )
+
+    with pytest.raises(ValueError, match="non-negative integer"):
+        await service.count_prompt_versions(
+            mode="local", prompt_identifier="local-uuid-7"
+        )
 
 
 @pytest.mark.parametrize(

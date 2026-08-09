@@ -494,6 +494,21 @@ class LocalPromptService:
             return self.prompt_db.record_prompt_usage(prompt_identifier)
         return self.get_prompt(prompt_identifier, include_deleted=True)
 
+    def count_prompt_versions(self, prompt_identifier: str | int) -> int:
+        """Return the exact retained create/update count for one local Prompt."""
+        prompt = self.get_prompt(prompt_identifier, include_deleted=True)
+        if not prompt:
+            raise ValueError(f"Prompt '{prompt_identifier}' not found.")
+        prompt_uuid = prompt.get("uuid")
+        if not prompt_uuid:
+            raise ValueError(f"Prompt '{prompt_identifier}' has no UUID.")
+        count = self.prompt_db.get_prompt_history_count(prompt_uuid)
+        if type(count) is not int or count < 0:
+            raise ValueError(
+                "Local retained history count must be a non-negative integer."
+            )
+        return count
+
     def list_prompt_versions(
         self,
         prompt_identifier: str | int,
@@ -1036,6 +1051,25 @@ class PromptScopeService:
             service.list_prompt_versions(prompt_identifier)
         )
         return normalize_prompt_version_list(response, backend=normalized_mode.value)
+
+    async def count_prompt_versions(
+        self,
+        *,
+        mode: PromptBackend | str | None = None,
+        prompt_identifier: str | int,
+    ) -> int:
+        """Return an exact local retained-history count without loading a page."""
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(f"prompts.versions.list.{normalized_mode.value}")
+        if normalized_mode == PromptBackend.SERVER:
+            raise PromptCapabilityError("server", "retained history count")
+        service = self._service_for_mode(normalized_mode)
+        count = await self._maybe_await(
+            service.count_prompt_versions(prompt_identifier)
+        )
+        if type(count) is not int or count < 0:
+            raise ValueError("Retained history count must be a non-negative integer.")
+        return count
 
     async def restore_prompt_version(
         self,
