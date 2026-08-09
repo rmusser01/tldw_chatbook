@@ -3,23 +3,17 @@ id: TASK-2701
 title: >-
   Library Prompts editor: action row renders below the viewport (Save
   unreachable by mouse)
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-31'
-updated_date: '2026-08-08 14:37'
+updated_date: '2026-08-09 00:56'
 labels:
   - library
   - bug
   - ui
 dependencies: []
 ---
-
-## Implementation Plan
-
-<!-- SECTION:PLAN:BEGIN -->
-Implemented in the TASK-202 PR; split the editor into a scrollable body and auto-height footer and add geometry regressions. ADR required: no; ADR path: N/A; reason: UI-only defect repair under ADR-011/ADR-040.
-<!-- SECTION:PLAN:END -->
 
 ## Description (the why)
 
@@ -45,7 +39,21 @@ Message modal; a shared root cause is plausible.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] Editor actions remain visible at 200x50.
-- [ ] Actions remain scroll-reachable at shorter terminal sizes.
-- [ ] The action area does not obscure the final editor field.
+- [x] #1 Editor actions remain visible at 200x50.
+- [x] #2 Actions remain scroll-reachable at shorter terminal sizes.
+- [x] #3 The action area does not obscure the final editor field.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Implemented in the TASK-202 PR; split the editor into a scrollable body and auto-height footer and add geometry regressions. ADR required: no; ADR path: N/A; reason: UI-only defect repair under ADR-011/ADR-040.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented in the TASK-202 PR. The Prompt editor now has one scrollable content owner plus persistent auto-height action groups, while the embedded structured block editor avoids a nested vertical scroll trap. Geometry regressions cover normal and conflict states at 80x24, 100x30, 140x40, and 200x50, asserting reachable actions, visible final fields, and no overlap; the post-rebase affected suite passed 145 tests and the Impeccable layout scan returned no findings.
+
+ADR required: no. ADR path: N/A. This is a contained Textual layout correction under the existing Library UI architecture.
+<!-- SECTION:NOTES:END -->

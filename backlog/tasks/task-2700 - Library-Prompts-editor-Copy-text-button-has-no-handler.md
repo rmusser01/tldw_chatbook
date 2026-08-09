@@ -1,23 +1,17 @@
 ---
 id: TASK-2700
 title: 'Library Prompts editor: "Copy text" button has no handler (dead button)'
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-31'
-updated_date: '2026-08-08 14:37'
+updated_date: '2026-08-09 00:56'
 labels:
   - library
   - bug
   - ui
 dependencies: []
 ---
-
-## Implementation Plan
-
-<!-- SECTION:PLAN:BEGIN -->
-Implemented in the TASK-202 PR; add the missing handler through LibraryScreen and reuse the canonical Prompt Markdown renderer. ADR required: no; ADR path: N/A; reason: UI-only defect repair under ADR-011/ADR-040.
-<!-- SECTION:PLAN:END -->
 
 ## Description (the why)
 
@@ -33,7 +27,21 @@ intended pattern.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] Copy Markdown copies the live unsaved working copy.
-- [ ] Clipboard success is reported only after a successful copy.
-- [ ] Unavailable or failed clipboard support is reported honestly.
+- [x] #1 Copy Markdown copies the live unsaved working copy.
+- [x] #2 Clipboard success is reported only after a successful copy.
+- [x] #3 Unavailable or failed clipboard support is reported honestly.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Implemented in the TASK-202 PR; add the missing handler through LibraryScreen and reuse the canonical Prompt Markdown renderer. ADR required: no; ADR path: N/A; reason: UI-only defect repair under ADR-011/ADR-040.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented in the TASK-202 PR. `LibraryScreen` now renders and copies the exact live unsaved legacy or structured working copy through the application clipboard seam, reports success only after the synchronous clipboard call returns, and gives body-free truthful feedback for unavailable, failed, unknown, or non-losslessly-representable artifacts. Saved, create, duplicate, and converted drafts are covered; Copy, compatibility, privacy, and failure regressions are included in the post-rebase `145 passed` affected suite.
+
+ADR required: no. ADR path: N/A. This repairs an existing UI handler using the established renderer and clipboard seams.
+<!-- SECTION:NOTES:END -->
