@@ -229,10 +229,10 @@ def test_url_userinfo_removes_both_username_and_password() -> None:
 @pytest.mark.parametrize(
     "raw",
     [
-        "sk-proj-abcdefghijklmnopqrst",
-        "sk-ant-api03-abcdefghijklmnopqrst",
-        "sk-abcdefghijklmnopqrst",
-        "AIza" + "a" * 35,
+        "sk-proj-DO_NOT_USE_EXAMPLE_123456",
+        "sk-ant-api03-DO_NOT_USE_EXAMPLE_123456",
+        "sk-DONOTUSEEXAMPLEONLY1234567890",
+        "AIza" + "DO_NOT_USE_EXAMPLE_ONLY_" + "0" * 11,
     ],
 )
 def test_standalone_credential_shapes_are_replaced_wholly(raw: str) -> None:
@@ -243,10 +243,10 @@ def test_standalone_credential_shapes_are_replaced_wholly(raw: str) -> None:
 @pytest.mark.parametrize(
     "raw",
     [
-        "SK-PROJ-ABCDEFGHIJKLMNOPQRST",
-        "SK-ANT-API03-ABCDEFGHIJKLMNOPQRST",
-        "SK-ABCDEFGHIJKLMNOPQRST",
-        "AIZA" + "A" * 35,
+        "SK-PROJ-DO_NOT_USE_EXAMPLE_123456",
+        "SK-ANT-API03-DO_NOT_USE_EXAMPLE_123456",
+        "SK-DONOTUSEEXAMPLEONLY1234567890",
+        "AIZA" + "DO_NOT_USE_EXAMPLE_ONLY_" + "0" * 11,
     ],
 )
 def test_uppercase_standalone_credential_shapes_are_not_recognized(raw: str) -> None:
@@ -256,7 +256,7 @@ def test_uppercase_standalone_credential_shapes_are_not_recognized(raw: str) -> 
 
 def test_labeled_standalone_shaped_value_has_one_idempotent_marker() -> None:
     """Assignment redaction consumes a key-shaped quoted secret only once."""
-    raw = 'api_key="sk-proj-abcdefghijklmnopqrst"'
+    raw = 'api_key="sk-proj-DO_NOT_USE_EXAMPLE_123456"'
     sanitized = sanitize_string(raw)
 
     assert sanitized == 'api_key="***REDACTED***"'
@@ -340,12 +340,12 @@ class TestLogSanitizer:
     def test_sanitize_string_api_keys(self):
         """Test that API keys are sanitized from strings."""
         test_cases = [
-            ("api_key=sk-1234567890abcdef", "api_key=***REDACTED***"),
+            ("api_key=PRIVATE_API_KEY", "api_key=***REDACTED***"),
             (
-                "Bearer sk-abcdefghijklmnopqrstuvwxyz123456789012345678",
+                "Bearer PRIVATE_BEARER_TOKEN",
                 "Bearer ***REDACTED***",
             ),
-            ("OPENAI_API_KEY=sk-test123", "OPENAI_API_KEY=***REDACTED***"),
+            ("OPENAI_API_KEY=PRIVATE_OPENAI_KEY", "OPENAI_API_KEY=***REDACTED***"),
             ('{"api_key": "secret123"}', '{"api_key": "***REDACTED***"}'),
             ("password: mypassword123", "password: ***REDACTED***"),
             ("https://user:pass@example.com", "https://***REDACTED***@example.com"),
@@ -359,7 +359,7 @@ class TestLogSanitizer:
         """Test dictionary sanitization."""
         test_dict = {
             "name": "test",
-            "api_key": "sk-123456",
+            "api_key": "PRIVATE_API_KEY",
             "password": "secret",
             "nested": {"token": "bearer123", "safe": "value"},
             "config": "api_key=embedded_secret",
@@ -396,7 +396,7 @@ class TestLogSanitizer:
         msg = create_safe_log_message(
             "User {} logged in with key {}",
             "john",
-            "sk-abcdefghijklmnopqrstuvwxyz123456",
+            "sk-DONOTUSEEXAMPLEONLY1234567890",
         )
         assert msg == "User john logged in with key ***REDACTED***"
 
