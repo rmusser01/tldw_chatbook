@@ -194,6 +194,17 @@ concurrency model.
     `max_tool_call_seconds` daemon wrapper); bounded by the parent's remaining
     wall-clock; **polls `should_cancel`** — user cancellation propagates to
     cooperative-cancel of all children in turn-scoped mode.
+    **Result sizing:** per-child results are capped at
+    `max_subagent_result_chars` (4000) as today, but the combined tool result
+    is ALSO bounded by `max_tool_result_chars` (16000) at the history-append
+    seam — 5 children × 4000 chars would truncate mid-results. `wait_agents`
+    therefore allocates the history budget **evenly across returned children**
+    (each entry truncated with a notice); the supervisor re-fetches one
+    child's full capped result by calling `wait_agents([id])` for it alone.
+- The Console bridge raises `max_subagents` alongside the live-children cap
+  (`CONSOLE_RUN_BUDGET` currently inherits the default of **2 spawns/turn** —
+  left alone, phase 2's parallelism caps out at 2 before the fleet cap ever
+  binds). Sized together with `[agents] max_live_subagents`, config-visible.
   - `check_agents()` — non-blocking status snapshot from the DB-backed
     registry (invariant 3).
 - The spawn tool description teaches the spawn→`wait_agents` pattern; results
@@ -214,8 +225,22 @@ concurrency model.
    children — results also live in the run row's `result` column, so they
    survive restart).
 3. `send_to_agent(id, message)` + user steering from the panel (§6).
+4. **Wiring-lifetime audit — the hard part of 3a.** A live child holds the
+   prior turn's object graph: the approval-routing callable (bound "for THIS
+   run"), the per-run `ToolCatalogRegistry` + provider instances, the
+   run-tree-bound run-log writer, `on_step`, diff sink, cost hooks. Python
+   keeps them alive via the thread's references, but *alive* ≠ *valid*: each
+   seam is audited for behavior after its turn ends. The run-log writer and
+   lineage are correct by construction (the child belongs to its spawn turn's
+   tree); approval accounting must keep accepting rounds from a past turn's
+   run; anything found to be turn-scoped by assumption gets rebound or
+   documented as intentionally frozen.
 
 ### Containment (replaces `clamp_child_budget`'s parent-remainder clamp)
+
+**Timing:** phase 2 keeps `clamp_child_budget` byte-identical — turn-scoped
+children must die by end of turn anyway, so the parent-remainder clamp is
+still the correct bound. Phase 3a swaps in the set below.
 
 A background child deliberately outlives its parent — the old invariant
 ("child never outlives parent") is replaced, not just deleted:
@@ -252,7 +277,10 @@ shows fleets of dozens).
   panel drill-in. Both append to the same per-child mailbox.
 - Entries become **user-role messages drained between the child's model
   turns** (clean insertion point in `run_agent_loop`, before each model call).
-  Never cancel/restart (invariant 4).
+  Never cancel/restart (invariant 4). Drained only at a **protocol-coherent
+  boundary** — after every pending tool result for the previous assistant
+  message has been appended — so native tool-call pairing (`tool_calls` ↔
+  `role:"tool"` ids) is never split by an injected message.
 - **Source labels:** injected messages are prefixed
   `[Steering from supervisor]` / `[Steering from user]` in both the message
   and the run-log record — the child must not mistake supervisor text for the
@@ -368,6 +396,12 @@ now fights the target, and nothing long-term sneaks into this program's ACs.
 - **Stop semantics:** phase 2 — Stop cancels supervisor + children
   (turn-scoped, unchanged mental model). Phase 3 — Stop cancels the
   supervisor's turn only; the panel offers explicit "Cancel all agents".
+- Conversation deletion, or a temporary ("not saved") session closing,
+  cancels its fleet (cooperative cancel + card revocation). Ephemeral runs
+  already flow through the registry's `_ephemeral` gate at `invoke_by_name`.
+- Phase 3b audits the cost ticker's assumption that spend accrues only
+  during a turn — background children accrue between turns, delivered
+  through the coalescer.
 
 ## 9. Testing
 
