@@ -102,7 +102,15 @@ class ConflictError(DatabaseError):
 
 # --- Database Class ---
 class PromptsDatabase:
-    _CURRENT_SCHEMA_VERSION = 3
+    _CURRENT_SCHEMA_VERSION = 4
+    _PROMPT_HISTORY_INDEX_NAME = "idx_sync_log_prompt_history"
+    _PROMPT_HISTORY_COUNT_SQL = """
+        SELECT COUNT(*)
+        FROM sync_log
+        WHERE entity = 'Prompts'
+          AND entity_uuid = ?
+          AND operation IN ('create', 'update')
+    """
     # task-261: idle window within which the per-call `SELECT 1` liveness
     # ping is skipped for a recently-used thread-local connection (see
     # `_get_thread_connection`).
@@ -616,6 +624,11 @@ class PromptsDatabase:
             "function": "_apply_migration_v2_to_v3",
             "description": "Add prompt artifact type",
         },
+        3: {
+            "to_version": 4,
+            "function": "_apply_migration_v3_to_v4",
+            "description": "Add retained Prompt history index",
+        },
     }
 
     def _apply_schema_v1(self, conn: sqlite3.Connection):
@@ -762,6 +775,54 @@ class PromptsDatabase:
                 f"[Migration v2->v3] Failed during migration: {e}"
             )
             raise DatabaseError(f"Migration v2->v3 failed: {e}") from e
+
+    def _apply_migration_v3_to_v4(self, conn: sqlite3.Connection):
+        """Add an index for bounded retained Prompt history reads."""
+        logging.info(
+            f"Applying prompts migration from version 3 to 4 for DB: {self.db_path_str}..."
+        )
+        try:
+            with self.transaction():
+                conn.execute(
+                    f"""
+                    CREATE INDEX IF NOT EXISTS {self._PROMPT_HISTORY_INDEX_NAME}
+                    ON sync_log (
+                        entity,
+                        entity_uuid,
+                        change_id DESC,
+                        operation
+                    )
+                    WHERE entity = 'Prompts'
+                      AND operation IN ('create', 'update')
+                    """
+                )
+                conn.execute("UPDATE schema_version SET version = 4 WHERE version = 3")
+
+                index_row = conn.execute(
+                    """
+                    SELECT 1
+                    FROM sqlite_master
+                    WHERE type = 'index' AND name = ?
+                    """,
+                    (self._PROMPT_HISTORY_INDEX_NAME,),
+                ).fetchone()
+                if index_row is None:
+                    raise SchemaError(
+                        "Validation Error: retained Prompt history index is missing."
+                    )
+
+                version_in_tx = conn.execute(
+                    "SELECT version FROM schema_version LIMIT 1"
+                ).fetchone()
+                if not version_in_tx or version_in_tx["version"] != 4:
+                    raise SchemaError(
+                        "Schema version update to 4 did not take effect within transaction."
+                    )
+        except sqlite3.Error as e:
+            logging.opt(exception=True).error(
+                f"[Migration v3->v4] Failed during migration: {e}"
+            )
+            raise DatabaseError(f"Migration v3->v4 failed: {e}") from e
 
     def _initialize_schema(self):
         conn = self.get_connection()
@@ -3046,6 +3107,103 @@ class PromptsDatabase:
             raise DatabaseError(f"Failed to search prompts: {e}") from e
 
     # --- Sync Log Access Methods ---
+    @staticmethod
+    def _validate_prompt_history_entity_uuid(entity_uuid: str) -> str:
+        if not isinstance(entity_uuid, str) or not entity_uuid.strip():
+            raise InputError("entity_uuid must be a non-empty string.")
+        return entity_uuid
+
+    @staticmethod
+    def _validate_prompt_history_positive_int(value: int, *, name: str) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise InputError(f"{name} must be a positive integer.")
+        return value
+
+    @staticmethod
+    def _decode_prompt_history_row(row: sqlite3.Row) -> Dict[str, Any]:
+        row_dict = dict(row)
+        raw_payload = row_dict.get("payload")
+        row_dict["payload_error"] = None
+        row_dict["raw_payload"] = None
+        if raw_payload is not None:
+            try:
+                row_dict["payload"] = json.loads(raw_payload)
+            except (json.JSONDecodeError, TypeError, UnicodeDecodeError):
+                row_dict["payload"] = None
+                row_dict["payload_error"] = "malformed_json"
+                row_dict["raw_payload"] = raw_payload
+        return row_dict
+
+    def get_prompt_history_count(self, entity_uuid: str) -> int:
+        """Return the exact retained create/update count for one Prompt UUID."""
+        validated_uuid = self._validate_prompt_history_entity_uuid(entity_uuid)
+        try:
+            with self.transaction() as conn:
+                row = conn.execute(
+                    self._PROMPT_HISTORY_COUNT_SQL, (validated_uuid,)
+                ).fetchone()
+            return int(row[0]) if row is not None else 0
+        except sqlite3.Error as e:
+            logging.opt(exception=True).error(
+                f"Failed to count retained Prompt history for {validated_uuid}: {e}"
+            )
+            raise DatabaseError("Failed to count retained Prompt history") from e
+
+    def get_prompt_history_entries(
+        self,
+        entity_uuid: str,
+        page_size: int,
+        before_change_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Read one bounded retained Prompt history page and its predecessor."""
+        validated_uuid = self._validate_prompt_history_entity_uuid(entity_uuid)
+        validated_page_size = self._validate_prompt_history_positive_int(
+            page_size, name="page_size"
+        )
+        if before_change_id is not None:
+            before_change_id = self._validate_prompt_history_positive_int(
+                before_change_id, name="before_change_id"
+            )
+
+        row_query = """
+            SELECT *
+            FROM sync_log
+            WHERE entity = 'Prompts'
+              AND entity_uuid = ?
+              AND operation IN ('create', 'update')
+        """
+        row_params: List[Any] = [validated_uuid]
+        if before_change_id is not None:
+            row_query += " AND change_id < ?"
+            row_params.append(before_change_id)
+        row_query += " ORDER BY change_id DESC LIMIT ?"
+        row_params.append(validated_page_size + 1)
+
+        try:
+            with self.transaction() as conn:
+                count_row = conn.execute(
+                    self._PROMPT_HISTORY_COUNT_SQL, (validated_uuid,)
+                ).fetchone()
+                raw_rows = conn.execute(row_query, tuple(row_params)).fetchall()
+        except sqlite3.Error as e:
+            logging.opt(exception=True).error(
+                f"Failed to read retained Prompt history for {validated_uuid}: {e}"
+            )
+            raise DatabaseError("Failed to read retained Prompt history") from e
+
+        decoded_rows = [self._decode_prompt_history_row(row) for row in raw_rows]
+        has_more = len(decoded_rows) > validated_page_size
+        items = decoded_rows[:validated_page_size]
+        predecessor = decoded_rows[validated_page_size] if has_more else None
+        next_before_change_id = items[-1]["change_id"] if has_more and items else None
+        return {
+            "items": items,
+            "predecessor": predecessor,
+            "total_count": int(count_row[0]) if count_row is not None else 0,
+            "has_more": has_more,
+            "next_before_change_id": next_before_change_id,
+        }
+
     def get_sync_log_entries(
         self, since_change_id: int = 0, limit: Optional[int] = None
     ) -> List[Dict]:

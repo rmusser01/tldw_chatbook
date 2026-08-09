@@ -230,7 +230,10 @@ def test_v2_migration_defaults_existing_rows_to_prompt_and_preserves_sync_and_ft
     database = PromptsDatabase(database_path, client_id="migration-test")
     try:
         detail = database.fetch_prompt_details("Existing")
-        assert database._get_db_version(database.get_connection()) == 3
+        assert (
+            database._get_db_version(database.get_connection())
+            == database._CURRENT_SCHEMA_VERSION
+        )
         assert detail["artifact_type"] == "prompt"
         assert detail["prompt_format"] == "structured"
         assert detail["prompt_schema_version"] == 1
