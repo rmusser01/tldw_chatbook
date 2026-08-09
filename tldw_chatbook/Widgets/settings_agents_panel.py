@@ -66,12 +66,14 @@ class AgentsSettingsPanel(Vertical):
                 yield Input(
                     placeholder="researcher (lowercase slug)",
                     id="agents-name-input",
+                    classes="settings-compact-input",
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static("Description", classes="settings-input-label")
                 yield Input(
                     placeholder="One line the supervisor reads (max 200 chars)",
                     id="agents-description-input",
+                    classes="settings-compact-input",
                 )
             yield Static("Instructions (appended to the sub-agent prompt)",
                          classes="settings-input-label")
@@ -81,6 +83,7 @@ class AgentsSettingsPanel(Vertical):
                 yield Input(
                     placeholder="empty = parent's model (same provider)",
                     id="agents-model-input",
+                    classes="settings-compact-input",
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static(
@@ -88,7 +91,7 @@ class AgentsSettingsPanel(Vertical):
                     "only narrow, never grant)",
                     classes="settings-input-label",
                 )
-                yield Input(id="agents-tools-input")
+                yield Input(id="agents-tools-input", classes="settings-compact-input")
             with Horizontal(classes="settings-input-row"):
                 yield Static("Enabled", classes="settings-input-label")
                 yield Switch(value=True, id="agents-enabled-switch")
