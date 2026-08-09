@@ -2674,9 +2674,11 @@ class _FakeExternalSourceService:
     def on_root_activated(self, _reference):
         return None
 
-    def prefer_managed(self, key):
+    def prefer_managed(self, key, *, cancelled=lambda: False):
         import threading
 
+        if cancelled():
+            return
         self.prefer_threads.append(threading.get_ident())
         self.preferred.append(key)
 
@@ -2714,7 +2716,7 @@ class _FakeExternalSourceService:
         )
         return SimpleNamespace(key=key, verified=verified)
 
-    def commit_external(self, prepared):
+    def commit_external(self, prepared, *, cancelled=lambda: False):
         import threading
 
         from tldw_chatbook.STT.parakeet_sources import (
@@ -2724,13 +2726,17 @@ class _FakeExternalSourceService:
 
         self.commit_threads.append(threading.get_ident())
         self.commit_attempts.append(prepared)
+        if cancelled():
+            return
         if not self.vad_ready:
             raise ParakeetSourceError(ParakeetSourceErrorCode.VAD_UNAVAILABLE)
         self.committed.append(prepared)
 
-    def stop_using_external(self, key):
+    def stop_using_external(self, key, *, cancelled=lambda: False):
         import threading
 
+        if cancelled():
+            return
         self.stop_threads.append(threading.get_ident())
         self.stopped.append(key)
 
@@ -2939,6 +2945,130 @@ async def test_replacing_external_verification_releases_its_path_free_scope(
 
 
 @pytest.mark.asyncio
+async def test_stop_action_becomes_physical_cancel_during_external_work_at_80_columns(
+    tmp_path,
+):
+    from tldw_chatbook.STT.parakeet_sources import (
+        ParakeetSourceKey,
+        ParakeetSourcePreference,
+        ParakeetSourceRecord,
+    )
+    from tldw_chatbook.UI.Screens.model_external_view import ExternalModelView
+
+    key = ParakeetSourceKey.V2_INT8
+    root = (tmp_path / "configured").absolute()
+    prior = ParakeetSourceRecord(
+        model_id=key.model_id,
+        precision=key.precision,
+        directory=root,
+        preferred_source=ParakeetSourcePreference.EXTERNAL,
+    )
+    service = _FakeExternalSourceService(
+        records={key: prior},
+        block_verification=True,
+    )
+    app = _app()
+    app._parakeet_source_service = service
+    async with app.run_test(size=(80, 24)) as pilot:
+        screen = await _models_screen(app)
+        assert await _wait_for(
+            lambda: bool(screen.query("#external-models-view")), pilot
+        )
+        external_row = next(
+            row for row in _rail_rows(screen) if row.lab_view_key == "external"
+        )
+        external_row.press()
+        await pilot.pause()
+
+        await pilot.click(f"#external-model-copy-{key.value}")
+        assert await _wait_for(service.progress_seen.is_set, pilot)
+        cancel = screen.query_one(f"#external-model-stop-{key.value}", Button)
+        painted = "".join(
+            cancel.render_line(line).text for line in range(cancel.region.height)
+        )
+        parent = screen.query_one("#llm-view-external")
+        assert "Cancel operation" in painted
+        assert cancel.region.width > 0 and cancel.region.height > 0
+        assert parent.region.x <= cancel.region.x
+        assert (
+            cancel.region.x + cancel.region.width
+            <= parent.region.x + parent.region.width
+        )
+        cancel.focus()
+        await pilot.pause()
+        assert app.focused is cancel
+
+        await pilot.click(f"#external-model-stop-{key.value}")
+        assert await _wait_for(
+            lambda: "cancelled" in screen._external_operation_status.casefold(), pilot
+        )
+        cancelled_status = screen._external_operation_status
+        service.release_verification.set()
+        await pilot.pause()
+        await pilot.pause()
+
+        restored = screen.query_one(f"#external-model-stop-{key.value}", Button)
+        assert "Stop using" in str(restored.label)
+        assert screen._external_operation_status == cancelled_status
+        assert service.records()[key] == prior
+        assert service.stopped == []
+        assert service.commit_attempts == []
+        assert service.copy_plans == []
+        assert screen.query_one(ExternalModelView).is_mounted
+
+
+@pytest.mark.asyncio
+async def test_first_use_shows_one_physical_cancel_and_returns_to_empty_idle(
+    tmp_path,
+):
+    from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
+
+    service = _FakeExternalSourceService(block_verification=True)
+    app = _app()
+    app._parakeet_source_service = service
+    async with app.run_test(size=(80, 24)) as pilot:
+        screen = await _models_screen(app)
+        assert await _wait_for(
+            lambda: bool(screen.query("#external-models-view")), pilot
+        )
+        token = screen._next_external_token()
+        screen._external_directory_selected(
+            token,
+            ParakeetSourceKey.V2_INT8,
+            tmp_path,
+        )
+        assert await _wait_for(service.progress_seen.is_set, pilot)
+        await pilot.pause()
+
+        cancel_buttons = screen.query("#external-model-cancel-operation")
+        assert len(cancel_buttons) == 1
+        cancel = cancel_buttons.first(Button)
+        parent = screen.query_one("#llm-view-external")
+        assert str(cancel.label) == "Cancel operation"
+        assert cancel.region.width > 0 and cancel.region.height > 0
+        assert parent.region.x <= cancel.region.x
+        assert (
+            cancel.region.x + cancel.region.width
+            <= parent.region.x + parent.region.width
+        )
+        cancel.focus()
+        await pilot.pause()
+        assert app.focused is cancel
+
+        await pilot.click("#external-model-cancel-operation")
+        assert await _wait_for(
+            lambda: "cancelled" in screen._external_operation_status.casefold(), pilot
+        )
+        service.release_verification.set()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert service.records() == {}
+        assert service.commit_attempts == []
+        assert len(screen.query("#external-model-cancel-operation")) == 0
+
+
+@pytest.mark.asyncio
 async def test_failed_external_commit_releases_scope_and_preserves_prior_state(
     tmp_path,
 ):
@@ -2946,7 +3076,9 @@ async def test_failed_external_commit_releases_scope_and_preserves_prior_state(
 
     service = _FakeExternalSourceService()
 
-    def fail_commit(prepared):
+    def fail_commit(prepared, *, cancelled=lambda: False):
+        if cancelled():
+            return
         service.commit_attempts.append(prepared)
         raise RuntimeError("private commit detail")
 
@@ -2972,6 +3104,89 @@ async def test_failed_external_commit_releases_scope_and_preserves_prior_state(
         assert service.committed == []
         assert service.released_scopes == [owner[1]]
         assert "prior source is unchanged" in screen._external_operation_status
+
+
+@pytest.mark.asyncio
+async def test_replacement_keeps_commit_scope_until_point_of_no_return_finishes(
+    tmp_path,
+):
+    import threading
+
+    from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
+
+    started = threading.Event()
+    release = threading.Event()
+    timeline: list[str] = []
+    service = _FakeExternalSourceService()
+    real_release_scope = service.release_scope
+
+    def blocked_commit(prepared, *, cancelled=lambda: False):
+        service.commit_attempts.append(prepared)
+        started.set()
+        assert release.wait(3)
+        service.committed.append(prepared)
+        timeline.append("promoted")
+
+    def release_scope(scope_id):
+        timeline.append("released")
+        real_release_scope(scope_id)
+
+    service.commit_external = blocked_commit
+    service.release_scope = release_scope
+    app = _app()
+    app._parakeet_source_service = service
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _models_screen(app)
+        assert await _wait_for(
+            lambda: bool(screen.query("#external-models-view")), pilot
+        )
+        old_token = screen._next_external_token()
+        screen._external_directory_selected(
+            old_token,
+            ParakeetSourceKey.V2_INT8,
+            tmp_path,
+        )
+        assert await _wait_for(started.is_set, pilot)
+        old_owner = service.prepare_calls[0][2][1]
+
+        screen._next_external_token()
+        screen._set_external_status("Verifying newer model files…", active=True)
+        await pilot.pause()
+
+        assert service.released_scopes == []
+        release.set()
+        assert await _wait_for(lambda: old_owner in service.released_scopes, pilot)
+
+        assert timeline == ["promoted", "released"]
+        assert service.committed == [service.commit_attempts[0]]
+        assert screen._external_operation_status == "Verifying newer model files…"
+
+
+@pytest.mark.asyncio
+async def test_replaced_commit_releases_scope_even_when_worker_never_enters_service():
+    from types import SimpleNamespace
+
+    service = _FakeExternalSourceService()
+    app = _app()
+    app._parakeet_source_service = service
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _models_screen(app)
+        assert await _wait_for(
+            lambda: bool(screen.query("#external-models-view")), pilot
+        )
+        stale = screen._next_external_token()
+        stale_scope = screen._external_scope_id
+        screen._external_commit_tokens.add(stale)
+        screen._next_external_token()
+
+        screen._run_external_commit(stale, SimpleNamespace())
+        released = await _wait_for(
+            lambda: stale_scope in service.released_scopes,
+            pilot,
+        )
+
+        assert released is True
+        assert service.commit_attempts == []
 
 
 @pytest.mark.asyncio

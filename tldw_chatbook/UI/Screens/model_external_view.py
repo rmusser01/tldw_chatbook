@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from textual import on
@@ -12,6 +13,7 @@ from textual.widget import Widget
 from textual.widgets import Button, Static
 
 from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
+from tldw_chatbook.Utils.optional_deps import parakeet_onnx_deps_installed
 
 if TYPE_CHECKING:
     from tldw_chatbook.STT.parakeet_sources import ParakeetSourceService
@@ -33,6 +35,9 @@ class ExternalModelView(Widget):
 
     class CopyRequested(_KeyMessage):
         """Copy one verified source through the managed-store boundary."""
+
+    class CancelRequested(Message):
+        """Cancel the active operation when no configured row exists."""
 
     DEFAULT_CSS = """
     ExternalModelView {
@@ -78,17 +83,27 @@ class ExternalModelView(Widget):
     ExternalModelView #external-model-operation-status.-error {
         color: $error;
     }
+
+    ExternalModelView #external-model-cancel-operation {
+        width: 100%;
+        margin-bottom: 1;
+    }
     """
 
     def __init__(
         self,
         source_service: ParakeetSourceService,
         *,
+        runtime_ready: Callable[[], bool] | None = None,
         id: str | None = None,
     ) -> None:
         self.source_service = source_service
+        self._runtime_ready = (
+            parakeet_onnx_deps_installed if runtime_ready is None else runtime_ready
+        )
         self._operation_status = ""
         self._operation_error = False
+        self._operation_active = False
         super().__init__(id=id)
 
     def compose(self) -> ComposeResult:
@@ -106,6 +121,12 @@ class ExternalModelView(Widget):
             for key, record in self.source_service.records().items()
             if record.directory is not None
         )
+        runtime_ready = self._runtime_ready() if records else False
+        if self._operation_active and not records:
+            yield Button(
+                "Cancel operation",
+                id="external-model-cancel-operation",
+            )
         if not records:
             yield Static(
                 "No external Parakeet sources are configured. Choose Use from disk "
@@ -114,14 +135,25 @@ class ExternalModelView(Widget):
             )
         with VerticalScroll(classes="external-model-list"):
             for key, record in records:
-                yield self._row(key, record.directory)
+                yield self._row(
+                    key,
+                    record.directory,
+                    runtime_ready=runtime_ready,
+                    operation_active=self._operation_active,
+                )
 
     @staticmethod
-    def _row(key: ParakeetSourceKey, directory) -> Vertical:
+    def _row(
+        key: ParakeetSourceKey,
+        directory,
+        *,
+        runtime_ready: bool,
+        operation_active: bool,
+    ) -> Vertical:
         actions = []
         for action, label in (
             ("change", "Change…"),
-            ("stop", "Stop using"),
+            ("stop", "Cancel operation" if operation_active else "Stop using"),
             ("copy", "Copy into managed store…"),
         ):
             button = Button(
@@ -141,7 +173,11 @@ class ExternalModelView(Widget):
                 markup=False,
             ),
             Static(
-                "External source · descriptor verified",
+                (
+                    "External source · descriptor verified"
+                    if runtime_ready
+                    else "Runtime required"
+                ),
                 classes="external-model-status",
                 markup=False,
             ),
@@ -156,11 +192,19 @@ class ExternalModelView(Widget):
 
         self.refresh(recompose=True)
 
-    def apply_operation_status(self, text: str, *, error: bool = False) -> None:
+    def apply_operation_status(
+        self,
+        text: str,
+        *,
+        error: bool = False,
+        active: bool | None = None,
+    ) -> None:
         """Show path-safe progress or recovery copy on this edit surface."""
 
         self._operation_status = text
         self._operation_error = error
+        if active is not None:
+            self._operation_active = active
         self.refresh(recompose=True)
 
     @on(Button.Pressed, ".external-model-actions Button")
@@ -177,6 +221,11 @@ class ExternalModelView(Widget):
         }.get(action)
         if event_type is not None:
             self.post_message(event_type(key))
+
+    @on(Button.Pressed, "#external-model-cancel-operation")
+    def _cancel_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(self.CancelRequested())
 
 
 __all__ = ["ExternalModelView"]

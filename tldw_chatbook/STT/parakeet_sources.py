@@ -6,6 +6,7 @@ from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+import threading
 from types import MappingProxyType
 from typing import Literal
 
@@ -185,6 +186,8 @@ class ParakeetSourceService:
         self._vad_ready = (
             vad_ready if vad_ready is not None else self._default_vad_ready
         )
+        # ponytail: one lock is enough until source-preference write throughput matters.
+        self._mutation_lock = threading.Lock()
         self._records = self._read_records()
         self._observed_scopes: set[str] = set()
         self._sync_configured_owners()
@@ -276,26 +279,44 @@ class ParakeetSourceService:
         self._records = persisted
         self._sync_configured_owners()
 
-    def commit_external(self, prepared: PreparedExternalSelection) -> None:
+    def commit_external(
+        self,
+        prepared: PreparedExternalSelection,
+        *,
+        cancelled: Callable[[], bool] = _never_cancelled,
+    ) -> None:
         """Persist one prepared external selection with exactly one write."""
 
-        commit = self.prepare_config_commit(prepared)
-        self._write(commit.section_values)
-        self.accept_committed(commit)
+        if not callable(cancelled):
+            raise TypeError("cancelled must be callable")
+        with self._mutation_lock:
+            commit = self.prepare_config_commit(prepared)
+            if cancelled():
+                return
+            self._write(commit.section_values)
+            self.accept_committed(commit)
 
-    def prefer_managed(self, key: ParakeetSourceKey) -> None:
+    def prefer_managed(
+        self,
+        key: ParakeetSourceKey,
+        *,
+        cancelled: Callable[[], bool] = _never_cancelled,
+    ) -> None:
         """Prefer the exact managed root while remembering any directory."""
 
         self._require_key(key)
-        records = dict(self._records)
-        prior = records.get(key)
-        records[key] = ParakeetSourceRecord(
-            model_id=key.model_id,
-            precision=key.precision,
-            directory=prior.directory if prior is not None else None,
-            preferred_source=ParakeetSourcePreference.MANAGED,
-        )
-        self._persist_records(records)
+        if not callable(cancelled):
+            raise TypeError("cancelled must be callable")
+        with self._mutation_lock:
+            records = dict(self._records)
+            prior = records.get(key)
+            records[key] = ParakeetSourceRecord(
+                model_id=key.model_id,
+                precision=key.precision,
+                directory=prior.directory if prior is not None else None,
+                preferred_source=ParakeetSourcePreference.MANAGED,
+            )
+            self._persist_records(records, cancelled=cancelled)
 
     def on_root_activated(self, reference: ArtifactRef) -> None:
         """Prefer managed only when an exact curated Parakeet root activates."""
@@ -381,23 +402,31 @@ class ParakeetSourceService:
         except (ArtifactError, OSError):
             raise ParakeetSourceError(ParakeetSourceErrorCode.COPY_FAILED) from None
 
-    def stop_using_external(self, key: ParakeetSourceKey) -> None:
+    def stop_using_external(
+        self,
+        key: ParakeetSourceKey,
+        *,
+        cancelled: Callable[[], bool] = _never_cancelled,
+    ) -> None:
         """Forget the directory without erasing a managed preference."""
 
         self._require_key(key)
-        records = dict(self._records)
-        prior = records.get(key)
-        if prior is None:
-            return
-        if prior.preferred_source is ParakeetSourcePreference.MANAGED:
-            records[key] = ParakeetSourceRecord(
-                model_id=key.model_id,
-                precision=key.precision,
-                preferred_source=ParakeetSourcePreference.MANAGED,
-            )
-        else:
-            records.pop(key, None)
-        self._persist_records(records)
+        if not callable(cancelled):
+            raise TypeError("cancelled must be callable")
+        with self._mutation_lock:
+            records = dict(self._records)
+            prior = records.get(key)
+            if prior is None:
+                return
+            if prior.preferred_source is ParakeetSourcePreference.MANAGED:
+                records[key] = ParakeetSourceRecord(
+                    model_id=key.model_id,
+                    precision=key.precision,
+                    preferred_source=ParakeetSourcePreference.MANAGED,
+                )
+            else:
+                records.pop(key, None)
+            self._persist_records(records, cancelled=cancelled)
 
     def resolve(
         self,
@@ -666,12 +695,16 @@ class ParakeetSourceService:
     def _persist_records(
         self,
         records: dict[ParakeetSourceKey, ParakeetSourceRecord],
+        *,
+        cancelled: Callable[[], bool] = _never_cancelled,
     ) -> None:
         values: Mapping[str, Mapping[str, object]] = {
             "transcription": {
                 "parakeet_external_sources": self._serialize_records(records)
             }
         }
+        if cancelled():
+            return
         self._write(values)
         self._records = records
         self._sync_configured_owners()

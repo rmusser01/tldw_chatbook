@@ -1578,6 +1578,90 @@ def test_install_cancellation_during_copy_is_path_private_and_removes_only_its_s
     assert abandoned.read_bytes() == b"keep"
 
 
+def test_install_cancellation_during_second_staged_hash_never_publishes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hashing remains cooperatively cancellable after every copy completes."""
+
+    first = b"a" * (1024 * 1024 + 17)
+    second = b"b" * (1024 * 1024 + 17)
+    service, item, source = install_inputs(
+        tmp_path,
+        {"first.onnx": first, "second.onnx": second},
+    )
+    real_sha256 = service_module.hashlib.sha256
+    hashes_started = 0
+    second_hash_started = False
+    second_hash_chunks = 0
+
+    class _TrackedHash:
+        def __init__(self, *args, **kwargs) -> None:
+            nonlocal hashes_started
+            if not args and not kwargs:
+                hashes_started += 1
+                self._index = hashes_started
+            else:
+                self._index = 0
+            self._inner = real_sha256(*args, **kwargs)
+
+        def update(self, chunk: bytes) -> None:
+            nonlocal second_hash_chunks, second_hash_started
+            self._inner.update(chunk)
+            if self._index == 2:
+                second_hash_started = True
+                second_hash_chunks += 1
+
+        def hexdigest(self) -> str:
+            return self._inner.hexdigest()
+
+    monkeypatch.setattr(service_module.hashlib, "sha256", _TrackedHash)
+
+    with pytest.raises(
+        service_module.ArtifactStateError,
+        match="^artifact installation cancelled$",
+    ) as caught:
+        service.install(item, source, cancelled=lambda: second_hash_started)
+
+    assert second_hash_started is True
+    assert second_hash_chunks == 1
+    assert str(source) not in str(caught.value)
+    assert (source / "first.onnx").read_bytes() == first
+    assert (source / "second.onnx").read_bytes() == second
+    assert service.artifact_path(item.reference).exists() is False
+    assert tuple(service.staging_path.iterdir()) == ()
+
+
+def test_install_rechecks_cancellation_immediately_before_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancellation after staged verification still prevents publication."""
+
+    payload = b"model"
+    service, item, source = install_inputs(tmp_path, {"model.onnx": payload})
+    verified = False
+    real_verify = service._verify_payload
+
+    def finish_verification(*args, **kwargs) -> None:
+        nonlocal verified
+        real_verify(*args, **kwargs)
+        verified = True
+
+    monkeypatch.setattr(service, "_verify_payload", finish_verification)
+
+    with pytest.raises(
+        service_module.ArtifactStateError,
+        match="^artifact installation cancelled$",
+    ):
+        service.install(item, source, cancelled=lambda: verified)
+
+    assert verified is True
+    assert (source / "model.onnx").read_bytes() == payload
+    assert service.artifact_path(item.reference).exists() is False
+    assert tuple(service.staging_path.iterdir()) == ()
+
+
 # ---------------------------------------------------------------------------
 # TASK-1694: service-owned download-stage seam.
 #

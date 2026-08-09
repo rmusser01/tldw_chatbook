@@ -95,6 +95,41 @@ async def test_external_view_lists_only_records_with_user_owned_directories(
 
 
 @pytest.mark.asyncio
+async def test_fresh_production_css_view_persists_runtime_required(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A reopened External view derives runtime readiness from the runtime."""
+
+    from tldw_chatbook.UI.Screens import model_external_view as module
+
+    monkeypatch.setattr(
+        module,
+        "parakeet_onnx_deps_installed",
+        lambda: False,
+        raising=False,
+    )
+    service = _SourceService(
+        {
+            ParakeetSourceKey.V2_INT8: ParakeetSourceRecord(
+                model_id=PARAKEET_V2_MODEL,
+                precision="int8",
+                directory=(tmp_path / "model").absolute(),
+                preferred_source=ParakeetSourcePreference.EXTERNAL,
+            )
+        }
+    )
+
+    for _ in range(2):
+        app = _ViewApp(service)
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            status = app.query_one(".external-model-status", Static)
+            assert str(status.renderable) == "Runtime required"
+            assert status.region.width > 0 and status.region.height > 0
+
+
+@pytest.mark.asyncio
 async def test_external_view_emits_exact_change_stop_and_copy_actions(
     tmp_path: Path,
 ) -> None:

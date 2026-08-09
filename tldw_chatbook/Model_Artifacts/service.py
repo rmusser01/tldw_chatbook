@@ -3181,7 +3181,15 @@ class ModelArtifactService:
                         )
                         return descriptor.reference
                     _raise_if_install_cancelled(cancelled)
-                    self._verify_payload(staging, descriptor.files)
+                    if cancelled is _never_cancelled:
+                        self._verify_payload(staging, descriptor.files)
+                    else:
+                        self._verify_payload(
+                            staging,
+                            descriptor.files,
+                            cancelled=cancelled,
+                        )
+                    _raise_if_install_cancelled(cancelled)
                     atomic_write_json(
                         staging / "manifest.json",
                         {
@@ -3787,6 +3795,7 @@ class ModelArtifactService:
         files: tuple[ArtifactFile, ...],
         *,
         allowed_files: frozenset[str] = frozenset(),
+        cancelled: Callable[[], bool] = _never_cancelled,
     ) -> None:
         self._validate_payload_tree(
             root,
@@ -3801,6 +3810,7 @@ class ModelArtifactService:
                 with path.open("rb") as handle:
                     for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                         digest.update(chunk)
+                        _raise_if_install_cancelled(cancelled)
             except OSError as error:
                 raise ArtifactIntegrityError(
                     f"failed to verify payload file {item.path}"

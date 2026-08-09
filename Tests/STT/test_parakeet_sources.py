@@ -225,6 +225,133 @@ def test_prefer_managed_creates_exact_preference_without_external_directory() ->
     service.close()
 
 
+@pytest.mark.parametrize("newer_intent", ("commit", "stop", "prefer"))
+def test_blocked_commit_finishes_before_newer_source_intent_wins(
+    tmp_path: Path,
+    newer_intent: str,
+) -> None:
+    """One serialized write cannot overwrite a newer source decision."""
+
+    import threading
+
+    key = ParakeetSourceKey.V2_INT8
+    old_root = tmp_path / "old"
+    new_root = tmp_path / "new"
+    _materialize(old_root)
+    _materialize(new_root)
+    config = _Config()
+    write_started = threading.Event()
+    release_write = threading.Event()
+    write_count = 0
+
+    def blocked_writer(values) -> bool:
+        nonlocal write_count
+        write_count += 1
+        if write_count == 1:
+            write_started.set()
+            assert release_write.wait(3)
+        return config.write(values)
+
+    service = _service(config, write_settings=blocked_writer)
+    old = service.prepare_external(key, old_root, owner=("scope", "old"))
+    new = service.prepare_external(key, new_root, owner=("scope", "new"))
+    old_cancelled = threading.Event()
+    errors: list[BaseException] = []
+
+    def run(operation) -> None:
+        try:
+            operation()
+        except BaseException as exc:
+            errors.append(exc)
+
+    old_thread = threading.Thread(
+        target=run,
+        args=(lambda: service.commit_external(old, cancelled=old_cancelled.is_set),),
+    )
+    old_thread.start()
+    assert write_started.wait(3)
+    old_cancelled.set()
+
+    newer_operation = {
+        "commit": lambda: service.commit_external(new, cancelled=lambda: False),
+        "stop": lambda: service.stop_using_external(key, cancelled=lambda: False),
+        "prefer": lambda: service.prefer_managed(key, cancelled=lambda: False),
+    }[newer_intent]
+    newer_thread = threading.Thread(target=run, args=(newer_operation,))
+    newer_thread.start()
+    newer_thread.join(0.05)
+    assert newer_thread.is_alive(), "newer mutation bypassed the active write"
+
+    release_write.set()
+    old_thread.join(3)
+    newer_thread.join(3)
+
+    assert errors == []
+    assert not old_thread.is_alive()
+    assert not newer_thread.is_alive()
+    if newer_intent == "commit":
+        record = service.records()[key]
+        assert record.directory == new_root.absolute()
+        assert record.preferred_source is ParakeetSourcePreference.EXTERNAL
+    elif newer_intent == "prefer":
+        record = service.records()[key]
+        assert record.directory == old_root.absolute()
+        assert record.preferred_source is ParakeetSourcePreference.MANAGED
+    else:
+        assert key not in service.records()
+    assert service._parse_records(config.table) == dict(service.records())
+    service.close()
+
+
+@pytest.mark.parametrize("operation", ("commit", "stop", "prefer"))
+def test_cancelled_source_mutation_preserves_config_and_service_state(
+    tmp_path: Path,
+    operation: str,
+) -> None:
+    """Cancellation immediately before the serialized write is side-effect free."""
+
+    key = ParakeetSourceKey.V2_INT8
+    prior_root = (tmp_path / "prior").absolute()
+    replacement_root = (tmp_path / "replacement").absolute()
+    _materialize(prior_root)
+    _materialize(replacement_root)
+    config = _Config(
+        {
+            key.value: {
+                "model_id": key.model_id,
+                "precision": key.precision,
+                "directory": str(prior_root),
+                "preferred_source": "external",
+            }
+        }
+    )
+    service = _service(config)
+    prepared = service.prepare_external(key, replacement_root)
+    prior_records = dict(service.records())
+    prior_config = dict(config.table)
+
+    mutation = {
+        "commit": lambda: service.commit_external(
+            prepared,
+            cancelled=lambda: True,
+        ),
+        "stop": lambda: service.stop_using_external(
+            key,
+            cancelled=lambda: True,
+        ),
+        "prefer": lambda: service.prefer_managed(
+            key,
+            cancelled=lambda: True,
+        ),
+    }[operation]
+    mutation()
+
+    assert config.writes == []
+    assert config.table == prior_config
+    assert dict(service.records()) == prior_records
+    service.close()
+
+
 def test_explicit_override_wins_over_preferred_managed(tmp_path: Path) -> None:
     key = ParakeetSourceKey.V2_INT8
     root = tmp_path / "override"
