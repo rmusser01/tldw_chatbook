@@ -1,17 +1,18 @@
 ---
 id: TASK-2118
-title: >-
-  HuggingFace tools debug log dumps full tool schemas verbatim
-status: To Do
-assignee: []
+title: HuggingFace tools debug log dumps full tool schemas verbatim
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-08-03 16:35'
+updated_date: '2026-08-09 14:10'
 labels:
   - llm-calls
   - observability
   - security
-priority: medium
 dependencies:
   - TASK-2116
+priority: medium
 ---
 
 ## Description
