@@ -206,6 +206,27 @@ def test_video_card_uses_persisted_id_for_storage_resolution(tmp_path):
     assert specs[message.id].file_path == str(stored_path)
 
 
+def test_video_card_uses_native_id_when_message_is_not_persisted(tmp_path):
+    video_store = VideoStore(root=tmp_path / "generated_videos", config=_ttl_config())
+    message = ConsoleChatMessage(
+        id="native-video-message",
+        role=ConsoleMessageRole.ASSISTANT,
+        content="[video] dusk-over-neon-tokyo",
+        video_metadata=_video_meta(),
+    )
+    assert message.persisted_message_id is None
+    stored_path = video_store.save(message.id, _video_meta().name, b"video-bytes")
+    screen = ChatScreen.__new__(ChatScreen)
+    screen._console_video_store = video_store
+
+    specs = screen._build_video_card_specs([message])
+
+    assert set(specs) == {message.id}
+    assert specs[message.id].message_id == message.id
+    assert specs[message.id].status == "ready"
+    assert specs[message.id].file_path == str(stored_path)
+
+
 @pytest.mark.integration
 def test_video_message_reload_round_trip_and_image_reader_isolation(tmp_path):
     """Real-DB reload: persist a video message, drop the store, resume via
