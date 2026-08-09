@@ -51,6 +51,7 @@ from pathlib import Path
 from typing import Optional
 
 import pytest
+from loguru import logger
 
 #: Env var that opts a run into the (slow, real-model) harness. Defined
 #: before the offline latch below, which reads it.
@@ -175,26 +176,72 @@ def _unsandboxed_home() -> Path:
         return Path(os.path.expanduser("~"))
 
 
+def _validate_cache_dir_override(raw: str, *, env_var: str) -> Optional[Path]:
+    """Run one env-sourced cache-dir override through `path_validation.py`.
+
+    Qodo PR #1458 finding 3: `_resolve_model_cache_dir` used to build a
+    `Path` straight out of an environment variable with no traversal or
+    injection screen. Mirrors the treatment `RAGService._keyword_search`
+    already gives `config.search.media_db_path` (Qodo PR #1428 finding 1):
+    lexical normalization plus `validate_path_simple`'s screen, with
+    `probe_existing=False` because filesystem/symlink authority belongs to
+    whatever eventually opens the cache, not this gate.
+
+    Args:
+        raw: The raw environment variable value.
+        env_var: The variable's name, only used to name it in the warning.
+
+    Returns:
+        The validated, lexically normalized path, or ``None`` when `raw`
+        fails validation — logged as a warning, never raised.
+    """
+    from tldw_chatbook.Utils.path_validation import validate_path_simple
+    from tldw_chatbook.Utils.private_paths import lexical_path
+
+    try:
+        return lexical_path(
+            validate_path_simple(
+                Path(raw).expanduser(),
+                require_exists=False,
+                probe_existing=False,
+            )
+        )
+    except ValueError as exc:
+        logger.warning(
+            f"Rejected {env_var}={raw!r} for the model cache directory: "
+            f"{exc}; falling back to the default HuggingFace cache location."
+        )
+        return None
+
+
 def _resolve_model_cache_dir() -> Path:
     """Resolve the HuggingFace hub cache exactly as huggingface_hub does.
 
     Mirrors `huggingface_hub.constants`: `HF_HUB_CACHE` wins outright, then
     `$HF_HOME/hub`, then `$XDG_CACHE_HOME/huggingface/hub`, then
     `~/.cache/huggingface/hub` — with the last branch reading the real home
-    rather than `$HOME` (module docstring).
+    rather than `$HOME` (module docstring). The highest-priority env var
+    that is actually set is run through `path_validation.py`'s
+    traversal/injection screen (`_validate_cache_dir_override`); one that
+    fails it is logged and resolution degrades straight to the default
+    `~/.cache/huggingface/hub` location rather than raising or falling
+    through to a lower-priority candidate — an unvalidated env value must
+    never reach the filesystem checks `skip_reason()` runs against this
+    directory.
     """
-    explicit = os.environ.get(MODEL_CACHE_ENV_VAR)
-    if explicit:
-        return Path(explicit).expanduser()
-    hub_cache = os.environ.get("HF_HUB_CACHE")
-    if hub_cache:
-        return Path(hub_cache).expanduser()
-    hf_home = os.environ.get("HF_HOME")
-    if hf_home:
-        return Path(hf_home).expanduser() / "hub"
-    xdg_cache = os.environ.get("XDG_CACHE_HOME")
-    if xdg_cache:
-        return Path(xdg_cache).expanduser() / "huggingface" / "hub"
+    for env_var, suffix in (
+        (MODEL_CACHE_ENV_VAR, ()),
+        ("HF_HUB_CACHE", ()),
+        ("HF_HOME", ("hub",)),
+        ("XDG_CACHE_HOME", ("huggingface", "hub")),
+    ):
+        raw = os.environ.get(env_var)
+        if not raw:
+            continue
+        validated = _validate_cache_dir_override(raw, env_var=env_var)
+        if validated is None:
+            break
+        return validated.joinpath(*suffix)
     return _unsandboxed_home() / ".cache" / "huggingface" / "hub"
 
 

@@ -184,7 +184,8 @@ def rows_to_doc_ids(
             provenance.get("source_type") if isinstance(provenance, Mapping) else None
         )
         source_type = canonical_source_type(raw_type)
-        source_id = str(row.get("source_id") or "")
+        raw_source_id = row.get("source_id")
+        source_id = "" if raw_source_id is None else str(raw_source_id)
         doc_id = _resolve(source_type, source_id, slug_lookup)
         if doc_id is None:
             doc_id = f"{UNKNOWN_PREFIX}{source_type}:{source_id}"

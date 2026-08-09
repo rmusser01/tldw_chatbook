@@ -61,7 +61,6 @@ from tldw_chatbook.RAG_Search.eval.regression import (
     RegressionDetector,
     environment_mismatch,
 )
-
 from Tests.RAG_Eval.harness.environment import PROFILE_EMBEDDING_MODEL, PROFILE_NAME
 from Tests.RAG_Eval.harness.goldenset import CORPUS_PATH, GOLDEN_PATH
 

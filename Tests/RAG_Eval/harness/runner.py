@@ -44,7 +44,6 @@ from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
 
 from tldw_chatbook.RAG_Search.eval.metrics import evaluate_retrieval_batch
-
 from Tests.RAG_Eval.harness.canonicalize import rows_to_doc_ids, slug_lookup_from
 from Tests.RAG_Eval.harness.goldenset import NEGATIVE_CATEGORY, GoldenQuery
 
@@ -92,6 +91,12 @@ class QueryOutcome:
     error: str | None
 
     def to_dict(self) -> dict[str, Any]:
+        """A JSON-serializable snapshot of this query's outcome.
+
+        Returns:
+            The dataclass fields as a plain dict, with tuples rendered as
+            lists and ``latency_s`` converted to ``latency_ms``.
+        """
         return {
             "query_id": self.query_id,
             "query": self.query,

@@ -242,6 +242,25 @@ def test_row_with_no_source_id_is_unknown_and_never_matches_a_slug():
     assert rows_to_doc_ids([row], LOOKUP) == [f"{UNKNOWN_PREFIX}note:"]
 
 
+def test_falsy_int_source_id_zero_resolves_via_the_slug_not_unknown():
+    """Qodo PR #1458 finding 1: `row.get("source_id") or ""` rewrote a falsy
+    but valid id (the int `0`) to `""` before it ever reached `str()`, so a
+    row whose real source id is `0` could never match a lookup key and was
+    scored as unknown instead. Only an actually-missing id (`None`) should
+    fall back to `""`.
+    """
+    lookup = slug_lookup_from({"media-zero": ("media", 0)})
+    row = {
+        "source_id": 0,
+        "chunk_id": "",
+        "title": "Zero",
+        "snippet": "...",
+        "score": None,
+        "provenance": {"source_type": "media"},
+    }
+    assert rows_to_doc_ids([row], lookup) == ["media-zero"]
+
+
 def test_no_rows_is_no_documents():
     assert rows_to_doc_ids([], LOOKUP) == []
 
