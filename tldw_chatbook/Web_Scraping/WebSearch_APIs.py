@@ -650,6 +650,11 @@ async def analyze_and_aggregate(
             - user_review: Enable manual result selection
             - relevance_llm_timeout_s / relevance_scrape_timeout_s: per-call
               timeouts passed through to search_result_relevance (default 30/30)
+            - respect_robots_txt: bool, default False when absent -- passed
+              through to search_result_relevance's pre-scrape robots.txt
+              consult (task-3260). Absence (the dead-wired research-service
+              caller) keeps today's no-robots-check behavior; web_deep_search
+              (the tool) always sets this from the real [webfetch] setting.
         cancel_event: Optional cooperative-cancellation flag passed through to
             search_result_relevance (port of server WebSearch_APIs.py :638;
             task-1356).
@@ -676,6 +681,20 @@ async def analyze_and_aggregate(
     sub_questions = sub_query_dict.get("sub_questions", [])
     relevance_llm_timeout_s = float(search_params.get("relevance_llm_timeout_s", 30.0) or 30.0)
     relevance_scrape_timeout_s = float(search_params.get("relevance_scrape_timeout_s", 30.0) or 30.0)
+    # task-3260: default False when the key is absent -- the dead-wired
+    # research-service caller (never sets this) keeps today's no-robots-
+    # check behavior; web_deep_search (the tool) always places the real
+    # [webfetch] respect_robots_txt setting here.
+    raw_respect_robots = search_params.get("respect_robots_txt", False)
+    # Strict parse (Qodo PR #1451 — the fourth bool("false") catch of this
+    # arc): a stringly caller's "false" must not ENABLE enforcement. Bools
+    # pass through; only "true"/"1" strings enable; anything else is False.
+    if isinstance(raw_respect_robots, bool):
+        respect_robots_txt = raw_respect_robots
+    elif isinstance(raw_respect_robots, str):
+        respect_robots_txt = raw_respect_robots.strip().lower() in ("true", "1")
+    else:
+        respect_robots_txt = False
     relevant_results = await search_result_relevance(
         web_search_results_dict["results"],
         sub_query_dict["main_goal"],
@@ -684,6 +703,7 @@ async def analyze_and_aggregate(
         cancel_event=cancel_event,
         llm_timeout_s=relevance_llm_timeout_s,
         scrape_timeout_s=relevance_scrape_timeout_s,
+        respect_robots_txt=respect_robots_txt,
     )
     # FIXME
     logger.debug("Relevant results returned by search_result_relevance:")
@@ -755,6 +775,12 @@ async def analyze_and_aggregate(
 ######################### Question Analysis #########################
 #
 _SUBQUERY_GENERATION_MAX_ATTEMPTS = 3
+
+# One shared per-request HTTP timeout for every search backend this repo
+# owns (task-1355 added the literal to serper/exa/yandex; task-3060 to the
+# six older engines; Qodo PR #1451 named it). Bing predates both with its
+# own 10s and deliberately keeps it.
+SEARCH_BACKEND_TIMEOUT_S = 30
 """Number of paid LLM attempts `analyze_question` makes at generating
 sub-questions before giving up. Shared with `generate_and_search`'s
 total-failure warning (task-3221) so the "N attempts" the user is told
@@ -907,18 +933,44 @@ _DNS_GUARD_EXECUTOR_LOCK = threading.Lock()
 """Guards creation of the module-level DNS-guard executor below."""
 
 _DNS_GUARD_EXECUTOR: Optional[concurrent.futures.ThreadPoolExecutor] = None
-"""Dedicated, lazily-created, bounded executor for the pre-scrape SSRF DNS
-guard (`is_public_http_url`) offload in `search_result_relevance` (task-3220).
+"""Dedicated, lazily-created, bounded executor for TWO guard-class,
+synchronous-network-I/O offloads in `search_result_relevance`, both wrapped
+in `asyncio.wait_for(..., timeout=scrape_timeout_s)`: the pre-scrape SSRF
+DNS guard (`is_public_http_url`, task-3220) and the pre-scrape robots.txt
+check (`robots_allows_for_scrape`, task-3260). Both do synchronous network
+I/O (`socket.getaddrinfo` / a blocking `httpx.Client` request respectively)
+that cannot be cancelled once started -- when the caller's `wait_for` times
+out, the abandoned thread keeps occupying its executor slot until the
+underlying call itself gives up, not until the caller stopped waiting.
+Routing either through `asyncio.to_thread` would put it on the DEFAULT
+executor, the same one this loop's other offloads (the relevance/
+summarization `chat_api_call` calls, `aggregate_results`) share -- so a
+result set full of slow-DNS/slow-robots hosts could queue paid LLM calls
+behind dead resolvers/fetches. A small, separate pool isolates the
+abandoned threads so they can never crowd out those offloads.
 
-Constraint: that guard does synchronous `socket.getaddrinfo` and is wrapped
-in `asyncio.wait_for`; when the timeout fires, the abandoned resolver thread
-keeps occupying its executor slot until the OS resolver itself gives up --
-which can far outlast `scrape_timeout_s`. Routing it through
-`asyncio.to_thread` would put it on the DEFAULT executor, the same one this
-loop's other offloads (the relevance/summarization `chat_api_call` calls,
-`aggregate_results`) share -- so a result set full of slow-DNS hosts could
-queue paid LLM calls behind dead resolvers. A small, separate pool isolates
-the abandoned threads so they can never crowd out those offloads."""
+The two consumers fail in OPPOSITE directions once `wait_for` gives up on
+them (task-3260 design doc ruling 5, deliberate): the SSRF guard fails
+CLOSED (treated as non-public -> the scrape is refused) while the robots
+check fails OPEN (treated as allowed -> the scrape proceeds, matching
+`_fetch_robots_parser`'s existing fail-open for web_fetch/web_crawl).
+Sharing one pool between opposite-failing consumers has a real interaction
+under saturation: a hung robots check can hold its slot far longer than
+`scrape_timeout_s` -- `robots_allows_for_scrape`'s own client can chase up
+to `FETCH_MAX_REDIRECTS + 1` (6) hops, each independently bounded by
+`FETCH_TIMEOUT_SECONDS` (30s), so a host that hangs at every hop's timeout
+boundary can occupy a slot for ~180s even though the caller's own
+`wait_for` gave up after 30s. With only `_DNS_GUARD_EXECUTOR_MAX_WORKERS`
+(4) slots, roughly 4 such hung hosts saturate the whole pool; every guard
+call submitted after that -- SSRF AND robots alike, since they share this
+one pool -- queues UNSTARTED behind them. A queued robots check that never
+gets to run before its OWN `wait_for` elapses times out and fails OPEN
+(robots enforcement goes silently off for it), while a queued SSRF check
+queued the same way times out and fails CLOSED (still refuses) -- so a
+burst of slow/hung hosts degrades robots enforcement specifically, without
+weakening the SSRF guard. Spec-sanctioned, recorded here rather than fixed
+(the alternative -- separate pools per consumer, or a circuit breaker -- is
+out of scope for task-3260)."""
 
 
 def _get_dns_guard_executor() -> concurrent.futures.ThreadPoolExecutor:
@@ -966,6 +1018,7 @@ async def search_result_relevance(
     cancel_event: Optional[asyncio.Event] = None,
     llm_timeout_s: float = 30.0,
     scrape_timeout_s: float = 30.0,
+    respect_robots_txt: bool = False,
 ) -> Dict[str, Dict]:
     """
     Evaluate search results for relevance and extract key content.
@@ -986,6 +1039,17 @@ async def search_result_relevance(
     result (not present on the server), for downstream citation display;
     (6) jitter stays chatbook's `random.uniform(0.2, 0.6)` (no config knob).
 
+    robots.txt parity (task-3260): when ``respect_robots_txt`` is True, a
+    relevant result's URL is also checked against its host's robots.txt --
+    same guard-class offload discipline as the SSRF check just above it
+    (dedicated DNS-guard executor, bounded by ``scrape_timeout_s``) -- right
+    before the ``scrape_article`` call. Disallowed takes the SAME path as an
+    SSRF refusal: the scrape is skipped and the result is kept with its
+    existing snippet/title/url fallback content, never discarded. A robots-
+    check error/timeout fails OPEN (proceeds to scrape) -- deliberately the
+    opposite of the SSRF guard's own timeout/refusal, matching
+    ``_fetch_robots_parser``'s existing fail-open for web_fetch/web_crawl.
+
     Args:
         search_results (List[Dict]): List of search results to evaluate.
         original_question (str): The original question posed by the user.
@@ -996,6 +1060,10 @@ async def search_result_relevance(
             the loop between results.
         llm_timeout_s: Wall-clock timeout for each relevance/summarization LLM call.
         scrape_timeout_s: Wall-clock timeout for the per-result scrape.
+        respect_robots_txt: When True, consult the target host's robots.txt
+            before scraping a relevant result (task-3260); default False
+            (no robots.txt fetch at all) preserves the pre-task-3260
+            behavior for any caller that doesn't pass this explicitly.
 
     Returns:
         Dict[str, Dict]: A dictionary of relevant results, keyed by a unique ID or index.
@@ -1137,16 +1205,70 @@ async def search_result_relevance(
                                     "back to search snippet/title/url"
                                 )
                             else:
-                                scraped_content = await asyncio.wait_for(
-                                    scrape_article(result["url"]), timeout=scrape_timeout_s
-                                )
-                                scraped_text = ""
-                                if isinstance(scraped_content, dict):
-                                    scraped_text = str(scraped_content.get("content") or "").strip()
-                                elif isinstance(scraped_content, str):
-                                    scraped_text = scraped_content.strip()
-                                if scraped_text:
-                                    source_content = scraped_text
+                                # robots.txt parity (task-3260): checked here,
+                                # between the SSRF guard above and the scrape
+                                # below -- same guard-class offload discipline
+                                # (dedicated DNS-guard executor, bounded by
+                                # scrape_timeout_s) as the SSRF check, since a
+                                # robots.txt fetch does its own network I/O.
+                                # Function-local import: no module-level cycle
+                                # (web_tool_impls already imports WebSearch_APIs
+                                # function-locally in the OTHER direction).
+                                robots_ok = True
+                                if respect_robots_txt:
+                                    from tldw_chatbook.Tools.web_tool_impls import (
+                                        robots_allows_for_scrape,
+                                    )
+
+                                    try:
+                                        robots_ok = await asyncio.wait_for(
+                                            asyncio.get_running_loop().run_in_executor(
+                                                _get_dns_guard_executor(),
+                                                robots_allows_for_scrape,
+                                                result["url"],
+                                            ),
+                                            timeout=scrape_timeout_s,
+                                        )
+                                    except asyncio.CancelledError:
+                                        raise
+                                    except Exception as robots_error:
+                                        # Fail-OPEN on a robots-check error or
+                                        # timeout (deliberately the opposite of
+                                        # the SSRF guard just above, whose own
+                                        # timeout/refusal still refuses) --
+                                        # matches _fetch_robots_parser's
+                                        # existing fail-open for web_fetch/
+                                        # web_crawl.
+                                        logger.debug(
+                                            f"robots.txt check failed for result "
+                                            f"{result_id}, failing open (will "
+                                            f"scrape): {robots_error}"
+                                        )
+                                        robots_ok = True
+
+                                if not robots_ok:
+                                    # Disallowed -> same path as an SSRF
+                                    # refusal: skip the scrape, keep the
+                                    # result via its existing fallback
+                                    # content (never discard). Log names the
+                                    # HOST only, never the query.
+                                    host = urlparse(result.get("url") or "").hostname or "unknown"
+                                    logger.debug(
+                                        f"Skipping scrape for result {result_id}: "
+                                        f"robots.txt disallows {host!r}; falling "
+                                        "back to search snippet/title/url"
+                                    )
+                                else:
+                                    scraped_content = await asyncio.wait_for(
+                                        scrape_article(result["url"]), timeout=scrape_timeout_s
+                                    )
+                                    scraped_text = ""
+                                    if isinstance(scraped_content, dict):
+                                        scraped_text = str(scraped_content.get("content") or "").strip()
+                                    elif isinstance(scraped_content, str):
+                                        scraped_text = scraped_content.strip()
+                                    if scraped_text:
+                                        source_content = scraped_text
                         except asyncio.CancelledError:
                             raise
                         except Exception as scrape_error:
@@ -2631,7 +2753,9 @@ def search_web_brave(
         "safeSearch": "Moderate",
     }
 
-    response = requests.get(search_url, headers=headers, params=params)
+    # task-3060: bound worst-case latency -- an unresponsive Brave endpoint
+    # must not hang perform_websearch (and the deep-search pipeline) indefinitely.
+    response = requests.get(search_url, headers=headers, params=params, timeout=SEARCH_BACKEND_TIMEOUT_S)
     response.raise_for_status()
     # Response: https://api.search.brave.com/app/documentation/web-search/responses#WebSearchApiResponse
     brave_search_results = response.json()
@@ -2788,7 +2912,9 @@ def search_web_duckduckgo(
     results: list[dict[str, str]] = []
 
     for _ in range(5):
-        response = requests.post("https://html.duckduckgo.com/html", data=payload)
+        # task-3060: bound worst-case latency per bootstrap/pagination call
+        # (this loop can issue up to 5 requests.post calls, all this one site).
+        response = requests.post("https://html.duckduckgo.com/html", data=payload, timeout=SEARCH_BACKEND_TIMEOUT_S)
         resp_content = response.content
         if b"No  results." in resp_content:
             return results
@@ -3081,7 +3207,9 @@ def search_web_google(
         logger.info(f"Prepared parameters for Google Search: {params}")
 
         # Make the API call
-        response = requests.get(search_url, params=params)
+        # task-3060: bound worst-case latency -- an unresponsive Google CSE
+        # endpoint must not hang perform_websearch indefinitely.
+        response = requests.get(search_url, params=params, timeout=SEARCH_BACKEND_TIMEOUT_S)
         response.raise_for_status()
         google_search_results = response.json()
 
@@ -3282,7 +3410,9 @@ def search_web_kagi(query: str, limit: int = 10) -> Dict:
     endpoint = f"{search_url}/search"
     params = {"q": query, "limit": limit}
 
-    response = requests.get(endpoint, headers=headers, params=params)
+    # task-3060: bound worst-case latency -- an unresponsive Kagi endpoint
+    # must not hang perform_websearch indefinitely.
+    response = requests.get(endpoint, headers=headers, params=params, timeout=SEARCH_BACKEND_TIMEOUT_S)
     response.raise_for_status()
     logger.debug(response.json())
     return response.json()
@@ -3443,7 +3573,10 @@ def search_web_searx(
         time.sleep(delay)
 
         session = searx_create_session()
-        response = session.get(search_url, headers=headers)
+        # task-3060: bound worst-case latency -- Session.get() does not
+        # inherit a timeout from the Session itself, so it must be passed
+        # per-request like every other engine here.
+        response = session.get(search_url, headers=headers, timeout=SEARCH_BACKEND_TIMEOUT_S)
         response.raise_for_status()
 
         # Check if the response is JSON
@@ -3593,7 +3726,7 @@ def search_web_serper(
         "hl": search_lang or "en",
         "num": int(result_count) if result_count else 10,
     }
-    response = requests.post("https://google.serper.dev/search", headers=headers, json=payload, timeout=30)
+    response = requests.post("https://google.serper.dev/search", headers=headers, json=payload, timeout=SEARCH_BACKEND_TIMEOUT_S)
     response.raise_for_status()
     return response.json()
 
@@ -3663,7 +3796,7 @@ def search_web_exa(search_query: str, result_count: Optional[int] = None) -> dic
         "type": "auto",
         "contents": {"highlights": True},
     }
-    response = requests.post("https://api.exa.ai/search", headers=headers, json=payload, timeout=30)
+    response = requests.post("https://api.exa.ai/search", headers=headers, json=payload, timeout=SEARCH_BACKEND_TIMEOUT_S)
     response.raise_for_status()
     return response.json()
 
@@ -3728,8 +3861,10 @@ def search_web_tavily(
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
         }
 
+        # task-3060: bound worst-case latency -- an unresponsive Tavily
+        # endpoint must not hang perform_websearch indefinitely.
         response = requests.post(
-            tavily_api_url, headers=headers, data=json.dumps(payload)
+            tavily_api_url, headers=headers, data=json.dumps(payload), timeout=SEARCH_BACKEND_TIMEOUT_S
         )
         response.raise_for_status()
         return response.json()
@@ -3834,7 +3969,7 @@ def search_web_yandex(search_query: str, result_count: Optional[int] = None) -> 
         "responseFormat": "FORMAT_XML",
     }
     response = requests.post(
-        "https://searchapi.api.cloud.yandex.net/v2/web/search", headers=headers, json=payload, timeout=30
+        "https://searchapi.api.cloud.yandex.net/v2/web/search", headers=headers, json=payload, timeout=SEARCH_BACKEND_TIMEOUT_S
     )
     response.raise_for_status()
     return response.json()

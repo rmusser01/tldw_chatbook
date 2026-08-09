@@ -309,6 +309,41 @@ def test_deep_search_places_timeouts_into_search_params(deep_env, monkeypatch):
     assert seen["search_params"].get("relevance_scrape_timeout_s") == 30
 
 
+def test_deep_search_places_respect_robots_txt_into_search_params(deep_env, monkeypatch):
+    """task-3260: the tool must place the real, configured
+    [webfetch] respect_robots_txt setting into search_params -- the
+    pydantic-safe channel analyze_and_aggregate/search_result_relevance
+    read it from (mirrors the timeouts plumbing above)."""
+    monkeypatch.setattr(
+        web_tool_impls, "_webfetch_settings", lambda: {"respect_robots_txt": True}
+    )
+    seen = {}
+
+    def fake_generate(q, p):
+        seen["search_params"] = dict(p)
+        return _PHASE1
+
+    monkeypatch.setattr(WebSearch_APIs, "generate_and_search", fake_generate)
+    web_deep_search("q")
+    assert seen["search_params"].get("respect_robots_txt") is True
+
+
+def test_deep_search_places_respect_robots_txt_false_into_search_params(deep_env, monkeypatch):
+    """Same seam, opposite value -- proves this isn't hardcoded True."""
+    monkeypatch.setattr(
+        web_tool_impls, "_webfetch_settings", lambda: {"respect_robots_txt": False}
+    )
+    seen = {}
+
+    def fake_generate(q, p):
+        seen["search_params"] = dict(p)
+        return _PHASE1
+
+    monkeypatch.setattr(WebSearch_APIs, "generate_and_search", fake_generate)
+    web_deep_search("q")
+    assert seen["search_params"].get("respect_robots_txt") is False
+
+
 def test_deep_search_places_max_queries_cap_into_search_params(deep_env, monkeypatch):
     """Important 2 (final review): search_default_max_queries is already
     resolved by _deep_search_settings() but was never handed to the
