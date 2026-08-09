@@ -128,12 +128,30 @@ def test_browse_prompt_scope_normalizes_query_sort_and_bounded_page_size():
         ({"page": 0}, "page"),
         ({"page": True}, "page"),
         ({"page_size": 0}, "page_size"),
+        ({"page_size": True}, "page_size"),
         ({"query": None}, "query"),
     ],
 )
 def test_browse_prompt_scope_rejects_invalid_public_inputs(kwargs, message):
     with pytest.raises((TypeError, ValueError), match=message):
         prompts_state_module.PromptBrowseScope(**kwargs)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"query": "changed"},
+        {"collection_id": 7},
+        {"sort_by": "name"},
+        {"sort_order": "asc"},
+        {"page": 2},
+        {"page_size": 51},
+    ],
+)
+def test_browse_prompt_scope_fingerprint_covers_every_variable_field(changes):
+    scope = prompts_state_module.PromptBrowseScope()
+
+    assert replace(scope, **changes).fingerprint != scope.fingerprint
 
 
 def test_browse_prompt_result_preserves_exact_total_pages_and_clamped_page():
@@ -220,6 +238,41 @@ def test_browse_prompt_result_rejects_overfull_partial_last_page():
         )
 
 
+@pytest.mark.parametrize(
+    ("scope", "items", "total_items", "total_pages", "current_page"),
+    [
+        (
+            prompts_state_module.PromptBrowseScope(page=2, page_size=2),
+            [PROMPT_A],
+            5,
+            3,
+            2,
+        ),
+        (
+            prompts_state_module.PromptBrowseScope(page=3, page_size=2),
+            [],
+            5,
+            3,
+            3,
+        ),
+    ],
+)
+def test_browse_prompt_result_rejects_underfilled_pages(
+    scope, items, total_items, total_pages, current_page
+):
+    with pytest.raises(ValueError, match="item count"):
+        prompts_state_module.build_prompt_browse_result(
+            scope,
+            {
+                "items": items,
+                "total_items": total_items,
+                "total_pages": total_pages,
+                "current_page": current_page,
+                "per_page": scope.page_size,
+            },
+        )
+
+
 def test_browse_prompt_result_deeply_freezes_detached_mapping_rows():
     source = {
         "id": 7,
@@ -244,6 +297,9 @@ def test_browse_prompt_result_deeply_freezes_detached_mapping_rows():
 
     row = result.items[0]
     assert isinstance(row, Mapping)
+    assert row.get("name") == "Original"
+    assert dict(row)["name"] == "Original"
+    assert tuple(row) == ("id", "name", "keywords", "metadata")
     assert row["name"] == "Original"
     assert row["keywords"] == ("first",)
     assert row["metadata"]["labels"] == ("stable",)
@@ -253,6 +309,52 @@ def test_browse_prompt_result_deeply_freezes_detached_mapping_rows():
         row["metadata"]["new"] = "Direct change"  # type: ignore[index]
     with pytest.raises(TypeError):
         row["keywords"][0] = "Direct change"  # type: ignore[index]
+
+
+def _direct_prompt_browse_result(items):
+    scope = prompts_state_module.PromptBrowseScope()
+    return prompts_state_module.PromptBrowseResult(
+        scope=scope,
+        items=items,
+        total_items=1,
+        total_pages=1,
+        page=1,
+        status="ready",
+        request_fingerprint=scope.fingerprint,
+        request_token=1,
+    )
+
+
+def test_browse_prompt_result_constructor_deeply_freezes_and_detaches_items():
+    source = {
+        "id": 8,
+        "values": [None, "text", True, 3, 4.5],
+        "metadata": {"labels": ["stable"]},
+    }
+    source_items = [source]
+
+    result = _direct_prompt_browse_result(source_items)
+    source_items.append({"id": 9})
+    source["values"].append("late")
+    source["metadata"]["labels"].append("late")
+
+    assert isinstance(result.items, tuple)
+    assert len(result.items) == 1
+    assert result.items[0]["values"] == (None, "text", True, 3, 4.5)
+    assert result.items[0]["metadata"]["labels"] == ("stable",)
+    with pytest.raises(TypeError):
+        result.items[0]["id"] = 10  # type: ignore[index]
+
+
+def test_browse_prompt_result_constructor_rejects_non_mapping_items():
+    with pytest.raises(TypeError, match="items must be mappings"):
+        _direct_prompt_browse_result([{"id": 8}, "not a mapping"])
+
+
+@pytest.mark.parametrize("unsupported", [{"set value"}, object()])
+def test_browse_prompt_result_rejects_unsupported_nested_leaves(unsupported):
+    with pytest.raises(TypeError, match="JSON-like"):
+        _direct_prompt_browse_result([{"id": 8, "unsupported": unsupported}])
 
 
 @pytest.mark.parametrize(
@@ -328,6 +430,67 @@ def test_browse_prompt_result_rejects_late_same_scope_request_token():
     assert prompts_state_module.apply_prompt_browse_result(loading, fresh) is fresh
     with pytest.raises(FrozenInstanceError):
         fresh.status = "error"  # type: ignore[misc]
+
+
+def test_browse_prompt_reducer_rejects_settled_state_and_loading_result():
+    scope = prompts_state_module.PromptBrowseScope()
+    payload = {
+        "items": [PROMPT_A],
+        "total_items": 1,
+        "total_pages": 1,
+        "current_page": 1,
+        "per_page": scope.page_size,
+    }
+    settled = prompts_state_module.build_prompt_browse_result(scope, payload)
+    error = prompts_state_module.build_prompt_browse_error(scope)
+    loading = prompts_state_module.begin_prompt_browse(scope)
+    duplicate_loading = prompts_state_module.begin_prompt_browse(scope)
+
+    assert prompts_state_module.apply_prompt_browse_result(settled, error) is settled
+    assert (
+        prompts_state_module.apply_prompt_browse_result(loading, duplicate_loading)
+        is loading
+    )
+
+
+@pytest.mark.parametrize(
+    "field", ["total_items", "total_pages", "current_page", "per_page"]
+)
+def test_browse_prompt_result_rejects_bool_response_integers(field):
+    scope = prompts_state_module.PromptBrowseScope()
+    payload = {
+        "items": [PROMPT_A],
+        "total_items": 1,
+        "total_pages": 1,
+        "current_page": 1,
+        "per_page": scope.page_size,
+    }
+    payload[field] = True
+
+    with pytest.raises(ValueError, match=field):
+        prompts_state_module.build_prompt_browse_result(scope, payload)
+
+
+def test_browse_prompt_request_token_rejects_bool():
+    scope = prompts_state_module.PromptBrowseScope()
+    result = _direct_prompt_browse_result([{"id": 8}])
+
+    with pytest.raises(ValueError, match="request_token"):
+        prompts_state_module.begin_prompt_browse(scope, request_token=True)
+    with pytest.raises(ValueError, match="request_token"):
+        replace(result, request_token=True)
+
+
+def test_browse_prompt_error_strips_text_and_rejects_whitespace_only():
+    scope = prompts_state_module.PromptBrowseScope()
+
+    result = prompts_state_module.build_prompt_browse_error(
+        scope, error="  Couldn't load this page. Retry. \n"
+    )
+
+    assert result.error == "Couldn't load this page. Retry."
+    with pytest.raises(ValueError, match="error"):
+        prompts_state_module.build_prompt_browse_error(scope, error=" \n\t ")
 
 
 def test_browse_prompt_scope_clamps_to_last_exact_page_or_first_empty_page():

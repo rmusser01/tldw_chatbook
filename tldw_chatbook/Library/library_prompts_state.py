@@ -128,6 +128,27 @@ class PromptBrowseScope:
         return hashlib.sha256(encoded).hexdigest()
 
 
+def _prompt_browse_request_token(request_token: int) -> int:
+    if type(request_token) is not int or request_token <= 0:
+        raise ValueError("request_token must be a positive integer.")
+    return request_token
+
+
+def _freeze_prompt_browse_value(value: Any) -> Any:
+    """Return an immutable detached copy of one JSON-like browse value."""
+    if value is None or type(value) in {str, bool, int, float}:
+        return value
+    if isinstance(value, Mapping):
+        if any(type(key) is not str for key in value):
+            raise TypeError("Prompt browse mappings must use JSON-like string keys.")
+        return MappingProxyType(
+            {key: _freeze_prompt_browse_value(item) for key, item in value.items()}
+        )
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return tuple(_freeze_prompt_browse_value(item) for item in value)
+    raise TypeError("Prompt browse values must be JSON-like immutable data.")
+
+
 @dataclass(frozen=True)
 class PromptBrowseResult:
     """Immutable loading, result, or failure state for one browse request."""
@@ -142,15 +163,24 @@ class PromptBrowseResult:
     request_token: int
     error: str = ""
 
+    def __post_init__(self) -> None:
+        _prompt_browse_request_token(self.request_token)
+        if not isinstance(self.items, Sequence) or isinstance(self.items, (str, bytes)):
+            raise TypeError("Prompt browse result items must be a sequence.")
+        if any(not isinstance(item, Mapping) for item in self.items):
+            raise TypeError("Prompt browse result items must be mappings.")
+        object.__setattr__(
+            self,
+            "items",
+            tuple(
+                cast(Mapping[str, Any], _freeze_prompt_browse_value(item))
+                for item in self.items
+            ),
+        )
+
     @property
     def scope_fingerprint(self) -> str:
         return self.scope.fingerprint
-
-
-def _prompt_browse_request_token(request_token: int) -> int:
-    if type(request_token) is not int or request_token <= 0:
-        raise ValueError("request_token must be a positive integer.")
-    return request_token
 
 
 def clamp_prompt_browse_scope(
@@ -167,7 +197,6 @@ def begin_prompt_browse(
     scope: PromptBrowseScope, *, request_token: int = 1
 ) -> PromptBrowseResult:
     """Build loading state bound to an exact scope fingerprint and token."""
-    token = _prompt_browse_request_token(request_token)
     return PromptBrowseResult(
         scope=scope,
         items=(),
@@ -176,7 +205,7 @@ def begin_prompt_browse(
         page=scope.page,
         status="loading",
         request_fingerprint=scope.fingerprint,
-        request_token=token,
+        request_token=request_token,
     )
 
 
@@ -184,17 +213,6 @@ def _prompt_browse_int(record: Mapping[str, Any], key: str, *, minimum: int) -> 
     value = record.get(key)
     if type(value) is not int or value < minimum:
         raise ValueError(f"{key} must be an integer of at least {minimum}.")
-    return value
-
-
-def _freeze_prompt_browse_value(value: Any) -> Any:
-    """Return an immutable detached copy of one JSON-like browse value."""
-    if isinstance(value, Mapping):
-        return MappingProxyType(
-            {key: _freeze_prompt_browse_value(item) for key, item in value.items()}
-        )
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
-        return tuple(_freeze_prompt_browse_value(item) for item in value)
     return value
 
 
@@ -210,11 +228,7 @@ def build_prompt_browse_result(
     raw_items = record.get("items")
     if not isinstance(raw_items, Sequence) or isinstance(raw_items, (str, bytes)):
         raise TypeError("Prompt browse result items must be a sequence.")
-    if any(not isinstance(item, Mapping) for item in raw_items):
-        raise TypeError("Prompt browse result items must be mappings.")
-    items = tuple(
-        cast(Mapping[str, Any], _freeze_prompt_browse_value(item)) for item in raw_items
-    )
+    items = tuple(raw_items)
     total_items = _prompt_browse_int(record, "total_items", minimum=0)
     total_pages = _prompt_browse_int(record, "total_pages", minimum=0)
     current_page = _prompt_browse_int(record, "current_page", minimum=1)
@@ -248,7 +262,7 @@ def build_prompt_browse_result(
         page=current_page,
         status=status,
         request_fingerprint=scope.fingerprint,
-        request_token=_prompt_browse_request_token(request_token),
+        request_token=request_token,
     )
 
 
@@ -259,7 +273,8 @@ def build_prompt_browse_error(
     error: str = "Couldn't load prompts. Try again.",
 ) -> PromptBrowseResult:
     """Build failure state without misrepresenting it as an empty result."""
-    if not isinstance(error, str) or not error:
+    normalized_error = error.strip() if isinstance(error, str) else ""
+    if not normalized_error:
         raise ValueError("error must be non-empty text.")
     return PromptBrowseResult(
         scope=scope,
@@ -269,8 +284,8 @@ def build_prompt_browse_error(
         page=scope.page,
         status="error",
         request_fingerprint=scope.fingerprint,
-        request_token=_prompt_browse_request_token(request_token),
-        error=error,
+        request_token=request_token,
+        error=normalized_error,
     )
 
 
