@@ -1,7 +1,7 @@
 # TASK-2118 — HuggingFace tool-log privacy design
 
 - Date: 2026-08-09
-- Status: implemented and verified
+- Status: implemented; final review reconciliation in progress
 - Backlog: TASK-2118
 - Existing decision: `backlog/decisions/029-local-private-data-boundary.md`
 - ADR required: no
@@ -71,7 +71,7 @@ TDD evidence must include a red run against the current raw logs and a green run
 Sweep every Python module under `tldw_chatbook/LLM_Calls/` for logger calls that directly format raw request-payload dictionaries or raw tool definitions, matching acceptance criterion 4. Use an AST/text-assisted inventory, then inspect each candidate in context because names such as `data` also represent response events.
 
 - Any raw request-payload dictionary or tool-definition log is fixed in this task by routing through the existing allowlist helper.
-- Response events, status metadata, bounded parser diagnostics, and individual content-preview diagnostics are not AC 4 matches and are recorded as such in TASK-2118 Implementation Notes. The sweep confirmed separate content-preview exposures, so a standalone Backlog task was filed before implementation. TASK-2118 records their exact sites and classification without referencing the later task ID, preserving the repository's no-forward-reference rule and this repair's atomic scope.
+- Response events, status metadata, bounded parser diagnostics, and individual content, prompt, response/output, credential-fragment, and private endpoint/path diagnostics are not AC 4 matches. The original identifier-filtered candidate subset was not a complete inventory of that broader privacy boundary. Final review therefore inspected all 523 logger calls in the two summarization modules and assigned 141 direct private diagnostics to the standalone follow-up: 64 local and 77 general, categorized as 21 input, 17 prompt, 21 credential-fragment, 11 private endpoint/path, and 71 response/output sites. TASK-2118 records the complete categorized ownership without referencing the later task ID, preserving the repository's no-forward-reference rule and this repair's atomic scope.
 - The sweep is evidence for acceptance criterion 4; a new permanent broad AST test is not required unless the sweep finds a recurring mechanically detectable contract that existing tests do not cover.
 
 ## Verification and scope
@@ -80,9 +80,11 @@ Required focused verification:
 
 - `Tests/Chat/test_sensitive_llm_logging.py`
 - HuggingFace tests in `Tests/Chat/test_chat_functions.py`
+- `Tests/LLM_Calls/test_debug_log_fstring_hygiene.py`
+- `Tests/Architecture/test_persistent_diagnostic_inventory.py`, with exact current-dev baseline comparison for unrelated stored-inventory drift
 - Ruff lint/format checks for edited Python files
 - `python -m py_compile` for edited Python files
 - the documented LLM-call logging sweep
 - `git diff --check`
 
-The implementation scope is limited to the HuggingFace logging call sites, their function-level privacy regression test, TASK-2118 documentation, and this spec/plan. No application-state, provider-routing, transport, or UI behavior changes are included.
+The implementation scope is limited to the HuggingFace logging call sites, their function-level privacy regression test, the one branch-owned diagnostic-manifest digest, TASK-2118 documentation, the complete summarization follow-up inventory, the testing-evidence lesson, and this spec/plan. No application-state, provider-routing, transport, summarization runtime, or UI behavior changes are included.

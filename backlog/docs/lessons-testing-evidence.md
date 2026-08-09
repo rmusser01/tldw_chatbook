@@ -1847,6 +1847,9 @@ route the sub-legs through `connect_private_sqlite` with a registered owner
 (`rag.chachanotes_keyword_leg`, read-only URI), add the inventory row, and bump the
 ratchet — which is what the guard existed to make happen, roughly a day later than it
 should have.
+
+---
+
 ## `Widget.focus()` is deferred — a same-handler capture of `app.focused` sees the old widget
 
 **task-3311, 2026-08-09.** The Ingest Clear handler called `path_input.focus()` and
@@ -1896,3 +1899,19 @@ churn to bisect further. Corollary of the incident: line numbers in an earlier
 failure report drift as you edit the file — re-derive the failing STATEMENT
 before diagnosing (a "status query" failure here was actually the post-completion
 query racing the finish-of-run recompose, three asserts later than first read).
+
+---
+
+## A heuristic candidate list is not a complete remediation inventory (2026-08-09)
+
+**Incident (TASK-2118 final review).** A spelling-filtered logger sweep was
+correctly documented as heuristic AC evidence, but its content-bearing subset
+was later copied into a follow-up task as though it were the complete
+summarization privacy inventory. Reviewing every logger call in the two owned
+modules found many more prompt, response/output, credential-fragment, and
+private endpoint/path diagnostics that the filter was never designed to find.
+
+**The rule.** Preserve the stated proof boundary when evidence crosses into a
+follow-up. Build remediation inventories from the complete owning population,
+grouped by stable module/function/diagnostic identity; use heuristic matches
+only as candidates or cross-checks, never as the denominator.
