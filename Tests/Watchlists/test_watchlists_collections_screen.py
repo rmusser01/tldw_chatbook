@@ -3116,3 +3116,42 @@ async def test_a_hostile_search_query_renders_inert_and_never_raises():
         row_text = str(row_widget.query_one(Static).renderable)
         assert "[bold red]Evil Feed[/]" in row_text
         assert "[script]" in row_text
+
+
+# --- TASK-3604 plan task 5: the import summary toast ----------------------------
+
+
+def test_opml_import_summary_text_tells_the_whole_story():
+    """The toast names new vs already-present sources, the watchlists
+    created/reused, and the Unassigned remainder -- the pre-round-trip
+    "Imported N source(s)" read identically for a structured import and a
+    no-op re-import."""
+    from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
+        _opml_import_summary_text,
+    )
+
+    text = _opml_import_summary_text({
+        "created": 12,
+        "existing": 3,
+        "watchlists_created": ["AI", "News"],
+        "watchlists_reused": ["Tech"],
+        "assignments": 13,
+    })
+    assert "12 new" in text and "3 already present" in text
+    assert "13 into 3 watchlists, 2 new" in text
+    assert "2 unassigned" in text
+
+    assert _opml_import_summary_text({
+        "created": 5, "existing": 0,
+        "watchlists_created": [], "watchlists_reused": [], "assignments": 0,
+    }) == "Imported 5 new source(s) from OPML.", (
+        "a folderless import reads exactly like the old toast"
+    )
+
+    noop = _opml_import_summary_text({
+        "created": 0, "existing": 15,
+        "watchlists_created": [], "watchlists_reused": ["Tech"],
+        "assignments": 15,
+    })
+    assert "0 new + 15 already present" in noop
+    assert "unassigned" not in noop, "a full round-trip leaves no remainder"

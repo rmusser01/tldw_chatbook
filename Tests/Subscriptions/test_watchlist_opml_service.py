@@ -304,3 +304,61 @@ def test_export_with_no_watchlists_is_flat():
     top = list(ET.fromstring(xml).find("body"))
     assert all(el.get("xmlUrl") is not None for el in top), "no folders at all"
     assert [el.get("text") for el in top] == ["A", "B"], "flat AND name-ordered"
+
+
+# --- TASK-3604 plan task 5: the round-trip pin ---------------------------------
+
+
+@pytest.mark.asyncio
+async def test_export_then_import_round_trips_the_structure(tmp_path):
+    """The phase's done-when, machine-checked (ADR-043): exporting a
+    structured profile and importing the document into a FRESH database
+    reproduces the exact watchlists, memberships, and unassigned set."""
+    from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+    from tldw_chatbook.Subscriptions.local_watchlists_service import (
+        LocalWatchlistsService,
+    )
+    from tldw_chatbook.Subscriptions.watchlist_bundle_service import (
+        WatchlistBundleService,
+    )
+    from tldw_chatbook.Subscriptions.watchlist_scope_service import (
+        WatchlistBackend,
+        WatchlistScopeService,
+    )
+
+    db_a = SubscriptionsDB(str(tmp_path / "a.db"), client_id="test")
+    bundle_a = WatchlistBundleService(db_a)
+    tech = bundle_a.create("Tech")
+    news = bundle_a.create("News")
+    ai = db_a.add_subscription(name="AI", type="rss", source="http://x.com/ai")
+    shared = db_a.add_subscription(name="Shared", type="rss", source="http://x.com/shared")
+    db_a.add_subscription(name="Loose", type="rss", source="http://x.com/loose")
+    bundle_a.add_source(tech["id"], ai)
+    bundle_a.add_source(tech["id"], shared)
+    bundle_a.add_source(news["id"], shared)
+    scope_a = WatchlistScopeService(
+        local_service=LocalWatchlistsService(db_factory=lambda: db_a),
+        server_service=None,
+    )
+
+    document = await scope_a.export_opml(runtime_backend=WatchlistBackend.LOCAL)
+
+    db_b = SubscriptionsDB(str(tmp_path / "b.db"), client_id="test")
+    scope_b = WatchlistScopeService(
+        local_service=LocalWatchlistsService(db_factory=lambda: db_b),
+        server_service=None,
+    )
+    await scope_b.import_opml(runtime_backend=WatchlistBackend.LOCAL, xml_text=document)
+
+    def structure(bundle) -> dict[str, list[str]]:
+        return {
+            w["name"]: sorted(r["name"] for r in bundle.list_source_rows(w["id"]))
+            for w in bundle.list_watchlists()
+        }
+
+    bundle_b = WatchlistBundleService(db_b)
+    assert structure(bundle_b) == structure(bundle_a) == {
+        "News": ["Shared"],
+        "Tech": ["AI", "Shared"],
+    }
+    assert {r["name"] for r in bundle_b.list_unassigned_source_rows()} == {"Loose"}

@@ -301,6 +301,41 @@ def _normalize_items_status_filter(value: Any) -> str:
     return "unread" if text in {"unread", "new"} else "all"
 
 
+def _opml_import_summary_text(result: Mapping[str, Any]) -> str:
+    """The post-import toast, saying the WHOLE of what happened (TASK-3604).
+
+    The pre-round-trip toast counted only created sources, so importing a
+    structured document read identically whether it filed twelve feeds into
+    three watchlists or did nothing at all on a re-import. The summary now
+    names new vs already-present sources, the watchlists created or
+    reused, and the Unassigned remainder.
+
+    Args:
+        result: The scope service's import summary dict.
+
+    Returns:
+        One sentence for the toast.
+    """
+    created = int(result.get("created", 0) or 0)
+    existing = int(result.get("existing", 0) or 0)
+    created_wl = list(result.get("watchlists_created") or [])
+    reused_wl = list(result.get("watchlists_reused") or [])
+    assignments = int(result.get("assignments", 0) or 0)
+    unassigned = created + existing - assignments
+
+    sources_bit = f"{created} new" if existing == 0 else f"{created} new + {existing} already present"
+    text = f"Imported {sources_bit} source(s) from OPML"
+    if assignments:
+        total_wl = len(created_wl) + len(reused_wl)
+        wl_word = "watchlist" if total_wl == 1 else "watchlists"
+        new_bit = f", {len(created_wl)} new" if created_wl else ""
+        text += f": {assignments} into {total_wl} {wl_word}{new_bit}"
+        if unassigned:
+            text += f", {unassigned} unassigned"
+    text += "."
+    return text
+
+
 @dataclass(frozen=True)
 class _ItemStatusIntent:
     """One desired item-status write, captured at the moment it is dispatched.
@@ -5050,9 +5085,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 runtime_backend=self.runtime_backend,
                 xml_text=xml_text,
             )
-            created = result.get("created", 0)
             if callable(notify):
-                notify(f"Imported {created} source(s) from OPML.", severity="information")
+                notify(_opml_import_summary_text(result), severity="information")
         except Exception:
             logger.opt(exception=True).warning("Failed to import OPML.")
             if callable(notify):
