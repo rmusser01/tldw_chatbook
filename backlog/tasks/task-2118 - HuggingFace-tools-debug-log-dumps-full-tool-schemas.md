@@ -1,11 +1,11 @@
 ---
 id: TASK-2118
 title: HuggingFace tools debug log dumps full tool schemas verbatim
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-03 16:35'
-updated_date: '2026-08-09 20:55'
+updated_date: '2026-08-09 21:11'
 labels:
   - llm-calls
   - observability
@@ -76,7 +76,7 @@ The supplementary identifier-filtered inventory remained exactly 35 candidates a
 
 Latest-dev reconciliation: final-review base is origin/dev f6911b37b. No upstream commit since the prior reviewed base changed the scoped production file, focused tests, or either summarization module; only the testing-lessons file changed in scope. The 35-, 523-, and 763-call counts were rerun unchanged. The reviewed LLM_API_Calls.py diagnostic change preserves 171 calls and changes only its manifest digest from dc16bf5efed6e22426f0 to 246b5c982ddb1910cc8d. After that one-entry reconciliation, generated-versus-stored inventory drift is exactly the same 16 unrelated owners on branch and detached f6911b37b (normalized SHA-256 fa24957505c91fa2be8cf3426e3b86572ee8015b34be6715f72ff38eba62db41); sink topology is unchanged. A separate To Do task owns that current-dev baseline incident, and TASK-2118 does not bless those entries.
 
-Final touched-scope verification after the final rebase: sensitive logging 70 passed; HuggingFace chat subset 8 passed and 60 deselected; debug-log f-string hygiene 2 passed. Ruff lint passed; edited-range format checks at production 4341-4365 and test 40-70/675-820 each reported already formatted; py_compile and git diff --check passed. The user explicitly limited completion tests to files and functionality touched, so the earlier repository-wide gate in the task plan was replaced and is not completion evidence. No test application or simplified application was used.
+Final touched-scope verification after the final-review rebase: sensitive logging 70 passed; HuggingFace chat subset 8 passed and 60 deselected; debug-log f-string hygiene 2 passed. The diagnostic-inventory architecture file produced 1 failed and 7 passed on the branch, exactly matching the detached f6911b37b baseline; normalized generated-versus-stored drift is identical on both at 16 entries and SHA-256 fa24957505c91fa2be8cf3426e3b86572ee8015b34be6715f72ff38eba62db41, with no branch delta after the LLM_API_Calls.py reconciliation. Ruff lint passed; edited-range format checks at production 4341-4365 and test 40-70/675-820 each reported already formatted; py_compile and both diff checks passed. The user explicitly limited completion tests to files and functionality touched, so the earlier repository-wide gate in the task plan was replaced and is not completion evidence. No test application or simplified application was used.
 
 ADR required: no new ADR. ADR-029 already governs the metadata-only log boundary and permits tool names while excluding payload values and tool definitions. The existing Loguru temporary-sink and mutation-testing lesson applied. Final review added an incident-based testing-evidence lesson because a deliberately heuristic candidate list had been incorrectly promoted into a complete remediation inventory. Modified scope: LLM_API_Calls.py, test_sensitive_llm_logging.py, the one branch-owned production-diagnostic manifest digest, TASK-2118 spec/plan/task documentation, the complete summarization follow-up record, the unrelated baseline-owner record, and the testing-evidence lesson.
 <!-- SECTION:NOTES:END -->

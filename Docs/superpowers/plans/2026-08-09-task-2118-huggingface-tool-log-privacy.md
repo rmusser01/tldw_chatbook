@@ -676,18 +676,18 @@ Expected: all branch-owned focused/static gates pass, any diagnostic-inventory r
 - Modify: `backlog/docs/lessons-testing-evidence.md`
 - Verify: all 523 logger calls in the two summarization modules, the focused privacy tests, and the diagnostic-inventory architecture test
 
-- [ ] **Step 1: Reconcile the branch-owned diagnostic manifest entry**
+- [x] **Step 1: Reconcile the branch-owned diagnostic manifest entry**
 
 Hand-review the `LLM_API_Calls.py` diagnostic change and update only its stored digest. Compare the complete generated inventory with the stored artifact; if unrelated latest-dev drift remains, reproduce the exact architecture failure on a detached worktree at `f6911b37b`, preserve every unrelated entry, and find or create an independently owned Backlog record.
 
-- [ ] **Step 2: Replace the heuristic follow-up with the complete summarization audit**
+- [x] **Step 2: Replace the heuristic follow-up with the complete summarization audit**
 
 Review every logger call in `Local_Summarization_Lib.py` and `Summarization_General_Lib.py`. Record the stable module/function/label/category inventory in the separate To Do task, broaden its title/description/acceptance criteria without adding an implementation plan, and keep only the backward TASK-2118 incident reference.
 
-- [ ] **Step 3: Correct TASK-2118 evidence and the generalized testing lesson**
+- [x] **Step 3: Correct TASK-2118 evidence and the generalized testing lesson**
 
 Remove the false implication that the identifier-filtered candidate subset was a complete follow-up inventory. Record the complete categorized ownership, the branch-only manifest digest, the exact latest-dev baseline drift, and the incident-based lesson about promoting heuristic evidence beyond its stated limits.
 
-- [ ] **Step 4: Run only the related completion gates and close the task**
+- [x] **Step 4: Run only the related completion gates and close the task**
 
 Run the 70-test privacy module, 8-test HuggingFace subset, two-test log-f-string hygiene module, eight-test diagnostic-inventory architecture file, Ruff lint on the edited Python files, the three current edited-range format checks, `py_compile`, all Task 2 sweep/inventory scripts, and diff checks. Do not run the repository-wide suite, a test application, or a simplified application. Mark TASK-2118 Done only when branch-owned gates are green or an architecture failure is proven byte-for-byte identical to the owned latest-dev baseline drift.
