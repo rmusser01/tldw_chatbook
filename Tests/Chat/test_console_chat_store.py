@@ -3648,6 +3648,106 @@ def test_forced_roleplay_repair_snapshots_current_sources_without_revision_bumps
     assert persistence.updated_messages[-1]["content"] == "Hello User."
 
 
+def test_forced_restored_roleplay_repair_accepts_owned_alpha_ancestor(tmp_path):
+    db = CharactersRAGDB(tmp_path / "restored-roleplay-repair.db", "task-5")
+    try:
+        service = ChatPersistenceService(db)
+        conversation_id = service.create_conversation(
+            assistant_kind="generic",
+            assistant_id="console",
+            system_prompt="Speak with Alpha.",
+        )
+        assert service.update_conversation_roleplay_context(
+            conversation_id=conversation_id,
+            user_name_override=None,
+            character_system_template="Speak with {{user}}.",
+        ) is True
+        greeting_metadata = MessageMetadata(
+            template_kind="character_greeting",
+            template_source="Hello {{user}}.",
+        )
+        persisted_message_id = service.create_message(
+            conversation_id=conversation_id,
+            sender="assistant",
+            content="Hello Alpha.",
+            metadata_json=greeting_metadata.to_json(),
+        )
+        stale_store = ConsoleChatStore(persistence=service)
+        stale_session = stale_store.create_session(
+            settings=ConsoleSessionSettings(
+                provider="llama_cpp", system_prompt="Speak with Alpha."
+            ),
+            assistant_kind="character",
+            character_name="Alraune",
+        )
+        stale_session.persisted_conversation_id = conversation_id
+        stale_session.character_system_template = "Speak with {{user}}."
+        stale_greeting = stale_store.append_message(
+            stale_session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Hello Alpha.",
+            persist=False,
+            metadata=greeting_metadata,
+        )
+        stale_store._nodes_by_session[stale_session.id][
+            stale_greeting.id
+        ].persisted_message_id = persisted_message_id
+        stale_plan = stale_store.prepare_session_roleplay_projection_refresh(
+            stale_session.id,
+            global_default="Bravo",
+        )
+        assert stale_plan is not None
+
+        store = ConsoleChatStore(persistence=service)
+        session = store.create_session(
+            settings=ConsoleSessionSettings(
+                provider="llama_cpp", system_prompt="Speak with Cecelia."
+            ),
+            assistant_kind="character",
+            character_name="Alraune",
+        )
+        session.persisted_conversation_id = conversation_id
+        session.character_system_template = "Speak with {{user}}."
+        greeting = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Hello Cecelia.",
+            persist=False,
+            metadata=greeting_metadata,
+        )
+        store._nodes_by_session[session.id][
+            greeting.id
+        ].persisted_message_id = persisted_message_id
+
+        plan = store.prepare_session_roleplay_projection_refresh(
+            session.id,
+            global_default="Cecelia",
+            force_persistence=True,
+        )
+        assert plan is not None
+        assert len(plan.message_writes) == 1
+        result = store.persist_roleplay_projection_plan(plan)
+
+        assert result.persisted is True
+        assert store.accept_roleplay_projection_persistence_result(result) is True
+        assert db.get_conversation_by_id(conversation_id)["system_prompt"] == (
+            "Speak with Cecelia."
+        )
+        assert db.get_message_by_id(persisted_message_id)["content"] == (
+            "Hello Cecelia."
+        )
+        stale_result = stale_store.persist_roleplay_projection_plan(stale_plan)
+        assert stale_result.persisted is False
+        assert db.get_conversation_by_id(conversation_id)["system_prompt"] == (
+            "Speak with Cecelia."
+        )
+        assert db.get_message_by_id(persisted_message_id)["content"] == (
+            "Hello Cecelia."
+        )
+    finally:
+        db.close_connection()
+
+
 @pytest.mark.parametrize("execute_b", (True, False), ids=("b-applied", "b-skipped"))
 def test_accepted_roleplay_sync_rebases_c_from_latest_owned_outbox_hash(
     tmp_path, execute_b

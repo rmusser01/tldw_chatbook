@@ -1654,6 +1654,7 @@ class TestChatPersistenceService:
             system_prompt="Speak with Bravo.",
             expected_roleplay_context=context,
             expected_system_prompts=("Speak with Alpha.",),
+            allow_source_owned_repair=True,
         ) is False
         durable = db_instance.get_conversation_by_id(conversation_id)
         assert durable["system_prompt"] == "User-authored prompt."
@@ -1695,6 +1696,7 @@ class TestChatPersistenceService:
             ).to_json(),
             expected_roleplay_template_source=source,
             expected_message_contents=("Hello Alpha.",),
+            allow_source_owned_repair=True,
         ) is False
         durable = db_instance.get_message_by_id(message_id)
         assert durable["content"] == "User-edited greeting."

@@ -92,6 +92,8 @@ class _RoleplaySystemPromptWrite:
     expected_system_prompts: tuple[str | None, ...]
     accepts_roleplay_context_guard: bool
     accepts_system_prompt_guard: bool
+    accepts_source_owned_repair: bool
+    source_owned_repair: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +119,8 @@ class _RoleplayMessageProjectionWrite:
     expected_message_contents: tuple[str, ...]
     accepts_template_source_guard: bool
     accepts_message_contents_guard: bool
+    accepts_source_owned_repair: bool
+    source_owned_repair: bool
     sync_write: _RoleplaySyncWrite | None = None
 
 
@@ -2366,6 +2370,7 @@ class ConsoleChatStore:
                     session,
                     projected_system,
                     prior_system_prompt=projected_system,
+                    source_owned_repair=True,
                 )
         for message in self._nodes_by_session.get(session_id, {}).values():
             metadata = message.metadata
@@ -2395,6 +2400,7 @@ class ConsoleChatStore:
                 session,
                 message,
                 prior_content=prior_content,
+                source_owned_repair=force_persistence,
             )
             if message_write is not None:
                 message_writes.append(message_write)
@@ -2413,6 +2419,7 @@ class ConsoleChatStore:
         system_prompt: str | None,
         *,
         prior_system_prompt: str | None,
+        source_owned_repair: bool = False,
     ) -> _RoleplaySystemPromptWrite | None:
         if self.persistence is None or session.persisted_conversation_id is None:
             return None
@@ -2443,6 +2450,10 @@ class ConsoleChatStore:
             accepts_system_prompt_guard=self._persistence_accepts_kwarg(
                 writer, "expected_system_prompts"
             ),
+            accepts_source_owned_repair=self._persistence_accepts_kwarg(
+                writer, "allow_source_owned_repair"
+            ),
+            source_owned_repair=source_owned_repair,
         )
 
     def _snapshot_roleplay_message_projection_write(
@@ -2451,6 +2462,7 @@ class ConsoleChatStore:
         message: ConsoleChatMessage,
         *,
         prior_content: str,
+        source_owned_repair: bool = False,
     ) -> _RoleplayMessageProjectionWrite | None:
         if self.persistence is None or message.persisted_message_id is None:
             return None
@@ -2497,6 +2509,10 @@ class ConsoleChatStore:
             accepts_message_contents_guard=self._persistence_accepts_kwarg(
                 writer, "expected_message_contents"
             ),
+            accepts_source_owned_repair=self._persistence_accepts_kwarg(
+                writer, "allow_source_owned_repair"
+            ),
+            source_owned_repair=source_owned_repair,
             sync_write=self._snapshot_roleplay_sync_write(session, message),
         )
 
@@ -2595,6 +2611,10 @@ class ConsoleChatStore:
                     system_kwargs["expected_system_prompts"] = (
                         system_write.expected_system_prompts
                     )
+                if system_write.accepts_source_owned_repair:
+                    system_kwargs["allow_source_owned_repair"] = (
+                        system_write.source_owned_repair
+                    )
                 if not system_write.writer(
                     **system_kwargs,
                 ):
@@ -2632,6 +2652,10 @@ class ConsoleChatStore:
             if message_write.accepts_message_contents_guard:
                 kwargs["expected_message_contents"] = (
                     message_write.expected_message_contents
+                )
+            if message_write.accepts_source_owned_repair:
+                kwargs["allow_source_owned_repair"] = (
+                    message_write.source_owned_repair
                 )
             try:
                 message_persisted = bool(message_write.writer(**kwargs))

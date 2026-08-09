@@ -770,17 +770,76 @@ CONSOLE_REALTIME_READY_TIMEOUT_SECONDS = 8.0
 CONSOLE_ROLEPLAY_UNMOUNT_TIMEOUT_SECONDS = 0.25
 
 
-async def _persist_console_roleplay_projection_plan(
+@dataclass(frozen=True, slots=True)
+class _ConsoleRoleplayWriterHandle:
+    """Screen-free bridge from one daemon writer into the owner loop."""
+
+    future: asyncio.Future[ConsoleRoleplayProjectionPersistenceResult]
+    thread: threading.Thread
+
+
+def _deliver_console_roleplay_writer_result(
+    future: asyncio.Future[ConsoleRoleplayProjectionPersistenceResult],
+    result: ConsoleRoleplayProjectionPersistenceResult | None,
+    error: BaseException | None,
+) -> None:
+    """Deliver a daemon result only while its owner loop still accepts it."""
+    if future.done() or future.cancelled():
+        return
+    if error is not None:
+        future.set_exception(error)
+    elif result is not None:
+        future.set_result(result)
+
+
+def _run_console_roleplay_projection_writer(
     plan: ConsoleRoleplayProjectionPersistencePlan,
-) -> ConsoleRoleplayProjectionPersistenceResult:
-    """Run one immutable plan without capturing a ChatScreen or live store."""
-    return await asyncio.to_thread(
-        ConsoleChatStore.persist_roleplay_projection_plan, plan
+    loop: asyncio.AbstractEventLoop,
+    future: asyncio.Future[ConsoleRoleplayProjectionPersistenceResult],
+) -> None:
+    """Consume one frozen plan on a daemon that cannot delay app shutdown."""
+    result: ConsoleRoleplayProjectionPersistenceResult | None = None
+    error: BaseException | None = None
+    try:
+        result = ConsoleChatStore.persist_roleplay_projection_plan(plan)
+    except BaseException as exc:  # noqa: BLE001 - delivered to owner Future
+        error = exc
+    try:
+        loop.call_soon_threadsafe(
+            _deliver_console_roleplay_writer_result,
+            future,
+            result,
+            error,
+        )
+    except RuntimeError:
+        # The screen/app may have closed its loop while this daemon was
+        # blocked in persistence. Nothing live remains to accept a result.
+        if error is not None:
+            logger.opt(exception=error).error(
+                "Detached Console roleplay projection writer failed after loop close."
+            )
+
+
+def _start_console_roleplay_projection_writer(
+    plan: ConsoleRoleplayProjectionPersistencePlan,
+) -> _ConsoleRoleplayWriterHandle:
+    """Start one immutable writer without using asyncio's default executor."""
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future[ConsoleRoleplayProjectionPersistenceResult] = (
+        loop.create_future()
     )
+    thread = threading.Thread(
+        target=_run_console_roleplay_projection_writer,
+        args=(plan, loop, future),
+        name=f"console-roleplay-writer-{plan.generation}",
+        daemon=True,
+    )
+    thread.start()
+    return _ConsoleRoleplayWriterHandle(future=future, thread=thread)
 
 
 def _consume_console_roleplay_writer_completion(
-    task: asyncio.Task[ConsoleRoleplayProjectionPersistenceResult],
+    task: asyncio.Future[ConsoleRoleplayProjectionPersistenceResult],
 ) -> None:
     """Consume an abandoned immutable writer result or exception statically."""
     if task.cancelled():
@@ -2032,14 +2091,17 @@ class ChatScreen(BaseAppScreen):
         """Persist one current immutable plan without off-thread store access."""
         store = self._ensure_console_chat_store()
         if not store.is_roleplay_projection_plan_current(plan):
+            if self._console_roleplay_repair_plan is plan:
+                self._console_roleplay_repair_plan = None
+                self._console_roleplay_repair_inflight_generation = 0
             return
-        persistence_task = asyncio.create_task(
-            _persist_console_roleplay_projection_plan(plan)
-        )
+        writer = _start_console_roleplay_projection_writer(plan)
+        persistence_task = writer.future
         persistence_task.add_done_callback(
             _consume_console_roleplay_writer_completion
         )
         self._console_roleplay_writer_task = persistence_task
+        self._console_roleplay_writer_thread = writer.thread
         try:
             result = await asyncio.shield(persistence_task)
         except asyncio.CancelledError:
@@ -2052,7 +2114,25 @@ class ChatScreen(BaseAppScreen):
         finally:
             if self._console_roleplay_writer_task is persistence_task:
                 self._console_roleplay_writer_task = None
+                self._console_roleplay_writer_thread = None
         accepted = store.accept_roleplay_projection_persistence_result(result)
+        if self._console_roleplay_repair_plan is plan:
+            repair_generation = self._console_roleplay_repair_inflight_generation
+            self._console_roleplay_repair_plan = None
+            self._console_roleplay_repair_inflight_generation = 0
+            if accepted and result.persisted and repair_generation > 0:
+                self._console_roleplay_repair_generation = repair_generation
+                self.app_instance._console_roleplay_repair_consumed_generation = max(
+                    repair_generation,
+                    int(
+                        getattr(
+                            self.app_instance,
+                            "_console_roleplay_repair_consumed_generation",
+                            0,
+                        )
+                        or 0
+                    ),
+                )
         if accepted and not result.persisted:
             self.app_instance.notify(
                 "Your chat name is active, but updated character templates may not "
@@ -2177,6 +2257,7 @@ class ChatScreen(BaseAppScreen):
             self._console_roleplay_active_plan = None
             self._console_roleplay_pending_plan = None
             self._console_roleplay_writer_task = None
+            self._console_roleplay_writer_thread = None
             self._console_roleplay_drain_scheduled = False
             return
         try:
@@ -2201,6 +2282,7 @@ class ChatScreen(BaseAppScreen):
             self._console_roleplay_active_plan = None
             self._console_roleplay_pending_plan = None
             self._console_roleplay_writer_task = None
+            self._console_roleplay_writer_thread = None
             self._console_roleplay_drain_scheduled = False
 
     def _start_console_roleplay_persistence_drain(self) -> None:
@@ -2233,7 +2315,10 @@ class ChatScreen(BaseAppScreen):
         )
 
     def _dispatch_active_console_roleplay_refresh(
-        self, *, force_persistence: bool = False
+        self,
+        *,
+        force_persistence: bool = False,
+        repair_generation: int = 0,
     ) -> bool:
         """Coalesce refresh writes by active session and effective global name."""
         store = self._console_chat_store
@@ -2258,9 +2343,12 @@ class ChatScreen(BaseAppScreen):
             return False
         self._sync_console_identity_surfaces()
         if plan is not None:
+            if repair_generation > 0:
+                self._console_roleplay_repair_plan = plan
+                self._console_roleplay_repair_inflight_generation = repair_generation
             self._console_roleplay_pending_plan = plan
             self._start_console_roleplay_persistence_drain()
-        return True
+        return plan is not None if force_persistence else True
 
     def request_console_identity_refresh(self, generation: int | None = None) -> bool:
         """Consume a global display-name save without waiting for the sync tick."""
@@ -2302,16 +2390,14 @@ class ChatScreen(BaseAppScreen):
             self._console_roleplay_repair_generation, app_consumed
         ):
             return False
+        if self._console_roleplay_repair_inflight_generation >= generation:
+            return False
         self._ensure_console_chat_store()
         self._last_console_roleplay_refresh_key = None
         dispatched = self._dispatch_active_console_roleplay_refresh(
-            force_persistence=True
+            force_persistence=True,
+            repair_generation=generation,
         )
-        if dispatched:
-            self._console_roleplay_repair_generation = generation
-            self.app_instance._console_roleplay_repair_consumed_generation = (
-                generation
-            )
         return dispatched
 
     async def on_console_settings_open(self, event: Button.Pressed) -> None:
@@ -2893,8 +2979,9 @@ class ChatScreen(BaseAppScreen):
         self._last_console_roleplay_refresh_key: tuple[str, str] | None = None
         self._console_roleplay_persistence_task: asyncio.Task[None] | None = None
         self._console_roleplay_writer_task: (
-            asyncio.Task[ConsoleRoleplayProjectionPersistenceResult] | None
+            asyncio.Future[ConsoleRoleplayProjectionPersistenceResult] | None
         ) = None
+        self._console_roleplay_writer_thread: threading.Thread | None = None
         self._console_roleplay_active_plan: (
             ConsoleRoleplayProjectionPersistencePlan | None
         ) = None
@@ -2904,6 +2991,10 @@ class ChatScreen(BaseAppScreen):
         self._console_roleplay_drain_scheduled = False
         self._console_roleplay_tearing_down = False
         self._console_roleplay_repair_generation = 0
+        self._console_roleplay_repair_inflight_generation = 0
+        self._console_roleplay_repair_plan: (
+            ConsoleRoleplayProjectionPersistencePlan | None
+        ) = None
         self._console_identity_refresh_generation = 0
         # task-9: cache of persisted-conversation RAG retrieval scopes,
         # keyed by conversation id -- populated off-loop at resume time and

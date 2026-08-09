@@ -866,10 +866,26 @@ class SyncStateRepository(BaseDB):
                 DO UPDATE SET
                     envelope = excluded.envelope,
                     domain = excluded.domain,
-                    status = 'pending',
+                    status = CASE
+                        WHEN sync_v2_local_outbox.status = 'dispatched'
+                         AND json_extract(
+                                sync_v2_local_outbox.envelope,
+                                '$.payload_hash'
+                             ) = json_extract(excluded.envelope, '$.payload_hash')
+                        THEN 'dispatched'
+                        ELSE 'pending'
+                    END,
                     last_error = NULL,
                     updated_at = excluded.updated_at,
-                    dispatched_at = NULL
+                    dispatched_at = CASE
+                        WHEN sync_v2_local_outbox.status = 'dispatched'
+                         AND json_extract(
+                                sync_v2_local_outbox.envelope,
+                                '$.payload_hash'
+                             ) = json_extract(excluded.envelope, '$.payload_hash')
+                        THEN sync_v2_local_outbox.dispatched_at
+                        ELSE NULL
+                    END
                 """,
                 (
                     source_scope_key,

@@ -291,6 +291,7 @@ class ChatPersistenceService:
         system_prompt: Optional[str],
         expected_roleplay_context: ConsoleRoleplayContext | None = None,
         expected_system_prompts: tuple[str | None, ...] | None = None,
+        allow_source_owned_repair: bool = False,
     ) -> bool:
         """Update the persisted system prompt for an existing conversation.
 
@@ -315,6 +316,7 @@ class ChatPersistenceService:
             return False
         if (
             expected_system_prompts is not None
+            and not allow_source_owned_repair
             and current_conversation.get("system_prompt")
             not in expected_system_prompts
         ):
@@ -448,6 +450,7 @@ class ChatPersistenceService:
         metadata_json: Optional[str] = None,
         expected_roleplay_template_source: str | None = None,
         expected_message_contents: tuple[str, ...] | None = None,
+        allow_source_owned_repair: bool = False,
     ) -> bool:
         """Update a message's content, optionally its parent/feedback, and its images.
 
@@ -532,6 +535,7 @@ class ChatPersistenceService:
                 return False
         if (
             expected_message_contents is not None
+            and not allow_source_owned_repair
             and current_message.get("content") not in expected_message_contents
         ):
             return False

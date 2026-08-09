@@ -3,6 +3,7 @@ from dataclasses import replace
 import gc
 from pathlib import Path
 import threading
+import time
 from types import SimpleNamespace
 import weakref
 
@@ -3980,6 +3981,9 @@ async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_res
         app.app_config["chat_defaults"]["user_display_name"] = "Cecelia"
         assert hung._dispatch_active_console_roleplay_refresh() is True
         assert await asyncio.to_thread(hung_persistence.started.wait, 5)
+        writer_thread = hung._console_roleplay_writer_thread
+        assert writer_thread is not None
+        assert writer_thread.daemon is True
         old_screen = weakref.ref(hung)
         event_loop = asyncio.get_running_loop()
         loop_errors: list[dict[str, object]] = []
@@ -4027,6 +4031,175 @@ async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_res
             await pilot.pause(0.05)
             event_loop.set_exception_handler(previous_exception_handler)
         assert loop_errors == []
+
+
+def test_mounted_hung_roleplay_writer_does_not_delay_event_loop_close():
+    class HungPersistence:
+        def __init__(self) -> None:
+            self.started = threading.Event()
+            self.release = threading.Event()
+
+        def create_message(self, **_kwargs):
+            return "msg-hung"
+
+        def update_conversation_roleplay_context(self, **_kwargs):
+            return True
+
+        def update_conversation_system_prompt(self, **_kwargs):
+            self.started.set()
+            assert self.release.wait(10)
+            return True
+
+        def update_message_content(self, **_kwargs):
+            return True
+
+    persistence = HungPersistence()
+    state: dict[str, object] = {}
+
+    async def exercise() -> None:
+        app = _build_test_app()
+        app.app_config["chat_defaults"] = {"user_display_name": "Alpha"}
+        app.app_config.setdefault("console", {})[
+            "roleplay_refresh_teardown_timeout_seconds"
+        ] = 0.05
+        host = ConsoleHarness(app)
+        async with host.run_test(size=(160, 48)) as pilot:
+            base = host.screen_stack[-1]
+            await _wait_for_selector(base, pilot, "#console-settings-summary")
+            hung = ChatScreen(app)
+            await host.push_screen(hung)
+            await _wait_for_selector(hung, pilot, "#console-settings-summary")
+            store = hung._ensure_console_chat_store()
+            store.persistence = persistence
+            session = store.ensure_session()
+            session.settings = ConsoleSessionSettings(
+                provider="llama_cpp", system_prompt="Speak with Alpha."
+            )
+            session.assistant_kind = "character"
+            session.character_name = "Alraune"
+            session.persisted_conversation_id = "conv-hung"
+            store.seed_character_roleplay(
+                session.id,
+                system_template="Speak with {{user}}.",
+                greeting_template="Hello {{user}}.",
+                global_default="Alpha",
+            )
+            app.app_config["chat_defaults"]["user_display_name"] = "Cecelia"
+            assert hung._dispatch_active_console_roleplay_refresh() is True
+            for _ in range(500):
+                if persistence.started.is_set():
+                    break
+                await pilot.pause(0.01)
+            assert persistence.started.is_set()
+            writer_thread = hung._console_roleplay_writer_thread
+            assert writer_thread is not None
+            state["writer_thread"] = writer_thread
+            state["screen_ref"] = weakref.ref(hung)
+            state["shutdown_started_at"] = time.monotonic()
+            await host.pop_screen()
+            del hung, store, session
+
+    try:
+        asyncio.run(exercise())
+        state["close_elapsed"] = time.monotonic() - float(
+            state["shutdown_started_at"]
+        )
+        for _ in range(50):
+            gc.collect()
+            screen_ref = state.get("screen_ref")
+            if callable(screen_ref) and screen_ref() is None:
+                break
+    finally:
+        persistence.release.set()
+        writer_thread = state.get("writer_thread")
+        if isinstance(writer_thread, threading.Thread):
+            writer_thread.join(5)
+
+    assert float(state["close_elapsed"]) < 1.5
+    writer_thread = state["writer_thread"]
+    assert isinstance(writer_thread, threading.Thread)
+    assert writer_thread.daemon is True
+    screen_ref = state["screen_ref"]
+    assert callable(screen_ref)
+    assert screen_ref() is None
+
+
+@pytest.mark.asyncio
+async def test_roleplay_repair_marker_retries_partial_then_consumes(monkeypatch):
+    class PartialPersistence:
+        def __init__(self) -> None:
+            self.fail_messages = True
+            self.durable_system = "Speak with Alpha."
+            self.durable_greeting = "Hello Alpha."
+
+        def create_message(self, **kwargs):
+            self.durable_greeting = kwargs["content"]
+            return "msg-1"
+
+        def update_conversation_roleplay_context(self, **_kwargs):
+            return True
+
+        def update_conversation_system_prompt(self, **kwargs):
+            self.durable_system = kwargs["system_prompt"]
+            return True
+
+        def update_message_content(self, **kwargs):
+            if self.fail_messages:
+                return False
+            self.durable_greeting = kwargs["content"]
+            return True
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"user_display_name": "Cecelia"}
+    app._console_roleplay_repair_generation = 1
+    app._console_roleplay_repair_global_name = "Cecelia"
+    notifications: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(
+        app,
+        "notify",
+        lambda message, **kwargs: notifications.append(
+            (message, kwargs.get("severity"))
+        ),
+    )
+    console = ChatScreen(app)
+    persistence = PartialPersistence()
+    store = console._ensure_console_chat_store()
+    store.persistence = persistence
+    session = store.ensure_session()
+    session.settings = ConsoleSessionSettings(
+        provider="llama_cpp", system_prompt="Speak with Cecelia."
+    )
+    session.assistant_kind = "character"
+    session.character_name = "Alraune"
+    session.persisted_conversation_id = "conv-1"
+    greeting = store.seed_character_roleplay(
+        session.id,
+        system_template="Speak with {{user}}.",
+        greeting_template="Hello {{user}}.",
+        global_default="Cecelia",
+    )
+    assert greeting is not None
+    monkeypatch.setattr(console, "_sync_console_identity_surfaces", lambda: None)
+    queued = []
+    monkeypatch.setattr(
+        console,
+        "run_worker",
+        lambda coroutine, **_kwargs: queued.append(coroutine),
+    )
+
+    assert console._consume_pending_console_roleplay_repair() is True
+    await queued.pop(0)()
+    assert getattr(app, "_console_roleplay_repair_consumed_generation", 0) == 0
+    assert console._console_roleplay_repair_inflight_generation == 0
+    assert len([note for note in notifications if note[1] == "warning"]) == 1
+
+    persistence.fail_messages = False
+    assert console._consume_pending_console_roleplay_repair() is True
+    await queued.pop(0)()
+    assert app._console_roleplay_repair_consumed_generation == 1
+    assert persistence.durable_system == "Speak with Cecelia."
+    assert persistence.durable_greeting == "Hello Cecelia."
+    assert len([note for note in notifications if note[1] == "warning"]) == 1
 
 
 @pytest.mark.asyncio
