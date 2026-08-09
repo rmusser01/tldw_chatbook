@@ -319,7 +319,7 @@ def test_prompt_memberships_stage_and_apply_without_content_save_coupling():
         request_token=4,
     )
 
-    assert ready.summary == "[bold] literal, 研究"
+    assert not hasattr(ready, "summary")
     assert staged.applied_ids == (2, 7)
     assert staged.staged_ids == (7, 9)
     assert staged.can_apply is True

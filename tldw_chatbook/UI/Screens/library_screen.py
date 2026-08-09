@@ -7978,6 +7978,13 @@ class LibraryScreen(BaseAppScreen):
         button.label = f"collection: {escape_markup(label)} ▸"
 
     def _refresh_library_prompt_after_membership_apply(self) -> None:
+        """Invalidate list data and refresh counts after membership Apply.
+
+        The Prompt editor remains mounted here, so the browse controller's
+        active-list guard intentionally prevents service dispatch. The clean
+        Back-to-list path requests this invalidated exact scope once the list
+        owns the canvas again. Prompt Save state is never changed here.
+        """
         self._library_prompt_browse_controller.invalidate()
         self._refresh_local_source_snapshot()
 

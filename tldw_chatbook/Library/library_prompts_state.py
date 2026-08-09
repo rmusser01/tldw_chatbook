@@ -494,7 +494,11 @@ def begin_prompt_collection_catalog(
         if previous is None or previous.query != query:
             raise ValueError("Load more requires the current matching catalog.")
         return replace(
-            previous, status="loading", request_token=request_token, error=""
+            previous,
+            offset=previous.next_offset,
+            status="loading",
+            request_token=request_token,
+            error="",
         )
     return PromptCollectionCatalogState(
         query=query,
@@ -677,18 +681,6 @@ class PromptMembershipState:
     @property
     def can_apply(self) -> bool:
         return self.can_manage and self.staged_ids != self.applied_ids
-
-    @property
-    def summary(self) -> str:
-        if self.status == "load_error":
-            return "Memberships not loaded"
-        if not self.applied_ids:
-            return "No collections"
-        labels = dict(self.labels)
-        return ", ".join(
-            labels.get(collection_id, f"Collection #{collection_id}")
-            for collection_id in self.applied_ids
-        )
 
 
 def disable_prompt_memberships(reason: str) -> PromptMembershipState:

@@ -11,7 +11,9 @@ from rich.markup import escape as escape_markup
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.events import DescendantFocus
 from textual.screen import ModalScreen
+from textual.widget import Widget
 from textual.widgets import Button, Checkbox, Input, Static
 
 from ...Library.library_prompts_state import (
@@ -22,6 +24,7 @@ from ...Library.library_prompts_state import (
 from .prompt_collections import (
     PromptCollectionManagerMode,
     PromptCollectionManagerResult,
+    PromptCollectionNameConflictError,
     PromptMembershipIdentity,
 )
 
@@ -105,6 +108,7 @@ class PromptCollectionManagerModal(ModalScreen[PromptCollectionManagerResult | N
         self._prompt_identity = prompt_identity
         self._selected_id = selected_collection_id
         self._staged_ids = set(staged_collection_ids)
+        self._rename_selected_id = selected_collection_id if mode == "browse" else None
         self._load_catalog_callback = load_catalog
         self._create_collection_callback = create_collection
         self._rename_collection_callback = rename_collection
@@ -253,24 +257,38 @@ class PromptCollectionManagerModal(ModalScreen[PromptCollectionManagerResult | N
     def on_mount(self) -> None:
         self._start_catalog_load(query="", offset=0)
 
-    def _focus_search(self) -> None:
+    def _focus_control(self, control_id: str) -> None:
         if not self.is_mounted:
             return
-        for search in self.query("#prompt-collection-manager-search").results(Input):
-            search.focus()
+        for control in self.query(f"#{control_id}").results(Widget):
+            if not control.disabled:
+                control.focus()
             break
 
-    def _refresh(self, *, focus_search: bool = False) -> None:
+    def _refresh(self, *, focus_id: str | None = None) -> None:
         self.refresh(recompose=True)
-        if focus_search:
-            self.call_after_refresh(self._focus_search)
+        if focus_id is not None:
+            self.call_after_refresh(self._focus_control, focus_id)
+
+    def _collection_control_id(self, collection_id: int) -> str:
+        lane = "row" if self._mode == "browse" else "member"
+        return f"prompt-collection-manager-{lane}-{collection_id}"
 
     def _rename_target_id(self) -> int | None:
         if self._mode == "browse":
             return self._selected_id
-        if len(self._staged_ids) == 1:
-            return next(iter(self._staged_ids))
-        return None
+        return self._rename_selected_id
+
+    def on_descendant_focus(self, event: DescendantFocus) -> None:
+        if self._mode != "membership":
+            return
+        collection_id = getattr(event.widget, "collection_id", None)
+        if type(collection_id) is not int or collection_id <= 0:
+            return
+        self._rename_selected_id = collection_id
+        for rename in self.query("#prompt-collection-manager-rename").results(Button):
+            rename.disabled = self._mutation_in_flight
+            break
 
     def _start_catalog_load(self, *, query: str, offset: int) -> None:
         self._request_token += 1
@@ -299,7 +317,10 @@ class PromptCollectionManagerModal(ModalScreen[PromptCollectionManagerResult | N
             return
         if catalog is None:
             current = begin_prompt_collection_catalog(
-                query=query, request_token=request_token
+                query=query,
+                request_token=request_token,
+                previous=self._catalog if offset > 0 else None,
+                append=offset > 0,
             )
             self._catalog = fail_prompt_collection_catalog(
                 current, request_token=request_token, error=_CATALOG_ERROR
@@ -309,10 +330,11 @@ class PromptCollectionManagerModal(ModalScreen[PromptCollectionManagerResult | N
         else:
             self._catalog = catalog
             if catalog.status == "error":
-                self._retry_action = ("load", None, catalog.query)
+                self._retry_action = ("load", catalog.offset, catalog.query)
                 self._outcome = catalog.error
             else:
                 self._retry_action = None
+                self._outcome = ""
             if (
                 self._selected_id is not None
                 and not catalog.query
@@ -322,7 +344,13 @@ class PromptCollectionManagerModal(ModalScreen[PromptCollectionManagerResult | N
                 and not catalog.has_more
             ):
                 self._selected_id = None
-        self._refresh(focus_search=True)
+        self._refresh(
+            focus_id=(
+                "prompt-collection-manager-load-more"
+                if offset > 0
+                else "prompt-collection-manager-search"
+            )
+        )
 
     @on(Input.Submitted, "#prompt-collection-manager-search")
     def _search_submitted(self, event: Input.Submitted) -> None:
@@ -348,7 +376,7 @@ class PromptCollectionManagerModal(ModalScreen[PromptCollectionManagerResult | N
         if self._mutation_in_flight:
             return
         self._selected_id = None
-        self._refresh()
+        self._refresh(focus_id="prompt-collection-manager-all")
 
     @on(Button.Pressed, ".prompt-collection-manager-row")
     def _select_row(self, event: Button.Pressed) -> None:
@@ -362,7 +390,7 @@ class PromptCollectionManagerModal(ModalScreen[PromptCollectionManagerResult | N
         collection_id = getattr(event.button, "collection_id", None)
         if type(collection_id) is int:
             self._selected_id = collection_id
-            self._refresh()
+            self._refresh(focus_id=self._collection_control_id(collection_id))
 
     @on(Checkbox.Changed, ".prompt-collection-manager-row")
     def _membership_changed(self, event: Checkbox.Changed) -> None:
@@ -405,12 +433,12 @@ class PromptCollectionManagerModal(ModalScreen[PromptCollectionManagerResult | N
         if not name:
             self._outcome = "Collection name is required."
             self._retry_action = None
-            self._refresh()
+            self._refresh(focus_id="prompt-collection-manager-new-name")
             return
         if action == "rename" and collection_id is None:
             self._outcome = "Choose exactly one collection to rename."
             self._retry_action = None
-            self._refresh()
+            self._refresh(focus_id="prompt-collection-manager-new-name")
             return
         self._request_token += 1
         self._mutation_in_flight = True
@@ -426,6 +454,11 @@ class PromptCollectionManagerModal(ModalScreen[PromptCollectionManagerResult | N
                 catalog = await self._rename_collection_callback(collection_id, name)  # type: ignore[arg-type]
         except asyncio.CancelledError:
             raise
+        except PromptCollectionNameConflictError:
+            self._outcome = "Name already exists — choose another."
+            self._retry_action = None
+            self._refresh(focus_id="prompt-collection-manager-new-name")
+            return
         except Exception as exc:
             logger.warning(
                 "Library Prompt collection manager failed; operation={} "
@@ -441,14 +474,24 @@ class PromptCollectionManagerModal(ModalScreen[PromptCollectionManagerResult | N
         if catalog is None:
             self._outcome = _CREATE_ERROR if action == "create" else _RENAME_ERROR
             self._retry_action = (action, collection_id, name)
-            self._refresh()
+            self._refresh(focus_id="prompt-collection-manager-retry")
             return
         self._catalog = catalog
-        self._outcome = (
-            "Collection created." if action == "create" else "Collection renamed."
-        )
+        success = "Collection created." if action == "create" else "Collection renamed."
+        if catalog.status == "error":
+            self._outcome = f"{success} Couldn't refresh collections — Retry catalog."
+            self._retry_action = ("load", catalog.offset, catalog.query)
+            self._refresh(focus_id="prompt-collection-manager-retry")
+            return
+        self._outcome = success
         self._retry_action = None
-        self._refresh()
+        self._refresh(
+            focus_id=(
+                "prompt-collection-manager-new-name"
+                if action == "create"
+                else self._collection_control_id(collection_id)  # type: ignore[arg-type]
+            )
+        )
 
     @on(Button.Pressed, "#prompt-collection-manager-retry")
     async def _retry(self, event: Button.Pressed) -> None:
@@ -460,7 +503,7 @@ class PromptCollectionManagerModal(ModalScreen[PromptCollectionManagerResult | N
             return
         action, collection_id, value = retry
         if action == "load":
-            self._start_catalog_load(query=value, offset=0)
+            self._start_catalog_load(query=value, offset=collection_id or 0)
             return
         await self._run_mutation(action, collection_id, value)
 

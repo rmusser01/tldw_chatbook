@@ -31,6 +31,34 @@ _CATALOG_ERROR = "Couldn't load collections. Retry."
 _MEMBERSHIP_LOAD_ERROR = "Couldn't load memberships. Retry."
 _MEMBERSHIP_APPLY_ERROR = "Couldn't apply memberships. Retry."
 _UNSAVED_REASON = "Save this prompt before managing collections."
+_RESERVED_NAME_ERROR = "This prompt collection name is reserved."
+
+
+class PromptCollectionNameConflictError(ValueError):
+    """Fixed local classification for a deterministic reserved name."""
+
+
+def _membership_response_ids(
+    response: Any, *, identity: PromptMembershipIdentity
+) -> tuple[int, ...]:
+    if not isinstance(response, Mapping):
+        raise TypeError("Prompt membership response must be a mapping.")
+    prompt_id = response.get("prompt_id")
+    if type(prompt_id) is not int or prompt_id <= 0 or prompt_id != identity.prompt_id:
+        raise ValueError("Prompt membership response identity does not match.")
+    collection_ids = response.get("collection_ids")
+    if not isinstance(collection_ids, Sequence) or isinstance(
+        collection_ids, (str, bytes)
+    ):
+        raise TypeError("Prompt membership collection_ids must be a sequence.")
+    ids = tuple(collection_ids)
+    if any(
+        type(collection_id) is not int or collection_id <= 0 for collection_id in ids
+    ):
+        raise ValueError("Prompt membership collection IDs must be positive integers.")
+    if tuple(sorted(set(ids))) != ids:
+        raise ValueError("Prompt membership collection IDs must be sorted and unique.")
+    return ids
 
 
 @dataclass(frozen=True)
@@ -90,6 +118,21 @@ class LibraryPromptCollectionsController:
         refresh_browse_projection: Callable[[], Callable[[], None]] | None = None,
         membership_applied: Callable[[], Callable[[], None]] | None = None,
     ) -> None:
+        """Initialize the local collection coordinator.
+
+        Args:
+            run_service_call: Late-bound off-loop service dispatcher.
+            prompt_service: Late-bound Prompt scope service provider.
+            sync_memberships: Late-bound membership projection callback.
+            current_prompt_id: Current editor Prompt ID provider.
+            current_prompt_detail: Current editor record provider.
+            prompt_editor_active: Whether the Prompt editor is current.
+            push_modal: Optional late-bound modal presenter.
+            current_browse_collection_id: Active browse collection provider.
+            apply_browse_collection: Browse selection callback provider.
+            refresh_browse_projection: Targeted collection-label refresh provider.
+            membership_applied: Successful membership-apply callback provider.
+        """
         self._run_service_call = run_service_call
         self._prompt_service = prompt_service
         self._sync_memberships = sync_memberships
@@ -116,7 +159,17 @@ class LibraryPromptCollectionsController:
         return self._request_counter
 
     def begin_manager(self, mode: PromptCollectionManagerMode = "browse") -> int:
-        """Open one manager lane, invalidating an older dialog immediately."""
+        """Open one manager lane, invalidating an older dialog immediately.
+
+        Args:
+            mode: Browse or membership manager lane.
+
+        Returns:
+            Monotonic modal session token.
+
+        Raises:
+            ValueError: If ``mode`` is unsupported.
+        """
         if mode not in {"browse", "membership"}:
             raise ValueError("Unsupported Prompt collection manager mode.")
         self._manager_counter += 1
@@ -126,6 +179,15 @@ class LibraryPromptCollectionsController:
     def manager_is_active(
         self, manager_token: int, mode: PromptCollectionManagerMode | None = None
     ) -> bool:
+        """Check whether one manager session remains authoritative.
+
+        Args:
+            manager_token: Session token to check.
+            mode: Optional expected manager lane.
+
+        Returns:
+            ``True`` only for the current matching session.
+        """
         active = self._active_manager
         return (
             active is not None
@@ -140,7 +202,16 @@ class LibraryPromptCollectionsController:
         mode: PromptCollectionManagerMode,
         prompt_identity: PromptMembershipIdentity | None,
     ) -> bool:
-        """Validate one dialog lane and, for membership, its Prompt owner."""
+        """Validate one dialog lane and, for membership, its Prompt owner.
+
+        Args:
+            manager_token: Session token to check.
+            mode: Expected manager lane.
+            prompt_identity: Expected membership Prompt identity, if any.
+
+        Returns:
+            ``True`` only while the lane and identity remain current.
+        """
         return self.manager_is_active(manager_token, mode) and (
             mode == "browse" or self._current_identity() == prompt_identity
         )
@@ -148,11 +219,21 @@ class LibraryPromptCollectionsController:
     def end_manager(
         self, manager_token: int, mode: PromptCollectionManagerMode | None = None
     ) -> None:
+        """End the matching manager session.
+
+        Args:
+            manager_token: Session token to close.
+            mode: Optional expected manager lane.
+        """
         if self.manager_is_active(manager_token, mode):
             self._active_manager = None
 
     def invalidate(self, reason: str = _UNSAVED_REASON) -> None:
-        """Invalidate requests and modal authority after editor/navigation change."""
+        """Invalidate requests and modal authority after navigation.
+
+        Args:
+            reason: Truthful disabled-membership explanation.
+        """
         self._next_request_token()
         self._identity_generation += 1
         self._active_manager = None
@@ -160,7 +241,17 @@ class LibraryPromptCollectionsController:
         self._sync_memberships()(self.membership_state)
 
     def identity_for(self, prompt_id: int) -> PromptMembershipIdentity:
-        """Bind one local Prompt ID to the current editor-session generation."""
+        """Bind one local Prompt ID to the current editor session.
+
+        Args:
+            prompt_id: Persisted positive local Prompt ID.
+
+        Returns:
+            Session-scoped membership identity.
+
+        Raises:
+            ValueError: If ``prompt_id`` is not positive.
+        """
         return PromptMembershipIdentity(
             prompt_id,
             f"local:prompt:{prompt_id}:session:{self._identity_generation}",
@@ -181,7 +272,14 @@ class LibraryPromptCollectionsController:
         return self.identity_for(prompt_id)
 
     def open_manager(self, mode: PromptCollectionManagerMode) -> int | None:
-        """Build and present the shared manager with an immutable session."""
+        """Build and present the shared manager with an immutable session.
+
+        Args:
+            mode: Browse or membership manager lane.
+
+        Returns:
+            Session token, or ``None`` when the lane cannot open.
+        """
         prompt_identity = self._current_identity() if mode == "membership" else None
         if mode == "membership":
             if prompt_identity is None:
@@ -328,7 +426,18 @@ class LibraryPromptCollectionsController:
         manager_mode: PromptCollectionManagerMode | None = None,
         prompt_identity: PromptMembershipIdentity | None = None,
     ) -> PromptCollectionCatalogState | None:
-        """Load one bounded local page, rejecting stale dialog completions."""
+        """Load one bounded local page, rejecting stale completions.
+
+        Args:
+            manager_token: Authoritative manager session token.
+            query: Collection name search.
+            offset: Exact page offset to request.
+            manager_mode: Optional expected manager lane.
+            prompt_identity: Expected membership Prompt identity, if any.
+
+        Returns:
+            Settled catalog state, or ``None`` when stale.
+        """
         if not self._manager_request_is_active(
             manager_token, manager_mode, prompt_identity
         ):
@@ -397,6 +506,21 @@ class LibraryPromptCollectionsController:
         manager_mode: PromptCollectionManagerMode | None = None,
         prompt_identity: PromptMembershipIdentity | None = None,
     ) -> PromptCollectionCatalogState | None:
+        """Create one local collection and refresh the catalog.
+
+        Args:
+            manager_token: Authoritative manager session token.
+            name: Collection name after trimming.
+            manager_mode: Optional expected manager lane.
+            prompt_identity: Expected membership Prompt identity, if any.
+
+        Returns:
+            Refreshed catalog state, or ``None`` when stale.
+
+        Raises:
+            ValueError: If input or the service response is invalid.
+            PromptCollectionNameConflictError: If the name already exists.
+        """
         name = name.strip()
         if not name:
             raise ValueError("Collection name is required.")
@@ -408,12 +532,17 @@ class LibraryPromptCollectionsController:
         create = getattr(service, "create_prompt_collection", None)
         if not callable(create):
             raise ValueError("Prompt collection creation is unavailable.")
-        await self._run_service_call()(
-            create,
-            mode="local",
-            name=name,
-            isolate_in_worker=True,
-        )
+        try:
+            await self._run_service_call()(
+                create,
+                mode="local",
+                name=name,
+                isolate_in_worker=True,
+            )
+        except ValueError as exc:
+            if exc.args == (_RESERVED_NAME_ERROR,):
+                raise PromptCollectionNameConflictError from None
+            raise
         if not self._manager_request_is_active(
             manager_token, manager_mode, prompt_identity
         ):
@@ -435,6 +564,22 @@ class LibraryPromptCollectionsController:
         manager_mode: PromptCollectionManagerMode | None = None,
         prompt_identity: PromptMembershipIdentity | None = None,
     ) -> PromptCollectionCatalogState | None:
+        """Rename one local collection and refresh cached labels.
+
+        Args:
+            manager_token: Authoritative manager session token.
+            collection_id: Positive local collection ID.
+            name: Replacement name after trimming.
+            manager_mode: Optional expected manager lane.
+            prompt_identity: Expected membership Prompt identity, if any.
+
+        Returns:
+            Refreshed catalog state, or ``None`` when stale.
+
+        Raises:
+            ValueError: If input or the service response is invalid.
+            PromptCollectionNameConflictError: If the name already exists.
+        """
         if type(collection_id) is not int or collection_id <= 0:
             raise ValueError("Choose one collection to rename.")
         name = name.strip()
@@ -448,13 +593,18 @@ class LibraryPromptCollectionsController:
         rename = getattr(service, "update_prompt_collection", None)
         if not callable(rename):
             raise ValueError("Prompt collection rename is unavailable.")
-        response = await self._run_service_call()(
-            rename,
-            mode="local",
-            collection_id=collection_id,
-            name=name,
-            isolate_in_worker=True,
-        )
+        try:
+            response = await self._run_service_call()(
+                rename,
+                mode="local",
+                collection_id=collection_id,
+                name=name,
+                isolate_in_worker=True,
+            )
+        except ValueError as exc:
+            if exc.args == (_RESERVED_NAME_ERROR,):
+                raise PromptCollectionNameConflictError from None
+            raise
         if not self._manager_request_is_active(
             manager_token, manager_mode, prompt_identity
         ):
@@ -485,12 +635,73 @@ class LibraryPromptCollectionsController:
         )
 
     def collection_label(self, collection_id: int | None) -> str:
+        """Return the current literal label for one browse selection.
+
+        Args:
+            collection_id: Local collection ID, or ``None`` for all Prompts.
+
+        Returns:
+            Cached display label or a stable fallback.
+        """
         if collection_id is None:
             return "All prompts"
         return self._label_cache.get(collection_id, f"Collection #{collection_id}")
 
+    async def _hydrate_membership_labels(
+        self,
+        service: Any,
+        *,
+        identity: PromptMembershipIdentity,
+        request_token: int,
+        collection_ids: Sequence[int],
+    ) -> Mapping[int, str] | None:
+        get_collection = getattr(service, "get_prompt_collection", None)
+        if not callable(get_collection):
+            return self._label_cache
+        for collection_id in collection_ids:
+            if collection_id in self._label_cache:
+                continue
+            if (
+                self._current_identity() != identity
+                or self.membership_state.request_token != request_token
+            ):
+                return None
+            try:
+                response = await self._run_service_call()(
+                    get_collection,
+                    mode="local",
+                    collection_id=collection_id,
+                    isolate_in_worker=True,
+                )
+                if (
+                    self._current_identity() != identity
+                    or self.membership_state.request_token != request_token
+                ):
+                    return None
+                if (
+                    not isinstance(response, Mapping)
+                    or response.get("backend") != "local"
+                ):
+                    continue
+                option = PromptCollectionOption(
+                    collection_id=response.get("collection_id"),
+                    name=response.get("name"),
+                    display_name=response.get("display_name") or response.get("name"),
+                )
+                if option.collection_id == collection_id:
+                    self._label_cache[collection_id] = option.display_name
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                continue
+        return self._label_cache
+
     async def load_memberships(self) -> None:
-        """Load memberships for the exact current persisted local Prompt."""
+        """Load memberships for the exact current persisted local Prompt.
+
+        Returns:
+            None. Settled state is delivered through ``sync_memberships``.
+        """
         identity = self._current_identity()
         if identity is None:
             self.invalidate()
@@ -522,10 +733,19 @@ class LibraryPromptCollectionsController:
                 prompt_id=identity.prompt_id,
                 isolate_in_worker=True,
             )
+            collection_ids = _membership_response_ids(response, identity=identity)
+            labels = await self._hydrate_membership_labels(
+                service,
+                identity=identity,
+                request_token=request_token,
+                collection_ids=collection_ids,
+            )
+            if labels is None:
+                return
             settled = apply_prompt_memberships_loaded(
                 loading,
-                collection_ids=response["collection_ids"],
-                labels=self._label_cache,
+                collection_ids=collection_ids,
+                labels=labels,
                 request_token=request_token,
             )
         except asyncio.CancelledError:
@@ -551,16 +771,33 @@ class LibraryPromptCollectionsController:
         self._sync_memberships()(settled)
 
     def disable_memberships(self, reason: str = _UNSAVED_REASON) -> None:
+        """Disable membership management and invalidate pending work.
+
+        Args:
+            reason: Truthful disabled-state explanation.
+        """
         self.invalidate(reason)
 
     def stage_memberships(self, collection_ids: Sequence[int]) -> None:
+        """Stage a complete membership set without persisting it.
+
+        Args:
+            collection_ids: Positive collection IDs to stage.
+
+        Raises:
+            ValueError: If IDs or the current membership state are invalid.
+        """
         self.membership_state = stage_prompt_memberships(
             self.membership_state, collection_ids
         )
         self._sync_memberships()(self.membership_state)
 
     async def apply_memberships(self) -> None:
-        """Explicitly apply the staged set and refresh only current success."""
+        """Apply the staged set only for the current persisted Prompt.
+
+        Returns:
+            None. Settled state is delivered through ``sync_memberships``.
+        """
         identity = self._current_identity()
         state = self.membership_state
         if (
@@ -600,7 +837,7 @@ class LibraryPromptCollectionsController:
             )
             settled = apply_prompt_memberships_saved(
                 applying,
-                collection_ids=response["collection_ids"],
+                collection_ids=_membership_response_ids(response, identity=identity),
                 request_token=request_token,
             )
         except asyncio.CancelledError:

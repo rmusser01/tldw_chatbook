@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import threading
 from datetime import datetime, timezone
 from typing import Any
 
@@ -14,6 +15,9 @@ from textual.widgets import Button, Checkbox, Input, Static
 
 import tldw_chatbook.Library.library_prompts_state as prompts_state_module
 from tldw_chatbook.Prompt_Management.prompt_scope_service import PromptScopeService
+from tldw_chatbook.UI.Library_Modules.prompt_collections import (
+    LibraryPromptCollectionsController,
+)
 from tldw_chatbook.Widgets.Library.library_prompts_canvas import (
     LibraryPromptsListCanvas,
 )
@@ -64,11 +68,58 @@ def _catalog_page(*, offset: int, total: int = 207, query: str = "") -> dict[str
     }
 
 
-def test_controller_calls_exact_local_scope_signatures_off_ui_loop():
-    from tldw_chatbook.UI.Library_Modules.prompt_collections import (
-        LibraryPromptCollectionsController,
+def _direct_controller(service, **kwargs) -> LibraryPromptCollectionsController:
+    """Build a production-shaped controller with an in-loop test dispatcher."""
+
+    async def run(call, *args, **call_kwargs):
+        call_kwargs.pop("isolate_in_worker", None)
+        return await call(*args, **call_kwargs)
+
+    prompt_id = kwargs.pop("prompt_id", 41)
+    return LibraryPromptCollectionsController(
+        run_service_call=lambda: run,
+        prompt_service=lambda: service,
+        sync_memberships=kwargs.pop("sync_memberships", lambda: lambda _state: None),
+        current_prompt_id=(prompt_id if callable(prompt_id) else lambda: prompt_id),
+        current_prompt_detail=kwargs.pop(
+            "current_prompt_detail", lambda: {"backend": "local"}
+        ),
+        prompt_editor_active=kwargs.pop("prompt_editor_active", lambda: True),
+        **kwargs,
     )
 
+
+def _modal_outcome(modal) -> str:
+    return str(modal.query_one("#prompt-collection-manager-outcome", Static).render())
+
+
+def test_collection_controller_public_apis_use_google_style_docs():
+    required_sections = {
+        "__init__": ("Args:",),
+        "begin_manager": ("Args:", "Returns:", "Raises:"),
+        "manager_is_active": ("Args:", "Returns:"),
+        "manager_context_is_active": ("Args:", "Returns:"),
+        "end_manager": ("Args:",),
+        "invalidate": ("Args:",),
+        "identity_for": ("Args:", "Returns:", "Raises:"),
+        "open_manager": ("Args:", "Returns:"),
+        "load_catalog": ("Args:", "Returns:"),
+        "create_collection": ("Args:", "Returns:", "Raises:"),
+        "rename_collection": ("Args:", "Returns:", "Raises:"),
+        "collection_label": ("Args:", "Returns:"),
+        "load_memberships": ("Returns:",),
+        "disable_memberships": ("Args:",),
+        "stage_memberships": ("Args:", "Raises:"),
+        "apply_memberships": ("Returns:",),
+    }
+    for method_name, sections in required_sections.items():
+        doc = inspect.getdoc(getattr(LibraryPromptCollectionsController, method_name))
+        assert doc is not None, method_name
+        for section in sections:
+            assert section in doc, f"{method_name} lacks {section}"
+
+
+def test_controller_calls_exact_local_scope_signatures_off_ui_loop():
     assert (
         "mode"
         in inspect.signature(PromptScopeService.list_prompt_collections).parameters
@@ -116,11 +167,146 @@ def test_controller_calls_exact_local_scope_signatures_off_ui_loop():
     }
 
 
-def test_controller_rejects_late_catalog_and_membership_results_after_identity_switch():
-    from tldw_chatbook.UI.Library_Modules.prompt_collections import (
-        LibraryPromptCollectionsController,
-    )
+@pytest.mark.asyncio
+async def test_real_library_service_runner_isolates_every_collection_call_and_keeps_ui_responsive():
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
+    ui_thread = threading.get_ident()
+    started = threading.Event()
+    release = threading.Event()
+    service_threads: list[tuple[str, int]] = []
+    dispatched: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
+
+    class Service:
+        block_first_list = True
+
+        def _record(self, operation: str) -> None:
+            service_threads.append((operation, threading.get_ident()))
+
+        def list_prompt_collections(self, **kwargs):
+            self._record("list_prompt_collections")
+            if self.block_first_list:
+                self.block_first_list = False
+                started.set()
+                assert release.wait(timeout=5)
+            return _catalog_page(
+                offset=kwargs["offset"], total=1, query=kwargs["query"]
+            )
+
+        def create_prompt_collection(self, **_kwargs):
+            self._record("create_prompt_collection")
+            return {"collection_id": 1}
+
+        def update_prompt_collection(self, **kwargs):
+            self._record("update_prompt_collection")
+            return {
+                "backend": "local",
+                "collection_id": kwargs["collection_id"],
+                "name": kwargs["name"],
+                "display_name": kwargs["name"],
+            }
+
+        def list_prompt_collection_memberships(self, **kwargs):
+            self._record("list_prompt_collection_memberships")
+            return {
+                "prompt_id": kwargs["prompt_id"],
+                "collection_ids": (1,),
+                "changed": False,
+            }
+
+        def replace_prompt_collection_memberships(self, **kwargs):
+            self._record("replace_prompt_collection_memberships")
+            return {
+                "prompt_id": kwargs["prompt_id"],
+                "collection_ids": tuple(kwargs["collection_ids"]),
+                "changed": True,
+            }
+
+    class ResponsiveHost(App):
+        def __init__(self) -> None:
+            super().__init__()
+            self.pings = 0
+
+        def compose(self):
+            yield Button("Ping", id="ping")
+
+        def on_button_pressed(self, event: Button.Pressed) -> None:
+            if event.button.id == "ping":
+                self.pings += 1
+
+    service = Service()
+
+    async def run(call, *args, **kwargs):
+        dispatched.append((call.__name__, args, dict(kwargs)))
+        return await LibraryScreen._run_library_service_call(call, *args, **kwargs)
+
+    controller = LibraryPromptCollectionsController(
+        run_service_call=lambda: run,
+        prompt_service=lambda: service,
+        sync_memberships=lambda: lambda _state: None,
+        current_prompt_id=lambda: 41,
+        current_prompt_detail=lambda: {"backend": "local"},
+        prompt_editor_active=lambda: True,
+    )
+    host = ResponsiveHost()
+
+    async with host.run_test(size=(40, 12)) as pilot:
+        token = controller.begin_manager()
+        catalog_task = asyncio.create_task(
+            controller.load_catalog(manager_token=token, query="", offset=0)
+        )
+        await _wait_for_condition(
+            pilot, started.is_set, message="blocking catalog call never started"
+        )
+        await pilot.click("#ping")
+        assert host.pings == 1
+        assert catalog_task.done() is False
+        release.set()
+        assert await catalog_task is not None
+
+        await controller.create_collection(manager_token=token, name="Created")
+        await controller.rename_collection(
+            manager_token=token, collection_id=1, name="Renamed"
+        )
+        await controller.load_memberships()
+        controller.stage_memberships((1, 2))
+        await controller.apply_memberships()
+
+    assert service_threads
+    assert all(thread_id != ui_thread for _operation, thread_id in service_threads)
+    dispatched_by_name = {name: kwargs for name, _args, kwargs in dispatched}
+    assert dispatched_by_name["list_prompt_collections"] == {
+        "mode": "local",
+        "query": "",
+        "limit": 100,
+        "offset": 0,
+        "isolate_in_worker": True,
+    }
+    assert dispatched_by_name["create_prompt_collection"] == {
+        "mode": "local",
+        "name": "Created",
+        "isolate_in_worker": True,
+    }
+    assert dispatched_by_name["update_prompt_collection"] == {
+        "mode": "local",
+        "collection_id": 1,
+        "name": "Renamed",
+        "isolate_in_worker": True,
+    }
+    assert dispatched_by_name["list_prompt_collection_memberships"] == {
+        "mode": "local",
+        "prompt_id": 41,
+        "isolate_in_worker": True,
+    }
+    assert dispatched_by_name["replace_prompt_collection_memberships"] == {
+        "mode": "local",
+        "prompt_id": 41,
+        "collection_ids": (1, 2),
+        "isolate_in_worker": True,
+    }
+
+
+def test_controller_rejects_late_catalog_and_membership_results_after_identity_switch():
     catalog_gate = asyncio.Event()
     membership_gate = asyncio.Event()
     prompt_id = [41]
@@ -135,17 +321,10 @@ def test_controller_rejects_late_catalog_and_membership_results_after_identity_s
             await membership_gate.wait()
             return {"prompt_id": 41, "collection_ids": (1,), "changed": False}
 
-    async def run(call, *args, **kwargs):
-        kwargs.pop("isolate_in_worker", None)
-        return await call(*args, **kwargs)
-
-    controller = LibraryPromptCollectionsController(
-        run_service_call=lambda: run,
-        prompt_service=lambda: Service(),
+    controller = _direct_controller(
+        Service(),
         sync_memberships=lambda: synced.append,
-        current_prompt_id=lambda: prompt_id[0] if prompt_id else None,
-        current_prompt_detail=lambda: {"backend": "local"},
-        prompt_editor_active=lambda: True,
+        prompt_id=lambda: prompt_id[0] if prompt_id else None,
     )
 
     async def exercise():
@@ -167,10 +346,6 @@ def test_controller_rejects_late_catalog_and_membership_results_after_identity_s
 
 
 def test_controller_membership_apply_keeps_content_dirty_and_outcomes_separate():
-    from tldw_chatbook.UI.Library_Modules.prompt_collections import (
-        LibraryPromptCollectionsController,
-    )
-
     dirty = [True]
     content_status = ["Name already in use"]
     synced: list[Any] = []
@@ -186,18 +361,7 @@ def test_controller_membership_apply_keeps_content_dirty_and_outcomes_separate()
                 "changed": True,
             }
 
-    async def run(call, *args, **kwargs):
-        kwargs.pop("isolate_in_worker", None)
-        return await call(*args, **kwargs)
-
-    controller = LibraryPromptCollectionsController(
-        run_service_call=lambda: run,
-        prompt_service=lambda: Service(),
-        sync_memberships=lambda: synced.append,
-        current_prompt_id=lambda: 41,
-        current_prompt_detail=lambda: {"backend": "local"},
-        prompt_editor_active=lambda: True,
-    )
+    controller = _direct_controller(Service(), sync_memberships=lambda: synced.append)
 
     async def exercise():
         await controller.load_memberships()
@@ -211,19 +375,69 @@ def test_controller_membership_apply_keeps_content_dirty_and_outcomes_separate()
     assert synced[-1].status == "success"
 
 
-def test_controller_invalidate_rejects_old_modal_across_same_prompt_reopen():
-    from tldw_chatbook.UI.Library_Modules.prompt_collections import (
-        LibraryPromptCollectionsController,
-    )
+@pytest.mark.parametrize(
+    "response",
+    (
+        None,
+        {"collection_ids": (1,)},
+        {"prompt_id": 0, "collection_ids": (1,)},
+        {"prompt_id": 42, "collection_ids": (1,)},
+        {"prompt_id": 41, "collection_ids": "1"},
+    ),
+)
+def test_controller_membership_load_reply_fails_closed_on_malformed_identity(response):
+    class Service:
+        async def list_prompt_collection_memberships(self, **_kwargs):
+            return response
 
-    controller = LibraryPromptCollectionsController(
-        run_service_call=lambda: None,
-        prompt_service=lambda: None,
-        sync_memberships=lambda: lambda _state: None,
-        current_prompt_id=lambda: 41,
-        current_prompt_detail=lambda: {"backend": "local"},
-        prompt_editor_active=lambda: True,
-    )
+    controller = _direct_controller(Service())
+
+    asyncio.run(controller.load_memberships())
+
+    assert controller.membership_state.status == "load_error"
+    assert controller.membership_state.applied_ids == ()
+    assert controller.membership_state.staged_ids == ()
+    assert controller.membership_state.outcome == "Couldn't load memberships. Retry."
+
+
+@pytest.mark.parametrize(
+    "response",
+    (
+        None,
+        {"collection_ids": (1, 2)},
+        {"prompt_id": 0, "collection_ids": (1, 2)},
+        {"prompt_id": 42, "collection_ids": (1, 2)},
+        {"prompt_id": 41, "collection_ids": (1,)},
+    ),
+)
+def test_controller_membership_apply_reply_fails_closed_on_identity_or_set_drift(
+    response,
+):
+    class Service:
+        async def list_prompt_collection_memberships(self, **_kwargs):
+            return {"prompt_id": 41, "collection_ids": (1,), "changed": False}
+
+        async def replace_prompt_collection_memberships(self, **_kwargs):
+            return response
+
+    controller = _direct_controller(Service())
+
+    async def exercise() -> None:
+        await controller.load_memberships()
+        controller.stage_memberships((1, 2))
+        await controller.apply_memberships()
+
+    asyncio.run(exercise())
+
+    assert controller.membership_state.status == "apply_error"
+    assert controller.membership_state.applied_ids == (1,)
+    assert controller.membership_state.staged_ids == (1, 2)
+    assert controller.membership_state.outcome == "Couldn't apply memberships. Retry."
+    assert controller.membership_state.can_apply is True
+
+
+def test_controller_invalidate_rejects_old_modal_across_same_prompt_reopen():
+    controller = _direct_controller(None)
     old_token = controller.begin_manager("membership")
     old_identity = controller.identity_for(41)
 
@@ -238,30 +452,25 @@ def test_controller_invalidate_rejects_old_modal_across_same_prompt_reopen():
 
 
 def test_controller_membership_success_callback_runs_once_only_for_current_success():
-    from tldw_chatbook.UI.Library_Modules.prompt_collections import (
-        LibraryPromptCollectionsController,
-    )
-
     refreshes: list[str] = []
 
     class Service:
-        async def list_prompt_collection_memberships(self, **_kwargs):
-            return {"collection_ids": (1,)}
+        async def list_prompt_collection_memberships(self, **kwargs):
+            return {
+                "prompt_id": kwargs["prompt_id"],
+                "collection_ids": (1,),
+                "changed": False,
+            }
 
         async def replace_prompt_collection_memberships(self, **kwargs):
-            return {"collection_ids": kwargs["collection_ids"]}
+            return {
+                "prompt_id": kwargs["prompt_id"],
+                "collection_ids": kwargs["collection_ids"],
+                "changed": True,
+            }
 
-    async def run(call, *args, **kwargs):
-        kwargs.pop("isolate_in_worker", None)
-        return await call(*args, **kwargs)
-
-    controller = LibraryPromptCollectionsController(
-        run_service_call=lambda: run,
-        prompt_service=lambda: Service(),
-        sync_memberships=lambda: lambda _state: None,
-        current_prompt_id=lambda: 41,
-        current_prompt_detail=lambda: {"backend": "local"},
-        prompt_editor_active=lambda: True,
+    controller = _direct_controller(
+        Service(),
         membership_applied=lambda: lambda: refreshes.append("refresh"),
     )
 
@@ -276,11 +485,83 @@ def test_controller_membership_success_callback_runs_once_only_for_current_succe
     assert refreshes == ["refresh"]
 
 
-def test_controller_rename_refreshes_off_page_label_from_validated_response():
-    from tldw_chatbook.UI.Library_Modules.prompt_collections import (
-        LibraryPromptCollectionsController,
-    )
+def test_controller_hydrates_initial_membership_labels_without_opening_manager():
+    detail_calls: list[dict[str, Any]] = []
 
+    class Service:
+        async def list_prompt_collection_memberships(self, **kwargs):
+            return {
+                "prompt_id": kwargs["prompt_id"],
+                "collection_ids": (2, 207),
+                "changed": False,
+            }
+
+        async def get_prompt_collection(self, **kwargs):
+            detail_calls.append(kwargs)
+            collection_id = kwargs["collection_id"]
+            return {
+                "backend": "local",
+                "collection_id": collection_id,
+                "name": "[bold]" if collection_id == 2 else "研究",
+                "display_name": (
+                    "[bold] · #2" if collection_id == 2 else "研究 · #207"
+                ),
+            }
+
+    controller = _direct_controller(Service())
+
+    asyncio.run(controller.load_memberships())
+
+    assert controller.membership_state.labels == (
+        (2, "[bold] · #2"),
+        (207, "研究 · #207"),
+    )
+    assert detail_calls == [
+        {"mode": "local", "collection_id": 2},
+        {"mode": "local", "collection_id": 207},
+    ]
+
+
+def test_controller_rejects_late_membership_label_hydration_after_identity_switch():
+    detail_started = asyncio.Event()
+    detail_release = asyncio.Event()
+    prompt_id = [41]
+
+    class Service:
+        async def list_prompt_collection_memberships(self, **kwargs):
+            return {
+                "prompt_id": kwargs["prompt_id"],
+                "collection_ids": (2,),
+                "changed": False,
+            }
+
+        async def get_prompt_collection(self, **kwargs):
+            detail_started.set()
+            await detail_release.wait()
+            return {
+                "backend": "local",
+                "collection_id": kwargs["collection_id"],
+                "name": "Old",
+                "display_name": "Old",
+            }
+
+    controller = _direct_controller(Service(), prompt_id=lambda: prompt_id[0])
+
+    async def exercise() -> None:
+        task = asyncio.create_task(controller.load_memberships())
+        await detail_started.wait()
+        prompt_id[0] = 42
+        detail_release.set()
+        await task
+
+    asyncio.run(exercise())
+
+    assert controller.membership_state.status == "loading"
+    assert controller.membership_state.prompt_id == 41
+    assert controller.membership_state.labels == ()
+
+
+def test_controller_rename_refreshes_off_page_label_from_validated_response():
     renamed = "[bold] renamed 集合"
 
     class Service:
@@ -310,15 +591,9 @@ def test_controller_rename_refreshes_off_page_label_from_validated_response():
                 "prompt_ids": [],
             }
 
-    async def run(call, *args, **kwargs):
-        kwargs.pop("isolate_in_worker", None)
-        return await call(*args, **kwargs)
-
-    controller = LibraryPromptCollectionsController(
-        run_service_call=lambda: run,
-        prompt_service=lambda: Service(),
-        sync_memberships=lambda: lambda _state: None,
-        current_prompt_id=lambda: None,
+    controller = _direct_controller(
+        Service(),
+        prompt_id=None,
         current_prompt_detail=lambda: None,
         prompt_editor_active=lambda: False,
     )
@@ -340,11 +615,21 @@ def test_controller_rename_refreshes_off_page_label_from_validated_response():
 
 
 class _ManagerHost(App):
-    def __init__(self, *, mode: str, total: int = 207) -> None:
+    def __init__(
+        self,
+        *,
+        mode: str,
+        total: int = 207,
+        staged_ids: tuple[int, ...] = (1, 2),
+        create_refresh_error: bool = False,
+    ) -> None:
         super().__init__()
         self.mode = mode
         self.total = total
+        self.staged_ids = staged_ids
+        self.create_refresh_error = create_refresh_error
         self.calls: list[tuple[str, Any]] = []
+        self.catalog_state = None
 
     def on_mount(self) -> None:
         self.push_screen(self._modal())
@@ -356,29 +641,34 @@ class _ManagerHost(App):
 
         async def load(*, query: str, offset: int):
             self.calls.append(("load", (query, offset)))
-            current = prompts_state_module.begin_prompt_collection_catalog(
-                query=query, request_token=len(self.calls)
+            append = offset > 0
+            loading = prompts_state_module.begin_prompt_collection_catalog(
+                query=query,
+                request_token=len(self.calls),
+                previous=self.catalog_state if append else None,
+                append=append,
             )
-            if offset:
-                first = prompts_state_module.apply_prompt_collection_catalog_page(
-                    current,
-                    _catalog_page(offset=0, total=self.total, query=query),
-                    request_token=len(self.calls),
-                )
-                return prompts_state_module.apply_prompt_collection_catalog_page(
-                    first,
+            self.catalog_state = (
+                prompts_state_module.apply_prompt_collection_catalog_page(
+                    loading,
                     _catalog_page(offset=offset, total=self.total, query=query),
                     request_token=len(self.calls),
-                    append=True,
+                    append=append,
                 )
-            return prompts_state_module.apply_prompt_collection_catalog_page(
-                current,
-                _catalog_page(offset=0, total=self.total, query=query),
-                request_token=len(self.calls),
             )
+            return self.catalog_state
 
         async def create(name: str):
             self.calls.append(("create", name))
+            if self.create_refresh_error:
+                loading = prompts_state_module.begin_prompt_collection_catalog(
+                    query="", request_token=len(self.calls)
+                )
+                return prompts_state_module.fail_prompt_collection_catalog(
+                    loading,
+                    request_token=len(self.calls),
+                    error="Couldn't load collections. Retry.",
+                )
             return await load(query="", offset=0)
 
         async def rename(collection_id: int, name: str):
@@ -388,7 +678,7 @@ class _ManagerHost(App):
         return PromptCollectionManagerModal(
             mode=self.mode,
             selected_collection_id=None,
-            staged_collection_ids=(1, 2),
+            staged_collection_ids=self.staged_ids,
             load_catalog=load,
             create_collection=create,
             rename_collection=rename,
@@ -446,10 +736,14 @@ class _MutationManagerHost(App):
         )
 
 
-class _CatalogErrorManagerHost(App):
-    def __init__(self) -> None:
+class _PagingRetryManagerHost(App):
+    def __init__(self, *, fail_offset: int, fail_once: bool = True) -> None:
         super().__init__()
-        self.load_calls = 0
+        self.fail_offset = fail_offset
+        self.fail_once = fail_once
+        self.failed = False
+        self.offsets: list[int] = []
+        self.catalog_state = None
 
     def on_mount(self) -> None:
         from tldw_chatbook.UI.Library_Modules.prompt_collection_manager_modal import (
@@ -457,15 +751,33 @@ class _CatalogErrorManagerHost(App):
         )
 
         async def load(*, query: str, offset: int):
-            self.load_calls += 1
-            current = prompts_state_module.begin_prompt_collection_catalog(
-                query=query, request_token=self.load_calls
+            self.offsets.append(offset)
+            append = offset > 0
+            loading = prompts_state_module.begin_prompt_collection_catalog(
+                query=query,
+                request_token=len(self.offsets),
+                previous=self.catalog_state if append else None,
+                append=append,
             )
-            return prompts_state_module.fail_prompt_collection_catalog(
-                current,
-                request_token=self.load_calls,
-                error="Couldn't load collections. Retry.",
-            )
+            if offset == self.fail_offset and (not self.failed or not self.fail_once):
+                self.failed = True
+                self.catalog_state = (
+                    prompts_state_module.fail_prompt_collection_catalog(
+                        loading,
+                        request_token=len(self.offsets),
+                        error="Couldn't load collections. Retry.",
+                    )
+                )
+            else:
+                self.catalog_state = (
+                    prompts_state_module.apply_prompt_collection_catalog_page(
+                        loading,
+                        _catalog_page(offset=offset),
+                        request_token=len(self.offsets),
+                        append=append,
+                    )
+                )
+            return self.catalog_state
 
         async def unused(*_args, **_kwargs):
             raise AssertionError("mutation was not requested")
@@ -624,6 +936,103 @@ async def test_shared_manager_has_one_scroll_owner_literal_labels_no_delete_or_s
 
 
 @pytest.mark.asyncio
+async def test_shared_manager_restores_exact_focus_after_each_recompose_action():
+    app = _ManagerHost(mode="browse")
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        assert modal.query_one("#prompt-collection-manager-search", Input).has_focus
+
+        search = modal.query_one("#prompt-collection-manager-search", Input)
+        search.value = "集合"
+        await pilot.press("enter")
+        await _wait_for_condition(
+            pilot,
+            lambda: modal._catalog.query == "集合" and modal._catalog.status == "ready",
+            message="search did not settle",
+        )
+        assert modal.query_one("#prompt-collection-manager-search", Input).has_focus
+        assert _modal_outcome(modal) == ""
+
+        load_more = modal.query_one("#prompt-collection-manager-load-more", Button)
+        load_more.focus()
+        load_more.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: len(modal._catalog.items) == 200,
+            message="second catalog page did not settle",
+        )
+        await _wait_for_selector(modal, pilot, "#prompt-collection-manager-load-more")
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                modal.query_one(
+                    "#prompt-collection-manager-load-more", Button
+                ).has_focus
+            ),
+            message="Load more focus was not restored",
+        )
+        assert _modal_outcome(modal) == ""
+
+        row = modal.query_one("#prompt-collection-manager-row-1", Button)
+        row.focus()
+        row.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                modal.query_one("#prompt-collection-manager-row-1", Button).has_focus
+            ),
+            message="selected row focus was not restored",
+        )
+
+        all_rows = modal.query_one("#prompt-collection-manager-all", Button)
+        all_rows.focus()
+        all_rows.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: modal.query_one("#prompt-collection-manager-all", Button).has_focus,
+            message="All prompts focus was not restored",
+        )
+
+        name = modal.query_one("#prompt-collection-manager-new-name", Input)
+        name.value = "Created focus"
+        modal.query_one("#prompt-collection-manager-create", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: _modal_outcome(modal) == "Collection created.",
+            message="create did not settle",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                modal.query_one("#prompt-collection-manager-new-name", Input).has_focus
+            ),
+            message="create settlement focus was not restored",
+        )
+
+        row = modal.query_one("#prompt-collection-manager-row-1", Button)
+        row.focus()
+        row.press()
+        await pilot.pause()
+        modal.query_one(
+            "#prompt-collection-manager-new-name", Input
+        ).value = "Renamed focus"
+        modal.query_one("#prompt-collection-manager-rename", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: _modal_outcome(modal) == "Collection renamed.",
+            message="rename did not settle",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                modal.query_one("#prompt-collection-manager-row-1", Button).has_focus
+            ),
+            message="rename settlement focus was not restored",
+        )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("mode", "selector", "widget_type", "size"),
     (
@@ -656,13 +1065,31 @@ async def test_shared_manager_load_more_beyond_207_and_membership_multiselect():
     async with browse_app.run_test(size=(64, 24)) as pilot:
         await pilot.pause()
         await pilot.click("#prompt-collection-manager-load-more")
-        await pilot.pause()
+        await _wait_for_condition(
+            pilot,
+            lambda: len(browse_app.screen._catalog.items) == 200,
+            message="second catalog page did not settle",
+        )
         assert len(browse_app.screen.query(".prompt-collection-manager-row")) == 201
         assert browse_app.screen.query_one(
             "#prompt-collection-manager-load-more", Button
         ).display
+        await pilot.click("#prompt-collection-manager-load-more")
+        await _wait_for_condition(
+            pilot,
+            lambda: len(browse_app.screen._catalog.items) == 207,
+            message="third catalog page did not settle",
+        )
+        assert browse_app.screen.query_one("#prompt-collection-manager-row-207", Button)
+        assert browse_app.screen._catalog.total == 207
+        assert browse_app.screen._catalog.has_more is False
+        load_more = browse_app.screen.query_one(
+            "#prompt-collection-manager-load-more", Button
+        )
+        assert load_more.display is False
+        assert load_more.disabled is True
 
-    membership_app = _ManagerHost(mode="membership")
+    membership_app = _ManagerHost(mode="membership", staged_ids=(1, 2, 207))
     async with membership_app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         first = membership_app.screen.query_one(
@@ -674,6 +1101,25 @@ async def test_shared_manager_load_more_beyond_207_and_membership_multiselect():
         assert first.value is True and second.value is True
         await pilot.click("#prompt-collection-manager-member-1")
         assert first.value is False and second.value is True
+        await pilot.click("#prompt-collection-manager-load-more")
+        await _wait_for_condition(
+            pilot,
+            lambda: len(membership_app.screen._catalog.items) == 200,
+            message="membership second page did not settle",
+        )
+        await pilot.click("#prompt-collection-manager-load-more")
+        await _wait_for_condition(
+            pilot,
+            lambda: len(membership_app.screen._catalog.items) == 207,
+            message="membership third page did not settle",
+        )
+        assert (
+            membership_app.screen.query_one(
+                "#prompt-collection-manager-member-207", Checkbox
+            ).value
+            is True
+        )
+        assert membership_app.screen._staged_ids == {2, 207}
         assert membership_app.screen.query_one(
             "#prompt-collection-manager-done", Button
         )
@@ -689,15 +1135,55 @@ async def test_manager_rename_requires_one_concrete_selection_and_new_has_explic
         await pilot.click("#prompt-collection-manager-new-name")
         await pilot.press("space", "space")
         await pilot.click("#prompt-collection-manager-create")
-        assert (
-            "required"
-            in str(
-                app.screen.query_one(
-                    "#prompt-collection-manager-outcome", Static
-                ).render()
-            ).casefold()
-        )
+        assert "required" in _modal_outcome(app.screen).casefold()
         assert not any(call[0] == "create" for call in app.calls)
+
+
+@pytest.mark.asyncio
+async def test_membership_manager_renames_focused_row_without_changing_staged_set():
+    app = _ManagerHost(mode="membership", total=2, staged_ids=(1, 2))
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        first = modal.query_one("#prompt-collection-manager-member-1", Checkbox)
+        second = modal.query_one("#prompt-collection-manager-member-2", Checkbox)
+        assert first.value is True and second.value is True
+        assert modal._staged_ids == {1, 2}
+
+        second.focus()
+        await pilot.pause()
+        rename = modal.query_one("#prompt-collection-manager-rename", Button)
+        assert rename.disabled is False
+        assert modal._staged_ids == {1, 2}
+
+        modal.query_one(
+            "#prompt-collection-manager-new-name", Input
+        ).value = "Focused rename"
+        rename.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: _modal_outcome(modal) == "Collection renamed.",
+            message="focused membership rename did not settle",
+        )
+        assert ("rename", (2, "Focused rename")) in app.calls
+        assert modal._staged_ids == {1, 2}
+        assert (
+            modal.query_one("#prompt-collection-manager-member-1", Checkbox).value
+            is True
+        )
+        assert (
+            modal.query_one("#prompt-collection-manager-member-2", Checkbox).value
+            is True
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                modal.query_one(
+                    "#prompt-collection-manager-member-2", Checkbox
+                ).has_focus
+            ),
+            message="renamed membership row focus was not restored",
+        )
 
 
 @pytest.mark.asyncio
@@ -712,19 +1198,10 @@ async def test_manager_mutation_failure_copy_never_renders_exception_secrets():
         await pilot.click("#prompt-collection-manager-create")
         await _wait_for_condition(
             pilot,
-            lambda: (
-                "Retry"
-                in str(
-                    app.screen.query_one(
-                        "#prompt-collection-manager-outcome", Static
-                    ).render()
-                )
-            ),
+            lambda: "Retry" in _modal_outcome(app.screen),
             message="create failure never settled",
         )
-        outcome = str(
-            app.screen.query_one("#prompt-collection-manager-outcome", Static).render()
-        )
+        outcome = _modal_outcome(app.screen)
         assert outcome == "Couldn't create collection. Retry."
         assert secret not in outcome
         assert app.screen.query_one("#prompt-collection-manager-retry", Button).display
@@ -732,7 +1209,7 @@ async def test_manager_mutation_failure_copy_never_renders_exception_secrets():
 
 @pytest.mark.asyncio
 async def test_manager_catalog_error_state_always_exposes_exact_retry():
-    app = _CatalogErrorManagerHost()
+    app = _PagingRetryManagerHost(fail_offset=0, fail_once=False)
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         retry = app.screen.query_one("#prompt-collection-manager-retry", Button)
@@ -740,9 +1217,88 @@ async def test_manager_catalog_error_state_always_exposes_exact_retry():
         retry.press()
         await _wait_for_condition(
             pilot,
-            lambda: app.load_calls == 2,
+            lambda: app.offsets == [0, 0],
             message="catalog Retry did not repeat the exact root load",
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failed_offset", (100, 200))
+async def test_manager_catalog_retry_repeats_exact_failed_page_offset(failed_offset):
+    app = _PagingRetryManagerHost(fail_offset=failed_offset)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        if failed_offset == 200:
+            modal.query_one("#prompt-collection-manager-load-more", Button).press()
+            await _wait_for_condition(
+                pilot,
+                lambda: len(modal._catalog.items) == 200,
+                message="page two did not settle before page-three failure",
+            )
+            await _wait_for_selector(
+                modal, pilot, "#prompt-collection-manager-load-more"
+            )
+        modal.query_one("#prompt-collection-manager-load-more", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: modal._catalog.status == "error",
+            message="catalog page failure did not settle",
+        )
+        assert modal._catalog.offset == failed_offset
+        assert app.offsets[-1] == failed_offset
+        await _wait_for_selector(modal, pilot, "#prompt-collection-manager-retry")
+        retry = modal.query_one("#prompt-collection-manager-retry", Button)
+        assert retry.display is True
+        retry.press()
+        expected_loaded = min(207, failed_offset + 100)
+        await _wait_for_condition(
+            pilot,
+            lambda: len(modal._catalog.items) == expected_loaded,
+            message="catalog page Retry did not settle",
+        )
+        assert app.offsets[-2:] == [failed_offset, failed_offset]
+        assert (
+            modal.query_one("#prompt-collection-manager-retry", Button).display is False
+        )
+        assert _modal_outcome(modal) == ""
+
+
+@pytest.mark.asyncio
+async def test_successful_mutation_with_refresh_failure_retries_catalog_only():
+    app = _ManagerHost(mode="browse", total=1, create_refresh_error=True)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal.query_one("#prompt-collection-manager-new-name", Input).value = "Created"
+        modal.query_one("#prompt-collection-manager-create", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: "Retry catalog" in _modal_outcome(modal),
+            message="partial mutation success was not reported",
+        )
+        assert [call for call in app.calls if call[0] == "create"] == [
+            ("create", "Created")
+        ]
+        retry = modal.query_one("#prompt-collection-manager-retry", Button)
+        assert retry.display is True
+        retry.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                modal._catalog.status == "ready"
+                and [call for call in app.calls if call[0] == "load"]
+                == [("load", ("", 0)), ("load", ("", 0))]
+            ),
+            message="catalog-only Retry did not settle",
+        )
+        assert [call for call in app.calls if call[0] == "create"] == [
+            ("create", "Created")
+        ]
+        assert (
+            modal.query_one("#prompt-collection-manager-retry", Button).display is False
+        )
+        assert _modal_outcome(modal) == ""
 
 
 @pytest.mark.asyncio
@@ -788,10 +1344,7 @@ async def test_older_catalog_load_cannot_overwrite_completed_mutation():
         await pilot.pause()
         assert len(modal.query("#prompt-collection-manager-row-99")) == 1
         assert len(modal.query("#prompt-collection-manager-row-1")) == 0
-        assert (
-            str(modal.query_one("#prompt-collection-manager-outcome", Static).render())
-            == "Collection created."
-        )
+        assert _modal_outcome(modal) == "Collection created."
 
 
 def test_collection_manager_presentation_and_coordinator_are_split_by_concern():
@@ -1059,6 +1612,58 @@ async def test_library_screen_collection_manager_selects_exact_browse_scope(tmp_
 
 
 @pytest.mark.asyncio
+async def test_real_library_screen_collection_manager_crosses_sqlite_page_100(tmp_path):
+    _db, service = _real_prompt_scope_service(tmp_path)
+    created = []
+    for index in range(1, 108):
+        created.append(
+            await service.create_prompt_collection(
+                mode="local", name=f"Boundary {index:03d}"
+            )
+        )
+    final_id = created[-1]["collection_id"]
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-prompts", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-prompts-collection")
+        screen.query_one("#library-prompts-collection", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: host.screen is not screen,
+            message="real collection manager never opened",
+        )
+        modal = host.screen
+        await _wait_for_condition(
+            pilot,
+            lambda: len(modal._catalog.items) == 100,
+            message="real catalog first page did not settle",
+        )
+        assert len(modal.query(f"#prompt-collection-manager-row-{final_id}")) == 0
+        modal.query_one("#prompt-collection-manager-load-more", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: len(modal._catalog.items) == 107,
+            message="real catalog second page did not settle",
+        )
+        await _wait_for_selector(
+            modal, pilot, f"#prompt-collection-manager-row-{final_id}"
+        )
+        row = modal.query_one(f"#prompt-collection-manager-row-{final_id}", Button)
+        assert str(row.label) == "Boundary 107"
+        assert modal._catalog.total == 107
+        assert modal._catalog.has_more is False
+        load_more = modal.query_one("#prompt-collection-manager-load-more", Button)
+        assert load_more.display is False
+        assert load_more.disabled is True
+
+
+@pytest.mark.asyncio
 async def test_library_screen_manager_create_search_rename_and_explicit_all(tmp_path):
     db, service = _real_prompt_scope_service(tmp_path)
     db.add_prompt(
@@ -1113,6 +1718,41 @@ async def test_library_screen_manager_create_search_rename_and_explicit_all(tmp_
         )
         assert created_page["total"] == 1
         collection_id = created_page["collections"][0]["collection_id"]
+
+        host.screen.query_one(
+            "#prompt-collection-manager-new-name", Input
+        ).value = created_name.swapcase()
+        host.screen.query_one("#prompt-collection-manager-create", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                str(
+                    host.screen.query_one(
+                        "#prompt-collection-manager-outcome", Static
+                    ).render()
+                )
+                == "Name already exists — choose another."
+            ),
+            message="case-collision outcome never settled",
+        )
+        assert (
+            host.screen.query_one("#prompt-collection-manager-retry", Button).display
+            is False
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                host.screen.query_one(
+                    "#prompt-collection-manager-new-name", Input
+                ).has_focus
+            ),
+            message="collision recovery focus did not settle",
+        )
+        assert (
+            await service.list_prompt_collections(
+                mode="local", query=created_name, limit=100, offset=0
+            )
+        )["total"] == 1
 
         search = host.screen.query_one("#prompt-collection-manager-search", Input)
         search.value = created_name
@@ -1177,6 +1817,7 @@ async def test_library_screen_manager_create_search_rename_and_explicit_all(tmp_
             ),
             message="renamed collection never became the active filter",
         )
+        await _wait_for_selector(screen, pilot, "#library-prompts-collection")
         assert (
             str(screen.query_one("#library-prompts-collection", Button).label)
             == f"collection: {renamed_name} ▸"
@@ -1276,6 +1917,11 @@ async def test_library_screen_membership_apply_is_independent_from_dirty_prompt_
             ),
             message="Prompt memberships never loaded",
         )
+        membership_summary = str(
+            screen.query_one("#library-prompt-memberships-summary", Static).render()
+        )
+        assert "First" in membership_summary
+        assert "Collection #" not in membership_summary
         name_input = screen.query_one("#library-prompt-name", Input)
         name_input.value = "Dirty prompt edited"
         await pilot.pause()
@@ -1339,3 +1985,115 @@ async def test_library_screen_membership_apply_is_independent_from_dirty_prompt_
             screen._library_prompt_collections_controller.membership_state.outcome
             == "Memberships applied."
         )
+
+
+@pytest.mark.asyncio
+async def test_membership_apply_defers_exact_browse_until_clean_back_to_list(
+    tmp_path, monkeypatch
+):
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _prompt_uuid, _message = db.add_prompt(
+        name="Deferred refresh prompt",
+        author="A",
+        details="Before",
+        system_prompt="System",
+        user_prompt="User",
+    )
+    first = await service.create_prompt_collection(
+        mode="local", name="First", prompt_ids=[prompt_id]
+    )
+    second = await service.create_prompt_collection(mode="local", name="Second")
+    browse_prompt = service.browse_prompts
+    browse_calls: list[dict[str, Any]] = []
+
+    async def recording_browse(**kwargs):
+        browse_calls.append(dict(kwargs))
+        return await browse_prompt(**kwargs)
+
+    monkeypatch.setattr(service, "browse_prompts", recording_browse)
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-prompts", Button).press()
+        await _wait_for_selector(screen, pilot, f"#library-prompt-row-{prompt_id}")
+        screen._apply_library_prompt_collection(first["collection_id"])
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_prompt_browse_controller.scope.collection_id
+                == first["collection_id"]
+                and screen._library_prompt_browse_controller.result.status == "ready"
+            ),
+            message="exact starting collection scope did not settle",
+        )
+        await _wait_for_selector(screen, pilot, f"#library-prompt-row-{prompt_id}")
+        screen.query_one(f"#library-prompt-row-{prompt_id}", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_prompt_collections_controller.membership_state.status
+                == "ready"
+            ),
+            message="memberships did not load before deferred refresh test",
+        )
+        scope = screen._library_prompt_browse_controller.scope
+        browse_before_apply = len(browse_calls)
+        count_refreshes: list[str] = []
+        screen._refresh_local_source_snapshot = lambda: count_refreshes.append("count")
+
+        screen._library_prompt_collections_controller.stage_memberships(
+            (second["collection_id"],)
+        )
+        screen.query_one("#library-prompt-memberships-apply", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_prompt_collections_controller.membership_state.status
+                == "success"
+            ),
+            message="membership Apply did not settle",
+        )
+        assert len(browse_calls) == browse_before_apply
+        assert count_refreshes == ["count"]
+        assert screen._library_prompt_status == ""
+
+        screen.query_one("#library-prompt-back", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_prompts_view == "list"
+                and len(browse_calls) == browse_before_apply + 1
+                and screen._library_prompt_browse_controller.result.status
+                == "empty_collection"
+            ),
+            message=lambda: (
+                "Back to list did not dispatch the deferred exact browse: "
+                f"view={screen._library_prompts_view!r}, "
+                f"calls={browse_calls[browse_before_apply:]!r}, "
+                f"scope={screen._library_prompt_browse_controller.scope!r}, "
+                f"result={screen._library_prompt_browse_controller.result!r}"
+            ),
+        )
+        assert browse_calls[-1] == {
+            "mode": "local",
+            "query": scope.query,
+            "collection_id": scope.collection_id,
+            "sort_by": scope.sort_by,
+            "sort_order": scope.sort_order,
+            "page": scope.page,
+            "page_size": scope.page_size,
+        }
+        assert screen._library_prompt_browse_controller.result.total_items == 0
+        assert len(screen.query(f"#library-prompt-row-{prompt_id}")) == 0
+        assert (
+            await service.list_prompt_collection_memberships(
+                mode="local", prompt_id=prompt_id
+            )
+        )["collection_ids"] == (second["collection_id"],)
+        assert count_refreshes == ["count", "count"]
+        assert screen._library_prompt_status == ""
