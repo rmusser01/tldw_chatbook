@@ -1446,6 +1446,7 @@ async def test_prompt_scope_rejects_server_collection_query_before_policy_or_ada
         {"limit": 0},
         {"offset": False},
         {"offset": -1},
+        {"offset": 2**63},
     ],
 )
 async def test_prompt_scope_validates_collection_catalog_before_policy_or_adapter(
@@ -1464,6 +1465,27 @@ async def test_prompt_scope_validates_collection_catalog_before_policy_or_adapte
 
     assert policy.actions == []
     assert local.calls == []
+
+
+@pytest.mark.asyncio
+async def test_prompt_scope_accepts_signed_maximum_collection_catalog_offset():
+    policy = FakePolicyEnforcer()
+    local = FakeLocalPromptService()
+    service = PromptScopeService(
+        local_service=local,
+        server_service=FakeServerPromptService(),
+        policy_enforcer=policy,
+    )
+
+    listed = await service.list_prompt_collections(
+        mode="local", limit=1, offset=(2**63) - 1
+    )
+
+    assert listed["offset"] == (2**63) - 1
+    assert local.calls == [
+        ("list_prompt_collections", "", 1, (2**63) - 1),
+    ]
+    assert policy.actions == ["prompts.collections.list.local"]
 
 
 def test_local_prompt_service_persists_prompt_collections(tmp_path):

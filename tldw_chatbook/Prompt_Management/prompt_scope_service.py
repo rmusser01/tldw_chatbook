@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional
 
-from ..DB.Prompts_DB import ConflictError
+from ..DB.Prompts_DB import ConflictError, PromptsDatabase
 from ..runtime_policy.bootstrap import (
     build_runtime_api_client_provider_from_config,
     derive_configured_server_binding,
@@ -40,6 +40,9 @@ from .prompt_source_capabilities import (
 from .server_prompt_adapter import normalize_artifact_type
 
 
+_SQLITE_SIGNED_INTEGER_MAX = PromptsDatabase._SQLITE_SIGNED_INTEGER_MAX
+
+
 class PromptBackend(str, Enum):
     LOCAL = "local"
     SERVER = "server"
@@ -53,8 +56,8 @@ def _normalize_collection_catalog_args(
         raise TypeError("query must be a string.")
     if type(limit) is not int or limit <= 0:
         raise ValueError("limit must be a positive integer.")
-    if type(offset) is not int or offset < 0:
-        raise ValueError("offset must be a non-negative integer.")
+    if type(offset) is not int or offset < 0 or offset > _SQLITE_SIGNED_INTEGER_MAX:
+        raise ValueError("offset must be a non-negative signed 64-bit integer.")
     return query.strip(), limit, offset
 
 
@@ -310,38 +313,31 @@ class LocalPromptService:
         }
 
     @staticmethod
-    def _reject_active_name_collision(
-        conn: sqlite3.Connection,
-        *,
-        name: str,
-        exclude_collection_id: int | None = None,
-    ) -> None:
-        params: list[Any] = [name.casefold()]
-        exclude_sql = ""
-        if exclude_collection_id is not None:
-            exclude_sql = " AND collection_id != ?"
-            params.append(exclude_collection_id)
+    def _reject_reserved_name_collision(conn: sqlite3.Connection, *, name: str) -> None:
         collision = conn.execute(
-            f"""
+            """
             SELECT 1
             FROM LocalPromptCollections
-            WHERE deleted = 0
-              AND PY_CASEFOLD(name) = ?
-              {exclude_sql}
+            WHERE PY_CASEFOLD(name) = ?
             LIMIT 1
             """,
-            params,
+            (name.casefold(),),
         ).fetchone()
         if collision is not None:
-            raise ValueError("An active prompt collection already uses this name.")
+            raise ValueError("This prompt collection name is reserved.")
 
     @staticmethod
     def _collection_id(collection_id: int | str) -> int:
-        try:
-            resolved = int(collection_id)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("Invalid prompt collection id.") from exc
-        if resolved < 1:
+        if type(collection_id) is int:
+            resolved = collection_id
+        elif isinstance(collection_id, str):
+            try:
+                resolved = int(collection_id)
+            except ValueError as exc:
+                raise ValueError("Invalid prompt collection id.") from exc
+        else:
+            raise ValueError("Invalid prompt collection id.")
+        if resolved < 1 or resolved > _SQLITE_SIGNED_INTEGER_MAX:
             raise ValueError("Invalid prompt collection id.")
         return resolved
 
@@ -349,17 +345,15 @@ class LocalPromptService:
     def _prompt_ids(prompt_ids: Optional[list[int]]) -> list[int]:
         resolved: list[int] = []
         for prompt_id in prompt_ids or []:
-            try:
-                value = int(prompt_id)
-            except (TypeError, ValueError) as exc:
+            if (
+                type(prompt_id) is not int
+                or prompt_id < 1
+                or prompt_id > _SQLITE_SIGNED_INTEGER_MAX
+            ):
                 raise ValueError(
-                    "Prompt collection prompt_ids must be integers."
-                ) from exc
-            if value < 1:
-                raise ValueError(
-                    "Prompt collection prompt_ids must be positive integers."
+                    "Prompt collection prompt_ids must contain positive signed 64-bit integers."
                 )
-            resolved.append(value)
+            resolved.append(prompt_id)
         return resolved
 
     def _set_collection_prompt_ids(
@@ -680,8 +674,8 @@ class LocalPromptService:
             A mapping containing the new positive ``collection_id``.
 
         Raises:
-            ValueError: If the name or Prompt references are invalid, or an active
-                collection already has the same case-folded name.
+            ValueError: If the name or Prompt references are invalid, or a stored
+                collection reserves the same case-folded name.
         """
         db = self._require_collection_db()
         name = str(payload.get("name") or "").strip()
@@ -691,7 +685,7 @@ class LocalPromptService:
         prompt_ids = self._prompt_ids(payload.get("prompt_ids"))
         try:
             with db.transaction(immediate=True) as conn:
-                self._reject_active_name_collision(conn, name=name)
+                self._reject_reserved_name_collision(conn, name=name)
                 cursor = conn.execute(
                     """
                     INSERT INTO LocalPromptCollections (name, description)
@@ -833,10 +827,10 @@ class LocalPromptService:
 
         Raises:
             ValueError: If the collection, name, or Prompt references are invalid,
-                or another active collection has the same case-folded name.
+                or a stored collection reserves the same case-folded name.
         """
-        db = self._require_collection_db()
         resolved_collection_id = self._collection_id(collection_id)
+        db = self._require_collection_db()
         updates = {
             key: payload[key] for key in ("name", "description") if key in payload
         }
@@ -851,12 +845,21 @@ class LocalPromptService:
         )
         try:
             with db.transaction(immediate=True) as conn:
-                if "name" in updates:
-                    self._reject_active_name_collision(
-                        conn,
-                        name=updates["name"],
-                        exclude_collection_id=resolved_collection_id,
-                    )
+                target = conn.execute(
+                    """
+                    SELECT name
+                    FROM LocalPromptCollections
+                    WHERE collection_id = ? AND deleted = 0
+                    """,
+                    (resolved_collection_id,),
+                ).fetchone()
+                if target is None:
+                    raise ValueError("Prompt collection not found.")
+                if (
+                    "name" in updates
+                    and updates["name"].casefold() != str(target["name"]).casefold()
+                ):
+                    self._reject_reserved_name_collision(conn, name=updates["name"])
                 if updates:
                     set_clause = ", ".join(f"{key} = ?" for key in updates)
                     params = list(updates.values()) + [resolved_collection_id]

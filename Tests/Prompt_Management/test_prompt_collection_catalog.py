@@ -7,6 +7,9 @@ from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 from tldw_chatbook.Prompt_Management.prompt_scope_service import LocalPromptService
 
 
+SQLITE_SIGNED_INTEGER_MAX = PromptsDatabase._SQLITE_SIGNED_INTEGER_MAX
+
+
 @pytest.fixture
 def catalog(tmp_path):
     database = PromptsDatabase(tmp_path / "prompt-collections.db", client_id="catalog")
@@ -58,6 +61,9 @@ def test_catalog_search_is_trimmed_literal_unicode_casefolded_and_exact(catalog)
     percent_result = service.list_prompt_collections(query="%", limit=10)
     underscore_result = service.list_prompt_collections(query="_", limit=10)
     offset_result = service.list_prompt_collections(query="draft", limit=1, offset=1)
+    maximum_offset = service.list_prompt_collections(
+        query="draft", limit=1, offset=SQLITE_SIGNED_INTEGER_MAX
+    )
 
     assert unicode_result["total"] == 1
     assert [item["name"] for item in unicode_result["collections"]] == ["Straße"]
@@ -68,6 +74,9 @@ def test_catalog_search_is_trimmed_literal_unicode_casefolded_and_exact(catalog)
     assert offset_result["total"] == 2
     assert offset_result["offset"] == 1
     assert len(offset_result["collections"]) == 1
+    assert maximum_offset["offset"] == SQLITE_SIGNED_INTEGER_MAX
+    assert maximum_offset["total"] == 2
+    assert maximum_offset["collections"] == []
 
 
 @pytest.mark.parametrize(
@@ -78,6 +87,7 @@ def test_catalog_search_is_trimmed_literal_unicode_casefolded_and_exact(catalog)
         ({"limit": 0}, "limit"),
         ({"offset": False}, "offset"),
         ({"offset": -1}, "offset"),
+        ({"offset": SQLITE_SIGNED_INTEGER_MAX + 1}, "offset"),
     ],
 )
 def test_catalog_rejects_invalid_bounds(catalog, kwargs, message):
@@ -101,8 +111,8 @@ def test_catalog_labels_collisions_from_full_active_catalog_and_mutates_by_id(ca
 
     first_only = service.list_prompt_collections(query="sales", limit=1, offset=0)
     second_only = service.list_prompt_collections(query="sales", limit=1, offset=1)
-    renamed = service.update_prompt_collection(lower_sales_id, {"name": "Revenue"})
     original = service.update_prompt_collection(sales_id, {"name": "SALES"})
+    renamed = service.update_prompt_collection(lower_sales_id, {"name": "Revenue"})
 
     assert first_only["total"] == second_only["total"] == 2
     assert first_only["collections"][0]["display_name"] == f"Sales · #{sales_id}"
@@ -110,7 +120,142 @@ def test_catalog_labels_collisions_from_full_active_catalog_and_mutates_by_id(ca
     assert renamed["collection_id"] == lower_sales_id
     assert renamed["name"] == renamed["display_name"] == "Revenue"
     assert original["collection_id"] == sales_id
-    assert original["name"] == original["display_name"] == "SALES"
+    assert original["name"] == "SALES"
+    assert original["display_name"] == f"SALES · #{sales_id}"
+
+
+def test_missing_collection_id_wins_over_requested_name_collision(catalog):
+    database, service = catalog
+    _seed_collections(database, ["Sales"])
+
+    with pytest.raises(ValueError, match="not found"):
+        service.update_prompt_collection(999_999, {"name": "sales"})
+
+    listed = service.list_prompt_collections(limit=10)
+    assert [(item["name"], item["description"]) for item in listed["collections"]] == [
+        ("Sales", "Description 0")
+    ]
+
+
+@pytest.mark.parametrize("requested_name", ["Tombstone", "TOMBSTONE"])
+def test_deleted_collection_name_is_reserved_for_create(catalog, requested_name):
+    database, service = catalog
+    _seed_collections(database, ["Tombstone"])
+    database.get_connection().execute(
+        "UPDATE LocalPromptCollections SET deleted = 1 WHERE name = 'Tombstone'"
+    )
+    database.get_connection().commit()
+
+    with pytest.raises(ValueError, match="reserved"):
+        service.create_prompt_collection({"name": requested_name})
+
+    assert service.list_prompt_collections(limit=10)["total"] == 0
+
+
+@pytest.mark.parametrize("requested_name", ["Tombstone", "TOMBSTONE"])
+def test_deleted_collection_name_is_reserved_for_rename(catalog, requested_name):
+    database, service = catalog
+    _seed_collections(database, ["Tombstone", "Active"])
+    rows = (
+        database.get_connection()
+        .execute(
+            "SELECT collection_id, name FROM LocalPromptCollections ORDER BY collection_id"
+        )
+        .fetchall()
+    )
+    tombstone_id, active_id = int(rows[0][0]), int(rows[1][0])
+    database.get_connection().execute(
+        "UPDATE LocalPromptCollections SET deleted = 1 WHERE collection_id = ?",
+        (tombstone_id,),
+    )
+    database.get_connection().commit()
+
+    with pytest.raises(ValueError, match="reserved"):
+        service.update_prompt_collection(active_id, {"name": requested_name})
+
+    assert service.get_prompt_collection(active_id)["name"] == "Active"
+
+
+@pytest.mark.parametrize(
+    "invalid_collection_id",
+    [True, 1.0, 1.5, "1.0", SQLITE_SIGNED_INTEGER_MAX + 1, str(2**63)],
+)
+def test_collection_id_rejects_non_integral_or_overflow_values_without_mutation(
+    catalog, invalid_collection_id
+):
+    _database, service = catalog
+    collection_id = service.create_prompt_collection(
+        {"name": "Original", "description": "Before"}
+    )["collection_id"]
+
+    with pytest.raises(ValueError, match="collection id"):
+        service.update_prompt_collection(
+            invalid_collection_id, {"name": "Renamed", "description": "After"}
+        )
+
+    record = service.get_prompt_collection(collection_id)
+    assert record["name"] == "Original"
+    assert record["description"] == "Before"
+
+
+def test_collection_id_accepts_positive_numeric_string_and_signed_max(catalog):
+    database, service = catalog
+    with database.transaction(immediate=True) as conn:
+        conn.execute(
+            """
+            INSERT INTO LocalPromptCollections (collection_id, name, description)
+            VALUES (?, 'Maximum', 'Before')
+            """,
+            (SQLITE_SIGNED_INTEGER_MAX,),
+        )
+
+    fetched = service.get_prompt_collection(str(SQLITE_SIGNED_INTEGER_MAX))
+    updated = service.update_prompt_collection(
+        str(SQLITE_SIGNED_INTEGER_MAX), {"description": "After"}
+    )
+
+    assert fetched["collection_id"] == SQLITE_SIGNED_INTEGER_MAX
+    assert updated["collection_id"] == SQLITE_SIGNED_INTEGER_MAX
+    assert updated["description"] == "After"
+
+
+@pytest.mark.parametrize(
+    "invalid_prompt_id",
+    [True, 1.0, 1.5, "1", 0, -1, SQLITE_SIGNED_INTEGER_MAX + 1],
+)
+def test_prompt_ids_reject_non_integer_or_overflow_values_without_mutation(
+    catalog, invalid_prompt_id
+):
+    database, service = catalog
+    prompt_id = database.add_prompt(
+        name="Valid Prompt",
+        author="Writer",
+        details="Details",
+        user_prompt="Body",
+        overwrite=False,
+    )[0]
+    collection_id = service.create_prompt_collection(
+        {
+            "name": "Original",
+            "description": "Before",
+            "prompt_ids": [prompt_id],
+        }
+    )["collection_id"]
+
+    with pytest.raises(ValueError, match="prompt_ids"):
+        service.update_prompt_collection(
+            collection_id,
+            {
+                "name": "Renamed",
+                "description": "After",
+                "prompt_ids": [invalid_prompt_id],
+            },
+        )
+
+    record = service.get_prompt_collection(collection_id)
+    assert record["name"] == "Original"
+    assert record["description"] == "Before"
+    assert record["prompt_ids"] == [prompt_id]
 
 
 def test_catalog_batches_prompt_memberships(catalog):
