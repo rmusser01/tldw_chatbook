@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-24 01:03'
-updated_date: '2026-08-09 15:30'
+updated_date: '2026-08-09 16:01'
 labels:
   - stt
   - artifacts
@@ -45,5 +45,21 @@ Let users select known Parakeet ONNX model directories and transcribe from those
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-<!-- Added after the approved design is committed and reviewed. -->
+ADR required: yes
+ADR path: backlog/decisions/050-external-parakeet-roots-with-managed-vad.md
+Reason: implements the accepted mixed external-root/managed-VAD ownership and runtime boundary.
+
+Detailed plan: Docs/superpowers/plans/2026-08-09-task-598-external-parakeet-bundles.md
+
+1. Add descriptor-backed external-root verification with cancellable, coalesced, process-lifetime retention.
+2. Add exact source records, authoritative preference resolution, atomic config handoff, Library scopes, and VAD-only acquisition helpers.
+3. Add dependency-only managed leases without fake root readiness.
+4. Carry external root plus managed VAD through the shared executor with path-private provenance.
+5. Make one app-owned source service authoritative for Library and Console.
+6. Correct managed inventory semantics and add install-only optional copy.
+7. Add the user-owned external-source section and selection flow to Lab Models.
+8. Add atomic external selection to First Run.
+9. Validate Library per-job overrides and VAD readiness before enqueue.
+10. Run only affected focused gates and record honest isolated macOS evidence while leaving unavailable platform gates open.
+11. Complete correctness and complexity review before integration.
 <!-- SECTION:PLAN:END -->
