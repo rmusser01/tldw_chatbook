@@ -157,11 +157,17 @@ def run_video_generation(
         and negative_prompt
         and backend.strip().lower() == "comfyui"
     ):
-        from tldw_chatbook.Video_Generation.adapters.comfyui_video_adapter import (
-            ComfyUIVideoAdapter,
-        )
+        from tldw_chatbook.Video_Generation.adapter_registry import get_registry
 
-        if ComfyUIVideoAdapter().selected_workflow_is_h3():
+        registry = get_registry()
+        resolved_backend = registry.resolve_backend(backend)
+        adapter = (
+            registry.get_adapter(resolved_backend)
+            if resolved_backend == "comfyui"
+            else None
+        )
+        classify_workflow = getattr(adapter, "selected_workflow_is_h3", None)
+        if callable(classify_workflow) and classify_workflow():
             negative_prompt = None
 
     from tldw_chatbook.Video_Generation.worker import build_request, run_generation

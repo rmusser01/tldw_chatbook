@@ -68,9 +68,13 @@ def test_estimate_video_cost_text_shapes():
 @pytest.fixture(autouse=True)
 def _reset_registry():
     from tldw_chatbook.Video_Generation import adapter_registry as r
+    from tldw_chatbook.Video_Generation import config as c
+
+    c.reset_video_generation_config_cache()
     r.reset_registry()
     yield
     r.reset_registry()
+    c.reset_video_generation_config_cache()
 
 
 def _register_fake(result_content: bytes = b"vid-bytes", **result_kwargs):
@@ -93,13 +97,18 @@ def _register_fake(result_content: bytes = b"vid-bytes", **result_kwargs):
     registry.register_adapter("fakevid", FakeAdapter)
 
 
-def _register_capturing_comfyui(captured_requests: list) -> None:
+def _register_capturing_comfyui(
+    captured_requests: list, *, selected_workflow_is_h3: bool
+) -> None:
     from tldw_chatbook.Video_Generation.adapter_registry import get_registry
     from tldw_chatbook.Video_Generation.adapters.base import VideoGenResult
 
     class CapturingComfyUIAdapter:
         name = "comfyui"
         supported_formats = {"mp4"}
+
+        def selected_workflow_is_h3(self):
+            return selected_workflow_is_h3
 
         def generate(self, request):
             captured_requests.append(request)
@@ -224,7 +233,7 @@ def test_custom_named_h3_dispatch_preserves_positive_suffix_and_strips_style_neg
 ):
     _install_custom_workflow(tmp_path, monkeypatch)
     captured_requests: list = []
-    _register_capturing_comfyui(captured_requests)
+    _register_capturing_comfyui(captured_requests, selected_workflow_is_h3=True)
 
     meta, _path = run_video_generation(
         backend="comfyui",
@@ -278,7 +287,7 @@ def test_custom_named_h3_dispatch_keeps_explicit_programmatic_negative(
 def test_custom_non_h3_dispatch_keeps_style_negative(tmp_path, monkeypatch):
     _install_custom_workflow(tmp_path, monkeypatch, class_type="GenericVideoNode")
     captured_requests: list = []
-    _register_capturing_comfyui(captured_requests)
+    _register_capturing_comfyui(captured_requests, selected_workflow_is_h3=False)
 
     run_video_generation(
         backend="comfyui",
@@ -290,6 +299,132 @@ def test_custom_non_h3_dispatch_keeps_style_negative(tmp_path, monkeypatch):
     )
 
     assert captured_requests[0].negative_prompt == "style-derived negative"
+
+
+def test_successful_settings_save_rebuilds_adapter_and_console_uses_same_instance(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.UI.Screens import settings_screen as settings_screen_module
+    from tldw_chatbook.UI.Screens.settings_video_gen_defaults import (
+        VideoGenDraftValues,
+    )
+    from tldw_chatbook.Video_Generation import adapter_registry
+    from tldw_chatbook.Video_Generation import config as video_config
+    from tldw_chatbook.Video_Generation.adapters.base import VideoGenResult
+
+    state = {
+        "video_generation": {
+            "default_backend": "comfyui",
+            "enabled_backends": ["comfyui"],
+            "comfyui": {"default_workflow": "old-workflow.json"},
+        }
+    }
+    classified: list = []
+    dispatched: list[tuple[object, object]] = []
+
+    class LifecycleAdapter:
+        name = "comfyui"
+        supported_formats = {"mp4"}
+
+        def __init__(self):
+            self.workflow = (
+                video_config.get_video_generation_config().comfyui_default_workflow
+            )
+
+        def selected_workflow_is_h3(self):
+            classified.append(self)
+            return self.workflow == "new-workflow.json"
+
+        def generate(self, request):
+            dispatched.append((self, request))
+            return VideoGenResult(
+                content=b"video",
+                content_type="video/mp4",
+                bytes_len=5,
+            )
+
+    class FakeSettingsConfigAdapter:
+        def load(self):
+            return state
+
+        def save_sections(self, section_values):
+            for section, values in section_values.items():
+                if section == "video_generation":
+                    state["video_generation"].update(values)
+                    continue
+                _prefix, backend_id = section.split(".", 1)
+                state["video_generation"].setdefault(backend_id, {}).update(values)
+            return True
+
+        def delete_values(self, _section, _keys):
+            return True
+
+    callback_results: list[tuple] = []
+    fake_screen = SimpleNamespace(
+        app=SimpleNamespace(
+            call_from_thread=lambda _callback, *args: callback_results.append(args)
+        ),
+        _apply_video_gen_save_result=lambda *_args: None,
+    )
+
+    monkeypatch.setattr(
+        video_config,
+        "_read_video_generation_toml",
+        lambda: state["video_generation"],
+    )
+    monkeypatch.setattr(video_config, "_keyring_get", lambda _backend: None)
+    monkeypatch.setattr(
+        adapter_registry.VideoAdapterRegistry,
+        "DEFAULT_ADAPTERS",
+        {"comfyui": LifecycleAdapter},
+    )
+    monkeypatch.setattr(cva, "ComfyUIVideoAdapter", LifecycleAdapter)
+    monkeypatch.setattr(
+        settings_screen_module,
+        "SettingsConfigAdapter",
+        FakeSettingsConfigAdapter,
+    )
+
+    video_config.reset_video_generation_config_cache()
+    adapter_registry.reset_registry()
+    before_registry = adapter_registry.get_registry()
+    before_adapter = before_registry.get_adapter("comfyui")
+    assert before_adapter is not None
+    assert before_adapter.workflow == "old-workflow.json"
+
+    draft = VideoGenDraftValues(
+        enabled_backends=["comfyui"],
+        backend_fields={
+            "comfyui": {"default_workflow": "new-workflow.json"}
+        },
+    )
+    settings_screen_module.SettingsScreen._settings_save_video_gen_worker.__wrapped__(
+        fake_screen,
+        draft,
+        [],
+    )
+    after_registry = adapter_registry.get_registry()
+
+    run_video_generation(
+        backend="comfyui",
+        prompt="base prompt, cinematic positive suffix",
+        negative_prompt="style-derived negative",
+        style_negative_prompt=True,
+        message_id="lifecycle-message",
+        video_store=VideoStore(root=tmp_path / "videos"),
+    )
+
+    assert callback_results == [(True, [])]
+    assert state["video_generation"]["comfyui"]["default_workflow"] == (
+        "new-workflow.json"
+    )
+    assert after_registry is not before_registry
+    assert len(classified) == 1
+    assert len(dispatched) == 1
+    assert classified[0] is dispatched[0][0]
+    assert classified[0] is after_registry.get_adapter("comfyui")
+    assert classified[0].workflow == "new-workflow.json"
+    assert dispatched[0][1].negative_prompt is None
 
 
 @pytest.mark.asyncio

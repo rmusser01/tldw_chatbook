@@ -408,3 +408,15 @@ def get_video_generation_config(*, reload: bool = False) -> VideoGenerationConfi
 def reset_video_generation_config_cache() -> None:
     global _config_cache
     _config_cache = None
+
+
+def reset_video_generation_runtime() -> None:
+    """Invalidate cached video configuration and adapter instances.
+
+    The registry import stays local so configuration loading remains independent
+    from adapter construction at module-import time.
+    """
+    reset_video_generation_config_cache()
+    from tldw_chatbook.Video_Generation.adapter_registry import reset_registry
+
+    reset_registry()

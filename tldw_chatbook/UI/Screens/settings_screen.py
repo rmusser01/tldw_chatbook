@@ -178,7 +178,7 @@ from .settings_video_gen_defaults import (
 from ...Widgets.settings_video_gen_panel import VideoGenSettingsPanel
 from ...Video_Generation.config import (
     get_video_generation_config,
-    reset_video_generation_config_cache,
+    reset_video_generation_runtime,
 )
 from ...Image_Generation.config import (
     get_image_generation_config,
@@ -4538,7 +4538,7 @@ class SettingsScreen(BaseAppScreen):
             if keys:
                 ok = adapter.delete_values(section, keys) and ok
         if ok:
-            reset_video_generation_config_cache()
+            reset_video_generation_runtime()
         self.app.call_from_thread(self._apply_video_gen_save_result, ok, warnings)
 
     async def _apply_video_gen_save_result(

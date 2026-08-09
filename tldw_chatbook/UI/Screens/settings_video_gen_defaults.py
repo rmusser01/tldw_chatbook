@@ -65,7 +65,6 @@ FIELD_SCHEMA: dict[str, tuple[FieldSpec, ...]] = {
     ),
     "comfyui": (
         FieldSpec("base_url", "Base URL", "url"),
-        FieldSpec("default_model", "Default model", "text"),
         FieldSpec("default_workflow", "Default workflow", "text"),
         FieldSpec("timeout_seconds", "Timeout (seconds)", "int", min_value=60),
     ),

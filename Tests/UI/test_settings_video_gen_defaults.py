@@ -37,6 +37,14 @@ def test_effective_placeholder_reads_flat_field():
     assert d.effective_placeholder(cfg, "comfyui", "base_url") == "http://127.0.0.1:8188"
 
 
+def test_comfyui_curated_fields_keep_model_workflow_owned():
+    assert [spec.toml_key for spec in d.FIELD_SCHEMA["comfyui"]] == [
+        "base_url",
+        "default_workflow",
+        "timeout_seconds",
+    ]
+
+
 def test_canonical_backend_order():
     assert d.canonical_backend_order(["stable_diffusion_cpp", "minimax", "bogus"]) == [
         "minimax",
