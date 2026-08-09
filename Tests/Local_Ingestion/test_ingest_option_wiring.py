@@ -1540,3 +1540,357 @@ class TestPublicWrapperChunkDefaults:
         result = quick_ingest(source)
 
         assert result["chunks_created"] > 1
+
+
+# ---------------------------------------------------------------------------
+# task-3306: time-range trim, cookies file, recursive summary reach the
+# processors; adaptive/multi-level chunking stays rejected while dead.
+# ---------------------------------------------------------------------------
+
+
+def _write_fake_mp3(tmp_path: Path, name: str = "talk.mp3") -> Path:
+    source = tmp_path / name
+    source.write_bytes(b"ID3\x00" + b"\x00" * 32)
+    return source
+
+
+def _write_fake_mp4(tmp_path: Path, name: str = "clip.mp4") -> Path:
+    source = tmp_path / name
+    source.write_bytes(b"\x00\x00\x00\x20ftypisom" + b"\x00" * 32)
+    return source
+
+
+def _install_audio_stub(monkeypatch) -> list:
+    """Stub LocalAudioProcessor, returning the captured call kwargs list."""
+    from tldw_chatbook.Local_Ingestion.audio_processing import (
+        LocalAudioProcessor as RealAudioProcessor,
+    )
+
+    real_method = RealAudioProcessor.process_audio_files
+    calls: list = []
+
+    class _StubAudioProcessor:
+        def __init__(self, media_db=None):
+            self.media_db = media_db
+
+        def process_audio_files(self, **kwargs):
+            _assert_kwargs_accepted(real_method, kwargs)
+            calls.append(kwargs)
+            return _audio_stub_result()
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Local_Ingestion.local_file_ingestion.LocalAudioProcessor",
+        _StubAudioProcessor,
+    )
+    return calls
+
+
+def _install_video_stub(monkeypatch) -> list:
+    """Stub LocalVideoProcessor, returning the captured call kwargs list.
+
+    ``process_videos`` names inputs/download_video_flag/start_time/end_time
+    itself and forwards the rest into the audio pipeline, so the signature
+    guard runs against ``process_videos`` directly.
+    """
+    from tldw_chatbook.Local_Ingestion.video_processing import (
+        LocalVideoProcessor as RealVideoProcessor,
+    )
+
+    real_method = RealVideoProcessor.process_videos
+    calls: list = []
+
+    class _StubVideoProcessor:
+        def __init__(self, media_db=None):
+            self.media_db = media_db
+
+        def process_videos(self, **kwargs):
+            _assert_kwargs_accepted(real_method, kwargs)
+            calls.append(kwargs)
+            return {
+                "results": [
+                    {
+                        "status": "Success",
+                        "content": "Video transcript",
+                        "metadata": {"title": "Video", "author": "Unknown"},
+                        "chunks": [],
+                        "analysis": "",
+                    }
+                ]
+            }
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Local_Ingestion.local_file_ingestion.LocalVideoProcessor",
+        _StubVideoProcessor,
+    )
+    return calls
+
+
+class TestAVTrimWiring:
+    def test_trim_reaches_audio_processor(self, tmp_path: Path, monkeypatch):
+        source = _write_fake_mp3(tmp_path)
+        from tldw_chatbook.Local_Ingestion.audio_processing import (
+            LocalAudioProcessor as RealAudioProcessor,
+        )
+
+        params = inspect.signature(
+            RealAudioProcessor.process_audio_files
+        ).parameters
+        assert "start_time" in params and "end_time" in params
+        calls = _install_audio_stub(monkeypatch)
+
+        parse_local_file_for_ingest(
+            str(source), {"start_time": "0:15", "end_time": "1:30"}
+        )
+
+        assert calls[0]["start_time"] == "0:15"
+        assert calls[0]["end_time"] == "1:30"
+
+    def test_trim_reaches_video_processor(self, tmp_path: Path, monkeypatch):
+        source = _write_fake_mp4(tmp_path)
+        calls = _install_video_stub(monkeypatch)
+
+        parse_local_file_for_ingest(
+            str(source), {"start_time": "00:00:10", "end_time": "90"}
+        )
+
+        assert calls[0]["start_time"] == "00:00:10"
+        assert calls[0]["end_time"] == "90"
+
+    def test_trim_absent_defaults_unbounded(self, tmp_path: Path, monkeypatch):
+        source = _write_fake_mp3(tmp_path)
+        calls = _install_audio_stub(monkeypatch)
+
+        parse_local_file_for_ingest(str(source), {})
+
+        assert calls[0].get("start_time") is None
+        assert calls[0].get("end_time") is None
+
+    def test_video_extraction_trim_is_not_applied_twice(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """(task-3306) Governance: the ffmpeg trim must run ONCE.
+
+        ``_process_single_video`` extracts audio with the requested
+        start/end applied, then delegates to the audio stage with the same
+        kwargs -- whose own trim path re-cuts any local non-YouTube input.
+        Without dropping the bounds after extraction, a start of 60s is
+        applied twice and the transcript window silently shifts to 120s.
+        """
+        from tldw_chatbook.Local_Ingestion.video_processing import (
+            LocalVideoProcessor,
+        )
+
+        source = _write_fake_mp4(tmp_path)
+        extracted = tmp_path / "extracted.mp3"
+        extracted.write_bytes(b"ID3\x00" + b"\x00" * 32)
+
+        processor = LocalVideoProcessor(None)
+        extract_calls: list = []
+        audio_calls: list = []
+
+        def fake_extract(video_path, output_dir, start_time=None, end_time=None):
+            extract_calls.append((start_time, end_time))
+            return str(extracted)
+
+        def fake_single_audio(input_item, processing_dir, **kwargs):
+            audio_calls.append(kwargs)
+            return {
+                "status": "Success",
+                "input_ref": input_item,
+                "content": "Video transcript",
+                "metadata": {"title": "Video", "author": "Unknown"},
+                "segments": [],
+                "chunks": [],
+                "analysis": "",
+                "warnings": [],
+            }
+
+        monkeypatch.setattr(
+            processor, "_extract_audio_from_video", fake_extract
+        )
+        monkeypatch.setattr(
+            processor.audio_processor, "_process_single_audio", fake_single_audio
+        )
+
+        result = processor.process_videos(
+            inputs=[str(source)],
+            download_video_flag=False,
+            start_time="0:60",
+            end_time="2:00",
+        )
+
+        assert result["results"][0]["status"] != "Error"
+        assert extract_calls == [("0:60", "2:00")], (
+            "the extraction stage must receive the requested bounds"
+        )
+        assert audio_calls[0].get("start_time") is None
+        assert audio_calls[0].get("end_time") is None
+
+
+class TestAVRecursiveSummaryWiring:
+    def test_summarize_recursively_reaches_audio_processor(
+        self, tmp_path: Path, monkeypatch
+    ):
+        source = _write_fake_mp3(tmp_path)
+        from tldw_chatbook.Local_Ingestion.audio_processing import (
+            LocalAudioProcessor as RealAudioProcessor,
+        )
+
+        params = inspect.signature(
+            RealAudioProcessor.process_audio_files
+        ).parameters
+        assert "summarize_recursively" in params
+        calls = _install_audio_stub(monkeypatch)
+
+        parse_local_file_for_ingest(str(source), {"summarize_recursively": True})
+
+        assert calls[0]["summarize_recursively"] is True
+
+    def test_summarize_recursively_reaches_video_processor(
+        self, tmp_path: Path, monkeypatch
+    ):
+        source = _write_fake_mp4(tmp_path)
+        calls = _install_video_stub(monkeypatch)
+
+        parse_local_file_for_ingest(str(source), {"summarize_recursively": True})
+
+        assert calls[0]["summarize_recursively"] is True
+
+    def test_legacy_chunk_options_spelling_still_works(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """Older callers tucked the flag into chunk_options; keep honoring it."""
+        source = _write_fake_mp3(tmp_path)
+        calls = _install_audio_stub(monkeypatch)
+
+        parse_local_file_for_ingest(
+            str(source), {"chunk_options": {"recursive_summary": True}}
+        )
+
+        assert calls[0]["summarize_recursively"] is True
+
+    def test_absent_defaults_off(self, tmp_path: Path, monkeypatch):
+        source = _write_fake_mp3(tmp_path)
+        calls = _install_audio_stub(monkeypatch)
+
+        parse_local_file_for_ingest(str(source), {})
+
+        assert calls[0]["summarize_recursively"] is False
+
+    def test_recursive_summary_changes_the_analysis_dispatch(self):
+        """(task-3306) Governance at the consuming seam: with the flag ON
+        and multiple chunks, ``_analyze_content`` runs the map-reduce path
+        (one call per chunk + a combine call); OFF makes exactly one direct
+        call. The exposed control provably changes the output shape.
+        """
+        from tldw_chatbook.Local_Ingestion.audio_processing import (
+            LocalAudioProcessor,
+        )
+
+        processor = LocalAudioProcessor.__new__(LocalAudioProcessor)
+        chunks = [{"text": "part one"}, {"text": "part two"}]
+        for flag, expected_calls in ((True, 3), (False, 1)):
+            calls: list = []
+
+            def fake_chat_api_call(**kwargs):
+                calls.append(kwargs)
+                return f"summary {len(calls)}"
+
+            import tldw_chatbook.Local_Ingestion.audio_processing as audio_mod
+
+            original = audio_mod.chat_api_call
+            audio_mod.chat_api_call = fake_chat_api_call
+            try:
+                processor._analyze_content(
+                    content="part one part two",
+                    chunks=chunks,
+                    api_name="openai",
+                    api_key="k",
+                    custom_prompt=None,
+                    system_prompt=None,
+                    summarize_recursively=flag,
+                )
+            finally:
+                audio_mod.chat_api_call = original
+            assert len(calls) == expected_calls
+
+
+class TestAVCookiesFileWiring:
+    def test_cookies_file_reaches_video_processor(
+        self, tmp_path: Path, monkeypatch
+    ):
+        source = _write_fake_mp4(tmp_path)
+        calls = _install_video_stub(monkeypatch)
+
+        parse_local_file_for_ingest(
+            str(source),
+            {"use_cookies": True, "cookies": "/home/user/cookies.txt"},
+        )
+
+        assert calls[0]["use_cookies"] is True
+        assert calls[0]["cookies"] == "/home/user/cookies.txt"
+
+    def test_cookies_absent_defaults_off_for_video(
+        self, tmp_path: Path, monkeypatch
+    ):
+        source = _write_fake_mp4(tmp_path)
+        calls = _install_video_stub(monkeypatch)
+
+        parse_local_file_for_ingest(str(source), {})
+
+        assert calls[0]["use_cookies"] is False
+        assert calls[0].get("cookies") is None
+
+    def test_cookies_never_forwarded_to_audio_processor(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """The audio downloader treats a cookies STRING as a JSON dict
+        (``json.loads`` -> raw Cookie header); handing it the video path's
+        cookiefile PATH would raise ``JSONDecodeError`` and fail the whole
+        job. The audio branch therefore never forwards the option -- its
+        yt-dlp (YouTube) path ignores cookies entirely anyway.
+        """
+        source = _write_fake_mp3(tmp_path)
+        calls = _install_audio_stub(monkeypatch)
+
+        parse_local_file_for_ingest(
+            str(source),
+            {"use_cookies": True, "cookies": "/home/user/cookies.txt"},
+        )
+
+        assert "use_cookies" not in calls[0]
+        assert "cookies" not in calls[0]
+
+
+class TestAdaptiveChunkingStaysRejected:
+    def test_adaptive_and_multi_level_are_dead_at_the_real_chunker(self):
+        """(task-3306) Rejection tripwire, not a wiring test.
+
+        ``process_audio_files`` ACCEPTS use_adaptive_chunking /
+        use_multi_level_chunking / chunk_language, but the only chunker on
+        the audio/video path is ``ChunkingService.chunk_text``, which has
+        no such parameters -- and ``_process_single_audio`` never reads the
+        adaptive/multi-level kwargs at all (chunk_language lands only in
+        per-chunk metadata). Exposing them would ship controls whose output
+        cannot vary with the input. If this test ever fails, the chunker
+        has grown the capability: re-open the exposure decision recorded in
+        task-3306 instead of deleting the test.
+        """
+        from tldw_chatbook.RAG_Search.chunking_service import ChunkingService
+
+        params = inspect.signature(ChunkingService.chunk_text).parameters
+        assert "use_adaptive_chunking" not in params
+        assert "adaptive" not in params
+        assert "use_multi_level_chunking" not in params
+        assert "multi_level" not in params
+        assert "language" not in params
+
+        from tldw_chatbook.Local_Ingestion.audio_processing import (
+            LocalAudioProcessor,
+        )
+
+        single_audio_source = inspect.getsource(
+            LocalAudioProcessor._process_single_audio
+        )
+        assert "use_adaptive_chunking" not in single_audio_source
+        assert "use_multi_level_chunking" not in single_audio_source

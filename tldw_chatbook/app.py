@@ -2587,6 +2587,29 @@ class LibraryIngestQueueMixin:
             # (task-3303) VAD filter -- travels as its own option; the
             # parse worker hands it to the processors' ``vad_use``.
             options["vad_filter"] = bool(flat_opts.get("vad_filter", False))
+            # (task-3306) Time-range trim: format-gated at the option layer
+            # (HH:MM:SS or seconds); blank means unbounded on that side.
+            start_trim = str(flat_opts.get("start_time") or "").strip()
+            end_trim = str(flat_opts.get("end_time") or "").strip()
+            options["start_time"] = start_trim or None
+            options["end_time"] = end_trim or None
+            # (task-3306) Gated URL downloads: a cookies FILE PATH only
+            # (yt-dlp cookiefile) -- raw cookie text is a credential, and
+            # this options dict persists with the job and echoes into
+            # config.toml. Its presence IS the use_cookies flag, so there
+            # is no separate toggle to go stale. Only the video (yt-dlp)
+            # branch of ``parse_local_file_for_ingest`` consumes it; the
+            # audio downloader's cookies parameter has JSON-dict semantics
+            # a path would crash.
+            cookies_file = str(flat_opts.get("cookies_file") or "").strip()
+            options["use_cookies"] = bool(cookies_file)
+            options["cookies"] = cookies_file or None
+            # (task-3306) Recursive map-reduce summary; the processors'
+            # analysis tail consumes it only when analysis actually runs,
+            # so an idle True is inert rather than a stale hazard.
+            options["summarize_recursively"] = bool(
+                flat_opts.get("summarize_recursively", False)
+            )
             failed_attempt = job.retry_source_failure_provenance
             options["transcription_context"] = {
                 "attempt_id": f"{job.job_id}-attempt-{job.retry_count + 1}",

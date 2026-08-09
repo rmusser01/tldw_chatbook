@@ -250,6 +250,10 @@ def test_get_capabilities_audio_video() -> None:
         "timestamps",
         "diarization",
         "vad_filter",
+        "start_time",
+        "end_time",
+        "cookies_file",
+        "summarize_recursively",
     )
 
     provider_field = next(f for f in caps.fields if f.name == "transcription_provider")
@@ -277,10 +281,76 @@ def test_get_capabilities_audio_video() -> None:
     assert precision_field.enabled_when_values == ("parakeet-onnx",)
 
     model_field = next(f for f in caps.fields if f.name == "transcription_model")
-    assert model_field.options == ("tiny", "base", "small", "medium", "large")
+    # (task-3306) The full faster-whisper catalog the transcription service
+    # itself declares (``TranscriptionService.list_available_models``,
+    # ``transcription_service.py``) -- the old five-size list silently
+    # withheld large-v3, the .en variants, the distil family and the
+    # community turbo/CrisperWhisper builds the routing layer passes
+    # straight through to ``WhisperModel``. Order mirrors the service list.
+    assert model_field.options == (
+        "tiny",
+        "tiny.en",
+        "base",
+        "base.en",
+        "small",
+        "small.en",
+        "medium",
+        "medium.en",
+        "large-v1",
+        "large-v2",
+        "large-v3",
+        "large",
+        "distil-large-v2",
+        "distil-medium.en",
+        "distil-small.en",
+        "distil-large-v3",
+        "deepdml/faster-distil-whisper-large-v3.5",
+        "deepdml/faster-whisper-large-v3-turbo-ct2",
+        "nyrahealth/faster_CrisperWhisper",
+    )
     assert model_field.default == "base"
     assert model_field.enabled_when == "transcription_provider"
     assert model_field.enabled_when_values == ("faster-whisper",)
+
+
+def test_audio_video_trim_cookies_recursive_summary_fields() -> None:
+    """(task-3306) Time-range trim, cookies file, recursive summary shapes."""
+    caps = get_capabilities("audio_video")
+
+    start_field = next(f for f in caps.fields if f.name == "start_time")
+    assert start_field.type == "text"
+    assert start_field.default == ""
+    assert start_field.hint, "the accepted format must be stated at the control"
+    assert start_field.placeholder, "an empty Input needs example content"
+
+    end_field = next(f for f in caps.fields if f.name == "end_time")
+    assert end_field.type == "text"
+    assert end_field.default == ""
+    assert end_field.hint
+    assert end_field.placeholder
+
+    cookies_field = next(f for f in caps.fields if f.name == "cookies_file")
+    assert cookies_field.type == "text"
+    assert cookies_field.default == ""
+    # A PATH input, never raw cookie text: these option values persist with
+    # the job and echo into config.toml, where a credential must not land.
+    assert cookies_field.depends_on == "yt_dlp"
+    assert "video URL" in cookies_field.hint, (
+        "only the video (yt-dlp) download path consumes the cookie file; "
+        "the scope limit belongs at the control"
+    )
+    assert cookies_field.placeholder
+
+    recursive_field = next(
+        f for f in caps.fields if f.name == "summarize_recursively"
+    )
+    assert recursive_field.type == "checkbox"
+    assert recursive_field.default is False
+    # The gate lives in the GENERIC group (Analyze after import), which
+    # enabled_when cannot reach across groups -- the dependency is stated
+    # in the hint instead (the task-3303 convention).
+    assert recursive_field.enabled_when is None
+    assert "Analyze" in recursive_field.hint
 
 
 def test_parakeet_onnx_feature_probes_onnx_asr(monkeypatch) -> None:

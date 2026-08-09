@@ -677,6 +677,17 @@ class LocalVideoProcessor:
                     logger.info(
                         f"[VIDEO] Extracted audio file size: {os.path.getsize(audio_path) / (1024 * 1024):.2f} MB"
                     )
+                    # (task-3306) The extraction above already applied the
+                    # requested time range. The audio stage below re-cuts
+                    # any local non-YouTube input carrying these bounds
+                    # (``_process_single_audio`` -> ``_extract_time_range``),
+                    # which would apply the trim TWICE -- a start of 60s
+                    # shifting the transcript window to 120s. Drop the
+                    # bounds so the trim runs exactly once. The
+                    # already-audio path above keeps them: no extraction
+                    # ran there, so the audio stage's trim is the only one.
+                    kwargs.pop("start_time", None)
+                    kwargs.pop("end_time", None)
                 except Exception as e:
                     logger.opt(exception=True).error(
                         f"[VIDEO] Audio extraction failed: {type(e).__name__}: {str(e)}"

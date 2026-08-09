@@ -633,6 +633,76 @@ class TestIngestJobOptions:
 
         assert options["vad_filter"] is False
 
+    def test_trim_fields_travel_stripped(self) -> None:
+        """(task-3306) Start/Stop trim bounds reach the worker options."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp3",
+            ingest_options={
+                "audio_video": {"start_time": " 0:30 ", "end_time": "10:00"}
+            },
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["start_time"] == "0:30"
+        assert options["end_time"] == "10:00"
+
+    def test_trim_fields_default_unbounded(self) -> None:
+        """Untouched (or blank) trim inputs mean no trim at all."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp3",
+            ingest_options={"audio_video": {"start_time": "", "end_time": "  "}},
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["start_time"] is None
+        assert options["end_time"] is None
+
+    def test_cookies_file_maps_to_use_cookies_and_cookies(self) -> None:
+        """(task-3306) A cookies FILE PATH travels; its presence IS the
+        use_cookies flag -- there is no separate toggle to go stale."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp4",
+            ingest_options={
+                "audio_video": {"cookies_file": " /home/u/cookies.txt "}
+            },
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["use_cookies"] is True
+        assert options["cookies"] == "/home/u/cookies.txt"
+
+    def test_blank_cookies_file_means_no_cookies(self) -> None:
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp4",
+            ingest_options={"audio_video": {"cookies_file": "   "}},
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["use_cookies"] is False
+        assert options["cookies"] is None
+
+    def test_summarize_recursively_travels(self) -> None:
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp3",
+            ingest_options={"audio_video": {"summarize_recursively": True}},
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["summarize_recursively"] is True
+
+    def test_summarize_recursively_defaults_off(self) -> None:
+        app = _minimal_app()
+        job = _make_job(source_path="/tmp/test.mp3")
+
+        options = app._ingest_job_options(job)
+
+        assert options["summarize_recursively"] is False
+
     def test_faster_whisper_preserves_normalized_translation_target(self) -> None:
         app = _minimal_app()
         job = _make_job(

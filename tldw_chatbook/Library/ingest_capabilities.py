@@ -598,13 +598,65 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 label="Transcription model",
                 type="select",
                 default="base",
-                options=("tiny", "base", "small", "medium", "large"),
+                # (task-3306) The full catalog the transcription service
+                # itself declares for faster-whisper
+                # (``TranscriptionService.list_available_models``): the
+                # batch router passes an explicit faster-whisper model
+                # through untouched, and the service hands it straight to
+                # ``WhisperModel`` -- so the old five-size list silently
+                # withheld large-v3, every English-only ``.en`` variant,
+                # the distil family, and the community turbo/CrisperWhisper
+                # builds. Order mirrors the service list.
+                options=(
+                    "tiny",
+                    "tiny.en",
+                    "base",
+                    "base.en",
+                    "small",
+                    "small.en",
+                    "medium",
+                    "medium.en",
+                    "large-v1",
+                    "large-v2",
+                    "large-v3",
+                    "large",
+                    "distil-large-v2",
+                    "distil-medium.en",
+                    "distil-small.en",
+                    "distil-large-v3",
+                    "deepdml/faster-distil-whisper-large-v3.5",
+                    "deepdml/faster-whisper-large-v3-turbo-ct2",
+                    "nyrahealth/faster_CrisperWhisper",
+                ),
                 option_labels=(
                     ("tiny", "Tiny (fastest · least accurate)"),
+                    ("tiny.en", "Tiny · English-only"),
                     ("base", "Base (fast)"),
+                    ("base.en", "Base · English-only"),
                     ("small", "Small (balanced)"),
+                    ("small.en", "Small · English-only"),
                     ("medium", "Medium (more accurate · slower)"),
-                    ("large", "Large (most accurate · slowest)"),
+                    ("medium.en", "Medium · English-only"),
+                    ("large-v1", "Large v1 (legacy)"),
+                    ("large-v2", "Large v2"),
+                    ("large-v3", "Large v3 (most accurate · slowest)"),
+                    ("large", "Large (latest large build)"),
+                    ("distil-large-v2", "Distil Large v2 (distilled · faster)"),
+                    ("distil-medium.en", "Distil Medium · English-only"),
+                    ("distil-small.en", "Distil Small · English-only"),
+                    ("distil-large-v3", "Distil Large v3 (distilled · faster)"),
+                    (
+                        "deepdml/faster-distil-whisper-large-v3.5",
+                        "Distil Large v3.5 (community build)",
+                    ),
+                    (
+                        "deepdml/faster-whisper-large-v3-turbo-ct2",
+                        "Large v3 Turbo (community build)",
+                    ),
+                    (
+                        "nyrahealth/faster_CrisperWhisper",
+                        "CrisperWhisper (verbatim · community build)",
+                    ),
                 ),
                 depends_on="faster_whisper",
                 enabled_when="transcription_provider",
@@ -655,6 +707,66 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 label="Voice activity detection (VAD) filter",
                 type="checkbox",
                 default=False,
+                depends_on="audio_processing",
+            ),
+            OptionField(
+                # (task-3306) ``process_audio_files(start_time=...)`` /
+                # ``process_videos(start_time=...)``: local files trim via
+                # ffmpeg (-ss/-to/-t), YouTube audio via yt-dlp
+                # postprocessor args. The value travels verbatim, so the
+                # accepted format is gated at the shared validator seam
+                # (``validate_ingest_option_value``).
+                name="start_time",
+                label="Start at",
+                type="text",
+                default="",
+                placeholder="e.g. 0:30 or 90",
+                hint="HH:MM:SS or seconds · blank = from start",
+                depends_on="audio_processing",
+            ),
+            OptionField(
+                name="end_time",
+                label="Stop at",
+                type="text",
+                default="",
+                placeholder="e.g. 10:00",
+                hint="HH:MM:SS or seconds · blank = to end",
+                depends_on="audio_processing",
+            ),
+            OptionField(
+                # (task-3306) A cookies FILE PATH, never raw cookie text:
+                # this options map persists with the job and echoes into
+                # ``[library.ingest_options.audio_video]`` in config.toml,
+                # where a credential must not land (and the video
+                # processor logs its kwargs at debug level). Only the
+                # video (yt-dlp) download path consumes the file
+                # (``ydl_opts["cookiefile"]``); the audio downloader's
+                # cookies parameter is a JSON dict with different
+                # semantics, so the job-option builder deliberately does
+                # not feed this path to it.
+                name="cookies_file",
+                label="Cookies file for gated URLs",
+                type="text",
+                default="",
+                placeholder="/path/to/cookies.txt",
+                hint="Netscape cookies.txt · video URLs only",
+                depends_on="yt_dlp",
+            ),
+            OptionField(
+                # (task-3306) ``process_audio_files(summarize_recursively=
+                # ...)``: with chunking on and analysis running, the
+                # processor summarizes each chunk and then combines the
+                # summaries (map-reduce) instead of one direct call. The
+                # Analyze gate lives in the GENERIC group, which
+                # ``enabled_when`` cannot reach across groups (the gate
+                # lookup and the per-group value maps are both
+                # group-scoped), so the dependency is stated in the hint --
+                # the task-3303 convention.
+                name="summarize_recursively",
+                label="Recursive summary (map-reduce)",
+                type="checkbox",
+                default=False,
+                hint="with Analyze after import · needs chunking",
                 depends_on="audio_processing",
             ),
         ),

@@ -1980,6 +1980,63 @@ def test_capped_duplicate_forecast_says_at_least():
     assert "at least 20 will match" in capped.commit_summary_line
 
 
+def test_trim_time_validation_accepts_ffmpeg_forms_and_rejects_garbage():
+    """(task-3306) Start/Stop trim inputs are format-gated at the shared
+    validator seam: the values travel verbatim to ffmpeg's -ss/-to/-t (and
+    yt-dlp's postprocessor args), which accept plain seconds or
+    [HH:]MM:SS[.fraction] -- anything else fails the job only at run time,
+    long after the form could have said so."""
+    from tldw_chatbook.Library.ingest_capabilities import get_capabilities
+    from tldw_chatbook.Library.library_ingest_state import (
+        validate_ingest_option_value,
+    )
+
+    fields = {f.name: f for f in get_capabilities("audio_video").fields}
+    start_field = fields["start_time"]
+    end_field = fields["end_time"]
+
+    for good in ("", "  ", "90", "90.5", "0:30", "1:30", "01:02:03",
+                 "1:02:03.5", "10:5"):
+        assert validate_ingest_option_value(start_field, good) == "", good
+        assert validate_ingest_option_value(end_field, good) == "", good
+
+    for bad in ("abc", "1:75", "12:34:56:78", "-5", ":30", "1:2:3:4", "1h30"):
+        message = validate_ingest_option_value(start_field, bad)
+        assert message, bad
+        assert "Start at" in message
+        assert "HH:MM:SS" in message and "seconds" in message
+
+    bad_end = validate_ingest_option_value(end_field, "nope")
+    assert "Stop at" in bad_end
+
+
+def test_invalid_trim_time_gates_start_when_audio_panel_rendered(monkeypatch):
+    """(task-3306) End-to-end through the state gate: a malformed trim
+    value in a RENDERED audio/video panel blocks Start with a message."""
+    import tldw_chatbook.Library.library_ingest_state as state_mod
+
+    monkeypatch.setattr(state_mod, "_dependency_installed", lambda feature: True)
+    form = LibraryIngestFormState(path="/tmp/talk.mp3")
+    form.type_options["audio_video"] = {"start_time": "abc"}
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        preflight=PreflightResult(
+            type_groups={"audio_video": ["/tmp/talk.mp3"]},
+            warnings=[],
+            errors=[],
+            total_size=100,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    assert not state.start_enabled
+    assert any(
+        group == "audio_video" and name == "start_time"
+        for group, name, _message in state.option_errors
+    )
+
+
 def test_option_errors_skip_hidden_groups_and_gated_fields():
     """(task-2130 Qodo round) A stale invalid value in a panel that is not
     rendered, or in a field whose enabled_when gate is off, must not block

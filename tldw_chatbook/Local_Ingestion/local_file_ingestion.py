@@ -979,12 +979,29 @@ def parse_local_file_for_ingest(
                     options.get("vad_filter", chunk_options.get("vad_filter", False))
                 ),
                 timestamp_option=options.get("timestamps", True),
+                # (task-3306) Time-range trim: ffmpeg for local files,
+                # yt-dlp postprocessor args for YouTube URLs. NOTE: the
+                # panel's cookies_file is deliberately NOT forwarded here
+                # -- ``download_audio_file`` parses a cookies string as a
+                # JSON dict (raw Cookie header), so the video path's
+                # cookiefile PATH would raise JSONDecodeError and fail the
+                # job, and the audio YouTube path ignores cookies anyway.
+                start_time=options.get("start_time"),
+                end_time=options.get("end_time"),
                 perform_analysis=perform_analysis,
                 api_name=api_name,
                 api_key=api_key,
                 custom_prompt=custom_prompt,
                 system_prompt=system_prompt,
-                summarize_recursively=chunk_options.get("recursive_summary", False),
+                # (task-3306) The panel's own option travels first; the
+                # chunk-options spelling stays as a fallback for older
+                # callers that tucked it in there.
+                summarize_recursively=bool(
+                    options.get(
+                        "summarize_recursively",
+                        chunk_options.get("recursive_summary", False),
+                    )
+                ),
                 custom_title=title,
                 author=author,
             )
@@ -1075,12 +1092,27 @@ def parse_local_file_for_ingest(
                     options.get("vad_filter", chunk_options.get("vad_filter", False))
                 ),
                 timestamp_option=options.get("timestamps", True),
+                # (task-3306) Time-range trim (applied once, at audio
+                # extraction -- ``_process_single_video`` drops the bounds
+                # before delegating so the audio stage cannot re-cut) and
+                # gated-download cookies (a cookiefile PATH for yt-dlp;
+                # never raw cookie text -- see ``_ingest_job_options``).
+                start_time=options.get("start_time"),
+                end_time=options.get("end_time"),
+                use_cookies=bool(options.get("use_cookies", False)),
+                cookies=options.get("cookies"),
                 perform_analysis=perform_analysis,
                 api_name=api_name,
                 api_key=api_key,
                 custom_prompt=custom_prompt,
                 system_prompt=system_prompt,
-                summarize_recursively=chunk_options.get("recursive_summary", False),
+                # (task-3306) Panel option first, chunk-options fallback.
+                summarize_recursively=bool(
+                    options.get(
+                        "summarize_recursively",
+                        chunk_options.get("recursive_summary", False),
+                    )
+                ),
                 custom_title=title,
                 author=author,
             )

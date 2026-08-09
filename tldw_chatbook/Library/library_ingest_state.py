@@ -117,15 +117,28 @@ def build_web_scope_note(
     return WEB_LOCAL_SINGLE_PAGE_NOTE if method in MULTI_PAGE_SCRAPE_METHODS else ""
 
 
+#: (task-3306) The trim bounds travel VERBATIM to ffmpeg (-ss/-to/-t) and
+#: yt-dlp's postprocessor args, whose time-duration syntax is plain seconds
+#: (optionally fractional) or [HH:]MM:SS[.fraction] with minutes/seconds
+#: below 60. Anything else fails the job only at run time, so the form
+#: gates the format up front.
+_TRIM_TIME_RE = re.compile(
+    r"^(?:\d+(?:\.\d+)?|(?:\d+:)?[0-5]?\d:[0-5]?\d(?:\.\d+)?)$"
+)
+
+#: Audio/video fields validated as trim timestamps (see above).
+_TRIM_TIME_FIELDS = frozenset({"start_time", "end_time"})
+
+
 def validate_ingest_option_value(field: Any, value: Any) -> str:
     """Validation message for one option value, or ``""`` when valid.
 
     (task-2130) Shared by the state gate and the canvas's inline per-field
-    messages so the two can never disagree. Only ``number`` fields have a
-    wrong shape today; other types are constrained by their widgets. The
-    chunk-size bounds mirror ``clamp_chunk_size``'s submit-time clamp
-    (Qodo round: a value the UI blessed must not be silently rewritten at
-    submit).
+    messages so the two can never disagree. ``number`` fields and the
+    audio/video trim timestamps (task-3306) have a wrong shape; other
+    types are constrained by their widgets. The chunk-size bounds mirror
+    ``clamp_chunk_size``'s submit-time clamp (Qodo round: a value the UI
+    blessed must not be silently rewritten at submit).
 
     Args:
         field: The ``OptionField`` schema entry for the value.
@@ -135,6 +148,11 @@ def validate_ingest_option_value(field: Any, value: Any) -> str:
         A human-readable problem statement, or ``""`` when the value is
         acceptable to every downstream consumer.
     """
+    if getattr(field, "name", "") in _TRIM_TIME_FIELDS:
+        text = str(value).strip()
+        if not text or _TRIM_TIME_RE.match(text):
+            return ""
+        return f"{field.label} must be HH:MM:SS or seconds."
     if getattr(field, "type", "") != "number":
         return ""
     text = str(value).strip()
