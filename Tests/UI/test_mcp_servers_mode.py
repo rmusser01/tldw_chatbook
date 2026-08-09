@@ -770,7 +770,7 @@ async def test_tool_gate_checkboxes_render_under_builtin_detail_with_subheadings
 ):
     """The builtin detail pane also renders a "Tool gates" group -- one
     Checkbox per `all_tool_gates()` entry, under two subheadings ("Agent
-    built-ins" / "Local workspace tools"), plus the ADAPTED restart note
+    built-ins" / "Local workspace + web tools"), plus the ADAPTED restart note
     (NOT the `[mcp]` toggles' "next client launch" wording -- these gates
     affect the in-process agent runtime, no MCP client involved).
     """
@@ -798,7 +798,12 @@ async def test_tool_gate_checkboxes_render_under_builtin_detail_with_subheadings
         heading_builtin = app.query_one("#mcp-gate-heading-builtin", Static)
         heading_local = app.query_one("#mcp-gate-heading-local", Static)
         assert "Agent built-ins" in str(heading_builtin.renderable)
-        assert "Local workspace tools" in str(heading_local.renderable)
+        assert "Local workspace + web tools" in str(heading_local.renderable)
+
+        includes = app.query_one("#mcp-gate-local-includes", Static)
+        includes_text = str(includes.renderable)
+        assert "web_search, web_fetch, and web_crawl" in includes_text
+        assert "web_deep_search is separately gated" in includes_text
 
         first_cb = app.query_one(f"#mcp-gate-{first_builtin_key}", Checkbox)
         assert first_cb.value is True
@@ -847,13 +852,13 @@ async def test_local_group_dependents_are_disabled_while_master_is_off(monkeypat
         note = app.query_one("#mcp-gate-local-master-off-note", Static)
         assert (
             "Master switch is off" in str(note.renderable)
-            and "unavailable" in str(note.renderable)
+            and "web_search, web_fetch, web_crawl" in str(note.renderable)
         )
 
         master_cb = app.query_one(f"#mcp-gate-{LOCAL_TOOLS_MASTER_KEY}", Checkbox)
         assert master_cb.value is False
         assert master_cb.disabled is False  # the master itself stays clickable
-        assert "Local workspace tools (master switch)" in str(master_cb.label)
+        assert "Local workspace + web tools (master switch)" in str(master_cb.label)
 
         dependent_cb = app.query_one(f"#mcp-gate-{WEB_DEEP_SEARCH_GATE_KEY}", Checkbox)
         assert dependent_cb.value is True  # its own gate really is on...

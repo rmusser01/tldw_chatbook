@@ -5,7 +5,7 @@ file pins their local MCP exposure, which is deliberately FastMCP-free (owner
 directive, 2026-08-07) -- the in-app surface is the manifest plus the direct
 runtime delegate:
 
-- manifest: ``describe_local_mcp_capabilities()`` keeps the 10 AST-derived
+- manifest: ``describe_local_mcp_capabilities()`` keeps the 9 implemented AST-derived
   legacy tools unchanged and appends exactly the 18 descriptor tools, with
   names/descriptions/``inputSchema`` taken from ``LIBRARY_TOOL_DESCRIPTORS``
   (never hand-duplicated literals);
@@ -45,7 +45,6 @@ LEGACY_TOOL_NAMES = [
     "list_characters",
     "get_conversation_history",
     "export_conversation",
-    "ingest_media",
 ]
 
 LIBRARY_TOOL_NAMES = list(LIBRARY_TOOL_DESCRIPTORS)
@@ -76,6 +75,15 @@ def test_manifest_keeps_legacy_tools_then_appends_the_18_descriptor_tools():
     library_entries = tools[len(LEGACY_TOOL_NAMES) :]
     assert [entry["name"] for entry in library_entries] == LIBRARY_TOOL_NAMES
     assert len(tools) == len(LEGACY_TOOL_NAMES) + 18
+
+
+def test_manifest_does_not_advertise_unimplemented_ingest_media():
+    """The local MCP manifest omits the retired placeholder ingest tool."""
+    names = {
+        entry["name"] for entry in describe_local_mcp_capabilities()["tools"]
+    }
+
+    assert "ingest_media" not in names
 
 
 def test_manifest_library_entries_match_descriptors_exactly():
@@ -112,6 +120,15 @@ async def test_tools_list_request_exposes_library_schemas():
 
 
 # -- Direct-runtime dispatch ----------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_delegate_refuses_retired_placeholder_ingest_media():
+    """Direct runtime dispatch rejects the retired placeholder ingest tool."""
+    delegate = LocalMCPRuntimeDelegate(library_service=FakeLibraryToolService())
+
+    with pytest.raises(KeyError, match="Unsupported local MCP tool: ingest_media"):
+        await delegate.execute_tool("ingest_media", {"url": "https://example.com"})
 
 
 @pytest.mark.asyncio

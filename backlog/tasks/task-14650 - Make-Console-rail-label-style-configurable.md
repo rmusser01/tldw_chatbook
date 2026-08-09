@@ -1,5 +1,5 @@
 ---
-id: TASK-3401
+id: TASK-14650
 title: Make Console rail label style configurable
 status: In Progress
 assignee: []
@@ -61,6 +61,7 @@ Implemented an opt-in stacked presentation for collapsed Console rail labels whi
 - Broader targeted run before the final ownership expectation correction recorded 384 passes and 9 failures; the feature-caused ownership failure was corrected and reverified. The remaining eight are existing dev baselines: four 120x30 Console geometry tests and four Appearance tests caused by the missing _appearance_bool_label helper.
 - Repository-wide pytest was attempted and stopped during collection with 28 missing optional-dependency errors, including NumPy, Playwright, and audio/TTS extras. Ruff and MyPy are not installed in this worktree, so strict Definition of Done remains blocked and the task stays In Progress.
 - ADR required: no. This is an additive presentation preference using existing config, Settings, and Console boundaries; no schema, dependency, security, or cross-module contract decision was introduced.
+- Backlog hygiene: renumbered from TASK-3401 to TASK-14650 in PR #1465 because dev also contained the established TASK-3401 video-generation epic and the duplicate-ID guard correctly rejected the collision.
 
 Modified production areas: tldw_chatbook/config.py, tldw_chatbook/UI/Screens/chat_screen.py, tldw_chatbook/UI/Screens/settings_screen.py. Added or updated focused tests, user guides, design/plan artifacts, and this Backlog task.
 <!-- SECTION:NOTES:END -->

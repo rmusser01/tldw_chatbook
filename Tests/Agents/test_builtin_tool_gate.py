@@ -531,6 +531,8 @@ def test_tool_gate_breadcrumb_names_the_off_count(monkeypatch):
     assert text is not None
     assert "9" in text
     assert "Servers mode" in text
+    assert "web_search, web_fetch, web_crawl" in text
+    assert "restart the app" in text
 
 
 def test_gate_key_pairs_and_all_tool_gates_can_never_drift(monkeypatch):
@@ -556,5 +558,26 @@ def test_count_off_tool_gates_constructs_no_tools(monkeypatch):
         "tldw_chatbook.config.get_cli_setting", lambda s, k, d=None: d
     )
     assert builtin_tool_gate.count_off_tool_gates() == 9
-    assert builtin_tool_gate.tool_gate_breadcrumb() is not None
-    assert "9 tool gate(s)" in builtin_tool_gate.tool_gate_breadcrumb()
+    breadcrumb = builtin_tool_gate.tool_gate_breadcrumb()
+    assert breadcrumb is not None
+    assert "9 tool gate(s)" in breadcrumb
+    assert "web_search, web_fetch, web_crawl" in breadcrumb
+    assert "restart the app" in breadcrumb
+
+
+def test_tool_gate_breadcrumb_reads_each_config_gate_once(monkeypatch):
+    """Count and master-state messaging share one coherent config snapshot."""
+    from tldw_chatbook.Agents import builtin_tool_gate
+
+    reads: list[tuple[str, str]] = []
+
+    def read_gate(section, key, default=None):
+        reads.append((section, key))
+        return default
+
+    monkeypatch.setattr("tldw_chatbook.config.get_cli_setting", read_gate)
+
+    breadcrumb = builtin_tool_gate.tool_gate_breadcrumb()
+
+    assert breadcrumb is not None
+    assert reads == builtin_tool_gate._gate_key_pairs()

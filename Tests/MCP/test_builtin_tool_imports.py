@@ -171,13 +171,12 @@ _LEGACY_TOOL_NAMES_IN_ORDER = [
     "list_characters",
     "get_conversation_history",
     "export_conversation",
-    "ingest_media",
 ]
 
 
-def test_legacy_manifest_tool_names_and_order_are_unchanged():
+def test_implemented_legacy_manifest_tool_names_and_order_are_stable():
     """The 18 appended Library tools must not rename, reorder, or reshape the
-    10 legacy AST-derived manifest entries (plan Task 9 Step 8): existing
+    9 implemented legacy AST-derived manifest entries (TASK-4000): existing
     clients key off these names and payload schemas."""
     from tldw_chatbook.MCP.server import describe_local_mcp_capabilities
 

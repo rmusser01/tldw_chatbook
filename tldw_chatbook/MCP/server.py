@@ -142,7 +142,7 @@ def _signature_to_input_schema(fn: ast.AsyncFunctionDef | ast.FunctionDef) -> di
     """Synthesize a JSON-schema ``inputSchema`` fragment from a tool function's AST signature.
 
     Keyword-only args (``fn.args.kwonlyargs``/``kw_defaults``) are
-    intentionally unhandled: none of the ten built-in ``@self.mcp.tool()``
+    intentionally unhandled: none of the nine built-in ``@self.mcp.tool()``
     registrations in this module use them (verified by reading
     ``server.py``'s ``_register_tools`` body), so there is nothing to map
     yet -- add support here if a future tool introduces one.
@@ -678,30 +678,6 @@ class TldwMCPServer:
             return await self.tools.export_conversation(
                 conversation_id=conversation_id, format=format
             )
-
-        # Media ingestion tool (placeholder)
-        @self.mcp.tool()
-        async def ingest_media(
-            url: Optional[str] = None,
-            file_path: Optional[str] = None,
-            media_type: str = "auto",
-            title: Optional[str] = None,
-            tags: Optional[List[str]] = None,
-        ) -> Dict[str, Any]:
-            """Ingest media from URL or file path."""
-            try:
-                if not url and not file_path:
-                    return {"error": "Either url or file_path must be provided"}
-
-                # TODO: Implement actual media ingestion
-                return {
-                    "status": "queued",
-                    "media_id": "placeholder_id",
-                    "message": "Media ingestion queued",
-                }
-            except Exception as e:
-                logger.error(f"Error in ingest_media: {e}")
-                return {"error": str(e)}
 
     def _register_resources(self):
         """Register MCP resources."""
