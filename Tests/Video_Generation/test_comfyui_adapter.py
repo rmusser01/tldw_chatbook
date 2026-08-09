@@ -195,7 +195,7 @@ def test_view_download_has_descriptor_query_and_trusted_origin(adapter, json_rec
             "max_bytes": max_bytes,
             "trusted_origins": trusted_origins,
         }))
-        return b"animated", "image/webp"
+        return b"animated", "application/octet-stream"
 
     # Match the shared helper's transport contract, not the call under test.
     assert tuple(inspect.signature(fake_fetch_bytes).parameters) == tuple(
@@ -216,6 +216,44 @@ def test_view_download_has_descriptor_query_and_trusted_origin(adapter, json_rec
         "http://127.0.0.1:8188/view?filename=clip.webp&subfolder=&type=temp",
         {"timeout": 30, "headers": None, "cookies": None, "max_bytes": 500 * 1024 * 1024, "trusted_origins": frozenset({"127.0.0.1"})},
     )]
+
+
+@pytest.mark.parametrize("observed_type", ["application/octet-stream", None, "video/webm"])
+def test_h3_download_requires_observed_mp4_mime(
+    adapter, json_recorder, monkeypatch, observed_type
+):
+    _calls, routes = json_recorder
+    graph = _h3_workflow()
+    _install_workflow(adapter, monkeypatch, graph)
+
+    def fetch_bytes(
+        url: str,
+        *,
+        timeout: int | float,
+        headers=None,
+        cookies=None,
+        max_bytes=None,
+        trusted_origins=frozenset(),
+    ):
+        return b"video", observed_type
+
+    monkeypatch.setattr(cva, "fetch_image_bytes", fetch_bytes)
+    routes[("GET", "/object_info")] = _object_info_for(graph)
+    routes[("POST", "/prompt")] = {"prompt_id": "job-mime"}
+    routes[("GET", "/history/job-mime")] = {
+        "job-mime": {
+            "outputs": {
+                "save": {
+                    "videos": [
+                        {"filename": "clip.mp4", "subfolder": "", "type": "output"}
+                    ]
+                }
+            }
+        }
+    }
+
+    with pytest.raises(VideoGenerationError, match="did not return an MP4 output"):
+        adapter.generate(_request())
 
 
 def test_uploads_image_asset_and_injects_uploaded_filename(adapter, json_recorder, monkeypatch):

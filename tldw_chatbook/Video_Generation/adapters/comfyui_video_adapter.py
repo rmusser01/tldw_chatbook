@@ -866,13 +866,14 @@ class ComfyUIVideoAdapter:
         except ImageGenerationError as exc:
             raise VideoGenerationError(f"ComfyUI output download failed: {exc}") from exc
         normalized_type = (content_type or "").split(";", 1)[0].strip().lower()
-        if normalized_type not in _VIDEO_SUFFIX_TYPES.values():
-            normalized_type = _VIDEO_SUFFIX_TYPES[Path(descriptor["filename"]).suffix.lower()]
+        suffix = Path(descriptor["filename"]).suffix.lower()
         if self._is_h3_workflow(prepared.graph) and (
-            Path(descriptor["filename"]).suffix.lower() != ".mp4"
+            suffix != ".mp4"
             or normalized_type != "video/mp4"
         ):
             raise VideoGenerationError("ComfyUI H3 workflow did not return an MP4 output")
+        if normalized_type not in _VIDEO_SUFFIX_TYPES.values():
+            normalized_type = _VIDEO_SUFFIX_TYPES[suffix]
         return VideoGenResult(
             content=content,
             content_type=normalized_type,
