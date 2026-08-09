@@ -1,9 +1,11 @@
 ---
 id: TASK-198
 title: Prompt collections
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-07-12 13:16'
+updated_date: '2026-08-09 14:16'
 labels:
   - ux
   - library
@@ -20,5 +22,28 @@ Deferred from the 2026-07-12 Library Prompts spec: the server prompt service alr
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Prompts can be grouped into named collections,List canvas can filter by collection,Local and server collection seams stay routed through PromptScopeService
+- [ ] #1 The Library Prompt list uses an exact local `PromptScopeService` browse contract for search, collection filter, whitelisted sort, and bounded stable pagination; displayed totals/pages remain truthful beyond 100 active Prompts and Recipes, and existing Console/picker search behavior is unchanged.
+- [ ] #2 Users can create and rename named local Prompt collections and browse the complete catalog through bounded pages, collection search, and explicit Load more; case-fold collisions are rejected transactionally, pre-existing colliding names remain distinguishable by ID, and this task does not add collection deletion.
+- [ ] #3 A Prompt or Recipe can belong to multiple collections; the editor shows current memberships and applies one atomic membership update independently from Prompt content Save, with no partial change when any Prompt or collection identity is inactive, foreign, or invalid.
+- [ ] #4 Local and server collection operations remain routed through `PromptScopeService`, while the Library collection UI is explicitly local-only and does not expose a source selector or imply mixed/server results.
+- [ ] #5 Immutable browse state and request fingerprints distinguish loading, empty library, empty collection, no matches, and service failure with Retry; debounced workers reject late success/error results after scope changes and restore focus after page/result replacement.
+- [ ] #6 Collection, browse, paging, and membership controls have stable keyboard order, remain usable in narrow terminals and large catalogs, render markup-looking names literally, and report content Save and membership Apply outcomes separately.
+- [ ] #7 Automated database, service, state, and Textual UI tests cover exact counts/paging, sort injection rejection, case-fold races, multi-membership rollback, stale workers, truthful empty/error states, and responsive geometry; the user guide documents the final local-only workflow.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no.
+
+ADR path: N/A.
+
+Reason: TASK-198 surfaces the existing local collection ownership and PromptScopeService boundary without changing schema, sync policy, or durable ownership.
+
+1. Define immutable exact-browse scope/result state and service contracts with RED tests.
+2. Add whitelisted SQLite browse/count paging with deterministic ordering and injection-safe sort selection.
+3. Complete the local collection catalog, case-fold validation, and atomic multi-membership services while preserving existing server routes.
+4. Replace sampled Library Prompt filtering with request-tokened local browse workers and truthful loading/empty/error states.
+5. Add collection management and membership controls with separate Prompt Save and membership Apply outcomes.
+6. Update documentation, run focused/full verification and visual QA, request independent review, and close the task before PR merge.
+<!-- SECTION:PLAN:END -->
