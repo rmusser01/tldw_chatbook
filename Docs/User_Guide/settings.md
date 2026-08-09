@@ -546,4 +546,9 @@ not open an editor.
 scope-banner note refreshed against dev @ 7f23e0263 — 2026-08-07 (voice
 profiles slice 4: added pointer-note copy verbatim from
 `speech_tts_settings_panel.py`; not re-driven live, the rest of this page's
-content unchanged from the prior stamp).*
+content unchanged from the prior stamp). Troubleshooting — Agents section
+added against dev @ 3dd3e7431 — 2026-08-09 (fleet PR-1: driven live —
+created, selected, edited, and disabled a real definition in a scratch
+profile, fixing a rendering defect on the Name/Description/Model
+override/Tools fields found along the way; the rest of this page's content
+unchanged from the prior stamp).*

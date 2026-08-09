@@ -243,4 +243,9 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
   means you already looked.
 
 —
-*Verified against dev @ ff435772c — 2026-07-31*
+*Verified against dev @ ff435772c — 2026-07-31. Named agents section added
+against dev @ 3dd3e7431 — 2026-08-09 (fleet PR-1: driven live — Console
+delegated to a real named definition, the transcript showed the
+`[researcher]` sub-agent marker, and the reply visibly honored the
+definition's instructions; the rest of this page's content unchanged from
+the prior stamp).*
