@@ -181,14 +181,15 @@ def test_settings_category_summaries_cover_every_category_id_exactly_once():
     Adding Internal Prompts brought the total from 19 to 20; adding Image Gen
     (Settings > Image Gen task 4) brought it to 21; adding Workspaces
     (settings-workspaces-folder-roots task 8) brought it to 22; Speech & TTS
-    (TASK-1984) brought it to 23; About (TASK-2775) brought it to 24; Agents
-    (supervisor-fleet PR-1 task 6) brought it to 25. This pins the literal
+    (TASK-1984) brought it to 23; About (TASK-2775) brought it to 24; Video
+    Gen (video-generation-foundation) brought it to 25; Agents
+    (supervisor-fleet PR-1 task 6) brought it to 26. This pins the literal
     count so the next addition must touch this assertion deliberately, and
     cross-checks that summaries neither miss nor duplicate an enum member.
     """
     screen = SettingsScreen(_build_test_app())
     summaries = screen._category_summaries()
-    assert len(summaries) == len(list(SettingsCategoryId)) == 25
+    assert len(summaries) == len(list(SettingsCategoryId)) == 26
     assert {s.category for s in summaries} == set(SettingsCategoryId)
 
 

@@ -2662,6 +2662,7 @@ class SettingsScreen(BaseAppScreen):
                     SettingsCategoryId.MCP_DEFAULTS,
                     SettingsCategoryId.ACP_DEFAULTS,
                     SettingsCategoryId.IMAGE_GENERATION,
+                    SettingsCategoryId.VIDEO_GENERATION,
                 ),
             ),
         )
