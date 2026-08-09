@@ -19,14 +19,16 @@
 - ADR required: no new ADR
 - ADR path: `backlog/decisions/029-local-private-data-boundary.md`
 - Reason: ADR-029 already excludes provider payloads and tool definitions from persistent logs while permitting bounded metadata such as tool names. This task applies that accepted contract.
-- Latest-dev reconciliation: the completed branch was finally rebased onto `origin/dev` at `fccb3af6b`; the intervening dev commits did not change the scoped production, test, or `LLM_Calls` files, so the reviewed defect/helper contract and sweep counts remain applicable. The pre-implementation baselines were 68 passing privacy tests and 8 passing HuggingFace chat-function tests. The identifier-filtered high-risk logger inventory remains 35 candidates across four modules; it is not the exhaustive AC 4 proof. The exhaustive source proof is the complete 763-call logger review plus the outbound-body/tool-structure correlation in Task 2. Ruff lint and compilation are green. Both complete Python files have pre-existing formatter drift, while the three ranges this task edits are formatter-clean; use range checks to avoid an unrelated whole-file rewrite.
+- Latest-dev reconciliation: the branch was rebased onto `origin/dev` at `f6911b37b`. No upstream commit changed the scoped production file, focused test files, or the two summarization modules since the prior reviewed base; only the testing-lessons document changed in scope. The pre-implementation baselines were 68 passing privacy tests and 8 passing HuggingFace chat-function tests. The identifier-filtered high-risk logger inventory remains 35 candidates across four modules; it is not the exhaustive AC 4 or summarization-content proof. The exhaustive source proof is the complete 763-call logger review plus the outbound-body/tool-structure correlation in Task 2. The final review additionally requires the complete 523-call summarization audit, the branch-owned diagnostic-manifest digest reconciliation, and exact latest-dev baseline evidence for unrelated manifest drift. Ruff lint and compilation are green. Both complete Python files have pre-existing formatter drift, while the three ranges this task edits (`4341-4365`, `40-70`, and `675-820`) are formatter-clean; use range checks to avoid an unrelated whole-file rewrite.
 
 ## File map
 
 - Modify `Tests/Chat/test_sensitive_llm_logging.py`: add two sentinels and one parameterized function-level regression test using the existing `_FakeSession` helper and `_captured_logs` context manager.
 - Modify `tldw_chatbook/LLM_Calls/LLM_API_Calls.py`: route the two HuggingFace ordinary debug lines through the existing allowlist summary.
 - Modify `backlog/tasks/task-2118 - HuggingFace-tools-debug-log-dumps-full-tool-schemas.md`: record the plan, checked acceptance criteria, sweep/mutation/test evidence, ADR decision, and final status.
-- Verify the separately generated Backlog task titled `Remove raw summarization input data from debug logs`: it owns the ten out-of-scope content diagnostics and is committed before execution. Do not copy its later task ID into TASK-2118.
+- Modify the separately generated summarization-privacy Backlog task: it owns the complete verified raw input, prompt, response/output, credential-fragment, and private endpoint/path boundary. Keep its backward TASK-2118 incident reference, but do not copy its later task ID into TASK-2118.
+- Modify `Docs/security/production-diagnostic-inventory.json`: update only the reviewed `LLM_API_Calls.py` diagnostic digest while preserving its owner, reason, call count, every unrelated entry, and sink topology.
+- Modify `backlog/docs/lessons-testing-evidence.md`: record why a heuristic candidate list must not be promoted into a complete remediation inventory.
 - Keep `tldw_chatbook/Utils/sensitive_llm_logging.py` unchanged: its existing contract already produces the required output.
 
 ### Task 0: Reconcile the execution branch with current dev
@@ -263,7 +265,7 @@ for path in sorted(root.rglob("*.py")):
 PY
 ```
 
-Expected after the repair: exactly 35 high-risk candidates across four modules: `LLM_API_Calls.py` 13, `LLM_API_Calls_Local.py` 1, `Local_Summarization_Lib.py` 15, and `Summarization_General_Lib.py` 6. Eleven request/tool candidates in `LLM_API_Calls.py` route through `safe_llm_request_payload_summary()` (the nine existing provider summaries plus the two corrected HuggingFace summaries). Fourteen are safe metadata-only calls: two HuggingFace model/stream/count/byte calls, one `LLM_API_Calls_Local.py` payload-**keys** call, and eleven `type(data)` calls. The remaining ten calls in `Local_Summarization_Lib.py` and `Summarization_General_Lib.py` log full or 500-character input data. They are confirmed privacy exposures but are individual content diagnostics, not AC 4 raw provider request-payload dictionaries/tool definitions; the separately filed task owns them, while TASK-2118 notes record only the exact sites/classification and no later ID.
+Expected after the repair: exactly 35 high-risk candidates across four modules: `LLM_API_Calls.py` 13, `LLM_API_Calls_Local.py` 1, `Local_Summarization_Lib.py` 15, and `Summarization_General_Lib.py` 6. Eleven request/tool candidates in `LLM_API_Calls.py` route through `safe_llm_request_payload_summary()` (the nine existing provider summaries plus the two corrected HuggingFace summaries). Fourteen are safe metadata-only calls: two HuggingFace model/stream/count/byte calls, one `LLM_API_Calls_Local.py` payload-**keys** call, and eleven `type(data)` calls. The remaining candidate subset contains real content diagnostics, but it is not a complete summarization privacy inventory. A separate review of all 523 logger calls in both summarization modules owns that conclusion: 141 direct private diagnostics, split as 64 in `Local_Summarization_Lib.py` (13 input, 8 prompt, 8 credential-fragment, 6 private endpoint/path, 29 response/output) and 77 in `Summarization_General_Lib.py` (8 input, 9 prompt, 13 credential-fragment, 5 private endpoint/path, 42 response/output). These are outside AC 4's raw provider request-dictionary/tool-definition scope and are durably assigned to the separate follow-up without a forward task-ID reference.
 
 This 35-site list is deliberately only a high-risk candidate inventory. Its identifier spelling filter can miss a body called `request_data`, `data2`, `retry_payload`, or an unrelated alias, so it must not be presented as exhaustive or authoritative AC 4 evidence. Inspect every result in context, retain its classification, and then complete Steps 2 and 3.
 
@@ -600,6 +602,7 @@ Run in the foreground and retain exact counts:
 ../../.venv/bin/python -m pytest Tests/Chat/test_sensitive_llm_logging.py -q
 ../../.venv/bin/python -m pytest Tests/Chat/test_chat_functions.py -q -k huggingface
 ../../.venv/bin/python -m pytest Tests/LLM_Calls/test_debug_log_fstring_hygiene.py -q
+../../.venv/bin/python -m pytest Tests/Architecture/test_persistent_diagnostic_inventory.py -q
 ../../.venv/bin/python -m ruff check tldw_chatbook/LLM_Calls/LLM_API_Calls.py Tests/Chat/test_sensitive_llm_logging.py
 ../../.venv/bin/python -m ruff format --check --range=4341-4365 tldw_chatbook/LLM_Calls/LLM_API_Calls.py
 ../../.venv/bin/python -m ruff format --check --range=40-70 Tests/Chat/test_sensitive_llm_logging.py
@@ -608,7 +611,7 @@ Run in the foreground and retain exact counts:
 git diff --check
 ```
 
-Expected: all gates exit 0. Per the user's explicit closeout scope, only tests related to the edited files and affected HuggingFace/logging functionality are completion gates. Do not run a repository-wide test suite, compose a test or simplified application, or perform detached-baseline replay for unrelated failures.
+Expected: the privacy, HuggingFace, hygiene, and branch-owned manifest gates exit 0. Per the user's explicit closeout scope, only tests related to the edited files and affected HuggingFace/logging functionality are completion gates. Do not run a repository-wide test suite, compose a test or simplified application, or perform detached-baseline replay for unrelated failures. The sole exception is the final-review requirement to reproduce an unchanged diagnostic-inventory failure on the exact current-dev commit when unrelated stored entries remain stale after the branch-owned digest is reconciled.
 
 - [x] **Step 2: Complete Backlog evidence and status through the CLI**
 
@@ -616,9 +619,10 @@ Use `backlog task edit 2118` to:
 
 - check acceptance criteria 1 through 4;
 - add concise Implementation Notes covering the two helper-routed log sites and the complete combined AC 4 evidence: all 763 logger calls across eight modules reviewed; 57 body-bearing calls across 33 function scopes (`json=` 55, `data=` 2, `content=` 0); all 57 body construction/reassignment flows reviewed; 41 correlations (27 exact and 14 limited simple-alias) classified as nine safe helper summaries, one keys-only local diagnostic, and 31 summarization metadata/input-preview diagnostics that do not render the constructed request dictionary; ten lexical tool/schema/definition sites classified as eight constant warnings, one tool-call ID, and one HuggingFace names-only summary; and the static-analysis limitations for dynamic values, custom logger aliases, positional/custom transports, and generated code;
-- retain the 35-candidate high-risk inventory and its 11 helper-routed / 14 metadata-only / 10 separately owned content-diagnostic classification, explicitly as a heuristic supplement rather than the sole AC 4 evidence;
+- retain the 35-candidate high-risk inventory and its 11 helper-routed / 14 metadata-only / remaining content-candidate classification, explicitly as a heuristic supplement rather than the sole AC 4 evidence;
+- record the independent all-call summarization audit: all 523 logger calls reviewed and 141 direct private diagnostics assigned by module, enclosing function, diagnostic label, and category (64 local and 77 general; 21 input, 17 prompt, 21 credential-fragment, 11 private endpoint/path, and 71 response/output);
 - record the real-function sentinel plus both independent mutation failures and restored green counts, final test/static counts, no new dependency/helper, and the ADR-029 decision;
-- state that the existing Loguru/mutation lesson applied and no new general lesson was discovered;
+- state that the existing Loguru/mutation lesson applied and record the final-review incident in the testing-evidence lesson: a deliberately heuristic candidate list was incorrectly promoted into a complete follow-up inventory;
 - set the task to `Done` only after every gate above is satisfied.
 
 If the CLI canonicalizes the task filename, restore the original tracked filename with `apply_patch` so the closeout does not introduce an unrelated rename.
@@ -650,13 +654,40 @@ Run:
 ```bash
 ../../.venv/bin/python -m pytest Tests/Chat/test_sensitive_llm_logging.py -q
 ../../.venv/bin/python -m pytest Tests/Chat/test_chat_functions.py -q -k huggingface
+../../.venv/bin/python -m pytest Tests/LLM_Calls/test_debug_log_fstring_hygiene.py -q
+../../.venv/bin/python -m pytest Tests/Architecture/test_persistent_diagnostic_inventory.py -q
 ../../.venv/bin/python -m ruff check tldw_chatbook/LLM_Calls/LLM_API_Calls.py Tests/Chat/test_sensitive_llm_logging.py
 ../../.venv/bin/python -m ruff format --check --range=4341-4365 tldw_chatbook/LLM_Calls/LLM_API_Calls.py
 ../../.venv/bin/python -m ruff format --check --range=40-70 Tests/Chat/test_sensitive_llm_logging.py
 ../../.venv/bin/python -m ruff format --check --range=675-820 Tests/Chat/test_sensitive_llm_logging.py
 git diff --check
 git status --short --branch
-git merge-base --is-ancestor fccb3af6b HEAD
+git merge-base --is-ancestor f6911b37b HEAD
 ```
 
-Expected: all focused/static gates pass, the worktree is clean, and the reviewed dev baseline `fccb3af6b` is an ancestor of `HEAD`. A later PR integration pass must fetch/rebase current `origin/dev` again rather than treating this recorded commit as permanently latest.
+Expected: all branch-owned focused/static gates pass, any diagnostic-inventory red is identical to the separately owned `f6911b37b` baseline, the worktree is clean, and `f6911b37b` is an ancestor of `HEAD`. A later PR integration pass must fetch/rebase current `origin/dev` again rather than treating this recorded commit as permanently latest.
+
+### Task 4: Reconcile final whole-branch privacy and inventory review
+
+**Files:**
+- Modify: `Docs/security/production-diagnostic-inventory.json`
+- Modify: `backlog/tasks/task-2118 - HuggingFace-tools-debug-log-dumps-full-tool-schemas.md`
+- Modify: the separately filed summarization-privacy task
+- Modify: `backlog/docs/lessons-testing-evidence.md`
+- Verify: all 523 logger calls in the two summarization modules, the focused privacy tests, and the diagnostic-inventory architecture test
+
+- [ ] **Step 1: Reconcile the branch-owned diagnostic manifest entry**
+
+Hand-review the `LLM_API_Calls.py` diagnostic change and update only its stored digest. Compare the complete generated inventory with the stored artifact; if unrelated latest-dev drift remains, reproduce the exact architecture failure on a detached worktree at `f6911b37b`, preserve every unrelated entry, and find or create an independently owned Backlog record.
+
+- [ ] **Step 2: Replace the heuristic follow-up with the complete summarization audit**
+
+Review every logger call in `Local_Summarization_Lib.py` and `Summarization_General_Lib.py`. Record the stable module/function/label/category inventory in the separate To Do task, broaden its title/description/acceptance criteria without adding an implementation plan, and keep only the backward TASK-2118 incident reference.
+
+- [ ] **Step 3: Correct TASK-2118 evidence and the generalized testing lesson**
+
+Remove the false implication that the identifier-filtered candidate subset was a complete follow-up inventory. Record the complete categorized ownership, the branch-only manifest digest, the exact latest-dev baseline drift, and the incident-based lesson about promoting heuristic evidence beyond its stated limits.
+
+- [ ] **Step 4: Run only the related completion gates and close the task**
+
+Run the 70-test privacy module, 8-test HuggingFace subset, two-test log-f-string hygiene module, eight-test diagnostic-inventory architecture file, Ruff lint on the edited Python files, the three current edited-range format checks, `py_compile`, all Task 2 sweep/inventory scripts, and diff checks. Do not run the repository-wide suite, a test application, or a simplified application. Mark TASK-2118 Done only when branch-owned gates are green or an architecture failure is proven byte-for-byte identical to the owned latest-dev baseline drift.

@@ -1,11 +1,11 @@
 ---
 id: TASK-2118
 title: HuggingFace tools debug log dumps full tool schemas verbatim
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-03 16:35'
-updated_date: '2026-08-09 20:22'
+updated_date: '2026-08-09 20:55'
 labels:
   - llm-calls
   - observability
