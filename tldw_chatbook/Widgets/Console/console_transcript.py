@@ -6,7 +6,7 @@ import asyncio
 import re
 from dataclasses import dataclass, replace
 from time import monotonic
-from typing import Iterable, Literal, Mapping
+from typing import Any, Iterable, Literal, Mapping
 
 from loguru import logger
 from PIL import Image as PILImage
@@ -48,6 +48,11 @@ from tldw_chatbook.Widgets.Console.console_generation_card import (
     ConsoleGenerationCard,
     ConsoleGenerationCardSpec,
     generation_card_signature,
+)
+from tldw_chatbook.Widgets.Console.console_video_card import (
+    ConsoleVideoCard,
+    ConsoleVideoCardSpec,
+    video_card_signature,
 )
 from tldw_chatbook.Widgets.diff_widgets import make_diff
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
@@ -448,6 +453,7 @@ class _TranscriptRow:
         "original-attempt",
         "image",
         "generation-card",
+        "video-card",
         "actions",
         "action-help",
         "empty",
@@ -461,6 +467,7 @@ class _TranscriptRow:
     card_state: ConsoleSetupCardState | None = None
     image_spec: "ConsoleImageRowSpec | None" = None
     generation_card_spec: "ConsoleGenerationCardSpec | None" = None
+    video_card_spec: "ConsoleVideoCardSpec | None" = None
 
 
 def get_console_assistant_markdown(app_config: Mapping[str, object] | None) -> bool:
@@ -1025,6 +1032,7 @@ class ConsoleTranscript(VerticalScroll):
         self._row_build_counts: dict[str, int] = {}
         self._image_specs: dict[str, ConsoleImageRowSpec] = {}
         self._generation_card_specs: dict[str, ConsoleGenerationCardSpec] = {}
+        self._video_card_specs: dict[str, ConsoleVideoCardSpec] = {}
         self._original_attempt_previews: dict[str, str] = {}
         self._citation_counts: dict[str, int] = {}
         #: TASK-1860: ids of TOOL markers currently showing their FULL result.
@@ -1271,6 +1279,21 @@ class ConsoleTranscript(VerticalScroll):
                 generation message in hidden view mode).
         """
         self._generation_card_specs = dict(specs)
+
+    def set_video_card_specs(
+        self, specs: Mapping[str, ConsoleVideoCardSpec]
+    ) -> None:
+        """Replace the prebuilt video-generation card row payloads keyed by message ID.
+
+        Args:
+            specs: Mapping of message ID to its prepared video-card payload.
+                A message id present here renders a ``"video-card"`` row
+                INSTEAD of any image/generation-card row for that same
+                message (mutually exclusive per message id; a video message
+                never has attachments -- ADR-044). Messages absent from the
+                mapping render no video row.
+        """
+        self._video_card_specs = dict(specs)
 
     def set_summary_boundary(self, message_id: str | None) -> None:
         """Set the `/rewind` summary boundary message id for the banner.
@@ -1894,7 +1917,21 @@ class ConsoleTranscript(VerticalScroll):
                     )
                 )
             card_spec = self._generation_card_specs.get(message.id)
-            if card_spec is not None:
+            video_spec = self._video_card_specs.get(message.id)
+            if video_spec is not None:
+                # A video-generation message renders its card row INSTEAD of
+                # any image/generation-card row (it never has attachments --
+                # mutually exclusive per message id, ADR-044).
+                rows.append(
+                    _TranscriptRow(
+                        key=f"video-card:{message.id}",
+                        kind="video-card",
+                        signature=video_card_signature(video_spec),
+                        message=message,
+                        video_card_spec=video_spec,
+                    )
+                )
+            elif card_spec is not None:
                 # A generation-card message renders the card row INSTEAD of
                 # the plain image row -- mutually exclusive per message id.
                 rows.append(
@@ -2098,6 +2135,8 @@ class ConsoleTranscript(VerticalScroll):
             return self._image_row_widget(row.image_spec)
         if row.kind == "generation-card" and row.generation_card_spec is not None:
             return ConsoleGenerationCard(row.generation_card_spec)
+        if row.kind == "video-card" and row.video_card_spec is not None:
+            return ConsoleVideoCard(row.video_card_spec)
         if row.kind == "actions" and row.message is not None:
             return self._action_row(row.message)
         raise ValueError(f"Unsupported transcript row: {row}")
@@ -2383,21 +2422,27 @@ class ConsoleTranscript(VerticalScroll):
         except NoScreen:
             return None
 
-    def _generation_action_kwargs(self, message: ConsoleChatMessage) -> dict[str, int]:
-        """Return the ``available_actions()`` generation kwargs for ``message``.
+    def _generation_action_kwargs(self, message: ConsoleChatMessage) -> dict[str, Any]:
+        """Return the ``available_actions()`` generation/video kwargs for ``message``.
 
-        Empty for a non-generation message, so ``available_actions(message)``
-        sees its old, un-keyworded call shape unchanged (regression guard).
+        Empty for a plain message, so ``available_actions(message)`` sees its
+        old, un-keyworded call shape unchanged (regression guard). A video
+        message contributes ``video_file_available`` from the current video
+        card specs (the action row's ▶/Save enablement -- task-3401.5).
         """
         variant_count = len(message.generation_metadata)
-        if variant_count == 0:
-            return {}
-        return {
-            "generation_variant_count": variant_count,
-            "generation_browsed_index": self._generation_browsed_index(
+        kwargs: dict[str, Any] = {}
+        if variant_count > 0:
+            kwargs["generation_variant_count"] = variant_count
+            kwargs["generation_browsed_index"] = self._generation_browsed_index(
                 message.id, variant_count
-            ),
-        }
+            )
+        if getattr(message, "video_metadata", None) is not None:
+            spec = self._video_card_specs.get(message.id)
+            kwargs["video_file_available"] = bool(
+                spec is not None and spec.status == "ready"
+            )
+        return kwargs
 
     def _action_row_signature(self, message: ConsoleChatMessage) -> tuple:
         actions = []

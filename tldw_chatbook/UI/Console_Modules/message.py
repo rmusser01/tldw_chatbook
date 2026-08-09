@@ -126,7 +126,10 @@ from ...Chat.console_chat_models import (
     MessageAttachment,
 )
 from ...Chat.console_chat_store import ConsoleChatStore
-from ...Chat.console_command_grammar import GENERATE_IMAGE_COMMAND_HANDLER_ID
+from ...Chat.console_command_grammar import (
+    GENERATE_IMAGE_COMMAND_HANDLER_ID,
+    GENERATE_VIDEO_COMMAND_HANDLER_ID,
+)
 from ...Chat.console_ephemeral import blocked_reason
 from ...Chat.console_image_view import IMAGE_CACHE_MAX_ENTRIES
 from ...Chat.console_message_actions import ConsoleActionResult, ConsoleMessageActionService
@@ -137,6 +140,7 @@ from ...Chat.console_save_targets import (
 )
 from ...Chat.message_metadata import MessageMetadata
 from ...Chat.provider_usage import ProviderUsage
+from ...Video_Generation.video_metadata import VideoGenerationMetadata
 from ...config import get_cli_setting
 from ...Notes.notes_scope_service import ScopeType
 from ...Widgets.Console import ConsoleEditMessageModal, ConsoleEditResult, ConsoleSaveAsModal
@@ -532,7 +536,18 @@ class ConsoleMessageController:
             raw_mime = node.get("image_mime_type")
             image_mime_type = str(raw_mime) if raw_mime else None
             usage = ProviderUsage.from_json(node.get("usage_json"))
-            metadata = MessageMetadata.from_json(node.get("metadata_json"))
+            raw_metadata_json = node.get("metadata_json")
+            # task-3401.4: a video generation row's metadata_json carries the
+            # namespaced video payload instead of turn provenance -- hydrate
+            # it into video_metadata and leave ``metadata`` None (the two
+            # shapes never co-write one row; persistence prefers the video
+            # payload so a later edit cannot clobber it).
+            video_metadata = VideoGenerationMetadata.from_json(raw_metadata_json)
+            metadata = (
+                None
+                if video_metadata is not None
+                else MessageMetadata.from_json(raw_metadata_json)
+            )
             raw_id = node.get("id")
             node_persisted_id = str(raw_id) if raw_id is not None else None
             kept = bool(content) or image_data is not None
@@ -564,6 +579,7 @@ class ConsoleMessageController:
                         attachments=attachments,
                         usage=usage,
                         metadata=metadata,
+                        video_metadata=video_metadata,
                     )
                 )
             # Children re-parent to this node when kept, else pass the nearest
@@ -716,11 +732,17 @@ class ConsoleMessageController:
             # `usage_json` above -- a screen-state round trip that dropped
             # it would lose the interrupted flag and a voice row's
             # transcript status, silently re-stranding what this field
-            # exists to record.
+            # exists to record. task-3401.4: a video row's payload lives in
+            # ``video_metadata`` (mutually exclusive with ``metadata``) and
+            # is preferred here so the round trip cannot strand it either.
             "metadata_json": (
-                metadata.to_json()
-                if (metadata := getattr(message, "metadata", None)) is not None
-                else None
+                video_metadata.to_json()
+                if (video_metadata := getattr(message, "video_metadata", None)) is not None
+                else (
+                    metadata.to_json()
+                    if (metadata := getattr(message, "metadata", None)) is not None
+                    else None
+                )
             ),
         }
 
@@ -791,7 +813,19 @@ class ConsoleMessageController:
             # which is exactly the "no usage known" state.
             usage=ProviderUsage.from_json(payload.get("usage_json")),
             # Same degrade-never-raise contract for structured metadata.
-            metadata=MessageMetadata.from_json(payload.get("metadata_json")),
+            # task-3401.4: video rows hydrate into video_metadata instead
+            # (the two shapes never co-write one row).
+            metadata=(
+                None
+                if (
+                    video_metadata := VideoGenerationMetadata.from_json(
+                        payload.get("metadata_json")
+                    )
+                )
+                is not None
+                else MessageMetadata.from_json(payload.get("metadata_json"))
+            ),
+            video_metadata=video_metadata,
         )
 
     def _rehydrate_console_message_image(self, message: ConsoleChatMessage) -> None:
@@ -1221,6 +1255,20 @@ class ConsoleMessageController:
                     return True
                 await self._regenerate_console_generation_variant(message_id)
                 return True
+            if getattr(message, "video_metadata", None) is not None:
+                # task-3401.5: a video message's regenerate rebuilds the
+                # request from the persisted video facts and appends a NEW
+                # video message (there are no variants to swap). Same
+                # ephemeral gate as /generate-video's command path.
+                video_blocked = blocked_reason(
+                    GENERATE_VIDEO_COMMAND_HANDLER_ID,
+                    ephemeral=self._console_active_session_is_ephemeral(),
+                )
+                if video_blocked is not None:
+                    self.app_instance.notify(video_blocked, severity="warning")
+                    return True
+                await self._regenerate_console_video_message(message_id)
+                return True
             controller = self._ensure_console_chat_controller()
             target_session_id = controller.store.active_session_id
             refusal = controller.send_refusal_copy(target_session_id)
@@ -1281,6 +1329,16 @@ class ConsoleMessageController:
                 self._save_console_message_image(message_id),
                 exclusive=True,
                 group="console-save-image",
+            )
+            return True
+        if action_id == "video-play" and result.status == "completed":
+            await self._play_console_video(message_id)
+            return True
+        if action_id == "video-save-copy" and result.status == "completed":
+            self.run_worker(
+                self._save_console_video_copy(message_id),
+                exclusive=True,
+                group="console-save-video",
             )
             return True
         if action_id == "delete" and result.status == "completed":

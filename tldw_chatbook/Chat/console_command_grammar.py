@@ -51,6 +51,16 @@ GENERATE_IMAGE_COMMAND_NAME = "generate-image"
 GENERATE_IMAGE_COMMAND_ARGUMENT_HINT = "[:backend] <prompt>"
 GENERATE_IMAGE_COMMAND_HANDLER_ID = "generate-image"
 
+GENERATE_VIDEO_COMMAND_NAME = "generate-video"
+# Help text: "Generate a video: /generate-video [:backend] <prompt>"
+GENERATE_VIDEO_COMMAND_ARGUMENT_HINT = "[:backend] <prompt>"
+GENERATE_VIDEO_COMMAND_HANDLER_ID = "generate-video"
+
+STREAM_VIDEO_COMMAND_NAME = "stream-video"
+# Help text: "Stream a video: /stream-video <url>"
+STREAM_VIDEO_COMMAND_ARGUMENT_HINT = "<url>"
+STREAM_VIDEO_COMMAND_HANDLER_ID = "stream-video"
+
 REWIND_COMMAND_NAME = "rewind"
 REWIND_COMMAND_ARGUMENT_HINT = ""
 REWIND_COMMAND_HANDLER_ID = "rewind"
@@ -214,6 +224,20 @@ def default_console_registry() -> ConsoleCommandRegistry:
             name=GENERATE_IMAGE_COMMAND_NAME,
             argument_hint=GENERATE_IMAGE_COMMAND_ARGUMENT_HINT,
             handler_id=GENERATE_IMAGE_COMMAND_HANDLER_ID,
+        )
+    )
+    registry.register(
+        ConsoleCommand(
+            name=GENERATE_VIDEO_COMMAND_NAME,
+            argument_hint=GENERATE_VIDEO_COMMAND_ARGUMENT_HINT,
+            handler_id=GENERATE_VIDEO_COMMAND_HANDLER_ID,
+        )
+    )
+    registry.register(
+        ConsoleCommand(
+            name=STREAM_VIDEO_COMMAND_NAME,
+            argument_hint=STREAM_VIDEO_COMMAND_ARGUMENT_HINT,
+            handler_id=STREAM_VIDEO_COMMAND_HANDLER_ID,
         )
     )
     registry.register(

@@ -67,6 +67,8 @@ ACTION_GUIDE_SEGMENTS: tuple[tuple[str, str], ...] = (
     ("feedback", "👍/👎 Rate"),
     ("delete", "🗑 Delete"),
     ("variant-previous", "</> Variants"),
+    ("video-play", "▶ Play"),
+    ("video-save-copy", "Save copy"),
 )
 
 
@@ -143,6 +145,18 @@ class ConsoleMessageActionService:
     _FAILED_RETRY_ACTIONS: tuple[tuple[str, str], ...] = (("retry", "Retry"),)
     _IMAGE_VIEW_ACTIONS: tuple[tuple[str, str], ...] = (("toggle-image-view", "View"),)
     _SAVE_IMAGE_ACTIONS: tuple[tuple[str, str], ...] = (("save-image", "Save Image"),)
+    #: task-3401.5: offered only on a video-generation message (one carrying
+    #: video_metadata). Play opens the ephemeral file with the OS player;
+    #: Save copies it out of the ephemeral store -- the only byte escape
+    #: hatch, and always an explicit user act (ADR-044).
+    _VIDEO_ACTIONS: tuple[tuple[str, str], ...] = (
+        ("video-play", "▶"),
+        ("video-save-copy", "Save"),
+    )
+    #: Enablement reason shared by both video actions when the file is gone.
+    _VIDEO_FILE_MISSING_REASON = (
+        "The ephemeral video file is gone — regenerate to recreate it."
+    )
     _VIEW_ORIGINAL_ATTEMPT_ACTION: tuple[tuple[str, str], ...] = (
         ("view-original-attempt", "View original attempt"),
     )
@@ -204,6 +218,7 @@ class ConsoleMessageActionService:
         speaking_message_id: str | None = None,
         original_attempt_available: bool = False,
         ephemeral: bool = False,
+        video_file_available: bool = False,
     ) -> list[ConsoleMessageAction]:
         """Return canonical selected-message actions for a transcript message.
 
@@ -271,6 +286,8 @@ class ConsoleMessageActionService:
                 + list(self._IMAGE_VIEW_ACTIONS)
                 + list(self._SAVE_IMAGE_ACTIONS)
             )
+        if getattr(message, "video_metadata", None) is not None:
+            completed_actions = completed_actions + list(self._VIDEO_ACTIONS)
         if not self._speak_visible(message):
             completed_actions = [
                 (action_id, label)
@@ -309,6 +326,7 @@ class ConsoleMessageActionService:
                     generation_variant_count=generation_variant_count,
                     generation_browsed_index=generation_browsed_index,
                     ephemeral=ephemeral,
+                    video_file_available=video_file_available,
                 ),
                 disabled_reason=disabled_reason
                 or self._action_disabled_reason(
@@ -317,6 +335,7 @@ class ConsoleMessageActionService:
                     generation_variant_count=generation_variant_count,
                     generation_browsed_index=generation_browsed_index,
                     ephemeral=ephemeral,
+                    video_file_available=video_file_available,
                 ),
             )
             for action_id, label in completed_actions
@@ -497,6 +516,20 @@ class ConsoleMessageActionService:
                 visible_copy="Saving image to disk.",
                 target_message_id=message.id,
             )
+        if action_id == "video-play":
+            return ConsoleActionResult(
+                action_id=action_id,
+                status="completed",
+                visible_copy="Opening video with the system player.",
+                target_message_id=message.id,
+            )
+        if action_id == "video-save-copy":
+            return ConsoleActionResult(
+                action_id=action_id,
+                status="completed",
+                visible_copy="Saving a copy of the video to disk.",
+                target_message_id=message.id,
+            )
         return ConsoleActionResult(
             action_id=action_id,
             status="wip",
@@ -540,11 +573,14 @@ class ConsoleMessageActionService:
         generation_variant_count: int = 0,
         generation_browsed_index: int = 0,
         ephemeral: bool = False,
+        video_file_available: bool = False,
     ) -> bool:
         if action_id == "regenerate":
             return ConsoleMessageActionService._is_assistant_message(message)
         if action_id == "save-image":
             return blocked_reason("save-image", ephemeral=ephemeral) is None
+        if action_id in {"video-play", "video-save-copy"}:
+            return video_file_available
         return ConsoleMessageActionService._variant_action_enabled(
             action_id,
             message,
@@ -560,6 +596,7 @@ class ConsoleMessageActionService:
         generation_variant_count: int = 0,
         generation_browsed_index: int = 0,
         ephemeral: bool = False,
+        video_file_available: bool = False,
     ) -> str:
         if (
             action_id == "regenerate"
@@ -568,6 +605,8 @@ class ConsoleMessageActionService:
             return "Only assistant messages can be regenerated."
         if action_id == "save-image":
             return blocked_reason("save-image", ephemeral=ephemeral) or ""
+        if action_id in {"video-play", "video-save-copy"} and not video_file_available:
+            return ConsoleMessageActionService._VIDEO_FILE_MISSING_REASON
         if action_id in {
             "variant-previous",
             "variant-next",

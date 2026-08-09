@@ -169,6 +169,17 @@ from .settings_image_gen_defaults import (
     probe_backend as image_gen_probe_backend,
     validate_draft as validate_image_gen_draft,
 )
+from .settings_video_gen_defaults import (
+    BACKEND_IDS as VIDEO_GEN_BACKEND_IDS,
+    VideoGenDraftValues,
+    diff_to_sections as video_gen_diff_to_sections,
+    validate_draft as validate_video_gen_draft,
+)
+from ...Widgets.settings_video_gen_panel import VideoGenSettingsPanel
+from ...Video_Generation.config import (
+    get_video_generation_config,
+    reset_video_generation_runtime,
+)
 from ...Image_Generation.config import (
     get_image_generation_config,
     reset_image_generation_config_cache,
@@ -777,6 +788,34 @@ SETTINGS_DOMAIN_CATEGORY_CONTRACTS = (
         follow_up=(
             "Follow-up: add a dedicated style-template create/edit/delete UI (v2); "
             "v1 shows a read-only count only."
+        ),
+    ),
+    SettingsDomainCategoryContract(
+        category=SettingsCategoryId.VIDEO_GENERATION,
+        title="Video Gen",
+        owner_destination="Console",
+        source_of_truth=(
+            "config.toml [video_generation] (+ nested backend sections)",
+            "Video_Generation engine (adapters/worker/ephemeral store)",
+        ),
+        rows=(
+            (
+                "Generation actions",
+                "Console owns /generate-video, cards, playback",
+            ),
+            (
+                "Settings role",
+                "Settings edits persisted backend/config defaults only",
+            ),
+            (
+                "Style templates",
+                "builtins ship in code; user styles via [video_generation.styles]",
+            ),
+        ),
+        settings_can_mutate=True,
+        follow_up=(
+            "Follow-up: style-template management UI + per-backend live Test probe (v2); "
+            "v1 shows a read-only count and static diagnostics."
         ),
     ),
 )
@@ -2496,6 +2535,13 @@ class SettingsScreen(BaseAppScreen):
                 "Guided",
             ),
             SettingsCategorySummary(
+                SettingsCategoryId.VIDEO_GENERATION,
+                "Video Gen",
+                "Video generation backend defaults for MiniMax H3, ComfyUI, and "
+                "SD.cpp, plus retention, cost-confirm, and playback diagnostics.",
+                "Guided",
+            ),
+            SettingsCategorySummary(
                 SettingsCategoryId.DIAGNOSTICS,
                 "Diagnostics",
                 "Config validation, logs, and troubleshooting signals.",
@@ -4174,6 +4220,389 @@ class SettingsScreen(BaseAppScreen):
         draft = self._settings_drafts.get(category)
         return bool(draft and draft.is_dirty)
 
+    # ------------------------------------------------------------------
+    # Video Gen (task-3401.12): draft/dirty editing + Save/Revert, mirroring
+    # the Image Gen block's idioms at video's smaller surface (3 backends,
+    # 6 globals). Namespaced draft keys are identical in shape:
+    # "default_backend", "enabled_backends", "retention",
+    # "retention_ttl_hours", "max_store_mb", "confirm_cost_estimate",
+    # "field::<backend_id>::<toml_key>", "cleared::<backend_id>::<toml_key>".
+
+    def _video_gen_raw_section(self) -> Mapping[str, object]:
+        # Lazily cached per edit session; invalidated on save/revert (the
+        # same exactly-three-points rule as the image block's cache).
+        cache = getattr(self, "_video_gen_raw_section_cache", None)
+        if cache is None:
+            raw = SettingsConfigAdapter().load().get("video_generation")
+            cache = raw if isinstance(raw, Mapping) else {}
+            self._video_gen_raw_section_cache = cache
+        return cache
+
+    def _video_gen_overlay_values(self) -> dict[str, object]:
+        draft = self._settings_drafts.get(SettingsCategoryId.VIDEO_GENERATION)
+        return dict(draft.values) if draft is not None else {}
+
+    def _video_gen_expected_default_backend_select_value(
+        self, overlay: Mapping[str, object]
+    ) -> object:
+        """Mirror of the panel's compose logic for the suppression queue."""
+        cfg = get_video_generation_config(reload=True)
+        effective = overlay.get("default_backend", cfg.default_backend)
+        return effective if effective in VIDEO_GEN_BACKEND_IDS else Select.NULL
+
+    def _queue_video_gen_select_suppression(self, overlay: Mapping[str, object]) -> None:
+        """Record the value the about-to-(re)compose default-backend Select
+        will mount with (a fresh Select refires Changed on mount with a
+        non-NULL value) -- the image block's exact idiom."""
+        expected = self._video_gen_expected_default_backend_select_value(overlay)
+        if expected is Select.NULL:
+            return
+        queue = getattr(self, "_video_gen_select_suppress_queue", None)
+        if queue is None:
+            queue = []
+            self._video_gen_select_suppress_queue = queue
+        queue.append(expected)
+
+    def _video_gen_stage(self, key: str, original: object, value: object) -> None:
+        category = SettingsCategoryId.VIDEO_GENERATION
+        draft = self._settings_drafts.setdefault(
+            category, SettingsDraft(category=category)
+        )
+        draft.set_value(key, original, value)
+        if not draft.is_dirty:
+            self._settings_drafts.pop(category, None)
+        self._update_draft_status_widgets(category)
+
+    def _video_gen_unstage(self, key: str) -> None:
+        """Remove one staged key without touching any other."""
+        category = SettingsCategoryId.VIDEO_GENERATION
+        draft = self._settings_drafts.get(category)
+        if draft is None:
+            return
+        draft.values.pop(key, None)
+        draft.originals.pop(key, None)
+        if not draft.is_dirty:
+            self._settings_drafts.pop(category, None)
+
+    def _stage_video_gen_field(self, backend_id: str, toml_key: str, raw_value: str) -> None:
+        raw_backend = self._video_gen_raw_section().get(backend_id) or {}
+        original = (
+            raw_backend.get(toml_key) if isinstance(raw_backend, Mapping) else None
+        )
+        original_str = "" if original is None else str(original)
+        self._video_gen_stage(
+            f"field::{backend_id}::{toml_key}", original_str, raw_value
+        )
+        # Typing into a field cancels a pending Clear on that SAME field.
+        self._video_gen_unstage(f"cleared::{backend_id}::{toml_key}")
+        self._update_draft_status_widgets(SettingsCategoryId.VIDEO_GENERATION)
+
+    def _refresh_video_gen_default_markers(self, effective_default_backend: str) -> None:
+        for backend_id in VIDEO_GEN_BACKEND_IDS:
+            try:
+                marker = self.query_one(
+                    f"#settings-videogen-default-marker-{backend_id}", Static
+                )
+            except QueryError:
+                continue
+            marker.update(
+                "★ Default" if backend_id == effective_default_backend else ""
+            )
+
+    def _video_gen_draft_values_for_save(
+        self, panel: VideoGenSettingsPanel
+    ) -> VideoGenDraftValues:
+        draft = self._settings_drafts.get(SettingsCategoryId.VIDEO_GENERATION)
+        values = draft.values if draft is not None else {}
+        backend_fields: dict = {}
+        cleared_fields: dict[str, list[str]] = {}
+        for key, value in values.items():
+            if key.startswith("field::"):
+                _prefix, backend_id, toml_key = key.split("::", 2)
+                backend_fields.setdefault(backend_id, {})[toml_key] = value
+            elif key.startswith("cleared::"):
+                _prefix, backend_id, toml_key = key.split("::", 2)
+                cleared_fields.setdefault(backend_id, []).append(toml_key)
+
+        # Checkbox/Select values are ALWAYS read live (no blank ambiguity --
+        # the image block's rule), so an untouched toggle still lands.
+        enabled_backends = [
+            backend_id
+            for backend_id in VIDEO_GEN_BACKEND_IDS
+            if panel.query_one(
+                f"#settings-videogen-enabled-{backend_id}", Checkbox
+            ).value
+        ]
+        default_backend_widget_value = panel.query_one(
+            "#settings-videogen-default_backend", Select
+        ).value
+        default_backend = (
+            default_backend_widget_value
+            if isinstance(default_backend_widget_value, str)
+            else None
+        )
+        retention_widget_value = panel.query_one(
+            "#settings-videogen-retention", Select
+        ).value
+        retention = (
+            retention_widget_value
+            if isinstance(retention_widget_value, str)
+            else None
+        )
+        confirm_cost_estimate = bool(
+            panel.query_one("#settings-videogen-confirm_cost_estimate", Checkbox).value
+        )
+        # bool-kind backend fields (e.g. minimax allow_uploads) read live too.
+        from .settings_video_gen_defaults import FIELD_SCHEMA as VIDEO_GEN_FIELD_SCHEMA
+
+        for backend_id in VIDEO_GEN_BACKEND_IDS:
+            for spec in VIDEO_GEN_FIELD_SCHEMA.get(backend_id, ()):
+                if spec.kind != "bool":
+                    continue
+                try:
+                    value = panel.query_one(
+                        f"#settings-videogen-field-{backend_id}-{spec.toml_key}",
+                        Checkbox,
+                    ).value
+                except QueryError:
+                    continue
+                backend_fields.setdefault(backend_id, {})[spec.toml_key] = bool(value)
+
+        return VideoGenDraftValues(
+            default_backend=default_backend,
+            enabled_backends=enabled_backends,
+            retention=retention,
+            retention_ttl_hours=values.get("retention_ttl_hours"),
+            max_store_mb=values.get("max_store_mb"),
+            confirm_cost_estimate=confirm_cost_estimate,
+            backend_fields=backend_fields,
+            cleared_fields=cleared_fields,
+        )
+
+    @on(Select.Changed, "#settings-videogen-default_backend")
+    def handle_video_gen_default_backend_changed(self, event: Select.Changed) -> None:
+        event.stop()
+        queue = getattr(self, "_video_gen_select_suppress_queue", [])
+        if queue and event.value == queue[0]:
+            queue.pop(0)
+            return
+        value = event.value if isinstance(event.value, str) else None
+        original = self._video_gen_raw_section().get("default_backend")
+        self._video_gen_stage("default_backend", original, value)
+        if value is not None:
+            self._refresh_video_gen_default_markers(value)
+
+    @on(Select.Changed, "#settings-videogen-retention")
+    def handle_video_gen_retention_changed(self, event: Select.Changed) -> None:
+        event.stop()
+        value = event.value if isinstance(event.value, str) else None
+        original = self._video_gen_raw_section().get("retention")
+        self._video_gen_stage("retention", original, value)
+
+    @on(Checkbox.Changed)
+    def handle_video_gen_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        checkbox_id = str(getattr(event.checkbox, "id", "") or "")
+        if not checkbox_id.startswith("settings-videogen-"):
+            return
+        event.stop()
+        if checkbox_id == "settings-videogen-confirm_cost_estimate":
+            original = self._video_gen_raw_section().get("confirm_cost_estimate")
+            self._video_gen_stage(
+                "confirm_cost_estimate", original, bool(event.value)
+            )
+            return
+        prefix = "settings-videogen-enabled-"
+        if checkbox_id.startswith(prefix):
+            backend_id = checkbox_id[len(prefix) :]
+            if backend_id not in VIDEO_GEN_BACKEND_IDS:
+                return
+            try:
+                panel = self.query_one("#settings-videogen-panel", VideoGenSettingsPanel)
+            except QueryError:
+                return
+            enabled_backends = [
+                bid
+                for bid in VIDEO_GEN_BACKEND_IDS
+                if panel.query_one(f"#settings-videogen-enabled-{bid}", Checkbox).value
+            ]
+            checkbox = panel.query_one(
+                f"#settings-videogen-enabled-{backend_id}", Checkbox
+            )
+            checkbox.label = (
+                "On" if checkbox.value else "Off"
+            )
+            original = self._video_gen_raw_section().get("enabled_backends")
+            self._video_gen_stage("enabled_backends", original, enabled_backends)
+            return
+        # bool-kind backend field (e.g. minimax allow_uploads)
+        field_prefix = "settings-videogen-field-"
+        if checkbox_id.startswith(field_prefix):
+            remainder = checkbox_id[len(field_prefix) :]
+            for backend_id in VIDEO_GEN_BACKEND_IDS:
+                backend_prefix = f"{backend_id}-"
+                if remainder.startswith(backend_prefix):
+                    toml_key = remainder[len(backend_prefix) :]
+                    raw_backend = self._video_gen_raw_section().get(backend_id) or {}
+                    original = (
+                        raw_backend.get(toml_key)
+                        if isinstance(raw_backend, Mapping)
+                        else None
+                    )
+                    self._video_gen_stage(
+                        f"field::{backend_id}::{toml_key}", original, bool(event.value)
+                    )
+                    event.checkbox.label = (
+                        f"{'Allow image uploads (i2v)'}: {'on' if event.value else 'off'}"
+                        if toml_key == "allow_uploads"
+                        else event.checkbox.label
+                    )
+                    return
+
+    @on(Input.Changed)
+    def handle_video_gen_input_changed(self, event: Input.Changed) -> None:
+        input_id = str(getattr(event.input, "id", "") or "")
+        if not input_id.startswith("settings-videogen-"):
+            return
+        event.stop()
+        global_keys = {
+            "settings-videogen-retention_ttl_hours": "retention_ttl_hours",
+            "settings-videogen-max_store_mb": "max_store_mb",
+        }
+        if input_id in global_keys:
+            key = global_keys[input_id]
+            original = self._video_gen_raw_section().get(key)
+            original_str = "" if original is None else str(original)
+            self._video_gen_stage(key, original_str, event.value)
+            return
+        prefix = "settings-videogen-field-"
+        if not input_id.startswith(prefix):
+            return
+        remainder = input_id[len(prefix) :]
+        for backend_id in VIDEO_GEN_BACKEND_IDS:
+            backend_prefix = f"{backend_id}-"
+            if remainder.startswith(backend_prefix):
+                toml_key = remainder[len(backend_prefix) :]
+                self._stage_video_gen_field(backend_id, toml_key, event.value)
+                return
+
+    def _handle_video_gen_clear(self, backend_id: str, toml_key: str) -> None:
+        """Stage an explicit Clear of a backend's locally-saved field."""
+        self._video_gen_unstage(f"field::{backend_id}::{toml_key}")
+        self._video_gen_stage(f"cleared::{backend_id}::{toml_key}", False, True)
+        try:
+            field_input = self.query_one(
+                f"#settings-videogen-field-{backend_id}-{toml_key}", Input
+            )
+            field_input.value = ""
+        except QueryError:
+            pass
+        try:
+            source_line = self.query_one(
+                f"#settings-videogen-key-source-{backend_id}", Static
+            )
+            from .settings_video_gen_defaults import key_source_after_clear
+
+            source_line.update(key_source_after_clear(backend_id))
+        except QueryError:
+            pass
+        self._update_draft_status_widgets(SettingsCategoryId.VIDEO_GENERATION)
+
+    def _handle_video_gen_save(self) -> None:
+        try:
+            panel = self.query_one("#settings-videogen-panel", VideoGenSettingsPanel)
+        except QueryError:
+            return
+        draft_values = self._video_gen_draft_values_for_save(panel)
+        errors, warnings = validate_video_gen_draft(draft_values)
+        if errors:
+            message = " ".join(errors)
+            self._set_static_text("#settings-videogen-save-result", message)
+            self.app.notify(message, severity="error")
+            return
+        self._set_static_text(
+            "#settings-videogen-save-result", "Saving Video Gen defaults..."
+        )
+        self._settings_save_video_gen_worker(draft_values, warnings)
+
+    @work(exclusive=True, thread=True)
+    def _settings_save_video_gen_worker(
+        self, draft_values: VideoGenDraftValues, warnings: list[str]
+    ) -> None:
+        raw_config = SettingsConfigAdapter().load()
+        sections, deletions = video_gen_diff_to_sections(draft_values, raw_config)
+        adapter = SettingsConfigAdapter()
+        ok = True
+        if sections:
+            ok = adapter.save_sections(sections) and ok
+        for section, keys in deletions.items():
+            if keys:
+                ok = adapter.delete_values(section, keys) and ok
+        if ok:
+            reset_video_generation_runtime()
+        self.app.call_from_thread(self._apply_video_gen_save_result, ok, warnings)
+
+    async def _apply_video_gen_save_result(
+        self, saved: bool, warnings: list[str]
+    ) -> None:
+        if not saved:
+            message = "Failed to save Video Gen defaults."
+            self._set_static_text("#settings-videogen-save-result", message)
+            self.app.notify(message, severity="error")
+            return
+        self._settings_drafts.pop(SettingsCategoryId.VIDEO_GENERATION, None)
+        self._video_gen_raw_section_cache = None
+        message = "Video Gen defaults saved."
+        if warnings:
+            message = f"{message} {' '.join(warnings)}"
+        try:
+            panel = self.query_one("#settings-videogen-panel", VideoGenSettingsPanel)
+        except QueryError:
+            panel = None
+        if panel is not None:
+            panel.overlay = {}
+            self._queue_video_gen_select_suppression({})
+            await panel.recompose()
+            self._set_static_text("#settings-videogen-save-result", message)
+        self._update_draft_status_widgets(SettingsCategoryId.VIDEO_GENERATION)
+        self.app.notify(message, severity="warning" if warnings else "information")
+
+    async def _handle_video_gen_revert(self) -> None:
+        self._settings_drafts.pop(SettingsCategoryId.VIDEO_GENERATION, None)
+        self._video_gen_raw_section_cache = None
+        try:
+            panel = self.query_one("#settings-videogen-panel", VideoGenSettingsPanel)
+        except QueryError:
+            panel = None
+        if panel is not None:
+            panel.overlay = {}
+            self._queue_video_gen_select_suppression({})
+            await panel.recompose()
+            self._set_static_text("#settings-videogen-save-result", "")
+        self._update_draft_status_widgets(SettingsCategoryId.VIDEO_GENERATION)
+
+    @on(Button.Pressed)
+    async def handle_video_gen_button_pressed(self, event: Button.Pressed) -> None:
+        button_id = str(getattr(event.button, "id", "") or "")
+        if not button_id.startswith("settings-videogen-"):
+            return
+        event.stop()
+        if button_id == "settings-videogen-save":
+            self._handle_video_gen_save()
+            return
+        if button_id == "settings-videogen-revert":
+            await self._handle_video_gen_revert()
+            return
+        prefix = "settings-videogen-clear-"
+        if not button_id.startswith(prefix):
+            return
+        remainder = button_id[len(prefix) :]
+        for backend_id in VIDEO_GEN_BACKEND_IDS:
+            backend_prefix = f"{backend_id}-"
+            if remainder.startswith(backend_prefix):
+                toml_key = remainder[len(backend_prefix) :]
+                self._handle_video_gen_clear(backend_id, toml_key)
+                return
+
     def _guided_action_message(self, category: SettingsCategoryId) -> str:
         if category is SettingsCategoryId.APPEARANCE:
             if self._category_has_unsaved_changes(category):
@@ -4340,6 +4769,16 @@ class SettingsScreen(BaseAppScreen):
             # them through this one shared draft-status refresh, matching
             # the sibling idiom rather than a parallel mechanism.
             for button_id in ("settings-imagegen-save", "settings-imagegen-revert"):
+                try:
+                    self.query_one(
+                        f"#{button_id}", Button
+                    ).disabled = not has_unsaved_changes
+                except QueryError:
+                    pass
+        if category is SettingsCategoryId.VIDEO_GENERATION:
+            # task-3401.12: same sibling idiom for Video Gen's in-panel
+            # Save/Revert.
+            for button_id in ("settings-videogen-save", "settings-videogen-revert"):
                 try:
                     self.query_one(
                         f"#{button_id}", Button
@@ -4647,6 +5086,8 @@ class SettingsScreen(BaseAppScreen):
         if category in GUIDED_SETTINGS_MUTATION_CATEGORIES:
             return "Draft — save with s"
         if category is SettingsCategoryId.IMAGE_GENERATION:
+            return "Draft — save/revert below"
+        if category is SettingsCategoryId.VIDEO_GENERATION:
             return "Draft — save/revert below"
         if category is SettingsCategoryId.SPLASH_SCREEN:
             return "Auto-saved"
@@ -12155,6 +12596,16 @@ class SettingsScreen(BaseAppScreen):
             yield ImageGenSettingsPanel(
                 id="settings-imagegen-panel",
                 overlay=image_gen_overlay,
+            )
+        elif category is SettingsCategoryId.VIDEO_GENERATION:
+            yield Static(
+                "Video Gen", classes="destination-section settings-column-title"
+            )
+            video_gen_overlay = self._video_gen_overlay_values()
+            self._queue_video_gen_select_suppression(video_gen_overlay)
+            yield VideoGenSettingsPanel(
+                id="settings-videogen-panel",
+                overlay=video_gen_overlay,
             )
         elif category is SettingsCategoryId.STORAGE:
             values = self._storage_setting_values()

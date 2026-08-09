@@ -1,0 +1,53 @@
+# ADR-044: Generated video is ephemeral and name-referenced; playback and streaming use a hybrid in-process/subprocess pipeline
+
+Status: Accepted (revision 1, same-day review: decisions 1, 4, 5, 7 corrected — see notes inline)
+Date: 2026-08-07
+Related Task: backlog/tasks/task-3401 (Video generation, ephemeral storage, playback, and streaming)
+Supersedes: N/A
+
+## Decision
+
+1. **Generated videos are ephemeral.** Video bytes are written only to files under the user data dir keyed by the **stable message id** (`generated_videos/<message_id>/<slug>.mp4`), never into the database. (Revision 1: originally session-id-keyed — console session ids are ephemeral, which would orphan `ttl`-retained files across restarts; message-keyed paths make resolution a direct path construction.) A video message persists a human-readable `[video] <slug-name>` content marker plus metadata containing **no path and no URL**. A runtime VideoStore resolves name → file for the live session and reports missing after restart or expiry, rendering a named tombstone with a regenerate action. Retention is configurable: `session` (default; wiped on app start) or `ttl` (best-effort cache), and **a total store size cap with LRU eviction applies in all modes** so a long running session cannot grow the store unboundedly. Escaping ephemerality ("Save a copy…") is always an explicit user action.
+2. **Video generation lives in a new `Video_Generation/` package** mirroring `Image_Generation/`: frozen request/result contracts, adapter Protocol, lazy registry, `[video_generation]` nested-TOML config with env→config→keyring secret precedence, and a single request-validation choke point. Initial backends: `minimax` (MiniMax-H3 official async task API), `comfyui` (user-run server, shipped parameterized workflow JSON), and `stable_diffusion_cpp` video models (Wan2.1/2.2, MiniMax-H3 local, LTX-2.3, HunyuanVideo 1.5 via the configured `sd` binary).
+3. **Cloud image-to-video uploads are opt-in.** Using a locally generated image as a cloud backend's first/reference frame uploads that image; `[video_generation.<backend>] allow_uploads` defaults to **off**, and the adapter refuses with a clear message when off. Local backends are unaffected.
+4. **Playback is a two-surface hybrid.** A silent in-process transcript preview (PyAV decode on a thread → existing `rich_pixels`/halfcell inline-image path, capped fps/length/resolution, one active preview, **paused by default until explicit user action**) for short generated clips, and a modal full-player screen using a subprocess pipeline with clock-driven A/V sync (drift/dropped-frame stats, `-ss` seek restarts), rendering frames through the same widget. (Revision 1: the player uses a **single-demux** pipeline — one ffmpeg process supplies both the video frame pipe and the audio PCM pipe; ffplay never opens the source itself, so streamed sources are fetched once, not twice.) Terminal graphics fall back sixel/kitty → halfcell → ASCII. Player keybindings follow the single-letter htop-style conventions of decision 031.
+5. **Streaming is egress-gated and subprocess-only.** `/stream-video <url>` passes the user-typed URL through `Utils/egress.py` (typed URL seeds trusted-origin intent); `yt-dlp` runs only as a subprocess to resolve site URLs to direct streams; **the fully resolved final URL — post-redirects, post-`yt-dlp -g` — is validated through egress again before reaching ffmpeg, because ffmpeg follows redirects internally** (revision 1: closes the validate-only-the-typed-URL hole). ffmpeg reads the stream with reconnect flags. v1 scopes to progressive single-URL streams; DASH/HLS separate audio/video muxing is a documented follow-up. Nothing is written to disk while streaming, so `MAX_FETCH_BYTES_MEDIA` does not apply — stream sessions are time-boxed and user-terminated instead (accepted residual risk).
+6. **New optional dependencies, no new core deps.** `av` (filling its existing `optional_deps` slot) and `textual-canvas` form a `video_playback` extra; `ffmpeg`/`ffplay` (player) and `yt-dlp` (streaming) are runtime binaries detected with `shutil.which`, with graceful degradation and install guidance when absent. No code is vendored from the reference repos until licenses are verified (TermTube is MIT; textual-video's license is unverified — clean-room reimplement from its architecture if unresolved).
+7. **Metadata lives in `messages.metadata_json`; no schema migration.** (Revision 1 — reverses the original decision 7, which proposed extending the v25 `message_generation_metadata` sidecar as "v26". Three facts forced the reversal: the schema head is already v32 and v26 is taken; more importantly the sidecar's `position` column is defined by **index alignment with message attachments** and a video message has no attachments, so a video row would break that invariant for every generic reader (`get_generation_metadata_for_messages`, variant regenerate, the image card builder); and v31 (task-2364) already provides a proven local-only per-message JSON column.) Video generation metadata (prompt, backend, model, seed, duration, resolution, slug name, i2v source-message id) is stored in `metadata_json`; the sidecar is untouched; nothing video-related syncs (`metadata_json` is already excluded per the v31 migration note). Marker discrimination (`[image] ` vs `[video] `) plus the separate column keeps the image and video read paths isolated by construction.
+
+## Context
+
+The image-generation pipeline (adapter registry, validation choke point, `/generate-image`, DB-BLOB attachments + v25 metadata sidecar) is the proven template, but its storage model does not transfer: images persist as ≤4 MB DB BLOBs while videos run 5–100 MB. The product requirement is explicit — videos are not stored permanently; conversations refer to them by name; there is no durable link once the file is gone or the app restarts. MiniMax's own API reinforces this: completed tasks return an **expiring** CDN download URL, and input media must be URLs (hence decision 3).
+
+Backend facts verified 2026-08-07: MiniMax-H3 (`POST /v2/video_generation`, multimodal `content[]`, poll `/v2/query/video_generation/{task_id}`) ; ComfyUI (`/prompt`, `/history`, `/view`, `/upload/image`, WS progress); stable-diffusion.cpp gained Wan2.1/2.2 (2025-09) and day-1 MiniMax-H3 support (2026-08-04). For playback, textual-video proves the in-process PyAV→textual-image widget path (but is silent), and TermTube proves the ffmpeg/ffplay subprocess path with audio sync and reconnect (but renders raw ANSI, which would fight Textual's compositor). The hybrid takes each repo's strength.
+
+## Alternatives Considered
+
+| Option | Why rejected |
+| --- | --- |
+| Persist videos as DB BLOBs like images | BLOBS of 5–100 MB bloat the DB and sync surface for a product that explicitly disclaims durability; the 4 MB inline cap already excludes most clips. |
+| Persistent media library (videos survive forever, referenced by stable path) | Contradicts the stated requirement; duplicates Media-tab concerns; silent unbounded disk growth. |
+| Extend `Image_Generation/` in place with a media-kind flag | Image contracts (width/height/steps/format) don't cover duration/fps/ratio/frames; a parallel package keeps both contracts honest and can later merge under a shared umbrella if a third modality appears. |
+| Extend the v25 `message_generation_metadata` sidecar for video (original decision 7) | Its `position` column means "attachment index"; video messages have no attachments, so video rows would corrupt the invariant every sidecar reader relies on. `metadata_json` (v31) is local-only already, needs no migration, and the video card is a separate read path anyway. |
+| In-process playback only (textual-video-style, incl. audio via python audio lib) | Audio + clock sync in the Textual event loop is fragile and pulls in heavy audio deps; TermTube's evidence is that audio/sync belongs in a subprocess. |
+| ffplay opens the stream for audio while ffmpeg decodes video | Fetches the same stream twice with two divergent clocks; single-demux (one ffmpeg, two pipes) is strictly better. |
+| Import `yt-dlp` as a Python library | Adds a large fast-moving dependency and potential license friction to the core; subprocess invocation keeps it optional and upgradable by the user. |
+| Trust MiniMax CDN download URLs unconditionally | CDN hostnames still pass the egress policy with the configured API base seeding trust; unauthenticated blanket trust of response URLs would bypass the SSRF guard precedent (web-fetch-hardening). |
+| Validate only the user-typed stream URL before handing to ffmpeg | ffmpeg follows redirects internally, so post-handoff hops would bypass policy; the fully resolved final URL must be re-validated (decision 5). |
+
+## Consequences
+
+- After app restart (default `session` retention) every video message degrades to a named tombstone; regenerate is the recovery path. This is intentional and must be documented in the user guide, not treated as data loss.
+- Export/copy of a conversation exports video names + metadata, not bytes; "Save a copy…" on a live card is the only byte escape hatch. Export paths must render video messages as marker+metadata text and never error on missing bytes.
+- Local video generation (sd.cpp Wan/H3) can run minutes-to-hours on CPU/Metal: progress reporting, cooperative cancellation, and conservative local default duration/resolution guardrails are required, not optional.
+- The sd.cpp CLI surface changes frequently upstream; the adapter feature-detects a minimum binary version at init and the pinned flag set is recorded from the Phase-0 spike.
+- Streaming sessions bypass the media byte cap by design; final-URL egress validation and time-boxing are the compensating controls.
+- Any future modality (audio generation, 3D) should evaluate merging `Image_Generation`/`Video_Generation` under a `Media_Generation` umbrella rather than adding a third near-duplicate package.
+
+## Links
+
+- [Brainstorm/design spec (revision 1)](../../Docs/superpowers/specs/2026-08-07-video-generation-playback-streaming-design.md)
+- [Web-fetch hardening design (egress trust-seeding precedent)](../../Docs/superpowers/specs/2026-07-23-web-fetch-hardening-design.md)
+- Decision 031 (TUI keybinding and footer-hint conventions)
+- v31 migration `chachanotes_v30_to_v31_message_metadata.sql` (metadata_json local-only precedent, task-2364)
+- Reference implementations: github.com/rmusser01/textual-video, github.com/anshupriyan/TermTube (MIT)

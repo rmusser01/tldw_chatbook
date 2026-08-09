@@ -5459,6 +5459,75 @@ with stray left-edge border fragments), and padding 0 1 so the full
     text-style: dim italic;
 }
 
+/* task-3401.5/.9: video generation card + silent in-card preview (mirrors
+   the image generation card's panel treatment; the preview frame reuses the
+   inline-image max bounds from Python -- ConsoleVideoPreview -- and only
+   needs spacing/colors here). */
+.console-video-card {
+    height: auto;
+    margin: 0 0 1 0;
+    padding: 1;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+.console-video-card-status {
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+.console-video-card-status-expired {
+    color: $ds-text-muted;
+    text-style: dim italic;
+}
+
+.console-video-card-details {
+    height: auto;
+    min-height: 1;
+    padding: 1 0 0 0;
+}
+
+.console-video-preview {
+    height: auto;
+    padding: 0 0 1 0;
+}
+
+.console-video-preview-frame {
+    color: $ds-text-primary;
+    height: auto;
+}
+
+.console-video-preview-progress {
+    color: $ds-text-muted;
+    height: 1;
+}
+
+/* task-3401.10: modal full-player screen -- centered panel, frame area above
+   a status line (position/drift/dropped/mode) and the hints line (only
+   implemented actions, decision 031). */
+VideoPlayerScreen {
+    align: center middle;
+}
+
+VideoPlayerScreen .video-player-frame {
+    height: auto;
+    max-height: 26;
+    padding: 0 1;
+}
+
+#video-player-status {
+    color: $ds-text-muted;
+    height: 1;
+    padding: 0 1;
+}
+
+#video-player-hints {
+    color: $ds-text-muted;
+    text-style: dim;
+    height: 1;
+    padding: 0 1;
+}
+
 .console-transcript-action-row {
     height: 3;
     min-height: 3;
