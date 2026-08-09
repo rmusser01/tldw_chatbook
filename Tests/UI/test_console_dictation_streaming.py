@@ -93,6 +93,13 @@ class FakeDictationService:
         # the (real) processing thread's loop; a test asserts it stays unset
         # to prove a stale error never bypassed the capture it was not for.
         self.stop_processing = threading.Event()
+        self.uses_deferred_dictation = False
+        self.waiting_for_executor = False
+        self.executor_results_emitted = 0
+
+    def reserve_deferred_dictation(self, capture_generation: int):
+        self.capture_generation = capture_generation
+        return SimpleNamespace(waiting_for_executor=self.waiting_for_executor)
 
     def _record_release(self) -> None:
         self.release_calls += 1
@@ -139,6 +146,13 @@ class FakeDictationService:
         assert self.on_final is not None, "start_dictation() has not run yet"
         self.on_final(text)
 
+    def emit_executor_result(self, *logical_segments: str) -> None:
+        """Deliver all logical boundaries returned by one executor request."""
+
+        self.executor_results_emitted += 1
+        for text in logical_segments:
+            self.emit_final(text)
+
     def emit_segment_transcribing(self, done: bool = False) -> None:
         assert self.on_segment_transcribing is not None, (
             "start_dictation() has not run yet"
@@ -175,6 +189,7 @@ def _patch_availability(
     monkeypatch,
     *,
     availability: voice_module.Availability | None = None,
+    provider: str = "faster-whisper",
 ) -> None:
     """Pretend a capture backend and a local provider are installed.
 
@@ -195,10 +210,10 @@ def _patch_availability(
         voice_module,
         "resolve",
         lambda: voice_module.EffectiveConfig(
-            provider="faster-whisper",
+            provider=provider,
             model=None,
             language="en",
-            configured_provider="faster-whisper",
+            configured_provider=provider,
             was_overridden=False,
         ),
     )
@@ -241,6 +256,62 @@ def _install_streaming_session(monkeypatch, service: FakeDictationService) -> li
         factory,
     )
     return sessions
+
+
+@pytest.mark.asyncio
+async def test_busy_parakeet_capture_stays_live_then_inserts_without_sending(
+    monkeypatch,
+):
+    """A reserved capture explains the wait and keeps the ordinary success tail."""
+    service = FakeDictationService()
+    service.uses_deferred_dictation = True
+    service.waiting_for_executor = True
+    service.start_gate = threading.Event()
+    _patch_availability(monkeypatch, provider="parakeet-onnx")
+    _install_streaming_session(monkeypatch, service)
+    _, host = _ready_host()
+
+    try:
+        async with host.run_test(size=(140, 42)) as pilot:
+            console = await _mounted_console(host, pilot)
+            composer = console.query_one(
+                "#console-native-composer", ConsoleComposerBar
+            )
+            store = console._ensure_console_chat_store()
+            message_count = len(
+                store.messages_for_session(store.active_session_id)
+            )
+
+            await pilot.click("#console-dictation")
+            deadline = time.monotonic() + 4
+            while (
+                time.monotonic() < deadline
+                and composer._voice_preparing_message
+                != "Local transcription busy — dictation will run next."
+            ):
+                await pilot.pause(0.01)
+
+            assert console._console_dictation_state == "starting"
+            assert (
+                composer._voice_preparing_message
+                == "Local transcription busy — dictation will run next."
+            )
+
+            service.start_gate.set()
+            await _wait_for_mic_label(composer, pilot, "Dictating")
+            service.emit_final("queued dictation")
+            await pilot.pause(0.1)
+            await pilot.click("#console-dictation")
+            await _wait_for_mic_label(composer, pilot, "Dictate")
+
+            assert composer.draft_text() == "queued dictation"
+            assert (
+                len(store.messages_for_session(store.active_session_id))
+                == message_count
+            )
+            assert service.start_calls == 1
+    finally:
+        service.start_gate.set()
 
 
 @pytest.mark.asyncio
@@ -758,6 +829,33 @@ def test_a_stale_speech_resumed_is_dropped_by_the_session_adapter():
     session._handle_event(voice_module.VoiceSpeechResumed(), 4)  # stale
 
     assert events == []
+
+
+def test_streaming_session_delegates_one_shot_retry_state():
+    calls: list[str] = []
+
+    class RetryController:
+        retry_available = True
+
+        def clear_retry(self) -> None:
+            calls.append("clear")
+            self.retry_available = False
+
+        def retry_with_faster_whisper(self) -> str:
+            calls.append("retry")
+            self.retry_available = False
+            return "recovered"
+
+    session = dictation_module.ConsoleStreamingDictationSession(
+        on_event=lambda _session, _event: None,
+    )
+    session._controller = RetryController()
+
+    assert session.retry_available is True
+    assert session.retry_with_faster_whisper() == "recovered"
+    assert session.retry_available is False
+    session.clear_retry()
+    assert calls == ["retry", "clear"]
 
 
 @pytest.mark.asyncio
@@ -1586,15 +1684,8 @@ async def test_the_console_capture_is_given_a_bounded_pcm_budget(monkeypatch):
         await _wait_for_mic_label(composer, pilot, "Dictating")
 
         bound = service.factory_kwargs.get("max_buffer_bytes")
-        assert bound == dictation_module.CONSOLE_DICTATION_MAX_BYTES
-        # Derived from the session cap, not a magic number: 60s of 16kHz mono
-        # 16-bit PCM plus headroom, so the wall timer always ends an ordinary
-        # capture first and this stays a memory backstop.
-        assert bound >= int(
-            dictation_module.CONSOLE_DICTATION_SAMPLE_RATE
-            * dictation_module.CONSOLE_DICTATION_SAMPLE_WIDTH
-            * dictation_module.CONSOLE_DICTATION_MAX_SECONDS
-        )
+        # Hand-derived: 60 s × 16,000 Hz × mono × 2-byte samples.
+        assert bound == 1_920_000
         assert service.factory_kwargs.get("on_buffer_limit") is not None
 
 
@@ -1619,10 +1710,14 @@ async def test_the_buffer_limit_callback_stops_the_capture_from_its_own_thread(
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("before after")
+        for _ in range(5):
+            composer.move_cursor_left()
 
         await pilot.click("#console-dictation")
         await _wait_for_mic_label(composer, pilot, "Dictating")
-
+        service.emit_final("all accepted pcm")
+        await pilot.pause()
         on_buffer_limit = service.factory_kwargs["on_buffer_limit"]
         returned = threading.Event()
 
@@ -1639,11 +1734,25 @@ async def test_the_buffer_limit_callback_stops_the_capture_from_its_own_thread(
 
         await _wait_for_mic_label(composer, pilot, "Dictate")
         assert service.stop_calls == 1
-        assert any(
-            "Dictation limit reached" in str(call.args[0])
-            and call.kwargs.get("severity") == "warning"
+        assert composer.draft_text() == "before all accepted pcm after"
+        assert console._console_dictation_timer is None
+        assert console._console_dictation_elapsed_timer is None
+        assert [
+            (str(call.args[0]), call.kwargs.get("severity"))
             for call in notify.call_args_list
-        )
+        ] == [("Limit reached — press Mic to continue.", "warning")]
+
+        # Limit recovery is an explicit physical Mic press, never a timer or
+        # hidden reopen. The old capture stays stopped until this click.
+        await pilot.pause(0.2)
+        assert service.start_calls == 1
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
+        assert service.start_calls == 2
+        service.emit_final("second capture")
+        await pilot.pause()
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
 
 @pytest.mark.asyncio
@@ -1892,10 +2001,10 @@ async def test_capture_ending_command_is_kept_out_of_segments_but_forwarded(
 
         monkeypatch.setattr(session, "_on_event", _spy)
 
-        service.emit_final("dictated words")
-        service.emit_final("Console, stop.")
+        service.emit_executor_result("dictated words", "Console, stop.")
         await pilot.pause()
 
+        assert service.executor_results_emitted == 1
         assert session.commands_consumed == 1
         forwarded_commands = [
             event for event in received if isinstance(event, VoiceCommand)

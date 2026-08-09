@@ -193,6 +193,32 @@ async def test_preparing_and_error_states_render_their_message():
 
 
 @pytest.mark.asyncio
+async def test_busy_dictation_copy_uses_the_existing_chip_and_clears_at_idle():
+    app = ComposerApp()
+    async with app.run_test() as pilot:
+        composer = app.query_one(ConsoleComposerBar)
+        message = "Local transcription busy — dictation will run next."
+
+        composer.sync_dictation_state("starting")
+        composer.set_voice_preparing_message(message)
+        await pilot.pause()
+        chip = composer.query_one("#console-voice-status", Static)
+
+        assert str(chip.renderable) == message
+        assert _visible(chip)
+
+        # An ordinary control-bar refresh must not erase the busy status.
+        composer.sync_dictation_state("starting")
+        await pilot.pause()
+        assert str(chip.renderable) == message
+
+        composer.sync_dictation_state("idle")
+        await pilot.pause()
+        assert chip.styles.width.value == 0
+        assert _painted(chip) == ""
+
+
+@pytest.mark.asyncio
 async def test_the_mic_tooltips_claim_nothing_the_backend_no_longer_does():
     """The button's own copy outlived the backend it described.
 

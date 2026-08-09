@@ -196,6 +196,45 @@ def test_dictation_resolves_the_hands_free_sibling_at_call_time():
     assert screen._dictation._hands_free_session_accessor() is sentinel
 
 
+def test_dictation_session_late_binds_the_app_owned_service_factory():
+    """The session must follow app factory replacement after screen wiring."""
+    screen = _unmounted_console()
+    first = object()
+    second = object()
+    calls: list[tuple[object, dict]] = []
+
+    def first_factory(**kwargs):
+        calls.append((first, kwargs))
+        return first
+
+    def second_factory(**kwargs):
+        calls.append((second, kwargs))
+        return second
+
+    screen.app_instance._create_console_dictation_service = first_factory
+    session = screen._dictation._create_console_dictation_session()
+    assert session._build_service(language="en") is first
+
+    screen.app_instance._create_console_dictation_service = second_factory
+    assert session._build_service(language="fr") is second
+    assert calls == [
+        (
+            first,
+            {
+                "language": "en",
+                "max_buffer_bytes": 1_920_000,
+            },
+        ),
+        (
+            second,
+            {
+                "language": "fr",
+                "max_buffer_bytes": 1_920_000,
+            },
+        ),
+    ]
+
+
 def test_hands_free_reads_dictation_state_through_the_screen_at_call_time():
     screen = _unmounted_console()
     sentinel = object()
