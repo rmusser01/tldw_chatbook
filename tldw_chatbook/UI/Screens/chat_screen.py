@@ -84,6 +84,10 @@ from ..Console_Modules.session import (
 from ...Chat.chat_persistence_service import ChatPersistenceService
 from ...Chat.citation_trace_repository import ActiveCitationTraceState
 from ...Chat.console_chat_controller import ConsoleChatController
+from ...Chat.console_roleplay_identity import (
+    ChatDisplayNameError,
+    normalize_chat_display_name,
+)
 from ...Chat.prompt_history import PromptHistory
 from ...Chat.console_cost_tracker import (
     ConsoleCacheState,
@@ -433,6 +437,7 @@ from ...Widgets.Console import (
     ConsoleTranscript,
     ConsoleWorkspaceContextTray,
 )
+from ...Widgets.Console.console_settings_modal import ConsoleSettingsResult
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Widgets.Console.console_image_viewer_modal import (
     AvatarViewRequested,
@@ -1860,8 +1865,15 @@ class ChatScreen(BaseAppScreen):
         """Open Console session settings for the active native session."""
         settings = self._session._ensure_active_console_session_settings()
         controller = self._ensure_console_chat_controller()
+        store = self._ensure_console_chat_store()
+        session_id = store.active_session_id
+        if session_id is None:
+            return
+        session = store.switch_session(session_id)
         modal = ConsoleSettingsModal(
             settings=settings,
+            user_display_name_override=session.user_display_name_override,
+            global_user_display_name=self._global_chat_display_name(),
             app_config=self._provider_readiness_app_config(),
             providers_models=await self._providers_models_for_console_settings(
                 settings.provider,
@@ -1872,34 +1884,119 @@ class ChatScreen(BaseAppScreen):
             focus_model=focus_model,
         )
 
-        def _apply_modal_result(result: ConsoleSessionSettings | None) -> None:
-            if not isinstance(result, ConsoleSessionSettings):
-                return
-            # Modal results are explicit user selections; mark them so stale
-            # default refresh never overrides them.
-            current_settings = self._session._active_console_session_settings()
-            current_system_prompt = (
-                current_settings.system_prompt
-                if current_settings is not None
-                else None
-            )
-            self._session._replace_active_console_session_settings(
-                replace(
-                    result,
-                    source="user",
-                    system_prompt=current_system_prompt,
-                )
-            )
-            self.run_worker(
-                self._sync_native_console_chat_ui(),
-                exclusive=True,
-                group="console-sync",
-            )
-            # FB-07 (TASK-2154.17): the save used to apply with no positive
-            # confirmation at all (a dismiss returns None and skips this).
-            self.app_instance.notify("Console settings saved.", severity="success")
+        self.app.push_screen(modal, callback=self._apply_console_settings_result)
 
-        self.app.push_screen(modal, callback=_apply_modal_result)
+    def _global_chat_display_name(self) -> str:
+        """Return the live in-memory global chat label without touching disk."""
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        chat_defaults = (
+            app_config.get("chat_defaults", {})
+            if isinstance(app_config, Mapping)
+            else {}
+        )
+        raw_value = (
+            chat_defaults.get("user_display_name", "User")
+            if isinstance(chat_defaults, Mapping)
+            else "User"
+        )
+        try:
+            return (
+                normalize_chat_display_name(raw_value, blank_means_none=False)
+                or "User"
+            )
+        except ChatDisplayNameError:
+            return "User"
+
+    def _sync_console_identity_surfaces(self) -> None:
+        """Refresh mounted surfaces derived from active chat presentation."""
+        self._sync_console_chat_core_state()
+        self._sync_console_settings_summary()
+        self._sync_console_rail_system_line()
+        self._sync_console_control_bar()
+
+    def _apply_console_settings_result(
+        self, result: ConsoleSettingsResult | None
+    ) -> None:
+        """Apply provider settings and the separately owned chat-name override."""
+        if not isinstance(result, ConsoleSettingsResult):
+            return
+        store = self._ensure_console_chat_store()
+        session_id = store.active_session_id
+        if session_id is None:
+            return
+        current_settings = self._session._active_console_session_settings()
+        current_system_prompt = (
+            current_settings.system_prompt if current_settings is not None else None
+        )
+        self._session._replace_active_console_session_settings(
+            replace(
+                result.settings,
+                source="user",
+                system_prompt=current_system_prompt,
+            )
+        )
+        _session, persisted = store.set_session_user_display_name_override(
+            session_id,
+            result.user_display_name_override,
+            global_default=self._global_chat_display_name(),
+        )
+        self._last_console_roleplay_refresh_key = (
+            session_id,
+            self._global_chat_display_name(),
+        )
+        if not persisted:
+            self.app_instance.notify(
+                "Name changed for this session, but it may not survive reopening.",
+                severity="warning",
+            )
+        self._sync_console_identity_surfaces()
+        self.run_worker(
+            self._sync_native_console_chat_ui(),
+            exclusive=True,
+            group="console-sync",
+        )
+        self.app_instance.notify("Console settings saved.", severity="success")
+
+    async def _refresh_console_roleplay_projections(
+        self,
+        session_id: str,
+        global_user_display_name: str,
+    ) -> None:
+        """Materialize trusted name projections off the Textual UI loop."""
+        store = self._ensure_console_chat_store()
+        persisted = await asyncio.to_thread(
+            store.refresh_session_roleplay_projections,
+            session_id,
+            global_default=global_user_display_name,
+        )
+        if not persisted:
+            self.app_instance.notify(
+                "Your chat name is active, but updated character templates may not "
+                "survive reopening.",
+                severity="warning",
+            )
+        if store.active_session_id == session_id:
+            self._sync_console_identity_surfaces()
+
+    def _dispatch_active_console_roleplay_refresh(self) -> bool:
+        """Coalesce refresh writes by active session and effective global name."""
+        store = self._console_chat_store
+        if store is None or store.active_session_id is None:
+            return False
+        global_user_display_name = self._global_chat_display_name()
+        refresh_key = (store.active_session_id, global_user_display_name)
+        if refresh_key == self._last_console_roleplay_refresh_key:
+            return False
+        self._last_console_roleplay_refresh_key = refresh_key
+        self._sync_console_identity_surfaces()
+        self.run_worker(
+            self._refresh_console_roleplay_projections(
+                refresh_key[0], global_user_display_name
+            ),
+            exclusive=False,
+            group="console-roleplay-refresh",
+        )
+        return True
 
     async def on_console_settings_open(self, event: Button.Pressed) -> None:
         """Open Console session settings for the active native session."""
@@ -2477,6 +2574,7 @@ class ChatScreen(BaseAppScreen):
             CONSOLE_LIBRARY_RAG_SOURCE_SCOPE
         )
         self._console_chat_store: ConsoleChatStore | None = None
+        self._last_console_roleplay_refresh_key: tuple[str, str] | None = None
         # task-9: cache of persisted-conversation RAG retrieval scopes,
         # keyed by conversation id -- populated off-loop at resume time and
         # by the scope picker's modal-open/after-save reads (never during
@@ -14159,6 +14257,20 @@ class ChatScreen(BaseAppScreen):
 
         messages = self._native_console_messages()
         if transcript is not None:
+            store = self._ensure_console_chat_store()
+            set_presentation_context = getattr(
+                transcript, "set_presentation_context", None
+            )
+            if (
+                callable(set_presentation_context)
+                and store.active_session_id is not None
+            ):
+                set_presentation_context(
+                    store.presentation_context(
+                        store.active_session_id,
+                        self._global_chat_display_name(),
+                    )
+                )
             self._sync_console_citation_count_discovery(messages)
             message_ids = {message.id for message in messages}
             controller = self._console_chat_controller
@@ -14402,6 +14514,7 @@ class ChatScreen(BaseAppScreen):
             self._sync_console_settings_summary()
             self._sync_console_mode_bar()
             await self._sync_console_native_session_tabs()
+            self._dispatch_active_console_roleplay_refresh()
             self._sync_console_workspace_context()
             await self._sync_native_console_transcript()
             self._sync_console_rail_visibility_if_changed(
@@ -18405,6 +18518,7 @@ class ChatScreen(BaseAppScreen):
         self.set_timer(0.15, self._consume_pending_console_prompt_insert)
         self.set_timer(0.15, self.consume_pending_console_provider_intent)
         self.call_after_refresh(self._restore_console_workbench_focus)
+        self._dispatch_active_console_roleplay_refresh()
         self.run_worker(self._refresh_console_skill_candidates(), exclusive=False)
         # Note: BaseAppScreen doesn't have on_screen_resume, so no super() call
 

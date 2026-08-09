@@ -4023,6 +4023,7 @@ async def test_settings_console_behavior_rejects_invalid_tool_result_display_cha
 async def test_settings_console_behavior_renders_global_default_controls():
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
+        "user_display_name": "Rowan",
         "streaming": False,
         "temperature": 0.33,
         "top_p": 0.81,
@@ -4048,6 +4049,12 @@ async def test_settings_console_behavior_renders_global_default_controls():
         await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
 
+        assert (
+            screen.query_one(
+                "#settings-console-default-user-display-name", Input
+            ).value
+            == "Rowan"
+        )
         assert (
             screen.query_one("#settings-console-default-streaming", Checkbox).value
             is False
@@ -4103,6 +4110,11 @@ async def test_settings_console_behavior_renders_global_default_controls():
             == "50"
         )
         text = _visible_text(screen)
+        assert "Default chat display name" in text
+        assert (
+            "Used for your speaker label. Character chats also use it for trusted "
+            "{{user}} templates."
+        ) in text
         assert (
             "Used when no provider+model profile or active Console session overrides them."
             in text
@@ -4610,6 +4622,108 @@ async def test_settings_console_behavior_saves_global_defaults(monkeypatch):
         "thinking_effort": "low",
         "thinking_budget_tokens": 4096,
     }
+
+
+@pytest.mark.asyncio
+async def test_settings_console_behavior_saves_display_name_exactly(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"user_display_name": "Rowan"}
+    saved = []
+
+    class FakeAdapter:
+        def save_sections(self, section_values):
+            saved.append(section_values)
+            return True
+
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        field = screen.query_one(
+            "#settings-console-default-user-display-name", Input
+        )
+        field.value = "Captain Rowan"
+        screen.handle_console_default_user_display_name_changed(
+            Input.Changed(field, field.value)
+        )
+
+        await pilot.click("#settings-save-category")
+        await _wait_for_settings_text(screen, pilot, "Console behavior settings saved.")
+
+    assert saved == [{"chat_defaults": {"user_display_name": "Captain Rowan"}}]
+    assert app.app_config["chat_defaults"] == {
+        "user_display_name": "Captain Rowan"
+    }
+
+
+@pytest.mark.asyncio
+async def test_settings_console_behavior_rejects_overwide_cjk_display_name_atomically(
+    monkeypatch,
+):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"user_display_name": "Rowan"}
+    saved = []
+
+    class FakeAdapter:
+        def save_sections(self, section_values):
+            saved.append(section_values)
+            return True
+
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        field = screen.query_one(
+            "#settings-console-default-user-display-name", Input
+        )
+        field.value = "界" * 25
+        screen.handle_console_default_user_display_name_changed(
+            Input.Changed(field, field.value)
+        )
+
+        await pilot.click("#settings-save-category")
+
+        assert "Display name must fit within 48 terminal cells." in _visible_text(
+            screen
+        )
+
+    assert saved == []
+    assert app.app_config["chat_defaults"] == {"user_display_name": "Rowan"}
+
+
+@pytest.mark.asyncio
+async def test_settings_console_behavior_display_name_revert_restores_loaded_value():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"user_display_name": "Rowan"}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        field = screen.query_one(
+            "#settings-console-default-user-display-name", Input
+        )
+        field.value = "Captain Rowan"
+        screen.handle_console_default_user_display_name_changed(
+            Input.Changed(field, field.value)
+        )
+
+        await pilot.click("#settings-revert-category")
+        await pilot.pause()
+        await pilot.click("#confirm-button")
+        await pilot.pause()
+
+        assert (
+            screen.query_one(
+                "#settings-console-default-user-display-name", Input
+            ).value
+            == "Rowan"
+        )
+        assert screen.query_one("#settings-save-category", Button).disabled is True
 
 
 @pytest.mark.asyncio

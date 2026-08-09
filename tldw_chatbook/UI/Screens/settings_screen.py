@@ -46,6 +46,10 @@ from textual.widgets import (
 from tldw_chatbook.Utils.about_text import ABOUT_MARKDOWN, get_app_version
 
 from ...Chat.console_chat_models import CONSOLE_DEFAULT_MAX_PARALLEL_RUNS
+from ...Chat.console_roleplay_identity import (
+    ChatDisplayNameError,
+    normalize_chat_display_name,
+)
 from ...Widgets.glyph_fallback import set_ascii_glyph_mode
 from ...Chat.console_provider_endpoints import URL_BASED_PROVIDER_KEYS
 from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
@@ -437,6 +441,7 @@ TEXTUAL_WEB_URL_AUTOLINK_BREAK = "\u200b"
 TEXTUAL_WEB_URL_SCHEME_RE = re.compile(r"\b(https?)://", re.IGNORECASE)
 CONSOLE_BEHAVIOR_CHAT_DEFAULT_KEYS = frozenset(
     {
+        "user_display_name",
         "streaming",
         "temperature",
         "top_p",
@@ -459,6 +464,7 @@ CONSOLE_BEHAVIOR_SAVE_ORDER = (
     "paste_collapse_threshold",
     "max_parallel_runs",
     "tool_result_display_chars",
+    "user_display_name",
     "streaming",
     "temperature",
     "top_p",
@@ -3166,6 +3172,18 @@ class SettingsScreen(BaseAppScreen):
             return coerce_bool_setting(chat_defaults.get("enable_streaming"), True)
         return True
 
+    def _loaded_console_default_user_display_name(self) -> str:
+        try:
+            return (
+                normalize_chat_display_name(
+                    self._chat_defaults().get("user_display_name", "User"),
+                    blank_means_none=False,
+                )
+                or "User"
+            )
+        except ChatDisplayNameError:
+            return "User"
+
     def _loaded_console_default_temperature(self) -> float:
         return self._coerce_float_default(
             self._chat_defaults().get("temperature", 0.7),
@@ -3246,6 +3264,7 @@ class SettingsScreen(BaseAppScreen):
             "paste_collapse_threshold": self._loaded_paste_collapse_threshold(),
             "max_parallel_runs": self._loaded_console_max_parallel_runs(),
             "tool_result_display_chars": self._loaded_tool_result_display_chars(),
+            "user_display_name": self._loaded_console_default_user_display_name(),
             "streaming": self._loaded_console_default_streaming(),
             "temperature": self._loaded_console_default_temperature(),
             "top_p": self._loaded_console_default_top_p(),
@@ -5467,6 +5486,22 @@ class SettingsScreen(BaseAppScreen):
         fallback rows render only while no field owns focus, so the
         "Focus a field for guidance" promise is kept.
         """
+        if (
+            self._active_settings_field_id
+            == "settings-console-default-user-display-name"
+        ):
+            return (
+                (
+                    "Purpose",
+                    "Default speaker label for chats without a per-chat override.",
+                ),
+                (
+                    "Consequences",
+                    "Character chats also use this value for trusted {{user}} templates.",
+                ),
+                ("Saved as", "chat_defaults.user_display_name"),
+                ("Applies", "Open inherited chats immediately after saving."),
+            )
         if (
             self._active_settings_field_id
             == "settings-console-stack-collapsed-rail-labels"
@@ -10543,6 +10578,24 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-detail-row",
             )
             with Horizontal(classes="settings-input-row"):
+                yield Static(
+                    "Default chat display name", classes="settings-input-label"
+                )
+                yield Input(
+                    value=self._console_input_value(
+                        self._console_behavior_value("user_display_name")
+                    ),
+                    id="settings-console-default-user-display-name",
+                    classes="settings-compact-input",
+                    placeholder="User",
+                )
+            yield Static(
+                "Used for your speaker label. Character chats also use it for trusted "
+                "{{user}} templates.",
+                id="settings-console-default-user-display-name-help",
+                classes="settings-detail-row",
+            )
+            with Horizontal(classes="settings-input-row"):
                 yield Static("Streaming", classes="settings-input-label")
                 yield Checkbox(
                     value=coerce_bool_setting(
@@ -13082,6 +13135,10 @@ class SettingsScreen(BaseAppScreen):
         if summary.category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             yield Static("Control guide", classes="destination-section")
             yield self._detail_row(
+                "Default chat display name",
+                "Speaker label and trusted character-template human name",
+            )
+            yield self._detail_row(
                 "Streaming",
                 "Global fallback for streaming responses when no Console session "
                 "or provider+model profile overrides it",
@@ -13936,6 +13993,7 @@ class SettingsScreen(BaseAppScreen):
                 "settings-console-paste-collapse-threshold",
                 "settings-console-max-parallel-runs",
                 "settings-console-tool-result-display-chars",
+                "settings-console-default-user-display-name",
             }
             self._active_settings_field_id = (
                 widget_id if widget_id in console_behavior_field_ids else None
@@ -14895,6 +14953,15 @@ class SettingsScreen(BaseAppScreen):
             "#settings-console-behavior-result", self._console_behavior_result_text()
         )
         self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
+
+    @on(Input.Changed, "#settings-console-default-user-display-name")
+    def handle_console_default_user_display_name_changed(
+        self, event: Input.Changed
+    ) -> None:
+        if self._syncing_console_defaults:
+            return
+        self._stage_console_default_value("user_display_name", event.value)
+        self._mark_console_behavior_settings_staged()
 
     @on(Checkbox.Changed, "#settings-console-default-streaming")
     def handle_console_default_streaming_changed(self, event: Checkbox.Changed) -> None:
@@ -16728,6 +16795,10 @@ class SettingsScreen(BaseAppScreen):
                 if key in draft.dirty_keys
             }
             try:
+                if "user_display_name" in dirty_values:
+                    dirty_values["user_display_name"] = normalize_chat_display_name(
+                        dirty_values["user_display_name"], blank_means_none=False
+                    )
                 if "paste_collapse_threshold" in dirty_values:
                     dirty_values["paste_collapse_threshold"] = (
                         self._normalise_paste_collapse_threshold(
@@ -17704,6 +17775,9 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             pass
         input_values = {
+            "#settings-console-default-user-display-name": (
+                self._console_behavior_value("user_display_name")
+            ),
             "#settings-console-default-temperature": self._console_behavior_value(
                 "temperature"
             ),

@@ -39,6 +39,7 @@ from tldw_chatbook.Widgets.Console.console_settings_modal import (
     MODEL_DISCOVER_STATUS_ID,
     ConsoleSettingsInput,
     ConsoleSettingsModal,
+    ConsoleSettingsResult,
     _settings_screen_region,
 )
 from tldw_chatbook.Widgets.Console import (
@@ -105,9 +106,11 @@ class ModalHarness(App[None]):
             },
         }
         self.saved_settings: ConsoleSessionSettings | None = None
+        self.saved_result: ConsoleSettingsResult | None = None
 
-    def capture_saved_settings(self, settings: ConsoleSessionSettings | None) -> None:
-        self.saved_settings = settings
+    def capture_saved_settings(self, result: ConsoleSettingsResult | None) -> None:
+        self.saved_result = result
+        self.saved_settings = result.settings if result is not None else None
 
 
 class StyledModalHarness(ModalHarness):
@@ -1024,6 +1027,9 @@ async def test_console_settings_modal_save_returns_validated_settings() -> None:
         )
         app.screen.query_one("#console-settings-temperature", Input).value = "0.42"
         app.screen.query_one("#console-settings-top-p", Input).value = "0.88"
+        app.screen.query_one("#console-settings-user-display-name", Input).value = (
+            "  Captain Rowan  "
+        )
         await pilot.click("#console-settings-save")
 
     assert app.saved_settings is not None
@@ -1031,6 +1037,97 @@ async def test_console_settings_modal_save_returns_validated_settings() -> None:
     assert app.saved_settings.model == "model-a"
     assert app.saved_settings.temperature == 0.42
     assert app.saved_settings.top_p == 0.88
+    assert app.saved_result is not None
+    assert app.saved_result.user_display_name_override == "Captain Rowan"
+    assert not hasattr(app.saved_result.settings, "user_display_name_override")
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_renders_current_chat_identity() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                user_display_name_override="Captain Rowan",
+                global_user_display_name="Default Name",
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        identity = app.screen.query_one(
+            "#console-settings-user-display-name", Input
+        )
+        assert identity.value == "Captain Rowan"
+        assert identity.placeholder == "Default Name"
+        assert "Chat identity" in _visible_text(app)
+        assert "Leave blank to use the global default." in _visible_text(app)
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_blank_name_returns_separate_none_override() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            _basic_modal(
+                settings,
+                app,
+                user_display_name_override="Captain Rowan",
+                global_user_display_name="Default Name",
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+        app.screen.query_one("#console-settings-user-display-name", Input).value = "   "
+        await pilot.click("#console-settings-save")
+
+    assert app.saved_result is not None
+    assert app.saved_result.user_display_name_override is None
+    assert app.saved_result.settings == app.saved_settings
+    assert not hasattr(app.saved_result.settings, "user_display_name_override")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("invalid_name", "expected_error"),
+    [
+        ("界" * 25, "Display name must fit within 48 terminal cells."),
+        ("Captain\x07Rowan", "Display name cannot contain control characters."),
+        ("Captain\u202eRowan", "Display name cannot contain control characters."),
+    ],
+)
+async def test_console_settings_modal_invalid_name_prevents_dismissal(
+    invalid_name, expected_error
+) -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            _basic_modal(settings, app), callback=app.capture_saved_settings
+        )
+        await pilot.pause()
+        app.screen.query_one("#console-settings-user-display-name", Input).value = (
+            invalid_name
+        )
+        await pilot.click("#console-settings-save")
+        await pilot.pause()
+
+        assert app.screen.query_one("#console-settings-modal")
+        assert expected_error in str(
+            app.screen.query_one("#console-settings-error", Static).renderable
+        )
+
+    assert app.saved_result is None
 
 
 @pytest.mark.asyncio
@@ -3064,7 +3161,12 @@ async def test_console_settings_modal_save_updates_active_summary_only() -> None
         settings_button = await _visible_console_settings_button(console, pilot)
         settings_button.press()
         modal_screen = await _wait_for_console_settings_modal(host, pilot)
-        modal_screen.dismiss(ConsoleSessionSettings(provider="openai", model="gpt-4.1"))
+        modal_screen.dismiss(
+            ConsoleSettingsResult(
+                settings=ConsoleSessionSettings(provider="openai", model="gpt-4.1"),
+                user_display_name_override=None,
+            )
+        )
         await _wait_for_console_top_screen(host, console, pilot)
         await _wait_for_selector(console, pilot, "#console-settings-summary")
         await _visible_console_settings_button(console, pilot)
@@ -3144,6 +3246,189 @@ async def test_console_settings_save_preserves_omitted_system_prompt_and_source(
         assert session.character_system_template == "Protect {{user}}."
         assert system_prompt_writes == []
         assert roleplay_writes == []
+
+
+def test_console_settings_result_applies_name_override_without_losing_prompt_source(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"user_display_name": "Default Name"}
+    notifications: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(
+        app,
+        "notify",
+        lambda message, **kwargs: notifications.append(
+            (message, kwargs.get("severity"))
+        ),
+    )
+    console = ChatScreen(app)
+    store = console._ensure_console_chat_store()
+    session = store.ensure_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+    )
+    session.assistant_kind = "character"
+    session.character_name = "Alraune"
+    store.seed_character_roleplay(
+        session.id,
+        system_template="Protect {{user}}.",
+        greeting_template="",
+        global_default="Default Name",
+    )
+    session.persisted_conversation_id = "conv-1"
+    store.persistence = SimpleNamespace(
+        update_conversation_system_prompt=lambda **_kwargs: True,
+        update_conversation_roleplay_context=lambda **_kwargs: False,
+    )
+    monkeypatch.setattr(console, "_sync_console_identity_surfaces", lambda: None)
+    monkeypatch.setattr(
+        console,
+        "run_worker",
+        lambda coroutine, **_kwargs: coroutine.close(),
+    )
+
+    console._apply_console_settings_result(
+        ConsoleSettingsResult(
+            settings=ConsoleSessionSettings(
+                provider="llama_cpp", model="model-a", temperature=0.5
+            ),
+            user_display_name_override="Captain Rowan",
+        )
+    )
+
+    assert store.session_settings(session.id).temperature == 0.5
+    assert store.session_settings(session.id).system_prompt == "Protect Captain Rowan."
+    assert session.character_system_template == "Protect {{user}}."
+    assert session.user_display_name_override == "Captain Rowan"
+    assert (
+        "Name changed for this session, but it may not survive reopening.",
+        "warning",
+    ) in notifications
+
+
+@pytest.mark.asyncio
+async def test_console_global_name_refresh_coalesces_and_respects_session_override(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"user_display_name": "Default One"}
+    console = ChatScreen(app)
+    store = console._ensure_console_chat_store()
+    inherited = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+        assistant_kind="character",
+        character_name="Alraune",
+    )
+    store.seed_character_roleplay(
+        inherited.id,
+        system_template="Protect {{user}}.",
+        greeting_template="Hello {{user}}.",
+        global_default="Default One",
+    )
+    overridden = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+        assistant_kind="character",
+        character_name="Alraune",
+    )
+    store.seed_character_roleplay(
+        overridden.id,
+        system_template="Protect {{user}}.",
+        greeting_template="Hello {{user}}.",
+        global_default="Default One",
+    )
+    store.set_session_user_display_name_override(
+        overridden.id,
+        "Captain Rowan",
+        global_default="Default One",
+    )
+    queued = []
+    surface_syncs = []
+    monkeypatch.setattr(
+        console,
+        "run_worker",
+        lambda coroutine, **_kwargs: queued.append(coroutine),
+    )
+    monkeypatch.setattr(
+        console,
+        "_sync_console_identity_surfaces",
+        lambda: surface_syncs.append(store.active_session_id),
+    )
+
+    app.app_config["chat_defaults"]["user_display_name"] = "Default Two"
+    store.switch_session(inherited.id)
+    assert console._dispatch_active_console_roleplay_refresh() is True
+    assert surface_syncs == [inherited.id]
+    assert console._dispatch_active_console_roleplay_refresh() is False
+    assert len(queued) == 1
+    await queued.pop(0)
+    assert surface_syncs == [inherited.id, inherited.id]
+
+    assert store.presentation_context(inherited.id, "Default Two").user_name == (
+        "Default Two"
+    )
+    assert store.session_settings(inherited.id).system_prompt == "Protect Default Two."
+
+    store.switch_session(overridden.id)
+    assert console._dispatch_active_console_roleplay_refresh() is True
+    assert surface_syncs[-1] == overridden.id
+    await queued.pop(0)
+    assert store.presentation_context(overridden.id, "Default Two").user_name == (
+        "Captain Rowan"
+    )
+    assert store.session_settings(overridden.id).system_prompt == (
+        "Protect Captain Rowan."
+    )
+
+    store.set_session_user_display_name_override(
+        overridden.id,
+        None,
+        global_default="Default Two",
+    )
+    assert store.presentation_context(overridden.id, "Default Two").user_name == (
+        "Default Two"
+    )
+    assert store.session_settings(overridden.id).system_prompt == "Protect Default Two."
+    assert surface_syncs == [
+        inherited.id,
+        inherited.id,
+        overridden.id,
+        overridden.id,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_console_global_name_refresh_failure_notifies_once(monkeypatch) -> None:
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"user_display_name": "Default Name"}
+    notifications: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(
+        app,
+        "notify",
+        lambda message, **kwargs: notifications.append(
+            (message, kwargs.get("severity"))
+        ),
+    )
+    console = ChatScreen(app)
+    store = console._ensure_console_chat_store()
+    session = store.ensure_session()
+    queued = []
+    monkeypatch.setattr(
+        console,
+        "run_worker",
+        lambda coroutine, **_kwargs: queued.append(coroutine),
+    )
+    monkeypatch.setattr(console, "_sync_console_identity_surfaces", lambda: None)
+    monkeypatch.setattr(store, "refresh_session_roleplay_projections", lambda *_a, **_k: False)
+
+    assert console._dispatch_active_console_roleplay_refresh() is True
+    assert console._dispatch_active_console_roleplay_refresh() is False
+    await queued.pop(0)
+
+    expected = (
+        "Your chat name is active, but updated character templates may not survive "
+        "reopening."
+    )
+    assert notifications.count((expected, "warning")) == 1
+    assert store.active_session_id == session.id
 
 
 @pytest.mark.asyncio
@@ -3256,7 +3541,12 @@ async def test_console_settings_are_isolated_between_native_tabs() -> None:
         settings_button = await _visible_console_settings_button(console, pilot)
         settings_button.press()
         modal_screen = await _wait_for_console_settings_modal(host, pilot)
-        modal_screen.dismiss(ConsoleSessionSettings(provider="openai", model="gpt-4.1"))
+        modal_screen.dismiss(
+            ConsoleSettingsResult(
+                settings=ConsoleSessionSettings(provider="openai", model="gpt-4.1"),
+                user_display_name_override=None,
+            )
+        )
         await _wait_for_console_top_screen(host, console, pilot)
         await _click_console_session_tab(console, store, pilot, first.id)
         await _wait_for_selector(console, pilot, "#console-settings-summary")
