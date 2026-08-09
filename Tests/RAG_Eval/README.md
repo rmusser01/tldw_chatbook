@@ -43,9 +43,11 @@ Tests/RAG_Eval/
     semantic.json, plain.json, hybrid.json   committed, fingerprinted, per-mode baselines
 ```
 
-The metrics, regression/gating, fixture-integrity and canonicalization
-modules are ported from `tldw_chatbook/RAG_Search/eval/` and are always-on:
-they need no model, no extras, and run in every ordinary `pytest` invocation.
+The metrics and regression/gating modules live in
+`tldw_chatbook/RAG_Search/eval/`, ported from tldw_server2's `rag_service`.
+Fixture-integrity (`goldenset.py`) and canonicalization are chatbook-native
+harness code, not ports. All four are always-on: they need no model, no
+extras, and run in every ordinary `pytest` invocation.
 Only the two files that stand up a real indexed corpus and run real queries
 through the real seam (`test_harness_smoke.py`, `test_harness_run.py`) are
 gated behind `RAG_EVAL=1`.

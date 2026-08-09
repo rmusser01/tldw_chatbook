@@ -198,8 +198,12 @@ def _resolve_model_cache_dir() -> Path:
     return _unsandboxed_home() / ".cache" / "huggingface" / "hub"
 
 
-#: Captured at import (collection time) — i.e. BEFORE the autouse
-#: environment isolation repoints HOME. See the module docstring.
+#: Captured at import (collection time) — which is AFTER `Tests/conftest.py`
+#: has already repointed `$HOME` (its sandboxing happens at module level
+#: during collection, before this module is even imported; see the module
+#: docstring). Import order buys nothing here; this is correct only because
+#: the `~` fallback in `_resolve_model_cache_dir()` goes through
+#: `_unsandboxed_home()`'s passwd-database lookup instead of `$HOME`.
 _MODEL_CACHE_DIR: Path = _resolve_model_cache_dir()
 
 
