@@ -140,6 +140,7 @@ from .settings_config_models import (
 from ...Widgets.settings_splash_screen_viewer import SettingsSplashScreenViewer
 from ...Widgets.settings_theme_editor import SettingsThemeEditor
 from ...Widgets.settings_internal_prompts_panel import InternalPromptsPanel
+from ...Widgets.settings_agents_panel import AgentsSettingsPanel
 from ...Widgets.settings_image_gen_panel import (
     ImageGenSettingsPanel,
     _key_source_line as _image_gen_key_source_line,
@@ -1321,6 +1322,11 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
             "Edits backend, key, and generation defaults here; Save applies "
             "to config.toml",
         ),
+    ),
+    SettingsCategoryId.AGENTS: (
+        ("Affected config", "agent_definitions table in agent_runs.db (DB, not config.toml)"),
+        ("Recovery", "definitions are soft-deleted; re-create or re-enable from this screen"),
+        ("Boundary", "definitions only narrow a sub-agent's tools — [tools] gates and permission cards still apply"),
     ),
 }
 # Generic guidance for a category with no explicit entry. Kept as a runtime
@@ -2566,6 +2572,12 @@ class SettingsScreen(BaseAppScreen):
                 "(RAG, web search, agents, summarization, more).",
                 self._internal_prompts_status(),
             ),
+            SettingsCategorySummary(
+                SettingsCategoryId.AGENTS,
+                "Agents",
+                "Named sub-agent definitions the Console supervisor can spawn.",
+                "Local",
+            ),
         )
 
     def _get_internal_prompts_customized_count(self) -> int:
@@ -2624,7 +2636,11 @@ class SettingsScreen(BaseAppScreen):
             ),
             (
                 "Troubleshooting",
-                (SettingsCategoryId.DIAGNOSTICS, SettingsCategoryId.ABOUT),
+                (
+                    SettingsCategoryId.DIAGNOSTICS,
+                    SettingsCategoryId.ABOUT,
+                    SettingsCategoryId.AGENTS,
+                ),
             ),
             (
                 "Expert",
@@ -2982,6 +2998,21 @@ class SettingsScreen(BaseAppScreen):
                 ),
                 recovery_copy=(
                     "Reset a prompt from its editor to restore the packaged default text."
+                ),
+            ),
+            SettingsOwnershipRecord(
+                category=SettingsCategoryId.AGENTS,
+                owns_config_sections=("agent_definitions table in agent_runs.db",),
+                reads_runtime_state_from=("agent_runs.db",),
+                writes_allowed=True,
+                runtime_owner="Agents panel (immediate CRUD)",
+                boundary_copy=(
+                    "Definitions only narrow a sub-agent's tools; [tools] gates and "
+                    "permission cards still apply at spawn time."
+                ),
+                recovery_copy=(
+                    "agent_runs.db (SQLite) — immediate CRUD, no draft; definitions "
+                    "are soft-deleted and can be re-created or re-enabled here."
                 ),
             ),
             *self._domain_category_ownership_records(),
@@ -5093,6 +5124,8 @@ class SettingsScreen(BaseAppScreen):
             return "Auto-saved"
         if category is SettingsCategoryId.WORKSPACES:
             return "Applies immediately"
+        if category is SettingsCategoryId.AGENTS:
+            return "Applies immediately"
         if category is SettingsCategoryId.THEME:
             return "Managed in editor"
         if category is SettingsCategoryId.INTERNAL_PROMPTS:
@@ -5127,6 +5160,8 @@ class SettingsScreen(BaseAppScreen):
             return "Splash changes take effect as you make them."
         if category is SettingsCategoryId.WORKSPACES:
             return "Each action reversible: unarchive, rename again, or set active."
+        if category is SettingsCategoryId.AGENTS:
+            return "agent_runs.db (SQLite) — immediate CRUD, no draft"
         if category is SettingsCategoryId.THEME:
             return "Use the editor's Apply/Save/Reset buttons below."
         if category is SettingsCategoryId.INTERNAL_PROMPTS:
@@ -12848,6 +12883,11 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-about-markdown",
                     open_links=False,
                 )
+        elif category is SettingsCategoryId.AGENTS:
+            yield Static("Agents", classes="destination-section settings-column-title")
+            yield AgentsSettingsPanel(
+                self.app_instance, id="settings-agents-panel"
+            )
         elif category in DOMAIN_SETTINGS_CATEGORY_IDS:
             yield from self._render_domain_category_detail(category)
         else:
