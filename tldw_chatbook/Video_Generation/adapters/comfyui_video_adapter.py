@@ -65,6 +65,7 @@ _TITLE_CONTROLS = {
     "fps": frozenset({"fps"}),
     "inputimage": frozenset({"input_image"}),
     "widthheightframes": frozenset({"width", "height", "frames"}),
+    "widthheightframesfps": frozenset({"width", "height", "frames", "fps"}),
 }
 
 
@@ -173,9 +174,15 @@ class ComfyUIVideoAdapter:
         if candidate.name != raw_name or raw_name in {".", ".."}:
             raise VideoGenerationError("ComfyUI workflow path is not allowed")
 
-        user_candidate = get_user_data_dir() / "video_workflows" / candidate.name
+        data_root = get_user_data_dir().resolve()
+        workflow_root = data_root / "video_workflows"
+        user_candidate = workflow_root / candidate.name
         if user_candidate.is_symlink():
             raise VideoGenerationError("ComfyUI workflow symlink is not allowed")
+        try:
+            user_candidate.resolve().relative_to(workflow_root)
+        except (OSError, ValueError) as exc:
+            raise VideoGenerationError("ComfyUI workflow path escapes video_workflows") from exc
         paths = (user_candidate, self._shipped_workflow_dir() / candidate.name)
         selected = next((path for path in paths if path.is_file()), None)
         if selected is None:
@@ -405,6 +412,53 @@ class ComfyUIVideoAdapter:
     # -- history/output parsing ------------------------------------------
 
     @staticmethod
+    def _safe_execution_message(messages: Any) -> str | None:
+        """Extract a short, display-safe execution message from ComfyUI status."""
+        candidates: list[str] = []
+
+        def collect(value: Any) -> None:
+            if isinstance(value, str):
+                candidates.append(value)
+            elif isinstance(value, dict):
+                for key in ("exception_message", "message", "error", "details"):
+                    candidate = value.get(key)
+                    if isinstance(candidate, str):
+                        candidates.append(candidate)
+            elif isinstance(value, (list, tuple)):
+                for item in value:
+                    collect(item)
+
+        collect(messages)
+        for candidate in candidates:
+            cleaned = " ".join(candidate.split())
+            if cleaned and cleaned not in {"execution_error", "error"}:
+                return cleaned[:240]
+        return None
+
+    @classmethod
+    def _raise_for_terminal_history_status(cls, entry: dict[str, Any]) -> None:
+        """Raise immediately for terminal ComfyUI execution failures."""
+        status = entry.get("status")
+        if not isinstance(status, dict):
+            return
+        state = str(status.get("status_str") or status.get("status") or "").strip().lower()
+        if state in {"error", "failed", "interrupted", "cancelled", "canceled"}:
+            detail = cls._safe_execution_message(status.get("messages"))
+            message = "ComfyUI execution failed"
+            if detail:
+                message = f"{message}: {detail}"
+            raise VideoGenerationError(message)
+
+    @staticmethod
+    def _is_terminal_success(entry: dict[str, Any]) -> bool:
+        """Return whether ComfyUI explicitly completed the prompt successfully."""
+        status = entry.get("status")
+        if not isinstance(status, dict) or status.get("completed") is not True:
+            return False
+        state = str(status.get("status_str") or status.get("status") or "").strip().lower()
+        return state in {"success", "succeeded", "completed", "complete"}
+
+    @staticmethod
     def _find_output_descriptor(history: Any, prompt_id: str) -> dict[str, str] | None:
         """Find the first supported ComfyUI media descriptor in a history payload."""
         if not isinstance(history, dict):
@@ -412,6 +466,7 @@ class ComfyUIVideoAdapter:
         entry = history.get(prompt_id)
         if not isinstance(entry, dict):
             return None
+        ComfyUIVideoAdapter._raise_for_terminal_history_status(entry)
         outputs = entry.get("outputs")
         if not isinstance(outputs, dict):
             return None
@@ -436,7 +491,7 @@ class ComfyUIVideoAdapter:
                         "subfolder": str(descriptor.get("subfolder") or ""),
                         "type": str(descriptor.get("type") or "output"),
                     }
-        if outputs:
+        if outputs or ComfyUIVideoAdapter._is_terminal_success(entry):
             raise VideoGenerationError("ComfyUI history returned no supported video or animated-image output")
         return None
 
