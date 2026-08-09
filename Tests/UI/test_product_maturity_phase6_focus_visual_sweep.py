@@ -309,16 +309,50 @@ async def test_phase6_home_keyboard_focus_reaches_navigation_and_primary_action(
                     for destination_id in TOP_LEVEL_DESTINATION_IDS
                 ),
             ]
+            # Review-round regression (task-3200 fix round 1): before that
+            # round, every nav button stayed Tab-focusable even while
+            # visually "ghosted" (straddling the strip's scroll viewport
+            # edge) -- a real accessibility bug (a keyboard user could land
+            # on an invisible button with no focus ring). The fix makes a
+            # ghosted button `disabled`, which correctly removes it from
+            # Tab's focus chain -- but at this test's 140-col width the
+            # strip overflows badly enough that whichever destination
+            # happens to be straddling the RIGHT edge at the CURRENT scroll
+            # position is transiently disabled and skipped by a single Tab
+            # press, exactly like a sighted user would never be able to
+            # land on it either (the corresponding fix). It is not
+            # permanently unreachable: the skipped button becomes fully
+            # visible (and re-enabled) again once the strip scrolls past
+            # it and a later lap comes back around; live-reproduced needing
+            # up to 17 extra presses to recover a single skip out of this
+            # bar's ~14 stops (a bit over one extra lap). Budget generously
+            # per destination instead of assuming exactly one press always
+            # lands on the immediately-next canonical destination.
+            _DESTINATION_FOCUS_BUDGET = 40
             observed_focus_ids: list[str] = []
             for expected_focus_id in expected_focus_ids:
-                await _wait_until(
-                    pilot,
-                    lambda: (
+                found = False
+                for _ in range(_DESTINATION_FOCUS_BUDGET):
+                    if (
                         isinstance(app.focused, Button)
                         and app.focused.id == expected_focus_id
-                    ),
-                    context=f"focus:{expected_focus_id}",
-                )
+                    ):
+                        found = True
+                        break
+                    await pilot.press("tab")
+                if not found:
+                    # Exhausted the budget without a single extra frame of
+                    # async settle time -- give the last press's settle
+                    # chain a final, short chance before failing for real.
+                    await _wait_until(
+                        pilot,
+                        lambda: (
+                            isinstance(app.focused, Button)
+                            and app.focused.id == expected_focus_id
+                        ),
+                        timeout_seconds=1.0,
+                        context=f"focus:{expected_focus_id}",
+                    )
                 focused = app.focused
                 assert isinstance(focused, Button)
                 observed_focus_ids.append(focused.id or "")

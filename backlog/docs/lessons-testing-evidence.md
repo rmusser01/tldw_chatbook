@@ -682,6 +682,38 @@ from it — `Tests/UI/test_library_content_hub.py` uses `DestinationHarness` (no
 most of its tests, `Tests/UI/test_library_shell.py` uses `LibraryHarness` (real CSS) —
 same directory, same screen under test, opposite answer to "does this rule apply".
 
+**Fifth instance (2026-08-08, task-3200 review round 1, cascade PRIORITY not just
+missing rules this time).** `MainNavigationBar.DEFAULT_CSS` ghosts a straddling nav
+button by setting `color`/`background`/`opacity`/`text-opacity` all to `$background`
+`!important`, intending a pixel-exact invisible button once it's also `disabled`. The
+bare-`App`-no-`CSS_PATH` test (`test_nav_strip_never_renders_a_partial_destination_
+label`) confirmed exact-match compositor colors and stayed green — but live tmux
+showed the ghosted fragment as a faintly-but-genuinely readable `rgb(43-62,43-62,
+43-62)` against `rgb(16,16,16)`, not a match. Root cause was NOT a missing bundle
+rule (the earlier four instances) but a PRIORITY one: `tldw_chatbook/css/components/
+_buttons.tcss`'s app-wide `Button:disabled { opacity: 50%; }`, loaded via `App.
+CSS_PATH`, outranks ANY widget `DEFAULT_CSS` rule as a TIER, regardless of
+`!important` on the `DEFAULT_CSS` side — confirmed by direct introspection
+(`button.styles.opacity` read `0.5` under the real `TldwCli` app + `HomeHarness`
+despite the widget's own `opacity: 100% !important`, but read `1.0` under the bare
+test harness where no `CSS_PATH` rule existed to compete). This codebase had already
+hit and fixed the identical defect once before (`Tests/UI/test_mcp_inspector.py`'s
+`test_disabled_action_buttons_stay_legible_with_bundled_css`, for the MCP inspector's
+action buttons) — that precedent was not consulted before initially trying
+`!important` in `DEFAULT_CSS`, which was the wrong tier to fight from. The fix that
+actually works: add the override to a `CSS_PATH`-bundled source file (`_navigation.
+tcss` here), in the SAME tier as the rule being overridden, where ordinary
+specificity resolves it without needing `!important` at all.
+
+**What to do (all five instances).** Never trust a bare-`App`-no-`CSS_PATH` test's
+color/opacity or geometry as proof of live behavior — it can miss a rule entirely
+(instances 1-4) or miss a PRIORITY inversion where `CSS_PATH` beats `DEFAULT_CSS`
+regardless of `!important` (instance 5). Before shipping any "hide via CSS" trick
+(`color == background`, opacity-to-zero, etc.), grep for prior art
+(`Button:disabled`, `:disabled` opacity overrides already exist for MCP inspector)
+and verify with `button.styles.opacity`/`get_visual_style()` under a REAL-bundle
+harness or live tmux, not just a bare widget construction.
+
 ---
 
 ## A zero-latency fake makes loop-starvation bugs invisible (2026-07-30)

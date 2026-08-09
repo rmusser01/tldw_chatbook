@@ -123,4 +123,87 @@ Files: tldw_chatbook/UI/Navigation/main_navigation.py,
 Tests/UI/test_master_shell_navigation.py,
 Tests/UI/test_destination_visual_parity_correction.py,
 backlog/docs/lessons-testing-evidence.md.
+
+### Review-round follow-up (fix round 1)
+
+A review of the above found ghosted buttons stayed fully interactive (color-only
+hiding, no `disabled`/focus change) and asked for an honest characterization of the
+residual settle-chain race. Both closed; two real regressions were found and fixed
+along the way (not anticipated by the review, caught by re-running the suite before
+shipping):
+
+- `_ghost_clipped_buttons` now also sets `button.disabled = should_ghost`.
+  Textual's own `disabled` semantics do the rest for free: `Widget.focusable`
+  excludes disabled widgets from the Tab focus chain, and `Button.press()` already
+  no-ops when `self.disabled` is set. A new `on_descendant_focus` handler
+  re-scrolls the strip to the newly-Tab-focused button (mirroring what
+  `_scroll_active_destination_into_view` already does for the active destination)
+  before re-running the ghost check, closing a staleness gap Tab-cycling opens that
+  none of mount/resize/click ever did (Tab can move DOM focus without the app
+  calling any of this class's own scroll methods).
+- **Regression found and fixed**: disabling a button that had *just* received Tab
+  focus (via the new `on_descendant_focus` re-scroll landing on a still-fractionally-
+  straddling position) let Textual's `watch_disabled` blur it immediately, and the
+  next Tab press wrapped all the way back to the first button in the bar instead of
+  advancing — reproduced live via direct focus/disabled tracing, and via a broader
+  regression sweep (`test_tab_order_reaches_visible_primary_action` regressed on
+  5/9 cases that passed at HEAD). Fixed by exempting whichever button currently
+  holds keyboard focus from ghosting, in `_ghost_clipped_buttons`, the same way the
+  active destination is already exempt.
+- **A second, pre-existing test in a different file**
+  (`test_phase6_home_keyboard_focus_reaches_navigation_and_primary_action`,
+  `Tests/UI/test_product_maturity_phase6_focus_visual_sweep.py`) asserted Tab
+  reaches all 13 top-level destinations in exact canonical order, one press each —
+  an invariant `disabled`-based ghosting cannot preserve by design (a straddling
+  button is un-Tab-reachable exactly where it is straddling). Live-traced: the
+  skipped destination recovers within a bounded number of extra presses (17 in the
+  worst observed case, out of a ~14-stop bar), so it is not permanently
+  unreachable — rewrote the test's per-destination advance to budget extra presses
+  instead of assuming single-press lockstep, keeping the same final strict-order
+  assertion.
+- **Color-fidelity defect found and fixed**: even with `disabled` set, a ghosted
+  button was NOT pixel-exact invisible in the real running app (only in a bare-
+  widget pytest harness) — live tmux capture showed a faintly-readable foreground
+  against the intended-matching background. Root cause: `tldw_chatbook/css/
+  components/_buttons.tcss`'s app-wide `Button:disabled { opacity: 50%; }`, loaded
+  via `App.CSS_PATH`, outranks ANY widget `DEFAULT_CSS` rule regardless of
+  `!important` there (Textual gives `CSS_PATH` stylesheets priority over widget
+  `DEFAULT_CSS` as a tier, not just by specificity) — a known, precedented gotcha in
+  this codebase (`Tests/UI/test_mcp_inspector.py` documents and fixes the identical
+  defect for the MCP inspector's action buttons the same way). Fixed by adding a
+  targeted override to `tldw_chatbook/css/components/_navigation.tcss` (previously
+  an empty stub), in the same `CSS_PATH` tier, where normal specificity resolves it
+  (two classes + a pseudo-class beats one class + a pseudo-class) — no `!important`
+  needed there. Verified via a real-`TldwCli`-app pytest repro
+  (`get_visual_style()` went from `rgba(255,255,255,0.38) on rgb(15,15,15)` to
+  `rgb(18,18,18) on rgb(18,18,18)`) and live in tmux (`38;2;18;18;18m` on
+  `48;2;18;18;18m`, exact, at both the trailing and leading straddle edges).
+- **Residual-race characterization, corrected**: the periodic 0.5s interval's own
+  direct call is cheap, but it unconditionally chains into the SAME full
+  straddle-scan (`_scroll_active_destination_into_view` → `call_after_refresh(_ghost_
+  clipped_buttons)`) every other trigger uses — a prior report draft's "does NOT
+  call a heavier settle function" framing was wrong and has been corrected, not
+  reworded-and-hidden (see the task-5 report's Fix Report round-1 section for the
+  full trace). Both directions of transient staleness are possible (a straddling
+  button briefly staying visible+enabled, or a no-longer-straddling one briefly
+  staying ghosted+disabled) until the next settle pass, bounded by one interval
+  period (0.5s) plus a two-hop `call_after_refresh` chain — sub-second in practice.
+  A generation-token hardening was considered (would only gate which chain's RESULT
+  applies, not touch scroll/focus decisions like the two previously-reverted
+  attempts above) and declined: the actual `call_after_refresh` timing here is
+  exactly what the base round already showed cannot be pinned reliably via pytest,
+  and shipping unverified new bookkeeping to close a sub-second, self-healing,
+  cosmetic-only race is not a good trade for a review-fix round.
+- Tests: `test_master_shell_navigation.py` 26/26 x5 runs; `test_destination_visual_
+  parity_correction.py` 133/133 (5 pre-existing schedules/MCP failures unrelated,
+  see task-2560); `test_product_maturity_phase6_focus_visual_sweep.py` 5/5; a
+  13-file broader nav-referencing sweep 324 passed / 5 pre-existing failed / 1
+  pre-existing skipped, unchanged before/after the CSS bundle fix.
+
+Additional files this round: `tldw_chatbook/css/components/_navigation.tcss`
+(new override rule), `tldw_chatbook/css/tldw_cli_modular.tcss` (regenerated),
+`Tests/UI/test_product_maturity_phase6_focus_visual_sweep.py` (budget-tolerant Tab
+advance), `backlog/tasks/task-2560 - ...md` (delta note),
+`.superpowers/sdd/library-polish-batch/task-5-report.md` (Fix Report round 1 +
+corrections to the base report's Important #2 framing and minors).
 <!-- SECTION:NOTES:END -->

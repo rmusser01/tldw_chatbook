@@ -642,6 +642,11 @@ async def test_nav_strip_never_renders_a_partial_destination_label(width, active
             assert fragment not in painted, (
                 f"{button.id} is ghosted but '{fragment}' still readable"
             )
+            # Review finding: color alone left a ghosted button fully
+            # interactive (Tab-reachable with no focus ring, clickable
+            # while invisible). `disabled` must accompany the ghost class.
+            assert button.disabled, f"{button.id} is ghosted but not disabled"
+            assert not button.focusable, f"{button.id} is ghosted but still focusable"
         if width == 100 and active == "home":
             # Pin the specific finding this task fixed (task-2858 P2 /
             # LIB-18): at a narrow width with the strip scrolled to its
@@ -649,4 +654,101 @@ async def test_nav_strip_never_renders_a_partial_destination_label(width, active
             # ›" hint's edge -- if nothing were ever ghosted here, the
             # geometry/rendered-text assertions above would be vacuous.
             assert ghosted, "test premise: expected a straddling destination at 100 cols"
+
+
+@pytest.mark.asyncio
+async def test_tab_cycling_never_focuses_a_ghosted_nav_button():
+    """Review finding: a ghosted (invisible) button was still Tab-reachable
+    with no visible focus ring -- a keyboard user could land on it blind
+    and Enter-navigate to a destination they never saw highlighted.
+    `disabled` (paired with the ghost class in `_ghost_clipped_buttons`)
+    removes it from the focus chain entirely (`Widget.focusable` excludes
+    disabled widgets) -- cycle Tab all the way around the bar and confirm
+    focus never lands on a ghosted button, only on genuinely visible ones.
+
+    The per-press check reads each button's ghost/disabled state AT THE
+    MOMENT it receives focus, not a snapshot taken before the loop starts:
+    `on_descendant_focus` re-scrolls the strip on every Tab landing (to
+    keep the newly-focused button fully visible), which legitimately
+    changes WHICH buttons straddle an edge as the strip's scroll position
+    moves -- a button ghosted at t=0 can be genuinely un-ghosted (fully
+    visible, re-enabled) by the time Tab reaches it several presses later.
+    An earlier version of this test compared against a single pre-loop
+    snapshot and produced a false failure for exactly that reason (caught
+    live: Tab correctly reached `nav-schedules` only after it had been
+    scrolled fully into view and un-ghosted, but the stale snapshot still
+    listed its id as ghosted).
+    """
+
+    class TestApp(App):
+        def compose(self):
+            yield MainNavigationBar(active="settings")
+
+    app = TestApp()
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(0.6)
+
+        assert any(
+            button.has_class("nav-button-clip-ghost")
+            for button in app.query(".nav-button")
+        ), "test premise: expected a straddling destination at 80 cols"
+
+        # More than enough presses to cycle all the way around the bar
+        # (13 destinations + the overflow hint) at least twice.
+        visited_while_ghosted = []
+        for _ in range(30):
+            await pilot.press("tab")
+            focused = app.focused
+            if focused is not None and focused.has_class("nav-button-clip-ghost"):
+                visited_while_ghosted.append(focused.id)
+            if focused is not None and focused.has_class("nav-button"):
+                assert not focused.disabled, (
+                    f"{focused.id} received focus while disabled"
+                )
+
+        assert visited_while_ghosted == []
+
+
+@pytest.mark.asyncio
+async def test_press_on_a_ghosted_nav_button_is_a_no_op():
+    """Review finding: nothing rejected a ghosted button as a `.press()`
+    target -- a mouse click into dead-looking space (or a programmatic
+    `.press()`) would silently navigate. `Button.press()` already no-ops
+    when `self.disabled` is set; `_ghost_clipped_buttons` sets it whenever
+    the ghost class is applied, so calling `.press()` directly on a
+    ghosted button must produce neither a `Button.Pressed` message nor a
+    `NavigateToScreen` navigation, and the active destination must stay
+    unchanged.
+    """
+    events = []
+
+    class TestApp(App):
+        def compose(self):
+            yield MainNavigationBar(active="settings")
+
+        def on_navigate_to_screen(self, message):
+            events.append(message.screen_name)
+
+    app = TestApp()
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(0.6)
+
+        nav = app.query_one(MainNavigationBar)
+        ghosted = [
+            button
+            for button in app.query(".nav-button")
+            if button.has_class("nav-button-clip-ghost")
+        ]
+        assert ghosted, "test premise: expected a straddling destination at 80 cols"
+        target = ghosted[0]
+        assert target.disabled
+
+        target.press()
+        await pilot.pause(0.1)
+
+        assert events == []
+        assert nav.active_destination_id == "settings"
+        assert target.has_class("nav-button-clip-ghost")
 

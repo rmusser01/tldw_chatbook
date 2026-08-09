@@ -5,6 +5,8 @@ from loguru import logger
 
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
+from textual.events import DescendantFocus
+from textual.geometry import Region
 from textual.widgets import Button, Static
 from textual.message import Message
 from textual import on
@@ -17,6 +19,24 @@ from .shell_destinations import (
 
 if TYPE_CHECKING:
     pass
+
+
+def _straddles_viewport(region: Region, viewport: Region) -> bool:
+    """True if `region` is PARTIALLY (not fully in, not fully out) within
+    `viewport` on the horizontal axis -- the geometric definition of
+    task-3200's "partially-clipped label" straddle, used by
+    `MainNavigationBar._ghost_clipped_buttons` to decide which button to
+    ghost (and, paired with `disabled`, which button Tab may land on --
+    see that method's docstring for why straddle-rejection was NOT put
+    directly on a `NavigationButton.allow_focus` override: an earlier
+    attempt at exactly that broke Tab cycling and was reverted).
+    """
+    if region.width <= 0 or viewport.width <= 0:
+        return False
+    return (
+        region.x < viewport.x < region.right
+        or region.x < viewport.right < region.right
+    )
 
 
 #: Hotkey digits for the nav keyboard layer: ctrl+1..ctrl+9 select the first
@@ -77,6 +97,15 @@ class NavigationButton(Button):
         self._target_route = target_route
 
     def press(self):
+        # `display` is never set False by anything in this module today
+        # (task-3200's clip-straddle handling ghosts via CSS + `disabled`
+        # instead -- see `_ghost_clipped_buttons`), so this branch is
+        # currently unreachable in practice; kept as-is since some other
+        # future caller could still legitimately hide a nav button. A
+        # ghosted (task-3200) button does NOT hit this branch either way:
+        # it stays `display=True`, so `super().press()` runs, and
+        # `Button.press()` already no-ops when `self.disabled` is set --
+        # no separate `disabled` check is needed here.
         if not self.display:
             self.app.post_message(NavigateToScreen(self._target_route))
             return self
@@ -168,16 +197,54 @@ class MainNavigationBar(Container):
        sliver of it happens to be on-screen reads as empty space rather
        than a mid-word cut ("Watchlists" -> "Watc"). Listed after (and so
        overriding) hover/focus/active so a straddling button can never
-       flash real content via those states. */
+       flash real content via those states. `_ghost_clipped_buttons` pairs
+       this class with `disabled = True` (review finding: a ghosted
+       button was otherwise still fully interactive -- Tab-reachable with
+       no visible focus ring, clickable/Enter-navigable while invisible),
+       so `opacity`/`text-opacity` are pinned to 100% here to cancel
+       Textual's own built-in disabled-dimming (`App`'s global
+       `*:disabled:can-focus { opacity: 0.7; }` and, every `Button`'s own
+       default variant class, `Button.-style-default:disabled {
+       text-opacity: 0.6; }`) -- without this the ghosted color blends
+       toward transparent instead of staying pixel-exact on `$background`.
+       `!important` is required, not decorative: `Button.-style-default:
+       disabled` carries an extra TYPE-selector component (`Button`) that
+       `.nav-button.nav-button-clip-ghost:disabled` (two classes, no type)
+       does not, so by standard CSS specificity comparison Button's own
+       rule wins even though it is declared earlier and matches every
+       `NavigationButton` (a `Button` subclass that never opts out of the
+       default `-style-default` class) -- confirmed by direct tmux capture
+       (`capture-pane -e`) BEFORE `!important` was added: the ghosted
+       "Watc" fragment rendered as foreground `38;2;43;43;43` against
+       background `48;2;16;16;16` -- visibly distinct, not the intended
+       pixel-exact match. IMPORTANT CAVEAT: this `!important` alone is
+       NOT sufficient in the real running app -- `tldw_chatbook/css/
+       components/_buttons.tcss`'s app-wide `Button:disabled { opacity:
+       50%; }`, loaded via `App.CSS_PATH`, outranks ANY widget
+       `DEFAULT_CSS` rule as a TIER, `!important` or not (Textual gives
+       `CSS_PATH` stylesheets priority over widget `DEFAULT_CSS`
+       independent of specificity). The rule that actually wins live is
+       `tldw_chatbook/css/components/_navigation.tcss`'s
+       `.nav-button.nav-button-clip-ghost:disabled` override, in the SAME
+       `CSS_PATH` tier -- a known, precedented pattern in this codebase
+       (see `Tests/UI/test_mcp_inspector.py`'s
+       `test_disabled_action_buttons_stay_legible_with_bundled_css` for
+       the MCP inspector's identical fix). This `!important` block stays
+       as defense-in-depth for the `DEFAULT_CSS` tier itself (e.g.
+       against some future widget-level rule), not as the actual fix for
+       the app-wide `Button:disabled` opacity. */
     .nav-button.nav-button-clip-ghost,
     .nav-button.nav-button-clip-ghost:hover,
     .nav-button.nav-button-clip-ghost:focus,
     .nav-button.nav-button-clip-ghost.is-active,
-    .nav-button.nav-button-clip-ghost.is-active:focus {
-        background: $background;
-        border: solid $background;
-        color: $background;
+    .nav-button.nav-button-clip-ghost.is-active:focus,
+    .nav-button.nav-button-clip-ghost:disabled {
+        background: $background !important;
+        border: solid $background !important;
+        color: $background !important;
         text-style: none;
+        opacity: 100% !important;
+        text-opacity: 100% !important;
     }
 
     .nav-overflow-hint {
@@ -324,6 +391,54 @@ class MainNavigationBar(Container):
         self.call_after_refresh(self._update_overflow_hints)
         self.call_after_refresh(self._refresh_overflow_hint_visibility)
 
+    def on_descendant_focus(self, event: DescendantFocus) -> None:
+        """Re-scroll to the newly-focused button, then ghost-check
+        (task-3200 review finding).
+
+        `Widget.focus()` defaults to `scroll_visible=True`: Tab landing
+        on an off-screen-but-focusable button auto-scrolls the strip to
+        reveal it, same as a resize -- but that happens via Textual's OWN
+        internal, independently-scheduled `call_later(scroll_to_center,
+        ...)` (`Screen.set_focus`), which nothing here waits on or drives
+        -- so the ghost/disabled state stayed pinned to whatever scroll
+        position was current when it was last computed. Live-reproduced:
+        Tab-cycling through the bar eventually left a genuinely
+        straddling button un-ghosted AND un-disabled, reachable by Tab.
+
+        Rather than react to (and race) Textual's own scroll, this drives
+        an equivalent scroll itself -- `strip.scroll_to_widget(event.
+        widget)`, the same call `_scroll_active_destination_into_view`
+        already makes for the active destination -- then chains the
+        ghost-check the same proven way every other trigger in this
+        class does. A first attempt reacted to `DescendantFocus` by only
+        re-running the ghost-check (not re-scrolling): it raced Textual's
+        scroll closely enough to occasionally starve it entirely,
+        observed live as Tab getting stuck oscillating between two
+        buttons instead of cycling the whole bar; a second attempt made
+        the button reject focus based on a LIVE geometry check instead of
+        `disabled` (`NavigationButton.allow_focus`) -- also reverted, it
+        broke Tab in the same "stuck between two buttons" way, most
+        likely because Textual's own focus-chain walk snapshots
+        candidates' regions once per Tab press rather than re-measuring
+        as scroll changes, so evaluating straddle status against
+        already-stale regions rejected far more candidates than
+        intended. Doing OWN scroll first (idempotent alongside Textual's,
+        since `scroll_to_center` no-ops once the widget is already fully
+        visible) sidesteps both failure modes.
+        """
+        widget = event.widget
+        if not isinstance(widget, NavigationButton):
+            return
+        self.call_after_refresh(self._scroll_to_focused_then_ghost_check, widget)
+
+    def _scroll_to_focused_then_ghost_check(self, widget: "NavigationButton") -> None:
+        try:
+            strip = self.query_one("#nav-destination-strip", Horizontal)
+            strip.scroll_to_widget(widget, animate=False)
+        except Exception:
+            return
+        self.call_after_refresh(self._ghost_clipped_buttons)
+
     def _refresh_overflow_hint_visibility(self) -> None:
         """Show the overflow menu button only when the strip actually clips.
 
@@ -388,6 +503,20 @@ class MainNavigationBar(Container):
         button boundary, so that cascade never converged on a clean
         state). Ghosting sidesteps all of it: geometry is never touched,
         so there is nothing to iterate or race.
+
+        A ghosted button is also made ``disabled`` (review finding: color
+        alone left it fully interactive -- Tab could land on an invisible
+        button with no focus ring, and a click or Enter would silently
+        navigate). Textual's own `disabled` semantics do exactly what's
+        needed here for free: `Widget.focusable` excludes disabled
+        widgets from Tab order, `watch_disabled` blurs it immediately if
+        it currently holds focus, and `Button.press()` already no-ops
+        when `self.disabled` is set -- `NavigationButton.press()`'s own
+        `display`-hidden-chrome branch doesn't need touching, since that
+        check runs first and only ever applies when `display` is False,
+        which ghosting never sets. The active destination is exempt from
+        `should_ghost` below, so it is always re-enabled in the same pass
+        that clears its ghost class -- never a visible-but-disabled tab.
         """
         if not self.is_attached or not self.screen.is_active:
             return
@@ -399,19 +528,43 @@ class MainNavigationBar(Container):
         if strip_region.width <= 0:
             return
         active_id = f"nav-{self.active_destination_id}"
+        # Review-round regression fix: the button that currently HOLDS
+        # keyboard focus must never be ghosted/disabled, exactly like the
+        # active destination is exempt below. `_scroll_to_focused_then_
+        # ghost_check` (called from `on_descendant_focus`) always scrolls
+        # this button fully into view immediately before this method runs
+        # -- but `scroll_to_widget` targets a fractional `scroll_x` and a
+        # subsequent layout pass can still measure this button's region as
+        # straddling by a hair (rounding at the cell boundary). Ghosting a
+        # focused button sets `disabled = True`, and Textual's own
+        # `watch_disabled` immediately blurs a focused widget when it
+        # becomes disabled -- observed live via a direct reproduction: Tab
+        # landing on `nav-lab` triggered exactly this, blurring it before
+        # the next Tab press, which then computed "next focusable after
+        # nothing" and wrapped all the way back to the first button in the
+        # bar -- Tab cycling never escaped the nav bar within the
+        # `test_tab_order_reaches_visible_primary_action` budget (a real,
+        # reproduced regression, not a hypothetical). Exempting the
+        # focused button the same way the active destination is exempted
+        # fixes it without touching scroll or focus-rejection logic (the
+        # two approaches already reverted elsewhere in this file for
+        # breaking Tab in a similar way).
+        focused = self.screen.focused
+        focused_id = focused.id if isinstance(focused, NavigationButton) else None
         for button in strip.query(NavigationButton):
             region = button.region
             if region.width <= 0:
                 continue
-            straddles = (
-                region.x < strip_region.x < region.right
-                or region.x < strip_region.right < region.right
-            )
+            straddles = _straddles_viewport(region, strip_region)
             # The active destination is guaranteed fully visible by
             # `_scroll_active_destination_into_view` and must never be
-            # ghosted, even transiently.
-            should_ghost = straddles and button.id != active_id
+            # ghosted, even transiently; same guarantee for whichever
+            # button currently holds focus (see docstring above).
+            should_ghost = (
+                straddles and button.id != active_id and button.id != focused_id
+            )
             button.set_class(should_ghost, "nav-button-clip-ghost")
+            button.disabled = should_ghost
 
     @on(Button.Pressed, "#nav-overflow-hint")
     def handle_overflow_hint(self, event: Button.Pressed) -> None:
