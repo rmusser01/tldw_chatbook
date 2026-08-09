@@ -245,6 +245,50 @@ def test_rejects_required_directory_node(tmp_path: Path) -> None:
     _assert_error(ExternalParakeetErrorCode.IRREGULAR, _descriptor(files), root)
 
 
+@pytest.mark.skipif(
+    not hasattr(os, "mkfifo") or not getattr(os, "O_NONBLOCK", 0),
+    reason="requires POSIX FIFOs and nonblocking opens",
+)
+def test_opens_required_file_nonblocking_to_reject_fifo_swap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    files = {"model.onnx": b"expected"}
+    root = tmp_path / "external-fifo-swap"
+    _materialize(root, files)
+    model_path = root / "model.onnx"
+    original_path = root / "model.original"
+    real_open = os.open
+    opened = False
+
+    def swap_to_fifo_and_open(path: Path, flags: int) -> int:
+        nonlocal opened
+        assert Path(path) == model_path
+        model_path.rename(original_path)
+        try:
+            try:
+                os.mkfifo(model_path)
+            except OSError as error:
+                pytest.skip(f"FIFO creation is unavailable: {error}")
+            assert flags & os.O_NONBLOCK
+            descriptor_fd = real_open(path, flags)
+            opened = True
+            return descriptor_fd
+        finally:
+            model_path.unlink(missing_ok=True)
+            original_path.rename(model_path)
+
+    monkeypatch.setattr(parakeet_external.os, "open", swap_to_fifo_and_open)
+
+    error = _assert_error(
+        ExternalParakeetErrorCode.CHANGED,
+        _descriptor(files),
+        root,
+    )
+    assert opened
+    assert str(root.absolute()) not in "".join(traceback.format_exception(error))
+
+
 def test_rejects_selected_root_with_redirected_ancestor(tmp_path: Path) -> None:
     files = {"model.onnx": b"expected"}
     actual_parent = tmp_path / "actual-parent"
