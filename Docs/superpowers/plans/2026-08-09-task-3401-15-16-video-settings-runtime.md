@@ -72,7 +72,8 @@ git commit -m "fix: expose Video Gen settings navigation"
 **Files:**
 - Create: `Tests/Video_Generation/test_config_projection.py`
 - Modify: `tldw_chatbook/config.py`
-- Verify: `Tests/Video_Generation/test_config_loader.py`
+- Modify: `Tests/Video_Generation/test_config_loader.py`
+- Modify: `tldw_chatbook/Video_Generation/config.py`
 - Verify: `Tests/Video_Generation/test_adapter_registry.py`
 
 - [ ] **Step 1: Write a real scratch-config failing regression**
@@ -115,7 +116,7 @@ and include it in `config_dict`:
 "video_generation": final_video_generation_settings_cli,
 ```
 
-Do not change the video loader, registry, writers, or cache-reset APIs.
+Keep the registry, writers, and cache-reset APIs unchanged. Because projection makes the raw table reachable for the first time, normalize a non-mapping top-level section and non-mapping backend subsections to empty mappings at the existing video loader boundary; add focused malformed-section tests before this production change.
 
 - [ ] **Step 4: Run focused config/runtime GREEN tests**
 
@@ -140,6 +141,10 @@ git add tldw_chatbook/config.py Tests/Video_Generation/test_config_projection.py
 git diff --cached --check
 git commit -m "fix: project video settings into runtime"
 ```
+
+- [ ] **Step 7: Address review-discovered loader and isolation gaps**
+
+Make the first scratch-profile assertion call `load_settings()` without `force_reload`, start teardown protection before any environment/cache mutation, and retain forced reload only after rewriting the profile. Add RED tests for scalar top-level and backend video tables, then minimally normalize them to empty mappings in `Video_Generation.config`. Rerun the projection/config/registry gate and commit the review fix separately.
 
 ### Task 3: Verify and commit both defect implementations
 
