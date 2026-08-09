@@ -1463,7 +1463,7 @@ def test_app_detail_hook_navigates_library_with_ingest_context_for_handled_inges
             HomeControlAction.OPEN_DETAILS: HomeControlResult(
                 action=HomeControlAction.OPEN_DETAILS,
                 status=HomeControlResultStatus.HANDLED,
-                message="Opening Library ingest job details.",
+                message="Opening Library import job details.",
                 target_id="local:ingest:ingest-job-1",
                 target_route="library",
             ),
@@ -1497,7 +1497,7 @@ def test_app_detail_hook_navigates_library_for_ingest_detail():
             HomeControlAction.OPEN_DETAILS: HomeControlResult(
                 action=HomeControlAction.OPEN_DETAILS,
                 status=HomeControlResultStatus.HANDLED,
-                message="Opening Library ingest job details.",
+                message="Opening Library import job details.",
                 target_id="local:ingest:ingest-job-1",
                 target_route="library",
             ),
@@ -1611,7 +1611,7 @@ def test_retry_active_home_item_unknown_ingest_id_warns_without_requeue():
 
     assert result.status is HomeControlResultStatus.UNAVAILABLE
     app.notify.assert_called_once_with(
-        "This ingest job can no longer be retried.",
+        "This import job can no longer be retried.",
         severity="warning",
     )
     assert len(app.library_ingest_jobs.jobs()) == jobs_before
