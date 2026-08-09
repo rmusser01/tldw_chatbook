@@ -5315,6 +5315,20 @@ class SettingsScreen(BaseAppScreen):
             options.append((f"Current: {current_theme}", current_theme))
         return options
 
+    def _appearance_bool_label(self, key: str) -> str:
+        """Label for a boolean Appearance toggle button, from staged state.
+
+        Args:
+            key: An appearance-defaults key (``reduce_motion``,
+                ``ascii_glyphs``, or ``smooth_scrolling``).
+
+        Returns:
+            ``"Enabled"`` or ``"Disabled"``, reflecting the draft value when
+            one is staged, else the loaded value (the same draft-over-loaded
+            precedence every other Appearance control renders from).
+        """
+        return "Enabled" if bool(self._appearance_setting_values()[key]) else "Disabled"
+
     def _appearance_summary_text(self) -> str:
         values = self._appearance_setting_values()
         return (

@@ -1166,9 +1166,13 @@ async def test_settings_appearance_renders_guided_defaults_and_validates(monkeyp
             screen.query_one("#settings-appearance-animations-enabled", Checkbox).value
             is True
         )
+        # Smooth scrolling renders as a label-cycling toggle Button (not a
+        # Checkbox) — the label comes from _appearance_bool_label.
         assert (
-            screen.query_one("#settings-appearance-smooth-scrolling", Checkbox).value
-            is True
+            str(
+                screen.query_one("#settings-appearance-smooth-scrolling", Button).label
+            )
+            == "Enabled"
         )
         assert screen.query_one("#settings-save-category", Button).disabled is True
         assert screen.query_one("#settings-revert-category", Button).disabled is True
