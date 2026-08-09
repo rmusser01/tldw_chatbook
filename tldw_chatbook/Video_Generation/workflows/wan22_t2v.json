@@ -1,0 +1,47 @@
+{
+  "1": {
+    "class_type": "UNETLoader",
+    "inputs": {"unet_name": "wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors", "weight_dtype": "default"},
+    "_meta": {"title": "WAN 2.2 Model"}
+  },
+  "2": {
+    "class_type": "CLIPLoader",
+    "inputs": {"clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors", "type": "wan"},
+    "_meta": {"title": "Text Encoder"}
+  },
+  "3": {
+    "class_type": "VAELoader",
+    "inputs": {"vae_name": "wan_2.1_vae.safetensors"},
+    "_meta": {"title": "VAE"}
+  },
+  "4": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {"text": "A cinematic video", "clip": ["2", 0]},
+    "_meta": {"title": "Prompt"}
+  },
+  "5": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {"text": "", "clip": ["2", 0]},
+    "_meta": {"title": "Negative Prompt"}
+  },
+  "6": {
+    "class_type": "EmptyHunyuanLatentVideo",
+    "inputs": {"width": 832, "height": 480, "length": 49, "batch_size": 1},
+    "_meta": {"title": "Frames"}
+  },
+  "7": {
+    "class_type": "KSampler",
+    "inputs": {"seed": 0, "steps": 30, "cfg": 6.0, "sampler_name": "euler", "scheduler": "simple", "denoise": 1.0, "model": ["1", 0], "positive": ["4", 0], "negative": ["5", 0], "latent_image": ["6", 0]},
+    "_meta": {"title": "Seed"}
+  },
+  "8": {
+    "class_type": "VAEDecode",
+    "inputs": {"samples": ["7", 0], "vae": ["3", 0]},
+    "_meta": {"title": "Decode"}
+  },
+  "9": {
+    "class_type": "VHS_VideoCombine",
+    "inputs": {"images": ["8", 0], "frame_rate": 16, "loop_count": 0, "filename_prefix": "video/wan22_t2v", "format": "video/h264-mp4"},
+    "_meta": {"title": "FPS"}
+  }
+}
