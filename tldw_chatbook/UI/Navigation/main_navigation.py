@@ -335,14 +335,21 @@ class MainNavigationBar(Container):
         # Order matters: settle the overflow indicators (which change the
         # strip's width) before aligning the active button.
         self.call_after_refresh(self._update_overflow_hints)
-        self.call_after_refresh(self._scroll_active_destination_into_view)
+        self.call_after_refresh(self._recenter_strip)
         # Review round 2: marks the point after which a `DescendantFocus`
         # is trusted as a genuine, later Tab press rather than Textual's
         # own initial `AUTO_FOCUS` (which lands on the first focusable
         # widget -- empirically confirmed to fire between `on_mount`'s own
         # synchronous return and this bar's first `call_after_refresh`
         # callback, i.e. strictly BEFORE this marker runs). See
-        # `on_descendant_focus` and `_recenter_periodic`.
+        # `on_descendant_focus` and `_recenter_strip`. Because
+        # `_deliberate_focus_id` can only ever be set AFTER this marker
+        # fires, `_recenter_strip` is always equivalent to the plain
+        # active-only scroll during this entire mount-settle window --
+        # routing this call through it (round 3) rather than the
+        # lower-level `_scroll_active_destination_into_view` directly is
+        # therefore behavior-neutral here, and keeps every settle path
+        # going through the one shared, focus-aware entry point.
         self.call_after_refresh(self._mark_mount_settled)
         self.set_interval(0.5, self._update_overflow_hints)
         # The strip's virtual_size only settles once its scrollable content
@@ -377,10 +384,10 @@ class MainNavigationBar(Container):
         # Layout settles asynchronously (hint toggles change the strip's
         # width, fonts finish, etc.), so keep the active destination (or,
         # while it differs, the keyboard-focused button -- see
-        # `_recenter_periodic`, review round 2) pinned every tick instead
+        # `_recenter_strip`, review rounds 2-3) pinned every tick instead
         # of only when a hint changed state — the call is idempotent and
         # cheap.
-        self.call_after_refresh(self._recenter_periodic)
+        self.call_after_refresh(self._recenter_strip)
 
     def on_resize(self) -> None:
         """Re-sync the overflow affordance when the bar's width changes.
@@ -392,9 +399,10 @@ class MainNavigationBar(Container):
 
         Both calls below are deferred (`call_after_refresh`); the first,
         `_update_overflow_hints`, itself unconditionally ends by chaining
-        into `_scroll_active_destination_into_view` (re-scroll, THEN
-        ghost-check via `_ghost_clipped_buttons`) -- so a resize reaches
-        the ghost re-check through that existing chain rather than calling
+        into `_recenter_strip` (re-scroll to the active destination, or
+        the deliberately-focused button if one differs, THEN ghost-check
+        via `_ghost_clipped_buttons`) -- so a resize reaches the ghost
+        re-check through that existing chain rather than calling
         `_ghost_clipped_buttons` directly. That matters for the same
         reason it did before this rename: a screen transition fires
         several resizes while content is still settling, and ghost-
@@ -406,6 +414,20 @@ class MainNavigationBar(Container):
         destination that needs scrolling left a straddling neighbor
         un-ghosted because the final settle's ghost-check ran against an
         intermediate, not the final, scroll_x).
+
+        Review round 3: routing through `_recenter_strip` (rather than
+        the lower-level `_scroll_active_destination_into_view`) also
+        matters here specifically: a resize used to drag the strip back
+        toward the active destination indifferently to focus -- live-
+        reproduced as a second instance of the interval's exact defect
+        class: `active="schedules"`, Tab to `nav-settings`, then a resize
+        (80 -> 90 cols) dragged the strip back toward active the same way
+        the un-fixed interval once did, leaving `nav-settings` straddling
+        (`Region(x=66, width=15)` vs `strip.region.right == 80`),
+        un-ghosted, enabled, and still focused. `_update_overflow_hints`
+        already chains into `_recenter_strip` (not the lower-level,
+        active-only method), so this indirect path carries the fix
+        without on_resize needing its own direct call.
         """
         self.call_after_refresh(self._update_overflow_hints)
         self.call_after_refresh(self._refresh_overflow_hint_visibility)
@@ -446,7 +468,7 @@ class MainNavigationBar(Container):
         visible) sidesteps both failure modes.
 
         Review round 2: also records `widget.id` as the "deliberate focus"
-        target (`_recenter_periodic` reads it) -- but ONLY once `self.
+        target (`_recenter_strip` reads it) -- but ONLY once `self.
         _mount_settled` is True. Textual's own `AUTO_FOCUS` (`App.
         AUTO_FOCUS = "*"` by default, not overridden anywhere in this
         app) posts exactly this same `DescendantFocus` event for whichever
@@ -501,6 +523,20 @@ class MainNavigationBar(Container):
             return
         reclaimable = hint.outer_size.width if hint.display else 0
         hint.display = strip_virtual > strip_width + reclaimable
+        # (rebase note) Review round 3's `_defer_focus_release_check`/
+        # `_release_focus_if_left_straddling` pair -- keeping a
+        # deliberately-focused nav button from being left straddling by a
+        # "More ›" pager press -- is not carried forward here: dev's
+        # NV-01/TASK-2154.21 rework (merged in parallel with the whole
+        # task-3200 series) replaced the in-strip paging control with
+        # `handle_overflow_hint` opening a real `NavOverflowMenu` screen
+        # (see that method below) instead of scrolling the strip. There is
+        # no more `_page_destination_overflow`/`event.button` press to
+        # hang this fix off of, and the menu makes every destination
+        # reachable directly rather than by paging a scroll viewport, so
+        # the defect class this fix closed (paging strands a focused
+        # button mid-straddle) cannot recur.
+
 
     def _focused_strip_button(self) -> "NavigationButton | None":
         """The nav button currently holding keyboard focus, or ``None``.
@@ -514,14 +550,14 @@ class MainNavigationBar(Container):
         widget (`nav-home` in a bare test) the instant the app mounts, well
         before any user interaction -- so callers must not treat "a strip
         button is focused" as "the user is mid-Tab-interaction" (see
-        `_recenter_periodic`'s docstring for the regression that
+        `_recenter_strip`'s docstring for the regression that
         distinction fixed).
 
         Review round 2 crash fix: `self.screen` raises `NoScreen` once this
         widget is no longer attached to an active screen (a real, live
         crash caught only by a full-app regression sweep, not the bare-
         widget nav tests -- a deferred `call_after_refresh` callback
-        reaching `_recenter_periodic` after a screen swap had already
+        reaching `_recenter_strip` after a screen swap had already
         unmounted this bar took the WHOLE app down mid-test, `NoScreen:
         node has no screen`, and every subsequent `Tab` press in that test
         silently did nothing because the app had already exited). Every
@@ -541,19 +577,21 @@ class MainNavigationBar(Container):
         """Bring the active destination's button into the strip's visible
         scroll window, then re-check for a straddling neighbor.
 
-        Always targets the ACTIVE destination, unconditionally -- every
-        caller here (mount, `on_resize`, `restore_active`, a click) needs
-        "the current screen's own tab is always fully visible" to hold
-        regardless of what happens to hold keyboard focus at that moment
-        (which can be incidental, not deliberate -- see
-        `_focused_strip_button`'s docstring). A first attempt at this
-        round's fix redirected this method itself toward focus when
-        present; that broke `test_master_shell_navigation_keeps_active_
-        destination_visible_on_mount` (Textual's default `AUTO_FOCUS` sat
-        on `nav-home` while `active="settings"`, and the mount-time
-        recenter dutifully "fixed" the wrong button) -- reverted in favor
-        of `_recenter_periodic`, a narrower fix scoped to the ONE caller
-        that actually needed focus-awareness.
+        Always targets the ACTIVE destination, unconditionally, with no
+        awareness of focus -- the low-level primitive `_recenter_strip`
+        builds on. Nothing outside this class, and no other method in it,
+        should call this directly anymore (review round 3): every
+        settle-triggering event (mount, the interval, `on_resize`,
+        `restore_active`) now goes through `_recenter_strip` instead, so
+        that "is a deliberately-focused button different from active"
+        gets asked in exactly ONE place rather than re-implemented, or
+        forgotten, per call site -- which is exactly what round 2's fix
+        (scoped only to the interval) missed: the identical defect was
+        independently live-reproduced through `on_resize` and
+        `restore_active` at HEAD after round 2 shipped, because those two
+        still called this method directly. `_activate_navigation_button`
+        (a click) is the one remaining direct caller, deliberately not
+        migrated -- see that method for why.
         """
         try:
             strip = self.query_one("#nav-destination-strip", Horizontal)
@@ -568,44 +606,57 @@ class MainNavigationBar(Container):
             return
         self.call_after_refresh(self._ghost_clipped_buttons)
 
-    def _recenter_periodic(self) -> None:
-        """Interval-specific recenter (review round 2 finding).
+    def _recenter_strip(self) -> None:
+        """The ONE focus-aware recenter every settle trigger in this class
+        (mount, the periodic interval, `on_resize`, `restore_active`)
+        funnels through (review round 3 generalization).
 
-        The periodic 0.5s interval (`_update_overflow_hints`, armed in
-        `on_mount`) used to end every tick with `_scroll_active_
-        destination_into_view` unconditionally, indifferent to keyboard
-        focus. When Tab had moved focus to a DIFFERENT, far-away button
-        (`on_descendant_focus` -> `_scroll_to_focused_then_ghost_check`
-        scrolls to reveal it, same as this class's other settle paths),
-        the interval's very next tick dragged the strip straight back
-        toward the active destination -- leaving the FOCUSED button
-        straddling the edge: visibly mid-word-cut, still `app.focused`,
-        un-ghosted, and `disabled=False` (Enter-navigable). A STATIC
-        `focused_id` exemption inside `_ghost_clipped_buttons` alone could
-        not catch this: it meant "don't hide it," never "keep it visible,"
-        and nothing had re-scrolled to reveal the focused button on the
-        interval's own tick. Deterministically reproduced: `active=
-        "schedules"`, Tab to `nav-settings` (forces a scroll, since
-        Settings does not fit alongside Schedules at 80 cols),
-        `pilot.pause(0.9)` (>= one interval tick) -> `nav-settings`
-        measured `Region(x=66, width=15)` against `strip.region.right ==
-        70`, genuinely straddling.
+        Round 2 fixed this exact defect class for the periodic interval
+        ONLY (as `_recenter_periodic`, this method's prior name), because
+        that was the trigger the round-2 review's probe demonstrated. The
+        round-3 re-review live-reproduced the IDENTICAL stranding --
+        genuinely straddling, un-ghosted, enabled, still-focused button --
+        through the three OTHER active-only recenter triggers that
+        round 2 left untouched:
+        - `on_resize`: `active="schedules"`, Tab to `nav-settings`, resize
+          80 -> 90 cols -> `nav-settings` measured `Region(x=66, width=
+          15)` against `strip.region.right == 80`.
+        - `restore_active`: Tab to `nav-settings` (`active="schedules"`),
+          an optimistic click-activate to `console`, then `restore_active
+          ("schedules")` -> same stranding.
+        - the "More ›" pager: this class no longer pages the strip at all
+          (see `handle_overflow_hint` below) -- dev's parallel NV-01/
+          TASK-2154.21 rework replaced in-strip paging with a real
+          `NavOverflowMenu` screen listing every destination, so the
+          pager-specific stranding this generalization originally also
+          had to cover (a paged-away, deliberately-focused button left
+          straddling) cannot recur; there is no scroll-viewport position
+          for a menu row to strand against.
 
-        Fixed HERE, not by changing `_scroll_active_destination_into_view`
-        itself (see that method's docstring for why a broader redirect was
-        tried and reverted): while a DIFFERENT nav-strip button than the
-        active destination currently holds focus, this recenters on THAT
-        button instead, matching what the user's own Tab press already
-        asked for a moment earlier; with no such conflict (nothing focused
-        in the strip, or the focused button IS the active one), it defers
-        to the normal, unconditional `_scroll_active_destination_into_
-        view`. Only ever one target per call -- never active and focused
-        both fighting for scroll position in the same tick, which is what
-        would risk a ping-pong (this file's history already shows two
-        earlier, unrelated scroll/focus attempts here broke Tab that
-        way -- this one does not touch scroll TARGETING based on live
-        geometry or focus REJECTION, only which existing button
-        `scroll_to_widget` is pointed at, for this one caller).
+        This is why round 2's "closed at the source" framing (this
+        report, task-3200's notes) OVERSTATED coverage: the source was
+        "every caller of a active-only recenter", not "the interval", and
+        patching each remaining call site individually would have been
+        the same mistake a third and fourth time. Generalizing HERE, once,
+        and switching every non-pager caller to call this method instead
+        of `_scroll_active_destination_into_view` directly, closes the
+        whole class in one place.
+
+        Behavior: while a DIFFERENT nav-strip button than the active
+        destination currently holds DELIBERATE focus, this recenters on
+        THAT button instead, matching what the user's own Tab press
+        already asked for; with no such conflict (nothing deliberately
+        focused in the strip, or the focused button IS the active one --
+        including the entire mount-settle window, when `_deliberate_
+        focus_id` cannot yet be set at all, see `on_mount`'s comment), it
+        defers to the normal, unconditional `_scroll_active_destination_
+        into_view`. Only ever one target per call -- never active and
+        focused both fighting for scroll position in the same pass, which
+        is what would risk a ping-pong (this file's history already shows
+        two earlier, unrelated scroll/focus attempts broke Tab that way --
+        this does not touch scroll TARGETING based on live geometry or
+        focus REJECTION, only which existing button `scroll_to_widget` is
+        pointed at).
 
         "Currently holds focus" specifically means `self._deliberate_
         focus_id` (set by `on_descendant_focus`, only once `self.
@@ -672,15 +723,24 @@ class MainNavigationBar(Container):
         which ghosting never sets.
 
         The active destination is UNCONDITIONALLY exempt from
-        `should_ghost` below (never ghosted, even transiently) -- every
-        caller of `_scroll_active_destination_into_view` (mount, resize,
-        restore_active, a click) guarantees it fully visible before this
-        runs, deliberately regardless of what else holds keyboard focus
-        (see that method's docstring for why a broader, focus-aware
-        redirect there was tried and reverted).
+        `should_ghost` below (never ghosted, even transiently). Every
+        settle trigger (mount, the interval, `on_resize`, `restore_active`)
+        now funnels through `_recenter_strip` (review round 3), which
+        guarantees active fully visible UNLESS a deliberately-focused
+        different button currently takes priority -- in that one case,
+        active itself is not re-guaranteed visible by this pass, but stays
+        exempt from ghosting regardless (the same accepted trade-off round
+        2 already made for the interval, now applying uniformly instead of
+        to one trigger only: a transiently non-guaranteed-visible active
+        destination is still never actively hidden, and the next pass
+        without a focus conflict restores the guarantee). `
+        _activate_navigation_button` (a click) is the one caller that
+        still goes straight to the lower-level, always-active `_scroll_
+        active_destination_into_view` (see that method's docstring for
+        why).
 
         The FOCUSED button (if it differs from active, and only when it is
-        a DELIBERATE focus -- see `_recenter_periodic`'s docstring) is
+        a DELIBERATE focus -- see `_recenter_strip`'s docstring) is
         UNCONDITIONALLY exempt too, the same way active is -- NOT a
         "retry the scroll, then judge by a synchronous re-measurement"
         guard. A round 2 attempt at exactly that guard was reverted: a
@@ -725,7 +785,7 @@ class MainNavigationBar(Container):
         active_id = f"nav-{self.active_destination_id}"
         focused = self._focused_strip_button()
         # Same "deliberate, not merely auto-focused" gate as
-        # `_recenter_periodic` (see that method and `on_descendant_focus`
+        # `_recenter_strip` (see that method and `on_descendant_focus`
         # for why): a straddling AUTO_FOCUS target from before the bar
         # settled must not earn an exemption from active either.
         focused_id = (
@@ -811,6 +871,25 @@ class MainNavigationBar(Container):
         self.active_destination_id = destination.destination_id
         self.active_route = screen_name
         self.active_screen = self.active_destination_id
+        # Deliberately still the plain, active-only
+        # `_scroll_active_destination_into_view`, NOT `_recenter_strip`
+        # (review round 3): a click/Enter-press on `button` here is the
+        # thing that just SET `active_destination_id` to `button`'s own
+        # destination, and a real mouse click (or Enter while `button`
+        # holds focus) also focuses `button` itself via Textual's normal
+        # click-handling -- so the "deliberate focus" and "active" targets
+        # are the SAME button in the by-far-common case, making this a
+        # no-op distinction there. The risk of routing through
+        # `_recenter_strip` here instead: if some STALE, unrelated
+        # `_deliberate_focus_id` from an earlier Tab press happens to
+        # still be the LIVE focused widget when a DIFFERENT button gets
+        # clicked (e.g. a click path that does not itself move focus),
+        # `_recenter_strip` would scroll back to that stale target instead
+        # of the button the user just activated -- the opposite of what a
+        # click-driven activation should ever do. Not exercised by any
+        # review finding (round 3's three repros are `on_resize`,
+        # `restore_active`, and the pager only), so left as the
+        # unconditional, already-correct-for-its-purpose primitive.
         self.call_after_refresh(self._scroll_active_destination_into_view)
 
         # Post navigation message to app
@@ -845,4 +924,15 @@ class MainNavigationBar(Container):
         # The restored destination may have been clip-ghosted (task-3200)
         # while it wasn't active -- re-scroll so it's guaranteed visible
         # now that it is, same as a normal click-driven activation.
-        self.call_after_refresh(self._scroll_active_destination_into_view)
+        # Review round 3: routes through `_recenter_strip`, not the plain
+        # active-only primitive -- live-reproduced as a stranding: Tab to
+        # `nav-settings` (active="schedules"), an optimistic click-activate
+        # to `console` (`_activate_navigation_button`, before its
+        # navigation actually completes), then `restore_active
+        # ("schedules")` left `nav-settings` genuinely straddling,
+        # un-ghosted, enabled, and still focused -- this call used to
+        # unconditionally re-target `schedules`, indifferent to the
+        # keyboard focus that had moved to `nav-settings` in the
+        # meantime, the identical defect class round 2 fixed only for the
+        # periodic interval.
+        self.call_after_refresh(self._recenter_strip)

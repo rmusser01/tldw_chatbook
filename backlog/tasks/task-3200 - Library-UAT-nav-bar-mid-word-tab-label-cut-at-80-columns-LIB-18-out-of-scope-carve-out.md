@@ -270,4 +270,152 @@ periodic`, `_mount_settled`/`_deliberate_focus_id`/`_mark_mount_settled`,
 `_focused_strip_button` crash fix, focused-guard reverted to unconditional
 exemption), `Tests/UI/test_master_shell_navigation.py` (new regression test),
 `.superpowers/sdd/library-polish-batch/task-5-report.md` (Fix Report round 2).
+
+### Review round 3 follow-up
+
+Round-3 re-review confirmed round 2's interval fix (`_recenter_periodic` + its
+probe test) held, but found round 2's "closed at the source" framing OVERSTATED
+coverage: the re-review live-reproduced the IDENTICAL stranding (a deliberately-
+focused, non-active button left genuinely straddling, un-ghosted, enabled, still
+focused) through THREE other active-only recenter triggers round 2 left
+untouched -- `on_resize`, `restore_active`, and the "More ›" pager. The actual
+source of the defect class was "every caller of an active-only, focus-indifferent
+recenter," not "the periodic interval" specifically; round 2 had fixed exactly one
+instance of it.
+
+**Generalized, not patched a third and fourth time**: `_recenter_periodic` renamed
+to `_recenter_strip` and made the ONE shared entry point every settle trigger
+funnels through -- mount, the interval, `on_resize`, and `restore_active` now all
+call it instead of the plain, active-only `_scroll_active_destination_into_view`
+directly. Confirmed behavior-neutral for mount specifically: `_deliberate_focus_id`
+cannot be set until AFTER `_mount_settled` becomes `True` (a later `call_after_
+refresh` than the mount-time recenter call), so `_recenter_strip` is provably
+equivalent to the old plain scroll throughout the entire mount-settle window,
+regardless of Textual's own `AUTO_FOCUS`. `_activate_navigation_button` (a click)
+deliberately kept calling the plain primitive -- documented reasoning in the code:
+a click that just set `active_destination_id` typically also focuses that same
+button via Textual's normal click handling, making the two targets identical in
+the common case; the one way they could differ (a stale, unrelated deliberate
+focus from an earlier Tab press still being the live-focused widget when a
+DIFFERENT button gets clicked) is not covered by any of round 3's repros, and
+migrating it there risks scrolling away from the button the user just activated.
+
+**The pager got a genuinely different fix, not `_recenter_strip`**, because its
+whole purpose is moving the viewport AWAY from wherever it sits -- scrolling back
+to the focused button (what `_recenter_strip` does everywhere else) would make
+"More ›" non-functional whenever a nav button holds focus (confirmed: the
+generalized interval was already doing exactly this unwanted self-heal within
+~0.5s, masking the pager's own defect by silently defeating the page). Decision,
+matching standard paginated-control convention: move focus WITH the page --
+specifically to the pager control itself (matching what a real mouse click on it
+already does) -- but ONLY when the old focus target would actually be left
+straddling by the new position (`_release_focus_if_left_straddling`). A second,
+independently-found timing bug had to be fixed to make this reliable: Textual's
+`Widget.scroll_to()` is itself internally deferred by one `call_after_refresh` hop
+before the new position even begins applying, so a straddle check scheduled only
+one hop after calling it can still read stale, pre-scroll geometry -- fixed by
+chaining a second hop (`_defer_focus_release_check`) specifically for this
+one-shot decision (unlike `_ghost_clipped_buttons`, which tolerates occasional
+staleness because later triggers re-invoke it).
+
+Four new regression tests, matching the re-review's specified repros exactly:
+`test_resize_does_not_strand_the_focused_button`,
+`test_restore_active_does_not_strand_the_focused_button`,
+`test_pager_releases_focus_instead_of_stranding_it` (the actual straddling
+scenario had to be found empirically -- `active="home"`, Tab to `nav-schedules`,
+a single forward page; the `nav-settings`/wrap-to-0 scenario tried first never
+straddles, it goes straight to fully-off-screen, which would have been a vacuous
+test), and `test_recenter_strip_and_focused_strip_button_survive_a_detached_bar`
+(the 5-line crash-guard: detach a mounted bar, call the focus-aware methods
+directly, confirm none raise).
+
+**"Closed at the source" is now actually true**: every active-recenter trigger
+either shares `_recenter_strip` or has its own, differently-shaped but equally
+deliberate fix (the pager). The remaining residual is a single in-flight layout
+pass (the scroll-then-geometry lag documented above), not an unhandled trigger.
+
+Tests: `test_master_shell_navigation.py` **31/31** (27 + 4 new) x5 runs;
+`test_product_maturity_phase6_focus_visual_sweep.py` 5/5 x3 runs;
+`test_destination_visual_parity_correction.py` 108 passed / 5 failed / 113
+collected (unchanged); the 13-file broader sweep re-run once, clean.
+
+Files this round: `tldw_chatbook/UI/Navigation/main_navigation.py`
+(`_recenter_periodic` renamed `_recenter_strip` and wired into `on_resize`/
+`restore_active`/`on_mount`; `_release_focus_if_left_straddling` +
+`_defer_focus_release_check`, new, pager-specific), `Tests/UI/
+test_master_shell_navigation.py` (four new regression tests),
+`.superpowers/sdd/library-polish-batch/task-5-report.md` (Fix Report round 3 +
+explicit correction of round 2's "closed at the source" overstatement).
+
+### Round 3 takeover: verification + one more correction
+
+Round 3 died mid-sweep (API limit) with its work uncommitted; a takeover verified
+the inherited diff before committing. Independently confirmed:
+`test_master_shell_navigation.py` **31/31 x7** (not just x5 — re-run twice more
+during takeover verification, including once mid-mutation-test), `test_product_
+maturity_phase6_focus_visual_sweep.py` **5/5 x3**, and the diff-stat matches the
+inherited partial exactly (487 insertions / 79 deletions across the three files).
+
+**The 13-file sweep tally needed a correction.** A fresh run found **328 passed, 6
+failed, 1 skipped** (not the "324/5/1" pattern reported every prior round) — a
+6th failure, `test_product_maturity_phase1_first_run.py::test_clean_first_run_
+launches_home_and_exposes_setup_orientation`, outside the known 5 (which remain
+exactly `test_destination_visual_parity_correction.py`'s schedules/MCP set,
+task-2560 territory). A/B-bisected by swapping `main_navigation.py`'s content at
+each commit (never `git checkout`, plain content swap + restore from a verified
+backup): passes cleanly at base `451d95340` (~2.5s, reliable across 4 runs),
+fails at round 1 `071a6c403` onward, unchanged by round 3's own diff (byte-for-
+byte identical failure with round-2 vs round-3 content). **Not a round-3
+regression** — it predates this round and was already broken at commit time for
+round 1 and round 2, whose own reports' "5 known, unchanged" tallies for this
+sweep were therefore never actually re-verified against this specific file, or
+were run under conditions where it happened to pass. Root-caused via a temporary,
+fully-reverted diagnostic (print instrumentation added and removed via `Edit`,
+confirmed `git diff --quiet` after): round 1's "ghost ⇒ disabled" fix (intentional
+and correct on its own terms) makes a genuinely off-screen `nav-settings`
+non-interactive, and this pre-existing test presses `#nav-settings` by ID at 140
+columns without paging/scrolling first — a premise round 1 legitimately broke,
+since a real mouse click could never land on a button in that state anyway. Filed
+as **task-3224** (root cause + fix options, not fixed here — out of round 3's
+scope).
+
+**A second correction, more material: "closed at the source" needs one more
+caveat.** Spot-checking RED reconstructibility (revert the specific wiring, watch
+the test fail for the right reason, restore via `Edit`) confirmed `restore_active`
+cleanly: reverting its `_recenter_strip` call reproduces the exact reported
+geometry (`nav-settings` at `Region(x=57, width=15)` vs `strip.region.right==70`)
+and the test goes red for that reason, then green again once restored. **The
+`on_resize` repro did not clear the same bar.** Reverting `on_resize`'s wiring
+alone (interval left fixed) did not turn `test_resize_does_not_strand_the_
+focused_button` red — the shipped scenario (resize 80→90) never produces a
+straddle at all in this bare-widget harness within the test's own timing budget,
+regardless of which method `on_resize` calls; `strip.region` simply never grows
+past its pre-resize width in that direction inside the window tested. The test is
+green, but vacuously — it is not exercising what its docstring claims. Building an
+alternative scenario that DOES reproduce a genuine straddle (same Tab-to-
+`nav-settings` setup, but SHRINKING 80→70 instead of growing) confirmed the
+underlying code difference is real at short windows (reverted code straddles
+immediately and stays that way; fixed code initially corrects it) — but also
+surfaced something round 3's own review did not catch: the fixed code's
+correction is only transient, drifting back to the same straddling geometry by
+roughly 0.3s post-resize, still short of the interval's 0.5s tick (so the interval
+cannot be the explanation), with focus/active/`_deliberate_focus_id` all
+unchanged throughout. Root cause not established in the time available. Filed as
+**task-3225** (root-cause the drift with direct on_resize call-count/timing
+evidence, then either land a second corrective pass or a genuinely-discriminating
+test).
+
+Net: the generalization itself (every settle trigger funnels through one
+focus-aware entry point, or the pager's principled alternative) is real and the
+right shape, and `restore_active` and the periodic interval are confirmed correct
+by mutation testing. `on_resize`'s coverage is the one leg not yet confirmed to
+the same standard — "closed at the source" is accurate for the refactor's
+structure, not yet proven end-to-end for every trigger's behavior under all
+timings.
+
+Tests (round-3-takeover, independently re-run): `test_master_shell_navigation.py`
+31/31 x7; `test_product_maturity_phase6_focus_visual_sweep.py` 5/5 x3; 13-file
+sweep 328 passed / 6 failed (5 known + 1 newly-characterized, task-3224) / 1
+skipped x1 (RED/GREEN mutation-tested for `restore_active`; `on_resize`'s own
+test found vacuous, follow-up task-3225 filed).
 <!-- SECTION:NOTES:END -->

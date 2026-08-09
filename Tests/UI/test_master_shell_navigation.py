@@ -820,3 +820,139 @@ async def test_periodic_interval_does_not_drag_the_focused_button_out_of_view():
             "the focused button must not be disabled while it holds focus"
         )
 
+
+@pytest.mark.asyncio
+async def test_resize_does_not_strand_the_focused_button():
+    """Review round 3 finding: `on_resize` used to route straight through
+    the plain, active-only `_scroll_active_destination_into_view`,
+    indifferent to keyboard focus -- the exact defect class round 2 fixed
+    for the periodic interval, independently reproduced through this
+    OTHER trigger. Live-reproduced: `active="schedules"`, Tab to
+    `nav-settings` (forces a scroll), then a resize (80 -> 90 cols)
+    dragged the strip back toward `schedules`, leaving `nav-settings`
+    straddling (`Region(x=66, width=15)` against `strip.region.right ==
+    80`), un-ghosted, enabled, and still focused.
+    """
+
+    class TestApp(App):
+        def compose(self):
+            yield MainNavigationBar(active="schedules")
+
+    app = TestApp()
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(0.3)
+
+        for _ in range(20):
+            await pilot.press("tab")
+            if getattr(app.focused, "id", None) == "nav-settings":
+                break
+        assert app.focused is not None and app.focused.id == "nav-settings", (
+            "test premise: expected to Tab-focus nav-settings"
+        )
+
+        await pilot.resize_terminal(90, 24)
+        await pilot.pause(0.3)
+
+        strip = app.query_one("#nav-destination-strip", Horizontal)
+        settings = app.query_one("#nav-settings", Button)
+        assert app.focused is settings, (
+            "nav-settings should still hold focus after the resize"
+        )
+        assert not _straddles_viewport(settings.region, strip.region), (
+            f"nav-settings straddles after a resize while focused: "
+            f"{settings.region} vs strip {strip.region}"
+        )
+        assert not settings.has_class("nav-button-clip-ghost")
+        assert not settings.disabled
+
+
+@pytest.mark.asyncio
+async def test_restore_active_does_not_strand_the_focused_button():
+    """Review round 3 finding: `restore_active` used to route straight
+    through the plain, active-only `_scroll_active_destination_into_view`
+    too -- the same defect class, a third independent trigger.
+    Live-reproduced: Tab to `nav-settings` (`active="schedules"`), an
+    optimistic click-activate to `console` (mirroring `_activate_
+    navigation_button`, before its navigation actually completes), then
+    `restore_active("schedules")` left `nav-settings` genuinely
+    straddling, un-ghosted, enabled, and still focused.
+    """
+
+    class TestApp(App):
+        def compose(self):
+            yield MainNavigationBar(active="schedules")
+
+    app = TestApp()
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(0.3)
+
+        for _ in range(20):
+            await pilot.press("tab")
+            if getattr(app.focused, "id", None) == "nav-settings":
+                break
+        assert app.focused is not None and app.focused.id == "nav-settings", (
+            "test premise: expected to Tab-focus nav-settings"
+        )
+
+        nav = app.query_one(MainNavigationBar)
+        console_button = app.query_one("#nav-console", Button)
+        nav._activate_navigation_button(console_button)
+        await pilot.pause(0.2)
+        nav.restore_active("schedules")
+        await pilot.pause(0.3)
+
+        strip = app.query_one("#nav-destination-strip", Horizontal)
+        settings = app.query_one("#nav-settings", Button)
+        assert app.focused is settings, (
+            "nav-settings should still hold focus after restore_active"
+        )
+        assert not _straddles_viewport(settings.region, strip.region), (
+            f"nav-settings straddles after restore_active while focused: "
+            f"{settings.region} vs strip {strip.region}"
+        )
+        assert not settings.has_class("nav-button-clip-ghost")
+        assert not settings.disabled
+
+
+# (rebase note) `test_pager_releases_focus_instead_of_stranding_it`
+# (review round 3's own regression test for a focused nav button left
+# straddling by a "More ›" pager press) was dropped here, not adapted:
+# dev's parallel NV-01/TASK-2154.21 rework (merged independently of the
+# whole task-3200 series) replaced in-strip paging with
+# `handle_overflow_hint` opening a real `NavOverflowMenu` screen listing
+# every destination -- pressing "#nav-overflow-hint" no longer scrolls
+# the strip at all, so there is no more scroll-viewport position for a
+# focused button to be left straddling against. The defect class this
+# test pinned cannot recur under the current design; see
+# `_refresh_overflow_hint_visibility`'s rebase note in
+# `main_navigation.py` for the corresponding production-code note.
+
+
+@pytest.mark.asyncio
+async def test_recenter_strip_and_focused_strip_button_survive_a_detached_bar():
+    """Review round 3 crash-guard: `self.screen` raises `NoScreen` once a
+    widget is no longer attached to an active screen (`_focused_strip_
+    button`'s round-2 fix). Confirm every focus-aware recenter entry point
+    tolerates that -- constructing a `MainNavigationBar`, mounting it,
+    then removing it, and calling the methods a stray deferred
+    `call_after_refresh` callback could still reach afterward must never
+    raise.
+    """
+
+    class TestApp(App):
+        def compose(self):
+            yield MainNavigationBar(active="home")
+
+    app = TestApp()
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        nav = app.query_one(MainNavigationBar)
+        await nav.remove()
+        await pilot.pause(0.1)
+
+        assert nav._focused_strip_button() is None
+        nav._recenter_strip()
+        nav._ghost_clipped_buttons()
+
