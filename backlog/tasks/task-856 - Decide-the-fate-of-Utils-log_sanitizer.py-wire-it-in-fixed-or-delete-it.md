@@ -124,6 +124,17 @@ failure set as clean `origin/dev` at 2 failed/23 passed
 (`test_llm_destination_action_census_is_complete_and_removed_controls_are_absent`
 and `test_production_llm_destination_owns_navigation_actions_and_recovery`).
 
+Final PR refresh: the branch was rebased again onto `origin/dev` at
+`ebeae144042c744d1639df2f192bda8d63aa78b6`. Exact generated comparison with
+that base records inventory `470/1155/6890/6`; the base and branch differ only
+in `monitoring_engine.py`'s digest (`65f3a0c1be12db1830f4` to
+`28b1354fcd730b42d311`). Both retain 16 calls, the same owner/reason, six sink
+files, and non-monitoring SHA-256
+`284f2c81631ff4b06b67971e996258b2b831b731f097b05dae46fd11aea0e2f3`.
+Fresh post-rebase verification retained 77 sanitizer/security passes, one
+installed-wheel pass, eight inventory architecture passes, green static/range/
+syntax/diff checks, and only the same two known full affected-module failures.
+
 Lessons recorded: no-match input does not prove matched-scanner linearity; and a
 rebase must rerun cross-cutting generated-manifest gates even when scoped files
 are unchanged.
