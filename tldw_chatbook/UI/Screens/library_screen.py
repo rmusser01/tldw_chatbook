@@ -506,6 +506,9 @@ LIBRARY_MEDIA_HANDOFF_EXCERPT_CHARS = 500
 # removed and remounted here -- only the always-kept heading is listed.
 LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS = frozenset({"library-rag-results-heading"})
 LIBRARY_NOTES_COMPACT_BREAKPOINT = 120
+LIBRARY_NOTES_SOURCE_DATABASE = "database"
+LIBRARY_NOTES_SOURCE_FILES = "files"
+LIBRARY_CANVAS_KIND_NOTES = "notes"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -2285,7 +2288,9 @@ class LibraryScreen(BaseAppScreen):
         **kwargs: Any,
     ) -> None:
         super().__init__(app_instance, "library", **kwargs)
-        self._library_notes_source: Literal["database", "files"] = "database"
+        self._library_notes_source: Literal["database", "files"] = (
+            LIBRARY_NOTES_SOURCE_DATABASE
+        )
         self._library_file_notes_workspace: LibraryFileNotesWorkspace | None = None
         if file_notes_workspace_factory is None:
             self._library_file_notes_workspace_factory = lambda: (
@@ -3254,7 +3259,7 @@ class LibraryScreen(BaseAppScreen):
     def _library_notes_workflow_active(self) -> bool:
         """Return whether the current Library route is owned by Database Notes."""
         return (
-            self._library_notes_source == "database"
+            self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
             and self._library_selected_row_id
             in {
                 LIBRARY_ROW_BROWSE_NOTES,
@@ -4945,7 +4950,12 @@ class LibraryScreen(BaseAppScreen):
     def _file_notes_active(self) -> bool:
         """Return whether the retained File Notes workspace owns the canvas."""
         return (
-            getattr(self, "_library_notes_source", "database") == "files"
+            getattr(
+                self,
+                "_library_notes_source",
+                LIBRARY_NOTES_SOURCE_DATABASE,
+            )
+            == LIBRARY_NOTES_SOURCE_FILES
             and getattr(self, "_library_selected_row_id", "")
             == LIBRARY_ROW_BROWSE_NOTES
             and getattr(self, "_library_file_notes_workspace", None) is not None
@@ -4976,13 +4986,18 @@ class LibraryScreen(BaseAppScreen):
     def _library_note_editor_active(self) -> bool:
         """True while the in-canvas DATABASE note editor is the live view (task-2856).
 
-        Scoped to ``_library_notes_source == "database"`` so this never
+        Scoped to Database Notes so this never
         overlaps ``_file_notes_active()`` -- Files mode has its own
         dedicated Escape gate and never sets ``_library_notes_view``.
         """
         return (
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
-            and getattr(self, "_library_notes_source", "database") == "database"
+            and getattr(
+                self,
+                "_library_notes_source",
+                LIBRARY_NOTES_SOURCE_DATABASE,
+            )
+            == LIBRARY_NOTES_SOURCE_DATABASE
             and getattr(self, "_library_notes_view", "list") == "editor"
         )
 
@@ -5020,7 +5035,12 @@ class LibraryScreen(BaseAppScreen):
             return getattr(self, "_library_media_view", "list") == "list"
         if row_id == LIBRARY_ROW_BROWSE_NOTES:
             return (
-                getattr(self, "_library_notes_source", "database") == "database"
+                getattr(
+                    self,
+                    "_library_notes_source",
+                    LIBRARY_NOTES_SOURCE_DATABASE,
+                )
+                == LIBRARY_NOTES_SOURCE_DATABASE
                 and getattr(self, "_library_notes_view", "list") == "list"
             )
         if row_id in (LIBRARY_ROW_BROWSE_PROMPTS, LIBRARY_ROW_CREATE_PROMPT):
@@ -7333,9 +7353,11 @@ class LibraryScreen(BaseAppScreen):
         )
         install_progress.display = self._parakeet_v2_install_progress is not None
         yield install_progress
-        if shell.canvas_kind == "notes":
+        if shell.canvas_kind == LIBRARY_CANVAS_KIND_NOTES:
             with Horizontal(id="library-notes-source-strip"):
-                database_selected = self._library_notes_source == "database"
+                database_selected = (
+                    self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
+                )
                 database_source = Button(
                     ("Database (selected)" if database_selected else "Database"),
                     id="library-notes-source-database",
@@ -7348,7 +7370,7 @@ class LibraryScreen(BaseAppScreen):
                     id="library-notes-source-separator",
                     markup=False,
                 )
-                files_selected = self._library_notes_source == "files"
+                files_selected = self._library_notes_source == LIBRARY_NOTES_SOURCE_FILES
                 files_source = Button(
                     "Files (selected)" if files_selected else "Files",
                     id="library-notes-source-files",
@@ -7405,8 +7427,8 @@ class LibraryScreen(BaseAppScreen):
                     "conversations",
                     "media",
                 ) or (
-                    shell.canvas_kind == "notes"
-                    and self._library_notes_source != "files"
+                    shell.canvas_kind == LIBRARY_CANVAS_KIND_NOTES
+                    and self._library_notes_source != LIBRARY_NOTES_SOURCE_FILES
                 )
                 if (
                     is_local_snapshot_canvas
@@ -7469,8 +7491,8 @@ class LibraryScreen(BaseAppScreen):
                         id="library-media-canvas",
                     )
                 elif (
-                    shell.canvas_kind == "notes"
-                    and self._library_notes_source == "files"
+                    shell.canvas_kind == LIBRARY_CANVAS_KIND_NOTES
+                    and self._library_notes_source == LIBRARY_NOTES_SOURCE_FILES
                 ):
                     # task-2850: File Notes owns the canvas PANE now, not
                     # the whole screen -- the rail and shell_grid frame
@@ -7488,7 +7510,7 @@ class LibraryScreen(BaseAppScreen):
                             markup=False,
                         )
                 elif (
-                    shell.canvas_kind == "notes"
+                    shell.canvas_kind == LIBRARY_CANVAS_KIND_NOTES
                     and self._library_notes_view == "editor"
                 ):
                     editor_state = self._library_note_editor_state()
@@ -7538,7 +7560,8 @@ class LibraryScreen(BaseAppScreen):
                             id="library-notes-canvas",
                         )
                 elif (
-                    shell.canvas_kind == "notes" and self._library_notes_view == "sync"
+                    shell.canvas_kind == LIBRARY_CANVAS_KIND_NOTES
+                    and self._library_notes_view == "sync"
                 ):
                     yield LibraryNotesCanvas(
                         mode="sync",
@@ -7546,7 +7569,7 @@ class LibraryScreen(BaseAppScreen):
                         compact=self._library_notes_compact,
                         id="library-notes-canvas",
                     )
-                elif shell.canvas_kind == "notes":
+                elif shell.canvas_kind == LIBRARY_CANVAS_KIND_NOTES:
                     yield LibraryNotesCanvas(
                         self._build_library_notes_state(),
                         sort_mode=self._library_notes_sort,
@@ -8254,7 +8277,7 @@ class LibraryScreen(BaseAppScreen):
         if (
             note_id != self._selected_note_id
             or self._library_notes_view != "editor"
-            or self._library_notes_source != "database"
+            or self._library_notes_source != LIBRARY_NOTES_SOURCE_DATABASE
         ):
             return
         outcome = await self._library_note_session.open_session(note_id)
@@ -8263,7 +8286,7 @@ class LibraryScreen(BaseAppScreen):
         if (
             note_id != self._selected_note_id
             or self._library_notes_view != "editor"
-            or self._library_notes_source != "database"
+            or self._library_notes_source != LIBRARY_NOTES_SOURCE_DATABASE
         ):
             return
         if outcome.kind is NoteLoadOutcomeKind.MISSING:
@@ -11098,7 +11121,7 @@ class LibraryScreen(BaseAppScreen):
     async def _show_library_file_notes(self, event: Button.Pressed) -> None:
         """Leave Database Notes safely and lazily mount File Notes."""
         event.stop()
-        if self._library_notes_source == "files":
+        if self._library_notes_source == LIBRARY_NOTES_SOURCE_FILES:
             return
         await self._flush_library_note_save()
         if self._library_note_dirty:
@@ -11109,7 +11132,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_file_notes_workspace = (
                 self._library_file_notes_workspace_factory()
             )
-        self._library_notes_source = "files"
+        self._library_notes_source = LIBRARY_NOTES_SOURCE_FILES
         # task-2850: the Files-mode Escape binding only fires while
         # ``_file_notes_active()`` is true, so the footer's advertised keys
         # must follow this same transition or Escape works unadvertised.
@@ -11130,7 +11153,7 @@ class LibraryScreen(BaseAppScreen):
         sequence -- one seam, not a parallel key-driven path that could
         drift from the button's.
         """
-        if self._library_notes_source == "database":
+        if self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE:
             return
         if not await self._flush_active_file_notes():
             return
@@ -11138,7 +11161,7 @@ class LibraryScreen(BaseAppScreen):
         if release_source is False:
             return
         try:
-            self._library_notes_source = "database"
+            self._library_notes_source = LIBRARY_NOTES_SOURCE_DATABASE
             self._register_footer_shortcuts()
             await self.recompose()
             # task-2856 AC1: this lands on the Notes LIST (never Files'
@@ -11209,14 +11232,16 @@ class LibraryScreen(BaseAppScreen):
         """
         try:
             notes_source_strip_mounted = bool(self.query("#library-notes-source-strip"))
-            destination_uses_notes_source_strip = shell.canvas_kind == "notes"
+            destination_uses_notes_source_strip = (
+                shell.canvas_kind == LIBRARY_CANVAS_KIND_NOTES
+            )
             if notes_source_strip_mounted != destination_uses_notes_source_strip:
                 return False
 
-            if shell.canvas_kind == "notes":
+            if shell.canvas_kind == LIBRARY_CANVAS_KIND_NOTES:
                 if (
                     self._library_notes_view != "list"
-                    or self._library_notes_source != "database"
+                    or self._library_notes_source != LIBRARY_NOTES_SOURCE_DATABASE
                 ):
                     return False
                 canvas: Widget = LibraryNotesCanvas(
@@ -11314,6 +11339,11 @@ class LibraryScreen(BaseAppScreen):
         if not await self._flush_library_skill_save():
             self._notify_skill_dirty_veto()
             return
+        if row_id == LIBRARY_ROW_CREATE_NOTE:
+            # Create Note is a database-only Notes route. File Notes owns a
+            # retained workspace, so normalize the source only after its
+            # flush and transition admission have succeeded.
+            self._library_notes_source = LIBRARY_NOTES_SOURCE_DATABASE
         # A rail selection is an explicit route boundary, even when the user
         # later returns to the same visual Notes region. Invalidate the token
         # now so leave→return cannot recreate authority by region equality.

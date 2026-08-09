@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-09 19:57'
-updated_date: '2026-08-09 20:09'
+updated_date: '2026-08-09 13:43'
 labels:
   - library
   - notes
@@ -34,6 +34,8 @@ Restore reliable access to the Library Notes source selector so users can reach 
 - [x] #4 Reselecting Notes while Files owns the canvas retains the file-notes workspace, and Escape returns from Files to Database Notes.
 - [x] #5 Switching from a loading Database Note to Files invalidates the pending database session so its late completion cannot repopulate hidden editor state.
 - [x] #6 Focused mounted UI regressions, linting, changed-hunk formatting review, and diff checks pass.
+- [x] #7 Selecting Create Note from Files mode returns Notes to the Database source and restores the Database Notes Escape action.
+- [x] #8 Notes-source and Notes-canvas control flow uses named constants instead of repeated behavior-defining string literals.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -50,6 +52,7 @@ Reason: This is a contained UI composition-lifecycle regression and does not cha
 3. Preserve the existing File Notes exit and database-session invalidation contracts once the source selector is reachable again.
 4. Run focused Library Notes and shell tests at the supported compact terminal sizes.
 5. Run lint, changed-hunk formatting review, diff, and self-review checks, then document the implementation outcome.
+6. Address Qodo's source-state and maintainability findings with a Files-to-Create regression and named behavior constants.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -62,5 +65,6 @@ Reason: This is a contained UI composition-lifecycle regression and does not cha
 - Targeted Ruff (with seven unrelated pre-existing E721 findings excluded) and `git diff --check` passed. Changed hunks were reviewed against Ruff's formatter output; the three large pre-existing UI files still report whole-file formatting drift, so they were not mechanically reformatted into an unrelated large diff.
 - The existing Library user guide already accurately documents `Database | Files`; no user-facing documentation change was required. Added the route-owned-sibling incident to `backlog/docs/lessons-testing-evidence.md`.
 - ADR required: no. The change conforms to ADR-027 and ADR-029 and does not alter storage, synchronization, or ownership boundaries.
-- Backlog.md's CLI was blocked by the repository's pre-existing duplicate TASK-3401 collision and has no explicit-ID create option, so this collision-free task was recorded and completed directly in its canonical task file without altering the unrelated duplicate tasks.
+- Addressed both actionable Qodo findings: Create Note now normalizes Files to the Database source only after File Notes flush and transition admission succeed, and routing/source checks now share named source and canvas-kind constants. The new transition regression asserts the selected route, source, Escape action, and lease ordering.
+- Focused Qodo follow-up verification passed: eight route/source/session tests, targeted Ruff with the file's pre-existing E721 findings excluded, and `git diff --check`. The owner directed this PR to ignore the unrelated duplicate TASK-3401 CI failure, so no unrelated backlog task was renumbered.
 <!-- SECTION:NOTES:END -->
