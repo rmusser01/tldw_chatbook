@@ -1,6 +1,5 @@
 """PlayerPipeline: probe parsing, lifecycle, and isolated run state."""
 
-
 import os
 import subprocess
 import threading
@@ -17,7 +16,11 @@ def test_playback_tools_available_present_and_missing(monkeypatch):
     monkeypatch.setattr(pp.shutil, "which", lambda tool: f"/usr/bin/{tool}")
     ok, guidance = pp.playback_tools_available()
     assert ok and guidance == ""
-    monkeypatch.setattr(pp.shutil, "which", lambda tool: None if tool == "ffplay" else f"/usr/bin/{tool}")
+    monkeypatch.setattr(
+        pp.shutil,
+        "which",
+        lambda tool: None if tool == "ffplay" else f"/usr/bin/{tool}",
+    )
     ok, guidance = pp.playback_tools_available()
     assert not ok and "ffplay" in guidance and "ffmpeg" in guidance
 
@@ -40,7 +43,11 @@ def test_parse_probe_json_video_and_audio():
 
 def test_parse_probe_json_silent_stream_duration_fallback():
     probe = pp.parse_probe_json(
-        {"streams": [{"codec_type": "video", "width": 64, "height": 48, "duration": "1.0"}]},
+        {
+            "streams": [
+                {"codec_type": "video", "width": 64, "height": 48, "duration": "1.0"}
+            ]
+        },
         "silent.mp4",
     )
     assert probe.has_audio is False
@@ -139,7 +146,9 @@ class _SpawnRecorder:
 
 
 def _probe(width=64, height=48, duration=2.0, has_audio=True):
-    return pp.PlayerProbe(width=width, height=height, duration_seconds=duration, has_audio=has_audio)
+    return pp.PlayerProbe(
+        width=width, height=height, duration_seconds=duration, has_audio=has_audio
+    )
 
 
 def _record_real_pipe_fds(monkeypatch):
@@ -212,9 +221,7 @@ def test_silent_start_never_allocates_audio_pipe(monkeypatch):
 
 def test_first_spawn_failure_closes_every_parent_pipe_fd(monkeypatch):
     fds, closed = _record_real_pipe_fds(monkeypatch)
-    pipeline = pp.PlayerPipeline(
-        "clip.mp4", _probe(), spawn=_SpawnRecorder(fail_at=1)
-    )
+    pipeline = pp.PlayerPipeline("clip.mp4", _probe(), spawn=_SpawnRecorder(fail_at=1))
 
     with pytest.raises(OSError, match="spawn failed"):
         pipeline.start()
@@ -306,7 +313,9 @@ def test_sync_clock_math(monkeypatch):
     run.pause_started = 101.0
     now[0] = 103.0
     pipeline.resume()  # folds 2.0s of pause out of the clock
-    assert pipeline.sync_clock(run) == pytest.approx(3.0 - 2.0 - pp.AUDIO_BUFFER_LAG_SECONDS)
+    assert pipeline.sync_clock(run) == pytest.approx(
+        3.0 - 2.0 - pp.AUDIO_BUFFER_LAG_SECONDS
+    )
 
 
 def test_due_behind_and_stats(monkeypatch):
@@ -372,9 +381,7 @@ def test_pause_and_resume_signal_only_captured_run_during_restart(
     monkeypatch.setattr(pp.time, "monotonic", blocked_clock)
     monkeypatch.setattr(pp.os, "kill", lambda pid, sig: killed.append((pid, sig)))
     spawn = _SpawnRecorder()
-    pipeline = pp.PlayerPipeline(
-        "silent.mp4", _probe(has_audio=False), spawn=spawn
-    )
+    pipeline = pp.PlayerPipeline("silent.mp4", _probe(has_audio=False), spawn=spawn)
     old_run = pipeline.start()
     if action == "resume":
         old_run.pause_started = 99.0
@@ -427,7 +434,7 @@ class _FakeStdout:
             return b""
         want = self._chunk if size < 0 else min(self._chunk, size)
         end = min(self._pos + want, len(self._payload))
-        data = self._payload[self._pos:end]
+        data = self._payload[self._pos : end]
         self._pos = end
         return data
 
@@ -468,7 +475,9 @@ def test_iter_frames_exact_reads_and_pts_sequence():
     frames = list(pipeline.iter_frames(run))
     assert len(frames) == 3
     fps = pp.PLAYER_TARGET_FPS
-    assert [pts for pts, _ in frames] == pytest.approx([1.0, 1.0 + 1 / fps, 1.0 + 2 / fps])
+    assert [pts for pts, _ in frames] == pytest.approx(
+        [1.0, 1.0 + 1 / fps, 1.0 + 2 / fps]
+    )
     assert all(len(data) == 24 for _, data in frames)
     assert run.eof
 
@@ -689,12 +698,8 @@ def test_restart_then_never_advanced_iterator_close_closes_old_stdout_exactly_on
 
 def test_stop_force_kill_waits_for_process_after_terminate_timeout():
     stdout = _FakeStdout(b"", chunk=1)
-    spawn = _SpawnRecorder(
-        stdout_factory=lambda: stdout, timeout_at=1
-    )
-    pipeline = pp.PlayerPipeline(
-        "silent.mp4", _probe(has_audio=False), spawn=spawn
-    )
+    spawn = _SpawnRecorder(stdout_factory=lambda: stdout, timeout_at=1)
+    pipeline = pp.PlayerPipeline("silent.mp4", _probe(has_audio=False), spawn=spawn)
     pipeline.start()
 
     pipeline.stop()
@@ -789,9 +794,7 @@ def test_stop_is_idempotent():
 
 def test_http_source_injects_reconnect_flags():
     spawn = _SpawnRecorder()
-    pipeline = pp.PlayerPipeline(
-        "https://cdn.example.net/v.mp4", _probe(), spawn=spawn
-    )
+    pipeline = pp.PlayerPipeline("https://cdn.example.net/v.mp4", _probe(), spawn=spawn)
     pipeline.start()
     joined = " ".join(spawn.calls[0].cmd)
     assert "-reconnect 1" in joined

@@ -130,7 +130,9 @@ class AvFrameSource:
         next_emit = 0.0
         try:
             for frame in container.decode(video=0):
-                timestamp = float(frame.pts * frame.time_base) if frame.pts is not None else 0.0
+                timestamp = (
+                    float(frame.pts * frame.time_base) if frame.pts is not None else 0.0
+                )
                 now = time.monotonic() - started
                 if now < next_emit:
                     # Decode outruns the wall clock: pace by sleeping until the

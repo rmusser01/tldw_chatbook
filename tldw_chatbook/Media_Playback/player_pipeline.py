@@ -54,11 +54,7 @@ def playback_tools_available() -> tuple[bool, str]:
     """Whether ffmpeg+ffplay are on PATH; returns (ok, guidance-if-missing)."""
     if shutil.which("ffmpeg") and shutil.which("ffplay"):
         return True, ""
-    missing = [
-        tool
-        for tool in ("ffmpeg", "ffplay")
-        if shutil.which(tool) is None
-    ]
+    missing = [tool for tool in ("ffmpeg", "ffplay") if shutil.which(tool) is None]
     return False, f"Missing {', '.join(missing)}. {PLAYBACK_TOOLS_GUIDANCE}"
 
 
@@ -76,14 +72,16 @@ def probe_file(source: str | Path) -> PlayerProbe:
     """Probe width/height/duration/audio-presence via ffprobe JSON."""
     cmd = [
         "ffprobe",
-        "-v", "error",
+        "-v",
+        "error",
     ]
     if str(source).startswith(("http://", "https://")):
         # task-3401.11: streams get the same reconnect/timeout input options
         # as the playback pipeline so probing a slow host cannot hang.
         cmd += ["-reconnect", "1", "-rw_timeout", "15000000"]
     cmd += [
-        "-print_format", "json",
+        "-print_format",
+        "json",
         "-show_streams",
         "-show_format",
         str(source),
@@ -240,28 +238,47 @@ class PlayerPipeline:
                 # a throttled/dropped connection resumes inside ffmpeg instead
                 # of killing playback, plus a socket timeout to surface stalls.
                 http_args = [
-                    "-reconnect", "1",
-                    "-reconnect_streamed", "1",
-                    "-reconnect_delay_max", "5",
-                    "-rw_timeout", "15000000",
+                    "-reconnect",
+                    "1",
+                    "-reconnect_streamed",
+                    "1",
+                    "-reconnect_delay_max",
+                    "5",
+                    "-rw_timeout",
+                    "15000000",
                 ]
             ffmpeg_cmd = [
-                "ffmpeg", "-hide_banner", "-loglevel", "error",
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
                 *http_args,
                 *seek_args,
                 "-re",  # pace input at native frame rate (silent sources especially)
-                "-i", self._source,
+                "-i",
+                self._source,
                 # Video: CFR at the target fps so pts == index / fps exactly.
-                "-map", "0:v:0",
-                "-vf", f"fps={self._target_fps:g}",
-                "-f", "rawvideo", "-pix_fmt", "rgb24",
+                "-map",
+                "0:v:0",
+                "-vf",
+                f"fps={self._target_fps:g}",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "rgb24",
                 "pipe:1",
             ]
             pass_fds: tuple[int, ...] = ()
             if audio_w is not None:
                 ffmpeg_cmd += [
-                    "-map", "0:a:0",
-                    "-f", "s16le", "-ac", str(AUDIO_CHANNELS), "-ar", str(AUDIO_RATE),
+                    "-map",
+                    "0:a:0",
+                    "-f",
+                    "s16le",
+                    "-ac",
+                    str(AUDIO_CHANNELS),
+                    "-ar",
+                    str(AUDIO_RATE),
                     f"pipe:{audio_w}",
                 ]
                 pass_fds = (audio_w,)
@@ -278,10 +295,21 @@ class PlayerPipeline:
                     audio_w = None
                     os.close(inherited_audio_w)  # the ffmpeg child has its own copy
                     ffplay_cmd = [
-                        "ffplay", "-autoexit", "-nodisp", "-loglevel", "error",
-                        "-volume", str(self._volume),
-                        "-f", "s16le", "-ar", str(AUDIO_RATE), "-ac", str(AUDIO_CHANNELS),
-                        "-i", "pipe:0",
+                        "ffplay",
+                        "-autoexit",
+                        "-nodisp",
+                        "-loglevel",
+                        "error",
+                        "-volume",
+                        str(self._volume),
+                        "-f",
+                        "s16le",
+                        "-ar",
+                        str(AUDIO_RATE),
+                        "-ac",
+                        str(AUDIO_CHANNELS),
+                        "-i",
+                        "pipe:0",
                     ]
                     ffplay = self._spawn(
                         ffplay_cmd,
@@ -366,7 +394,9 @@ class PlayerPipeline:
 
     def sync_clock(self, run: PlayerRun) -> float:
         """Estimated playback position in seconds (pause-adjusted wall time)."""
-        elapsed = 0.0 if run.started_wall is None else time.monotonic() - run.started_wall
+        elapsed = (
+            0.0 if run.started_wall is None else time.monotonic() - run.started_wall
+        )
         lag = AUDIO_BUFFER_LAG_SECONDS if self._probe.has_audio else 0.0
         return run.offset_seconds + elapsed - run.paused_total - lag
 

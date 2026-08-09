@@ -137,7 +137,9 @@ def _patch_modal_seams(monkeypatch: pytest.MonkeyPatch):
 
 
 async def _wait(event: Event, *, timeout: float = 2.0) -> None:
-    assert await asyncio.to_thread(event.wait, timeout), "synchronization event timed out"
+    assert await asyncio.to_thread(event.wait, timeout), (
+        "synchronization event timed out"
+    )
 
 
 async def _finish_workers(app: _PlayerApp, pilot: Any) -> None:
@@ -145,7 +147,9 @@ async def _finish_workers(app: _PlayerApp, pilot: Any) -> None:
     await pilot.pause()
     assert app.player.seen_workers
     assert WorkerState.ERROR not in app.player.worker_states
-    assert all(worker.state is not WorkerState.ERROR for worker in app.player.seen_workers)
+    assert all(
+        worker.state is not WorkerState.ERROR for worker in app.player.seen_workers
+    )
 
 
 def _assert_sanitized(records: list[str], phase: str) -> None:
@@ -160,7 +164,17 @@ def _assert_sanitized(records: list[str], phase: str) -> None:
 
 
 def test_bindings_follow_keybinding_conventions():
-    forbidden_chords = {"ctrl+c", "ctrl+v", "ctrl+x", "ctrl+s", "ctrl+d", "ctrl+z", "ctrl+a", "ctrl+r", "ctrl+w"}
+    forbidden_chords = {
+        "ctrl+c",
+        "ctrl+v",
+        "ctrl+x",
+        "ctrl+s",
+        "ctrl+d",
+        "ctrl+z",
+        "ctrl+a",
+        "ctrl+r",
+        "ctrl+w",
+    }
     keys = {binding.key for binding in VideoPlayerScreen.BINDINGS}
     assert keys == {"space", "s", "left", "right", "q"}
     assert not (keys & forbidden_chords)
@@ -171,7 +185,11 @@ def test_bindings_follow_keybinding_conventions():
 def test_hints_line_names_only_implemented_actions():
     # AC2: the footer hints may only advertise implemented actions -- every
     # hinted key has a matching action method on the screen.
-    hinted = {"space": "action_toggle_pause", "s": "action_stop_playback", "q": "action_close_player"}
+    hinted = {
+        "space": "action_toggle_pause",
+        "s": "action_stop_playback",
+        "q": "action_close_player",
+    }
     for key, method in hinted.items():
         assert key in _HINTS
         assert callable(getattr(VideoPlayerScreen, method))
@@ -418,9 +436,7 @@ async def test_replacement_pump_starts_before_seek_flag_is_cleared(monkeypatch):
             self.launch_flags: list[tuple[int, bool]] = []
             super().__init__(*args, **kwargs)
 
-        def _start_pump(
-            self, token: int, pipeline: _Pipeline, run: PlayerRun
-        ) -> None:
+        def _start_pump(self, token: int, pipeline: _Pipeline, run: PlayerRun) -> None:
             self.launch_flags.append((run.generation, self._seek_in_flight))
             super()._start_pump(token, pipeline, run)
 
@@ -500,7 +516,10 @@ async def test_old_frame_eof_and_failure_after_seek_do_not_replace_new_frame(
             await _finish_workers(app, pilot)
 
             assert app.player._run is replacement
-            assert str(app.player.query_one("#video-player-frame", Static).renderable) == replacement_frame
+            assert (
+                str(app.player.query_one("#video-player-frame", Static).renderable)
+                == replacement_frame
+            )
             assert not app.notifications
     finally:
         logger.remove(sink)
@@ -534,7 +553,9 @@ async def _assert_wrong_identity_is_ignored(
         run = player._run
         assert pipeline is not None and run is not None
         token = player._activation_token
-        candidate_pipeline = HeldPipeline(PRIVATE_PATH, PROBE) if wrong_pipeline else pipeline
+        candidate_pipeline = (
+            HeldPipeline(PRIVATE_PATH, PROBE) if wrong_pipeline else pipeline
+        )
         candidate_run = run if wrong_pipeline else PlayerRun(run.generation, None, 0.0)
 
         assert not player._render_frame(

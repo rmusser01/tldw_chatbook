@@ -74,6 +74,7 @@ class _PreviewApp(App[None]):
             self.action_count += 1
             self.action_seen.set()
 
+
 class _Source:
     """Minimal decoder seam; individual tests override only their needed phase."""
 
@@ -112,7 +113,9 @@ def _patch_source(monkeypatch: pytest.MonkeyPatch, factory: Any) -> None:
 
 
 async def _wait(event: Event, *, timeout: float = 2.0) -> None:
-    assert await asyncio.to_thread(event.wait, timeout), "synchronization event timed out"
+    assert await asyncio.to_thread(event.wait, timeout), (
+        "synchronization event timed out"
+    )
 
 
 async def _finish_workers(app: _PreviewApp, pilot: Any) -> None:
@@ -121,8 +124,7 @@ async def _finish_workers(app: _PreviewApp, pilot: Any) -> None:
     assert app.preview.seen_workers
     assert WorkerState.ERROR not in app.preview.worker_states
     assert all(
-        worker.state is not WorkerState.ERROR
-        for worker in app.preview.seen_workers
+        worker.state is not WorkerState.ERROR for worker in app.preview.seen_workers
     )
 
 
@@ -618,9 +620,7 @@ async def test_immediate_eof_observes_timer_before_decode_and_cleans_every_owner
             sources.append(self)
 
         def iter_frames(self):
-            timer_seen.append(
-                app_holder["app"].preview._offscreen_timer is not None
-            )
+            timer_seen.append(app_holder["app"].preview._offscreen_timer is not None)
             if False:
                 yield 0.0, None
 
@@ -854,6 +854,7 @@ async def test_bridge_refusal_is_attempted_once_without_direct_ui_fallback(monke
     sink = logger.add(lambda message: records.append(str(message)))
     try:
         async with app.run_test() as pilot:
+
             def refuse(callback, *args, **kwargs):
                 bridge_calls.append((callback.__name__, get_ident()))
                 raise RuntimeError(PRIVATE_ERROR)

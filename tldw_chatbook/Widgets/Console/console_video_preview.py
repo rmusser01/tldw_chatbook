@@ -240,9 +240,10 @@ class ConsoleVideoPreview(Vertical):
                 return
             if run.cancelled.is_set():
                 return
-            if self._bridge(
-                "frame_dispatch", self._accept_source, run, source
-            ) is not True:
+            if (
+                self._bridge("frame_dispatch", self._accept_source, run, source)
+                is not True
+            ):
                 return
 
             try:
@@ -255,18 +256,19 @@ class ConsoleVideoPreview(Vertical):
                         return
                     except Exception as exc:
                         _log_preview_failure("decode", exc)
-                        self._bridge(
-                            "frame_dispatch", self._degrade_run, run, source
-                        )
+                        self._bridge("frame_dispatch", self._degrade_run, run, source)
                         return
-                    if self._bridge(
-                        "frame_dispatch",
-                        self._show_frame,
-                        run,
-                        source,
-                        timestamp,
-                        image,
-                    ) is not True:
+                    if (
+                        self._bridge(
+                            "frame_dispatch",
+                            self._show_frame,
+                            run,
+                            source,
+                            timestamp,
+                            image,
+                        )
+                        is not True
+                    ):
                         return
             except Exception as exc:
                 _log_preview_failure("decode", exc)

@@ -36,8 +36,13 @@ def _ffmpeg(*args: str) -> None:
 def video_only_clip(tmp_path):
     path = tmp_path / "video_only.mp4"
     _ffmpeg(
-        "-f", "lavfi", "-i", "testsrc=duration=1:size=64x48:rate=10",
-        "-c:v", "mpeg4", str(path),
+        "-f",
+        "lavfi",
+        "-i",
+        "testsrc=duration=1:size=64x48:rate=10",
+        "-c:v",
+        "mpeg4",
+        str(path),
     )
     return path
 
@@ -46,9 +51,20 @@ def video_only_clip(tmp_path):
 def audio_video_clip(tmp_path):
     path = tmp_path / "audio_video.mp4"
     _ffmpeg(
-        "-f", "lavfi", "-i", "testsrc=duration=1:size=64x48:rate=10",
-        "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
-        "-c:v", "mpeg4", "-c:a", "aac", "-shortest", str(path),
+        "-f",
+        "lavfi",
+        "-i",
+        "testsrc=duration=1:size=64x48:rate=10",
+        "-f",
+        "lavfi",
+        "-i",
+        "sine=frequency=440:duration=1",
+        "-c:v",
+        "mpeg4",
+        "-c:a",
+        "aac",
+        "-shortest",
+        str(path),
     )
     return path
 

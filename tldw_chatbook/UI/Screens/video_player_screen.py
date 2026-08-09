@@ -260,18 +260,14 @@ class VideoPlayerScreen(ModalScreen[None]):
 
     # -- frame pump (worker thread) -------------------------------------------
 
-    def _start_pump(
-        self, token: int, pipeline: PlayerPipeline, run: PlayerRun
-    ) -> None:
+    def _start_pump(self, token: int, pipeline: PlayerPipeline, run: PlayerRun) -> None:
         self.run_worker(
             partial(self._pump_loop, token, pipeline, run),
             thread=True,
             group="video-player-pump",
         )
 
-    def _pump_loop(
-        self, token: int, pipeline: PlayerPipeline, run: PlayerRun
-    ) -> None:
+    def _pump_loop(self, token: int, pipeline: PlayerPipeline, run: PlayerRun) -> None:
         """Drive exactly one immutable playback generation."""
         try:
             for pts, data in pipeline.iter_frames(run):
@@ -298,9 +294,7 @@ class VideoPlayerScreen(ModalScreen[None]):
             _log_failure("pump", exc)
             self._bridge(self._fail_run, token, pipeline, run)
 
-    def _matches(
-        self, token: int, pipeline: PlayerPipeline, run: PlayerRun
-    ) -> bool:
+    def _matches(self, token: int, pipeline: PlayerPipeline, run: PlayerRun) -> bool:
         return (
             self._mounted
             and token == self._activation_token
@@ -353,18 +347,14 @@ class VideoPlayerScreen(ModalScreen[None]):
             return False
         return True
 
-    def _finish_run(
-        self, token: int, pipeline: PlayerPipeline, run: PlayerRun
-    ) -> bool:
+    def _finish_run(self, token: int, pipeline: PlayerPipeline, run: PlayerRun) -> bool:
         if not self._matches(token, pipeline, run):
             return False
         self._finished = True
         self._refresh_status()
         return True
 
-    def _fail_run(
-        self, token: int, pipeline: PlayerPipeline, run: PlayerRun
-    ) -> bool:
+    def _fail_run(self, token: int, pipeline: PlayerPipeline, run: PlayerRun) -> bool:
         if not self._matches(token, pipeline, run):
             return False
         app = self.app
@@ -400,7 +390,11 @@ class VideoPlayerScreen(ModalScreen[None]):
                 )
                 self.dismiss(None)
                 return
-        state = "⏸ paused" if self._paused else ("■ finished" if self._finished else "▶ playing")
+        state = (
+            "⏸ paused"
+            if self._paused
+            else ("■ finished" if self._finished else "▶ playing")
+        )
         # AC3: surface stalls (no frames for a while mid-play) -- ffmpeg's
         # reconnect flags are what actually resumes them.
         if (
@@ -453,12 +447,7 @@ class VideoPlayerScreen(ModalScreen[None]):
     def _seek_relative(self, delta: float) -> None:
         pipeline = self._pipeline
         run = self._run
-        if (
-            pipeline is None
-            or run is None
-            or self._finished
-            or self._seek_in_flight
-        ):
+        if pipeline is None or run is None or self._finished or self._seek_in_flight:
             return
         if not self._seekable:
             # AC4: non-seekable streams disable seek (the hints line says so).
@@ -475,9 +464,7 @@ class VideoPlayerScreen(ModalScreen[None]):
             group="video-player-seek",
         )
 
-    def _seek(
-        self, token: int, pipeline: PlayerPipeline, target: float
-    ) -> None:
+    def _seek(self, token: int, pipeline: PlayerPipeline, target: float) -> None:
         try:
             run = pipeline.seek(target)
         except Exception as exc:
