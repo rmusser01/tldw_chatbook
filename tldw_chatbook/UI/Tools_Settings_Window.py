@@ -46,6 +46,11 @@ from textual.widgets import (
 )
 from textual.message import Message
 from textual.worker import NoActiveWorker, get_current_worker
+
+# task-3240: WEB_DEEP_SEARCH_GATE_KEY relocated to its actual runtime
+# consumer (Agents/local_tool_provider.py); re-exported here so this
+# (deprecated) window's own code and tests keep working unchanged.
+from ..Agents.local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY  # noqa: F401
 from textual.widgets import Markdown
 from textual import on
 
@@ -131,7 +136,12 @@ SETTINGS_DATABASES = (
 #: in the SAME [tools] table the GateableTool switches write, so the Tool
 #: Settings view gets it its own row plus explicit save/reset handling
 #: instead of a GateableTool table entry.
-WEB_DEEP_SEARCH_GATE_KEY = "web_deep_search_enabled"
+#:
+#: task-3240: WEB_DEEP_SEARCH_GATE_KEY itself relocated to
+#: Agents/local_tool_provider.py (its actual runtime consumer); the
+#: back-compat re-export now lives in the top-of-file import block
+#: (Qodo PR #1453 — three-group import ordering).
+
 WEB_DEEP_SEARCH_TOOL_NAME = "web_deep_search"
 
 #: TASK-2775: the About text's canonical home is Utils/about_text (rendered by

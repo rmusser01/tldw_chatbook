@@ -38,6 +38,15 @@ SOURCE = "local"
 LOCAL_SERVER_KEY = "local:__local__"
 LOCAL_SERVER_LABEL = "Local workspace"
 
+#: task-3240: relocated here from UI/Tools_Settings_Window.py -- this module
+#: is web_deep_search's actual runtime consumer (the [tools] gate read just
+#: below), which used to re-type the literal. Tools_Settings_Window.py now
+#: imports the constant from here instead of defining it; Agents/
+#: builtin_tool_gate.py's all_tool_gates() enumerator does too -- both reads
+#: (and the write each surface's Save button performs) share this single
+#: name, so they cannot silently drift apart.
+WEB_DEEP_SEARCH_GATE_KEY = "web_deep_search_enabled"
+
 # Pinned refusal strings (spec §3.3) — tests assert on these verbatim.
 LOCAL_DENY_REFUSAL = "blocked by local tool permissions (set to Off)"
 LOCAL_TIMEOUT_REFUSAL = "user did not approve within the time limit; do not retry"
@@ -1101,7 +1110,7 @@ def _default_specs(
     # truthiness would have ENABLED this security gate. coerce_bool_setting
     # applies load_settings' own bool rules ("false"/unrecognized -> False).
     if coerce_bool_setting(
-        get_cli_setting("tools", "web_deep_search_enabled", False), False
+        get_cli_setting("tools", WEB_DEEP_SEARCH_GATE_KEY, False), False
     ):
         # Double opt-in (Docs/superpowers/specs/2026-08-07-deep-search-tool-
         # design.md): a [tools] gate on top of the tool's own per-call

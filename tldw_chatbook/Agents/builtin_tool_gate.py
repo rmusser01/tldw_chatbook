@@ -384,3 +384,224 @@ def builtin_permission_rows(payload: dict) -> list[BuiltinPermRow]:
             )
         )
     return sorted(rows, key=lambda row: row.name)
+
+
+# --- task-3240: unified [tools]/[console] REGISTRATION gate enumerator -----
+#
+# `builtin_permission_rows()` (above) enumerates the PERMISSION layer -- one
+# row per LIVE tool a gate-enabled `BuiltinToolProvider` already registered.
+# It cannot represent a gate-OFF tool at all (no instance to build a row
+# from), which is exactly the layer conflation task-3240's design doc
+# rejects: registration and permission are different concerns, and the
+# affordance for "is this tool even switched on" belongs beside the other
+# [mcp]-source config toggles (Servers mode's built-in detail pane), not
+# folded into the Permissions matrix. `ToolGate`/`all_tool_gates()` are that
+# enumerator's single source of truth.
+
+
+@dataclass(frozen=True)
+class ToolGate:
+    """One ``[tools]``/``[console]`` registration gate, on or off.
+
+    Unlike ``BuiltinPermRow``, this enumerates every KNOWN gate regardless
+    of its current state -- the UI needs rows for gates that are OFF, which
+    is exactly why it cannot ask a provider (a provider only lists what its
+    own gates already permit; ``_GATEABLE_BUILTINS``'s own docstring in
+    ``tool_catalog.py`` makes the identical argument for that table).
+
+    Attributes:
+        section: The config table the gate's ``key`` lives under -- ``
+            "tools"`` for the ``[tools] <x>_enabled`` convention
+            (``_GATEABLE_BUILTINS`` and ``web_deep_search``) or ``
+            "console"`` for the ``[console] local_tools_enabled`` master
+            switch.
+        key: The config key within ``section``.
+        tool_name: The LLM-facing tool name -- or, for the local group's
+            master switch (which gates a GROUP, not a single tool), the
+            config key itself, doubling as its label.
+        description: One-line description for display.
+        enabled: The gate's current state, read through
+            ``coerce_bool_setting`` -- never raw truthiness (task-3240's
+            Critical prerequisite fixed the identical bug one layer down,
+            in ``tool_catalog.py``'s registration read; this enumerator
+            must never reintroduce it one layer up).
+        group: ``"builtin"`` (the 7 ``_GATEABLE_BUILTINS`` rows) or ``
+            "local"`` (the local-workspace-tool group: its master switch
+            plus ``web_deep_search``, which shares the group it masters).
+    """
+
+    section: str
+    key: str
+    tool_name: str
+    description: str
+    enabled: bool
+    group: str
+
+
+#: The local group's master-switch config key, named so it isn't re-typed
+#: as a literal at every call/comparison site (the enumerator itself, and
+#: the Servers-mode UI's master-vs-dependent branching).
+LOCAL_TOOLS_MASTER_KEY = "local_tools_enabled"
+
+#: Hand-written description for the local group's master switch -- it has
+#: no corresponding Tool instance to read a description off of (it gates a
+#: GROUP of tools, not one), unlike every _GATEABLE_BUILTINS row.
+#:
+#: task-3240 fix round 1 (Important 2): scoped to the Console/agent path
+#: ONLY -- `MCP/local_server_tools.py`'s `build_server_local_provider()`
+#: (external MCP-client serving, gated by `[mcp] expose_local_tools`)
+#: never reads this key at all, so an enabled `web_deep_search` with this
+#: master OFF is still live to external MCP clients. Wording-only fix;
+#: making this switch also govern MCP exposure is a separate, out-of-scope
+#: behavior change.
+_LOCAL_TOOLS_MASTER_DESCRIPTION = (
+    "Master switch for the local workspace tool group in the Console/agent "
+    "path (fs_*/web_*/todo_* tools plus web_deep_search). Off by default; "
+    "the group's individual gates still apply once this is on. Does NOT "
+    "govern exposure to external MCP clients -- that's the separate "
+    "[mcp] expose_local_tools switch."
+)
+
+#: Hand-written description for web_deep_search -- also has no Tool
+#: instance (it's a LocalToolSpec, not a Tool ABC subclass; see
+#: WEB_DEEP_SEARCH_GATE_KEY's own docstring in local_tool_provider.py).
+_WEB_DEEP_SEARCH_DESCRIPTION = (
+    "Multi-query web research; costs real money on paid providers. "
+    "Requires an app restart to take effect."
+)
+
+
+def all_tool_gates() -> list[ToolGate]:
+    """Every ``[tools]``/``[console]`` registration gate, on or off.
+
+    THE single source of truth for task-3240's MCP-hub gate affordance
+    (Servers mode's built-in-source detail pane): the 7
+    ``_GATEABLE_BUILTINS`` rows (group ``"builtin"``, registration order),
+    then the local group (group ``"local"``) -- its master switch
+    (``[console] local_tools_enabled``) listed FIRST, since it masters the
+    gate listed right after it, then ``web_deep_search``'s own gate.
+    ``Tools_Settings_Window``'s separate hand-wiring is untouched and NOT
+    extended from here -- that surface stays deprecated (see its module
+    docstring); this enumerator is a new, independent consumer of the same
+    underlying config keys.
+
+    A builtin row's ``description`` is read off a real, constructed Tool
+    instance (mirrors ``Tools_Settings_Window._compose_tool_settings``'s
+    own precedent) -- construction failure degrades that one row's
+    description rather than the whole enumeration (mirrors
+    ``BuiltinToolProvider.__init__``'s own per-entry try/except).
+
+    Returns:
+        Nine gates in the order described above.
+    """
+    from ..config import coerce_bool_setting, get_cli_setting
+    from .local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
+    from .tool_catalog import _GATEABLE_BUILTINS, build_gateable_tool
+
+    gates: list[ToolGate] = []
+    for entry in _GATEABLE_BUILTINS:
+        try:
+            description = build_gateable_tool(entry).description
+        except Exception as exc:  # noqa: BLE001 — degrade the row, not the enumerator
+            logger.opt(exception=True).warning(
+                f"Could not describe gateable tool {entry.factory_name}: {exc}"
+            )
+            description = "Unavailable on this system."
+        gates.append(
+            ToolGate(
+                section="tools",
+                key=entry.gate_key,
+                tool_name=entry.tool_name,
+                description=description,
+                enabled=coerce_bool_setting(
+                    get_cli_setting("tools", entry.gate_key, False), False
+                ),
+                group="builtin",
+            )
+        )
+
+    gates.append(
+        ToolGate(
+            section="console",
+            key=LOCAL_TOOLS_MASTER_KEY,
+            tool_name=LOCAL_TOOLS_MASTER_KEY,
+            description=_LOCAL_TOOLS_MASTER_DESCRIPTION,
+            enabled=coerce_bool_setting(
+                get_cli_setting("console", LOCAL_TOOLS_MASTER_KEY, False), False
+            ),
+            group="local",
+        )
+    )
+    gates.append(
+        ToolGate(
+            section="tools",
+            key=WEB_DEEP_SEARCH_GATE_KEY,
+            tool_name="web_deep_search",
+            description=_WEB_DEEP_SEARCH_DESCRIPTION,
+            enabled=coerce_bool_setting(
+                get_cli_setting("tools", WEB_DEEP_SEARCH_GATE_KEY, False), False
+            ),
+            group="local",
+        )
+    )
+    return gates
+
+
+def _gate_key_pairs() -> list[tuple[str, str]]:
+    """Every gate's (section, key), in enumeration order, WITHOUT
+    constructing any Tool — the cheap skeleton `all_tool_gates()` and the
+    count path share so the key set can never drift between them."""
+    from .local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
+    from .tool_catalog import _GATEABLE_BUILTINS
+
+    pairs: list[tuple[str, str]] = [
+        ("tools", entry.gate_key) for entry in _GATEABLE_BUILTINS
+    ]
+    pairs.append(("console", LOCAL_TOOLS_MASTER_KEY))
+    pairs.append(("tools", WEB_DEEP_SEARCH_GATE_KEY))
+    return pairs
+
+
+def count_off_tool_gates() -> int:
+    """How many registration gates are currently OFF — coerced config reads
+    only, NO Tool construction (Qodo PR #1453: the breadcrumb runs on every
+    Permissions-mode resync, and `all_tool_gates()` builds every gateable
+    Tool just to read descriptions — needless work plus repeated warning
+    logs for optional tools that cannot construct on this system)."""
+    from ..config import coerce_bool_setting, get_cli_setting
+
+    return sum(
+        1
+        for section, key in _gate_key_pairs()
+        if not coerce_bool_setting(get_cli_setting(section, key, False), False)
+    )
+
+
+def tool_gate_breadcrumb(gates: list[ToolGate] | None = None) -> str | None:
+    """A one-line "N tool gate(s) are off" sentence, or ``None`` if none are.
+
+    Shared text for task-3240's two discoverability breadcrumbs: the
+    Permissions matrix's always-visible legend (primary) and
+    ``MCPWorkbench._empty_tools_diagnosis()`` (secondary/partial, blind
+    whenever any local tool source is non-empty -- see that method's own
+    docstring). Both compute this fresh each render; ``gates`` lets a
+    caller that already has a batch (e.g. one about to also render
+    per-gate rows) reuse it instead of re-enumerating.
+
+    Args:
+        gates: A pre-fetched batch, or ``None`` to call ``all_tool_gates()``.
+
+    Returns:
+        The sentence, or ``None`` when every gate is on.
+    """
+    if gates is None:
+        # Count-only path: no Tool construction (see count_off_tool_gates).
+        off = count_off_tool_gates()
+    else:
+        off = sum(1 for gate in gates if not gate.enabled)
+    if off == 0:
+        return None
+    return (
+        f"{off} tool gate(s) are off — enable them in the built-in "
+        "server's detail (Servers mode)."
+    )

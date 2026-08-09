@@ -84,7 +84,7 @@ from tldw_chatbook.Agents.builtin_tool_gate import build_builtin_gate
 from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall, MCPToolProvider
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
-from tldw_chatbook.config import get_cli_setting
+from tldw_chatbook.config import coerce_bool_setting, get_cli_setting
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
 from tldw_chatbook.MCP.permission_store import BUILTIN_TOOL_SERVER_KEY
@@ -3340,7 +3340,19 @@ class ConsoleChatController:
             and this run's ``build_local_review_hook``-built batch-review
             closure; ``(None, None)`` otherwise.
         """
-        if not get_cli_setting("console", "local_tools_enabled", False):
+        # task-3240 fix round 1 (Critical 2): get_cli_setting returns the RAW
+        # TOML value -- a hand-typed quoted "false" is a non-empty string
+        # and therefore truthy under bare `not` truthiness, which would
+        # COMPOSE the entire local tool group while the MCP-hub gate
+        # checkbox (Agents/builtin_tool_gate.py's all_tool_gates()) and
+        # mcp_workbench.py's own [console] read both show it OFF. Note
+        # this is NOT normalized by load_settings() the way some [console]
+        # keys are -- that normalization lives in load_settings(), never
+        # in get_cli_setting() itself, which reads the raw bootstrap
+        # config. coerce_bool_setting is the arc's sixth such site.
+        if not coerce_bool_setting(
+            get_cli_setting("console", "local_tools_enabled", False), False
+        ):
             return None, None
         service = getattr(self.app, "unified_mcp_service", None)
         if service is None:

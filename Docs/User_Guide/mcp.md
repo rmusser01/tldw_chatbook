@@ -17,6 +17,51 @@ organized into four modes: Servers, Tools, Permissions, and Audit.
   "Tab Navigation: Switch to MCP".
  
 
+## Turning tools on (Servers mode ▸ Tool gates)
+
+Before a tool can appear anywhere else in the hub — Tools mode's catalog,
+the Permissions matrix, an agent's tool list — it needs to be *registered*,
+which is a separate, earlier step from *permission* (Allow/Ask/Off).
+Registration is controlled by a `[tools]`/`[console]` config switch called a
+**gate**, off by default for every one of them; a gate-off tool doesn't
+exist anywhere in the hub to grant permission to in the first place.
+
+Select the built-in server's row in Servers mode; its detail pane has a
+**Tool gates** group under the existing enable/expose checkboxes, split
+into two subheadings:
+
+- **Agent built-ins** — the app's own file/note tools (read/list/write a
+  file, glob/grep the workspace, create/update a note).
+- **Local workspace tools** — a master switch, labeled **Local workspace
+  tools (master switch)**, that turns the whole local-tool group on or off
+  for the Console/agent path, plus **web_deep_search** (multi-query web
+  research; costs real money on paid providers), gated individually
+  underneath it. While the master is off, every OTHER checkbox in this
+  group renders disabled — with its own gate still shown truthfully, but
+  greyed out — and a note explains why: "Master switch is off — these
+  tools stay unavailable regardless of their own gates." Turning the
+  master back on re-enables its dependents on the next resync.
+
+The master switch governs the **Console/agent path only**. It does *not*
+control whether an enabled tool (e.g. `web_deep_search`) is exposed to
+*external* MCP clients connecting to chatbook's own server — that is a
+separate switch, `[mcp] expose_local_tools`, unrelated to this pane.
+
+Every checkbox here saves immediately and reads back the real config value
+after saving — never an optimistic guess. **These gates need an app
+restart to take effect**: tool providers build their catalog once, at
+startup, so a newly-flipped gate won't add (or remove) a tool from a
+running session until you restart. This pane is still labeled as the
+built-in *MCP server* (the stdio process `python -m tldw_chatbook.MCP`
+clients launch) even though these particular checkboxes control the
+in-process *agent* tool catalog — a different subsystem sharing the same
+detail pane for discoverability.
+
+If any gate is off, both the Permissions matrix's legend (always visible,
+under the marker key) and the Tools-mode empty state (when nothing else is
+showing) name how many: "N tool gate(s) are off — enable them in the
+built-in server's detail (Servers mode)."
+
 ## Testing a tool (Tools mode)
 
 Tools mode lists every tool the hub knows about — the app's own built-in
@@ -158,4 +203,7 @@ only-checkbox or no arguments no longer crashes the app; the "Pick a
 server, tool, or entry…" placeholder now clears for Permissions-row,
 Audit-entry, and Finding detail exactly as it does for tool detail; and
 a permission the app could not read shows as "Unknown" (never a false
-"Off") in the matrix, the State column, and the inspector alike.*
+"Off") in the matrix, the State column, and the inspector alike.
+Verified against ee68f42ed — 2026-08-08 (task-3240): documented the new
+Servers-mode "Tool gates" group (builtin registration switches, at last
+reachable from live navigation) and its two discoverability breadcrumbs.*
