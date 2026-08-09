@@ -31,8 +31,9 @@ from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from loguru import logger
 from textual.app import App
-from textual.containers import Container, VerticalScroll
+from textual.containers import Container, Horizontal, VerticalScroll
 from textual.widgets import Button, Checkbox, Collapsible, Input, Static, TextArea
 
 from tldw_chatbook.DB.Prompts_DB import ConflictError, DatabaseError, PromptsDatabase
@@ -953,6 +954,8 @@ async def test_prompts_canvas_loading_keeps_search_and_toolbar_stable():
     )
 
     async with app.run_test() as pilot:
+        header = pilot.app.query_one("#library-prompts-header", Static)
+        assert str(header.renderable) == "Prompts (…)"
         assert pilot.app.query_one("#library-prompts-filter", Input).value == "plan"
         assert pilot.app.query_one("#library-prompts-sort", Button)
         assert pilot.app.query_one("#library-prompts-import", Button)
@@ -987,6 +990,8 @@ async def test_prompts_canvas_renders_truthful_literal_empty_states(
     )
 
     async with app.run_test() as pilot:
+        header = pilot.app.query_one("#library-prompts-header", Static)
+        assert str(header.renderable) == "Prompts (0)"
         empty = pilot.app.query_one("#library-prompts-empty", Static)
         assert str(empty.renderable) == expected
         assert str(empty.render()) == expected
@@ -1007,6 +1012,8 @@ async def test_prompts_canvas_error_names_recovery_and_renders_retry():
     )
 
     async with app.run_test() as pilot:
+        header = pilot.app.query_one("#library-prompts-header", Static)
+        assert str(header.renderable) == "Prompts (…)"
         line = pilot.app.query_one("#library-prompts-error", Static)
         assert str(line.renderable) == error.error
         assert str(line.render()) == error.error
@@ -1042,6 +1049,8 @@ async def test_prompts_canvas_minimal_paging_is_literal_and_keyboard_ordered():
     app = _CanvasHost(state, browse_result=result)
 
     async with app.run_test() as pilot:
+        header = pilot.app.query_one("#library-prompts-header", Static)
+        assert str(header.renderable) == "Prompts (75)"
         page_label = pilot.app.query_one("#library-prompts-page-label", Static)
         assert str(page_label.renderable) == "Page 2 of 2 · showing 51–75 of 75"
         assert str(page_label.render()) == "Page 2 of 2 · showing 51–75 of 75"
@@ -1064,6 +1073,71 @@ async def test_prompts_canvas_minimal_paging_is_literal_and_keyboard_ordered():
         assert focusable_ids.index(
             "library-prompts-page-previous"
         ) < focusable_ids.index("library-prompt-row-51")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(64, 24), (120, 40)], ids=["narrow", "wide"])
+@pytest.mark.parametrize("page", [1, 2], ids=["first-page", "second-page"])
+async def test_prompts_canvas_paging_actions_are_render_safe(
+    size: tuple[int, int], page: int
+) -> None:
+    """Paging copy wraps separately while enabled actions stay fully visible."""
+    first_item = 1 if page == 1 else 51
+    last_item = 50 if page == 1 else 75
+    items = [
+        {
+            "id": f"local:prompt:uuid-{index}",
+            "local_id": index,
+            "name": f"Prompt {index}",
+            "backend": "local",
+        }
+        for index in range(first_item, last_item + 1)
+    ]
+    result = _browse_result(
+        items=items,
+        page=page,
+        page_size=50,
+        total_items=75,
+    )
+    state = PromptsListState(
+        rows=tuple(
+            PromptListRow(index, f"Prompt {index}", "")
+            for index in range(first_item, last_item + 1)
+        ),
+        count=len(items),
+        sort="newest",
+    )
+    app = _StyledCanvasHost(state, browse_result=result)
+
+    async with app.run_test(size=size) as pilot:
+        canvas = pilot.app.query_one(
+            "#library-prompts-canvas", LibraryPromptsListCanvas
+        )
+        label = pilot.app.query_one("#library-prompts-page-label", Static)
+        previous = pilot.app.query_one("#library-prompts-page-previous", Button)
+        next_page = pilot.app.query_one("#library-prompts-page-next", Button)
+        enabled = next_page if page == 1 else previous
+        toolbar = previous.parent
+
+        assert isinstance(toolbar, Horizontal)
+        assert toolbar is next_page.parent
+        assert toolbar.has_class("ds-toolbar")
+        assert tuple(toolbar.children) == (previous, next_page)
+        assert label.parent is canvas
+        assert str(label.renderable) == (
+            f"Page {page} of 2 · showing {first_item}–{last_item} of 75"
+        )
+        assert label.region.width > 0
+        assert label.region.height > 0
+        assert label.region.right <= size[0]
+        assert label.region.bottom <= size[1]
+        assert enabled.disabled is False
+        assert enabled.region.width > 0
+        assert enabled.region.height > 0
+        assert enabled.region.right <= size[0]
+        assert enabled.region.bottom <= size[1]
+        assert previous.region.y == next_page.region.y
+        assert previous.region.height == next_page.region.height
 
 
 @pytest.mark.asyncio
@@ -1500,6 +1574,39 @@ async def test_library_prompts_retry_recovers_service_error():
             screen._library_prompt_browse_controller.result.request_token > first_token
         )
         assert screen._library_prompt_browse_controller.result.status == "ready"
+
+
+@pytest.mark.asyncio
+async def test_library_prompts_browse_failure_keeps_exception_details_out_of_logs():
+    """A browse failure renders fixed recovery without logging private details."""
+    secret = "TASK198_SECRET_PROMPT_BROWSE_PAYLOAD"
+
+    class SecretFailingPromptService(_FakePromptScopeServiceWithList):
+        async def browse_prompts(self, **_kwargs: Any) -> dict[str, Any]:
+            raise RuntimeError(secret)
+
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = SecretFailingPromptService([{"id": 5, "name": "X"}])
+    host = LibraryHarness(app)
+    logged: list[str] = []
+    sink_id = logger.add(lambda message: logged.append(str(message)))
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one("#library-row-browse-prompts").press()
+            error = await _wait_for_selector(screen, pilot, "#library-prompts-error")
+
+            assert str(error.renderable) == (
+                "Couldn't load prompts. Check the local Library and retry."
+            )
+            assert screen.query_one("#library-prompts-retry", Button)
+    finally:
+        logger.remove(sink_id)
+
+    assert secret not in "".join(logged)
 
 
 @pytest.mark.asyncio

@@ -7117,6 +7117,8 @@ async def test_library_shell_prompts_rail_row_shows_exact_count():
 
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
         assert screen.query_one("#library-prompts-canvas")
+        header = screen.query_one("#library-prompts-header", Static)
+        assert str(header.renderable) == "Prompts (…)"
         assert "unavailable" in str(error.renderable)
         assert screen.query_one("#library-prompts-retry", Button)
     assert app.prompt_scope_service.count_calls

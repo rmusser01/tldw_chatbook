@@ -154,7 +154,13 @@ class LibraryPromptsListCanvas(Vertical):
         if state is None:
             return
         browse_result = self.browse_result
-        total = browse_result.total_items if browse_result is not None else state.count
+        total: int | str = state.count
+        if browse_result is not None:
+            total = (
+                "…"
+                if browse_result.status in {"loading", "error"}
+                else browse_result.total_items
+            )
         yield Static(
             f"Prompts ({total})",
             id="library-prompts-header",
@@ -268,6 +274,14 @@ class LibraryPromptsListCanvas(Vertical):
         """Render the minimal bounded page controls required for exact browse."""
         first = (result.page - 1) * result.scope.page_size + 1
         last = min(result.total_items, first + len(result.items) - 1)
+        page_label = Static(
+            f"Page {result.page} of {result.total_pages} · "
+            f"showing {first}–{last} of {result.total_items}",
+            id="library-prompts-page-label",
+            markup=False,
+        )
+        page_label.styles.height = "auto"
+        yield page_label
         toolbar = Horizontal(classes="ds-toolbar")
         toolbar.styles.height = "auto"
         with toolbar:
@@ -277,12 +291,6 @@ class LibraryPromptsListCanvas(Vertical):
                 classes="library-canvas-action",
                 compact=True,
                 disabled=result.page <= 1,
-            )
-            yield Static(
-                f"Page {result.page} of {result.total_pages} · "
-                f"showing {first}–{last} of {result.total_items}",
-                id="library-prompts-page-label",
-                markup=False,
             )
             yield Button(
                 "Next",
