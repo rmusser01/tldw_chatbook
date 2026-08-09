@@ -97,6 +97,13 @@ def _symlink_or_skip(
         pytest.skip(f"symlink creation is unavailable: {error}")
 
 
+def _hardlink_or_skip(source: Path, target: Path) -> None:
+    try:
+        os.link(source, target)
+    except OSError as error:
+        pytest.skip(f"hardlink creation is unavailable: {error}")
+
+
 def _assert_error(
     code: ExternalParakeetErrorCode,
     descriptor: ArtifactDescriptor,
@@ -664,9 +671,7 @@ def test_configured_and_scope_owners_bound_cache_lifetime(
 
     monkeypatch.setattr(parakeet_external.os, "open", counted_open)
     verifier.verify(descriptor, root, owner=("configured", "v2_int8"))
-    verifier.set_configured_owners(
-        {"v2_int8": (descriptor.reference, root.absolute())}
-    )
+    verifier.set_configured_owners({"v2_int8": (descriptor.reference, root.absolute())})
     verifier.verify(descriptor, root)
     assert open_count == 1
 
@@ -678,6 +683,28 @@ def test_configured_and_scope_owners_bound_cache_lifetime(
     verifier.verify(descriptor, root)
     assert open_count == 2
     verifier.close()
+
+
+def test_hardlinked_roots_keep_the_selected_directory_and_snapshot(
+    tmp_path: Path,
+) -> None:
+    files = {"model.onnx": b"expected"}
+    descriptor = _descriptor(files)
+    first_root = tmp_path / "first-root"
+    second_root = tmp_path / "second-root"
+    _materialize(first_root, files)
+    second_root.mkdir()
+    _hardlink_or_skip(first_root / "model.onnx", second_root / "model.onnx")
+    verifier = ExternalParakeetVerifier()
+
+    first = verifier.verify(descriptor, first_root, owner=("scope", "batch"))
+    second = verifier.verify(descriptor, second_root, owner=("scope", "batch"))
+    verifier.close()
+
+    assert first.directory == first_root.absolute()
+    assert first.snapshot.paths == (first_root / "model.onnx",)
+    assert second.directory == second_root.absolute()
+    assert second.snapshot.paths == (second_root / "model.onnx",)
 
 
 def test_metadata_change_forces_rehash(tmp_path: Path, monkeypatch) -> None:
@@ -706,6 +733,44 @@ def test_metadata_change_forces_rehash(tmp_path: Path, monkeypatch) -> None:
     verifier.close()
 
     assert open_count == 2
+
+
+def test_configured_owner_reverification_prunes_its_old_metadata_entry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    files = {"model.onnx": b"expected"}
+    descriptor = _descriptor(files)
+    root = tmp_path / "external-configured-reverification"
+    _materialize(root, files)
+    verifier = ExternalParakeetVerifier()
+    real_open = parakeet_external.os.open
+    open_count = 0
+
+    def counted_open(path, flags):
+        nonlocal open_count
+        open_count += 1
+        return real_open(path, flags)
+
+    monkeypatch.setattr(parakeet_external.os, "open", counted_open)
+    owner = ("configured", "v2_int8")
+    verifier.verify(descriptor, root, owner=owner)
+    model_path = root / "model.onnx"
+    original = model_path.stat()
+    os.utime(
+        model_path,
+        ns=(original.st_atime_ns, original.st_mtime_ns + 5_000_000_000),
+    )
+    verifier.verify(descriptor, root, owner=owner)
+    verifier.verify(descriptor, root)
+    assert open_count == 2
+
+    current = model_path.stat()
+    os.utime(model_path, ns=(current.st_atime_ns, original.st_mtime_ns))
+    verifier.verify(descriptor, root)
+    verifier.close()
+
+    assert open_count == 3
 
 
 def test_scope_released_during_hash_is_not_retained(
@@ -784,3 +849,51 @@ def test_close_cancels_in_flight_hashing(tmp_path: Path, monkeypatch) -> None:
             pending.result(timeout=2)
 
     assert caught.value.code is ExternalParakeetErrorCode.CANCELLED
+
+
+def test_close_cancels_metadata_probe_fallback_hashing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = b"x" * 4096
+    files = {"model.onnx": payload}
+    root = tmp_path / "external-close-fallback"
+    _materialize(root, files)
+    verifier = ExternalParakeetVerifier()
+    progressed = threading.Event()
+    shutdown_started = threading.Event()
+    observed: list[int] = []
+    monkeypatch.setattr(parakeet_external, "_HASH_CHUNK_BYTES", 1)
+    monkeypatch.setattr(verifier, "_cache_key", lambda *_args: None)
+    real_shutdown = verifier._executor.shutdown
+
+    def observed_shutdown(*args, **kwargs):
+        shutdown_started.set()
+        return real_shutdown(*args, **kwargs)
+
+    monkeypatch.setattr(verifier._executor, "shutdown", observed_shutdown)
+
+    def progress(done: int, _total: int) -> None:
+        observed.append(done)
+        if done:
+            progressed.set()
+            assert shutdown_started.wait(timeout=2)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(
+            verifier.verify,
+            _descriptor(files),
+            root,
+            progress=progress,
+        )
+        assert progressed.wait(timeout=2)
+        with ThreadPoolExecutor(max_workers=1) as close_pool:
+            closed = close_pool.submit(verifier.close)
+            assert shutdown_started.wait(timeout=2)
+            closed.result(timeout=2)
+        with pytest.raises(ExternalParakeetVerificationError) as caught:
+            pending.result(timeout=2)
+
+    assert caught.value.code is ExternalParakeetErrorCode.CANCELLED
+    assert observed[-1] < len(payload)
+    assert not verifier._fallback_stops

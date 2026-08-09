@@ -80,7 +80,7 @@ _DirectoryIdentity = tuple[int, int, int]
 _AncestorIdentities = tuple[tuple[Path, _DirectoryIdentity], ...]
 _VerifiedFile = tuple[Path, _FileIdentity, _AncestorIdentities]
 _Owner = tuple[Literal["configured", "scope"], str]
-_CacheKey = tuple[ArtifactRef, str]
+_CacheKey = tuple[ArtifactRef, Path, str]
 
 
 def _file_identity(metadata: os.stat_result) -> _FileIdentity:
@@ -250,6 +250,7 @@ class ExternalParakeetVerifier:
         self._lock = threading.Lock()
         self._entries: dict[_CacheKey, ExternalParakeetVerifier._Entry] = {}
         self._owner_tokens: dict[_Owner, object] = {}
+        self._fallback_stops: set[threading.Event] = set()
         self._closed = False
 
     def verify(
@@ -388,7 +389,7 @@ class ExternalParakeetVerifier:
         digest = hashlib.sha256()
         for index, identity in enumerate(identities):
             digest.update(f"{index}:{identity!r};".encode("ascii"))
-        return descriptor.reference, digest.hexdigest()
+        return descriptor.reference, root, digest.hexdigest()
 
     def _verify_without_cache(
         self,
@@ -402,23 +403,32 @@ class ExternalParakeetVerifier:
         with self._lock:
             if self._closed:
                 _fail(ExternalParakeetErrorCode.CANCELLED)
-            future = self._executor.submit(
-                self._verify_uncached,
-                descriptor,
-                root,
-                lambda: stop.is_set() or cancelled(),
-                progress,
-            )
-        while True:
-            if cancelled():
-                stop.set()
-                _fail(ExternalParakeetErrorCode.CANCELLED)
+            self._fallback_stops.add(stop)
             try:
-                return future.result(timeout=0.01)
-            except TimeoutError:
-                continue
-            except CancelledError:
-                _fail(ExternalParakeetErrorCode.CANCELLED)
+                future = self._executor.submit(
+                    self._verify_uncached,
+                    descriptor,
+                    root,
+                    lambda: stop.is_set() or cancelled(),
+                    progress,
+                )
+            except BaseException:
+                self._fallback_stops.discard(stop)
+                raise
+        try:
+            while True:
+                if cancelled():
+                    stop.set()
+                    _fail(ExternalParakeetErrorCode.CANCELLED)
+                try:
+                    return future.result(timeout=0.01)
+                except TimeoutError:
+                    continue
+                except CancelledError:
+                    _fail(ExternalParakeetErrorCode.CANCELLED)
+        finally:
+            with self._lock:
+                self._fallback_stops.discard(stop)
 
     def _fanout(self, entry: _Entry, done: int, total: int) -> None:
         with self._lock:
@@ -462,11 +472,12 @@ class ExternalParakeetVerifier:
     ) -> None:
         if owner is None or self._owner_tokens.get(owner) is not owner_token:
             return
+        entry.owners.add(owner)
         if owner[0] == "configured":
             for other_key, other in self._entries.items():
                 if other_key != cache_key:
                     other.owners.discard(owner)
-        entry.owners.add(owner)
+            self._prune_unowned()
 
     def set_configured_owners(
         self,
@@ -492,10 +503,7 @@ class ExternalParakeetVerifier:
                 if result is None:
                     continue
                 for name, (reference, directory) in desired.items():
-                    if (
-                        result.reference == reference
-                        and result.directory == directory
-                    ):
+                    if result.reference == reference and result.directory == directory:
                         owner: _Owner = ("configured", name)
                         self._owner_tokens.setdefault(owner, object())
                         entry.owners.add(owner)
@@ -530,6 +538,8 @@ class ExternalParakeetVerifier:
             self._owner_tokens.clear()
             for entry in entries:
                 entry.stop.set()
+            for stop in self._fallback_stops:
+                stop.set()
         self._executor.shutdown(wait=True, cancel_futures=True)
 
     @staticmethod
