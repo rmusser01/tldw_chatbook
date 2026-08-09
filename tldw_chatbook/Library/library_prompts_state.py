@@ -14,6 +14,7 @@ import sqlite3
 import json
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+from types import MappingProxyType
 from typing import Any, Literal, Mapping, Sequence, cast
 
 from tldw_chatbook.Prompt_Management.prompt_artifact_models import (
@@ -186,6 +187,17 @@ def _prompt_browse_int(record: Mapping[str, Any], key: str, *, minimum: int) -> 
     return value
 
 
+def _freeze_prompt_browse_value(value: Any) -> Any:
+    """Return an immutable detached copy of one JSON-like browse value."""
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {key: _freeze_prompt_browse_value(item) for key, item in value.items()}
+        )
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return tuple(_freeze_prompt_browse_value(item) for item in value)
+    return value
+
+
 def build_prompt_browse_result(
     scope: PromptBrowseScope,
     record: Mapping[str, Any],
@@ -200,7 +212,9 @@ def build_prompt_browse_result(
         raise TypeError("Prompt browse result items must be a sequence.")
     if any(not isinstance(item, Mapping) for item in raw_items):
         raise TypeError("Prompt browse result items must be mappings.")
-    items = tuple(raw_items)
+    items = tuple(
+        cast(Mapping[str, Any], _freeze_prompt_browse_value(item)) for item in raw_items
+    )
     total_items = _prompt_browse_int(record, "total_items", minimum=0)
     total_pages = _prompt_browse_int(record, "total_pages", minimum=0)
     current_page = _prompt_browse_int(record, "current_page", minimum=1)
@@ -213,10 +227,9 @@ def build_prompt_browse_result(
     resolved_scope = clamp_prompt_browse_scope(scope, total_pages=total_pages)
     if current_page != resolved_scope.page:
         raise ValueError("current_page does not match the clamped requested page.")
-    if len(items) > per_page or len(items) > total_items:
-        raise ValueError("Prompt browse result item count is invalid.")
-    if bool(items) != bool(total_items):
-        raise ValueError("Prompt browse result items and total_items disagree.")
+    expected_items = min(per_page, max(0, total_items - (current_page - 1) * per_page))
+    if len(items) != expected_items:
+        raise ValueError("Prompt browse result item count is invalid for this page.")
 
     if items:
         status: PromptBrowseStatus = "ready"

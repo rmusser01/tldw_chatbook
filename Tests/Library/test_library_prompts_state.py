@@ -1,5 +1,6 @@
 """Pure display-state contracts for the Library prompts canvas."""
 
+from collections.abc import Mapping
 from dataclasses import FrozenInstanceError, replace
 import sqlite3
 from datetime import datetime, timezone
@@ -152,11 +153,106 @@ def test_browse_prompt_result_preserves_exact_total_pages_and_clamped_page():
     assert isinstance(result, prompts_state_module.PromptBrowseResult)
     assert result.scope.page == 3
     assert result.scope_fingerprint == replace(scope, page=3).fingerprint
-    assert result.items == (PROMPT_C,)
+    assert result.items[0]["id"] == PROMPT_C["id"]
+    assert result.items[0]["keywords"] == tuple(PROMPT_C["keywords"])
     assert result.total_items == 5
     assert result.total_pages == 3
     assert result.page == 3
     assert result.status == "ready"
+
+
+@pytest.mark.parametrize(
+    ("scope", "items", "total_items", "total_pages", "current_page"),
+    [
+        (
+            prompts_state_module.PromptBrowseScope(page=2, page_size=2),
+            [PROMPT_A, PROMPT_B],
+            5,
+            3,
+            2,
+        ),
+        (
+            prompts_state_module.PromptBrowseScope(page=3, page_size=2),
+            [PROMPT_C],
+            5,
+            3,
+            3,
+        ),
+        (
+            prompts_state_module.PromptBrowseScope(page_size=2),
+            [],
+            0,
+            0,
+            1,
+        ),
+    ],
+)
+def test_browse_prompt_result_requires_exact_page_cardinality(
+    scope, items, total_items, total_pages, current_page
+):
+    result = prompts_state_module.build_prompt_browse_result(
+        scope,
+        {
+            "items": items,
+            "total_items": total_items,
+            "total_pages": total_pages,
+            "current_page": current_page,
+            "per_page": scope.page_size,
+        },
+    )
+
+    assert len(result.items) == len(items)
+
+
+def test_browse_prompt_result_rejects_overfull_partial_last_page():
+    scope = prompts_state_module.PromptBrowseScope(page=3, page_size=2)
+
+    with pytest.raises(ValueError, match="item count"):
+        prompts_state_module.build_prompt_browse_result(
+            scope,
+            {
+                "items": [PROMPT_A, PROMPT_B],
+                "total_items": 5,
+                "total_pages": 3,
+                "current_page": 3,
+                "per_page": 2,
+            },
+        )
+
+
+def test_browse_prompt_result_deeply_freezes_detached_mapping_rows():
+    source = {
+        "id": 7,
+        "name": "Original",
+        "keywords": ["first"],
+        "metadata": {"labels": ["stable"]},
+    }
+    result = prompts_state_module.build_prompt_browse_result(
+        prompts_state_module.PromptBrowseScope(),
+        {
+            "items": [source],
+            "total_items": 1,
+            "total_pages": 1,
+            "current_page": 1,
+            "per_page": 50,
+        },
+    )
+
+    source["name"] = "Changed"
+    source["keywords"].append("late")
+    source["metadata"]["labels"].append("late")
+
+    row = result.items[0]
+    assert isinstance(row, Mapping)
+    assert row["name"] == "Original"
+    assert row["keywords"] == ("first",)
+    assert row["metadata"]["labels"] == ("stable",)
+    with pytest.raises(TypeError):
+        row["name"] = "Direct change"  # type: ignore[index]
+    with pytest.raises(TypeError):
+        row["metadata"]["new"] = "Direct change"  # type: ignore[index]
+    with pytest.raises(TypeError):
+        row["keywords"][0] = "Direct change"  # type: ignore[index]
 
 
 @pytest.mark.parametrize(
