@@ -64,6 +64,8 @@ CANARIES = (
     "GOOGLE-SYSTEM-INSTRUCTION-CANARY",
     "UNKNOWN-PAYLOAD-FIELD-CANARY",
     "TOOL-SCHEMA-DESCRIPTION-CANARY",
+    "TOOL-SCHEMA-ENUM-CANARY",
+    "HUGGINGFACE-USER-CANARY",
 )
 
 
@@ -727,6 +729,71 @@ def test_tool_definitions_log_names_only_never_schema_or_description(
     rendered = "\n".join(logs)
     _assert_canaries_absent(logs)
     assert "lookup_weather" in rendered
+
+
+@pytest.mark.parametrize("sensitive", [False, True])
+def test_huggingface_tool_logs_are_names_only(
+    monkeypatch: pytest.MonkeyPatch,
+    sensitive: bool,
+) -> None:
+    """Confirm HuggingFace logs only tool names outside sensitive requests.
+
+    Args:
+        monkeypatch: Pytest fixture used to stub config loading and the
+            outgoing HTTP session.
+        sensitive: Whether to exercise the sensitive-request logging policy.
+    """
+    response_data = {"id": "hf-test", "choices": [{"message": {"content": "ok"}}]}
+    session = _FakeSession(_FakeResponse(response_data))
+    monkeypatch.setattr(
+        cloud_adapters,
+        "load_settings",
+        lambda: {
+            "huggingface_api": {
+                "api_base_url": "https://hf.test/v1",
+                "api_chat_path": "chat/completions",
+                "api_retries": 0,
+            }
+        },
+    )
+    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+
+    context = sensitive_llm_request() if sensitive else nullcontext()
+    with _captured_logs() as logs, context:
+        cloud_adapters.chat_with_huggingface(
+            input_data=[{"role": "user", "content": "hello"}],
+            api_key="key",
+            model="org/model",
+            streaming=False,
+            user="HUGGINGFACE-USER-CANARY",
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "lookup_hf_weather",
+                        "description": "TOOL-SCHEMA-DESCRIPTION-CANARY",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "unit": {
+                                    "type": "string",
+                                    "enum": ["TOOL-SCHEMA-ENUM-CANARY"],
+                                }
+                            },
+                        },
+                    },
+                }
+            ],
+        )
+
+    _assert_canaries_absent(logs)
+    tool_logs = [entry for entry in logs if "HuggingFace Tools:" in entry]
+    if sensitive:
+        assert tool_logs == []
+    else:
+        assert len(tool_logs) == 1
+        tools_summary = tool_logs[0].split("HuggingFace Tools: ", 1)[1].strip()
+        assert tools_summary == "{'tool_names': ['lookup_hf_weather']}"
 
 
 def test_sensitive_huggingface_error_body_endpoint_and_exception_are_not_logged(
