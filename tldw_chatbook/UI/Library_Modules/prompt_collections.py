@@ -655,12 +655,13 @@ class LibraryPromptCollectionsController:
         request_token: int,
         collection_ids: Sequence[int],
     ) -> Mapping[int, str] | None:
-        get_collection = getattr(service, "get_prompt_collection", None)
-        if not callable(get_collection):
+        list_collections = getattr(service, "list_prompt_collections", None)
+        if not callable(list_collections):
             return self._label_cache
-        for collection_id in collection_ids:
-            if collection_id in self._label_cache:
-                continue
+        missing = set(collection_ids).difference(self._label_cache)
+        catalog: PromptCollectionCatalogState | None = None
+        offset = 0
+        while missing:
             if (
                 self._current_identity() != identity
                 or self.membership_state.request_token != request_token
@@ -668,9 +669,11 @@ class LibraryPromptCollectionsController:
                 return None
             try:
                 response = await self._run_service_call()(
-                    get_collection,
+                    list_collections,
                     mode="local",
-                    collection_id=collection_id,
+                    query="",
+                    limit=100,
+                    offset=offset,
                     isolate_in_worker=True,
                 )
                 if (
@@ -678,22 +681,29 @@ class LibraryPromptCollectionsController:
                     or self.membership_state.request_token != request_token
                 ):
                     return None
-                if (
-                    not isinstance(response, Mapping)
-                    or response.get("backend") != "local"
-                ):
-                    continue
-                option = PromptCollectionOption(
-                    collection_id=response.get("collection_id"),
-                    name=response.get("name"),
-                    display_name=response.get("display_name") or response.get("name"),
+                loading = begin_prompt_collection_catalog(
+                    query="",
+                    request_token=request_token,
+                    previous=catalog,
+                    append=catalog is not None,
                 )
-                if option.collection_id == collection_id:
-                    self._label_cache[collection_id] = option.display_name
+                catalog = apply_prompt_collection_catalog_page(
+                    loading,
+                    response,
+                    request_token=request_token,
+                    append=catalog is not None,
+                )
             except asyncio.CancelledError:
                 raise
             except Exception:
-                continue
+                break
+            self._label_cache.update(
+                (item.collection_id, item.display_name) for item in catalog.items
+            )
+            missing.difference_update(self._label_cache)
+            if not catalog.has_more:
+                break
+            offset = catalog.next_offset
         return self._label_cache
 
     async def load_memberships(self) -> None:

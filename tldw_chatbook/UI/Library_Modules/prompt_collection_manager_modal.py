@@ -59,6 +59,7 @@ class PromptCollectionManagerModal(ModalScreen[PromptCollectionManagerResult | N
     }
     #prompt-collection-manager-title,
     #prompt-collection-manager-authority,
+    #prompt-collection-manager-rename-target,
     #prompt-collection-manager-outcome {
         height: auto;
     }
@@ -180,6 +181,10 @@ class PromptCollectionManagerModal(ModalScreen[PromptCollectionManagerResult | N
                             compact=True,
                         )
                         checkbox.collection_id = item.collection_id
+                        checkbox.set_class(
+                            item.collection_id == self._rename_selected_id,
+                            "prompt-collection-manager-rename-target",
+                        )
                         yield checkbox
                     else:
                         button = Button(
@@ -212,6 +217,12 @@ class PromptCollectionManagerModal(ModalScreen[PromptCollectionManagerResult | N
                 id="prompt-collection-manager-new-name",
                 disabled=self._mutation_in_flight,
             )
+            if self._mode == "membership":
+                yield Static(
+                    self._rename_target_copy(),
+                    id="prompt-collection-manager-rename-target",
+                    markup=False,
+                )
             with Horizontal(classes="prompt-collection-manager-actions"):
                 yield Button(
                     "New collection",
@@ -279,13 +290,57 @@ class PromptCollectionManagerModal(ModalScreen[PromptCollectionManagerResult | N
             return self._selected_id
         return self._rename_selected_id
 
+    def _rename_target_copy(self) -> str:
+        collection_id = self._rename_target_id()
+        if collection_id is None:
+            return "Rename target: choose a collection row"
+        label = next(
+            (
+                item.display_name
+                for item in self._catalog.items
+                if item.collection_id == collection_id
+            ),
+            f"Collection #{collection_id}",
+        )
+        return f"Rename target: {label}"
+
+    def _catalog_focus_id(self, *, offset: int) -> str:
+        if offset <= 0:
+            return "prompt-collection-manager-search"
+        if self._catalog.has_more:
+            return "prompt-collection-manager-load-more"
+        if offset < len(self._catalog.items):
+            return self._collection_control_id(
+                self._catalog.items[offset].collection_id
+            )
+        if self._catalog.items:
+            return self._collection_control_id(self._catalog.items[-1].collection_id)
+        return "prompt-collection-manager-search"
+
+    def _collection_focus_id(self, collection_id: int) -> str:
+        if any(item.collection_id == collection_id for item in self._catalog.items):
+            return self._collection_control_id(collection_id)
+        return "prompt-collection-manager-search"
+
     def on_descendant_focus(self, event: DescendantFocus) -> None:
         if self._mode != "membership":
             return
         collection_id = getattr(event.widget, "collection_id", None)
         if type(collection_id) is not int or collection_id <= 0:
             return
+        if collection_id == self._rename_selected_id:
+            return
         self._rename_selected_id = collection_id
+        for checkbox in self.query(".prompt-collection-manager-row").results(Checkbox):
+            checkbox.set_class(
+                getattr(checkbox, "collection_id", None) == collection_id,
+                "prompt-collection-manager-rename-target",
+            )
+        for target in self.query("#prompt-collection-manager-rename-target").results(
+            Static
+        ):
+            target.update(self._rename_target_copy())
+            break
         for rename in self.query("#prompt-collection-manager-rename").results(Button):
             rename.disabled = self._mutation_in_flight
             break
@@ -325,7 +380,7 @@ class PromptCollectionManagerModal(ModalScreen[PromptCollectionManagerResult | N
             self._catalog = fail_prompt_collection_catalog(
                 current, request_token=request_token, error=_CATALOG_ERROR
             )
-            self._retry_action = ("load", None, query)
+            self._retry_action = ("load", offset, query)
             self._outcome = _CATALOG_ERROR
         else:
             self._catalog = catalog
@@ -344,13 +399,7 @@ class PromptCollectionManagerModal(ModalScreen[PromptCollectionManagerResult | N
                 and not catalog.has_more
             ):
                 self._selected_id = None
-        self._refresh(
-            focus_id=(
-                "prompt-collection-manager-load-more"
-                if offset > 0
-                else "prompt-collection-manager-search"
-            )
-        )
+        self._refresh(focus_id=self._catalog_focus_id(offset=offset))
 
     @on(Input.Submitted, "#prompt-collection-manager-search")
     def _search_submitted(self, event: Input.Submitted) -> None:
@@ -489,7 +538,7 @@ class PromptCollectionManagerModal(ModalScreen[PromptCollectionManagerResult | N
             focus_id=(
                 "prompt-collection-manager-new-name"
                 if action == "create"
-                else self._collection_control_id(collection_id)  # type: ignore[arg-type]
+                else self._collection_focus_id(collection_id)  # type: ignore[arg-type]
             )
         )
 

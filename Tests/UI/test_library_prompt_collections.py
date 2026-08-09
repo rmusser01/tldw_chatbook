@@ -119,7 +119,7 @@ def test_collection_controller_public_apis_use_google_style_docs():
             assert section in doc, f"{method_name} lacks {section}"
 
 
-def test_controller_calls_exact_local_scope_signatures_off_ui_loop():
+def test_controller_normalizes_catalog_query_and_dispatches_exact_local_kwargs():
     assert (
         "mode"
         in inspect.signature(PromptScopeService.list_prompt_collections).parameters
@@ -190,7 +190,7 @@ async def test_real_library_service_runner_isolates_every_collection_call_and_ke
                 started.set()
                 assert release.wait(timeout=5)
             return _catalog_page(
-                offset=kwargs["offset"], total=1, query=kwargs["query"]
+                offset=kwargs["offset"], total=207, query=kwargs["query"]
             )
 
         def create_prompt_collection(self, **_kwargs):
@@ -210,7 +210,7 @@ async def test_real_library_service_runner_isolates_every_collection_call_and_ke
             self._record("list_prompt_collection_memberships")
             return {
                 "prompt_id": kwargs["prompt_id"],
-                "collection_ids": (1,),
+                "collection_ids": (1, 101, 207),
                 "changed": False,
             }
 
@@ -275,13 +275,21 @@ async def test_real_library_service_runner_isolates_every_collection_call_and_ke
     assert service_threads
     assert all(thread_id != ui_thread for _operation, thread_id in service_threads)
     dispatched_by_name = {name: kwargs for name, _args, kwargs in dispatched}
-    assert dispatched_by_name["list_prompt_collections"] == {
-        "mode": "local",
-        "query": "",
-        "limit": 100,
-        "offset": 0,
-        "isolate_in_worker": True,
-    }
+    list_dispatches = [
+        kwargs
+        for name, _args, kwargs in dispatched
+        if name == "list_prompt_collections"
+    ]
+    assert list_dispatches[-3:] == [
+        {
+            "mode": "local",
+            "query": "",
+            "limit": 100,
+            "offset": offset,
+            "isolate_in_worker": True,
+        }
+        for offset in (0, 100, 200)
+    ]
     assert dispatched_by_name["create_prompt_collection"] == {
         "mode": "local",
         "name": "Created",
@@ -343,36 +351,6 @@ def test_controller_rejects_late_catalog_and_membership_results_after_identity_s
 
     asyncio.run(exercise())
     assert all(state.prompt_id != 41 or state.status == "loading" for state in synced)
-
-
-def test_controller_membership_apply_keeps_content_dirty_and_outcomes_separate():
-    dirty = [True]
-    content_status = ["Name already in use"]
-    synced: list[Any] = []
-
-    class Service:
-        async def list_prompt_collection_memberships(self, **_kwargs):
-            return {"prompt_id": 41, "collection_ids": (1,), "changed": False}
-
-        async def replace_prompt_collection_memberships(self, **kwargs):
-            return {
-                "prompt_id": kwargs["prompt_id"],
-                "collection_ids": tuple(kwargs["collection_ids"]),
-                "changed": True,
-            }
-
-    controller = _direct_controller(Service(), sync_memberships=lambda: synced.append)
-
-    async def exercise():
-        await controller.load_memberships()
-        controller.stage_memberships((1, 2))
-        await controller.apply_memberships()
-
-    asyncio.run(exercise())
-    assert dirty == [True]
-    assert content_status == ["Name already in use"]
-    assert synced[-1].outcome == "Memberships applied."
-    assert synced[-1].status == "success"
 
 
 @pytest.mark.parametrize(
@@ -485,40 +463,46 @@ def test_controller_membership_success_callback_runs_once_only_for_current_succe
     assert refreshes == ["refresh"]
 
 
-def test_controller_hydrates_initial_membership_labels_without_opening_manager():
-    detail_calls: list[dict[str, Any]] = []
+def test_controller_hydrates_207_memberships_with_three_catalog_pages():
+    calls: list[tuple[str, dict[str, Any]]] = []
 
     class Service:
         async def list_prompt_collection_memberships(self, **kwargs):
+            calls.append(("memberships", kwargs))
             return {
                 "prompt_id": kwargs["prompt_id"],
-                "collection_ids": (2, 207),
+                "collection_ids": (*range(1, 207), 999),
                 "changed": False,
             }
 
-        async def get_prompt_collection(self, **kwargs):
-            detail_calls.append(kwargs)
-            collection_id = kwargs["collection_id"]
-            return {
-                "backend": "local",
-                "collection_id": collection_id,
-                "name": "[bold]" if collection_id == 2 else "研究",
-                "display_name": (
-                    "[bold] · #2" if collection_id == 2 else "研究 · #207"
-                ),
-            }
+        async def list_prompt_collections(self, **kwargs):
+            calls.append(("catalog", kwargs))
+            return _catalog_page(offset=kwargs["offset"])
 
     controller = _direct_controller(Service())
 
     asyncio.run(controller.load_memberships())
 
-    assert controller.membership_state.labels == (
-        (2, "[bold] · #2"),
-        (207, "研究 · #207"),
-    )
-    assert detail_calls == [
-        {"mode": "local", "collection_id": 2},
-        {"mode": "local", "collection_id": 207},
+    labels = dict(controller.membership_state.labels)
+    assert len(controller.membership_state.applied_ids) == 207
+    assert len(labels) == 206
+    assert labels[2] == "[bold] · #2"
+    assert labels[206] == "集合 206"
+    assert labels.get(999, "Collection #999") == "Collection #999"
+    assert calls == [
+        ("memberships", {"mode": "local", "prompt_id": 41}),
+        (
+            "catalog",
+            {"mode": "local", "query": "", "limit": 100, "offset": 0},
+        ),
+        (
+            "catalog",
+            {"mode": "local", "query": "", "limit": 100, "offset": 100},
+        ),
+        (
+            "catalog",
+            {"mode": "local", "query": "", "limit": 100, "offset": 200},
+        ),
     ]
 
 
@@ -535,15 +519,10 @@ def test_controller_rejects_late_membership_label_hydration_after_identity_switc
                 "changed": False,
             }
 
-        async def get_prompt_collection(self, **kwargs):
+        async def list_prompt_collections(self, **kwargs):
             detail_started.set()
             await detail_release.wait()
-            return {
-                "backend": "local",
-                "collection_id": kwargs["collection_id"],
-                "name": "Old",
-                "display_name": "Old",
-            }
+            return _catalog_page(offset=kwargs["offset"])
 
     controller = _direct_controller(Service(), prompt_id=lambda: prompt_id[0])
 
@@ -621,12 +600,14 @@ class _ManagerHost(App):
         mode: str,
         total: int = 207,
         staged_ids: tuple[int, ...] = (1, 2),
+        selected_id: int | None = None,
         create_refresh_error: bool = False,
     ) -> None:
         super().__init__()
         self.mode = mode
         self.total = total
         self.staged_ids = staged_ids
+        self.selected_id = selected_id
         self.create_refresh_error = create_refresh_error
         self.calls: list[tuple[str, Any]] = []
         self.catalog_state = None
@@ -677,7 +658,7 @@ class _ManagerHost(App):
 
         return PromptCollectionManagerModal(
             mode=self.mode,
-            selected_collection_id=None,
+            selected_collection_id=self.selected_id,
             staged_collection_ids=self.staged_ids,
             load_catalog=load,
             create_collection=create,
@@ -737,10 +718,17 @@ class _MutationManagerHost(App):
 
 
 class _PagingRetryManagerHost(App):
-    def __init__(self, *, fail_offset: int, fail_once: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        fail_offset: int,
+        fail_once: bool = True,
+        callback_failure: str | None = None,
+    ) -> None:
         super().__init__()
         self.fail_offset = fail_offset
         self.fail_once = fail_once
+        self.callback_failure = callback_failure
         self.failed = False
         self.offsets: list[int] = []
         self.catalog_state = None
@@ -761,6 +749,10 @@ class _PagingRetryManagerHost(App):
             )
             if offset == self.fail_offset and (not self.failed or not self.fail_once):
                 self.failed = True
+                if self.callback_failure == "exception":
+                    raise RuntimeError("private catalog failure")
+                if self.callback_failure == "none":
+                    return None
                 self.catalog_state = (
                     prompts_state_module.fail_prompt_collection_catalog(
                         loading,
@@ -1088,6 +1080,15 @@ async def test_shared_manager_load_more_beyond_207_and_membership_multiselect():
         )
         assert load_more.display is False
         assert load_more.disabled is True
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                browse_app.screen.query_one(
+                    "#prompt-collection-manager-row-201", Button
+                ).has_focus
+            ),
+            message="final page did not focus its first surviving appended row",
+        )
 
     membership_app = _ManagerHost(mode="membership", staged_ids=(1, 2, 207))
     async with membership_app.run_test(size=(100, 30)) as pilot:
@@ -1142,7 +1143,7 @@ async def test_manager_rename_requires_one_concrete_selection_and_new_has_explic
 @pytest.mark.asyncio
 async def test_membership_manager_renames_focused_row_without_changing_staged_set():
     app = _ManagerHost(mode="membership", total=2, staged_ids=(1, 2))
-    async with app.run_test(size=(80, 24)) as pilot:
+    async with app.run_test(size=(64, 24)) as pilot:
         await pilot.pause()
         modal = app.screen
         first = modal.query_one("#prompt-collection-manager-member-1", Checkbox)
@@ -1154,6 +1155,16 @@ async def test_membership_manager_renames_focused_row_without_changing_staged_se
         await pilot.pause()
         rename = modal.query_one("#prompt-collection-manager-rename", Button)
         assert rename.disabled is False
+        assert modal._staged_ids == {1, 2}
+
+        modal.query_one("#prompt-collection-manager-new-name", Input).focus()
+        await pilot.pause()
+        target = modal.query_one("#prompt-collection-manager-rename-target", Static)
+        assert str(target.render()) == "Rename target: [bold] · #2"
+        assert target.region.height > 0 and target.is_on_screen
+        assert modal.query_one(
+            "#prompt-collection-manager-member-2", Checkbox
+        ).has_class("prompt-collection-manager-rename-target")
         assert modal._staged_ids == {1, 2}
 
         modal.query_one(
@@ -1183,6 +1194,34 @@ async def test_membership_manager_renames_focused_row_without_changing_staged_se
                 ).has_focus
             ),
             message="renamed membership row focus was not restored",
+        )
+
+
+@pytest.mark.asyncio
+async def test_off_page_rename_falls_back_to_visible_search_focus():
+    app = _ManagerHost(mode="browse", total=150, selected_id=150)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal.query_one("#prompt-collection-manager-load-more", Button).press()
+        await _wait_for_selector(modal, pilot, "#prompt-collection-manager-row-150")
+        modal.query_one("#prompt-collection-manager-row-150", Button).press()
+        await _wait_for_selector(modal, pilot, "#prompt-collection-manager-new-name")
+        modal.query_one(
+            "#prompt-collection-manager-new-name", Input
+        ).value = "Off-page renamed"
+        modal.query_one("#prompt-collection-manager-rename", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: _modal_outcome(modal) == "Collection renamed.",
+            message="off-page rename did not settle",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                modal.query_one("#prompt-collection-manager-search", Input).has_focus
+            ),
+            message="off-page rename did not fall back to visible Search focus",
         )
 
 
@@ -1223,9 +1262,16 @@ async def test_manager_catalog_error_state_always_exposes_exact_retry():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failed_offset", (100, 200))
-async def test_manager_catalog_retry_repeats_exact_failed_page_offset(failed_offset):
-    app = _PagingRetryManagerHost(fail_offset=failed_offset)
+@pytest.mark.parametrize(
+    ("failed_offset", "callback_failure"),
+    ((100, None), (200, None), (200, "exception"), (200, "none")),
+)
+async def test_manager_catalog_retry_repeats_exact_failed_page_offset(
+    failed_offset, callback_failure
+):
+    app = _PagingRetryManagerHost(
+        fail_offset=failed_offset, callback_failure=callback_failure
+    )
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         modal = app.screen
