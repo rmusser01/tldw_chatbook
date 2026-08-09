@@ -920,6 +920,38 @@ def test_character_screen_state_round_trips_roleplay_identity_fields_exactly():
     assert restored.identity_revision == original.identity_revision
 
 
+@pytest.mark.parametrize(
+    "invalid_name",
+    [
+        "bad\x00name",
+        "界" * 25,
+        "bad\u202ename",
+    ],
+    ids=["control", "overwide", "bidi-control"],
+)
+def test_character_screen_state_restore_discards_invalid_user_display_name(
+    invalid_name: str,
+) -> None:
+    """Corrupt saved identity must not prevent the rest of the chat restoring."""
+    original = ConsoleChatSession(
+        title="Saved roleplay chat",
+        assistant_kind="character",
+        character_name="Alraune",
+        user_display_name_override="Captain Rowan",
+        character_system_template="Speak with {{user}}.",
+    )
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    payload = controller._console_session_to_state(original)
+    payload["user_display_name_override"] = invalid_name
+
+    restored = controller._console_session_from_state(payload)
+
+    assert restored.id == original.id
+    assert restored.title == "Saved roleplay chat"
+    assert restored.user_display_name_override is None
+    assert restored.character_system_template == "Speak with {{user}}."
+
+
 @pytest.mark.asyncio
 async def test_durable_resume_restores_only_guarded_v1_roleplay_context():
     """Absent, invalid, and future metadata must never invent template provenance."""

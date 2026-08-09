@@ -132,6 +132,7 @@ from ...Chat.console_roleplay_identity import (
     ChatDisplayNameError,
     effective_user_display_name,
     expand_character_template,
+    normalize_chat_display_name,
 )
 from ...Chat.console_prefill import pinned_prefill_from_conversation_metadata
 from ...Chat.console_session_settings import (
@@ -1880,11 +1881,15 @@ class ConsoleSessionController:
         raw_user_display_name_override = raw_session.get(
             "user_display_name_override"
         )
-        session_kwargs["user_display_name_override"] = (
-            raw_user_display_name_override
-            if isinstance(raw_user_display_name_override, str)
-            else None
-        )
+        try:
+            session_kwargs["user_display_name_override"] = (
+                normalize_chat_display_name(
+                    raw_user_display_name_override,
+                    blank_means_none=True,
+                )
+            )
+        except ChatDisplayNameError:
+            session_kwargs["user_display_name_override"] = None
         raw_character_system_template = raw_session.get(
             "character_system_template"
         )
