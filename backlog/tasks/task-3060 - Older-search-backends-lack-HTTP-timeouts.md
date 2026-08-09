@@ -1,11 +1,11 @@
 ---
 id: TASK-3060
 title: Older search backends lack HTTP timeouts
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-07 14:10'
-updated_date: '2026-08-08 23:09'
+updated_date: '2026-08-09 02:18'
 labels:
   - web-tools
   - tech-debt

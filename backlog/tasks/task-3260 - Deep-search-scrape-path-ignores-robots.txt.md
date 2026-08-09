@@ -1,11 +1,11 @@
 ---
 id: TASK-3260
 title: Deep-search scrape path ignores robots.txt
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-07 21:15'
-updated_date: '2026-08-08 23:19'
+updated_date: '2026-08-09 02:18'
 labels:
   - web-tools
 dependencies:
