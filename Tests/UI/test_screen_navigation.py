@@ -1494,6 +1494,48 @@ async def test_file_notes_source_transition_blocks_mutation_through_recompose(
 
 
 @pytest.mark.asyncio
+async def test_file_notes_create_route_returns_to_database_notes(monkeypatch):
+    """Create Note leaves Files only after its source transition is admitted."""
+    from tldw_chatbook.Library.library_shell_state import (
+        LIBRARY_ROW_BROWSE_NOTES,
+        LIBRARY_ROW_CREATE_NOTE,
+    )
+    from tldw_chatbook.UI.Screens.library_screen import (
+        LIBRARY_NOTES_SOURCE_DATABASE,
+        LIBRARY_NOTES_SOURCE_FILES,
+        LibraryScreen,
+    )
+
+    app = _build_test_app()
+    transition_events = []
+
+    class WorkspaceProbe:
+        async def flush_pending_work(self):
+            transition_events.append("flushed")
+            return True
+
+        def acquire_transition(self, kind):
+            transition_events.append(f"admitted:{kind}")
+            return lambda: transition_events.append("released")
+
+    workspace = WorkspaceProbe()
+    screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
+    screen._library_file_notes_workspace = workspace
+    screen._library_notes_source = LIBRARY_NOTES_SOURCE_FILES
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
+    recompose = AsyncMock()
+    monkeypatch.setattr(screen, "recompose", recompose)
+
+    await screen._select_library_rail_row(LIBRARY_ROW_CREATE_NOTE)
+
+    assert transition_events == ["flushed", "admitted:source", "released"]
+    assert screen._library_selected_row_id == LIBRARY_ROW_CREATE_NOTE
+    assert screen._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
+    assert screen.check_action("library_notes_escape", ()) is True
+    recompose.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_file_notes_collections_source_transition_blocks_mutation_through_recompose(
     monkeypatch,
     tmp_path,
@@ -1649,6 +1691,7 @@ def test_check_action_gates_notes_files_back_to_active_files_mode():
     # Files mode genuinely owns the Notes canvas -- active.
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
     assert screen.check_action("library_notes_files_back", ()) is True
+    assert screen.check_action("library_notes_escape", ()) is False
 
     # Back to Database Notes -- inactive again.
     screen._library_notes_source = "database"

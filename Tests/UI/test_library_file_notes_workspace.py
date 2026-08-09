@@ -2061,6 +2061,17 @@ async def test_library_notes_source_choices_render_and_switch_by_keyboard(
             "Files source did not open from the keyboard",
         )
 
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_until(
+            pilot,
+            lambda: (
+                screen._library_notes_source == "files"
+                and bool(screen.query("#library-file-notes-workspace"))
+                and bool(screen.query("#library-notes-source-strip"))
+            ),
+            "Reselecting Notes did not retain the file-notes workspace",
+        )
+
         strip = screen.query_one("#library-notes-source-strip")
         database = screen.query_one("#library-notes-source-database", Button)
         files = screen.query_one("#library-notes-source-files", Button)

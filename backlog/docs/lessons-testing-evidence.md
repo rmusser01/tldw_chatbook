@@ -1737,3 +1737,23 @@ PR #1463 review exposed a second portability trap: treating a missing
 while leaving the post-open identity check looking reassuring. Add an explicit
 missing-capability mutation test. If the platform cannot guarantee no-follow,
 fail closed before `open()` instead of opening first and rejecting afterward.
+## A targeted subtree swap must account for route-owned siblings outside that subtree (2026-08-09)
+
+**Incident (task-13213).** The Library optimized Notes/Media navigation by
+replacing only `#library-canvas`. The Notes `Database | Files` source strip is
+not a canvas child; it is a route-owned sibling composed above the shell grid.
+The optimization therefore made Notes look selected while omitting the only
+entry into file-backed notes, and it could leave the same strip stale after
+leaving Notes. A shell-identity regression stayed green because it asserted
+only the widgets the optimization deliberately preserved, never the contextual
+sibling it had skipped. Once the route boundary was tested, the original code
+failed at both 120x40 and 160x45.
+
+**The rule.** Before introducing a targeted recompose, inventory every
+route-owned surface, including siblings and wrappers outside the replacement
+host. Encode that inventory as a structural signature and use the targeted path
+only when the mounted signature matches the destination; otherwise await the
+canonical full composition seam. Tests must assert both halves of the boundary:
+contextual chrome appears on entry and disappears on exit. If stable child IDs
+are reused, hide and detach the outgoing subtree before mounting its replacement
+or Textual will reject the duplicate even when the route signature matches.
