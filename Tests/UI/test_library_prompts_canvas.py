@@ -3275,6 +3275,10 @@ async def test_library_prompt_history_stale_conflict_reload_refreshes_and_can_re
                 and state.page_status == "loaded"
                 and len(state.rows) == 3
                 and len(screen.query("#library-prompt-conflict-copy")) == 0
+                and any(
+                    row.source_version == 1
+                    for row in screen.query(".library-prompt-history-row")
+                )
             ):
                 break
             await pilot.pause(0.02)
