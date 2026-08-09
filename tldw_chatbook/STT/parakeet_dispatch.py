@@ -12,6 +12,7 @@ from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
     active_managed_parakeet_dir,
     parakeet_reference,
     parakeet_v2_managed_service,
+    parakeet_vad_reference,
 )
 from tldw_chatbook.Local_Ingestion.parakeet_v2_installer import (
     PARAKEET_V2_FILES,
@@ -36,6 +37,7 @@ class ParakeetDispatch:
     managed_store_root: Path | None
     managed_artifact_ref: tuple[str, str, str] | None
     option_updates: Mapping[str, Any]
+    managed_dependency_refs: tuple[tuple[str, str, str], ...] = ()
 
 
 def _configured_paths(model_root: Path, precision: str) -> tuple[Path, ...]:
@@ -67,6 +69,7 @@ def _dispatch(
     closure_fingerprint: str | None = None,
     managed_store_root: Path | None = None,
     managed_artifact_ref: tuple[str, str, str] | None = None,
+    managed_dependency_refs: tuple[tuple[str, str, str], ...] = (),
     option_updates: Mapping[str, Any] | None = None,
 ) -> ParakeetDispatch:
     return ParakeetDispatch(
@@ -85,6 +88,7 @@ def _dispatch(
         managed_store_root=managed_store_root,
         managed_artifact_ref=managed_artifact_ref,
         option_updates=MappingProxyType(dict(option_updates or {})),
+        managed_dependency_refs=managed_dependency_refs,
     )
 
 
@@ -103,13 +107,21 @@ def resolve_parakeet_dispatch(
     reference = parakeet_reference(model_id, precision)
     if model_dir is not None and str(model_dir).strip():
         model_root = validate_path_simple(model_dir, require_exists=True).absolute()
-        local_source = snapshot_local_source(
-            _configured_paths(model_root, precision)
-        )
+        local_source = snapshot_local_source(_configured_paths(model_root, precision))
+        vad_reference = parakeet_vad_reference()
         return _dispatch(
             model_id=model_id,
             precision=precision,
             local_source=local_source,
+            root_revision=reference.revision,
+            managed_store_root=managed_model_artifact_root().absolute(),
+            managed_dependency_refs=(
+                (
+                    vad_reference.artifact_id,
+                    vad_reference.revision,
+                    vad_reference.variant,
+                ),
+            ),
             option_updates={"transcription_model_dir": str(model_root)},
         )
 

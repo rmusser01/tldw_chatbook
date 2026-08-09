@@ -203,6 +203,7 @@ class ExecutorRequest:
     local_source: LocalSourceSnapshot | None = field(default=None, repr=False)
     managed_store_root: Path | None = field(default=None, repr=False)
     managed_artifact_ref: tuple[str, str, str] | None = None
+    managed_dependency_refs: tuple[tuple[str, str, str], ...] = ()
 
     def __post_init__(self) -> None:
         _require_generation_and_attempt(self.generation, self.attempt_id)
@@ -254,9 +255,31 @@ class ExecutorRequest:
                 raise ValueError(
                     "managed_artifact_ref must contain three non-empty strings"
                 )
-        if (self.managed_store_root is None) != (self.managed_artifact_ref is None):
+        if type(self.managed_dependency_refs) is not tuple or any(
+            type(reference) is not tuple
+            or len(reference) != 3
+            or any(
+                type(component) is not str or not component.strip()
+                for component in reference
+            )
+            for reference in self.managed_dependency_refs
+        ):
+            raise ValueError("managed_dependency_refs must contain three-string tuples")
+        object.__setattr__(
+            self,
+            "managed_dependency_refs",
+            tuple(sorted(set(self.managed_dependency_refs))),
+        )
+        if self.managed_artifact_ref is not None and self.managed_dependency_refs:
             raise ValueError(
-                "managed_store_root and managed_artifact_ref must be provided together"
+                "managed_artifact_ref and managed_dependency_refs are mutually exclusive"
+            )
+        has_managed_reference = self.managed_artifact_ref is not None or bool(
+            self.managed_dependency_refs
+        )
+        if (self.managed_store_root is None) == has_managed_reference:
+            raise ValueError(
+                "managed_store_root requires a managed artifact or dependency reference"
             )
         if self.local_source is not None and self.managed_artifact_ref is not None:
             raise ValueError(
@@ -499,6 +522,7 @@ class LocalSTTExecutor:
         local_source: LocalSourceSnapshot | None = None,
         managed_store_root: Path | None = None,
         managed_artifact_ref: tuple[str, str, str] | None = None,
+        managed_dependency_refs: tuple[tuple[str, str, str], ...] = (),
         on_event: Callable[[ExecutorEvent], None] = _ignore_event,
         on_result: Callable[[ExecutorResult], None] = _ignore_result,
         on_failure: Callable[[ExecutorFailure], None] = _ignore_failure,
@@ -541,6 +565,7 @@ class LocalSTTExecutor:
                 local_source=local_source,
                 managed_store_root=managed_store_root,
                 managed_artifact_ref=managed_artifact_ref,
+                managed_dependency_refs=managed_dependency_refs,
             )
             self._active_request = request
             self._active_callbacks = _ActiveCallbacks(

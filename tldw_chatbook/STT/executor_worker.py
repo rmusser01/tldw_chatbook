@@ -55,6 +55,7 @@ class _ResidentRuntime:
     local_snapshot_token: str | None
     managed_store_root: Path | None
     managed_artifact_ref: tuple[str, str, str] | None
+    managed_dependency_refs: tuple[tuple[str, str, str], ...]
     lease: Any | None = None
     reported: bool = False
 
@@ -206,12 +207,20 @@ def _failure_from_worker_exception(
 
 
 def _acquire_managed_model(request: ExecutorRequest) -> tuple[Any, Any] | None:
-    if request.managed_artifact_ref is None:
+    if request.managed_artifact_ref is None and not request.managed_dependency_refs:
         return None
     assert request.managed_store_root is not None
     from tldw_chatbook.Model_Artifacts import ArtifactRef, ModelArtifactService
 
     try:
+        if request.managed_artifact_ref is None:
+            references = tuple(
+                ArtifactRef(*reference) for reference in request.managed_dependency_refs
+            )
+            leased = ModelArtifactService(
+                request.managed_store_root
+            ).acquire_dependencies(references)
+            return leased, leased.handle
         reference = ArtifactRef(*request.managed_artifact_ref)
         leased = ModelArtifactService(request.managed_store_root).acquire(reference)
         handle = leased.handle
@@ -259,8 +268,11 @@ def _load_resident(
     handle = None
     if acquired is not None:
         lease, handle = acquired
-        model_root = dict(handle.paths)[handle.root]
+        if request.managed_artifact_ref is not None:
+            model_root = dict(handle.paths)[handle.root]
     try:
+        if request.local_source is not None and handle is not None:
+            model_root = _direct_local_model_root(request)
         provider = provider_builder(request, model_root, handle, is_cancelled)
     except Exception:
         if lease is not None:
@@ -278,6 +290,7 @@ def _load_resident(
             else None
         ),
         managed_artifact_ref=request.managed_artifact_ref,
+        managed_dependency_refs=request.managed_dependency_refs,
         lease=lease,
     )
 
@@ -294,6 +307,8 @@ def _validate_reuse(request: ExecutorRequest, resident: _ResidentRuntime) -> Non
         if request.managed_store_root is not None
         else None
     )
+    if request.managed_dependency_refs != resident.managed_dependency_refs:
+        raise LocalSourceChangedError("Local STT model dependencies changed")
     if (
         request_store != resident.managed_store_root
         or request.managed_artifact_ref != resident.managed_artifact_ref
@@ -487,12 +502,15 @@ def _parakeet_provider(
     vad_root = None
     if managed_handle is not None:
         paths = dict(managed_handle.paths)
-        artifact_root = managed_handle.root.lease_key()
-        dependency_refs = tuple(
-            reference
-            for reference in managed_handle.closure
-            if reference != managed_handle.root
-        )
+        if hasattr(managed_handle, "root"):
+            artifact_root = managed_handle.root.lease_key()
+            dependency_refs = tuple(
+                reference
+                for reference in managed_handle.closure
+                if reference != managed_handle.root
+            )
+        else:
+            dependency_refs = managed_handle.references
         artifact_dependencies = tuple(
             reference.lease_key() for reference in dependency_refs
         )

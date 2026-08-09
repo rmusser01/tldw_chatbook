@@ -8,7 +8,12 @@ from types import SimpleNamespace
 
 import pytest
 
+from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
+    parakeet_reference,
+    parakeet_vad_reference,
+)
 from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V2_MODEL
+from tldw_chatbook.Model_Artifacts.store import managed_model_artifact_root
 from tldw_chatbook.Model_Artifacts import ArtifactRef
 from tldw_chatbook.STT.contracts import ExecutionDevice
 
@@ -61,11 +66,21 @@ def test_configured_library_and_console_calls_share_exact_dispatch(
     assert library.identity.model_id == PARAKEET_V2_MODEL
     assert library.identity.precision == precision
     assert library.identity.device is ExecutionDevice.CPU
-    assert library.identity.root_revision is None
+    assert (
+        library.identity.root_revision
+        == parakeet_reference(PARAKEET_V2_MODEL, precision).revision
+    )
     assert library.identity.closure_fingerprint is None
     assert library.identity.local_snapshot_token == library.local_source.token
-    assert library.managed_store_root is None
+    assert library.managed_store_root == managed_model_artifact_root().absolute()
     assert library.managed_artifact_ref is None
+    assert library.managed_dependency_refs == (
+        (
+            parakeet_vad_reference().artifact_id,
+            parakeet_vad_reference().revision,
+            parakeet_vad_reference().variant,
+        ),
+    )
     assert dict(library.option_updates) == {
         "transcription_model_dir": str(model_root.absolute())
     }
@@ -148,6 +163,7 @@ def test_managed_library_and_console_calls_share_closure_identity(
         "managed-revision",
         precision,
     )
+    assert library.managed_dependency_refs == ()
     assert dict(library.option_updates) == {}
     assert len(leases) == 2
     assert all(lease.closed for lease in leases)
