@@ -149,15 +149,19 @@ user-authored definition must not be able to break by omission.
 
 ### Settings UI
 
-**Settings ▸ Agents** category following the `tools_settings_screen.py`
-precedent (the About category confirms non-TOML categories exist): definition
-list + edit form (name, description, instructions textarea, enabled switch,
-tool picker, model field). Explicit deviation, stated in the UI: this edits
-the DB immediately (CRUD), not a config.toml draft with save/reset. The tool
-picker sources the same catalog the MCP screen browses, **excluding
-`RUNTIME_TOOL_NAMES`** (loop machinery, not grantable), and notes that names
-unavailable in a given run are ignored. Soft UI warning past ~20 enabled
-definitions (schema bloat).
+**Settings ▸ Agents** category following the **About-category precedent** (a
+bespoke non-TOML category: new `SettingsCategoryId` member + its own
+`_render_detail_pane` branch) rendering a dedicated panel widget — the
+`InternalPromptsPanel` per-item Save model is the closest shipped shape.
+(Correction during PR-1 planning: `tools_settings_screen.py` is NOT usable
+precedent — deprecated TASK-1346, nav-unreachable, its route resolves to the
+MCP screen.) Definition list + edit form (name, description, instructions
+textarea, enabled switch, tools field, model field). Explicit deviation,
+stated in the UI: this edits the DB immediately (CRUD), not a config.toml
+draft with save/reset. The tools field excludes **`RUNTIME_TOOL_NAMES`**
+(loop machinery, not grantable) and notes that names unavailable in a given
+run are ignored (intersection makes them harmless). Soft UI warning past ~20
+enabled definitions (schema bloat).
 
 ### Migration
 
