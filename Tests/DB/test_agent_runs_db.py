@@ -585,3 +585,50 @@ def test_definitions_survive_reopen_and_migration_is_idempotent(tmp_path):
             for row in conn.execute("SELECT version FROM schema_version").fetchall()
         }
     assert 5 in versions
+
+
+# --- Task 3: agent_definition + definition_fingerprint audit columns ---
+
+
+def test_create_run_records_definition_audit_fields(db):
+    run_id = db.create_run(
+        conversation_id="c",
+        agent_kind="subagent",
+        task="t",
+        parent_run_id=None,
+        agent_definition="researcher",
+        definition_fingerprint="abc123def4567890",
+    )
+    run = db.get_run(run_id)
+    assert run["agent_definition"] == "researcher"
+    assert run["definition_fingerprint"] == "abc123def4567890"
+
+
+def test_create_run_definition_fields_default_none(db):
+    run_id = db.create_run(conversation_id="c", agent_kind="primary")
+    run = db.get_run(run_id)
+    assert run["agent_definition"] is None
+    assert run["definition_fingerprint"] is None
+
+
+def test_agent_runs_columns_backfilled_on_old_file(tmp_path):
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    # Simulate a pre-v5 file: the v4-era 12-column table, no new columns.
+    conn.execute(
+        """CREATE TABLE agent_runs (
+               id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL,
+               parent_run_id TEXT, agent_kind TEXT NOT NULL, task TEXT,
+               status TEXT NOT NULL, steps TEXT NOT NULL DEFAULT '[]',
+               result TEXT, budget TEXT, created_at TEXT NOT NULL,
+               updated_at TEXT NOT NULL, assistant_message_id TEXT)"""
+    )
+    conn.commit()
+    conn.close()
+    db = AgentRunsDB(path, client_id="test")  # open runs the ALTER guards
+    with db.connection() as conn:
+        columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(agent_runs)").fetchall()
+        }
+    assert {"agent_definition", "definition_fingerprint"} <= columns

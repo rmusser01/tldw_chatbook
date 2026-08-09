@@ -188,7 +188,9 @@ class AgentRunsDB(BaseDB):
                     budget TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    assistant_message_id TEXT
+                    assistant_message_id TEXT,
+                    agent_definition TEXT,
+                    definition_fingerprint TEXT
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_agent_runs_conversation
@@ -254,6 +256,16 @@ class AgentRunsDB(BaseDB):
             if "assistant_message_id" not in existing_columns:
                 conn.execute(
                     "ALTER TABLE agent_runs ADD COLUMN assistant_message_id TEXT"
+                )
+            # v4->v5 (fleet spec §4): definition audit identity on runs --
+            # same idempotent-ALTER mechanism as above.
+            if "agent_definition" not in existing_columns:
+                conn.execute(
+                    "ALTER TABLE agent_runs ADD COLUMN agent_definition TEXT"
+                )
+            if "definition_fingerprint" not in existing_columns:
+                conn.execute(
+                    "ALTER TABLE agent_runs ADD COLUMN definition_fingerprint TEXT"
                 )
             # v3->v4 (TASK-1975): oversize disclosure count on snapshot
             # rows -- same idempotent-ALTER migration mechanism as above.
@@ -445,6 +457,8 @@ class AgentRunsDB(BaseDB):
         parent_run_id: str | None = None,
         budget: dict | None = None,
         assistant_message_id: str | None = None,
+        agent_definition: str | None = None,
+        definition_fingerprint: str | None = None,
     ) -> str:
         """Create a new run record in ``running`` status.
 
@@ -461,6 +475,11 @@ class AgentRunsDB(BaseDB):
                 ``None`` (the common case) when it will be recorded later
                 via ``set_run_assistant_message_id`` once the reply is
                 persisted.
+            agent_definition: The name of the agent definition used for
+                this run, if spawned from a definition; ``None`` otherwise.
+            definition_fingerprint: The fingerprint hash of the agent
+                definition used for this run, for audit trail purposes;
+                ``None`` if not applicable.
 
         Returns:
             The newly created run's id (a hex UUID4).
@@ -472,8 +491,8 @@ class AgentRunsDB(BaseDB):
                 """INSERT INTO agent_runs
                    (id, conversation_id, parent_run_id, agent_kind, task,
                     status, steps, result, budget, created_at, updated_at,
-                    assistant_message_id)
-                   VALUES (?, ?, ?, ?, ?, 'running', '[]', NULL, ?, ?, ?, ?)""",
+                    assistant_message_id, agent_definition, definition_fingerprint)
+                   VALUES (?, ?, ?, ?, ?, 'running', '[]', NULL, ?, ?, ?, ?, ?, ?)""",
                 (
                     run_id,
                     conversation_id,
@@ -484,6 +503,8 @@ class AgentRunsDB(BaseDB):
                     now,
                     now,
                     assistant_message_id,
+                    agent_definition,
+                    definition_fingerprint,
                 ),
             )
         return run_id
