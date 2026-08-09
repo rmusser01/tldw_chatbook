@@ -32,6 +32,10 @@ Use the existing two identities for their intended jobs:
    `message.persisted_message_id or message.id`. The durable ID owns the store
    directory after persistence/restart; the native ID remains the fallback for a
    current, non-persisted message.
+3. Restore the real Console action route by passing Play and Save-copy as named
+   callables into `ConsoleMessageController`. The controller extraction currently
+   dispatches to attributes it never received, so private screen-method tests alone
+   would miss an `AttributeError` on the user-facing buttons.
 
 No new identifier, metadata field, schema, file move, fallback scan, or migration
 is introduced. Existing video rows remain valid tombstones; this change guarantees
@@ -75,7 +79,9 @@ identity only for newly persisted generated videos.
   the restored message's `persisted_message_id` and slug while confirming its native
   `id` is fresh.
 - Focused card/action tests prove ready-state, playback, and save-copy use the durable
-  key after reload rather than the fresh native ID.
+  key after reload rather than the fresh native ID. The Play and Save-copy tests
+  enter through `handle_console_message_action()` so the production controller
+  wiring is part of the proof.
 - The new assertions are mutation-checked independently by removing the video
   stable-ID condition and by changing durable-first resolution back to `message.id`;
   each mutation must fail its corresponding focused test for the expected reason.
