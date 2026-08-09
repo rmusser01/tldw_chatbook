@@ -1,0 +1,494 @@
+"""Presentation-only local Prompt collection manager modal."""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Awaitable, Callable, Sequence
+from typing import Literal
+
+from loguru import logger
+from rich.markup import escape as escape_markup
+from textual import on
+from textual.app import ComposeResult
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.screen import ModalScreen
+from textual.widgets import Button, Checkbox, Input, Static
+
+from ...Library.library_prompts_state import (
+    PromptCollectionCatalogState,
+    begin_prompt_collection_catalog,
+    fail_prompt_collection_catalog,
+)
+from .prompt_collections import (
+    PromptCollectionManagerMode,
+    PromptCollectionManagerResult,
+    PromptMembershipIdentity,
+)
+
+CatalogLoader = Callable[..., Awaitable[PromptCollectionCatalogState | None]]
+CollectionCreator = Callable[[str], Awaitable[PromptCollectionCatalogState | None]]
+CollectionRenamer = Callable[[int, str], Awaitable[PromptCollectionCatalogState | None]]
+
+_CATALOG_ERROR = "Couldn't load collections. Retry."
+_CREATE_ERROR = "Couldn't create collection. Retry."
+_RENAME_ERROR = "Couldn't rename collection. Retry."
+
+
+class PromptCollectionManagerModal(ModalScreen[PromptCollectionManagerResult | None]):
+    """One reusable presentation surface for browse and membership selection."""
+
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    DEFAULT_CSS = """
+    PromptCollectionManagerModal {
+        align: center middle;
+        background: $background 75%;
+    }
+    #prompt-collection-manager {
+        width: 96;
+        max-width: 100%;
+        height: 36;
+        max-height: 100%;
+        min-height: 20;
+        background: $panel;
+        border: round $accent;
+        padding: 0 1;
+    }
+    #prompt-collection-manager-title,
+    #prompt-collection-manager-authority,
+    #prompt-collection-manager-outcome {
+        height: auto;
+    }
+    #prompt-collection-manager-rows {
+        height: 1fr;
+        min-height: 2;
+        background: $surface-darken-1;
+    }
+    .prompt-collection-manager-row,
+    #prompt-collection-manager-all {
+        width: 100%;
+        height: 1;
+        min-height: 1;
+    }
+    #prompt-collection-manager-load-more,
+    #prompt-collection-manager-new-name {
+        height: 3;
+    }
+    .prompt-collection-manager-actions {
+        height: 3;
+    }
+    .prompt-collection-manager-actions Button {
+        width: auto;
+        min-width: 8;
+        height: 3;
+        margin-right: 1;
+    }
+    """
+
+    def __init__(
+        self,
+        *,
+        mode: PromptCollectionManagerMode,
+        selected_collection_id: int | None,
+        staged_collection_ids: Sequence[int],
+        load_catalog: CatalogLoader,
+        create_collection: CollectionCreator,
+        rename_collection: CollectionRenamer,
+        manager_token: int = 1,
+        prompt_identity: PromptMembershipIdentity | None = None,
+    ) -> None:
+        if mode not in {"browse", "membership"}:
+            raise ValueError("Unsupported Prompt collection manager mode.")
+        super().__init__()
+        self._mode = mode
+        self._manager_token = manager_token
+        self._prompt_identity = prompt_identity
+        self._selected_id = selected_collection_id
+        self._staged_ids = set(staged_collection_ids)
+        self._load_catalog_callback = load_catalog
+        self._create_collection_callback = create_collection
+        self._rename_collection_callback = rename_collection
+        self._request_token = 0
+        self._catalog = begin_prompt_collection_catalog(query="", request_token=1)
+        self._outcome = ""
+        self._retry_action: tuple[str, int | None, str] | None = None
+        self._mutation_in_flight = False
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="prompt-collection-manager"):
+            yield Static(
+                "Manage Prompt collections",
+                id="prompt-collection-manager-title",
+                markup=False,
+            )
+            yield Static(
+                "Local only · Prompt Save is separate",
+                id="prompt-collection-manager-authority",
+                markup=False,
+            )
+            yield Input(
+                value=self._catalog.query,
+                placeholder="Search collections… (Enter)",
+                id="prompt-collection-manager-search",
+                disabled=self._mutation_in_flight,
+            )
+            with VerticalScroll(id="prompt-collection-manager-rows"):
+                if self._mode == "browse":
+                    all_button = Button(
+                        "All prompts",
+                        id="prompt-collection-manager-all",
+                        classes="prompt-collection-manager-row",
+                        compact=True,
+                        disabled=self._mutation_in_flight,
+                    )
+                    all_button.set_class(
+                        self._selected_id is None,
+                        "prompt-collection-manager-selected",
+                    )
+                    yield all_button
+                if self._catalog.status == "loading" and not self._catalog.items:
+                    yield Static(
+                        "Loading collections…",
+                        id="prompt-collection-manager-loading",
+                        markup=False,
+                    )
+                elif self._catalog.status == "error":
+                    yield Static(
+                        self._catalog.error,
+                        id="prompt-collection-manager-error",
+                        markup=False,
+                    )
+                elif self._catalog.status == "empty":
+                    yield Static(
+                        "No collections match this search.",
+                        id="prompt-collection-manager-empty",
+                        markup=False,
+                    )
+                for item in self._catalog.items:
+                    label = escape_markup(item.display_name)
+                    if self._mode == "membership":
+                        checkbox = Checkbox(
+                            label,
+                            value=item.collection_id in self._staged_ids,
+                            id=f"prompt-collection-manager-member-{item.collection_id}",
+                            classes="prompt-collection-manager-row",
+                            disabled=self._mutation_in_flight,
+                            compact=True,
+                        )
+                        checkbox.collection_id = item.collection_id
+                        yield checkbox
+                    else:
+                        button = Button(
+                            label,
+                            id=f"prompt-collection-manager-row-{item.collection_id}",
+                            classes="prompt-collection-manager-row",
+                            compact=True,
+                            disabled=self._mutation_in_flight,
+                        )
+                        button.collection_id = item.collection_id
+                        button.set_class(
+                            item.collection_id == self._selected_id,
+                            "prompt-collection-manager-selected",
+                        )
+                        yield button
+            load_more = Button(
+                "Load more",
+                id="prompt-collection-manager-load-more",
+                compact=True,
+                disabled=(
+                    self._mutation_in_flight
+                    or self._catalog.status == "loading"
+                    or not self._catalog.has_more
+                ),
+            )
+            load_more.display = self._catalog.has_more
+            yield load_more
+            yield Input(
+                placeholder="Collection name",
+                id="prompt-collection-manager-new-name",
+                disabled=self._mutation_in_flight,
+            )
+            with Horizontal(classes="prompt-collection-manager-actions"):
+                yield Button(
+                    "New collection",
+                    id="prompt-collection-manager-create",
+                    compact=True,
+                    disabled=self._mutation_in_flight,
+                )
+                yield Button(
+                    "Rename selected",
+                    id="prompt-collection-manager-rename",
+                    compact=True,
+                    disabled=(
+                        self._mutation_in_flight or self._rename_target_id() is None
+                    ),
+                )
+                retry = Button(
+                    "Retry",
+                    id="prompt-collection-manager-retry",
+                    compact=True,
+                    disabled=self._mutation_in_flight,
+                )
+                retry.display = self._retry_action is not None
+                yield retry
+            yield Static(
+                self._outcome,
+                id="prompt-collection-manager-outcome",
+                markup=False,
+            )
+            with Horizontal(classes="prompt-collection-manager-actions"):
+                yield Button(
+                    "Done",
+                    id="prompt-collection-manager-done",
+                    compact=True,
+                    disabled=self._mutation_in_flight,
+                )
+                yield Button(
+                    "Cancel",
+                    id="prompt-collection-manager-cancel",
+                    compact=True,
+                    disabled=self._mutation_in_flight,
+                )
+
+    def on_mount(self) -> None:
+        self._start_catalog_load(query="", offset=0)
+
+    def _focus_search(self) -> None:
+        if not self.is_mounted:
+            return
+        for search in self.query("#prompt-collection-manager-search").results(Input):
+            search.focus()
+            break
+
+    def _refresh(self, *, focus_search: bool = False) -> None:
+        self.refresh(recompose=True)
+        if focus_search:
+            self.call_after_refresh(self._focus_search)
+
+    def _rename_target_id(self) -> int | None:
+        if self._mode == "browse":
+            return self._selected_id
+        if len(self._staged_ids) == 1:
+            return next(iter(self._staged_ids))
+        return None
+
+    def _start_catalog_load(self, *, query: str, offset: int) -> None:
+        self._request_token += 1
+        request_token = self._request_token
+        self.run_worker(
+            self._load_catalog(query=query, offset=offset, request_token=request_token),
+            exclusive=True,
+            group=f"prompt-collection-manager-{self._manager_token}-catalog",
+        )
+
+    async def _load_catalog(
+        self, *, query: str, offset: int, request_token: int
+    ) -> None:
+        try:
+            catalog = await self._load_catalog_callback(query=query, offset=offset)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "Library Prompt collection manager failed; operation=load "
+                "exception_type={}",
+                type(exc).__name__,
+            )
+            catalog = None
+        if request_token != self._request_token or not self.is_mounted:
+            return
+        if catalog is None:
+            current = begin_prompt_collection_catalog(
+                query=query, request_token=request_token
+            )
+            self._catalog = fail_prompt_collection_catalog(
+                current, request_token=request_token, error=_CATALOG_ERROR
+            )
+            self._retry_action = ("load", None, query)
+            self._outcome = _CATALOG_ERROR
+        else:
+            self._catalog = catalog
+            if catalog.status == "error":
+                self._retry_action = ("load", None, catalog.query)
+                self._outcome = catalog.error
+            else:
+                self._retry_action = None
+            if (
+                self._selected_id is not None
+                and not catalog.query
+                and not any(
+                    item.collection_id == self._selected_id for item in catalog.items
+                )
+                and not catalog.has_more
+            ):
+                self._selected_id = None
+        self._refresh(focus_search=True)
+
+    @on(Input.Submitted, "#prompt-collection-manager-search")
+    def _search_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        if self._mutation_in_flight:
+            return
+        self._outcome = "Searching collections…"
+        self._start_catalog_load(query=event.value.strip(), offset=0)
+
+    @on(Button.Pressed, "#prompt-collection-manager-load-more")
+    def _load_more(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self._mutation_in_flight:
+            return
+        self._outcome = "Loading more collections…"
+        self._start_catalog_load(
+            query=self._catalog.query, offset=self._catalog.next_offset
+        )
+
+    @on(Button.Pressed, "#prompt-collection-manager-all")
+    def _select_all(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self._mutation_in_flight:
+            return
+        self._selected_id = None
+        self._refresh()
+
+    @on(Button.Pressed, ".prompt-collection-manager-row")
+    def _select_row(self, event: Button.Pressed) -> None:
+        if (
+            self._mutation_in_flight
+            or self._mode != "browse"
+            or event.button.id == "prompt-collection-manager-all"
+        ):
+            return
+        event.stop()
+        collection_id = getattr(event.button, "collection_id", None)
+        if type(collection_id) is int:
+            self._selected_id = collection_id
+            self._refresh()
+
+    @on(Checkbox.Changed, ".prompt-collection-manager-row")
+    def _membership_changed(self, event: Checkbox.Changed) -> None:
+        if self._mutation_in_flight or self._mode != "membership":
+            return
+        event.stop()
+        collection_id = getattr(event.checkbox, "collection_id", None)
+        if type(collection_id) is not int:
+            return
+        if event.value:
+            self._staged_ids.add(collection_id)
+        else:
+            self._staged_ids.discard(collection_id)
+        try:
+            rename = self.query_one("#prompt-collection-manager-rename", Button)
+        except Exception:
+            return
+        rename.disabled = self._rename_target_id() is None
+
+    def _name_value(self) -> str:
+        return self.query_one(
+            "#prompt-collection-manager-new-name", Input
+        ).value.strip()
+
+    @on(Button.Pressed, "#prompt-collection-manager-create")
+    async def _create(self, event: Button.Pressed) -> None:
+        event.stop()
+        await self._run_mutation("create", None, self._name_value())
+
+    @on(Button.Pressed, "#prompt-collection-manager-rename")
+    async def _rename(self, event: Button.Pressed) -> None:
+        event.stop()
+        await self._run_mutation("rename", self._rename_target_id(), self._name_value())
+
+    async def _run_mutation(
+        self, action: Literal["create", "rename"], collection_id: int | None, name: str
+    ) -> None:
+        if self._mutation_in_flight:
+            return
+        if not name:
+            self._outcome = "Collection name is required."
+            self._retry_action = None
+            self._refresh()
+            return
+        if action == "rename" and collection_id is None:
+            self._outcome = "Choose exactly one collection to rename."
+            self._retry_action = None
+            self._refresh()
+            return
+        self._request_token += 1
+        self._mutation_in_flight = True
+        self._outcome = (
+            "Creating collection…" if action == "create" else "Renaming collection…"
+        )
+        self._retry_action = None
+        self._refresh()
+        try:
+            if action == "create":
+                catalog = await self._create_collection_callback(name)
+            else:
+                catalog = await self._rename_collection_callback(collection_id, name)  # type: ignore[arg-type]
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "Library Prompt collection manager failed; operation={} "
+                "exception_type={}",
+                action,
+                type(exc).__name__,
+            )
+            catalog = None
+        finally:
+            self._mutation_in_flight = False
+        if not self.is_mounted:
+            return
+        if catalog is None:
+            self._outcome = _CREATE_ERROR if action == "create" else _RENAME_ERROR
+            self._retry_action = (action, collection_id, name)
+            self._refresh()
+            return
+        self._catalog = catalog
+        self._outcome = (
+            "Collection created." if action == "create" else "Collection renamed."
+        )
+        self._retry_action = None
+        self._refresh()
+
+    @on(Button.Pressed, "#prompt-collection-manager-retry")
+    async def _retry(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self._mutation_in_flight:
+            return
+        retry = self._retry_action
+        if retry is None:
+            return
+        action, collection_id, value = retry
+        if action == "load":
+            self._start_catalog_load(query=value, offset=0)
+            return
+        await self._run_mutation(action, collection_id, value)
+
+    @on(Button.Pressed, "#prompt-collection-manager-done")
+    def _done(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self._mutation_in_flight:
+            return
+        self._request_token += 1
+        self.dismiss(
+            PromptCollectionManagerResult(
+                mode=self._mode,
+                manager_token=self._manager_token,
+                selected_collection_id=(
+                    self._selected_id if self._mode == "browse" else None
+                ),
+                staged_collection_ids=tuple(sorted(self._staged_ids)),
+                prompt_identity=self._prompt_identity,
+            )
+        )
+
+    @on(Button.Pressed, "#prompt-collection-manager-cancel")
+    def _cancel_button(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.action_cancel()
+
+    def action_cancel(self) -> None:
+        if self._mutation_in_flight:
+            return
+        self._request_token += 1
+        self.dismiss(None)

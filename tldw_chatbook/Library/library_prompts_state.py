@@ -390,6 +390,427 @@ def apply_prompt_browse_result(
     return result
 
 
+PromptCollectionCatalogStatus = Literal["loading", "ready", "empty", "error"]
+PromptMembershipStatus = Literal[
+    "disabled",
+    "loading",
+    "ready",
+    "applying",
+    "success",
+    "load_error",
+    "apply_error",
+]
+PromptMembershipFailurePhase = Literal["load", "apply"]
+
+_PROMPT_MEMBERSHIP_OUTCOME_MAX = 200
+
+
+@dataclass(frozen=True)
+class PromptCollectionOption:
+    """One immutable local collection label keyed strictly by numeric ID."""
+
+    collection_id: int
+    name: str
+    display_name: str
+
+    def __post_init__(self) -> None:
+        if type(self.collection_id) is not int or self.collection_id <= 0:
+            raise ValueError("collection_id must be a positive integer.")
+        if not isinstance(self.name, str) or not self.name.strip():
+            raise ValueError("Collection name is required.")
+        if not isinstance(self.display_name, str) or not self.display_name:
+            raise ValueError("Collection display_name is required.")
+
+
+@dataclass(frozen=True)
+class PromptCollectionCatalogState:
+    """One exact bounded local collection catalog snapshot."""
+
+    query: str
+    items: tuple[PromptCollectionOption, ...]
+    total: int
+    limit: int
+    offset: int
+    status: PromptCollectionCatalogStatus
+    request_token: int
+    request_fingerprint: str
+    error: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.query, str):
+            raise TypeError("query must be a string.")
+        if type(self.total) is not int or self.total < 0:
+            raise ValueError("total must be a non-negative integer.")
+        if type(self.limit) is not int or not 1 <= self.limit <= 100:
+            raise ValueError("limit must be between 1 and 100.")
+        if type(self.offset) is not int or self.offset < 0:
+            raise ValueError("offset must be a non-negative integer.")
+        _prompt_browse_request_token(self.request_token)
+        if self.status not in {"loading", "ready", "empty", "error"}:
+            raise ValueError("Unsupported collection catalog status.")
+        if self.request_fingerprint != _prompt_collection_catalog_fingerprint(
+            self.query
+        ):
+            raise ValueError("Collection catalog fingerprint does not match query.")
+        if len({item.collection_id for item in self.items}) != len(self.items):
+            raise ValueError("Collection catalog cannot contain duplicate IDs.")
+        if len(self.items) > self.total:
+            raise ValueError("Collection catalog items cannot exceed exact total.")
+        if self.status == "error" and not self.error.strip():
+            raise ValueError("Collection catalog error status requires error text.")
+        if self.status != "error" and self.error:
+            raise ValueError(
+                "Only collection catalog error state may contain error text."
+            )
+
+    @property
+    def has_more(self) -> bool:
+        return len(self.items) < self.total
+
+    @property
+    def next_offset(self) -> int:
+        return len(self.items)
+
+
+def _prompt_collection_catalog_fingerprint(query: str) -> str:
+    return hashlib.sha256(
+        json.dumps(query, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def begin_prompt_collection_catalog(
+    *,
+    query: str,
+    request_token: int,
+    previous: PromptCollectionCatalogState | None = None,
+    append: bool = False,
+) -> PromptCollectionCatalogState:
+    """Start one catalog request, retaining exact rows only for Load more."""
+    if not isinstance(query, str):
+        raise TypeError("query must be a string.")
+    query = query.strip()
+    _prompt_browse_request_token(request_token)
+    if append:
+        if previous is None or previous.query != query:
+            raise ValueError("Load more requires the current matching catalog.")
+        return replace(
+            previous, status="loading", request_token=request_token, error=""
+        )
+    return PromptCollectionCatalogState(
+        query=query,
+        items=(),
+        total=0,
+        limit=100,
+        offset=0,
+        status="loading",
+        request_token=request_token,
+        request_fingerprint=_prompt_collection_catalog_fingerprint(query),
+    )
+
+
+def _prompt_collection_option(record: Mapping[str, Any]) -> PromptCollectionOption:
+    backend = record.get("backend", "local")
+    if backend != "local":
+        raise ValueError("Library Prompt collections are local-only.")
+    collection_id = record.get("collection_id")
+    name = record.get("name")
+    display_name = record.get("display_name") or name
+    return PromptCollectionOption(
+        collection_id=collection_id,
+        name=name,
+        display_name=display_name,
+    )
+
+
+def apply_prompt_collection_catalog_page(
+    state: PromptCollectionCatalogState,
+    record: Mapping[str, Any],
+    *,
+    request_token: int,
+    append: bool = False,
+) -> PromptCollectionCatalogState:
+    """Apply one exact service page, rejecting stale or divergent appends."""
+    if request_token != state.request_token:
+        return state
+    if not isinstance(record, Mapping):
+        raise TypeError("Collection catalog result must be a mapping.")
+    raw_items = record.get("collections")
+    if not isinstance(raw_items, Sequence) or isinstance(raw_items, (str, bytes)):
+        raise TypeError("Collection catalog collections must be a sequence.")
+    limit = _prompt_browse_integer(record.get("limit"), field="limit", minimum=1)
+    if limit > 100:
+        raise ValueError("limit must not exceed 100.")
+    offset = _prompt_browse_integer(record.get("offset"), field="offset", minimum=0)
+    total = _prompt_browse_integer(record.get("total"), field="total", minimum=0)
+    if append and total != state.total:
+        raise ValueError("Collection catalog exact total changed during append.")
+    expected_offset = len(state.items) if append else 0
+    if offset != expected_offset:
+        raise ValueError("Collection catalog offset does not match the requested page.")
+    page_items = tuple(_prompt_collection_option(item) for item in raw_items)
+    if len(page_items) > limit:
+        raise ValueError("Collection catalog page exceeds its limit.")
+    items = state.items + page_items if append else page_items
+    if len({item.collection_id for item in items}) != len(items):
+        raise ValueError("Collection catalog cannot append duplicate IDs.")
+    if len(items) > total:
+        raise ValueError("Collection catalog exact total is smaller than loaded rows.")
+    return PromptCollectionCatalogState(
+        query=state.query,
+        items=items,
+        total=total,
+        limit=limit,
+        offset=offset,
+        status="ready" if items else "empty",
+        request_token=request_token,
+        request_fingerprint=state.request_fingerprint,
+    )
+
+
+def fail_prompt_collection_catalog(
+    state: PromptCollectionCatalogState,
+    *,
+    request_token: int,
+    error: str = "Couldn't load collections. Retry.",
+) -> PromptCollectionCatalogState:
+    """Settle only the current catalog request as a recoverable failure."""
+    if request_token != state.request_token:
+        return state
+    return replace(state, status="error", error=error.strip())
+
+
+@dataclass(frozen=True)
+class PromptMembershipState:
+    """Independent current/staged collection membership editor state."""
+
+    prompt_id: int | None
+    identity_fingerprint: str
+    applied_ids: tuple[int, ...]
+    staged_ids: tuple[int, ...]
+    labels: tuple[tuple[int, str], ...]
+    status: PromptMembershipStatus
+    request_token: int
+    outcome: str = ""
+    disabled_reason: str = ""
+
+    def __post_init__(self) -> None:
+        if self.prompt_id is not None and (
+            type(self.prompt_id) is not int or self.prompt_id <= 0
+        ):
+            raise ValueError("prompt_id must be a positive integer or None.")
+        for field_name, values in (
+            ("applied_ids", self.applied_ids),
+            ("staged_ids", self.staged_ids),
+        ):
+            if any(type(value) is not int or value <= 0 for value in values):
+                raise ValueError(f"{field_name} must contain positive integers.")
+            if tuple(sorted(set(values))) != values:
+                raise ValueError(f"{field_name} must be sorted and unique.")
+        label_ids: list[int] = []
+        for label in self.labels:
+            if not isinstance(label, tuple) or len(label) != 2:
+                raise ValueError("labels must contain ID and label pairs.")
+            collection_id, display_label = label
+            if type(collection_id) is not int or collection_id <= 0:
+                raise ValueError("labels must use positive collection IDs.")
+            if not isinstance(display_label, str):
+                raise ValueError("membership labels must be strings.")
+            label_ids.append(collection_id)
+        if len(set(label_ids)) != len(label_ids):
+            raise ValueError("membership labels must use unique collection IDs.")
+        if not set(label_ids).issubset(set(self.applied_ids) | set(self.staged_ids)):
+            raise ValueError("membership labels must belong to applied or staged IDs.")
+        if self.status not in {
+            "disabled",
+            "loading",
+            "ready",
+            "applying",
+            "success",
+            "load_error",
+            "apply_error",
+        }:
+            raise ValueError("Unsupported Prompt membership status.")
+        if not isinstance(self.outcome, str):
+            raise ValueError("Membership outcome must be a string.")
+        if self.status == "disabled":
+            if not isinstance(self.disabled_reason, str) or not self.disabled_reason:
+                raise ValueError("Disabled membership state requires a reason.")
+            if (
+                self.prompt_id is not None
+                or self.identity_fingerprint
+                or self.applied_ids
+                or self.staged_ids
+                or self.labels
+                or self.request_token != 0
+                or self.outcome
+            ):
+                raise ValueError("Disabled membership state cannot carry active data.")
+            return
+        if self.prompt_id is None:
+            raise ValueError("Active membership state requires a Prompt identity.")
+        if (
+            not isinstance(self.identity_fingerprint, str)
+            or not self.identity_fingerprint.strip()
+        ):
+            raise ValueError(
+                "Active membership state requires an identity fingerprint."
+            )
+        _prompt_browse_request_token(self.request_token)
+        if self.disabled_reason:
+            raise ValueError("Active membership state cannot carry a disabled reason.")
+        if self.status in {"load_error", "apply_error", "success"}:
+            if not self.outcome.strip():
+                raise ValueError(f"{self.status} membership state requires an outcome.")
+            if len(self.outcome) > _PROMPT_MEMBERSHIP_OUTCOME_MAX:
+                raise ValueError("Membership outcome is too long.")
+        elif self.outcome:
+            raise ValueError("Only settled membership state may contain an outcome.")
+
+    @property
+    def can_manage(self) -> bool:
+        return self.status in {"ready", "success", "apply_error"}
+
+    @property
+    def can_retry_load(self) -> bool:
+        return self.status == "load_error"
+
+    @property
+    def can_apply(self) -> bool:
+        return self.can_manage and self.staged_ids != self.applied_ids
+
+    @property
+    def summary(self) -> str:
+        if self.status == "load_error":
+            return "Memberships not loaded"
+        if not self.applied_ids:
+            return "No collections"
+        labels = dict(self.labels)
+        return ", ".join(
+            labels.get(collection_id, f"Collection #{collection_id}")
+            for collection_id in self.applied_ids
+        )
+
+
+def disable_prompt_memberships(reason: str) -> PromptMembershipState:
+    """Build a readable disabled state for an unsaved/foreign identity."""
+    return PromptMembershipState(
+        prompt_id=None,
+        identity_fingerprint="",
+        applied_ids=(),
+        staged_ids=(),
+        labels=(),
+        status="disabled",
+        request_token=0,
+        disabled_reason=reason.strip() or "Memberships are unavailable.",
+    )
+
+
+def begin_prompt_memberships(
+    *, prompt_id: int, identity_fingerprint: str, request_token: int
+) -> PromptMembershipState:
+    """Start membership loading for one exact persisted local Prompt."""
+    _prompt_browse_request_token(request_token)
+    if not isinstance(identity_fingerprint, str) or not identity_fingerprint:
+        raise ValueError("identity_fingerprint is required.")
+    return PromptMembershipState(
+        prompt_id=prompt_id,
+        identity_fingerprint=identity_fingerprint,
+        applied_ids=(),
+        staged_ids=(),
+        labels=(),
+        status="loading",
+        request_token=request_token,
+    )
+
+
+def apply_prompt_memberships_loaded(
+    state: PromptMembershipState,
+    *,
+    collection_ids: Sequence[int],
+    labels: Mapping[int, str],
+    request_token: int,
+) -> PromptMembershipState:
+    """Settle the current membership load without accepting a late result."""
+    if state.status != "loading" or request_token != state.request_token:
+        return state
+    ids = tuple(sorted(set(collection_ids)))
+    relevant_labels = tuple(
+        (collection_id, str(labels[collection_id]))
+        for collection_id in ids
+        if collection_id in labels
+    )
+    return replace(
+        state,
+        applied_ids=ids,
+        staged_ids=ids,
+        labels=relevant_labels,
+        status="ready",
+        outcome="",
+    )
+
+
+def fail_prompt_memberships(
+    state: PromptMembershipState,
+    *,
+    request_token: int,
+    error: str,
+    phase: PromptMembershipFailurePhase,
+) -> PromptMembershipState:
+    """Settle the exact current load or Apply as a recoverable failure."""
+    expected_status = "loading" if phase == "load" else "applying"
+    if phase not in {"load", "apply"}:
+        raise ValueError("Unsupported membership failure phase.")
+    if request_token != state.request_token or state.status != expected_status:
+        return state
+    return replace(
+        state,
+        status="load_error" if phase == "load" else "apply_error",
+        outcome=error.strip(),
+    )
+
+
+def stage_prompt_memberships(
+    state: PromptMembershipState, collection_ids: Sequence[int]
+) -> PromptMembershipState:
+    """Stage zero or more IDs without mutating the applied membership set."""
+    if not state.can_manage:
+        return state
+    ids = tuple(sorted(set(collection_ids)))
+    return replace(state, staged_ids=ids, status="ready", outcome="")
+
+
+def begin_prompt_memberships_apply(
+    state: PromptMembershipState, *, request_token: int
+) -> PromptMembershipState:
+    """Start one explicit Apply request; Prompt Save state is not part of this type."""
+    _prompt_browse_request_token(request_token)
+    if not state.can_apply:
+        return state
+    return replace(state, status="applying", request_token=request_token, outcome="")
+
+
+def apply_prompt_memberships_saved(
+    state: PromptMembershipState,
+    *,
+    collection_ids: Sequence[int],
+    request_token: int,
+) -> PromptMembershipState:
+    """Settle only the current membership Apply request."""
+    if state.status != "applying" or request_token != state.request_token:
+        return state
+    ids = tuple(sorted(set(collection_ids)))
+    if ids != state.staged_ids:
+        raise ValueError("Membership response does not match the staged IDs.")
+    return replace(
+        state,
+        applied_ids=ids,
+        staged_ids=ids,
+        labels=tuple(label for label in state.labels if label[0] in ids),
+        status="success",
+        outcome="Memberships applied.",
+    )
+
+
 PromptHistoryPageStatus = Literal["closed", "loading", "loaded", "error"]
 PromptHistoryCountStatus = Literal["idle", "loading", "loaded", "error"]
 PromptHistoryRestoreKind = Literal[

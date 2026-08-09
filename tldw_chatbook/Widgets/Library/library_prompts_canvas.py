@@ -21,6 +21,7 @@ from tldw_chatbook.Library.library_prompts_state import (
     PromptBrowseResult,
     PromptEditorState,
     PromptHistoryState,
+    PromptMembershipState,
     PromptsListState,
     definition_state_display_label,
     prompt_editor_meta_line,
@@ -120,6 +121,8 @@ class LibraryPromptsListCanvas(Vertical):
         include_starter_content: bool = False,
         history_state: PromptHistoryState | None = None,
         history_current_compatible: bool = True,
+        collection_label: str = "All prompts",
+        membership_state: PromptMembershipState | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -140,6 +143,8 @@ class LibraryPromptsListCanvas(Vertical):
         self.include_starter_content = include_starter_content
         self.history_state = history_state
         self.history_current_compatible = history_current_compatible
+        self.collection_label = collection_label
+        self.membership_state = membership_state
         self.styles.width = "1fr"
         self.styles.min_width = 40
 
@@ -171,6 +176,12 @@ class LibraryPromptsListCanvas(Vertical):
             placeholder="Filter prompts… (Enter)",
             id="library-prompts-filter",
             value=self.filter_value,
+        )
+        yield Button(
+            f"collection: {escape_markup(self.collection_label)} ▸",
+            id="library-prompts-collection",
+            classes="library-canvas-action",
+            compact=True,
         )
         # One horizontal ds-toolbar row for sort/Import -- mirrors
         # library_notes_canvas.py's toolbar exactly (same render-safe shape:
@@ -504,6 +515,41 @@ class LibraryPromptsListCanvas(Vertical):
                             classes="library-canvas-action",
                             compact=True,
                         )
+                if self.membership_state is not None:
+                    yield Static(
+                        "Collections",
+                        classes="library-prompt-field-label",
+                        markup=False,
+                    )
+                    yield Static(
+                        self._membership_summary(self.membership_state),
+                        id="library-prompt-memberships-summary",
+                        classes="destination-purpose",
+                        markup=False,
+                    )
+                    yield Button(
+                        self._membership_manage_label(self.membership_state),
+                        id="library-prompt-memberships-manage",
+                        classes="library-canvas-action",
+                        compact=True,
+                        disabled=not (
+                            self.membership_state.can_manage
+                            or self.membership_state.can_retry_load
+                        ),
+                    )
+                    yield Button(
+                        "Apply memberships",
+                        id="library-prompt-memberships-apply",
+                        classes="library-canvas-action",
+                        compact=True,
+                        disabled=not self.membership_state.can_apply,
+                    )
+                    yield Static(
+                        self._membership_status(self.membership_state),
+                        id="library-prompt-memberships-status",
+                        classes="destination-purpose",
+                        markup=False,
+                    )
                 # Keep the empty region mounted for an unsaved editor so its
                 # first successful create can reveal history without
                 # remounting the editor fields or persistent action strip.
@@ -553,6 +599,7 @@ class LibraryPromptsListCanvas(Vertical):
                             classes="library-canvas-action",
                             compact=True,
                         )
+
                         yield Button(
                             "Export…",
                             id="library-prompt-export",
@@ -578,6 +625,66 @@ class LibraryPromptsListCanvas(Vertical):
                             classes="library-canvas-action library-media-action-danger",
                             compact=True,
                         )
+
+    @staticmethod
+    def _membership_ids_summary(
+        state: PromptMembershipState, collection_ids: tuple[int, ...]
+    ) -> str:
+        labels = dict(state.labels)
+        if not collection_ids:
+            return "No collections"
+        return ", ".join(
+            labels.get(collection_id, f"Collection #{collection_id}")
+            for collection_id in collection_ids
+        )
+
+    @classmethod
+    def _membership_summary(cls, state: PromptMembershipState) -> str:
+        if state.status == "disabled":
+            return "Memberships unavailable"
+        if state.status == "loading":
+            return "Loading memberships…"
+        if state.status == "load_error":
+            return "Memberships not loaded"
+        current = cls._membership_ids_summary(state, state.applied_ids)
+        if state.staged_ids == state.applied_ids:
+            return current
+        staged = cls._membership_ids_summary(state, state.staged_ids)
+        return f"Current: {current} · Staged: {staged}"
+
+    @staticmethod
+    def _membership_status(state: PromptMembershipState) -> str:
+        if state.status == "disabled":
+            return state.disabled_reason
+        if state.status == "loading":
+            return "Loading memberships…"
+        if state.status == "applying":
+            return "Applying memberships…"
+        if state.outcome:
+            return state.outcome
+        if state.can_apply:
+            return "Membership changes staged — apply separately from Prompt Save."
+        return "Memberships are current."
+
+    @staticmethod
+    def _membership_manage_label(state: PromptMembershipState) -> str:
+        return "Retry memberships" if state.can_retry_load else "Manage collections"
+
+    def sync_memberships(self, state: PromptMembershipState) -> None:
+        """Patch only membership controls, preserving every editor field widget."""
+        self.membership_state = state
+        self.query_one("#library-prompt-memberships-summary", Static).update(
+            self._membership_summary(state)
+        )
+        self.query_one("#library-prompt-memberships-status", Static).update(
+            self._membership_status(state)
+        )
+        manage = self.query_one("#library-prompt-memberships-manage", Button)
+        manage.label = self._membership_manage_label(state)
+        manage.disabled = not (state.can_manage or state.can_retry_load)
+        self.query_one(
+            "#library-prompt-memberships-apply", Button
+        ).disabled = not state.can_apply
 
     def on_prompt_block_editor_block_field_changed(
         self, event: PromptBlockEditor.BlockFieldChanged

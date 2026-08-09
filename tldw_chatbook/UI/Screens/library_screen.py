@@ -344,6 +344,7 @@ from ...Widgets.ModelArtifacts import (
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ..Library_Modules import (
     LibraryPromptBrowseController,
+    LibraryPromptCollectionsController,
     LibraryPromptHistoryController,
     LibraryPromptHistoryRegion,
 )
@@ -2452,6 +2453,29 @@ class LibraryScreen(BaseAppScreen):
                 in {LIBRARY_ROW_BROWSE_PROMPTS, LIBRARY_ROW_CREATE_PROMPT}
                 and self._library_prompts_view == "list"
             ),
+        )
+        self._library_prompt_collections_controller = (
+            LibraryPromptCollectionsController(
+                run_service_call=lambda: self._run_library_service_call,
+                prompt_service=lambda: getattr(
+                    self.app_instance, "prompt_scope_service", None
+                ),
+                sync_memberships=lambda: self._sync_library_prompt_memberships,
+                current_prompt_id=lambda: self._selected_prompt_id,
+                current_prompt_detail=lambda: self._library_prompt_detail,
+                prompt_editor_active=lambda: self._library_prompts_view == "editor",
+                push_modal=lambda: self.app.push_screen,
+                current_browse_collection_id=lambda: (
+                    self._library_prompt_browse_controller.scope.collection_id
+                ),
+                apply_browse_collection=lambda: self._apply_library_prompt_collection,
+                refresh_browse_projection=lambda: (
+                    self._sync_library_prompt_collection_label
+                ),
+                membership_applied=lambda: (
+                    self._refresh_library_prompt_after_membership_apply
+                ),
+            )
         )
         self._library_prompt_conflict_snapshot: PromptEditorState | None = None
         self._library_prompt_block_state: PromptBlockEditorState | None = None
@@ -4721,6 +4745,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_notes_autosave_timer.stop()
             self._library_notes_autosave_timer = None
         self._invalidate_library_prompts_browse()
+        self._library_prompt_collections_controller.invalidate()
         self._cancel_library_notes_auto_sync_timer()
         super().on_unmount()
         registry = self._library_ingest_registry()
@@ -7471,6 +7496,7 @@ class LibraryScreen(BaseAppScreen):
                             history_current_compatible=(
                                 self._library_prompt_block_state is not None
                             ),
+                            membership_state=self._library_prompt_collections_controller.membership_state,
                             id="library-prompts-canvas",
                         )
                     elif self._library_prompt_detail is None:
@@ -7505,6 +7531,7 @@ class LibraryScreen(BaseAppScreen):
                             history_current_compatible=(
                                 self._library_prompt_block_state is not None
                             ),
+                            membership_state=self._library_prompt_collections_controller.membership_state,
                             id="library-prompts-canvas",
                         )
                 elif shell.canvas_kind == "prompts":
@@ -7521,6 +7548,9 @@ class LibraryScreen(BaseAppScreen):
                         import_open=self._library_prompts_import_open,
                         import_path=self._library_prompts_import_path,
                         import_status=self._library_prompts_import_status,
+                        collection_label=self._library_prompt_collections_controller.collection_label(
+                            self._library_prompt_browse_controller.scope.collection_id
+                        ),
                         id="library-prompts-canvas",
                     )
                 elif (
@@ -7912,6 +7942,52 @@ class LibraryScreen(BaseAppScreen):
             self._library_prompt_browse_controller.result,
             now=datetime.now(timezone.utc),
         )
+
+    def _sync_library_prompt_memberships(self, state) -> None:
+        """Patch only membership controls; preserve editor inputs and undo state."""
+        try:
+            self.query_one(
+                "#library-prompts-canvas", LibraryPromptsListCanvas
+            ).sync_memberships(state)
+        except (NoMatches, QueryError):
+            pass
+
+    def _reconcile_library_prompt_memberships(self) -> None:
+        self._sync_library_prompt_memberships(
+            self._library_prompt_collections_controller.membership_state
+        )
+
+    def _apply_library_prompt_collection(self, collection_id: int | None) -> None:
+        self._request_library_prompts_browse(
+            dataclasses.replace(
+                self._library_prompt_browse_controller.scope,
+                collection_id=collection_id,
+                page=1,
+            ),
+            focus_identity="library-prompts-collection",
+        )
+
+    def _sync_library_prompt_collection_label(self) -> None:
+        try:
+            button = self.query_one("#library-prompts-collection", Button)
+        except (NoMatches, QueryError):
+            return
+        label = self._library_prompt_collections_controller.collection_label(
+            self._library_prompt_browse_controller.scope.collection_id
+        )
+        button.label = f"collection: {escape_markup(label)} ▸"
+
+    def _refresh_library_prompt_after_membership_apply(self) -> None:
+        self._library_prompt_browse_controller.invalidate()
+        self._refresh_local_source_snapshot()
+
+    def _load_library_prompt_memberships(self) -> None:
+        self.run_worker(
+            self._library_prompt_collections_controller.load_memberships(),
+            exclusive=True,
+            group="library_prompt_memberships_load",
+        )
+        self.call_after_refresh(self._reconcile_library_prompt_memberships)
 
     def _library_prompts_focus_identity(self) -> str | None:
         """Return the focused Prompt control's stable DOM id, when useful."""
@@ -12279,6 +12355,28 @@ class LibraryScreen(BaseAppScreen):
             focus_identity="library-prompts-sort",
         )
 
+    @on(Button.Pressed, "#library-prompts-collection")
+    def handle_library_prompts_collection(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._library_prompt_collections_controller.open_manager("browse")
+
+    @on(Button.Pressed, "#library-prompt-memberships-manage")
+    def handle_library_prompt_memberships_manage(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self._library_prompt_collections_controller.membership_state.can_retry_load:
+            self._load_library_prompt_memberships()
+        else:
+            self._library_prompt_collections_controller.open_manager("membership")
+
+    @on(Button.Pressed, "#library-prompt-memberships-apply")
+    def handle_library_prompt_memberships_apply(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.run_worker(
+            self._library_prompt_collections_controller.apply_memberships(),
+            exclusive=True,
+            group="library_prompt_memberships_apply",
+        )
+
     @on(Input.Changed, "#library-prompts-filter")
     def handle_library_prompts_filter_changed(self, event: Input.Changed) -> None:
         """Queue the service-backed Prompt search after a short debounce."""
@@ -15460,6 +15558,7 @@ class LibraryScreen(BaseAppScreen):
             detail,
             open_history=open_history,
         )
+        self._load_library_prompt_memberships()
         if self.is_mounted:
             self.refresh(recompose=True)
             self.call_after_refresh(self._arm_library_prompt_editor)
@@ -15521,6 +15620,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompt_version = None
         self._library_prompt_conflict_snapshot = None
         self._invalidate_library_prompt_history()
+        self._library_prompt_collections_controller.invalidate()
 
     def _arm_library_prompt_editor(self) -> None:
         """Enable dirty-tracking once the prompt editor is mounted."""
@@ -15818,6 +15918,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompt_include_starter_content = False
         self._library_prompt_editor_armed = False
         self._invalidate_library_prompt_history()
+        self._library_prompt_collections_controller.invalidate()
 
     def _reset_library_prompt_editor_state(self) -> None:
         """Clear all in-canvas Library prompt editor/save state.
@@ -15839,6 +15940,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompt_delete_pending_fingerprint = None
         self._library_prompt_editor_armed = False
         self._invalidate_library_prompt_history()
+        self._library_prompt_collections_controller.invalidate()
 
     def _mark_library_prompt_dirty(self) -> None:
         """Record an in-progress prompt edit.
@@ -16517,6 +16619,7 @@ class LibraryScreen(BaseAppScreen):
                 status=LIBRARY_PROMPT_SAVE_STATUS_COPY["ok"],
                 open_history=history_was_open,
             )
+            self._load_library_prompt_memberships()
             # This success patches the existing editor in place rather than
             # remounting it, so retain its prior dirty-tracking arm state.
             self._library_prompt_editor_armed = editor_was_armed
@@ -17834,6 +17937,7 @@ class LibraryScreen(BaseAppScreen):
             status=LIBRARY_PROMPT_SAVE_STATUS_COPY["ok"],
             open_history=False,
         )
+        self._load_library_prompt_memberships()
         # Mirrors `_save_library_prompt`'s own create-success branch: a
         # brand-new prompt changes the list's membership/count, so the
         # Prompts rail badge/list must pick up the new row now.
