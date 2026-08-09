@@ -3,6 +3,10 @@
 Status: Accepted
 Date: 2026-07-31
 Amended: 2026-08-02
+Partially superseded: 2026-08-09 by
+[ADR-050](050-audio-cpp-generated-model-setup-ownership.md), only for the new
+globally owned guided generated-configuration source; the four-owner model and
+existing External/user-JSON sources remain in force
 Related Task: N/A — program task decomposition follows the approved PRD
 Extends:
 [ADR-012 Provider Credential Settings Boundary](012-provider-credential-settings-boundary.md),
