@@ -3,9 +3,10 @@ id: TASK-13155
 title: >-
   AgentRunsDB trace-callback tests defeated by held connection (task-3012
   regression)
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-09 16:47'
+updated_date: '2026-08-09 19:20'
 labels: []
 dependencies: []
 priority: medium
@@ -24,3 +25,9 @@ Three tests in Tests/DB/test_agent_runs_db.py fail on the current dev baseline, 
 - [ ] #3 test_count_runs_does_not_materialize_rows_beyond_a_single_count passes
 - [ ] #4 Root cause documented: which AgentRunsDB code path holds the connection and why it defeats sqlite3 trace callbacks
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Root cause: task-3012 gave AgentRunsDB a HELD per-thread connection cached on first use, so these three tests' monkeypatched _get_connection spy never ran (the fixture's own create_run calls had already opened the connection) and set_trace_callback never attached — the assertions saw zero statements. Repair is test-side only, production untouched: each test now calls db.close() after installing the spy so the next call reopens through it. Both surviving behavioral guards were mutation-tested live (BEGIN IMMEDIATE -> BEGIN DEFERRED failed the transaction test; COUNT(*) -> SELECT id + len() failed the materialize test), and the production file was diffed byte-identical to its pre-mutation backup afterward. 47 passed across the DB battery.
+<!-- SECTION:NOTES:END -->

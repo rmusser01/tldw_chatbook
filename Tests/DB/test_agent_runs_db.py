@@ -100,6 +100,11 @@ def test_count_subagents_by_conversation_batches_single_query(db, monkeypatch):
         return conn
 
     monkeypatch.setattr(type(db), "_get_connection", spy_get_connection)
+    # task-3012 gave each thread a HELD connection, cached on first use —
+    # the create_run calls above already opened it, so the patched
+    # _get_connection would never run. Close the held connection so the
+    # next call reopens through the spy and the trace callback attaches.
+    db.close()
     counts = db.count_subagents_by_conversation(["conv-a", "conv-b", "conv-c"])
 
     assert counts == {"conv-a": 2, "conv-b": 1}
@@ -170,6 +175,10 @@ def test_transaction_begins_immediate_not_deferred(db, monkeypatch):
         return conn
 
     monkeypatch.setattr(type(db), "_get_connection", spy_get_connection)
+    # Reopen the held per-thread connection (task-3012) through the spy so
+    # the trace callback actually attaches — see the comment in
+    # test_count_subagents_by_conversation_batches_single_query.
+    db.close()
     with db.transaction() as conn:
         conn.execute("SELECT 1")
     begin_calls = [c for c in calls if c.strip().upper().startswith("BEGIN")]
@@ -518,6 +527,10 @@ def test_count_runs_does_not_materialize_rows_beyond_a_single_count(db, monkeypa
         return conn
 
     monkeypatch.setattr(type(db), "_get_connection", spy_get_connection)
+    # Reopen the held per-thread connection (task-3012) through the spy so
+    # the trace callback actually attaches — see the comment in
+    # test_count_subagents_by_conversation_batches_single_query.
+    db.close()
     n = db.count_runs("c", agent_kind="primary")
     assert n == 5
     select_calls = [c for c in calls if c.strip().upper().startswith("SELECT")]
