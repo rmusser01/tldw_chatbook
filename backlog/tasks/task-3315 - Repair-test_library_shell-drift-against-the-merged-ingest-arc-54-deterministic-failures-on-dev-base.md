@@ -136,4 +136,42 @@ the port before the write, `_patch_library_note_list_from_session` after it.
 Tests in Tests/UI/test_library_shell.py (real DB): the deliberate-"Untitled" note survives; an
 untouched seed still GCs after a body round-trip; the list row agrees with the persisted name.
 Mutation check (revert the gate to plain string equality) sends the first RED.
+
+### Addendum — round 2 after the rebase onto dev `f6911b37b` (2026-08-09)
+
+Test-side only; no product change. The rebase (201 dev commits since base
+`ebeae1440`) left three notes-half failures. All three were settled by the same
+method AC#2 demands — extract dev `f6911b37b`'s product tree with `git archive`
+into a scratch dir, drop THIS branch's `Tests/UI/test_library_shell.py` into it,
+and run the failing cases there (import isolation via a `sitecustomize.py` that
+repoints the venv's editable-install finder at the extracted tree, since the
+`.pth` finder sits on `sys.meta_path` and no `PYTHONPATH`/cwd trick outranks it).
+
+1. `test_library_note_60x20_navigator_state_allocation[normal]` and
+   `test_library_note_compact_surplus_allocation_expands_only_named_owner[navigator]`
+   — **dev's change, stale pin.** Both fail identically against the extracted dev
+   product tree. Cause: dev `d1df7d0a7` (TASK-13213, "restore file notes source
+   access") gates the targeted canvas swap on matching contextual chrome
+   (`notes_source_strip_mounted != (shell.canvas_kind == "notes")` → refuse), so
+   the plain rail press into the notes list now lands via the full recompose and
+   carries the 1-row Database|Files strip. Re-pinned: `normal` gets
+   `source_strip=True` and list 6→5; the navigator surplus owner 11→10 at 80x24
+   and 17→16 at 100x30. This also **closes task-3317 AC#1** — the per-route
+   asymmetry that AC recorded is gone; `source_strip=False` now survives only for
+   the create-note canvas (`canvas_kind "notes-create"`, which never composes the
+   strip).
+2. `test_library_shell_blank_note_escape_key_returns_to_list_without_crash`
+   — **ours**, and the inverse direction: this test arrived from dev
+   (`dd30c24e5`), where it pins `count_notes(...) == 1` with the comment "row
+   survival must match the Back button's own (separately tracked) GC bug". That
+   bug is the one THIS task fixed in `794ee4be5` (seed-aware `title_blank`), so on
+   this branch the row is correctly GC'd. Proof of direction: against the
+   extracted dev tree the Back-button GC test fails ("never GC'd") and the Escape
+   test's `== 1` passes — the exact inverse of this branch. Re-pinned to the fixed
+   behavior (GC parity with Back) and de-raced: dev's fixed `pilot.pause(0.2)`
+   before a worker-owned delete is why it failed 8/8 alone but survived some
+   loaded full-file runs. Now polls like the Back test does. Mutation check:
+   `title_blank`'s seed clause disabled → both the Escape test and
+   `..._untouched_is_gc_from_real_db_on_back` go RED; Edit-restored, product diff
+   vs HEAD empty.
 <!-- SECTION:NOTES:END -->

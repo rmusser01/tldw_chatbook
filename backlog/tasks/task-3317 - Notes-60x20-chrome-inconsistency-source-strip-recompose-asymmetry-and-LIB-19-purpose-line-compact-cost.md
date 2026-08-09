@@ -26,7 +26,29 @@ Found while repairing `Tests/UI/test_library_shell.py` against the merged surfac
 ## Acceptance Criteria
 
 <!-- AC:BEGIN -->
-- [ ] #1 The source strip's presence for notes routes is deterministic across entry paths (always or never per terminal class), with the chosen direction recorded
+- [x] #1 The source strip's presence for notes routes is deterministic across entry paths (always or never per terminal class), with the chosen direction recorded
 - [ ] #2 The database-purpose sentence has an explicit compact-mode treatment (kept, truncated, or hidden) chosen by the owner, not by layout accident
 - [ ] #3 `Tests/UI/test_library_shell.py`'s task8 pins are updated to the single ruled truth (removing the per-route `source_strip` fork task-3315 had to pin)
 <!-- AC:END -->
+
+## Update — AC#1 closed dev-side (2026-08-09)
+
+Observation 1 was fixed independently on dev by `d1df7d0a7` (TASK-13213,
+"restore file notes source access"), which lands the fix in the direction this
+task asked for: `_replace_library_browse_canvas` now refuses its targeted swap
+whenever the mounted contextual chrome disagrees with the destination
+(`notes_source_strip_mounted != (shell.canvas_kind == "notes")`), so entering
+Notes by rail press goes through the full recompose and shows the strip exactly
+like the editor/sync/loading routes. Every Database-notes route now settles at
+3 + 1 + 1 + 14 + 1 at 60x20.
+
+Confirmed empirically while rebasing the media-ingest follow-up branch onto dev
+`f6911b37b`: the 60x20 `normal` case and the navigator `compact_surplus` case
+both fail their old strip-less pins against a `git archive` extraction of dev's
+product tree, i.e. the change is dev's, not the arc's. The pins were re-measured
+in task-3315's round-2 addendum.
+
+AC#2 is untouched (the LIB-19 sentence still costs 4 of the compact list's rows;
+at 60x20 the navigator list is now 5). AC#3 is only partly satisfied: the
+per-route `source_strip` fork survives for the create-note canvas
+(`canvas_kind "notes-create"`), which still never composes the strip.

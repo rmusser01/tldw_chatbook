@@ -11566,22 +11566,30 @@ async def test_library_shell_blank_note_escape_key_returns_to_list_without_crash
     exercises Textual's own BINDINGS/check_action dispatch, matching what a
     user's keypress actually triggers.
 
-    Also pins Escape-vs-Back PARITY on the session-blank-note bookkeeping
-    (task-3021-era GC flags), not "GC succeeds": the untouched-blank GC
-    check in ``_flush_library_note_save`` compares the coordinator draft's
-    *title* against blank, but the create seam seeds that title with the
-    literal ``"Untitled"`` (see ``handle_library_notes_create_blank``), so
-    the GC branch's ``not any(...)`` never actually fires for the
-    never-touched case -- a pre-existing bug on ``_flush_library_note_save``
-    verified byte-identical on origin/dev (fccb3af6b), independently
-    confirmed by ``test_library_shell_blank_note_untouched_is_gc_from_
-    real_db_on_back`` already failing the same way via the "‹ Back to
-    list" button on this same branch. Out of scope for this P0 (which
-    fixes the crash, not that separate defect) -- this test therefore pins
-    today's REAL end state (row survives, GC bookkeeping flags still
-    clear), so Escape stays provably identical to Back rather than quietly
-    diverging from it, and a future fix to the GC check will need no
-    changes here.
+    Also pins Escape-vs-Back PARITY on the untouched-blank GC: Escape must
+    reach the same ``_exit_library_note_editor_guarded`` seam the "‹ Back
+    to list" button uses, so the never-touched row is deleted and the GC
+    bookkeeping flags are cleared, exactly as
+    ``test_library_shell_blank_note_untouched_is_gc_from_real_db_on_back``
+    pins for Back.
+
+    Rebase note (dev f6911b37b): as authored on dev at ``dd30c24e5`` this
+    test asserted the OPPOSITE end state -- ``count_notes(...) == 1``,
+    "row survival must match the Back button's own (separately tracked) GC
+    bug" -- because on dev the GC branch in ``_flush_library_note_save``
+    keys blankness on the draft *title* while the create seam seeds it with
+    the literal ``"Untitled"`` (``handle_library_notes_create_blank``), so
+    the branch never fires. THIS branch fixed that in ``794ee4be5``
+    (task-3315): the check is now seed-aware (``title_blank``), and the row
+    is really deleted. Verified as ours, not dev's: running this file
+    against a ``git archive`` extraction of dev ``f6911b37b``'s product
+    tree, the Back-button GC test fails ("never GC'd") and this test's
+    ``== 1`` passes -- the exact inverse of this branch. The pin therefore
+    moves to the FIXED behavior. It also polls instead of sleeping: the
+    delete lands on a worker, so dev's fixed ``pilot.pause(0.2)`` made the
+    assertion a race (it passed only when a loaded full-file run kept the
+    delete from landing inside the window, which is why it failed alone
+    8/8 but survived some whole-suite runs).
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
@@ -11627,13 +11635,22 @@ async def test_library_shell_blank_note_escape_key_returns_to_list_without_crash
         # of whether the GC delete itself ran.
         assert screen._library_note_pending_blank_gc_id is None
         assert screen._library_note_session_blank_id is None
-        await pilot.pause(0.2)
-        assert (
-            await app.notes_scope_service.count_notes(
-                scope="local_note", user_id="default_user"
+        # Parity with the Back button's own GC test: poll for the delete
+        # rather than sleeping a fixed window on a worker-owned write.
+        for _ in range(150):
+            if (
+                await app.notes_scope_service.count_notes(
+                    scope="local_note", user_id="default_user"
+                )
+                == 0
+            ):
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                "Escape left the untouched blank note in the real DB -- it must "
+                "GC it exactly like '‹ Back to list' does."
             )
-            == 1
-        ), "Row survival must match the Back button's own (separately tracked) GC bug."
 
 
 @pytest.mark.asyncio
@@ -12151,15 +12168,23 @@ def _assert_task8_compact_chrome(
     trees of both commits. Since the file-notes workspace (``b83852eda``)
     the screen composes a one-row Database|Files source strip
     (#library-notes-source-strip) above the shell grid whenever a FULL
-    screen recompose runs while the notes canvas is selected, so the
-    settled allocation on those routes is 3 + 1 + 1 + 14 + 1. The plain
-    rail-press route into the notes LIST is swapped in place by
-    ``_replace_library_browse_canvas`` (PR #1439's fast path) WITHOUT a
-    full recompose, so that route keeps 3 + 1 + 15 + 1 with no strip
-    (``source_strip=False``); the create-note canvas (canvas_kind
-    "notes-create") never composes the strip either. The per-route chrome
-    asymmetry itself is a product inconsistency tracked as task-3317;
-    these pins document the shipped truth per route.
+    screen recompose runs while ``shell.canvas_kind`` is "notes", so the
+    settled allocation on those routes is 3 + 1 + 1 + 14 + 1.
+
+    task-3315 re-pin round 2 (rebase onto dev ``f6911b37b``) -- again
+    dev-side, verified by running THIS file against a ``git archive``
+    extraction of dev ``f6911b37b``'s product tree, where both re-pinned
+    cases fail identically. Dev ``d1df7d0a7`` ("restore file notes source
+    access", TASK-13213) closed the per-route chrome asymmetry this
+    docstring used to record as task-3317: ``_replace_library_browse_
+    canvas`` now refuses its targeted swap whenever the mounted contextual
+    chrome disagrees with the destination
+    (``notes_source_strip_mounted != (shell.canvas_kind == "notes")``), so
+    the plain rail-press into the notes LIST also lands via the full
+    recompose and carries the strip. Every Database-notes route therefore
+    settles at 3 + 1 + 1 + 14 + 1 and ``source_strip=False`` now survives
+    only for the create-note canvas (canvas_kind "notes-create", which
+    never composes the strip), which keeps 3 + 1 + 15 + 1.
     """
     navigation = screen.query_one("MainNavigationBar")
     header = screen.query_one("#library-header-line")
@@ -12254,6 +12279,12 @@ async def _enter_task8_navigator_state(screen, pilot, state: str) -> None:
     screen.query_one("#library-row-browse-notes").press()
     await _wait_for_selector(screen, pilot, "#library-notes-filter")
     if state == "normal":
+        # task-3315 re-pin round 2: since dev d1df7d0a7 the plain rail press
+        # also lands via the full recompose, so this route carries the source
+        # strip too -- wait for it here for the same determinism reason as
+        # the forced-recompose states below.
+        await _wait_for_selector(screen, pilot, "#library-notes-source-strip")
+        await pilot.pause()
         return
     if state == "filtered-empty":
         screen._library_notes_filter = "[none] Ω very long filter query"
@@ -12269,9 +12300,7 @@ async def _enter_task8_navigator_state(screen, pilot, state: str) -> None:
     # task-3315 determinism guard: the forced FULL recompose above also
     # mounts the screen-level #library-notes-source-strip (see
     # _assert_task8_compact_chrome's docstring); wait for it so the
-    # geometry asserts below never race the recompose settling. The
-    # "normal" state returns before this refresh and keeps the strip-less
-    # fast-path chrome.
+    # geometry asserts below never race the recompose settling.
     await _wait_for_selector(screen, pilot, "#library-notes-source-strip")
     await pilot.pause()
 
@@ -12287,8 +12316,12 @@ async def _enter_task8_navigator_state(screen, pilot, state: str) -> None:
     #   in PR #1420 -- AFTER these pins were authored on the PR #1439
     #   branch): 3 wrapped rows at width 60 plus its 1-row bottom margin,
     #   so the list loses 4 rows;
-    # - the non-"normal" states additionally settle with the 1-row source
-    #   strip (see _assert_task8_compact_chrome), costing 1 more row.
+    # - every state settles with the 1-row source strip (see
+    #   _assert_task8_compact_chrome), costing 1 more row. Round 2, after
+    #   the rebase onto dev f6911b37b: "normal" joined them -- dev
+    #   d1df7d0a7 routes the plain rail press through the full recompose
+    #   too, so its list drops 6 -> 5. Reproduced against an extracted dev
+    #   f6911b37b product tree, so this is dev's change, not the arc's.
     (
         (
             "normal",
@@ -12299,10 +12332,10 @@ async def _enter_task8_navigator_state(screen, pilot, state: str) -> None:
                 "#library-notes-browse-actions": 1,
                 "#library-notes-transfer-actions": 1,
                 "#library-notes-status-row": 1,
-                "#library-notes-list": 6,
+                "#library-notes-list": 5,
             },
             "#library-notes-filter",
-            False,  # fast-path rail entry: no source strip, shell keeps 15
+            True,  # dev d1df7d0a7: rail entry now recomposes with the strip
         ),
         (
             "filtered-empty",
@@ -15672,15 +15705,26 @@ async def test_library_shell_ingest_canvas_live_updates_without_manual_recompose
                 f"{harness.library_ingest_jobs.jobs()}"
             )
 
+        # The very refresh this loop waits for RECOMPOSES the rail, so the
+        # row is transiently unmounted mid-poll and a bare ``query_one``
+        # here raced that window (``NoMatches: No nodes match
+        # '#library-row-browse-media'`` at this line -- reproduced under CPU
+        # contention, and once in a plain non-notes batch run). Pre-existing
+        # dev-side flake (test authored at d54c7a252, untouched by this
+        # branch); filed as task-14800. Tolerate the gap instead of asserting
+        # into it -- the loop's own budget is the real failure signal.
+        media_label = "<rail row absent>"
         for _ in range(_INGEST_POLL_ATTEMPTS):
-            media_button = screen.query_one("#library-row-browse-media", Button)
-            if "Media (1)" in str(media_button.label):
-                break
+            rail_rows = screen.query("#library-row-browse-media")
+            if rail_rows:
+                media_label = str(rail_rows.first(Button).label)
+                if "Media (1)" in media_label:
+                    break
             await pilot.pause(_INGEST_POLL_INTERVAL)
         else:
             raise AssertionError(
                 f"Rail Media count never incremented after completion. "
-                f"Label: {media_button.label!r}"
+                f"Label: {media_label!r}"
             )
 
 
@@ -19905,9 +19949,15 @@ async def test_library_note_same_side_resize_does_no_presentation_work(
         # family -- see _assert_task8_compact_chrome): the navigator list
         # loses 3 rows to the LIB-19 database-purpose sentence (2 wrapped
         # rows + 1 margin at widths 80/100); the editor/context routes lose
-        # 1 row to the source strip mounted by their full recompose. The
-        # invariant under test -- surplus goes ONLY to the named owner,
-        # growth exactly +6 for +6 terminal rows -- is unchanged.
+        # 1 row to the source strip mounted by their full recompose.
+        # Round 2 (rebase onto dev f6911b37b): the navigator loses that
+        # source-strip row too -- dev d1df7d0a7 gated the targeted canvas
+        # swap on matching contextual chrome, so the rail press into the
+        # notes list now recomposes with the Database|Files strip (11 -> 10
+        # at 80x24, 17 -> 16 at 100x30). Reproduced against an extracted
+        # dev f6911b37b product tree, so this is dev's change, not the
+        # arc's. The invariant under test -- surplus goes ONLY to the named
+        # owner, growth exactly +6 for +6 terminal rows -- is unchanged.
         (
             "navigator",
             "#library-notes-list",
@@ -19918,8 +19968,8 @@ async def test_library_note_same_side_resize_does_no_presentation_work(
                 "#library-notes-transfer-actions",
                 "#library-notes-status-row",
             ),
-            11,
-            17,
+            10,
+            16,
         ),
         (
             "editor",
