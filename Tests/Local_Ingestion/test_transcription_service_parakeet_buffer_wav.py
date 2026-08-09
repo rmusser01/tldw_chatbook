@@ -300,6 +300,8 @@ def test_parakeet_buffer_temp_file_is_removed_even_when_transcribe_raises(
 def test_onnx_buffer_uses_injected_source_without_acquisition(
     service_module, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import tldw_chatbook.Local_Ingestion.parakeet_v2_artifact as artifact_module
+
     dispatch = object()
     source_calls: list[dict[str, object]] = []
     dispatcher_calls: list[dict[str, object]] = []
@@ -323,10 +325,9 @@ def test_onnx_buffer_uses_injected_source_without_acquisition(
         lambda _backend_factory: _Bridge(),
     )
     monkeypatch.setattr(
-        service_module,
+        artifact_module,
         "run_parakeet_vad_provision",
         lambda *_args, **_kwargs: pytest.fail("transcription must not provision VAD"),
-        raising=False,
     )
 
     result = service_module.TranscriptionService(

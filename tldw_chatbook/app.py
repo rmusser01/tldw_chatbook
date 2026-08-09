@@ -2904,13 +2904,6 @@ class LibraryIngestQueueMixin:
         }
         service.release_scopes_except(active)
 
-    def _release_parakeet_source_scope(self, scope_id: str) -> None:
-        """Release a pre-enqueue scope after an abandoned submission."""
-
-        service = getattr(self, "_parakeet_source_service", None)
-        if service is not None:
-            service.release_scope(scope_id)
-
     def _ensure_local_stt_dispatch_coordinator(
         self,
     ) -> LocalSTTDispatchCoordinator:
@@ -2941,7 +2934,12 @@ class LibraryIngestQueueMixin:
             TranscriptionService,
         )
 
-        source_service = self._ensure_parakeet_source_service()
+        app_loop_running = getattr(self, "_loop", None) is not None
+        on_app_thread = threading.get_ident() == getattr(self, "_thread_id", None)
+        if app_loop_running and not on_app_thread:
+            source_service = self.call_from_thread(self._ensure_parakeet_source_service)
+        else:
+            source_service = self._ensure_parakeet_source_service()
         return LazyLiveDictationService(
             **kwargs,
             transcription_service_factory=lambda: TranscriptionService(
@@ -3819,10 +3817,11 @@ class LibraryIngestQueueMixin:
         pool callbacks -- ``_ingest_pool_callback``/
         ``_ingest_pool_error_callback``, running on the pool's
         result-handler thread -- short-circuit before marshaling from this
-        point on) and drops both worker references (nothing can submit to
-        either anymore). Executor close and parse-pool terminate/join then
-        run sequentially on one detached daemon thread, NEVER on the caller's
-        (loop) thread: CPython's ``Pool._terminate_pool`` does an unbounded
+        point on) and drops every worker reference (nothing can submit to
+        them anymore). Source/coordinator/executor close and parse-pool
+        terminate/join then run sequentially on one detached daemon thread,
+        NEVER on the caller's (loop) thread: verifier close may wait and
+        CPython's ``Pool._terminate_pool`` does an unbounded
         ``result_handler.join()``, and if that result-handler thread is at
         that moment parked inside a ``call_from_thread`` it entered just
         before the flag went up, joining it from the loop thread would
@@ -3835,8 +3834,8 @@ class LibraryIngestQueueMixin:
 
         Returns:
             The one teardown thread that owns every detached ingest resource,
-            or ``None`` when neither worker was ever created. The shutdown
-            flag is still set in that case.
+            or ``None`` when no ingest resource was ever created. The
+            shutdown flag is still set in that case.
         """
         self._ingest_shutdown = True
         with self._local_stt_executor_lock:
@@ -3846,19 +3845,10 @@ class LibraryIngestQueueMixin:
             executor = getattr(self, "_local_stt_executor", None)
             self._parakeet_source_service = None
             self._parakeet_source_registry_listener = None
-            if source_listener is not None:
-                self.library_ingest_jobs.remove_listener(source_listener)
-            if source_service is not None:
-                try:
-                    source_service.close()
-                except Exception:
-                    logger.opt(exception=True).error(
-                        "Error closing the Parakeet source service."
-                    )
-            if coordinator is not None:
-                coordinator.close()
             self._local_stt_dispatch_coordinator = None
             self._local_stt_executor = None
+            if source_listener is not None:
+                self.library_ingest_jobs.remove_listener(source_listener)
         local_jobs = getattr(self, "_ingest_local_stt_jobs", None)
         if local_jobs is None:
             self._ingest_local_stt_jobs = {}
@@ -3870,18 +3860,42 @@ class LibraryIngestQueueMixin:
             stop_event.set()
         self._ingest_parse_pool_stop_event = None
         self._ingest_parse_pool = None
-        if executor is None and pool is None:
+        if all(
+            resource is None
+            for resource in (source_service, coordinator, executor, pool)
+        ):
             return None
-        return self._shutdown_ingest_workers_off_thread(executor, pool)
+        return self._shutdown_ingest_workers_off_thread(
+            source_service,
+            coordinator,
+            executor,
+            pool,
+        )
 
     @staticmethod
     def _shutdown_ingest_workers_off_thread(
+        source_service: Any | None,
+        coordinator: Any | None,
         executor: Any | None,
         pool: Any | None,
     ) -> threading.Thread:
         """Close detached ingest workers without blocking the UI thread."""
 
         def _shutdown_workers() -> None:
+            if source_service is not None:
+                try:
+                    source_service.close()
+                except Exception:
+                    logger.opt(exception=True).error(
+                        "Error closing the Parakeet source service."
+                    )
+            if coordinator is not None:
+                try:
+                    coordinator.close()
+                except Exception:
+                    logger.opt(exception=True).error(
+                        "Error closing the local STT dispatch coordinator."
+                    )
             if executor is not None:
                 try:
                     executor.close()

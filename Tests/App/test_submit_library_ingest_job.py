@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -10,6 +12,7 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+from textual.app import App
 
 from tldw_chatbook.Library.ingest_capabilities import get_capabilities
 from tldw_chatbook.Library.library_ingest_jobs import (
@@ -137,6 +140,61 @@ def test_console_dictation_factory_injects_app_owned_coordinator() -> None:
     assert source_threads == [threading.get_ident()]
 
 
+@pytest.mark.asyncio
+async def test_console_dictation_factory_marshals_source_setup_to_app_thread() -> None:
+    events: list[tuple[str, int]] = []
+
+    class _Registry(LibraryIngestJobRegistry):
+        def add_listener(self, callback) -> None:
+            events.append(("listener", threading.get_ident()))
+            super().add_listener(callback)
+
+        def jobs(self) -> tuple[LibraryIngestJob, ...]:
+            events.append(("initial-read", threading.get_ident()))
+            return super().jobs()
+
+    class _SourceService:
+        def release_scopes_except(self, _active: set[str]) -> None:
+            events.append(("initial-sync", threading.get_ident()))
+
+    class _Host(app_module.LibraryIngestQueueMixin, App[None]):
+        def __init__(self) -> None:
+            super().__init__()
+            self.library_ingest_jobs = _Registry()
+            self._ingest_shutdown = False
+            self._local_stt_executor_lock = threading.RLock()
+            self._parakeet_source_service = None
+            self._parakeet_source_registry_listener = None
+
+        def _create_parakeet_source_service(self) -> _SourceService:
+            events.append(("create", threading.get_ident()))
+            return _SourceService()
+
+    class _FakeLazyService:
+        def __init__(self, **kwargs: object) -> None:
+            self.kwargs = kwargs
+
+    host = _Host()
+    with patch(
+        "tldw_chatbook.Audio.dictation_service_lazy.LazyLiveDictationService",
+        _FakeLazyService,
+    ):
+        async with host.run_test():
+            service = await asyncio.to_thread(
+                host._create_console_dictation_service,
+                transcription_provider="parakeet-onnx",
+                language="en",
+            )
+
+    assert service.kwargs["language"] == "en"
+    assert events == [
+        ("create", host._thread_id),
+        ("listener", host._thread_id),
+        ("initial-read", host._thread_id),
+        ("initial-sync", host._thread_id),
+    ]
+
+
 def test_parakeet_source_accessor_constructs_one_service_and_one_listener(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -239,43 +297,101 @@ def test_build_local_stt_dispatch_uses_authoritative_source_service_and_dependen
     assert resolved["managed_dependency_refs"] == (("silero-vad", "rev", "onnx"),)
 
 
-def test_folder_siblings_resolve_with_one_batch_scope_and_snapshot() -> None:
-    app = _minimal_stt_app()
-    local_source = object()
-    scopes: list[str | None] = []
-    dispatch = SimpleNamespace(
-        identity=object(),
-        local_source=local_source,
-        managed_store_root=Path("/managed"),
-        managed_artifact_ref=None,
-        managed_dependency_refs=(("silero-vad", "rev", "onnx"),),
-        option_updates={},
+def test_folder_siblings_reuse_one_real_verified_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tldw_chatbook.STT.parakeet_external as parakeet_external
+    from tldw_chatbook.Model_Artifacts.service import (
+        ArtifactDescriptor,
+        ArtifactFile,
+        ArtifactFormat,
+        ArtifactRef,
+        ArtifactRole,
+        ProvenanceClass,
     )
+    from tldw_chatbook.STT.parakeet_external import ExternalParakeetVerifier
+    from tldw_chatbook.STT.parakeet_sources import ParakeetSourceService
 
-    class _SourceService:
-        def resolve(self, _key: object, **kwargs: object) -> object:
-            scopes.append(kwargs.get("scope_id"))
-            return dispatch
-
-    source_service = _SourceService()
+    app = _minimal_stt_app()
+    payload = b"verified-model"
+    root = tmp_path / "external-parakeet"
+    root.mkdir()
+    model_path = root / "model.onnx"
+    model_path.write_bytes(payload)
+    descriptor = ArtifactDescriptor(
+        reference=ArtifactRef("parakeet-v2", "test-revision", "int8"),
+        model_id="nemo-parakeet-tdt-0.6b-v2",
+        role=ArtifactRole.ROOT,
+        format=ArtifactFormat.ONNX,
+        consumer="stt",
+        model_family="parakeet",
+        upstream_repository="example/parakeet-v2",
+        upstream_revision="test-revision",
+        source_url="https://example.invalid/model.onnx",
+        precision="int8",
+        expected_installed_bytes=len(payload),
+        license_id="cc-by-4.0",
+        license_url="https://example.invalid/license",
+        usage_notice="test",
+        runtime_name="onnx-asr",
+        runtime_version_constraint="==0.12.0",
+        supported_os=("linux", "darwin", "windows"),
+        supported_architectures=("x86-64", "arm64"),
+        provenance=(ProvenanceClass.CHATBOOK_CURATED,),
+        files=(
+            ArtifactFile(
+                "model.onnx",
+                len(payload),
+                hashlib.sha256(payload).hexdigest(),
+            ),
+        ),
+    )
+    source_service = ParakeetSourceService(
+        verifier=ExternalParakeetVerifier(),
+        read_setting=lambda _section, _key, default: default,
+        write_settings=lambda _values: True,
+        descriptor_for=lambda _model, _precision: descriptor,
+        active_managed=lambda _model, _precision: None,
+        dispatch_resolver=lambda **_kwargs: pytest.fail(
+            "external source must not use managed fallback"
+        ),
+        vad_ready=lambda: True,
+        managed_service=SimpleNamespace(
+            artifacts_path=tmp_path / "managed" / "artifacts"
+        ),
+    )
     app._ensure_parakeet_source_service = lambda: source_service  # type: ignore[method-assign]
     options = {
         "transcription_provider": "parakeet-onnx",
         "transcription_model": "nemo-parakeet-tdt-0.6b-v2",
         "transcription_precision": "int8",
-        "transcription_model_dir": "/user/parakeet",
+        "transcription_model_dir": str(root),
     }
-    first = app._build_local_stt_dispatch(
-        _parakeet_job(job_id="one", batch_id="folder-batch"),
-        dict(options),
-    )
-    second = app._build_local_stt_dispatch(
-        _parakeet_job(job_id="two", batch_id="folder-batch"),
-        dict(options),
-    )
+    real_open = parakeet_external.os.open
+    open_count = 0
 
-    assert scopes == ["folder-batch", "folder-batch"]
-    assert first["local_source"] is second["local_source"] is local_source
+    def counted_open(path: Path, flags: int) -> int:
+        nonlocal open_count
+        if Path(path) == model_path:
+            open_count += 1
+        return real_open(path, flags)
+
+    monkeypatch.setattr(parakeet_external.os, "open", counted_open)
+    try:
+        first = app._build_local_stt_dispatch(
+            _parakeet_job(job_id="one", batch_id="folder-batch"),
+            dict(options),
+        )
+        second = app._build_local_stt_dispatch(
+            _parakeet_job(job_id="two", batch_id="folder-batch"),
+            dict(options),
+        )
+    finally:
+        source_service.close()
+
+    assert open_count == 1
+    assert first["local_source"] is second["local_source"]
 
 
 def test_library_submission_forwards_exact_dependency_refs_to_coordinator() -> None:
@@ -398,10 +514,6 @@ class _ScopeTrackingSourceService:
         self.released.extend(sorted(self.observed - active))
         self.observed = active
 
-    def release_scope(self, scope_id: str) -> None:
-        self.released.append(scope_id)
-        self.observed.discard(scope_id)
-
     def close(self) -> None:
         if self.events is not None:
             self.events.append("source")
@@ -488,17 +600,27 @@ def test_unrelated_registry_mutation_does_not_release_unobserved_pre_enqueue_sco
     assert unrelated.job_id in service.observed
     assert "pending-preflight" not in service.released
 
-    app._release_parakeet_source_scope("pending-preflight")
+    app.library_ingest_jobs.mark_cancelled(unrelated.job_id)
 
-    assert service.released[-1] == "pending-preflight"
+    assert unrelated.job_id in service.released
+    assert "pending-preflight" not in service.released
 
 
-def test_shutdown_removes_listener_and_closes_source_before_coordinator_and_executor(
+def test_shutdown_detaches_and_closes_every_resource_off_thread_in_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     app = _minimal_stt_app()
     events: list[str] = []
-    service = _ScopeTrackingSourceService(events)
+    source_started = threading.Event()
+    release_source = threading.Event()
+
+    class _Source(_ScopeTrackingSourceService):
+        def close(self) -> None:
+            events.append("source")
+            source_started.set()
+            assert release_source.wait(timeout=2.0)
+
+    service = _Source(events)
     monkeypatch.setattr(
         app, "_create_parakeet_source_service", lambda: service, raising=False
     )
@@ -512,18 +634,61 @@ def test_shutdown_removes_listener_and_closes_source_before_coordinator_and_exec
         def close(self) -> None:
             events.append("executor")
 
+    class _Pool:
+        def terminate(self) -> None:
+            events.append("pool.terminate")
+
+        def join(self) -> None:
+            events.append("pool.join")
+
     app._local_stt_dispatch_coordinator = _Coordinator()
     app._local_stt_executor = _Executor()
+    app._ingest_parse_pool = _Pool()
 
-    teardown = app._shutdown_ingest_parse_pool()
+    with ThreadPoolExecutor(max_workers=1) as callers:
+        pending = callers.submit(app._shutdown_ingest_parse_pool)
+        assert source_started.wait(timeout=2.0)
+        try:
+            teardown = pending.result(timeout=0.2)
+            assert app._parakeet_source_service is None
+            assert app._parakeet_source_registry_listener is None
+            assert app.library_ingest_jobs._listeners == []  # noqa: SLF001
+            assert events == ["source"]
+        finally:
+            release_source.set()
     assert teardown is not None
     teardown.join(timeout=2.0)
 
     assert not teardown.is_alive()
-    assert events == ["source", "coordinator", "executor"]
-    assert app._parakeet_source_service is None
-    assert app._parakeet_source_registry_listener is None
-    assert app.library_ingest_jobs._listeners == []  # noqa: SLF001
+    assert events == [
+        "source",
+        "coordinator",
+        "executor",
+        "pool.terminate",
+        "pool.join",
+    ]
+
+
+@pytest.mark.parametrize("resource", ["source", "coordinator"])
+def test_shutdown_starts_teardown_for_source_or_coordinator_only(
+    resource: str,
+) -> None:
+    app = _minimal_stt_app()
+    closed: list[str] = []
+    owner = SimpleNamespace(close=lambda: closed.append(resource))
+    if resource == "source":
+        app._parakeet_source_service = owner
+    else:
+        app._local_stt_dispatch_coordinator = owner
+
+    teardown = app._shutdown_ingest_parse_pool()
+
+    assert teardown is not None
+    teardown.join(timeout=2.0)
+    assert not teardown.is_alive()
+    assert closed == [resource]
+    assert app._shutdown_ingest_parse_pool() is None
+    assert closed == [resource]
 
 
 def _make_job(
