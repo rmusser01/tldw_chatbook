@@ -687,6 +687,67 @@ async def test_current_pump_bridge_refusal_cleans_pipeline_once_without_ui_fallb
 
 
 @pytest.mark.asyncio
+async def test_stale_old_run_bridge_refusal_after_seek_does_not_stop_replacement(
+    monkeypatch,
+):
+    old_entered = Event()
+    release_old = Event()
+    replacement_entered = Event()
+    release_replacement = Event()
+    bridge_attempted = Event()
+
+    class SeekRacePipeline(_Pipeline):
+        def iter_frames(self, run: PlayerRun):
+            if run.generation == 1:
+                old_entered.set()
+                assert release_old.wait(2.0)
+                yield 1.0, bytes((255, 0, 0))
+                return
+            replacement_entered.set()
+            assert release_replacement.wait(2.0)
+            run.eof = True
+            if False:
+                yield 0.0, b""
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.video_player_screen.PlayerPipeline",
+        SeekRacePipeline,
+    )
+    app = _PlayerApp()
+    bridge_calls: list[str] = []
+    async with app.run_test() as pilot:
+        await _wait(old_entered)
+        app.player.action_seek_fwd()
+        await _wait(replacement_entered)
+        await pilot.pause()
+
+        pipeline = SeekRacePipeline.instances[0]
+        replacement = pipeline.runs[1]
+        assert app.player._run is replacement
+        original_bridge = app.call_from_thread
+
+        def refuse(callback: Any, *args: Any, **kwargs: Any) -> Any:
+            bridge_calls.append(callback.__name__)
+            bridge_attempted.set()
+            raise RuntimeError(PRIVATE_ERROR)
+
+        monkeypatch.setattr(app, "call_from_thread", refuse)
+        release_old.set()
+        await _wait(bridge_attempted)
+        await pilot.pause()
+
+        assert bridge_calls == ["_render_frame"]
+        assert pipeline.stop_calls == 0
+        assert app.player._pipeline is pipeline
+        assert app.player._run is replacement
+        assert not replacement.eof
+
+        monkeypatch.setattr(app, "call_from_thread", original_bridge)
+        release_replacement.set()
+        await _finish_workers(app, pilot)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("phase", ["start", "iterator", "clock", "stats"])
 async def test_activation_and_current_pump_failures_are_contained(
     monkeypatch,

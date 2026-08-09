@@ -289,19 +289,19 @@ class VideoPlayerScreen(ModalScreen[None]):
                     self._render_frame, token, pipeline, run, data
                 )
                 if dispatched is _BRIDGE_REFUSED:
-                    self._cleanup_pipeline(pipeline)
+                    self._cleanup_refused_run(token, pipeline, run)
                     return
                 if dispatched is False:
                     return
             if run.eof:
                 dispatched = self._bridge(self._finish_run, token, pipeline, run)
                 if dispatched is _BRIDGE_REFUSED:
-                    self._cleanup_pipeline(pipeline)
+                    self._cleanup_refused_run(token, pipeline, run)
         except Exception as exc:
             _log_failure("pump", exc)
             dispatched = self._bridge(self._fail_run, token, pipeline, run)
             if dispatched is _BRIDGE_REFUSED:
-                self._cleanup_pipeline(pipeline)
+                self._cleanup_refused_run(token, pipeline, run)
 
     def _matches(
         self, token: int, pipeline: PlayerPipeline, run: PlayerRun
@@ -312,6 +312,13 @@ class VideoPlayerScreen(ModalScreen[None]):
             and pipeline is self._pipeline
             and run is self._run
         )
+
+    def _cleanup_refused_run(
+        self, token: int, pipeline: PlayerPipeline, run: PlayerRun
+    ) -> None:
+        """Stop only the still-current run after its UI bridge is refused."""
+        if self._matches(token, pipeline, run):
+            self._cleanup_pipeline(pipeline)
 
     def _render_frame(
         self,
