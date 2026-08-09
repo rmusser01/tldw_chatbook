@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from .prompt_artifact_codec import decode_prompt_artifact, deserialize_definition
+from .prompt_restore_errors import PromptRestoreError, PromptRestoreErrorCode
 from .prompt_source_capabilities import (
     PromptSourceCapabilities,
     validate_console_artifact_payload,
@@ -546,7 +547,7 @@ def normalize_prompt_history_page(payload: Any, *, backend: str) -> dict[str, An
     }
 
 
-def prepare_retained_snapshot_for_restore(
+def _prepare_retained_snapshot_for_restore(
     record: Any, *, capabilities: PromptSourceCapabilities
 ) -> dict[str, Any]:
     """Validate one re-resolved retained row and produce ordinary update fields.
@@ -606,6 +607,21 @@ def prepare_retained_snapshot_for_restore(
         "keywords_captured": snapshot["keywords_captured"],
         "durable_prompt_definition": durable_prompt_definition,
     }
+
+
+def prepare_retained_snapshot_for_restore(
+    record: Any, *, capabilities: PromptSourceCapabilities
+) -> dict[str, Any]:
+    """Return a restorable snapshot or one bounded validation category."""
+    try:
+        return _prepare_retained_snapshot_for_restore(
+            record,
+            capabilities=capabilities,
+        )
+    except PromptRestoreError:
+        raise
+    except (KeyError, TypeError, ValueError) as exc:
+        raise PromptRestoreError(PromptRestoreErrorCode.VALIDATION) from exc
 
 
 def normalize_prompt_version_record(record: Any, *, backend: str) -> dict[str, Any]:

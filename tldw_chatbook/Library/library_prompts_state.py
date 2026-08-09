@@ -26,6 +26,10 @@ from tldw_chatbook.Prompt_Management.prompt_artifact_codec import (
 from tldw_chatbook.Prompt_Management.prompt_legacy_decomposer import (
     decompose_legacy_lanes,
 )
+from tldw_chatbook.Prompt_Management.prompt_restore_errors import (
+    PromptRestoreError,
+    PromptRestoreErrorCode,
+)
 from tldw_chatbook.Prompt_Management.prompt_source_capabilities import (
     CANONICAL_JSON_UTF8_V1,
     PromptCapabilityError,
@@ -53,6 +57,8 @@ PromptHistoryRestoreKind = Literal[
     "snapshot_unavailable",
     "current_unavailable",
     "validation_error",
+    "name_conflict",
+    "keyword_error",
     "error",
 ]
 
@@ -306,6 +312,24 @@ def close_prompt_history(state: PromptHistoryState) -> PromptHistoryState:
     return replace(
         state,
         is_open=False,
+        page_status="closed",
+        rows=(),
+        has_more=False,
+        next_before_change_id=None,
+        selected=None,
+        page_request=None,
+        preview_request=None,
+        restore_request=None,
+        restore_outcome=None,
+        error="",
+    )
+
+
+def reset_prompt_history_page(state: PromptHistoryState) -> PromptHistoryState:
+    """Clear page-scoped work for an explicit first-page reload."""
+    return replace(
+        state,
+        is_open=True,
         page_status="closed",
         rows=(),
         has_more=False,
@@ -604,15 +628,33 @@ def format_prompt_history_restore_outcome(
     result: Mapping[str, Any] | None = None, *, error: Exception | None = None
 ) -> PromptHistoryRestoreOutcome:
     """Classify local restore results into stable UI copy without side effects."""
-    if isinstance(error, ConflictError):
+    if isinstance(error, PromptRestoreError):
+        if error.code == PromptRestoreErrorCode.EXPECTED_VERSION:
+            return PromptHistoryRestoreOutcome(
+                "conflict",
+                "This Prompt changed elsewhere. Reload before restoring.",
+                True,
+            )
+        if error.code == PromptRestoreErrorCode.NAME_CONFLICT:
+            return PromptHistoryRestoreOutcome(
+                "name_conflict",
+                "Another active Prompt already uses this name. Rename it or choose another retained version, then retry.",
+                False,
+            )
+        if error.code == PromptRestoreErrorCode.KEYWORDS:
+            return PromptHistoryRestoreOutcome(
+                "keyword_error",
+                "This retained version's keywords couldn't be restored. Choose another retained version, then retry.",
+                False,
+            )
         return PromptHistoryRestoreOutcome(
-            "conflict", "This Prompt changed elsewhere. Reload before restoring.", True
+            "validation_error",
+            "This retained version couldn't be validated for restore. Choose another retained version, then retry.",
+            False,
         )
-    if isinstance(error, ValueError):
-        return PromptHistoryRestoreOutcome("validation_error", str(error), False)
     if error is not None:
         return PromptHistoryRestoreOutcome(
-            "error", str(error) or "Couldn't restore retained history.", False
+            "error", "Couldn't restore retained history.", False
         )
     if not isinstance(result, Mapping):
         return PromptHistoryRestoreOutcome(

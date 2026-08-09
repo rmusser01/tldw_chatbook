@@ -85,10 +85,13 @@ class ConflictError(DatabaseError):
         message="Conflict detected: Record modified concurrently.",
         entity=None,
         identifier=None,
+        *,
+        code="conflict",
     ):
         super().__init__(message)
         self.entity = entity
         self.identifier = identifier
+        self.code = code
 
     def __str__(self):
         base = super().__str__()
@@ -98,6 +101,25 @@ class ConflictError(DatabaseError):
         if self.identifier:
             details.append(f"ID: {self.identifier}")
         return f"{base} ({', '.join(details)})" if details else base
+
+
+class ExpectedVersionConflictError(ConflictError):
+    """A conditional write observed a newer persisted version."""
+
+    def __init__(self, message, entity=None, identifier=None):
+        super().__init__(
+            message,
+            entity,
+            identifier,
+            code="expected_version",
+        )
+
+
+class PromptNameConflictError(ConflictError):
+    """A Prompt write would duplicate another active Prompt name."""
+
+    def __init__(self, message, entity=None, identifier=None):
+        super().__init__(message, entity, identifier, code="name_conflict")
 
 
 # --- Database Class ---
@@ -1876,7 +1898,7 @@ class PromptsDatabase:
                 if expected_version is not None and expected_version != int(
                     current_version
                 ):
-                    raise ConflictError(
+                    raise ExpectedVersionConflictError(
                         "Prompt changed after it was opened.", "Prompts", prompt_id
                     )
 
@@ -1895,7 +1917,7 @@ class PromptsDatabase:
                     )
                     conflicting_prompt = cursor.fetchone()
                     if conflicting_prompt:
-                        raise ConflictError(
+                        raise PromptNameConflictError(
                             f"Another active prompt with name '{new_name}' already exists (ID: {conflicting_prompt['id']})."
                         )
 
@@ -3411,7 +3433,7 @@ class PromptsDatabase:
                 }
             current_version = int(current_row["version"])
             if current_version != validated_expected_version:
-                raise ConflictError(
+                raise ExpectedVersionConflictError(
                     "Prompt changed after it was opened.",
                     "Prompts",
                     int(current_row["id"]),

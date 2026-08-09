@@ -17,8 +17,43 @@ class _ScreenStub:
 
 
 class _HistoryServiceStub:
+    def __init__(self) -> None:
+        self.count_calls: list[str] = []
+        self.page_calls: list[int | None] = []
+
     async def count_prompt_versions(self, **kwargs: Any) -> int:
+        self.count_calls.append(kwargs["prompt_identifier"])
         return 7 if kwargs["prompt_identifier"] == "prompt-b" else 3
+
+    async def list_prompt_versions(self, **kwargs: Any) -> dict[str, Any]:
+        self.page_calls.append(kwargs["before_change_id"])
+        return {
+            "items": [
+                {
+                    "prompt_uuid": kwargs["prompt_identifier"],
+                    "change_id": 1,
+                    "version": 1,
+                    "timestamp": "2026-08-08T12:00:00+00:00",
+                    "artifact_type": "prompt",
+                    "artifact_type_raw": "",
+                    "name": "Prompt",
+                    "author": "",
+                    "details": "",
+                    "system_prompt": "",
+                    "user_prompt": "User",
+                    "keywords": [],
+                    "keywords_captured": True,
+                    "compatibility_state": "compatible",
+                    "compatibility_reason": "",
+                    "restore_eligible": True,
+                    "changed_fields": [],
+                    "change_summary": "Created",
+                }
+            ],
+            "total_count": 1,
+            "has_more": False,
+            "next_before_change_id": None,
+        }
 
 
 async def _call_service(function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -97,3 +132,33 @@ async def test_prompt_history_controller_ignores_late_count_after_prompt_switch(
     await prompt_b_count
     assert controller.state.prompt_uuid == "prompt-b"
     assert controller.state.retained_count == 7
+
+
+@pytest.mark.asyncio
+async def test_prompt_history_controller_reload_resets_page_without_refetching_count():
+    screen = _ScreenStub()
+    service = _HistoryServiceStub()
+    controller = LibraryPromptHistoryController(
+        screen=screen,
+        run_service_call=_call_service,
+        prompt_service=lambda: service,
+        sync_view=lambda _state: None,
+    )
+
+    controller.initialize({"uuid": "prompt-a", "version": 1})
+    await screen.started.pop()
+    controller.request_page()
+    await screen.started.pop()
+
+    controller.reload_page()
+
+    assert service.count_calls == ["prompt-a"]
+    assert service.page_calls == [None]
+    assert len(screen.started) == 1
+    assert controller.state is not None
+    assert controller.state.rows == ()
+    assert controller.state.selected is None
+    await screen.started.pop()
+    assert service.count_calls == ["prompt-a"]
+    assert service.page_calls == [None, None]
+    assert controller.state.page_status == "loaded"

@@ -331,7 +331,6 @@ from ...Widgets.Library.library_file_notes_workspace import (
     LibraryFileNotesWorkspace,
 )
 from ...Widgets.Library.library_notes_canvas import LibraryNotePresentationState
-from ...Widgets.Library.library_prompts_canvas import LibraryPromptHistoryRegion
 from ...Widgets.ModelArtifacts import (
     InstallProgressed,
     ModelInstallModal,
@@ -339,7 +338,10 @@ from ...Widgets.ModelArtifacts import (
     make_progress_callback,
 )
 from ...Widgets.confirmation_dialog import ConfirmationDialog
-from ..Library_Modules import LibraryPromptHistoryController
+from ..Library_Modules import (
+    LibraryPromptHistoryController,
+    LibraryPromptHistoryRegion,
+)
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 from ..Views.RAGSearch.search_handoff import build_library_rag_console_live_work_payload
@@ -14966,26 +14968,71 @@ class LibraryScreen(BaseAppScreen):
             if self.is_mounted:
                 self.refresh(recompose=True)
             return
+        self._adopt_library_prompt_persisted_detail(
+            detail,
+            open_history=open_history,
+        )
+        if self.is_mounted:
+            self.refresh(recompose=True)
+            self.call_after_refresh(self._arm_library_prompt_editor)
+
+    def _adopt_library_prompt_persisted_detail(
+        self,
+        detail: Mapping[str, Any],
+        *,
+        status: str = "",
+        open_history: bool | None = None,
+    ) -> None:
+        """Adopt one persisted Prompt identity and initialize its history scope."""
+        if open_history is None:
+            open_history = bool(
+                self._library_prompt_history_state is not None
+                and self._library_prompt_history_state.is_open
+            )
         self._library_prompt_detail = dict(detail)
         editor_state = build_prompt_editor_state(
             self._library_prompt_detail,
             capabilities=self._library_prompt_capabilities,
         )
+        prompt_id = self._library_prompt_detail.get("local_id")
+        if type(prompt_id) is not int:
+            prompt_id = self._library_prompt_detail.get("id")
+        if type(prompt_id) is int:
+            self._selected_prompt_id = prompt_id
         self._library_prompt_block_state = editor_state.block_editor_state
         self._library_prompt_detached_structured = False
         self._library_prompt_original_name = editor_state.name
         self._library_prompt_version = editor_state.version
         self._library_prompt_dirty = False
-        self._library_prompt_status = ""
+        self._library_prompt_status = status
         self._library_prompt_conflict_snapshot = None
         self._library_prompt_include_starter_content = False
         self._library_prompt_editor_armed = False
         self._initialize_library_prompt_history(
             self._library_prompt_detail, open_history=open_history
         )
-        if self.is_mounted:
-            self.refresh(recompose=True)
-            self.call_after_refresh(self._arm_library_prompt_editor)
+
+    def _detach_library_prompt_working_copy(self, detail: Mapping[str, Any]) -> None:
+        """Detach a saved Prompt/Recipe identity before editing an unsaved copy."""
+        detached = dict(detail)
+        for source_field in (
+            "id",
+            "local_id",
+            "server_id",
+            "uuid",
+            "source_id",
+            "version",
+            "created_at",
+            "last_modified",
+            "last_used_at",
+        ):
+            detached.pop(source_field, None)
+        self._library_prompt_detail = detached
+        self._selected_prompt_id = None
+        self._library_prompt_original_name = ""
+        self._library_prompt_version = None
+        self._library_prompt_conflict_snapshot = None
+        self._invalidate_library_prompt_history()
 
     def _arm_library_prompt_editor(self) -> None:
         """Enable dirty-tracking once the prompt editor is mounted."""
@@ -15054,53 +15101,63 @@ class LibraryScreen(BaseAppScreen):
             current_compatible=desired[2],
         )
 
+    @on(LibraryPromptHistoryRegion.Ready)
+    def _on_library_prompt_history_region_ready(
+        self, event: LibraryPromptHistoryRegion.Ready
+    ) -> None:
+        """Live-sync a region mounted after an overlapping controller publish."""
+        event.stop()
+        self._reconcile_library_prompt_history_region()
+
     def _request_library_prompt_history_count(self) -> None:
         self._library_prompt_history_controller.retry_count()
 
     def _request_library_prompt_history_page(self) -> None:
         self._library_prompt_history_controller.request_page()
 
-    @on(Collapsible.Toggled, "#library-prompt-history-collapsible")
-    def handle_library_prompt_history_toggled(self, event: Collapsible.Toggled) -> None:
-        """Lazy-load on open and use the pure close reset on collapse."""
-        event.stop()
+    @on(LibraryPromptHistoryRegion.DisclosureOpened)
+    def handle_library_prompt_history_opened(
+        self, _event: LibraryPromptHistoryRegion.DisclosureOpened
+    ) -> None:
+        """Lazy-load the first retained page when the disclosure opens."""
         state = self._library_prompt_history_state
-        if state is None:
-            return
-        if event.collapsible.collapsed:
-            self._library_prompt_history_controller.close()
-            return
-        if not state.is_open:
+        if state is not None and not state.is_open:
             self._request_library_prompt_history_page()
 
-    @on(Button.Pressed, "#library-prompt-history-retry-count")
-    def handle_library_prompt_history_retry_count(self, event: Button.Pressed) -> None:
-        event.stop()
+    @on(LibraryPromptHistoryRegion.DisclosureClosed)
+    def handle_library_prompt_history_closed(
+        self, _event: LibraryPromptHistoryRegion.DisclosureClosed
+    ) -> None:
+        """Use the pure close reset when the disclosure collapses."""
+        self._library_prompt_history_controller.close()
+
+    @on(LibraryPromptHistoryRegion.CountRetryRequested)
+    def handle_library_prompt_history_retry_count(
+        self, _event: LibraryPromptHistoryRegion.CountRetryRequested
+    ) -> None:
         self._request_library_prompt_history_count()
 
-    @on(Button.Pressed, "#library-prompt-history-retry-page")
-    @on(Button.Pressed, "#library-prompt-history-load-older")
-    def handle_library_prompt_history_request_page(self, event: Button.Pressed) -> None:
-        event.stop()
+    @on(LibraryPromptHistoryRegion.PageRequested)
+    def handle_library_prompt_history_request_page(
+        self, _event: LibraryPromptHistoryRegion.PageRequested
+    ) -> None:
         self._request_library_prompt_history_page()
 
-    @on(Button.Pressed, ".library-prompt-history-row")
-    def handle_library_prompt_history_row(self, event: Button.Pressed) -> None:
+    @on(LibraryPromptHistoryRegion.RowSelected)
+    def handle_library_prompt_history_row(
+        self, event: LibraryPromptHistoryRegion.RowSelected
+    ) -> None:
         """Select an already-loaded immutable preview with reducer guards."""
-        event.stop()
-        change_id = getattr(event.button, "change_id", None)
-        source_version = getattr(event.button, "source_version", None)
-        if type(change_id) is not int or type(source_version) is not int:
-            return
         self._library_prompt_history_controller.select(
-            change_id=change_id,
-            source_version=source_version,
+            change_id=event.change_id,
+            source_version=event.source_version,
         )
 
-    @on(Button.Pressed, "#library-prompt-history-restore")
-    def handle_library_prompt_history_restore(self, event: Button.Pressed) -> None:
+    @on(LibraryPromptHistoryRegion.RestoreRequested)
+    def handle_library_prompt_history_restore(
+        self, _event: LibraryPromptHistoryRegion.RestoreRequested
+    ) -> None:
         """Confirm a gated restore without exposing retained Prompt bodies."""
-        event.stop()
         state = self._library_prompt_history_state
         if state is None or self._library_prompt_block_state is None:
             return
@@ -15146,6 +15203,13 @@ class LibraryScreen(BaseAppScreen):
                 expected_current_version=target.expected_current_version,
             ),
         )
+
+    @on(LibraryPromptHistoryRegion.ReloadRequested)
+    def handle_library_prompt_history_reload(
+        self, _event: LibraryPromptHistoryRegion.ReloadRequested
+    ) -> None:
+        """Reset and reload the first retained page without a settled count fetch."""
+        self._library_prompt_history_controller.reload_page()
 
     def _confirm_library_prompt_history_restore(
         self,
@@ -15384,25 +15448,9 @@ class LibraryScreen(BaseAppScreen):
             else {}
         )
         detail.update(artifact_fields)
-        for source_field in (
-            "id",
-            "local_id",
-            "server_id",
-            "uuid",
-            "source_id",
-            "version",
-            "created_at",
-            "last_modified",
-            "last_used_at",
-        ):
-            detail.pop(source_field, None)
-        self._library_prompt_detail = detail
+        self._detach_library_prompt_working_copy(detail)
         self._library_prompt_block_state = converted
         self._library_prompt_detached_structured = True
-        self._selected_prompt_id = None
-        self._library_prompt_original_name = ""
-        self._library_prompt_version = None
-        self._library_prompt_conflict_snapshot = None
         self._library_prompt_dirty = True
         self._library_prompt_status = (
             "Compatibility text converted to an unsaved Prompt copy."
@@ -16066,22 +16114,18 @@ class LibraryScreen(BaseAppScreen):
             )
             self._library_prompt_block_state = prompt_state
             self._library_prompt_detached_structured = True
-            self._selected_prompt_id = None
-            self._library_prompt_original_name = ""
-            self._library_prompt_version = None
-            self._library_prompt_conflict_snapshot = None
             self._library_prompt_dirty = True
             self._library_prompt_status = (
                 "Recipe opened as an unsaved Prompt copy — review and save it "
                 "before use."
             )
-            if isinstance(self._library_prompt_detail, Mapping):
-                detail = dict(self._library_prompt_detail)
-                detail.update(artifact_fields)
-                detail.pop("id", None)
-                detail.pop("local_id", None)
-                detail.pop("uuid", None)
-                self._library_prompt_detail = detail
+            detail = (
+                dict(self._library_prompt_detail)
+                if isinstance(self._library_prompt_detail, Mapping)
+                else {}
+            )
+            detail.update(artifact_fields)
+            self._detach_library_prompt_working_copy(detail)
             self._library_prompt_editor_armed = False
             if self.is_mounted:
                 self.refresh(recompose=True)
@@ -16693,8 +16737,7 @@ class LibraryScreen(BaseAppScreen):
                 # Keep the invalid live block state so the duplicate remains
                 # editable; Copy/Save will surface its existing validation.
                 artifact_fields = {"artifact_type": block_state.artifact_type}
-        self._selected_prompt_id = None
-        self._library_prompt_detail = {
+        detached_detail = {
             "name": f"{name} (copy)",
             "author": author,
             "details": details,
@@ -16708,12 +16751,10 @@ class LibraryScreen(BaseAppScreen):
             "keywords": keywords_text,
             **artifact_fields,
         }
+        self._detach_library_prompt_working_copy(detached_detail)
         self._library_prompt_block_state = block_state
         self._library_prompt_detached_structured = detached_structured
-        self._library_prompt_original_name = ""
-        self._library_prompt_version = None
         self._library_prompt_status = ""
-        self._library_prompt_conflict_snapshot = None
         self._library_prompt_dirty = True
         self._library_prompt_editor_armed = False
         if self.is_mounted:
@@ -17040,19 +17081,10 @@ class LibraryScreen(BaseAppScreen):
             return
 
         if not overwrite:
-            self._library_prompt_detail = dict(detail)
-            editor_state = build_prompt_editor_state(
-                self._library_prompt_detail,
-                capabilities=self._library_prompt_capabilities,
+            self._adopt_library_prompt_persisted_detail(
+                detail,
+                open_history=None,
             )
-            self._library_prompt_block_state = editor_state.block_editor_state
-            self._library_prompt_detached_structured = False
-            self._library_prompt_original_name = editor_state.name
-            self._library_prompt_version = editor_state.version
-            self._library_prompt_conflict_snapshot = None
-            self._library_prompt_dirty = False
-            self._library_prompt_status = ""
-            self._library_prompt_editor_armed = False
             if self.is_mounted:
                 self.refresh(recompose=True)
                 self.call_after_refresh(self._arm_library_prompt_editor)
@@ -17100,38 +17132,31 @@ class LibraryScreen(BaseAppScreen):
             return
 
         version = result.get("version") if isinstance(result, Mapping) else None
-        self._library_prompt_version = (
-            version if version is not None else fresh_version + 1
-        )
-        patched_detail: dict[str, Any] = (
-            dict(self._library_prompt_detail)
-            if isinstance(self._library_prompt_detail, Mapping)
-            else {}
-        )
+        persisted_version = version if version is not None else fresh_version + 1
+        patched_detail: dict[str, Any] = dict(detail)
+        if isinstance(result, Mapping):
+            patched_detail.update(result)
         patched_detail["id"] = prompt_id
         patched_detail["name"] = name
         patched_detail["author"] = author
         patched_detail["details"] = details
         patched_detail["system_prompt"] = system_prompt
         patched_detail["user_prompt"] = user_prompt
-        patched_detail["version"] = self._library_prompt_version
+        patched_detail["version"] = persisted_version
         if isinstance(result, Mapping) and "keywords" in result:
             patched_detail["keywords"] = result["keywords"]
         elif keywords is not None:
             patched_detail["keywords"] = keywords
-        self._library_prompt_detail = patched_detail
-        self._library_prompt_detached_structured = False
-        self._library_prompt_original_name = name
-        self._library_prompt_conflict_snapshot = None
-        self._library_prompt_dirty = False
-        self._library_prompt_status = LIBRARY_PROMPT_SAVE_STATUS_COPY["ok"]
+        self._adopt_library_prompt_persisted_detail(
+            patched_detail,
+            status=LIBRARY_PROMPT_SAVE_STATUS_COPY["ok"],
+        )
         # This recompose swaps the conflict banner's Overwrite/Reload
         # actions back for the normal action row (a real mode change,
         # unlike the plain Save success path above), so it also remounts
         # the Input/TextArea fields -- disarm first (mirroring every other
         # recompose in this editor) so their spurious mount-time `Changed`
         # is not mistaken for a fresh edit.
-        self._library_prompt_editor_armed = False
         if self.is_mounted:
             self.refresh(recompose=True)
             self.call_after_refresh(self._arm_library_prompt_editor)
@@ -17248,27 +17273,30 @@ class LibraryScreen(BaseAppScreen):
 
         new_id = result_id
         version = result.get("version") if isinstance(result, Mapping) else None
-        self._library_prompt_version = version if version is not None else 1
-        patched_detail: dict[str, Any] = {
-            "id": new_id,
-            "name": name,
-            "author": author,
-            "details": details,
-            "system_prompt": system_prompt,
-            "user_prompt": user_prompt,
-            "version": self._library_prompt_version,
-        }
+        persisted_version = version if version is not None else 1
+        patched_detail: dict[str, Any] = (
+            dict(result) if isinstance(result, Mapping) else {}
+        )
+        patched_detail.update(
+            {
+                "id": new_id,
+                "name": name,
+                "author": author,
+                "details": details,
+                "system_prompt": system_prompt,
+                "user_prompt": user_prompt,
+                "version": persisted_version,
+            }
+        )
         if isinstance(result, Mapping) and "keywords" in result:
             patched_detail["keywords"] = result["keywords"]
         elif keywords is not None:
             patched_detail["keywords"] = keywords
-        self._library_prompt_detail = patched_detail
-        self._library_prompt_original_name = name
-        self._selected_prompt_id = new_id
-        self._library_prompt_conflict_snapshot = None
-        self._library_prompt_dirty = False
-        self._library_prompt_status = LIBRARY_PROMPT_SAVE_STATUS_COPY["ok"]
-        self._library_prompt_editor_armed = False
+        self._adopt_library_prompt_persisted_detail(
+            patched_detail,
+            status=LIBRARY_PROMPT_SAVE_STATUS_COPY["ok"],
+            open_history=False,
+        )
         # Mirrors `_save_library_prompt`'s own create-success branch: a
         # brand-new prompt changes the list's membership/count, so the
         # Prompts rail badge/list must pick up the new row now.
@@ -17293,7 +17321,7 @@ class LibraryScreen(BaseAppScreen):
             outcome: A ``classify_prompt_save_error`` return value (never
                 ``"ok"`` -- callers only reach this on a failed retry).
         """
-        self._library_prompt_detail = {
+        detached_detail = {
             "name": snapshot.name,
             "author": snapshot.author,
             "details": snapshot.details,
@@ -17301,13 +17329,11 @@ class LibraryScreen(BaseAppScreen):
             "user_prompt": snapshot.user_prompt,
             "keywords": snapshot.keywords_csv,
         }
+        self._detach_library_prompt_working_copy(detached_detail)
         self._library_prompt_detached_structured = (
             snapshot.block_editor_state is not None
             and snapshot.definition_state == "supported_v2"
         )
-        self._library_prompt_original_name = ""
-        self._library_prompt_version = None
-        self._library_prompt_conflict_snapshot = None
         self._library_prompt_dirty = True
         self._library_prompt_status = LIBRARY_PROMPT_SAVE_STATUS_COPY.get(
             outcome, LIBRARY_PROMPT_SAVE_STATUS_COPY["error"]
@@ -17342,7 +17368,7 @@ class LibraryScreen(BaseAppScreen):
         name, author, details, system_prompt, user_prompt, keywords_text = fields
         block_state = self._library_prompt_block_state or snapshot.block_editor_state
         artifact_type = block_state.artifact_type
-        self._library_prompt_detail = {
+        detached_detail = {
             "name": name,
             "author": author,
             "details": details,
@@ -17351,15 +17377,12 @@ class LibraryScreen(BaseAppScreen):
             "keywords": keywords_text,
             "artifact_type": artifact_type,
         }
+        self._detach_library_prompt_working_copy(detached_detail)
         self._library_prompt_block_state = block_state
         self._library_prompt_detached_structured = (
             snapshot.definition_state == "supported_v2"
             or self._library_prompt_detached_structured
         )
-        self._selected_prompt_id = None
-        self._library_prompt_original_name = ""
-        self._library_prompt_version = None
-        self._library_prompt_conflict_snapshot = None
         self._library_prompt_status = ""
         self._library_prompt_dirty = True
         self._library_prompt_editor_armed = False

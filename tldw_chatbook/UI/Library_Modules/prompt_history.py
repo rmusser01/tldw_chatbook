@@ -13,6 +13,7 @@ from typing import Any
 
 from loguru import logger
 
+from ...Prompt_Management.prompt_restore_errors import PromptRestoreError
 from ...Library.library_prompts_state import (
     PromptHistoryPageRequest,
     PromptHistoryRequest,
@@ -33,6 +34,7 @@ from ...Library.library_prompts_state import (
     close_prompt_history,
     format_prompt_history_restore_outcome,
     history_restore_gate,
+    reset_prompt_history_page,
 )
 
 _PAGE_SIZE = 10
@@ -215,6 +217,16 @@ class LibraryPromptHistoryController:
         if state is not None and state.is_open:
             self._publish(close_prompt_history(state))
 
+    def reload_page(self) -> None:
+        """Reset to page zero and reload without repeating a settled count."""
+        state = self.state
+        if state is None:
+            return
+        self._publish(reset_prompt_history_page(state))
+        if state.retained_count is None and state.count_request is None:
+            self.retry_count()
+        self.request_page()
+
     def select(self, *, change_id: int, source_version: int) -> None:
         """Select one already-loaded immutable preview."""
         state = self.state
@@ -283,16 +295,13 @@ class LibraryPromptHistoryController:
                     expected_version=request.expected_current_version,
                     isolate_in_worker=True,
                 )
-            except ValueError as exc:
-                # Deliberate validation copy is suitable for the user.
+            except PromptRestoreError as exc:
+                # Only bounded service categories are suitable for UI translation.
                 caught = exc
-            except Exception as exc:
-                classified = format_prompt_history_restore_outcome(error=exc)
-                if classified.kind == "conflict":
-                    caught = exc
-                else:
-                    logger.warning("Library retained-history restore failed.")
-                    caught = RuntimeError()
+            except Exception:
+                # Never include arbitrary exception text or retained bodies.
+                logger.warning("Library retained-history restore failed.")
+                caught = RuntimeError()
         outcome = format_prompt_history_restore_outcome(result, error=caught)
         state = self.state
         if state is None:

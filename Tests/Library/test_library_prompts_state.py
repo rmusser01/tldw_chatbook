@@ -30,6 +30,7 @@ from tldw_chatbook.Library.library_prompts_state import (
     history_restore_gate,
     prompt_history_count_label,
     prompt_editor_meta_line,
+    reset_prompt_history_page,
     require_artifact_save_supported,
 )
 from tldw_chatbook.Prompt_Management.prompt_artifact_models import (
@@ -38,6 +39,10 @@ from tldw_chatbook.Prompt_Management.prompt_artifact_models import (
 )
 from tldw_chatbook.Prompt_Management.prompt_normalizers import (
     normalize_prompt_history_page,
+)
+from tldw_chatbook.Prompt_Management.prompt_restore_errors import (
+    PromptRestoreError,
+    PromptRestoreErrorCode,
 )
 from tldw_chatbook.Prompt_Management.prompt_source_capabilities import (
     PromptCapabilityError,
@@ -934,6 +939,28 @@ def test_closing_history_clears_active_preview_and_restore_requests():
     )
 
 
+def test_reload_history_page_clears_page_scope_but_preserves_settled_count():
+    state = replace(
+        _loaded_history_state(),
+        restore_outcome=PromptHistoryRestoreOutcome(
+            kind="snapshot_unavailable",
+            message="Reload retained history.",
+            reload_required=True,
+        ),
+    )
+
+    reset = reset_prompt_history_page(state)
+
+    assert reset.is_open is True
+    assert reset.page_status == "closed"
+    assert reset.rows == ()
+    assert reset.selected is None
+    assert reset.restore_outcome is None
+    assert reset.retained_count == state.retained_count
+    assert reset.count_status == state.count_status
+    assert reset.current_version == state.current_version
+
+
 @pytest.mark.parametrize(
     ("result", "error", "kind"),
     [
@@ -947,7 +974,11 @@ def test_closing_history_clears_active_preview_and_restore_requests():
             None,
             "no_change",
         ),
-        (None, ConflictError("stale", "Prompts", 1), "conflict"),
+        (
+            None,
+            PromptRestoreError(PromptRestoreErrorCode.EXPECTED_VERSION),
+            "conflict",
+        ),
         (
             {"outcome": "snapshot_unavailable", "source_version": 3},
             None,
@@ -958,7 +989,23 @@ def test_closing_history_clears_active_preview_and_restore_requests():
             None,
             "current_unavailable",
         ),
-        (None, ValueError("Invalid artifact"), "validation_error"),
+        (
+            None,
+            PromptRestoreError(PromptRestoreErrorCode.VALIDATION),
+            "validation_error",
+        ),
+        (
+            None,
+            PromptRestoreError(PromptRestoreErrorCode.NAME_CONFLICT),
+            "name_conflict",
+        ),
+        (
+            None,
+            PromptRestoreError(PromptRestoreErrorCode.KEYWORDS),
+            "keyword_error",
+        ),
+        (None, ValueError("SECRET adapter value"), "error"),
+        (None, ConflictError("SECRET unclassified conflict"), "error"),
         (None, RuntimeError("network"), "error"),
     ],
 )
@@ -983,6 +1030,9 @@ def test_restore_non_success_outcomes_keep_selected_row_retryable(
     assert settled.restore_request is None
     assert settled.restore_outcome is not None
     assert settled.restore_outcome.kind == kind
+    if kind == "error":
+        assert settled.restore_outcome.message == "Couldn't restore retained history."
+        assert "SECRET" not in settled.restore_outcome.message
     assert settled.selected == selected
     assert history_restore_gate(settled, dirty=False).enabled is True
 
@@ -1138,12 +1188,20 @@ def test_history_restore_outcomes_have_stable_copy_and_keyword_disclosure():
         == "current_unavailable"
     )
     assert format_prompt_history_restore_outcome(
-        error=ConflictError("stale", "Prompts", 1)
+        error=PromptRestoreError(PromptRestoreErrorCode.EXPECTED_VERSION)
     ).message == ("This Prompt changed elsewhere. Reload before restoring.")
     assert (
-        format_prompt_history_restore_outcome(error=ValueError("Invalid artifact")).kind
+        format_prompt_history_restore_outcome(
+            error=PromptRestoreError(PromptRestoreErrorCode.VALIDATION)
+        ).kind
         == "validation_error"
     )
+    generic = format_prompt_history_restore_outcome(
+        error=ValueError("SECRET validation payload")
+    )
+    assert generic.kind == "error"
+    assert generic.message == "Couldn't restore retained history."
+    assert "SECRET" not in generic.message
 
 
 def test_stale_history_count_page_selection_and_restore_outcomes_are_ignored():

@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional
 
+from ..DB.Prompts_DB import ConflictError
 from ..runtime_policy.bootstrap import (
     build_runtime_api_client_provider_from_config,
     derive_configured_server_binding,
@@ -27,6 +28,7 @@ from .prompt_normalizers import (
     normalize_prompt_version_list,
     prepare_retained_snapshot_for_restore,
 )
+from .prompt_restore_errors import prompt_restore_error_from_conflict
 from .prompt_source_capabilities import (
     PromptCapabilityError,
     PromptSourceCapabilities,
@@ -542,16 +544,24 @@ class LocalPromptService:
         prompt_uuid = prompt.get("uuid")
         if not prompt_uuid:
             raise ValueError(f"Prompt '{prompt_identifier}' has no UUID.")
-        return self.prompt_db.restore_prompt_history_entry(
-            prompt_uuid,
-            change_id=change_id,
-            version=version,
-            expected_version=expected_version,
-            snapshot_validator=lambda snapshot: prepare_retained_snapshot_for_restore(
-                snapshot,
-                capabilities=local_prompt_capabilities(),
-            ),
-        )
+        try:
+            return self.prompt_db.restore_prompt_history_entry(
+                prompt_uuid,
+                change_id=change_id,
+                version=version,
+                expected_version=expected_version,
+                snapshot_validator=lambda snapshot: (
+                    prepare_retained_snapshot_for_restore(
+                        snapshot,
+                        capabilities=local_prompt_capabilities(),
+                    )
+                ),
+            )
+        except ConflictError as exc:
+            classified = prompt_restore_error_from_conflict(exc)
+            if classified is not None:
+                raise classified from exc
+            raise
 
     def create_prompt_collection(self, payload: dict[str, Any]) -> dict[str, Any]:
         db = self._require_collection_db()

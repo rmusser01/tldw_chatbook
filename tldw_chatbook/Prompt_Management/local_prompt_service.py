@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..DB.Prompts_DB import ConflictError
 from . import Prompts_Interop as prompts_interop
 from .prompt_normalizers import prepare_retained_snapshot_for_restore
+from .prompt_restore_errors import prompt_restore_error_from_conflict
 from .prompt_source_capabilities import local_prompt_capabilities
 
 
@@ -212,13 +214,21 @@ class LocalPromptService:
         prompt_uuid = prompt.get("uuid")
         if not prompt_uuid:
             raise ValueError(f"Prompt '{prompt_id}' has no UUID.")
-        return self.interop.get_db_instance().restore_prompt_history_entry(
-            prompt_uuid,
-            change_id=change_id,
-            version=version,
-            expected_version=expected_version,
-            snapshot_validator=lambda snapshot: prepare_retained_snapshot_for_restore(
-                snapshot,
-                capabilities=local_prompt_capabilities(),
-            ),
-        )
+        try:
+            return self.interop.get_db_instance().restore_prompt_history_entry(
+                prompt_uuid,
+                change_id=change_id,
+                version=version,
+                expected_version=expected_version,
+                snapshot_validator=lambda snapshot: (
+                    prepare_retained_snapshot_for_restore(
+                        snapshot,
+                        capabilities=local_prompt_capabilities(),
+                    )
+                ),
+            )
+        except ConflictError as exc:
+            classified = prompt_restore_error_from_conflict(exc)
+            if classified is not None:
+                raise classified from exc
+            raise

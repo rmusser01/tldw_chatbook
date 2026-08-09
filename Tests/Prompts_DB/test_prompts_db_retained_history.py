@@ -970,7 +970,9 @@ def test_retained_restore_stale_expected_version_keeps_conflict_error_path():
         ]
         before = _prompt_storage_state(database)
 
-        with pytest.raises(ConflictError, match="Prompt changed after it was opened"):
+        with pytest.raises(
+            ConflictError, match="Prompt changed after it was opened"
+        ) as caught:
             database.restore_prompt_history_entry(
                 prompt_uuid,
                 change_id=source["change_id"],
@@ -978,6 +980,8 @@ def test_retained_restore_stale_expected_version_keeps_conflict_error_path():
                 expected_version=99,
                 snapshot_validator=lambda _snapshot: pytest.fail("must not validate"),
             )
+
+        assert caught.value.code == "expected_version"
 
         assert _prompt_storage_state(database) == before
     finally:
@@ -1076,7 +1080,7 @@ def test_retained_restore_duplicate_name_rolls_back_prompt_and_history():
         )
         before = _prompt_storage_state(database)
 
-        with pytest.raises(ConflictError, match="already exists"):
+        with pytest.raises(ConflictError, match="already exists") as caught:
             database.restore_prompt_history_entry(
                 prompt_uuid,
                 change_id=source["change_id"],
@@ -1102,6 +1106,7 @@ def test_retained_restore_duplicate_name_rolls_back_prompt_and_history():
                 },
             )
 
+        assert caught.value.code == "name_conflict"
         assert _prompt_storage_state(database) == before
     finally:
         database.close_connection()
