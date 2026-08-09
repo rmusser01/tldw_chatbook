@@ -19,7 +19,7 @@
 - ADR required: no new ADR
 - ADR path: `backlog/decisions/029-local-private-data-boundary.md`
 - Reason: ADR-029 already excludes provider payloads and tool definitions from persistent logs while permitting bounded metadata such as tool names. This task applies that accepted contract.
-- Latest-dev reconciliation: rebased onto `origin/dev` at `727565e73`; the two unsafe HuggingFace log calls and existing helper contract are unchanged. Fresh baselines are 68 passing privacy tests and 8 passing HuggingFace chat-function tests. The identifier-filtered high-risk logger inventory remains 35 candidates across four modules; it is not the exhaustive AC 4 proof. The exhaustive source proof is the complete 763-call logger review plus the outbound-body/tool-structure correlation in Task 2. Ruff lint and compilation are green. Both complete Python files have pre-existing formatter drift, while the three ranges this task will edit are formatter-clean; use range checks to avoid an unrelated whole-file rewrite.
+- Latest-dev reconciliation: the completed branch was finally rebased onto `origin/dev` at `575d4cd8d`; the intervening dev commits did not change the scoped production, test, or `LLM_Calls` files, so the reviewed defect/helper contract and sweep counts remain applicable. The pre-implementation baselines were 68 passing privacy tests and 8 passing HuggingFace chat-function tests. The identifier-filtered high-risk logger inventory remains 35 candidates across four modules; it is not the exhaustive AC 4 proof. The exhaustive source proof is the complete 763-call logger review plus the outbound-body/tool-structure correlation in Task 2. Ruff lint and compilation are green. Both complete Python files have pre-existing formatter drift, while the three ranges this task edits are formatter-clean; use range checks to avoid an unrelated whole-file rewrite.
 
 ## File map
 
@@ -69,7 +69,7 @@ Re-inspect the two HuggingFace log calls and `safe_llm_request_payload_summary()
 ../../.venv/bin/python -B -m pytest Tests/Chat/test_chat_functions.py -q -k huggingface
 ../../.venv/bin/python -m ruff check tldw_chatbook/LLM_Calls/LLM_API_Calls.py Tests/Chat/test_sensitive_llm_logging.py
 ../../.venv/bin/python -m ruff format --check --range=4341-4365 tldw_chatbook/LLM_Calls/LLM_API_Calls.py
-../../.venv/bin/python -m ruff format --check --range=40-65 Tests/Chat/test_sensitive_llm_logging.py
+../../.venv/bin/python -m ruff format --check --range=40-70 Tests/Chat/test_sensitive_llm_logging.py
 ../../.venv/bin/python -m ruff format --check --range=675-820 Tests/Chat/test_sensitive_llm_logging.py
 ```
 
@@ -193,7 +193,7 @@ Run:
 ../../.venv/bin/python -m pytest Tests/Chat/test_chat_functions.py -q -k huggingface
 ../../.venv/bin/python -m ruff check tldw_chatbook/LLM_Calls/LLM_API_Calls.py Tests/Chat/test_sensitive_llm_logging.py
 ../../.venv/bin/python -m ruff format --check --range=4341-4365 tldw_chatbook/LLM_Calls/LLM_API_Calls.py
-../../.venv/bin/python -m ruff format --check --range=40-65 Tests/Chat/test_sensitive_llm_logging.py
+../../.venv/bin/python -m ruff format --check --range=40-70 Tests/Chat/test_sensitive_llm_logging.py
 ../../.venv/bin/python -m ruff format --check --range=675-820 Tests/Chat/test_sensitive_llm_logging.py
 ../../.venv/bin/python -m py_compile tldw_chatbook/LLM_Calls/LLM_API_Calls.py Tests/Chat/test_sensitive_llm_logging.py
 git diff --check
@@ -603,7 +603,7 @@ Run in the foreground and retain exact counts:
 ../../.venv/bin/python -m pytest -q
 ../../.venv/bin/python -m ruff check tldw_chatbook/LLM_Calls/LLM_API_Calls.py Tests/Chat/test_sensitive_llm_logging.py
 ../../.venv/bin/python -m ruff format --check --range=4341-4365 tldw_chatbook/LLM_Calls/LLM_API_Calls.py
-../../.venv/bin/python -m ruff format --check --range=40-65 Tests/Chat/test_sensitive_llm_logging.py
+../../.venv/bin/python -m ruff format --check --range=40-70 Tests/Chat/test_sensitive_llm_logging.py
 ../../.venv/bin/python -m ruff format --check --range=675-820 Tests/Chat/test_sensitive_llm_logging.py
 ../../.venv/bin/python -m py_compile tldw_chatbook/LLM_Calls/LLM_API_Calls.py Tests/Chat/test_sensitive_llm_logging.py
 git diff --check
@@ -668,11 +668,11 @@ Run:
 ../../.venv/bin/python -m pytest Tests/Chat/test_chat_functions.py -q -k huggingface
 ../../.venv/bin/python -m ruff check tldw_chatbook/LLM_Calls/LLM_API_Calls.py Tests/Chat/test_sensitive_llm_logging.py
 ../../.venv/bin/python -m ruff format --check --range=4341-4365 tldw_chatbook/LLM_Calls/LLM_API_Calls.py
-../../.venv/bin/python -m ruff format --check --range=40-65 Tests/Chat/test_sensitive_llm_logging.py
+../../.venv/bin/python -m ruff format --check --range=40-70 Tests/Chat/test_sensitive_llm_logging.py
 ../../.venv/bin/python -m ruff format --check --range=675-820 Tests/Chat/test_sensitive_llm_logging.py
 git diff --check
 git status --short --branch
-git merge-base --is-ancestor 727565e73 HEAD
+git merge-base --is-ancestor 575d4cd8d HEAD
 ```
 
-Expected: all focused/static gates pass, the worktree is clean, and the reviewed dev baseline `727565e73` is an ancestor of `HEAD`. A later PR integration pass must fetch/rebase current `origin/dev` again rather than treating this recorded commit as permanently latest.
+Expected: all focused/static gates pass, the worktree is clean, and the reviewed dev baseline `575d4cd8d` is an ancestor of `HEAD`. A later PR integration pass must fetch/rebase current `origin/dev` again rather than treating this recorded commit as permanently latest.
