@@ -35,9 +35,9 @@ already names:
    True, group="default", name="_load_console_agent_run_log")`. Those are
    the exact values `@work(thread=True)` itself passes -- the pre-move
    worker group name is preserved, per the binding rule.
-2. ...and its `self.app.call_from_thread(...)` became `self.call_from_
-   thread(...)`, reaching the framework service through this controller's
-   own property rather than through a whole `App` handle.
+2. ...and its `self.app.call_from_thread(...)` became
+   `self._screen.app.call_from_thread(...)`, reaching the canonical owning
+   `App` bridge without adding a controller-local alias.
 3. `_show_console_agent_run_log_modal`'s `self.app.push_screen(...)`
    became `self.push_screen(...)`, same reason (and the same shape
    `ConsoleMessageController` already uses).
