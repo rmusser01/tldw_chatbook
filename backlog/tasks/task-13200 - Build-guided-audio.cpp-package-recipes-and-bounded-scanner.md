@@ -68,7 +68,7 @@ ADR required: no new ADR. This task directly implements the structured-settings,
 Verification:
 
 - `pytest` foundation set: 96 passed.
-- `pytest Tests/TTS` excluding six sandbox-blocked loopback cases: 2,597 passed, 16 skipped, 6 deselected.
+- `pytest Tests/TTS` excluding six sandbox-blocked loopback cases: 2,600 passed, 16 skipped, 6 deselected.
 - The six deselected real-socket/process cases rerun outside the sandbox: 6 passed.
 - Ruff check and format check passed for every changed Python file; compileall and `git diff --cached --check` passed.
 <!-- SECTION:NOTES:END -->
