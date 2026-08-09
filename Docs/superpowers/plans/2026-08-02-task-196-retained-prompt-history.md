@@ -14,7 +14,7 @@
 
 - Begin only after the TASK-202 PR is merged and visible on latest `origin/dev`; create a fresh branch/worktree from that commit.
 - ADR required: yes.
-- ADR path: allocate the next available number on latest `dev` as `backlog/decisions/NNN-local-prompt-retained-version-history.md`.
+- ADR path: allocate the first number unreserved across latest `dev` and visible in-flight repository refs as `backlog/decisions/NNN-local-prompt-retained-version-history.md`.
 - Reason: this makes retained sync payloads a user-visible source and fixes restore, keyword, pruning, and concurrency semantics.
 - Commit the ADR and linked Backlog plan before implementation code.
 
@@ -33,7 +33,7 @@
 ## Task 1: Refresh the Baseline and Record the Decision
 
 - [ ] Fetch latest `origin/dev`, confirm TASK-202 is merged, and create `codex/task-196-retained-prompt-history` in a fresh ignored worktree.
-- [ ] Inspect `backlog/decisions/` on that baseline, allocate the next number, and write the ADR with: retained-not-complete terminology; create/update-only rows; page-size+1 predecessor; pruning gaps; additive keywords; conditional restore; no-change; compatibility-only snapshots; transaction rollback.
+- [ ] Inspect `backlog/decisions/` on that baseline plus visible in-flight repository refs, allocate the first unreserved number, and write the ADR with: retained-not-complete terminology; create/update-only rows; page-size+1 predecessor; pruning gaps; additive keywords; conditional restore; no-change; compatibility-only snapshots; transaction rollback.
 - [ ] Mark TASK-196 In Progress, replace its comma-collapsed criterion with the approved measurable criteria, and add a plan containing the exact ADR path/reason.
 - [ ] Commit ADR + Backlog state before code.
 
@@ -41,7 +41,7 @@
 
 - [ ] Add failing migration tests in a focused file such as `Tests/Prompts_DB/test_prompts_db_retained_history.py` for fresh v4 schema and v3→v4 upgrade.
 - [ ] Add a failing `EXPLAIN QUERY PLAN` regression with many unrelated `sync_log` rows. The plan must use the new composite index for entity/type/operation/order rather than scan the table.
-- [ ] Add failing paging tests for create/update-only rows, descending change IDs, strict limit validation, `before_change_id`, and at most `page_size + 1` decoded snapshots.
+- [ ] Add failing paging tests for create/update-only rows, descending change IDs, strict limit validation, `before_change_id`, at most `page_size + 1` decoded snapshots, and an exact index-only retained count that is refreshed in the page read transaction.
 - [ ] Run the red DB tests.
 
 ```bash
@@ -72,10 +72,10 @@
 - [ ] Add failing `Tests/Prompt_Management/test_prompt_scope_service.py` cases proving `mode="local"` routes list/restore to the live in-module `LocalPromptService`; keep server routing intact for existing callers.
 - [ ] Add focused local adapter tests proving the whole-log scanning helper is gone and every page invokes the bounded DB method once.
 - [ ] Implement paginated `list_prompt_versions` on the live local adapter and normalize it through `PromptScopeService`.
-- [ ] Extend restore to accept `expected_version`. Re-read current state in the conditional transaction, reject stale versions, validate the target through current artifact/capability rules, and call ordinary update fields.
+- [ ] Extend restore to accept retained `change_id`, selected version, and `expected_version`. Re-resolve the exact retained row and current state in one immediate conditional transaction; reject pruned/replaced snapshots, stale versions, and deleted current records before validating the target and calling ordinary update fields.
 - [ ] For older snapshots without keywords, retain current keywords and disclose that choice. For modern snapshots, replace keywords in the same transaction.
 - [ ] Detect byte-identical current content/metadata/keywords before update and return `no_change` without a new sync row.
-- [ ] Add rollback tests for duplicate name and keyword validation failure; current row and history count must remain unchanged.
+- [ ] Add rollback tests for pruning-after-preview, deleted current records, duplicate name, and keyword validation failure; current row and history count must remain unchanged.
 - [ ] Run service and DB tests green.
 
 ```bash
@@ -91,7 +91,7 @@
 
 ## Task 7: Build the Lazy Disclosure and Guarded Workers
 
-- [ ] Add failing UI pilots for collapsed-by-default `Retained history (N)`, first load on open, Load older versions, read-only lane previews, literal text rendering, and Retry after error.
+- [ ] Add failing UI pilots for collapsed-by-default `Retained history (…)` changing to the exact `Retained history (N)`, first page load only on open, Load older versions, read-only lane previews, literal text rendering, and Retry after error.
 - [ ] Add dirty-working-copy and compatibility tests: viewing remains available; Restore is disabled with exact reason.
 - [ ] Add confirmation tests for normal and Prompt↔Recipe restore. Confirm copy must state that a new current version is created.
 - [ ] Implement history state ownership in `LibraryScreen`, using worker groups plus prompt identity/request tokens. A late result cannot update a different editor.

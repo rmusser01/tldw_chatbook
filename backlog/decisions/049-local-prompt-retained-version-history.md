@@ -5,6 +5,11 @@ Date: 2026-08-08
 Related Task: [backlog/tasks/task-196 - Prompt-version-history-UI-in-the-Library-editor.md](../tasks/task-196%20-%20Prompt-version-history-UI-in-the-Library-editor.md)
 Supersedes: N/A
 
+Allocation note: ADR-049 was allocated on `dev` baseline `fefa0707c`, then
+reverified after rebasing onto `34e09301e`. ADR-045 was the highest number
+merged on both baselines; visible in-flight repository refs had already
+reserved ADR-046, ADR-047, and ADR-048, making 049 the first unreserved number.
+
 ## Decision
 
 Expose local Prompt and Recipe history as a bounded, index-backed projection of
@@ -21,6 +26,18 @@ volume. A request validates a finite positive page size and reads at most
 the immediate predecessor of the last visible row; it is not another visible
 row in that page. Paging uses a strict `before_change_id` cursor.
 
+The disclosure count is the exact number of currently retained Prompt
+`create` and `update` rows for the selected UUID; it is not the current Prompt
+version and does not include pruned rows. Selecting a Prompt starts a separate
+stale-guarded, index-only count request that returns one scalar and decodes no
+payloads, while the first history page remains lazy until disclosure. Until
+that count settles, the collapsed label is `Retained history (…)`; afterward it
+is `Retained history (N)`. Count work is proportional only to retained matching
+rows and remains independent of unrelated sync-log volume.
+Every page response recomputes the retained count in the same read transaction
+as its rows and refreshes the label, so paging does not combine rows and count
+from different database snapshots.
+
 A visible row is compared only with its immediately preceding retained Prompt
 version. Version 1 is labelled `Created`. If pruning or malformed retained data
 means that immediate predecessor is unavailable, the row is labelled `Earlier
@@ -35,17 +52,28 @@ consumers may ignore it, and older snapshots without it remain readable with
 snapshot are written in one transaction. A keyword validation or persistence
 failure rolls back all three.
 
+Keyword snapshots use the database's canonical membership representation:
+trimmed, whitespace-collapsed, lower-cased values, deduplicated and sorted by
+the normalized string. Restore and `no_change` compare canonical membership,
+not caller order, because keyword links store no ordinal. Equivalent keyword
+sets therefore do not create a false diff or a new version.
+
 `PromptScopeService` remains the application-facing boundary. It routes local
 history to the live local adapter, preserves existing server routing for other
 callers, and normalizes both through one retained-version envelope. Malformed
 payloads remain explicit preview/error records instead of being silently
 dropped or failing the whole page.
 
-Restore accepts both the selected snapshot version and the expected current
-version. Inside one conditional transaction, the local service re-reads the
-current record, rejects a stale expected version, and validates the snapshot
-under current source capabilities and ADR-040. Only valid legacy text and valid
-structured-v2 Prompt/Recipe snapshots are restorable. Malformed JSON,
+Restore accepts the selected snapshot `change_id` and version plus the expected
+current version. Inside one immediate conditional transaction, the local
+service re-resolves that exact retained create/update row by Prompt UUID,
+`change_id`, and version before re-reading the current record. If cleanup has
+removed or replaced the selected row, restore returns `snapshot_unavailable`
+without writes. A deleted current Prompt is not restorable and is never
+implicitly undeleted. The service rejects a stale expected current version and
+validates the retained snapshot under current source capabilities and ADR-040.
+Only valid legacy text and valid structured-v2 Prompt/Recipe snapshots are
+restorable. Malformed JSON,
 definition/compiled-text mismatch, artifact-type/definition-kind mismatch,
 unknown format or schema version, unsupported future artifact types, and
 foreign structured-v1 snapshots are preview-only with their exact compatibility
@@ -91,6 +119,9 @@ it does not introduce another artifact schema or a separate history store.
   out a Prompt-to-Recipe or Recipe-to-Prompt type change.
 - The expected current version is checked at the transaction boundary, not only
   in UI state. A mismatch uses the existing conflict/Reload outcome.
+- The selected retained row is re-resolved inside that same transaction; a
+  pruning race returns `snapshot_unavailable` and changes nothing.
+- Restore refuses a soft-deleted current Prompt rather than resurrecting it.
 - Migration adds the composite history index without rewriting retained rows.
   Additive keyword payloads do not invalidate older rows or older consumers.
 - Malformed and compatibility-invalid rows remain observable and preview-only;
@@ -106,7 +137,10 @@ it does not introduce another artifact schema or a separate history store.
 | Include delete, link, unlink, collections, usage, or deletion state | These events do not represent restorable Prompt/Recipe artifact versions and would blur ownership of independent state. |
 | Restore by overwriting the current row or changing history in place | Destroys lineage and bypasses the ordinary version, validation, and sync contract. |
 | Restore without `expected_version` | A stale preview could overwrite a concurrent edit. |
+| Restore from previewed payload alone | Cleanup could prune the selected row after preview; re-resolving its UUID, change ID, and version inside the write transaction makes that race fail closed. |
+| Let restore revive a deleted Prompt | History excludes deletion state, so resurrection would be an implicit, unaudited side effect rather than a retained-version restore. |
 | Treat missing historical keywords as an empty list | Older snapshots did not capture keyword state; clearing current keywords would invent history that was never recorded. |
+| Compare keyword lists by caller order | Keyword links have no ordinal; canonical set ordering prevents equivalent membership from creating false changes. |
 | Convert foreign structured-v1 snapshots during restore | Violates ADR-040 and can lose roles, variables, assembly rules, or future v1 meaning. |
 
 ## Consequences
