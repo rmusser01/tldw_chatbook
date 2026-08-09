@@ -336,9 +336,8 @@ class ConsoleAgentController:
         `ConsoleDictationController.__init__`'s docstring. As it applies
         here:
 
-        1. **Framework services** (`run_worker`, `push_screen`,
-           `call_from_thread`) are live-read from the screen via `@property`
-           below, never snapshotted.
+        1. **Framework services** (`run_worker`, `push_screen`) are live-read
+           from the screen via `@property` below, never snapshotted.
         2. **`app_instance`** is the one justified snapshot: it never
            changes identity over this controller's life, and
            `_ensure_console_agent_bridge` only ever `getattr`s off it.
@@ -426,15 +425,6 @@ class ConsoleAgentController:
     def push_screen(self) -> Any:
         """`Screen.app.push_screen`, bound. See `__init__`'s docstring."""
         return self._screen.app.push_screen
-
-    @property
-    def call_from_thread(self) -> Any:
-        """`Screen.app.call_from_thread`, bound. See `__init__`'s docstring.
-
-        Used by `_load_console_agent_run_log`, which runs on a real thread
-        and must hop back to the UI thread to push the modal.
-        """
-        return self._screen.app.call_from_thread
 
     # -- Named constructor dependencies -------------------------------------
     #
@@ -828,7 +818,7 @@ class ConsoleAgentController:
             return
         if not log_text:
             return
-        self.call_from_thread(
+        self._screen.app.call_from_thread(
             self._show_console_agent_run_log_modal, run_id, log_text
         )
 
