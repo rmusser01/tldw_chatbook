@@ -162,10 +162,10 @@ class ComfyUIVideoAdapter:
         if candidate.name != raw_name or raw_name in {".", ".."}:
             raise VideoGenerationError("ComfyUI workflow path is not allowed")
 
-        paths = (
-            get_user_data_dir() / "video_workflows" / candidate.name,
-            self._shipped_workflow_dir() / candidate.name,
-        )
+        user_candidate = get_user_data_dir() / "video_workflows" / candidate.name
+        if user_candidate.is_symlink():
+            raise VideoGenerationError("ComfyUI workflow symlink is not allowed")
+        paths = (user_candidate, self._shipped_workflow_dir() / candidate.name)
         selected = next((path for path in paths if path.is_file()), None)
         if selected is None:
             raise VideoGenerationError(f"ComfyUI workflow not found: {candidate.name}")
@@ -210,11 +210,26 @@ class ComfyUIVideoAdapter:
             )
 
     @staticmethod
-    def _normalized_title(node: dict[str, Any]) -> str:
-        """Return a title normalized for the documented workflow convention."""
+    def _title_controls(node: dict[str, Any]) -> set[str]:
+        """Return documented controls named by a node's title.
+
+        A connected ComfyUI node can carry several independently mutable
+        inputs, such as ``Width Height Frames``. Preserve the conventional
+        multi-word labels while allowing those single-token controls to
+        appear together in one title.
+        """
         meta = node.get("_meta")
-        title = meta.get("title") if isinstance(meta, dict) else ""
-        return re.sub(r"[^a-z0-9]+", "", str(title).lower())
+        raw_title = meta.get("title") if isinstance(meta, dict) else ""
+        words = set(re.findall(r"[a-z0-9]+", str(raw_title).lower()))
+        compact = re.sub(r"[^a-z0-9]+", "", str(raw_title).lower())
+        controls = words & {"seed", "width", "height", "frames", "fps"}
+        if "negativeprompt" in compact:
+            controls.add("negative_prompt")
+        elif "prompt" in words:
+            controls.add("prompt")
+        if "inputimage" in compact:
+            controls.add("input_image")
+        return controls
 
     @staticmethod
     def _set_input(inputs: dict[str, Any], fields: tuple[str, ...], value: Any) -> None:
@@ -242,22 +257,22 @@ class ComfyUIVideoAdapter:
             inputs = node.get("inputs")
             if not isinstance(inputs, dict):
                 continue
-            title = self._normalized_title(node)
-            if title == "prompt":
+            controls = self._title_controls(node)
+            if "prompt" in controls:
                 self._set_input(inputs, ("text", "prompt"), request.prompt)
-            elif title == "negativeprompt":
+            if "negative_prompt" in controls:
                 self._set_input(inputs, ("text", "prompt"), request.negative_prompt or "")
-            elif title == "seed" and request.seed is not None:
+            if "seed" in controls and request.seed is not None:
                 self._set_input(inputs, ("seed", "noise_seed"), request.seed)
-            elif title == "width" and request.width is not None:
+            if "width" in controls and request.width is not None:
                 self._set_input(inputs, ("width",), request.width)
-            elif title == "height" and request.height is not None:
+            if "height" in controls and request.height is not None:
                 self._set_input(inputs, ("height",), request.height)
-            elif title == "frames" and frames is not None:
-                self._set_input(inputs, ("num_frames", "frames", "length"), frames)
-            elif title == "fps" and request.fps is not None:
+            if "frames" in controls and frames is not None:
+                self._set_input(inputs, ("num_frames", "frames", "length", "video_frames"), frames)
+            if "fps" in controls and request.fps is not None:
                 self._set_input(inputs, ("fps", "frame_rate"), request.fps)
-            elif title == "inputimage" and image_name is not None:
+            if "input_image" in controls and image_name is not None:
                 self._set_input(inputs, ("image", "image_name"), image_name)
         return graph
 

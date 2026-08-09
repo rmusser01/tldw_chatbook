@@ -12,7 +12,7 @@
   "3": {
     "class_type": "SVD_img2vid_Conditioning",
     "inputs": {"width": 1024, "height": 576, "video_frames": 25, "motion_bucket_id": 127, "fps": 6, "augmentation_level": 0.0, "clip_vision": ["2", 1], "init_image": ["1", 0], "vae": ["2", 2]},
-    "_meta": {"title": "Frames"}
+    "_meta": {"title": "Width Height Frames"}
   },
   "4": {
     "class_type": "KSampler",
@@ -28,15 +28,5 @@
     "class_type": "SaveAnimatedWEBP",
     "inputs": {"images": ["5", 0], "filename_prefix": "video/svd_xt_i2v", "fps": 6, "lossless": false, "quality": 90, "method": "default"},
     "_meta": {"title": "FPS"}
-  },
-  "7": {
-    "class_type": "EmptyLatentImage",
-    "inputs": {"width": 1024, "height": 576, "batch_size": 1},
-    "_meta": {"title": "Width"}
-  },
-  "8": {
-    "class_type": "EmptyLatentImage",
-    "inputs": {"width": 1024, "height": 576, "batch_size": 1},
-    "_meta": {"title": "Height"}
   }
 }
