@@ -787,10 +787,19 @@ def test_huggingface_tool_logs_are_names_only(
         )
 
     _assert_canaries_absent(logs)
+    final_payload_label = "HuggingFace Final Payload (safe fields only):"
+    final_payload_logs = [entry for entry in logs if final_payload_label in entry]
     tool_logs = [entry for entry in logs if "HuggingFace Tools:" in entry]
     if sensitive:
+        assert final_payload_logs == []
         assert tool_logs == []
     else:
+        assert len(final_payload_logs) == 1
+        final_payload_summary = ast.literal_eval(
+            final_payload_logs[0].split(final_payload_label, 1)[1].strip()
+        )
+        assert final_payload_summary["model"] == "org/model"
+        assert final_payload_summary["message_count"] == 1
         assert len(tool_logs) == 1
         tools_summary = tool_logs[0].split("HuggingFace Tools: ", 1)[1].strip()
         assert tools_summary == "{'tool_names': ['lookup_hf_weather']}"
