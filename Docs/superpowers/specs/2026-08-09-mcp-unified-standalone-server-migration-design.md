@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-09
 
-**Status:** Design approved; pending written-spec review
+**Status:** Spec-reviewed; pending owner review
 
 **Task:** TASK-2512
 
