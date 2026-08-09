@@ -2,13 +2,12 @@
 
 ## What this screen is for
 
-The Prompts canvas stores the prompts you want to keep: a reusable
-instruction set (the system part) and/or a ready-to-send message (the
-user part), with a name, description, keywords, and author. Build a
-prompt once here, then pull it into any Console session — from this
-screen with **Use in Console**, or from the Console composer with
-`/prompt` and `/system`. For the rail, landing canvas, and the other
-Library sources, start with the [Library overview](../library.md).
+The Prompts canvas stores Prompts and Recipes with a name, description,
+keywords, author, and reusable System/User blocks. A Prompt can go directly to
+Console; a Recipe first becomes an unsaved Prompt copy for review. You can also
+apply saved Prompts from Console with `/prompt` and `/system`. For the rail,
+landing canvas, and the other Library sources, start with the
+[Library overview](../library.md).
 
 ## Getting there
 
@@ -29,9 +28,11 @@ Press **Ctrl+3** to open Library, then click **Prompts** in the rail's
 - **Import row** — appears inline under the toolbar when you press
   "Import…": a "File or folder path…" field, then "Browse…", "Import",
   and "Cancel", with an outcome line underneath.
-- **Editor** — opens when you click a prompt (or create one): "‹ Back to
-  list", six fields, a muted meta line ("Modified 4h · v2"; "New prompt"
-  before the first save), a save-status line, and the action row.
+- **Editor** — opens when you click a Prompt or Recipe (or create one):
+  "‹ Back to list", identity fields, editable System/User blocks, compiled
+  previews, keywords, author, a muted meta line ("Modified 4h · v2"; "New
+  prompt" before the first save), a save-status line, and a persistent action
+  area. Its groups are primary save, content actions, then lifecycle actions.
 
 ## Features & controls
 
@@ -63,14 +64,23 @@ folder."
   characters).
 - **Description** — what the prompt is for; shown under the name in the
   list.
-- **System prompt** — "Instructions the model always follows."
-- **User prompt** — "The message inserted into the composer."
+- **System and User blocks** — structured Prompts and Recipes expose their
+  blocks for editing. The compiled previews below them show the exact System
+  and User Markdown produced by those blocks.
+- **Compatibility artifacts** — an unsupported structured definition is
+  read-only. If its lanes can be recovered, **Convert and save as new Prompt**
+  creates a detached, editable Prompt working copy: **Save Prompt** is enabled,
+  the meta line reads "New prompt · Unsaved changes", and the original artifact
+  is untouched.
+- **Recipe starter content** — controls whether the current block text is
+  included when saving a new Recipe.
 - **Keywords (comma-separated)** and **Author**.
 
-Nothing autosaves here — press **Save**. While you have unsaved edits
-the meta line shows an "Unsaved changes" marker, and leaving the editor
-(Back, another row, another screen) is blocked until you Save or the
-edit is resolved. The save-status line reports the outcome:
+Nothing autosaves here — use **Save Prompt**, **Save Recipe**, or **Update
+original**. While you have unsaved edits the meta line shows an "Unsaved
+changes" marker, and leaving the editor (Back, another row, another screen) is
+blocked until you save or resolve the edit. The save-status line reports the
+outcome:
 
 - "Saved."
 - "Name already in use — pick another or open the existing prompt." —
@@ -79,28 +89,29 @@ edit is resolved. The save-status line reports the outcome:
 - "A deleted prompt holds this name — restore it or choose another."
 - "Couldn't save this prompt. Try again."
 
-If the prompt was changed elsewhere while you edited, a banner replaces
-the action row: "This prompt changed elsewhere — Overwrite saves your
-text; Reload discards it." with **Overwrite** and **Reload** buttons.
+If the Prompt or Recipe changed elsewhere while you edited, the editor shows
+the conflict explanation and replaces the normal actions with **Save as new**
+and **Reload**. Reload restores the current version; Save as new keeps your
+blocks in a new item.
 
-### The action row
+### The action area
 
 | Control | What it does |
 |---|---|
-| Save | Saves the prompt (explicit save only) |
-| Use in Console | Inserts the user-prompt text into the Console composer and switches there |
-| Export… | Saves this one prompt as a Markdown file ("Export Prompt as Markdown" dialog) |
-| Copy text | Currently does nothing when pressed — see Quirks (task-2700) |
-| Duplicate prompt | Opens a new unsaved prompt named "<name> (copy)" with all fields prefilled |
-| Delete | Deletes the prompt immediately — there is no confirmation step |
+| Save Prompt / Save Recipe / Update original | Saves the current Prompt or Recipe (explicit save only) |
+| Use in Console | For a saved, clean Prompt, appends its compiled User text to the Console composer and switches there. For an editable Recipe, creates a detached unsaved Prompt copy in the editor; nothing is applied. |
+| Export… | Saves a representable Prompt or Recipe as a Markdown file ("Export Prompt as Markdown" dialog). Compatibility or legacy Recipes that would lose their type fail closed and require **Convert and save as a new Prompt** first. |
+| Copy Markdown | Copies the exact live Markdown working copy, including unsaved create, duplicate, conversion, and block edits: System/User text plus applicable structured Prompt/Recipe metadata. Success follows a clipboard write; unavailable or failed clipboard support shows a warning or error. Compatibility or legacy Recipes that would flatten to Prompt-looking Markdown require **Convert and save as a new Prompt** first. |
+| Duplicate prompt | Opens a new unsaved copy named "<name> (copy)" with all fields prefilled. Compatibility or legacy Recipes that cannot retain Recipe identity require **Convert and save as a new Prompt** first. |
+| Delete | Opens a confirmation before discarding the saved Prompt or Recipe; if the editor is dirty, it also warns that the unsaved working copy will be discarded |
 
-**Use in Console** works differently from the notes and media "Use in
-Console" actions: instead of staging a source for retrieval, it inserts
-the prompt's user-prompt text directly into the Console composer,
-**appended to whatever draft is already there** — never replacing it.
-Two refusals: "Save your changes before using this prompt in Console."
-(unsaved edits) and "This prompt has no user prompt text to insert."
-(a system-only prompt).
+For a Prompt, **Use in Console** works differently from the notes and media
+actions: instead of staging a source for retrieval, it appends compiled User
+text to the current Console draft — never replacing it. It refuses a dirty
+Prompt ("Save your changes before using this prompt in Console.") and a
+system-only Prompt. For an editable Recipe, the action stays in Library and
+converts the Recipe into a detached unsaved Prompt copy for review; it does not
+stage text, change the saved Recipe, or switch to Console.
 
 ### Where prompts surface in Console
 
@@ -113,20 +124,21 @@ prompt to the Library. See
 ## Common tasks
 
 1. **Create a prompt** — click **New prompt** in the rail's "Create"
-   section, fill in **Name** and the **System prompt** and/or **User
-   prompt** fields, press **Save**; the status line reads "Saved."
+   section, fill in **Name** and the System and/or User blocks, then press
+   **Save Prompt**; the status line reads "Saved."
 2. **Import a folder of prompts** — press **Import…**, type the folder's
    path into "File or folder path…" (Browse… only picks single files),
    press **Import**, and read the "N imported · N skipped" outcome.
 3. **Use a prompt in Console** — open it, press **Use in Console**; you
    land in Console with its user text added to the composer. (Or, from
    Console, type `/prompt <name>`.)
-4. **Duplicate and tweak** — open a prompt, press **Duplicate prompt**,
-   rename the "<name> (copy)" editor that opens, adjust the text, press
-   **Save** — the original is untouched.
-5. **Export a prompt as Markdown** — open it, press **Export…**, pick a
-   location in the "Export Prompt as Markdown" dialog; a notice confirms
-   "Prompt exported successfully to <file>".
+4. **Duplicate and tweak** — open a Prompt or losslessly representable Recipe,
+   press **Duplicate prompt**, rename the "<name> (copy)" editor that opens,
+   adjust the blocks, then use the enabled save action — the original is untouched.
+5. **Export a Prompt or Recipe as Markdown** — open a losslessly representable
+   artifact, press **Export…**, and pick a location; a notice confirms the export.
+   A compatibility artifact or legacy Recipe that fails this check requires
+   **Convert and save as a new Prompt** before Copy, Export, or Duplicate.
 
 ## Keyboard & commands
 
@@ -150,13 +162,9 @@ prompt to the Library. See
 
 ## Quirks & troubleshooting
 
-- **Delete asks nothing.** One press on **Delete** removes the prompt
-  and returns to the list — unlike notes, there is no inline confirm.
 - **Imports skip duplicates silently by design** — a name that already
   exists (even on a deleted prompt) is counted as "skipped (duplicate
   name)", never overwritten or auto-renamed.
-- **Copy text is not wired up.** Pressing it does nothing on this
-  build — use **Export…** or select text directly instead. (task-2700)
 - **The filter ignores keywords** — it matches only the name and
   description, so a keywords-based search will come up empty.
 - **Size caps**: names up to 300 characters; the system prompt, user
@@ -166,4 +174,6 @@ prompt to the Library. See
   item (task-197).
 
 —
-*Verified against dev @ bd05a692a — 2026-07-31*
+*TASK-202 behavior and this guide were reverified after the final review
+corrections on 2026-08-08. Verification is tied to the branch history rather
+than a self-referential documentation SHA.*

@@ -252,12 +252,19 @@ class PromptBlockEditor(Vertical):
         width: 100%; height: 100%; min-height: 0;
         background: $ds-surface-panel; color: $ds-text-primary;
     }
+    PromptBlockEditor.embedded {
+        height: auto;
+        min-height: 0;
+    }
     #prompt-editor-scroll {
         width: 100%; height: 1fr; min-height: 0;
         overflow-y: auto; overflow-x: hidden; scrollbar-size: 1 1;
         scrollbar-background: $ds-surface-panel;
         scrollbar-color: $ds-grid-line;
         scrollbar-color-active: $ds-action-focus;
+    }
+    #prompt-editor-body {
+        width: 100%; height: auto; min-height: 0;
     }
     .prompt-lane {
         width: 100%; height: auto; margin: 0 0 1 0;
@@ -436,6 +443,7 @@ class PromptBlockEditor(Vertical):
         can_update_original: bool = False,
         allow_apply_system: bool = True,
         apply_system_unavailable_reason: str = "",
+        embedded: bool = False,
         **kwargs: object,
     ) -> None:
         super().__init__(**kwargs)
@@ -443,6 +451,8 @@ class PromptBlockEditor(Vertical):
         self._can_update_original = can_update_original
         self._allow_apply_system = bool(allow_apply_system)
         self._apply_system_unavailable_reason = apply_system_unavailable_reason.strip()
+        self._embedded = bool(embedded)
+        self.set_class(self._embedded, "embedded")
         self._block_widgets: dict[str, PromptBlockCard] = {}
 
     @property
@@ -469,7 +479,9 @@ class PromptBlockEditor(Vertical):
         return f"encoded-{block_id.encode('utf-8').hex()}"
 
     def compose(self) -> ComposeResult:
-        with VerticalScroll(id="prompt-editor-scroll"):
+        body_class = Vertical if self._embedded else VerticalScroll
+        body_id = "prompt-editor-body" if self._embedded else "prompt-editor-scroll"
+        with body_class(id=body_id):
             for lane in self._state.definition.lanes:
                 with Collapsible(
                     title=f"{lane.id.title()} · {len(lane.blocks)} blocks",

@@ -20,7 +20,9 @@ path end to end.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -28,6 +30,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.app import App
+from textual.containers import VerticalScroll
 from textual.widgets import Button, Checkbox, Input, Static, TextArea
 
 from tldw_chatbook.DB.Prompts_DB import ConflictError, PromptsDatabase
@@ -36,6 +39,7 @@ from tldw_chatbook.Library.library_prompts_state import (
     PromptListRow,
     PromptsListState,
     build_prompt_editor_state,
+    prepare_prompt_artifact_save,
 )
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_PROMPTS,
@@ -59,6 +63,10 @@ from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 from tldw_chatbook.Widgets.Library.library_prompts_canvas import (
     LibraryPromptsListCanvas,
+)
+from tldw_chatbook.Widgets.Library.prompt_delete_confirmation_modal import (
+    PromptDeleteConfirmationModal,
+    PromptDeleteDecision,
 )
 from tldw_chatbook.Widgets.Prompts.prompt_block_editor import PromptBlockEditor
 
@@ -117,6 +125,12 @@ class _CanvasHost(App):
         yield LibraryPromptsListCanvas(
             self._state, id="library-prompts-canvas", **self._kwargs
         )
+
+
+class _StyledCanvasHost(_CanvasHost):
+    """Canvas harness with the application's real layout rules loaded."""
+
+    CSS_PATH = str(BUNDLED_STYLESHEET)
 
 
 def _structured_editor_state(*, artifact_type: str = "prompt") -> PromptEditorState:
@@ -1518,6 +1532,10 @@ async def test_library_prompt_delete_returns_to_list_and_decrements_count(tmp_pa
 
         screen.query_one("#library-prompt-delete", Button).press()
         await pilot.pause()
+        modal = host.screen
+        assert isinstance(modal, PromptDeleteConfirmationModal)
+        modal.query_one("#prompt-delete-confirm", Button).press()
+        await pilot.pause()
         for _ in range(150):
             if screen._library_prompts_view == "list":
                 break
@@ -1533,6 +1551,102 @@ async def test_library_prompt_delete_returns_to_list_and_decrements_count(tmp_pa
             await pilot.pause(0.02)
         assert "(1)" in rail_label
         assert len(screen.query(f"#library-prompt-row-{eta_id}")) == 0
+        deleted = db.fetch_prompt_details(eta_id, include_deleted=True)
+        assert deleted is not None
+        assert deleted["deleted"] == 1
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_delete_modal_cancel_preserves_dirty_editor_and_request(tmp_path):
+    """Delete opens a typed dirty request; Cancel performs no soft delete."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Keep me", author="A", details="d", user_prompt="x"
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        screen.query_one("#library-prompt-author", Input).value = "Unsaved author"
+        await pilot.pause()
+
+        screen.query_one("#library-prompt-delete", Button).press()
+        await pilot.pause()
+        modal = host.screen
+        assert isinstance(modal, PromptDeleteConfirmationModal)
+        request = modal.request
+        assert request.dirty is True
+        assert request.items[0].name == "Keep me"
+        assert request.items[0].artifact_type == "prompt"
+        assert request.fingerprint == screen._library_prompt_delete_fingerprint()
+
+        modal.query_one("#prompt-delete-cancel", Button).press()
+        await pilot.pause()
+
+        assert host.screen is screen
+        assert screen._library_prompts_view == "editor"
+        assert screen._selected_prompt_id == prompt_id
+        assert db.fetch_prompt_details(prompt_id) is not None
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_delete_rejects_a_stale_modal_result(tmp_path):
+    """A confirmation for an earlier editor identity must not delete either row."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    first_id, _uuid, _msg = db.add_prompt(
+        name="First", author="A", details="d", user_prompt="x"
+    )
+    second_id, _uuid, _msg = db.add_prompt(
+        name="Second", author="B", details="d", user_prompt="y"
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, first_id)
+        screen.query_one("#library-prompt-delete", Button).press()
+        await pilot.pause()
+        modal = host.screen
+        assert isinstance(modal, PromptDeleteConfirmationModal)
+
+        screen._selected_prompt_id = second_id
+        modal.dismiss(PromptDeleteDecision(True, modal.request.fingerprint))
+        await pilot.pause()
+
+        assert host.screen is screen
+        assert db.fetch_prompt_details(first_id) is not None
+        assert db.fetch_prompt_details(second_id) is not None
+        assert screen._library_prompt_status == "Delete confirmation is no longer current."
+
+
+def test_library_prompt_delete_ignores_duplicate_modal_settlement() -> None:
+    """Only the first matching confirmation can schedule the delete worker."""
+    screen = SimpleNamespace(
+        _library_prompt_delete_pending_fingerprint="library-prompt:9:2:prompt",
+        _library_prompts_view="editor",
+        _selected_prompt_id=9,
+        _library_prompt_version=2,
+        _library_prompt_block_state=SimpleNamespace(artifact_type="prompt"),
+        _library_prompt_delete_fingerprint=lambda: "library-prompt:9:2:prompt",
+        run_worker=Mock(),
+        _delete_library_prompt=Mock(),
+        _update_library_prompt_status_static=Mock(),
+    )
+    decision = PromptDeleteDecision(True, "library-prompt:9:2:prompt")
+
+    LibraryScreen._settle_library_prompt_delete(screen, decision)
+    LibraryScreen._settle_library_prompt_delete(screen, decision)
+
+    screen.run_worker.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -2290,8 +2404,10 @@ async def test_prompts_canvas_editor_field_order_author_last_beside_keywords():
     )
     app = _CanvasHost(None, mode="editor", editor_state=editor_state)
     async with app.run_test() as pilot:
-        canvas = pilot.app.query_one(LibraryPromptsListCanvas)
-        ids = [child.id for child in canvas.children if child.id]
+        shell = pilot.app.query_one("#library-prompt-editor-shell")
+        content = shell.query_one("#library-prompt-editor-content")
+        assert content.parent is shell
+        ids = [child.id for child in content.walk_children() if child.id]
         assert (
             ids.index("library-prompt-name")
             < ids.index("library-prompt-details")
@@ -2335,9 +2451,7 @@ async def test_prompts_canvas_editor_renders_system_and_user_field_hints():
 
 @pytest.mark.asyncio
 async def test_prompts_canvas_editor_copy_and_duplicate_relabeled():
-    """U8: #library-prompt-copy (clipboard) and #library-prompt-duplicate
-    (clone as new prompt) sit adjacent with near-identical labels today --
-    relabel to disambiguate. Ids are unchanged."""
+    """Catches the Task-202 copy-label mutation while stable ids remain unchanged."""
     editor_state = PromptEditorState(
         prompt_id=1,
         name="X",
@@ -2354,8 +2468,1350 @@ async def test_prompts_canvas_editor_copy_and_duplicate_relabeled():
     async with app.run_test() as pilot:
         copy_button = pilot.app.query_one("#library-prompt-copy", Button)
         duplicate_button = pilot.app.query_one("#library-prompt-duplicate", Button)
-        assert str(copy_button.label) == "Copy text"
+        assert str(copy_button.label) == "Copy Markdown"
         assert str(duplicate_button.label) == "Duplicate prompt"
+
+
+# ---------------------------------------------------------------------------
+# Task 202: intentionally-red editor action geometry, grouping, and copy
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (100, 30), (140, 40), (200, 50)])
+@pytest.mark.parametrize("conflict", [False, True])
+async def test_library_prompt_editor_geometry_keeps_actions_visible_without_covering_author(
+    size: tuple[int, int],
+    conflict: bool,
+    tmp_path,
+):
+    """Catches the planned ``_compose_editor`` shell/content/action split.
+
+    The production mutation must give the bounded editor a single scrollable
+    content owner plus a visible, non-scrolling action area. A flat trailing
+    toolbar leaves the actions below the viewport at these real terminal sizes.
+    """
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Geometry prompt",
+        author="A",
+        details="d",
+        system_prompt="# Role\n\nBe exact.",
+        user_prompt="Ship it.",
+        prompt_format="structured",
+        prompt_schema_version=2,
+        prompt_definition={
+            "kind": "block_prompt",
+            "schema_version": 2,
+            "lanes": [
+                {
+                    "id": "system",
+                    "blocks": [
+                        {
+                            "id": "role",
+                            "title": "Role",
+                            "syntax": "markdown",
+                            "content": "Be exact.",
+                        }
+                    ],
+                },
+                {
+                    "id": "user",
+                    "blocks": [
+                        {
+                            "id": "goal",
+                            "title": "Goal",
+                            "syntax": "markdown",
+                            "content": "Ship it.",
+                        }
+                    ],
+                },
+            ],
+        },
+        artifact_type="prompt",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=size) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        if conflict:
+            screen._library_prompt_conflict_snapshot = (
+                screen._current_library_prompt_editor_state()
+            )
+            screen._library_prompt_dirty = True
+            screen.refresh(recompose=True)
+            await pilot.pause()
+
+        canvas = screen.query_one("#library-prompts-canvas")
+        shell = screen.query_one("#library-prompt-editor-shell")
+        content = screen.query_one("#library-prompt-editor-content")
+        actions = screen.query_one("#library-prompt-editor-actions")
+        author = screen.query_one("#library-prompt-author", Input)
+
+        assert canvas.region.contains_region(shell.region)
+        assert shell.region.contains_region(actions.region)
+        assert actions.region.width > 0
+        assert actions.region.height > 0
+        assert content.max_scroll_y > 0
+        assert actions.max_scroll_y == 0
+        assert list(content.query(VerticalScroll)) == []
+
+        content.scroll_end(animate=False)
+        await pilot.pause()
+        assert not actions.region.overlaps(author.region)
+        action_ids = (
+            (
+                "library-prompt-conflict-save-new",
+                "library-prompt-conflict-reload",
+            )
+            if conflict
+            else (
+                "library-prompt-save",
+                "library-prompt-insert-console",
+                "library-prompt-export",
+                "library-prompt-copy",
+                "library-prompt-duplicate",
+                "library-prompt-delete",
+            )
+        )
+        for action_id in action_ids:
+            action = screen.query_one(f"#{action_id}", Button)
+            assert action.region.width > 0
+            assert action.region.height > 0
+            assert screen.region.contains_region(action.region)
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_action_groups_preserve_normal_dom_and_focus_order():
+    """Catches the action-group wrapper mutation replacing the flat toolbar."""
+    app = _StyledCanvasHost(
+        None,
+        mode="editor",
+        editor_state=_structured_editor_state(),
+    )
+
+    async with app.run_test(size=(140, 40)) as pilot:
+        actions = pilot.app.query_one("#library-prompt-editor-actions")
+        primary = pilot.app.query_one("#library-prompt-actions-primary")
+        content = pilot.app.query_one("#library-prompt-actions-content")
+        lifecycle = pilot.app.query_one("#library-prompt-actions-lifecycle")
+
+        assert [child.id for child in actions.children] == [
+            "library-prompt-actions-primary",
+            "library-prompt-actions-content",
+            "library-prompt-actions-lifecycle",
+        ]
+        assert [button.id for button in primary.query(Button)] == [
+            "library-prompt-save"
+        ]
+        assert [button.id for button in content.query(Button)] == [
+            "library-prompt-insert-console",
+            "library-prompt-export",
+            "library-prompt-copy",
+        ]
+        assert [button.id for button in lifecycle.query(Button)] == [
+            "library-prompt-duplicate",
+            "library-prompt-delete",
+        ]
+        assert [button.id for button in actions.query(Button)] == [
+            "library-prompt-save",
+            "library-prompt-insert-console",
+            "library-prompt-export",
+            "library-prompt-copy",
+            "library-prompt-duplicate",
+            "library-prompt-delete",
+        ]
+        assert str(pilot.app.query_one("#library-prompt-copy", Button).label) == (
+            "Copy Markdown"
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_action_groups_preserve_conflict_action_order():
+    """Catches the conflict action-area mutation replacing the flat toolbar."""
+    app = _StyledCanvasHost(
+        None,
+        mode="editor",
+        editor_state=_structured_editor_state(),
+        conflict=True,
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        actions = pilot.app.query_one("#library-prompt-editor-actions")
+        assert [button.id for button in actions.query(Button)] == [
+            "library-prompt-conflict-save-new",
+            "library-prompt-conflict-reload",
+        ]
+        assert [
+            str(button.label) for button in actions.query(Button)
+        ] == ["Save as new", "Reload"]
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_copy_uses_live_unsaved_legacy_lane_markdown(tmp_path):
+    """Catches the missing legacy-lane ``handle_library_prompt_copy`` path."""
+    _db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = _db.add_prompt(
+        name="Copy source",
+        author="Original author",
+        details="Original details",
+        system_prompt="Original system",
+        user_prompt="Original user",
+        keywords=["alpha", "beta"],
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+    copied: list[str] = []
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        screen.query_one("#library-prompt-system", TextArea).text = "Edited system"
+        screen.query_one("#library-prompt-user", TextArea).text = "Edited user"
+        await pilot.pause()
+
+        screen.app_instance = host
+        host.copy_to_clipboard = copied.append
+        host._notifications.clear()
+        screen.query_one("#library-prompt-copy", Button).press()
+        await pilot.pause()
+
+        assert copied == [
+            render_prompt_markdown(
+                {
+                    "name": "Copy source",
+                    "author": "Original author",
+                    "details": "Original details",
+                    "system_prompt": "Edited system",
+                    "user_prompt": "Edited user",
+                    "keywords": ["alpha", "beta"],
+                }
+            )
+        ]
+        assert [notification.message for notification in host._notifications] == [
+            "Prompt copied to clipboard as markdown!"
+        ]
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_copy_uses_current_structured_block_working_copy(tmp_path):
+    """Catches a copy handler that serializes preview text but drops structure."""
+    definition = {
+        "kind": "block_prompt",
+        "schema_version": 2,
+        "lanes": [
+            {
+                "id": "system",
+                "blocks": [
+                    {
+                        "id": "role",
+                        "title": "Role",
+                        "syntax": "markdown",
+                        "content": "Original role.",
+                    }
+                ],
+            },
+            {
+                "id": "user",
+                "blocks": [
+                    {
+                        "id": "goal",
+                        "title": "Goal",
+                        "syntax": "markdown",
+                        "content": "Original goal.",
+                    }
+                ],
+            },
+        ],
+    }
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Structured copy source",
+        author="Original author",
+        details="Original details",
+        system_prompt="# Role\n\nOriginal role.",
+        user_prompt="# Goal\n\nOriginal goal.",
+        keywords=["alpha", "beta"],
+        prompt_format="structured",
+        prompt_schema_version=2,
+        prompt_definition=definition,
+        artifact_type="prompt",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+    copied: list[str] = []
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        screen.query_one("#prompt-block-content-role", TextArea).text = "Edited role."
+        await pilot.pause()
+
+        block_state = screen._library_prompt_block_state
+        assert block_state is not None
+        assert block_state.definition.lanes[0].blocks[0].content == "Edited role."
+        _draft, artifact_fields, _prepared = prepare_prompt_artifact_save(
+            block_state,
+            artifact_type=block_state.artifact_type,
+            include_recipe_starter_content=True,
+            request_fields={},
+        )
+        expected_markdown = render_prompt_markdown(
+            {
+                "name": screen.query_one("#library-prompt-name", Input).value,
+                "author": screen.query_one("#library-prompt-author", Input).value,
+                "details": screen.query_one("#library-prompt-details", Input).value,
+                "keywords": screen.query_one("#library-prompt-keywords", Input).value,
+                **artifact_fields,
+            }
+        )
+        assert "### ARTIFACT_TYPE ###\nprompt\n" in expected_markdown
+        assert "### STRUCTURE ###\n```json\n" in expected_markdown
+
+        screen.app_instance = host
+        host.copy_to_clipboard = copied.append
+        host._notifications.clear()
+        screen.query_one("#library-prompt-copy", Button).press()
+        await pilot.pause()
+
+        assert copied == [expected_markdown]
+        assert [notification.message for notification in host._notifications] == [
+            "Prompt copied to clipboard as markdown!"
+        ]
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_copy_warns_when_clipboard_is_unavailable(tmp_path):
+    """Catches the missing unavailable-clipboard branch in the copy handler."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Copy source", author="A", details="d", user_prompt="u"
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        screen.app_instance = host
+        host.copy_to_clipboard = None
+        host._notifications.clear()
+        screen.query_one("#library-prompt-copy", Button).press()
+        await pilot.pause()
+
+        notifications = list(host._notifications)
+        assert [notification.message for notification in notifications] == [
+            "Clipboard copy is unavailable in this runtime."
+        ]
+        assert [notification.severity for notification in notifications] == ["warning"]
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_copy_reports_clipboard_error_without_success_notice(tmp_path):
+    """Catches the missing clipboard-exception branch in the copy handler."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Copy source", author="A", details="d", user_prompt="u"
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    def unavailable_clipboard(_markdown: str) -> None:
+        raise RuntimeError("clipboard unavailable")
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        screen.app_instance = host
+        host.copy_to_clipboard = unavailable_clipboard
+        host._notifications.clear()
+        screen.query_one("#library-prompt-copy", Button).press()
+        await pilot.pause()
+
+        notifications = list(host._notifications)
+        assert [notification.message for notification in notifications] == [
+            "Error copying prompt: RuntimeError"
+        ]
+        assert [notification.severity for notification in notifications] == ["error"]
+        assert all(
+            "copied to clipboard" not in notification.message.lower()
+            for notification in notifications
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("artifact_type", "schema_version"),
+    [("prompt", 1), ("recipe", 3)],
+)
+async def test_library_prompt_copy_preserves_compatibility_structured_metadata(
+    tmp_path, artifact_type, schema_version
+):
+    """Copy must preserve raw structured metadata when no editable block exists."""
+    kind = f"foreign_{artifact_type}"
+    definition = {
+        "schema_version": schema_version,
+        "kind": kind,
+        "opaque": {"keep": "this definition"},
+    }
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name=f"Compatibility {artifact_type}",
+        author="A",
+        details="d",
+        system_prompt="compat system",
+        user_prompt="compat user",
+        prompt_format="structured",
+        prompt_schema_version=schema_version,
+        prompt_definition=definition,
+        artifact_type=artifact_type,
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+    copied: list[str] = []
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        assert screen._library_prompt_block_state is None
+        assert isinstance(screen._library_prompt_detail, dict)
+        screen.app_instance = host
+        host.copy_to_clipboard = copied.append
+        screen.query_one("#library-prompt-copy", Button).press()
+        await pilot.pause()
+
+        assert len(copied) == 1
+        assert "### SYSTEM ###\ncompat system\n" in copied[0]
+        assert "### USER ###\ncompat user\n" in copied[0]
+        assert f"### ARTIFACT_TYPE ###\n{artifact_type}\n" in copied[0]
+        assert "### STRUCTURE ###\n```json\n" in copied[0]
+        assert f'"kind":"{kind}"' in copied[0]
+        assert f'"schema_version":{schema_version}' in copied[0]
+        assert '"keep":"this definition"' in copied[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("prompt_format", "outer_schema", "raw_definition"),
+    [
+        ("structured", 2, "{malformed-json"),
+        ("structured", 2, "[]"),
+        (
+            "future_structured",
+            2,
+            json.dumps(
+                {
+                    "kind": "block_prompt",
+                    "schema_version": 2,
+                    "lanes": [],
+                    "private_definition": "DO_NOT_DISCLOSE",
+                }
+            ),
+        ),
+        (
+            "legacy",
+            2,
+            json.dumps(
+                {
+                    "kind": "block_prompt",
+                    "schema_version": 2,
+                    "lanes": [],
+                    "private_definition": "DO_NOT_DISCLOSE",
+                }
+            ),
+        ),
+        (
+            "structured",
+            3,
+            json.dumps(
+                {
+                    "kind": "future_prompt",
+                    "schema_version": 2,
+                    "private_definition": "DO_NOT_DISCLOSE",
+                }
+            ),
+        ),
+        (
+            "structured",
+            2,
+            json.dumps(
+                {
+                    "kind": "block_recipe",
+                    "schema_version": 2,
+                    "lanes": [],
+                    "private_definition": "DO_NOT_DISCLOSE",
+                }
+            ),
+        ),
+    ],
+    ids=[
+        "malformed-json",
+        "non-object-json",
+        "unknown-format",
+        "non-structured-format",
+        "schema-mismatch",
+        "artifact-kind-mismatch",
+    ],
+)
+async def test_library_prompt_copy_and_export_reject_unrepresentable_metadata(
+    tmp_path, prompt_format, outer_schema, raw_definition
+):
+    """Copy/Export cannot flatten modern metadata the Markdown grammar loses."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Private metadata",
+        author="A",
+        details="d",
+        system_prompt="SECRET_SYSTEM_BODY",
+        user_prompt="SECRET_USER_BODY",
+        prompt_format="structured",
+        prompt_schema_version=outer_schema,
+        prompt_definition=raw_definition,
+        artifact_type="prompt",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+    copied: list[str] = []
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        if prompt_format != "structured":
+            assert isinstance(screen._library_prompt_detail, dict)
+            screen._library_prompt_detail["prompt_format"] = prompt_format
+            screen._library_prompt_block_state = None
+        screen.app_instance = host
+        host.copy_to_clipboard = copied.append
+
+        host._notifications.clear()
+        screen.query_one("#library-prompt-copy", Button).press()
+        await pilot.pause()
+
+        assert copied == []
+        assert [notice.message for notice in host._notifications] == [
+            "This structured artifact cannot be represented as Markdown "
+            "without losing metadata. Use Convert and save as a new Prompt first."
+        ]
+        assert [notice.severity for notice in host._notifications] == ["warning"]
+        copy_notices = list(host._notifications)
+        assert all(
+            private not in copy_notices[0].message
+            for private in (
+                "SECRET_SYSTEM_BODY",
+                "SECRET_USER_BODY",
+                "DO_NOT_DISCLOSE",
+                "malformed-json",
+                "ValueError",
+            )
+        )
+
+        host._notifications.clear()
+        stack_size = len(host.screen_stack)
+        screen.query_one("#library-prompt-export", Button).press()
+        await pilot.pause()
+
+        assert len(host.screen_stack) == stack_size
+        assert not any(isinstance(item, FileSave) for item in host.screen_stack)
+        assert [notice.message for notice in host._notifications] == [
+            "This structured artifact cannot be represented as Markdown "
+            "without losing metadata. Use Convert and save as a new Prompt first."
+        ]
+        export_notices = list(host._notifications)
+        assert all(
+            private not in export_notices[0].message
+            for private in (
+                "SECRET_SYSTEM_BODY",
+                "SECRET_USER_BODY",
+                "DO_NOT_DISCLOSE",
+                "malformed-json",
+                "ValueError",
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_export_preserves_representable_foreign_recipe(tmp_path):
+    """A foreign Recipe with agreeing metadata remains exportable without conversion."""
+    definition = {
+        "kind": "foreign_recipe",
+        "schema_version": 3,
+        "opaque": {"keep": "FOREIGN_RECIPE_DEFINITION"},
+    }
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Foreign Recipe",
+        author="A",
+        details="d",
+        system_prompt="foreign system",
+        user_prompt="foreign user",
+        prompt_format="structured",
+        prompt_schema_version=3,
+        prompt_definition=definition,
+        artifact_type="recipe",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+    destination = tmp_path / "foreign-recipe.md"
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        screen.query_one("#library-prompt-export", Button).press()
+        for _ in range(150):
+            if isinstance(host.screen_stack[-1], FileSave):
+                break
+            await pilot.pause(0.02)
+        dialog = host.screen_stack[-1]
+        assert isinstance(dialog, FileSave)
+
+        dialog.dismiss(destination)
+        for _ in range(150):
+            if destination.exists():
+                break
+            await pilot.pause(0.02)
+
+        assert destination.exists()
+        exported = destination.read_text(encoding="utf-8")
+        assert "### SYSTEM ###\nforeign system\n" in exported
+        assert "### USER ###\nforeign user\n" in exported
+        assert "### ARTIFACT_TYPE ###\nrecipe\n" in exported
+        assert '"kind":"foreign_recipe"' in exported
+        assert '"schema_version":3' in exported
+        assert '"keep":"FOREIGN_RECIPE_DEFINITION"' in exported
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_copy_after_compatibility_recipe_conversion_uses_prompt(
+    tmp_path,
+):
+    """Convert detaches canonical Prompt metadata from the source Recipe."""
+    source_definition = {
+        "schema_version": 3,
+        "kind": "future_recipe",
+        "opaque": {"source": "must not survive conversion"},
+    }
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Compatibility recipe",
+        author="A",
+        details="d",
+        system_prompt="compat system",
+        user_prompt="compat user",
+        prompt_format="structured",
+        prompt_schema_version=3,
+        prompt_definition=source_definition,
+        artifact_type="recipe",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+    copied: list[str] = []
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        assert screen._library_prompt_block_state is None
+
+        screen.query_one("#library-prompt-convert", Button).press()
+        await pilot.pause()
+        assert screen._selected_prompt_id is None
+        detached_state = screen._current_library_prompt_editor_state()
+        assert detached_state.prompt_id is None
+        save = screen.query_one("#library-prompt-save", Button)
+        assert str(save.label) == "Save Prompt"
+        assert save.disabled is False
+        assert str(screen.query_one("#library-prompt-meta", Static).renderable) == (
+            "New prompt · • Unsaved changes"
+        )
+        converted_content = screen.query_one(
+            "#prompt-block-content-legacy-system-1", TextArea
+        )
+        converted_content.text = "Converted system"
+        await pilot.pause()
+
+        block_state = screen._library_prompt_block_state
+        assert block_state is not None
+        assert block_state.artifact_type == "prompt"
+        _draft, artifact_fields, _prepared = prepare_prompt_artifact_save(
+            block_state,
+            artifact_type="prompt",
+            include_recipe_starter_content=True,
+            request_fields={},
+        )
+        expected = render_prompt_markdown(
+            {
+                "name": screen.query_one("#library-prompt-name", Input).value,
+                "author": screen.query_one("#library-prompt-author", Input).value,
+                "details": screen.query_one("#library-prompt-details", Input).value,
+                "keywords": [],
+                **artifact_fields,
+            }
+        )
+        screen.app_instance = host
+        host.copy_to_clipboard = copied.append
+        screen.query_one("#library-prompt-copy", Button).press()
+        await pilot.pause()
+
+        assert copied == [expected]
+        assert "### ARTIFACT_TYPE ###\nprompt\n" in copied[0]
+        assert '"kind":"block_prompt"' in copied[0]
+        assert '"schema_version":3' not in copied[0]
+        assert "future_recipe" not in copied[0]
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_copy_keeps_both_edited_legacy_lanes_plain(tmp_path):
+    """Editing both real legacy blocks cannot implicitly change Copy format."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Legacy lanes",
+        author="A",
+        details="d",
+        system_prompt="Original system",
+        user_prompt="Original user",
+        artifact_type="prompt",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+    copied: list[str] = []
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        assert screen._current_library_prompt_editor_state().definition_state == (
+            "legacy"
+        )
+
+        screen.query_one(
+            "#prompt-block-content-legacy-system-1", TextArea
+        ).text = "Edited system"
+        await pilot.pause()
+        screen.query_one(
+            "#prompt-block-content-legacy-user-1", TextArea
+        ).text = "Edited user"
+        await pilot.pause()
+        block_state = screen._library_prompt_block_state
+        assert block_state is not None
+        assert block_state.system_origin is None
+        assert block_state.user_origin is None
+
+        expected = render_prompt_markdown(
+            {
+                "name": "Legacy lanes",
+                "author": "A",
+                "details": "d",
+                "system_prompt": "Edited system",
+                "user_prompt": "Edited user",
+                "keywords": [],
+            }
+        )
+        screen.app_instance = host
+        host.copy_to_clipboard = copied.append
+        screen.query_one("#library-prompt-copy", Button).press()
+        await pilot.pause()
+
+        assert copied == [expected]
+        assert "### ARTIFACT_TYPE ###" not in copied[0]
+        assert "### STRUCTURE ###" not in copied[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("schema_version", "definition_state"),
+    [(1, "foreign_v1"), (2, "malformed")],
+)
+async def test_library_prompt_delete_uses_compatibility_recipe_type(
+    tmp_path, schema_version, definition_state
+):
+    """Read-only/foreign Recipes must still be named correctly in Delete."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Compatibility recipe",
+        author="A",
+        details="d",
+        user_prompt="compat user",
+        prompt_format="structured",
+        prompt_schema_version=schema_version,
+        prompt_definition={"schema_version": schema_version, "kind": "future"},
+        artifact_type="recipe",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        assert screen._library_prompt_block_state is None
+        assert screen._current_library_prompt_editor_state().definition_state == (
+            definition_state
+        )
+
+        screen.query_one("#library-prompt-delete", Button).press()
+        await pilot.pause()
+        modal = host.screen
+        assert isinstance(modal, PromptDeleteConfirmationModal)
+        assert modal.request.items[0].artifact_type == "recipe"
+        assert modal.request.fingerprint is not None
+        assert modal.request.fingerprint.endswith(":recipe")
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_delete_allows_only_one_in_flight_service_call(tmp_path):
+    """A second confirmation during a slow delete cannot start a second worker."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Slow delete", author="A", details="d", user_prompt="x"
+    )
+    started = threading.Event()
+    release = threading.Event()
+    calls: list[int] = []
+
+    async def delayed_delete(*, mode, prompt_identifier):
+        calls.append(prompt_identifier)
+        started.set()
+        await asyncio.to_thread(release.wait)
+        return True
+
+    service.delete_prompt = delayed_delete
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+
+        screen.query_one("#library-prompt-delete", Button).press()
+        await pilot.pause()
+        host.screen.query_one("#prompt-delete-confirm", Button).press()
+        for _ in range(100):
+            if started.is_set():
+                break
+            await pilot.pause(0.02)
+        assert started.is_set()
+
+        screen.query_one("#library-prompt-delete", Button).press()
+        await pilot.pause()
+        assert host.screen is screen
+        assert calls == [prompt_id]
+        release.set()
+        for _ in range(100):
+            if screen._library_prompts_view == "list":
+                break
+            await pilot.pause(0.02)
+        assert screen._library_prompts_view == "list"
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_delete_reset_rejects_a_late_modal_dismissal(tmp_path):
+    """Leaving an editor clears its pending confirmation before late settlement."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Late result", author="A", details="d", user_prompt="x"
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        screen.query_one("#library-prompt-delete", Button).press()
+        await pilot.pause()
+        modal = host.screen
+        assert isinstance(modal, PromptDeleteConfirmationModal)
+
+        screen._reset_library_prompt_editor_state()
+        assert screen._library_prompt_delete_pending_fingerprint is None
+        modal.dismiss(PromptDeleteDecision(True, modal.request.fingerprint))
+        await pilot.pause()
+
+        assert host.screen is screen
+        assert db.fetch_prompt_details(prompt_id) is not None
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_copy_and_delete_fail_closed_for_unknown_future_type(tmp_path):
+    """An explicit future artifact type cannot copy flattened data or delete."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Future artifact", author="A", details="d", user_prompt="x"
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+    copied: list[str] = []
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        assert isinstance(screen._library_prompt_detail, dict)
+        screen._library_prompt_detail["artifact_type"] = "future_prompt"
+        screen.app_instance = host
+        host.copy_to_clipboard = copied.append
+
+        host._notifications.clear()
+        screen.query_one("#library-prompt-copy", Button).press()
+        await pilot.pause()
+
+        assert copied == []
+        assert [notice.message for notice in host._notifications] == [
+            "This artifact type is unsupported."
+        ]
+        assert all(
+            "copied to clipboard" not in notice.message.lower()
+            for notice in host._notifications
+        )
+
+        host._notifications.clear()
+        screen.query_one("#library-prompt-delete", Button).press()
+        await pilot.pause()
+
+        assert host.screen is screen
+        assert [notice.message for notice in host._notifications] == [
+            "This artifact type is unsupported."
+        ]
+        assert db.fetch_prompt_details(prompt_id) is not None
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_export_and_duplicate_fail_closed_for_unknown_future_type(
+    tmp_path,
+):
+    """Export/Duplicate share the explicit Prompt/Recipe admission boundary."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Future artifact",
+        author="A",
+        details="PRIVATE_DETAILS",
+        system_prompt="PRIVATE_SYSTEM",
+        user_prompt="PRIVATE_USER",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        assert isinstance(screen._library_prompt_detail, dict)
+        screen._library_prompt_detail["artifact_type"] = "future_prompt"
+        original_detail = dict(screen._library_prompt_detail)
+        original_block_state = screen._library_prompt_block_state
+        screen.app_instance = host
+
+        host._notifications.clear()
+        stack_size = len(host.screen_stack)
+        screen.query_one("#library-prompt-export", Button).press()
+        await pilot.pause()
+
+        assert len(host.screen_stack) == stack_size
+        assert not any(isinstance(item, FileSave) for item in host.screen_stack)
+        assert [notice.message for notice in host._notifications] == [
+            "This artifact type is unsupported."
+        ]
+
+        host._notifications.clear()
+        screen.query_one("#library-prompt-duplicate", Button).press()
+        await pilot.pause()
+
+        assert screen._selected_prompt_id == prompt_id
+        assert screen._library_prompt_detail == original_detail
+        assert screen._library_prompt_block_state is original_block_state
+        assert db.fetch_prompt_details(prompt_id) is not None
+        assert db.fetch_prompt_details("Future artifact (copy)") is None
+        assert [notice.message for notice in host._notifications] == [
+            "This artifact type is unsupported."
+        ]
+        duplicate_notices = list(host._notifications)
+        assert all(
+            private not in duplicate_notices[0].message
+            for private in ("PRIVATE_DETAILS", "PRIVATE_SYSTEM", "PRIVATE_USER")
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_duplicate_requires_conversion_for_compatibility_artifact(
+    tmp_path,
+):
+    """A compatibility duplicate cannot silently become a legacy Prompt draft."""
+    definition = {
+        "kind": "foreign_recipe",
+        "schema_version": 1,
+        "opaque": {"private": "DO_NOT_DISCLOSE"},
+    }
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Compatibility recipe",
+        author="A",
+        details="PRIVATE_DETAILS",
+        system_prompt="PRIVATE_SYSTEM",
+        user_prompt="PRIVATE_USER",
+        prompt_format="structured",
+        prompt_schema_version=1,
+        prompt_definition=definition,
+        artifact_type="recipe",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        assert screen._library_prompt_block_state is None
+        assert screen._current_library_prompt_editor_state().definition_state == (
+            "foreign_v1"
+        )
+        original_detail = dict(screen._library_prompt_detail)
+        screen.app_instance = host
+
+        host._notifications.clear()
+        screen.query_one("#library-prompt-duplicate", Button).press()
+        await pilot.pause()
+
+        assert screen._selected_prompt_id == prompt_id
+        assert screen._library_prompt_detail == original_detail
+        assert screen._library_prompt_block_state is None
+        assert db.fetch_prompt_details("Compatibility recipe (copy)") is None
+        assert [notice.message for notice in host._notifications] == [
+            "Convert this compatibility artifact and save it as a new Prompt "
+            "before duplicating."
+        ]
+        duplicate_notices = list(host._notifications)
+        assert all(
+            private not in duplicate_notices[0].message
+            for private in (
+                "PRIVATE_DETAILS",
+                "PRIVATE_SYSTEM",
+                "PRIVATE_USER",
+                "DO_NOT_DISCLOSE",
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_copy_rejects_legacy_recipe_without_clipboard_write(
+    tmp_path,
+):
+    """A legacy Recipe cannot be copied as Prompt-looking Markdown."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Legacy Recipe",
+        author="A",
+        details="PRIVATE_DETAILS",
+        system_prompt="PRIVATE_SYSTEM_BODY",
+        user_prompt="PRIVATE_USER_BODY",
+        prompt_format="legacy",
+        artifact_type="recipe",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+    copied: list[str] = []
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        state = screen._current_library_prompt_editor_state()
+        assert state.definition_state == "legacy"
+        assert state.artifact_type == "recipe"
+        assert screen._library_prompt_block_state is None
+        screen.app_instance = host
+        host.copy_to_clipboard = copied.append
+
+        host._notifications.clear()
+        screen.query_one("#library-prompt-copy", Button).press()
+        await pilot.pause()
+
+        assert copied == []
+        assert [notice.message for notice in host._notifications] == [
+            "This Recipe cannot use this action without losing its type. "
+            "Convert and save as a new Prompt first."
+        ]
+        assert [notice.severity for notice in host._notifications] == ["warning"]
+        notice = list(host._notifications)[0].message
+        assert "copied" not in notice.lower()
+        assert "PRIVATE_DETAILS" not in notice
+        assert "PRIVATE_SYSTEM_BODY" not in notice
+        assert "PRIVATE_USER_BODY" not in notice
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_export_rejects_legacy_recipe_before_file_save(
+    tmp_path,
+):
+    """A legacy Recipe cannot open FileSave for a type-losing export."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Legacy Recipe",
+        author="A",
+        details="PRIVATE_DETAILS",
+        system_prompt="PRIVATE_SYSTEM_BODY",
+        user_prompt="PRIVATE_USER_BODY",
+        prompt_format="legacy",
+        artifact_type="recipe",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        state = screen._current_library_prompt_editor_state()
+        assert state.definition_state == "legacy"
+        assert state.artifact_type == "recipe"
+        assert screen._library_prompt_block_state is None
+        screen.app_instance = host
+
+        host._notifications.clear()
+        stack_size = len(host.screen_stack)
+        screen.query_one("#library-prompt-export", Button).press()
+        await pilot.pause()
+
+        assert len(host.screen_stack) == stack_size
+        assert not any(isinstance(item, FileSave) for item in host.screen_stack)
+        assert list(tmp_path.glob("*.md")) == []
+        assert [notice.message for notice in host._notifications] == [
+            "This Recipe cannot use this action without losing its type. "
+            "Convert and save as a new Prompt first."
+        ]
+        notice = list(host._notifications)[0].message
+        assert "exported" not in notice.lower()
+        assert "PRIVATE_DETAILS" not in notice
+        assert "PRIVATE_SYSTEM_BODY" not in notice
+        assert "PRIVATE_USER_BODY" not in notice
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_duplicate_rejects_legacy_recipe_without_state_mutation(
+    tmp_path,
+):
+    """A legacy Recipe must use Convert instead of becoming a legacy Prompt copy."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Legacy Recipe",
+        author="A",
+        details="PRIVATE_DETAILS",
+        system_prompt="PRIVATE_SYSTEM_BODY",
+        user_prompt="PRIVATE_USER_BODY",
+        prompt_format="legacy",
+        artifact_type="recipe",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        state = screen._current_library_prompt_editor_state()
+        assert state.definition_state == "legacy"
+        assert state.artifact_type == "recipe"
+        assert screen._library_prompt_block_state is None
+        original_detail = dict(screen._library_prompt_detail)
+        original_dirty = screen._library_prompt_dirty
+        screen.app_instance = host
+
+        host._notifications.clear()
+        screen.query_one("#library-prompt-duplicate", Button).press()
+        await pilot.pause()
+
+        assert screen._selected_prompt_id == prompt_id
+        assert screen._library_prompt_detail == original_detail
+        assert screen._library_prompt_block_state is None
+        assert screen._library_prompt_dirty is original_dirty
+        assert db.fetch_prompt_details("Legacy Recipe (copy)") is None
+        assert [notice.message for notice in host._notifications] == [
+            "This Recipe cannot use this action without losing its type. "
+            "Convert and save as a new Prompt first."
+        ]
+        notice = list(host._notifications)[0].message
+        assert "PRIVATE_DETAILS" not in notice
+        assert "PRIVATE_SYSTEM_BODY" not in notice
+        assert "PRIVATE_USER_BODY" not in notice
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_copy_uses_unsaved_legacy_create_working_copy(tmp_path):
+    """A not-yet-saved create copies its live lanes without requiring an ID."""
+    _db, service = _real_prompt_scope_service(tmp_path)
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+    copied: list[str] = []
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one(f"#library-row-{LIBRARY_ROW_CREATE_PROMPT}").press()
+        await _wait_for_selector(screen, pilot, "#library-prompt-name")
+        assert screen._selected_prompt_id is None
+
+        screen.query_one("#library-prompt-name", Input).value = "Unsaved create"
+        screen.query_one("#library-prompt-author", Input).value = "Draft author"
+        screen.query_one("#library-prompt-details", Input).value = "Draft details"
+        screen.query_one("#library-prompt-system", TextArea).text = "Draft system"
+        screen.query_one("#library-prompt-user", TextArea).text = "Draft user"
+        screen.query_one("#library-prompt-keywords", Input).value = "draft, live"
+        await pilot.pause()
+
+        screen.app_instance = host
+        host.copy_to_clipboard = copied.append
+        screen.query_one("#library-prompt-copy", Button).press()
+        await pilot.pause()
+
+        assert copied == [
+            render_prompt_markdown(
+                {
+                    "name": "Unsaved create",
+                    "author": "Draft author",
+                    "details": "Draft details",
+                    "system_prompt": "Draft system",
+                    "user_prompt": "Draft user",
+                    "keywords": ["draft", "live"],
+                }
+            )
+        ]
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_copy_uses_unsaved_structured_duplicate_working_copy(
+    tmp_path,
+):
+    """A structured duplicate copies the mounted edited blocks without an ID."""
+    definition = {
+        "kind": "block_prompt",
+        "schema_version": 2,
+        "lanes": [
+            {
+                "id": "system",
+                "blocks": [
+                    {
+                        "id": "role",
+                        "title": "Role",
+                        "syntax": "markdown",
+                        "content": "Original role.",
+                    }
+                ],
+            },
+            {
+                "id": "user",
+                "blocks": [
+                    {
+                        "id": "goal",
+                        "title": "Goal",
+                        "syntax": "markdown",
+                        "content": "Original goal.",
+                    }
+                ],
+            },
+        ],
+    }
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Structured source",
+        author="A",
+        details="d",
+        system_prompt="# Role\n\nOriginal role.",
+        user_prompt="# Goal\n\nOriginal goal.",
+        prompt_format="structured",
+        prompt_schema_version=2,
+        prompt_definition=definition,
+        artifact_type="prompt",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+    copied: list[str] = []
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        screen.query_one("#prompt-block-content-role", TextArea).text = "Edited role."
+        await pilot.pause()
+        screen.query_one("#library-prompt-duplicate", Button).press()
+        await pilot.pause()
+
+        assert screen._selected_prompt_id is None
+        block_state = screen._library_prompt_block_state
+        assert block_state is not None
+        assert block_state.definition.lanes[0].blocks[0].content == "Edited role."
+        _draft, artifact_fields, _prepared = prepare_prompt_artifact_save(
+            block_state,
+            artifact_type=block_state.artifact_type,
+            include_recipe_starter_content=True,
+            request_fields={},
+        )
+        expected = render_prompt_markdown(
+            {
+                "name": "Structured source (copy)",
+                "author": "A",
+                "details": "d",
+                "keywords": [],
+                **artifact_fields,
+            }
+        )
+        screen.app_instance = host
+        host.copy_to_clipboard = copied.append
+        screen.query_one("#library-prompt-copy", Button).press()
+        await pilot.pause()
+
+        assert copied == [expected]
 
 
 @pytest.mark.asyncio
@@ -2512,8 +3968,8 @@ async def test_library_prompt_duplicate_button_between_copy_and_delete(tmp_path)
         await _wait_for_library_shell(screen, pilot)
         await _open_prompt_editor(screen, pilot, prompt_id)
 
-        toolbar = screen.query_one("#library-prompt-copy", Button).parent
-        ids = [child.id for child in toolbar.children]
+        actions = screen.query_one("#library-prompt-editor-actions")
+        ids = [button.id for button in actions.query(Button)]
         assert (
             ids.index("library-prompt-copy")
             < ids.index("library-prompt-duplicate")

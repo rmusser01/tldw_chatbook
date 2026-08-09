@@ -175,6 +175,7 @@ from ...Library.library_skills_state import (
     compose_skill_markdown,
 )
 from ...Prompt_Management.prompt_markdown_export import render_prompt_markdown
+from ...Prompt_Management.prompt_artifact_codec import deserialize_definition
 from ...Prompt_Management.prompt_artifact_models import ArtifactType
 from ...Prompt_Management.prompt_source_capabilities import (
     PromptSourceCapabilities,
@@ -190,6 +191,12 @@ from ...Widgets.Prompts.prompt_block_editor import PromptBlockEditor
 from ...Widgets.Prompts.prompt_block_editor_state import (
     PromptBlockEditorState,
     set_artifact_type,
+)
+from ...Widgets.Library.prompt_delete_confirmation_modal import (
+    PromptDeleteConfirmationModal,
+    PromptDeleteDecision,
+    PromptDeleteItem,
+    PromptDeleteRequest,
 )
 from ...Library.library_rag_answer_service import (
     LibraryRagAnswer,
@@ -2346,10 +2353,16 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompt_status: str = ""
         self._library_prompt_conflict_snapshot: PromptEditorState | None = None
         self._library_prompt_block_state: PromptBlockEditorState | None = None
+        # Explicit provenance for an unsaved canonical structured copy.
+        # Legacy block edits can clear both lane origins, so origins cannot
+        # truthfully distinguish conversion/duplication from ordinary edits.
+        self._library_prompt_detached_structured: bool = False
         self._library_prompt_capabilities: PromptSourceCapabilities = (
             local_prompt_capabilities()
         )
         self._library_prompt_include_starter_content: bool = False
+        self._library_prompt_delete_pending_fingerprint: str | None = None
+        self._library_prompt_delete_inflight_fingerprint: str | None = None
         # Task 8b Fix wave 1 (Minor): the exact name that triggered the
         # current "name-in-use" status, captured at the moment that status
         # is set -- NOT re-derived from the live Name field at "Open
@@ -14723,6 +14736,7 @@ class LibraryScreen(BaseAppScreen):
             capabilities=self._library_prompt_capabilities,
         )
         self._library_prompt_block_state = editor_state.block_editor_state
+        self._library_prompt_detached_structured = False
         self._library_prompt_original_name = editor_state.name
         self._library_prompt_version = editor_state.version
         self._library_prompt_dirty = False
@@ -14767,6 +14781,7 @@ class LibraryScreen(BaseAppScreen):
             capabilities=self._library_prompt_capabilities,
         )
         self._library_prompt_block_state = editor_state.block_editor_state
+        self._library_prompt_detached_structured = False
         self._library_prompt_original_name = ""
         self._library_prompt_version = None
         self._library_prompt_dirty = False
@@ -14790,7 +14805,9 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompt_status = ""
         self._library_prompt_conflict_snapshot = None
         self._library_prompt_block_state = None
+        self._library_prompt_detached_structured = False
         self._library_prompt_include_starter_content = False
+        self._library_prompt_delete_pending_fingerprint = None
         self._library_prompt_editor_armed = False
 
     def _mark_library_prompt_dirty(self) -> None:
@@ -14899,7 +14916,33 @@ class LibraryScreen(BaseAppScreen):
         ).block_editor_state
         if converted is None:
             return
+        _draft, artifact_fields, converted = prepare_prompt_artifact_save(
+            converted,
+            artifact_type="prompt",
+            include_recipe_starter_content=True,
+            request_fields={},
+        )
+        detail = (
+            dict(self._library_prompt_detail)
+            if isinstance(self._library_prompt_detail, Mapping)
+            else {}
+        )
+        detail.update(artifact_fields)
+        for source_field in (
+            "id",
+            "local_id",
+            "server_id",
+            "uuid",
+            "source_id",
+            "version",
+            "created_at",
+            "last_modified",
+            "last_used_at",
+        ):
+            detail.pop(source_field, None)
+        self._library_prompt_detail = detail
         self._library_prompt_block_state = converted
+        self._library_prompt_detached_structured = True
         self._selected_prompt_id = None
         self._library_prompt_original_name = ""
         self._library_prompt_version = None
@@ -15437,6 +15480,7 @@ class LibraryScreen(BaseAppScreen):
         elif keywords is not None:
             patched_detail["keywords"] = keywords
         self._library_prompt_detail = patched_detail
+        self._library_prompt_detached_structured = False
         self._library_prompt_original_name = name
         self._library_prompt_dirty = False
         if is_create:
@@ -15549,7 +15593,14 @@ class LibraryScreen(BaseAppScreen):
         notify = getattr(self.app_instance, "notify", None)
         if state.artifact_type == "recipe":
             prompt_state = set_artifact_type(state, "prompt")
+            _draft, artifact_fields, prompt_state = prepare_prompt_artifact_save(
+                prompt_state,
+                artifact_type="prompt",
+                include_recipe_starter_content=True,
+                request_fields={},
+            )
             self._library_prompt_block_state = prompt_state
+            self._library_prompt_detached_structured = True
             self._selected_prompt_id = None
             self._library_prompt_original_name = ""
             self._library_prompt_version = None
@@ -15561,9 +15612,7 @@ class LibraryScreen(BaseAppScreen):
             )
             if isinstance(self._library_prompt_detail, Mapping):
                 detail = dict(self._library_prompt_detail)
-                detail["artifact_type"] = "prompt"
-                detail["system_prompt"] = prompt_state.compiled_system
-                detail["user_prompt"] = prompt_state.compiled_user
+                detail.update(artifact_fields)
                 detail.pop("id", None)
                 detail.pop("local_id", None)
                 detail.pop("uuid", None)
@@ -15769,53 +15818,19 @@ class LibraryScreen(BaseAppScreen):
         """
         if self._library_prompts_view != "editor" or not self._selected_prompt_id:
             return
+        if self._library_prompt_action_artifact_type() is None:
+            self._notify_library_prompt_unsupported_artifact_type()
+            return
         fields = self._read_library_prompt_editor_fields()
         if fields is None:
             return
         name, author, details, system_prompt, user_prompt, keywords_text = fields
         prompt_id = self._selected_prompt_id
-        artifact_fields: Mapping[str, Any] | None = None
-        block_state = self._library_prompt_block_state
-        if block_state is not None:
-            try:
-                _draft, artifact_payload, _prepared = prepare_prompt_artifact_save(
-                    block_state,
-                    artifact_type=block_state.artifact_type,
-                    include_recipe_starter_content=True,
-                    request_fields={},
-                )
-            except ValueError:
-                notify = getattr(self.app_instance, "notify", None)
-                if callable(notify):
-                    notify(
-                        "Fix block validation errors before exporting; "
-                        "the structured artifact was not downgraded.",
-                        severity="warning",
-                    )
-                return
-            artifact_fields = {
-                key: artifact_payload[key]
-                for key in (
-                    "artifact_type",
-                    "prompt_format",
-                    "prompt_schema_version",
-                    "prompt_definition",
-                    "system_prompt",
-                    "user_prompt",
-                )
-                if key in artifact_payload
-            }
-        elif isinstance(self._library_prompt_detail, Mapping):
-            artifact_fields = {
-                key: self._library_prompt_detail[key]
-                for key in (
-                    "artifact_type",
-                    "prompt_format",
-                    "prompt_schema_version",
-                    "prompt_definition",
-                )
-                if key in self._library_prompt_detail
-            }
+        artifact_fields = self._library_prompt_markdown_artifact_fields(
+            action="exporting"
+        )
+        if artifact_fields is None:
+            return
         # Same inline sanitize-for-filename technique as
         # ``_export_library_note``'s ``safe_title`` -- alnum/space/-/_ only,
         # falling back to a generic name when that leaves nothing (e.g. a
@@ -15848,6 +15863,229 @@ class LibraryScreen(BaseAppScreen):
                 artifact_fields,
             ),
         )
+
+    @on(Button.Pressed, "#library-prompt-copy")
+    def handle_library_prompt_copy(self, event: Button.Pressed) -> None:
+        """Copy the live Prompt/Recipe working copy as canonical Markdown."""
+        event.stop()
+        if self._library_prompts_view != "editor":
+            return
+        if self._library_prompt_action_artifact_type() is None:
+            self._notify_library_prompt_unsupported_artifact_type()
+            return
+        fields = self._read_library_prompt_editor_fields()
+        if fields is None:
+            return
+        name, author, details, system_prompt, user_prompt, keywords_text = fields
+        detail: dict[str, Any] = {
+            "name": name,
+            "author": author,
+            "details": details,
+            "system_prompt": system_prompt,
+            "user_prompt": user_prompt,
+            "keywords": self._library_note_keywords_from_input(keywords_text) or [],
+        }
+        artifact_fields = self._library_prompt_markdown_artifact_fields(
+            action="copying"
+        )
+        if artifact_fields is None:
+            return
+        detail.update(artifact_fields)
+
+        notify = getattr(self.app_instance, "notify", None)
+        copy_to_clipboard = getattr(self.app_instance, "copy_to_clipboard", None)
+        if not callable(copy_to_clipboard):
+            if callable(notify):
+                notify(
+                    "Clipboard copy is unavailable in this runtime.", severity="warning"
+                )
+            return
+        try:
+            copy_to_clipboard(render_prompt_markdown(detail))
+        except Exception as exc:
+            if callable(notify):
+                notify(f"Error copying prompt: {type(exc).__name__}", severity="error")
+            return
+        if callable(notify):
+            notify("Prompt copied to clipboard as markdown!", severity="information")
+
+    def _library_prompt_artifact_fields(self) -> dict[str, Any]:
+        """Return export/copy metadata for the live Prompt working copy.
+
+        Supported stored v2 and explicitly detached structured block state is
+        prepared canonically. Read-only compatibility records retain their raw
+        metadata rather than being silently flattened to their compiled lanes.
+        Legacy lane records stay in the established plain-Markdown form.
+        """
+        editor_state = self._current_library_prompt_editor_state()
+        block_state = self._library_prompt_block_state
+        if block_state is not None and (
+            editor_state.definition_state == "supported_v2"
+            or self._library_prompt_detached_structured
+        ):
+            _draft, artifact_payload, _prepared = prepare_prompt_artifact_save(
+                block_state,
+                artifact_type=block_state.artifact_type,
+                include_recipe_starter_content=True,
+                request_fields={},
+            )
+            return {
+                key: artifact_payload[key]
+                for key in (
+                    "artifact_type",
+                    "prompt_format",
+                    "prompt_schema_version",
+                    "prompt_definition",
+                    "system_prompt",
+                    "user_prompt",
+                )
+                if key in artifact_payload
+            }
+        if editor_state.definition_state == "legacy":
+            return {}
+        detail = self._library_prompt_detail
+        if not isinstance(detail, Mapping):
+            return {}
+        return {
+            key: detail[key]
+            for key in (
+                "artifact_type",
+                "prompt_format",
+                "prompt_schema_version",
+                "prompt_definition",
+            )
+            if key in detail
+        }
+
+    def _library_prompt_markdown_artifact_fields(
+        self, *, action: Literal["copying", "exporting"]
+    ) -> dict[str, Any] | None:
+        """Admit only working copies the Markdown grammar can preserve."""
+        if self._library_prompt_legacy_recipe_requires_conversion():
+            self._notify_library_prompt_legacy_recipe_requires_conversion()
+            return None
+        detail = self._library_prompt_detail
+        if isinstance(detail, Mapping):
+            has_modern_metadata = (
+                detail.get("prompt_schema_version") is not None
+                or detail.get("prompt_definition") is not None
+            )
+            if has_modern_metadata and detail.get("prompt_format") != "structured":
+                self._notify_library_prompt_unrepresentable_markdown()
+                return None
+        try:
+            artifact_fields = self._library_prompt_artifact_fields()
+        except ValueError:
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(
+                    f"Fix block validation errors before {action}; "
+                    "the structured artifact was not downgraded.",
+                    severity="warning",
+                )
+            return None
+        if not artifact_fields:
+            return {}
+
+        artifact_type = self._library_prompt_action_artifact_type()
+        definition = deserialize_definition(
+            artifact_fields.get("prompt_definition")
+        )
+        outer_schema = artifact_fields.get("prompt_schema_version")
+        definition_schema = (
+            definition.get("schema_version") if definition is not None else None
+        )
+        definition_kind = definition.get("kind") if definition is not None else None
+        definition_kind_owner: ArtifactType | None = None
+        if isinstance(definition_kind, str):
+            if definition_kind.endswith("_prompt"):
+                definition_kind_owner = "prompt"
+            elif definition_kind.endswith("_recipe"):
+                definition_kind_owner = "recipe"
+        if (
+            definition is not None
+            and definition.get("definition_kind") == "single_text_recipe"
+        ):
+            definition_kind_owner = "recipe"
+
+        representable = (
+            artifact_type in {"prompt", "recipe"}
+            and artifact_fields.get("artifact_type") == artifact_type
+            and artifact_fields.get("prompt_format") == "structured"
+            and definition is not None
+            and type(outer_schema) is int
+            and type(definition_schema) is int
+            and outer_schema == definition_schema
+            and (
+                definition_kind_owner is None
+                or definition_kind_owner == artifact_type
+            )
+        )
+        if representable:
+            return artifact_fields
+
+        self._notify_library_prompt_unrepresentable_markdown()
+        return None
+
+    def _notify_library_prompt_unrepresentable_markdown(self) -> None:
+        """Report metadata loss without exposing artifact content or errors."""
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(
+                "This structured artifact cannot be represented as Markdown "
+                "without losing metadata. Use Convert and save as a new Prompt "
+                "first.",
+                severity="warning",
+            )
+
+    def _library_prompt_legacy_recipe_requires_conversion(self) -> bool:
+        """Return whether a legacy Recipe would lose its type in this action."""
+        if self._library_prompt_detached_structured:
+            return False
+        editor_state = self._current_library_prompt_editor_state()
+        return (
+            editor_state.definition_state == "legacy"
+            and editor_state.artifact_type == "recipe"
+        )
+
+    def _notify_library_prompt_legacy_recipe_requires_conversion(self) -> None:
+        """Direct a legacy Recipe to the explicit type-preserving conversion."""
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(
+                "This Recipe cannot use this action without losing its type. "
+                "Convert and save as a new Prompt first.",
+                severity="warning",
+            )
+
+    def _library_prompt_action_artifact_type(self) -> ArtifactType | None:
+        """Return a supported explicit type, preserving missing legacy type as Prompt."""
+        if self._library_prompt_detached_structured:
+            block_state = self._library_prompt_block_state
+            if block_state is None or block_state.artifact_type not in {
+                "prompt",
+                "recipe",
+            }:
+                return None
+            return block_state.artifact_type
+        detail = self._library_prompt_detail
+        if isinstance(detail, Mapping) and "artifact_type" in detail:
+            raw_type = detail["artifact_type"]
+            if raw_type == "prompt":
+                return "prompt"
+            if raw_type == "recipe":
+                return "recipe"
+            return None
+        artifact_type = self._current_library_prompt_editor_state().artifact_type
+        if artifact_type not in {"prompt", "recipe"}:
+            return None
+        return artifact_type
+
+    def _notify_library_prompt_unsupported_artifact_type(self) -> None:
+        """Report an unsupported artifact without exposing its contents."""
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify("This artifact type is unsupported.", severity="warning")
 
     def _write_library_prompt_export_file(
         self,
@@ -15912,8 +16150,10 @@ class LibraryScreen(BaseAppScreen):
         try:
             validated_path.write_text(render_prompt_markdown(detail), encoding="utf-8")
         except Exception as exc:
-            logger.opt(exception=True).warning(
-                f"Error exporting Library prompt {prompt_id!r} to '{validated_path}'."
+            logger.warning(
+                "Failed to export Library prompt {} (category={}).",
+                prompt_id,
+                type(exc).__name__,
             )
             if callable(notify):
                 notify(
@@ -15946,10 +16186,47 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         if self._library_prompts_view != "editor":
             return
+        if self._library_prompt_action_artifact_type() is None:
+            self._notify_library_prompt_unsupported_artifact_type()
+            return
+        if self._library_prompt_legacy_recipe_requires_conversion():
+            self._notify_library_prompt_legacy_recipe_requires_conversion()
+            return
         fields = self._read_library_prompt_editor_fields()
         if fields is None:
             return
         name, author, details, system_prompt, user_prompt, keywords_text = fields
+        editor_state = self._current_library_prompt_editor_state()
+        block_state = self._library_prompt_block_state
+        if (
+            not self._library_prompt_detached_structured
+            and editor_state.definition_state not in {"legacy", "supported_v2"}
+        ):
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(
+                    "Convert this compatibility artifact and save it as a new "
+                    "Prompt before duplicating.",
+                    severity="warning",
+                )
+            return
+        detached_structured = block_state is not None and (
+            editor_state.definition_state == "supported_v2"
+            or self._library_prompt_detached_structured
+        )
+        artifact_fields: dict[str, Any] = {}
+        if detached_structured and block_state is not None:
+            try:
+                _draft, artifact_fields, block_state = prepare_prompt_artifact_save(
+                    block_state,
+                    artifact_type=block_state.artifact_type,
+                    include_recipe_starter_content=True,
+                    request_fields={},
+                )
+            except ValueError:
+                # Keep the invalid live block state so the duplicate remains
+                # editable; Copy/Save will surface its existing validation.
+                artifact_fields = {"artifact_type": block_state.artifact_type}
         self._selected_prompt_id = None
         self._library_prompt_detail = {
             "name": f"{name} (copy)",
@@ -15963,7 +16240,10 @@ class LibraryScreen(BaseAppScreen):
             # Keywords field's exact text rather than round-tripping it
             # through a list.
             "keywords": keywords_text,
+            **artifact_fields,
         }
+        self._library_prompt_block_state = block_state
+        self._library_prompt_detached_structured = detached_structured
         self._library_prompt_original_name = ""
         self._library_prompt_version = None
         self._library_prompt_status = ""
@@ -15976,26 +16256,78 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-prompt-delete")
     def handle_library_prompt_delete(self, event: Button.Pressed) -> None:
-        """Soft-delete the open prompt and return to the list view.
-
-        Confirm-free by design (a single press deletes) -- unlike the
-        notes editor's Delete/Cancel inline confirmation, matching the
-        brief's "dim button, single press acceptable" delete affordance
-        while still sharing the same danger-tier styling class.
-
-        Args:
-            event: Button press event emitted by the editor's "Delete" action.
-        """
+        """Open a confirmation for the current Prompt/Recipe identity."""
         event.stop()
         if self._library_prompts_view != "editor" or not self._selected_prompt_id:
             return
+        if getattr(self, "_library_prompt_delete_inflight_fingerprint", None):
+            return
+        fields = self._read_library_prompt_editor_fields()
+        artifact_type = self._library_prompt_action_artifact_type()
+        fingerprint = self._library_prompt_delete_fingerprint()
+        if fields is None or artifact_type is None or fingerprint is None:
+            if artifact_type is None:
+                self._notify_library_prompt_unsupported_artifact_type()
+            return
+        self._library_prompt_delete_pending_fingerprint = fingerprint
+        self.app.push_screen(
+            PromptDeleteConfirmationModal(
+                PromptDeleteRequest(
+                    items=(PromptDeleteItem(fields[0], artifact_type),),
+                    fingerprint=fingerprint,
+                    dirty=self._library_prompt_dirty,
+                )
+            ),
+            self._settle_library_prompt_delete,
+        )
+
+    def _library_prompt_delete_fingerprint(self) -> str | None:
+        """Return the body-free identity captured by a delete confirmation."""
+        prompt_id = self._selected_prompt_id
+        if self._library_prompts_view != "editor" or not isinstance(prompt_id, int):
+            return None
+        artifact_type = self._library_prompt_action_artifact_type()
+        if artifact_type is None:
+            return None
+        version = self._library_prompt_version
+        version_token = str(version) if isinstance(version, int) else "none"
+        return f"library-prompt:{prompt_id}:{version_token}:{artifact_type}"
+
+    def _settle_library_prompt_delete(self, decision: PromptDeleteDecision) -> None:
+        """Delete only a once-settled confirmation for the same live editor."""
+        pending = getattr(self, "_library_prompt_delete_pending_fingerprint", None)
+        if decision.fingerprint != pending or pending is None:
+            return
+        self._library_prompt_delete_pending_fingerprint = None
+        if not decision.confirmed:
+            self._refocus_library_prompt_delete_action()
+            return
+        if pending != self._library_prompt_delete_fingerprint():
+            self._update_library_prompt_status_static(
+                "Delete confirmation is no longer current."
+            )
+            self._refocus_library_prompt_delete_action()
+            return
+        prompt_id = self._selected_prompt_id
+        if not isinstance(prompt_id, int):
+            return
+        self._library_prompt_delete_inflight_fingerprint = pending
         self.run_worker(
-            self._delete_library_prompt(self._selected_prompt_id),
+            self._delete_library_prompt(prompt_id, delete_fingerprint=pending),
             exclusive=True,
             group="library_prompt_delete",
         )
 
-    async def _delete_library_prompt(self, prompt_id: int) -> None:
+    def _refocus_library_prompt_delete_action(self) -> None:
+        """Restore focus after a dismissed delete confirmation when possible."""
+        try:
+            self.query_one("#library-prompt-delete", Button).focus()
+        except (NoMatches, QueryError):
+            pass
+
+    async def _delete_library_prompt(
+        self, prompt_id: int, *, delete_fingerprint: str | None = None
+    ) -> None:
         """Delete the selected Library prompt, then return to the list view.
 
         Calls ``delete_prompt`` through the offloaded service seam. On
@@ -16007,59 +16339,67 @@ class LibraryScreen(BaseAppScreen):
         Args:
             prompt_id: The Library prompt id to delete.
         """
-        service = getattr(self.app_instance, "prompt_scope_service", None)
-        delete_prompt = getattr(service, "delete_prompt", None)
-        if not callable(delete_prompt):
-            self._update_library_prompt_status_static("Prompt deletion is unavailable.")
-            return
         try:
-            deleted = await self._run_library_service_call(
-                delete_prompt,
-                mode="local",
-                prompt_identifier=prompt_id,
-                isolate_in_worker=True,
-            )
-        except Exception:
-            logger.opt(exception=True).warning(
-                f"Failed to delete Library prompt {prompt_id!r}."
-            )
+            service = getattr(self.app_instance, "prompt_scope_service", None)
+            delete_prompt = getattr(service, "delete_prompt", None)
+            if not callable(delete_prompt):
+                self._update_library_prompt_status_static("Prompt deletion is unavailable.")
+                return
+            try:
+                deleted = await self._run_library_service_call(
+                    delete_prompt,
+                    mode="local",
+                    prompt_identifier=prompt_id,
+                    isolate_in_worker=True,
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"Failed to delete Library prompt {prompt_id!r}."
+                )
+                if (
+                    prompt_id != self._selected_prompt_id
+                    or self._library_prompts_view != "editor"
+                ):
+                    return
+                self._update_library_prompt_status_static("Could not delete this prompt.")
+                return
+
+            # Discard a stale result: the user has since switched to a different
+            # prompt (or left the editor) while this delete was in flight.
             if (
                 prompt_id != self._selected_prompt_id
                 or self._library_prompts_view != "editor"
             ):
                 return
-            self._update_library_prompt_status_static("Could not delete this prompt.")
-            return
 
-        # Discard a stale result: the user has since switched to a different
-        # prompt (or left the editor) while this delete was in flight.
-        if (
-            prompt_id != self._selected_prompt_id
-            or self._library_prompts_view != "editor"
-        ):
-            return
+            if not deleted:
+                # Targeted status update only (no recompose) -- same discipline
+                # as `_save_library_prompt`'s outcome branches: the fields are
+                # unchanged, so remounting them here would spuriously re-dirty
+                # the (armed, still-open) editor via Textual's mount-time
+                # `Changed` event for a non-empty initial value.
+                self._update_library_prompt_status_static(
+                    "This prompt changed elsewhere — refresh and try again."
+                )
+                return
 
-        if not deleted:
-            # Targeted status update only (no recompose) -- same discipline
-            # as `_save_library_prompt`'s outcome branches: the fields are
-            # unchanged, so remounting them here would spuriously re-dirty
-            # the (armed, still-open) editor via Textual's mount-time
-            # `Changed` event for a non-empty initial value.
-            self._update_library_prompt_status_static(
-                "This prompt changed elsewhere — refresh and try again."
-            )
-            return
-
-        self._reset_library_prompt_editor_state()
-        self._library_prompts_filter = ""
-        # Reuses the same full local-source reload the notes delete flow
-        # uses (already its own exclusive worker via @work) so the list
-        # view and the rail's Prompts count both drop the deleted prompt --
-        # fire-and-forget, not awaited (see `_save_library_prompt`'s
-        # matching comment for why).
-        self._refresh_local_source_snapshot()
-        if self.is_mounted:
-            self.refresh(recompose=True)
+            self._reset_library_prompt_editor_state()
+            self._library_prompts_filter = ""
+            # Reuses the same full local-source reload the notes delete flow
+            # uses (already its own exclusive worker via @work) so the list
+            # view and the rail's Prompts count both drop the deleted prompt --
+            # fire-and-forget, not awaited (see `_save_library_prompt`'s
+            # matching comment for why).
+            self._refresh_local_source_snapshot()
+            if self.is_mounted:
+                self.refresh(recompose=True)
+        finally:
+            if (
+                delete_fingerprint is not None
+                and self._library_prompt_delete_inflight_fingerprint
+                == delete_fingerprint
+            ):
+                self._library_prompt_delete_inflight_fingerprint = None
 
     @on(Button.Pressed, "#library-prompt-open-existing")
     def handle_library_prompt_open_existing(self, event: Button.Pressed) -> None:
@@ -16232,6 +16572,7 @@ class LibraryScreen(BaseAppScreen):
                 capabilities=self._library_prompt_capabilities,
             )
             self._library_prompt_block_state = editor_state.block_editor_state
+            self._library_prompt_detached_structured = False
             self._library_prompt_original_name = editor_state.name
             self._library_prompt_version = editor_state.version
             self._library_prompt_conflict_snapshot = None
@@ -16305,6 +16646,7 @@ class LibraryScreen(BaseAppScreen):
         elif keywords is not None:
             patched_detail["keywords"] = keywords
         self._library_prompt_detail = patched_detail
+        self._library_prompt_detached_structured = False
         self._library_prompt_original_name = name
         self._library_prompt_conflict_snapshot = None
         self._library_prompt_dirty = False
@@ -16485,6 +16827,10 @@ class LibraryScreen(BaseAppScreen):
             "user_prompt": snapshot.user_prompt,
             "keywords": snapshot.keywords_csv,
         }
+        self._library_prompt_detached_structured = (
+            snapshot.block_editor_state is not None
+            and snapshot.definition_state == "supported_v2"
+        )
         self._library_prompt_original_name = ""
         self._library_prompt_version = None
         self._library_prompt_conflict_snapshot = None
@@ -16532,6 +16878,10 @@ class LibraryScreen(BaseAppScreen):
             "artifact_type": artifact_type,
         }
         self._library_prompt_block_state = block_state
+        self._library_prompt_detached_structured = (
+            snapshot.definition_state == "supported_v2"
+            or self._library_prompt_detached_structured
+        )
         self._selected_prompt_id = None
         self._library_prompt_original_name = ""
         self._library_prompt_version = None
