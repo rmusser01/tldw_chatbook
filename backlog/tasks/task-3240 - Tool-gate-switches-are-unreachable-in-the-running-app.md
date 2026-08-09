@@ -1,11 +1,11 @@
 ---
 id: TASK-3240
 title: Tool gate switches are unreachable in the running app
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-07 20:15'
-updated_date: '2026-08-09 03:19'
+updated_date: '2026-08-09 04:39'
 labels:
   - settings
   - ux
