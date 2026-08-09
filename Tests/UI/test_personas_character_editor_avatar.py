@@ -460,7 +460,7 @@ class TestCharacterEditorAvatarThumbnailFit:
 
 
 # ===================================================================
-# task-3401: no-fold thumbnail pins.
+# task-3793: no-fold thumbnail pins.
 #
 # The thumb containers used to reserve max-width 24 PLUS padding 0 1, so the
 # 24-column mosaic baked by PersonasScreen._build_avatar_pixels folded at 22
@@ -485,7 +485,7 @@ def _cover_mosaic():
 
 @pytest.mark.asyncio
 async def test_avatar_thumbnail_static_matches_mosaic_grid_no_fold():
-    """task-3401 regression: the editor avatar thumb must not fold into stripes.
+    """task-3793 regression: the editor avatar thumb must not fold into stripes.
 
     Asserts the mounted Static's painted height equals the mosaic row count
     (no continuation rows), its width fits the container's content box, and
@@ -505,7 +505,7 @@ async def test_avatar_thumbnail_static_matches_mosaic_grid_no_fold():
         await pilot.pause()
         thumb_box = ed.query_one("#personas-char-editor-avatar-thumb", Container)
         static = thumb_box.query_one(Static)
-        # Before task-3401 the painted height was ~2x the mosaic rows (fold).
+        # Before task-3793 the painted height was ~2x the mosaic rows (fold).
         assert static.region.height == len(mosaic.plain.split("\n"))
         assert static.region.width <= thumb_box.content_size.width
         padding = thumb_box.styles.padding
@@ -519,7 +519,7 @@ async def test_avatar_thumbnail_static_matches_mosaic_grid_no_fold():
 
 @pytest.mark.asyncio
 async def test_expression_thumbnail_static_matches_mosaic_grid_no_fold():
-    """task-3401 regression: expression-slot thumbs must not fold into stripes.
+    """task-3793 regression: expression-slot thumbs must not fold into stripes.
 
     Same contract as the avatar thumb, scoped to one expression state: the
     mounted Static's painted height equals the mosaic row count, its width

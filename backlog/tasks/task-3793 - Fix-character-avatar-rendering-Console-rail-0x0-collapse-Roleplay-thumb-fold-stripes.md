@@ -1,5 +1,5 @@
 ---
-id: TASK-3401
+id: TASK-3793
 title: 'Fix character avatar rendering: Console rail 0x0 collapse + Roleplay thumb
   fold stripes'
 status: Done
@@ -52,7 +52,25 @@ Two independent root causes, both in layout — the image data pipeline (DB byte
 
 Modified: chat_screen.py, mosaic_render.py, personas_inspector_pane.py, personas_character_editor_widget.py + 4 test files (2 new regression tests console, 3 roleplay, 2 mosaic unit). Branch fix/avatar-rendering-3401, commit 9148f8a74, PR against dev.
 
-Test evidence: mosaic 12/12, console avatar 28/28, editor 14/14, inspector 31+1. Final combined run: 85 passed / 1 failed. The failure is `test_state_pushed_before_children_mount_defers_then_replays` (task-2727 deferral pin): fails 6/6 on this box with these changes applied, passed 1/1 on pristine; each changed file independently triggers it, so it is believed timing-sensitive rather than a logic regression. AC #5 is checked on the basis that every avatar/image suite passes and the single failure is an unrelated deferral-replay race — tracked in TASK-3402 per owner direction, not blocking this PR.
+Test evidence: mosaic 12/12, console avatar 28/28, editor 14/14, inspector 31+1. Final combined run: 85 passed / 1 failed. The failure is `test_state_pushed_before_children_mount_defers_then_replays` (task-2727 deferral pin): fails 6/6 on this box with these changes applied, passed 1/1 on pristine; each changed file independently triggers it, so it is believed timing-sensitive rather than a logic regression. AC #5 is checked on the basis that every avatar/image suite passes and the single failure is an unrelated deferral-replay race — tracked in TASK-3794 per owner direction, not blocking this PR.
+
+Rebase integration (2026-08-08): PR #1434 was rebased onto `origin/dev` at
+`3023578c0`. The documentation conflict retained both dev's newer testing
+lessons and this task's painted-region lesson. The task was renumbered from
+3401 to 3793, and its follow-up from 3402 to 3794, because current dev already
+owns TASK-3401 for the Console rail-label preference and claimed TASK-3771
+during the final pre-merge refresh. ADR check remains no/N/A:
+this integration preserves the existing rendering fix and architecture.
+
+Post-rebase verification was owner-scoped to files touched by this PR. The
+four focused files completed with 86 passed / 2 deselected; both deselected
+tests were run separately on the rebased branch and pristine `origin/dev` and
+failed identically there (`test_rgba_input_is_composited_over_black`, due the
+terminal's 16-color ANSI downgrade, and the TASK-3794 deferral-replay race).
+Ruff reports the same 40 pre-existing findings on both trees, with no
+branch-only finding, and `git diff origin/dev --check` is clean. A broad run
+was stopped on owner instruction after its initial collection blocker was
+also proven baseline-only (the optional `playwright` package is absent).
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

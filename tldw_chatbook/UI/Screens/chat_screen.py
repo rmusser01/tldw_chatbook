@@ -8617,7 +8617,7 @@ class ChatScreen(BaseAppScreen):
             # width auto, not the Static default 100%: the holder is
             # width/height auto (task-1661), and a percentage-width child of
             # an auto container resolves to 0x0 under Textual 8.x -- the
-            # placeholder would mount but paint nothing (task-3401).
+            # placeholder would mount but paint nothing (task-3793).
             placeholder = Static(hint, id="console-character-avatar-empty")
             placeholder.styles.width = "auto"
             return placeholder
@@ -8671,7 +8671,7 @@ class ChatScreen(BaseAppScreen):
             # grid, not just max-width/max-height: the holder is
             # width/height auto (task-1661), and this Static's default
             # width: 100% resolves to 0x0 inside it under Textual 8.x --
-            # the avatar mounted but painted nothing at all (task-3401).
+            # the avatar mounted but painted nothing at all (task-3793).
             # Same pattern as ConsoleImageViewerModal._build_full_size_widget;
             # explicit_cell_size returns None for a rich_pixels renderable,
             # which is sized for the box anyway.

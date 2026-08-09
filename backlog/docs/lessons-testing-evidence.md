@@ -1242,7 +1242,7 @@ it cheap to actually read the diagnostics being newly blessed.
 
 ## A mounted widget with healthy data can still paint nothing — assert the painted region
 
-**Incident.** TASK-3401, 2026-08-08. The Console rail's character avatar was
+**Incident.** TASK-3793, 2026-08-08. The Console rail's character avatar was
 invisible (even the no-character placeholder was gone) and Roleplay thumbnails
 painted black stripes — while every existing avatar test passed, because they
 asserted the widget mounted, the DB bytes decoded, PIL produced an image, and

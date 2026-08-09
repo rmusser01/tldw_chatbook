@@ -768,7 +768,7 @@ def test_expanding_the_character_section_reallows_a_rail_width_avatar():
 
 
 
-# --- task-3401: explicit sizing regression pins -----------------------------
+# --- task-3793: explicit sizing regression pins -----------------------------
 #
 # The rail's avatar holder is width/height auto (task-1661); a default-width
 # (100%) Static inside an auto container resolves to 0x0 under Textual 8.x,
@@ -802,7 +802,7 @@ class _AvatarHolderApp(App):
 
 @pytest.mark.asyncio
 async def test_pixels_avatar_paints_nonzero_region_in_auto_holder():
-    """task-3401 regression: the pixels avatar must paint a non-zero region.
+    """task-3793 regression: the pixels avatar must paint a non-zero region.
 
     Mounts the real builder output in an auto/auto holder replicating
     ``ClickableAvatarBox`` and asserts the painted region is non-zero with
@@ -824,7 +824,7 @@ async def test_pixels_avatar_paints_nonzero_region_in_auto_holder():
     app = _AvatarHolderApp(screen, spec)
     async with app.run_test(size=(60, 30)):
         widget = app.query_one("#console-character-avatar-image", Static)
-        # Before task-3401 this region was 0x0: mounted, painted nothing.
+        # Before task-3793 this region was 0x0: mounted, painted nothing.
         assert widget.region.width > 0
         assert widget.region.height > 0
         # Explicit cell size from the mosaic grid, clamped to the avatar box
@@ -836,7 +836,7 @@ async def test_pixels_avatar_paints_nonzero_region_in_auto_holder():
 
 @pytest.mark.asyncio
 async def test_avatar_placeholder_paints_nonzero_region_in_auto_holder():
-    """task-3401 regression: the no-character placeholder must stay visible.
+    """task-3793 regression: the no-character placeholder must stay visible.
 
     Same auto/auto holder as the pixels case: the placeholder Static needs
     ``width auto`` so it cannot collapse to 0x0 under Textual 8.

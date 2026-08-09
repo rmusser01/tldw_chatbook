@@ -227,7 +227,7 @@ def test_monochrome_mosaic_is_never_blank_for_a_dark_portrait():
     )
 
 
-# --- task-3401: explicit_cell_size ------------------------------------------
+# --- task-3793: explicit_cell_size ------------------------------------------
 #
 # Every surface mounting a mosaic inside a Static needs the renderable's own
 # grid as an explicit cell size: a Static's default width: 100% resolves to

@@ -209,7 +209,7 @@ class PersonasCharacterEditorWidget(Container):
        preview rather than a scrolling message history. No horizontal
        padding: the mosaic renderable is baked at exactly AVATAR_THUMB_COLS
        columns, and padding used to shrink the content box below that,
-       folding every line into a black continuation stripe (task-3401). */
+       folding every line into a black continuation stripe (task-3793). */
     PersonasCharacterEditorWidget #personas-char-editor-avatar-thumb {
         height: 10;
         max-width: 24;
@@ -303,7 +303,7 @@ class PersonasCharacterEditorWidget(Container):
     /* Same box as #personas-char-editor-avatar-thumb above - Task 4 reuses
        PersonasScreen._fit_avatar_cell_size/_build_avatar_pixels unchanged
        for the expression thumbnails, so the box must match (padding-free
-       for the same fold-into-stripes reason, task-3401). */
+       for the same fold-into-stripes reason, task-3793). */
     PersonasCharacterEditorWidget .personas-char-editor-expr-thumb {
         height: 10;
         max-width: 24;
@@ -1075,7 +1075,7 @@ class PersonasCharacterEditorWidget(Container):
 
         # Explicit cell size from the baked renderable's grid: the Static
         # default width: 100% folds a full-width mosaic inside any narrower
-        # (or padded) box, painting black continuation stripes (task-3401);
+        # (or padded) box, painting black continuation stripes (task-3793);
         # an explicit size degrades a future width mismatch to a crop.
         thumb = _S(renderable)
         grid_size = explicit_cell_size(renderable)
@@ -1154,7 +1154,7 @@ class PersonasCharacterEditorWidget(Container):
         from ...Utils.mosaic_render import explicit_cell_size
 
         # Explicit cell size from the baked renderable's grid - same
-        # fold-into-stripes guard as set_avatar_thumbnail (task-3401).
+        # fold-into-stripes guard as set_avatar_thumbnail (task-3793).
         thumb = _S(renderable)
         grid_size = explicit_cell_size(renderable)
         if grid_size is not None:

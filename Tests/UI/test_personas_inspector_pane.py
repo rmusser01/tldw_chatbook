@@ -735,7 +735,7 @@ async def test_state_pushed_before_children_mount_defers_then_replays():
 
 
 async def test_avatar_thumbnail_static_matches_mosaic_grid_no_fold():
-    """task-3401: the inspector portrait must not fold into black stripes.
+    """task-3793: the inspector portrait must not fold into black stripes.
 
     The thumb box used to add padding 0 1 on top of max-width 24, so the
     24-column mosaic baked by PersonasScreen._build_avatar_pixels folded at
@@ -766,7 +766,7 @@ async def test_avatar_thumbnail_static_matches_mosaic_grid_no_fold():
         await pilot.pause()
         thumb_box = pane.query_one("#personas-inspector-avatar-thumb", Container)
         static = thumb_box.query_one(Static)
-        # Before task-3401 the painted height was ~2x the mosaic rows (fold).
+        # Before task-3793 the painted height was ~2x the mosaic rows (fold).
         assert static.region.height == len(mosaic.plain.split("\n"))
         assert static.region.width <= thumb_box.content_size.width
         padding = thumb_box.styles.padding

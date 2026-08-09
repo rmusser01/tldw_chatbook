@@ -67,7 +67,7 @@ class PersonasInspectorPane(Vertical):
        horizontal padding: the mosaic renderable is baked at exactly
        AVATAR_THUMB_COLS columns, and padding used to shrink the content box
        below that, folding every line into a black continuation stripe
-       (task-3401). */
+       (task-3793). */
     PersonasInspectorPane #personas-inspector-avatar-thumb {
         height: auto;
         max-width: 24;
@@ -618,7 +618,7 @@ class PersonasInspectorPane(Vertical):
 
         # Explicit cell size from the baked renderable's grid: the Static
         # default width: 100% folds a full-width mosaic inside any narrower
-        # (or padded) box, painting black continuation stripes (task-3401);
+        # (or padded) box, painting black continuation stripes (task-3793);
         # an explicit size degrades a future width mismatch to a crop.
         thumb = Static(renderable)
         grid_size = explicit_cell_size(renderable)
