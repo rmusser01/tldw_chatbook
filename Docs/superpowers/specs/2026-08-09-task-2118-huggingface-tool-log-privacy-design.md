@@ -84,4 +84,3 @@ Required focused verification:
 - `git diff --check`
 
 The implementation scope is limited to the HuggingFace logging call sites, their function-level privacy regression test, TASK-2118 documentation, and this spec/plan. No application-state, provider-routing, transport, or UI behavior changes are included.
-
