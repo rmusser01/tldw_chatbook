@@ -12,7 +12,7 @@
   "3": {
     "class_type": "SVD_img2vid_Conditioning",
     "inputs": {"width": 1024, "height": 576, "video_frames": 25, "motion_bucket_id": 127, "fps": 6, "augmentation_level": 0.0, "clip_vision": ["2", 1], "init_image": ["1", 0], "vae": ["2", 2]},
-    "_meta": {"title": "Width Height Frames"}
+    "_meta": {"title": "Width Height Frames FPS"}
   },
   "4": {
     "class_type": "KSampler",

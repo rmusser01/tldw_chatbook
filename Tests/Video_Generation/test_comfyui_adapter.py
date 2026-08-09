@@ -312,6 +312,19 @@ def test_workflow_resolution_rejects_user_workflow_symlink_escape(adapter, monke
         adapter._load_workflow("escape.json")
 
 
+def test_workflow_resolution_rejects_symlinked_workflow_parent(adapter, monkeypatch, tmp_path):
+    user_dir = tmp_path / "data"
+    user_dir.mkdir()
+    outside = tmp_path / "outside-workflows"
+    outside.mkdir()
+    (outside / "escape.json").write_text('{"outside": {"class_type": "Outside"}}')
+    (user_dir / "video_workflows").symlink_to(outside, target_is_directory=True)
+    monkeypatch.setattr(cva, "get_user_data_dir", lambda: user_dir)
+
+    with pytest.raises(VideoGenerationError, match="escapes"):
+        adapter._load_workflow("escape.json")
+
+
 def test_unsupported_reference_and_bad_output_are_clear(adapter, json_recorder, monkeypatch):
     graph = _workflow()
     _install_workflow(adapter, monkeypatch, graph)
@@ -339,6 +352,41 @@ def test_unsupported_reference_and_bad_output_are_clear(adapter, json_recorder, 
         adapter.generate(_request())
 
 
+@pytest.mark.parametrize(
+    "outputs",
+    [
+        {},
+        {"preview": {"images": [{"filename": "partial.png", "subfolder": "", "type": "output"}]}},
+    ],
+)
+def test_terminal_history_failure_is_not_masked_by_empty_or_partial_output(adapter, outputs):
+    history = {
+        "job-6": {
+            "outputs": outputs,
+            "status": {
+                "completed": True,
+                "status_str": "error",
+                "messages": [["execution_error", {"exception_message": "model unavailable"}]],
+            },
+        }
+    }
+
+    with pytest.raises(VideoGenerationError, match="execution failed: model unavailable"):
+        adapter._find_output_descriptor(history, "job-6")
+
+
+def test_terminal_success_without_media_fails_without_waiting(adapter):
+    history = {
+        "job-7": {
+            "outputs": {},
+            "status": {"completed": True, "status_str": "success", "messages": []},
+        }
+    }
+
+    with pytest.raises(VideoGenerationError, match="no supported video or animated-image output"):
+        adapter._find_output_descriptor(history, "job-7")
+
+
 def test_shipped_workflows_are_api_graphs_with_documented_titles(adapter):
     wan = adapter._load_workflow("wan22_t2v.json")
     svd = adapter._load_workflow("svd_xt_i2v.json")
@@ -358,10 +406,34 @@ def test_parameterizes_connected_controls_in_each_shipped_workflow(adapter):
     wan = adapter._parameterize_workflow(adapter._load_workflow("wan22_t2v.json"), request, None)
     svd = adapter._parameterize_workflow(adapter._load_workflow("svd_xt_i2v.json"), request, None)
 
-    assert wan["6"]["inputs"] == {"width": 1280, "height": 720, "length": 36, "batch_size": 1}
+    assert wan["7"]["inputs"] == {"width": 1280, "height": 720, "length": 36, "batch_size": 1, "vae": ["6", 0]}
     assert svd["3"]["inputs"]["width"] == 1280
     assert svd["3"]["inputs"]["height"] == 720
     assert svd["3"]["inputs"]["video_frames"] == 36
+    assert svd["3"]["inputs"]["fps"] == 12
+    assert svd["6"]["inputs"]["fps"] == 12
+
+
+def test_shipped_wan_workflow_routes_official_5b_topology(adapter):
+    workflow = adapter._load_workflow("wan22_t2v.json")
+    by_class = {
+        node["class_type"]: (node_id, node)
+        for node_id, node in workflow.items()
+    }
+    unet_id, unet = by_class["UNETLoader"]
+    sampling_id, sampling = by_class["ModelSamplingSD3"]
+    sampler_id, sampler = by_class["KSampler"]
+    latent_id, latent = by_class["Wan22ImageToVideoLatent"]
+    vae_id, _vae = by_class["VAELoader"]
+
+    assert unet["inputs"]["unet_name"] == "wan2.2_ti2v_5B_fp16.safetensors"
+    assert sampling["inputs"]["model"] == [unet_id, 0]
+    assert sampler["inputs"]["model"] == [sampling_id, 0]
+    assert latent["inputs"]["vae"] == [vae_id, 0]
+    assert "start_image" not in latent["inputs"]
+    assert sampler["inputs"]["latent_image"] == [latent_id, 0]
+    assert workflow["9"]["inputs"] == {"samples": [sampler_id, 0], "vae": [vae_id, 0]}
+    assert workflow["10"]["inputs"]["images"] == ["9", 0]
 
 
 def test_title_controls_reject_titles_with_unrelated_words(adapter):
