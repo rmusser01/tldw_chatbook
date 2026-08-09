@@ -15866,7 +15866,11 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-prompt-copy")
     def handle_library_prompt_copy(self, event: Button.Pressed) -> None:
-        """Copy the live Prompt/Recipe working copy as canonical Markdown."""
+        """Copy the live Prompt/Recipe working copy as canonical Markdown.
+
+        Args:
+            event: Button press emitted by the Prompt editor's Copy action.
+        """
         event.stop()
         if self._library_prompts_view != "editor":
             return
@@ -16256,7 +16260,11 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-prompt-delete")
     def handle_library_prompt_delete(self, event: Button.Pressed) -> None:
-        """Open a confirmation for the current Prompt/Recipe identity."""
+        """Open a confirmation for the current Prompt/Recipe identity.
+
+        Args:
+            event: Button press emitted by the Prompt editor's Delete action.
+        """
         event.stop()
         if self._library_prompts_view != "editor" or not self._selected_prompt_id:
             return
