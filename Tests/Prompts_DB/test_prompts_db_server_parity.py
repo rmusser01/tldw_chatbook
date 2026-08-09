@@ -3,7 +3,11 @@ import sqlite3
 
 import pytest
 
-from tldw_chatbook.DB.Prompts_DB import InputError, PromptsDatabase, add_or_update_prompt
+from tldw_chatbook.DB.Prompts_DB import (
+    InputError,
+    PromptsDatabase,
+    add_or_update_prompt,
+)
 
 
 def seed_v2_prompt_database(database_path, *, name, user_prompt):
@@ -279,7 +283,11 @@ def test_standalone_overwrite_helper_preserves_recipe_artifact_type():
             user_prompt="initial compiled text",
             prompt_format="structured",
             prompt_schema_version=2,
-            prompt_definition={"kind": "block_recipe", "schema_version": 2, "lanes": []},
+            prompt_definition={
+                "kind": "block_recipe",
+                "schema_version": 2,
+                "lanes": [],
+            },
             artifact_type="recipe",
         )
         add_or_update_prompt(
