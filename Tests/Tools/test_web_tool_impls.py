@@ -1584,7 +1584,11 @@ class _BlockingOnceClock:
         if self._first:
             self._first = False
             self._entered.set()
-            self._release.wait(timeout=5)
+            # Hard-fail rather than silently proceeding (Qodo PR #1451): a
+            # silent expiry lets the worker leave the critical section
+            # before the contention assertion runs on a loaded runner --
+            # turning a deterministic test into a flaky one.
+            assert self._release.wait(timeout=30), "lock-test release never set"
         return 0.0
 
 

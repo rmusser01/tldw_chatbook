@@ -1166,6 +1166,29 @@ async def test_analyze_and_aggregate_forwards_respect_robots_txt_true(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_analyze_and_aggregate_string_false_does_not_enable_robots(monkeypatch):
+    """Qodo PR #1451 (the arc's FOURTH bool("false") catch): a stringly
+    caller serializing search_params must not ENABLE enforcement with
+    "false" -- only "true"/"1" strings (or a real bool) enable; anything
+    else forwards False."""
+    captured = {}
+
+    async def fake_relevance(*args, **kwargs):
+        captured["respect_robots_txt"] = kwargs.get("respect_robots_txt")
+        return {}
+
+    monkeypatch.setattr(WebSearch_APIs, "search_result_relevance", fake_relevance)
+    wsr = {"results": [], "warnings": []}
+    sqd = {"main_goal": "q", "sub_questions": []}
+    for raw, expected in (("false", False), ("true", True), ("1", True), ("no", False), (0, False)):
+        captured.clear()
+        params = {"relevance_analysis_llm": "openai", "final_answer_llm": "openai",
+                  "respect_robots_txt": raw}
+        await WebSearch_APIs.analyze_and_aggregate(wsr, sqd, params)
+        assert captured["respect_robots_txt"] is expected, f"raw={raw!r}"
+
+
+@pytest.mark.asyncio
 async def test_analyze_and_aggregate_forwards_respect_robots_txt_false_when_absent(monkeypatch):
     """Companion case: an absent key must forward False (not None, not
     missing), proving the forwarding isn't hardcoded True and the

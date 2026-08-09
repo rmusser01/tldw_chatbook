@@ -685,7 +685,16 @@ async def analyze_and_aggregate(
     # research-service caller (never sets this) keeps today's no-robots-
     # check behavior; web_deep_search (the tool) always places the real
     # [webfetch] respect_robots_txt setting here.
-    respect_robots_txt = bool(search_params.get("respect_robots_txt", False))
+    raw_respect_robots = search_params.get("respect_robots_txt", False)
+    # Strict parse (Qodo PR #1451 — the fourth bool("false") catch of this
+    # arc): a stringly caller's "false" must not ENABLE enforcement. Bools
+    # pass through; only "true"/"1" strings enable; anything else is False.
+    if isinstance(raw_respect_robots, bool):
+        respect_robots_txt = raw_respect_robots
+    elif isinstance(raw_respect_robots, str):
+        respect_robots_txt = raw_respect_robots.strip().lower() in ("true", "1")
+    else:
+        respect_robots_txt = False
     relevant_results = await search_result_relevance(
         web_search_results_dict["results"],
         sub_query_dict["main_goal"],
@@ -766,6 +775,12 @@ async def analyze_and_aggregate(
 ######################### Question Analysis #########################
 #
 _SUBQUERY_GENERATION_MAX_ATTEMPTS = 3
+
+# One shared per-request HTTP timeout for every search backend this repo
+# owns (task-1355 added the literal to serper/exa/yandex; task-3060 to the
+# six older engines; Qodo PR #1451 named it). Bing predates both with its
+# own 10s and deliberately keeps it.
+SEARCH_BACKEND_TIMEOUT_S = 30
 """Number of paid LLM attempts `analyze_question` makes at generating
 sub-questions before giving up. Shared with `generate_and_search`'s
 total-failure warning (task-3221) so the "N attempts" the user is told
@@ -2740,7 +2755,7 @@ def search_web_brave(
 
     # task-3060: bound worst-case latency -- an unresponsive Brave endpoint
     # must not hang perform_websearch (and the deep-search pipeline) indefinitely.
-    response = requests.get(search_url, headers=headers, params=params, timeout=30)
+    response = requests.get(search_url, headers=headers, params=params, timeout=SEARCH_BACKEND_TIMEOUT_S)
     response.raise_for_status()
     # Response: https://api.search.brave.com/app/documentation/web-search/responses#WebSearchApiResponse
     brave_search_results = response.json()
@@ -2899,7 +2914,7 @@ def search_web_duckduckgo(
     for _ in range(5):
         # task-3060: bound worst-case latency per bootstrap/pagination call
         # (this loop can issue up to 5 requests.post calls, all this one site).
-        response = requests.post("https://html.duckduckgo.com/html", data=payload, timeout=30)
+        response = requests.post("https://html.duckduckgo.com/html", data=payload, timeout=SEARCH_BACKEND_TIMEOUT_S)
         resp_content = response.content
         if b"No  results." in resp_content:
             return results
@@ -3194,7 +3209,7 @@ def search_web_google(
         # Make the API call
         # task-3060: bound worst-case latency -- an unresponsive Google CSE
         # endpoint must not hang perform_websearch indefinitely.
-        response = requests.get(search_url, params=params, timeout=30)
+        response = requests.get(search_url, params=params, timeout=SEARCH_BACKEND_TIMEOUT_S)
         response.raise_for_status()
         google_search_results = response.json()
 
@@ -3397,7 +3412,7 @@ def search_web_kagi(query: str, limit: int = 10) -> Dict:
 
     # task-3060: bound worst-case latency -- an unresponsive Kagi endpoint
     # must not hang perform_websearch indefinitely.
-    response = requests.get(endpoint, headers=headers, params=params, timeout=30)
+    response = requests.get(endpoint, headers=headers, params=params, timeout=SEARCH_BACKEND_TIMEOUT_S)
     response.raise_for_status()
     logger.debug(response.json())
     return response.json()
@@ -3561,7 +3576,7 @@ def search_web_searx(
         # task-3060: bound worst-case latency -- Session.get() does not
         # inherit a timeout from the Session itself, so it must be passed
         # per-request like every other engine here.
-        response = session.get(search_url, headers=headers, timeout=30)
+        response = session.get(search_url, headers=headers, timeout=SEARCH_BACKEND_TIMEOUT_S)
         response.raise_for_status()
 
         # Check if the response is JSON
@@ -3711,7 +3726,7 @@ def search_web_serper(
         "hl": search_lang or "en",
         "num": int(result_count) if result_count else 10,
     }
-    response = requests.post("https://google.serper.dev/search", headers=headers, json=payload, timeout=30)
+    response = requests.post("https://google.serper.dev/search", headers=headers, json=payload, timeout=SEARCH_BACKEND_TIMEOUT_S)
     response.raise_for_status()
     return response.json()
 
@@ -3781,7 +3796,7 @@ def search_web_exa(search_query: str, result_count: Optional[int] = None) -> dic
         "type": "auto",
         "contents": {"highlights": True},
     }
-    response = requests.post("https://api.exa.ai/search", headers=headers, json=payload, timeout=30)
+    response = requests.post("https://api.exa.ai/search", headers=headers, json=payload, timeout=SEARCH_BACKEND_TIMEOUT_S)
     response.raise_for_status()
     return response.json()
 
@@ -3849,7 +3864,7 @@ def search_web_tavily(
         # task-3060: bound worst-case latency -- an unresponsive Tavily
         # endpoint must not hang perform_websearch indefinitely.
         response = requests.post(
-            tavily_api_url, headers=headers, data=json.dumps(payload), timeout=30
+            tavily_api_url, headers=headers, data=json.dumps(payload), timeout=SEARCH_BACKEND_TIMEOUT_S
         )
         response.raise_for_status()
         return response.json()
@@ -3954,7 +3969,7 @@ def search_web_yandex(search_query: str, result_count: Optional[int] = None) -> 
         "responseFormat": "FORMAT_XML",
     }
     response = requests.post(
-        "https://searchapi.api.cloud.yandex.net/v2/web/search", headers=headers, json=payload, timeout=30
+        "https://searchapi.api.cloud.yandex.net/v2/web/search", headers=headers, json=payload, timeout=SEARCH_BACKEND_TIMEOUT_S
     )
     response.raise_for_status()
     return response.json()
