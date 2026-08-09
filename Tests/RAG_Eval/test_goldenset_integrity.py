@@ -255,6 +255,9 @@ def test_corpus_composition_matches_the_planned_design(corpus):
 
 def test_golden_set_category_quotas(golden):
     counts = Counter(query.category for query in golden)
+    # 44 original + kw-plant-maintenance-record, the vector-blind keyword
+    # case added for TASK-3994 AC #2 (see the corpus section of that name;
+    # it is the only query on this set semantic mode does not answer).
     assert len(golden) == 45
     assert counts["keyword"] >= 10
     assert counts["paraphrase"] >= 10

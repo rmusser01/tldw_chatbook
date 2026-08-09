@@ -219,7 +219,7 @@ Every golden query carries one of four categories:
 - **`vocabulary_mismatch`** — a stronger version of paraphrase: the query
   and the document use genuinely disjoint vocabularies for the same concept
   (e.g. "no will" / "intestacy"). **Caveat, found running this harness for
-  real, not assumed at design time:** against this 48-document corpus and
+  real, not assumed at design time:** against this 49-document corpus and
   `all-MiniLM-L6-v2`, every planted vocabulary-mismatch pair is bridged —
   semantic and hybrid score 1.000 recall at rank 1 on all nine
   `vocabulary_mismatch` queries. Only `plain` shows the gap (0.000). So on
@@ -365,10 +365,15 @@ mechanisms and source locations before attempting anything here:
   shipped defaults (alpha 0.7, rrf_k 60) a keyword rank-1 row scores
   0.00492 and loses to every vector row better than rank ~82, while the
   vector leg is only ever asked for `2k` results. So whenever the vector
-  leg returns k or more rows, a document only the keyword leg found is
-  structurally unreachable. `kw-plant-maintenance-record` is its
-  before-number: plain rank 1, semantic absent, engine FTS leg rank 1,
-  hybrid absent.
+  leg returns k or more **distinct documents**, a document only the
+  keyword leg found is structurally unreachable. Distinct *documents*, not
+  rows, is the load-bearing word: fusion dedups by document identity, so a
+  vector leg returning `2k` chunk rows that collapse to fewer than k
+  documents leaves room, which is why keyword-only rows still appear when
+  the vector index is thin or unrelated to the selected sources.
+  `kw-plant-maintenance-record` is the before-number for the case that
+  matters: plain rank 1, semantic absent, engine FTS leg rank 1, hybrid
+  absent.
 
 Do not "fix" any of these by editing the harness or the fixtures — the
 harness's job is to keep measuring the real seam accurately; the numbers it
