@@ -354,6 +354,26 @@ class LocalPromptService:
             include_deleted=include_deleted,
         )
 
+    def browse_prompts(
+        self,
+        *,
+        query: str = "",
+        collection_id: int | None = None,
+        sort_by: str = "last_modified",
+        sort_order: str = "desc",
+        page: int = 1,
+        page_size: int = 50,
+    ) -> Any:
+        """Delegate one exact browse page to the local database."""
+        return self.prompt_db.browse_prompts(
+            query=query,
+            collection_id=collection_id,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            page=page,
+            page_size=page_size,
+        )
+
     def count_prompts(self, *, include_deleted: bool = False, **_kwargs: Any) -> int:
         """Count local prompts without fetching a full page.
 
@@ -812,6 +832,63 @@ class PromptScopeService:
         )
         return self._normalize_prompt_list(
             response, backend=normalized_mode.value, page=page, per_page=per_page
+        )
+
+    async def browse_prompts(
+        self,
+        *,
+        mode: PromptBackend | str = "local",
+        query: str = "",
+        collection_id: int | None = None,
+        sort_by: str = "last_modified",
+        sort_order: str = "desc",
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict[str, Any]:
+        """Browse one normalized page from the local Prompt library."""
+        mode_value = mode.value if isinstance(mode, PromptBackend) else mode
+        if not isinstance(mode_value, str) or mode_value.strip().lower() != "local":
+            raise ValueError("Prompt browsing is local-only.")
+        if not isinstance(query, str):
+            raise TypeError("query must be a string.")
+        if collection_id is not None and (
+            type(collection_id) is not int or collection_id <= 0
+        ):
+            raise ValueError("collection_id must be a positive integer or None.")
+        if not isinstance(sort_by, str):
+            raise TypeError("sort_by must be a string.")
+        sort_by = sort_by.strip().lower()
+        if sort_by not in {"last_modified", "name"}:
+            raise ValueError("sort_by must be 'last_modified' or 'name'.")
+        if not isinstance(sort_order, str):
+            raise TypeError("sort_order must be a string.")
+        sort_order = sort_order.strip().lower()
+        if sort_order not in {"asc", "desc"}:
+            raise ValueError("sort_order must be 'asc' or 'desc'.")
+        if type(page) is not int or page <= 0:
+            raise ValueError("page must be a positive integer.")
+        if type(page_size) is not int or page_size <= 0:
+            raise ValueError("page_size must be a positive integer.")
+        query = query.strip()
+        page_size = min(page_size, 100)
+
+        self._enforce_policy("prompts.list.local")
+        service = self._service_for_mode(PromptBackend.LOCAL)
+        response = await self._maybe_await(
+            service.browse_prompts(
+                query=query,
+                collection_id=collection_id,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                page=page,
+                page_size=page_size,
+            )
+        )
+        return self._normalize_prompt_list(
+            response,
+            backend="local",
+            page=page,
+            per_page=page_size,
         )
 
     async def count_prompts(self, *, mode: PromptBackend | str = "local") -> int:

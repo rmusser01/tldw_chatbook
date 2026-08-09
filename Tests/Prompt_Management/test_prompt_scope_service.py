@@ -410,6 +410,142 @@ class FakeServerPromptService:
         )
 
 
+class RecordingPromptBrowseDatabase:
+    """Signature-real adapter target for the Task 3 database seam."""
+
+    def __init__(self):
+        self.calls = []
+
+    def browse_prompts(
+        self,
+        *,
+        query="",
+        collection_id=None,
+        sort_by="last_modified",
+        sort_order="desc",
+        page=1,
+        page_size=50,
+    ):
+        self.calls.append(
+            {
+                "query": query,
+                "collection_id": collection_id,
+                "sort_by": sort_by,
+                "sort_order": sort_order,
+                "page": page,
+                "page_size": page_size,
+            }
+        )
+        return (
+            [
+                {
+                    "id": 7,
+                    "uuid": "local-uuid-7",
+                    "name": "Local Prompt",
+                    "artifact_type": "prompt",
+                }
+            ],
+            3,
+            2,
+            121,
+        )
+
+
+def test_browse_prompt_local_adapter_exposes_narrow_keyword_only_signature():
+    parameters = inspect.signature(LocalPromptService.browse_prompts).parameters
+
+    assert tuple(parameters) == (
+        "self",
+        "query",
+        "collection_id",
+        "sort_by",
+        "sort_order",
+        "page",
+        "page_size",
+    )
+    assert all(
+        parameter.kind is inspect.Parameter.KEYWORD_ONLY
+        for name, parameter in parameters.items()
+        if name != "self"
+    )
+
+
+@pytest.mark.asyncio
+async def test_browse_prompt_routes_normalized_local_scope_through_real_adapter():
+    database = RecordingPromptBrowseDatabase()
+    policy = FakePolicyEnforcer()
+    service = PromptScopeService(
+        local_service=LocalPromptService(database),
+        server_service=FakeServerPromptService(),
+        policy_enforcer=policy,
+    )
+
+    result = await service.browse_prompts(
+        mode="local",
+        query="  alpha beta \n",
+        collection_id=8,
+        sort_by=" NAME ",
+        sort_order=" ASC ",
+        page=2,
+        page_size=999,
+    )
+
+    assert database.calls == [
+        {
+            "query": "alpha beta",
+            "collection_id": 8,
+            "sort_by": "name",
+            "sort_order": "asc",
+            "page": 2,
+            "page_size": 100,
+        }
+    ]
+    assert result["items"][0]["id"] == "local:prompt:local-uuid-7"
+    assert result["total_items"] == 121
+    assert result["total_pages"] == 3
+    assert result["current_page"] == 2
+    assert result["per_page"] == 100
+    assert policy.actions == ["prompts.list.local"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["server", "all", "mixed"])
+async def test_browse_prompt_rejects_non_local_library_modes_without_routing(mode):
+    database = RecordingPromptBrowseDatabase()
+    server = FakeServerPromptService()
+    service = PromptScopeService(LocalPromptService(database), server)
+
+    with pytest.raises(ValueError, match="local|backend"):
+        await service.browse_prompts(mode=mode)
+
+    assert database.calls == []
+    assert server.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"sort_by": "name; DROP TABLE Prompts"}, "sort_by"),
+        ({"sort_order": "sideways"}, "sort_order"),
+        ({"collection_id": True}, "collection_id"),
+        ({"page": 0}, "page"),
+        ({"page_size": 0}, "page_size"),
+        ({"query": None}, "query"),
+    ],
+)
+async def test_browse_prompt_rejects_invalid_scope_before_adapter_call(kwargs, message):
+    database = RecordingPromptBrowseDatabase()
+    service = PromptScopeService(
+        LocalPromptService(database), FakeServerPromptService()
+    )
+
+    with pytest.raises((TypeError, ValueError), match=message):
+        await service.browse_prompts(**kwargs)
+
+    assert database.calls == []
+
+
 @pytest.mark.asyncio
 async def test_prompt_scope_lists_local_and_server_prompts_with_stable_ids():
     policy = FakePolicyEnforcer()
