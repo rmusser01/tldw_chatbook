@@ -6,9 +6,11 @@ embeddings, vector stores, chunking, and search operations.
 """
 
 import asyncio
+import sqlite3
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from pathlib import Path
 from typing import (
     Any,
@@ -47,7 +49,12 @@ from .vector_store import create_vector_store, SearchResult, SearchResultWithCit
 from .citations import Citation, CitationType, merge_citations
 from .config import RAGConfig
 from .collection_fingerprint import fingerprinted_collection_name, collection_provenance
-from ..fusion import reciprocal_rank_fusion, resolve_hybrid_alpha, DEFAULT_RRF_K
+from ..fusion import (
+    reciprocal_rank_fusion,
+    resolve_hybrid_alpha,
+    interleave_rankings,
+    DEFAULT_RRF_K,
+)
 from ..chunking_service import ChunkingService
 from .simple_cache import SimpleRAGCache
 from .db_connection_pool import get_connection_pool
@@ -85,6 +92,22 @@ EMBEDDING_PROGRESS_INTERVAL = _rag_service_config.get("embedding_progress_interv
 DEFAULT_BATCH_SIZE = _rag_service_config.get(
     "batch_size", 32
 )  # This one matches the rag.embedding.batch_size
+
+
+# The keyword leg's sub-leg vocabulary. These MUST stay byte-identical to
+# `ingestion_indexing.ITEM_TYPE_*` (the singular `media`/`note`/
+# `conversation` the vector leg stamps): `_fusion_doc_key` compares the raw
+# strings, so a plural or variant spelling would leave keyword rows present
+# but never merging with their vector twins -- a silent, test-green
+# reversion of TASK-3996's purpose. They are copies rather than imports so
+# the search path does not depend on the indexing module (which reaches back
+# into this package for the service factory); drift is caught instead of
+# prevented, by `test_keyword_leg_chacha.test_cross_leg_merge_per_source_
+# type`, which builds its vector rows from the REAL `ingestion_indexing`
+# documents and fails the moment the two definitions disagree.
+SOURCE_TYPE_MEDIA = "media"
+SOURCE_TYPE_NOTE = "note"
+SOURCE_TYPE_CONVERSATION = "conversation"
 
 
 def _fusion_doc_key(result: Any) -> Hashable:
@@ -830,14 +853,33 @@ class RAGService:
         include_citations: bool = True,
     ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
         """
-        Perform keyword search using FTS5 from the media database.
+        Perform keyword (FTS5) search across media, notes and conversations.
 
-        This implementation leverages the existing FTS5 index in the MediaDatabase
-        for efficient keyword-based search with proper connection pooling.
+        TASK-3996: this leg used to join ``media_fts`` and nothing else, so
+        the keyword half of hybrid search could only ever return media rows
+        -- notes and conversations were structurally unreachable through it
+        no matter what the query said (28 of the P1 fixture corpus's 48
+        documents). It is now three sub-legs over two databases:
+
+        * media -- ``media_fts`` in the media DB, via the connection pool;
+        * notes -- ``notes_fts`` in the ChaChaNotes DB;
+        * conversations -- ``messages_fts`` in the ChaChaNotes DB, one row
+          per matching conversation.
+
+        The two ChaChaNotes sub-legs run over a READ-ONLY raw connection
+        (never ``CharactersRAGDB``, whose constructor does schema work), and
+        each sub-leg degrades independently: a missing chacha DB costs the
+        notes/conversation rows and leaves media untouched, and vice versa.
+        The leg is empty only when every sub-leg is empty or unavailable.
+
+        The sub-legs are merged rank-fairly (``interleave_rankings``, round
+        robin by rank position) rather than concatenated: FTS5 scores from
+        different tables are not comparable, and concatenation would let one
+        well-stocked source consume every ``top_k`` slot.
         """
         # TASK-3995: a query with no FTS5-searchable tokens (empty,
         # whitespace-only, or all punctuation) escapes to "" and can only
-        # ever match nothing. Short-circuit before resolving the media DB
+        # ever match nothing. Short-circuit before resolving any DB
         # path or acquiring a connection -- no FTS5 call, no DB touch.
         if not self._escape_fts5_query(query):
             logger.debug(
@@ -847,6 +889,49 @@ class RAGService:
             )
             return []
 
+        media_ranking, chacha_rankings = await asyncio.gather(
+            self._media_keyword_subleg(
+                query, top_k, filter_metadata, include_citations
+            ),
+            self._chacha_keyword_sublegs(
+                query, top_k, filter_metadata, include_citations
+            ),
+        )
+
+        rankings = [
+            ranking for ranking in (media_ranking, *chacha_rankings) if ranking
+        ]
+        if not rankings:
+            return []
+
+        # Deduplicate on the same document identity fusion uses, so a
+        # document that somehow appears in two sub-legs occupies one slot.
+        results = interleave_rankings(rankings, key=_fusion_doc_key)[:top_k]
+        logger.info(
+            f"Keyword search found {len(results)} results for query: '{query}' "
+            f"across {len(rankings)} sub-leg(s)"
+        )
+        return results
+
+    async def _media_keyword_subleg(
+        self,
+        query: str,
+        top_k: int,
+        filter_metadata: Optional[Dict[str, Any]] = None,
+        include_citations: bool = True,
+    ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
+        """The media sub-leg of the keyword search: FTS5 over the media DB.
+
+        Args:
+            query: Raw user query (escaped for FTS5 downstream).
+            top_k: Maximum rows this sub-leg contributes.
+            filter_metadata: Optional metadata equality filters.
+            include_citations: Whether to build citation-carrying rows.
+
+        Returns:
+            Media rows, best first; ``[]`` on any failure (this sub-leg
+            never breaks the other two).
+        """
         try:
             # Resolve the media DB path -- explicit override wins, otherwise
             # defer to the single authoritative resolver. No guessing across
@@ -938,20 +1023,354 @@ class RAGService:
                     search_results, filter_metadata, top_k
                 )
 
-            logger.info(
-                f"Keyword search found {len(results)} results for query: '{query}'"
+            logger.debug(
+                f"Media keyword sub-leg found {len(results)} results for "
+                f"query: '{query}'"
             )
             return results
 
         except Exception as e:
             logger.opt(exception=True).error(
-                f"Keyword search failed for query '{query}': {e}"
+                f"Media keyword sub-leg failed for query '{query}': {e}"
             )
             # Log additional context for debugging
             logger.debug(
                 f"Search parameters: top_k={top_k}, include_citations={include_citations}"
             )
             # Return empty list on error to maintain compatibility
+            return []
+
+    async def _chacha_keyword_sublegs(
+        self,
+        query: str,
+        top_k: int,
+        filter_metadata: Optional[Dict[str, Any]] = None,
+        include_citations: bool = True,
+    ) -> List[Union[List[SearchResult], List[SearchResultWithCitations]]]:
+        """The notes and conversation sub-legs, over a read-only chacha DB.
+
+        Args:
+            query: Raw user query (escaped for FTS5 downstream).
+            top_k: Maximum rows each sub-leg contributes.
+            filter_metadata: Optional metadata equality filters.
+            include_citations: Whether to build citation-carrying rows.
+
+        Returns:
+            One ranking per non-empty sub-leg (notes, then conversations),
+            each best first -- ready for ``interleave_rankings``. An
+            unavailable database or a failed sub-query yields fewer (or no)
+            rankings and one logged warning; it never raises and never
+            affects the media sub-leg.
+        """
+        # Nothing below may raise: `_hybrid_search` gathers this leg with the
+        # semantic one without `return_exceptions`, so an escaping exception
+        # would fail the whole search rather than degrade one sub-leg.
+        try:
+            db_path = self._resolve_chachanotes_db_path()
+            if db_path is None:
+                return []
+
+            loop = asyncio.get_event_loop()
+            raw_rows = await loop.run_in_executor(
+                None,
+                self._chacha_fts_rows,
+                db_path,
+                query,
+                top_k * SEARCH_RESULT_MULTIPLIER,  # Get extra for filtering
+            )
+
+            rankings: List[Any] = []
+            for source_type in (SOURCE_TYPE_NOTE, SOURCE_TYPE_CONVERSATION):
+                items = raw_rows.get(source_type) or []
+                if not items:
+                    continue
+                if include_citations:
+                    rows = await self._process_keyword_results_with_citations(
+                        items, query, filter_metadata, top_k, source_type=source_type
+                    )
+                else:
+                    rows = self._process_keyword_results_basic(
+                        items, filter_metadata, top_k, source_type=source_type
+                    )
+                if rows:
+                    rankings.append(rows)
+            return rankings
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"ChaChaNotes keyword sub-legs failed for query '{query}': {e}; "
+                "the media sub-leg is unaffected."
+            )
+            return []
+
+    def _resolve_chachanotes_db_path(self) -> Optional[Path]:
+        """Resolve (and validate) the ChaChaNotes DB path for the FTS leg.
+
+        Mirrors the media sub-leg's treatment exactly: an explicit config
+        override wins, otherwise the single authoritative resolver
+        (``get_chachanotes_db_path``) decides -- no guessing across
+        candidate filenames, and never a create-on-miss (a search must not
+        have the side effect of creating a database). The config-sourced
+        override is run through ``path_validation``'s traversal/injection
+        screen plus lexical normalization before it reaches a filesystem
+        check, the same as ``media_db_path``.
+
+        Returns:
+            The validated, existing path, or ``None`` (with one logged
+            warning naming the reason and the path) when the notes and
+            conversation sub-legs must be skipped.
+        """
+        from tldw_chatbook.Utils.path_validation import validate_path_simple
+        from tldw_chatbook.Utils.private_paths import lexical_path
+
+        try:
+            from tldw_chatbook.config import get_chachanotes_db_path
+
+            db_path_raw = (
+                self.config.search.chachanotes_db_path or get_chachanotes_db_path()
+            )
+        except Exception as e:
+            logger.warning(
+                f"Could not resolve the ChaChaNotes database path: {e}; the "
+                "notes and conversation keyword sub-legs return no results."
+            )
+            return None
+
+        try:
+            db_path = lexical_path(
+                validate_path_simple(
+                    Path(str(db_path_raw)).expanduser(),
+                    require_exists=False,
+                    probe_existing=False,
+                )
+            )
+        except ValueError as e:
+            logger.warning(
+                f"Rejected chachanotes_db_path from config ({db_path_raw!r}): "
+                f"{e}; the notes and conversation keyword sub-legs return no "
+                "results (a search never creates a database)."
+            )
+            return None
+
+        # The media sub-leg defers symlink authority to the private SQLite
+        # owner (MediaDatabase -> connect_private_sqlite performs a no-follow
+        # open). This leg opens SQLite directly, so it makes that same call
+        # explicitly rather than inheriting a weaker guarantee: a symlinked
+        # DB path is refused instead of followed.
+        if db_path.is_symlink():
+            logger.warning(
+                f"ChaChaNotes database path {db_path} is a symlink; the notes "
+                "and conversation keyword sub-legs return no results."
+            )
+            return None
+
+        if not db_path.exists() or not db_path.is_file():
+            logger.warning(
+                f"ChaChaNotes database not found at {db_path}; the notes and "
+                "conversation keyword sub-legs return no results (a search "
+                "never creates a database)."
+            )
+            return None
+
+        return db_path
+
+    def _connect_chacha_readonly(self, db_path: Union[str, Path]) -> sqlite3.Connection:
+        """Open the ChaChaNotes database read-only, without the ORM.
+
+        Two properties, both deliberate (TASK-3996):
+
+        * ``mode=ro`` makes the connection structurally incapable of
+          writing -- any write raises ``sqlite3.OperationalError`` rather
+          than relying on this code never issuing one;
+        * it is a raw ``sqlite3`` connection, not ``CharactersRAGDB``, whose
+          constructor runs schema creation/migration checks and client
+          registration on open. The engine's search path must never do that
+          to the user's main database.
+
+        Args:
+            db_path: An absolute, already-validated database path.
+
+        Returns:
+            A read-only connection with ``sqlite3.Row`` rows. The caller
+            owns closing it.
+        """
+        from tldw_chatbook.Utils.private_paths import lexical_path
+
+        # `as_uri()` requires an absolute path and percent-encodes anything
+        # SQLite's URI parser would otherwise read as a parameter separator.
+        uri = f"{lexical_path(db_path).as_uri()}?mode=ro"
+        conn = sqlite3.connect(uri, uri=True)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _chacha_fts_rows(
+        self, db_path: Path, query: str, limit: int
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Run both ChaChaNotes FTS sub-queries on one read-only connection.
+
+        Args:
+            db_path: Validated path to the ChaChaNotes database.
+            query: Raw user query.
+            limit: Maximum rows per sub-query.
+
+        Returns:
+            ``{"note": [...], "conversation": [...]}`` -- an unopenable
+            database or a failing sub-query yields empty lists plus one
+            logged warning, never an exception.
+        """
+        rows: Dict[str, List[Dict[str, Any]]] = {
+            SOURCE_TYPE_NOTE: [],
+            SOURCE_TYPE_CONVERSATION: [],
+        }
+
+        escaped_query = self._escape_fts5_query(query)
+        if not escaped_query:
+            return rows
+
+        if not isinstance(limit, int) or limit < 1:
+            limit = DEFAULT_FTS5_LIMIT
+        limit = min(limit, MAX_FTS5_LIMIT)
+
+        try:
+            conn = self._connect_chacha_readonly(db_path)
+        except (sqlite3.Error, ValueError, OSError) as e:
+            logger.warning(
+                f"Could not open the ChaChaNotes database at {db_path} "
+                f"read-only: {e}; the notes and conversation keyword "
+                "sub-legs return no results."
+            )
+            return rows
+
+        with closing(conn):
+            rows[SOURCE_TYPE_NOTE] = self._chacha_notes_fts(
+                conn, escaped_query, limit
+            )
+            rows[SOURCE_TYPE_CONVERSATION] = self._chacha_conversations_fts(
+                conn, escaped_query, limit
+            )
+        return rows
+
+    @staticmethod
+    def _chacha_notes_fts(
+        conn: sqlite3.Connection, escaped_query: str, limit: int
+    ) -> List[Dict[str, Any]]:
+        """Notes sub-query: mirrors ``CharactersRAGDB.search_notes``.
+
+        Same FTS table and join (``notes_fts`` is an external-content table
+        over ``notes``, joined on ``rowid``), same ``rank`` ordering, and the
+        same ``notes.deleted = 0`` filter. That filter reads as redundant --
+        the soft-delete trigger evicts the row from the index -- and is not:
+        an external-content ``'rebuild'`` re-indexes the content table,
+        deleted rows included, and this predicate is then the only thing
+        keeping a deleted note out of search results (pinned by
+        ``test_deleted_notes_and_conversations_are_excluded``, which rebuilds
+        both indexes; without the rebuild, dropping this line changed
+        nothing).
+
+        Args:
+            conn: Read-only ChaChaNotes connection.
+            escaped_query: A per-token-quoted FTS5 MATCH expression.
+            limit: Maximum rows.
+
+        Returns:
+            Row dicts (``id``/``title``/``content``), best match first.
+        """
+        sql = """
+        SELECT
+            main.id AS id,
+            main.title AS title,
+            main.content AS content
+        FROM notes_fts fts
+        JOIN notes main ON fts.rowid = main.rowid
+        WHERE fts.notes_fts MATCH ?
+          AND main.deleted = 0
+        ORDER BY rank
+        LIMIT ?
+        """
+        try:
+            cursor = conn.execute(sql, (escaped_query, limit))
+            return [
+                {
+                    "id": row["id"],
+                    "title": row["title"] or f"Note {row['id']}",
+                    "content": row["content"] or "",
+                }
+                for row in cursor
+            ]
+        except sqlite3.Error as e:
+            logger.warning(
+                f"Notes keyword sub-leg failed: {e}; returning no note rows."
+            )
+            return []
+
+    @staticmethod
+    def _chacha_conversations_fts(
+        conn: sqlite3.Connection, escaped_query: str, limit: int
+    ) -> List[Dict[str, Any]]:
+        """Conversations sub-query: mirrors
+        ``CharactersRAGDB.search_conversations_by_content``.
+
+        Message content is what is indexed (``messages_fts``), but the unit
+        of retrieval is the CONVERSATION -- one row per conversation at its
+        best matching message's rank (``GROUP BY c.id``, ``MIN(rank)``,
+        ``ORDER BY best_rank``), matching both the ORM's convention and the
+        ``conversation`` document the vector leg indexes (whose ``source_id``
+        is the conversation id -- the two legs must agree for fusion to
+        merge them).
+
+        Both soft-delete filters the ORM applies are replicated:
+        ``messages.deleted = 0`` AND ``conversations.deleted = 0``. The
+        conversations one is load-bearing at all times -- deleting a
+        conversation does not soft-delete its messages, so without it a
+        deleted conversation keeps matching through its surviving messages.
+        The messages one matters after an index ``'rebuild'`` (see
+        ``_chacha_notes_fts``), which re-admits soft-deleted messages.
+
+        The document text is the matched messages rendered as
+        ``sender: content`` lines, the same shape
+        ``ingestion_indexing.conversation_document`` indexes (restricted to
+        the matching messages, which is what the user searched for).
+
+        Args:
+            conn: Read-only ChaChaNotes connection.
+            escaped_query: A per-token-quoted FTS5 MATCH expression.
+            limit: Maximum conversations.
+
+        Returns:
+            Row dicts (``id``/``title``/``content``), best match first.
+        """
+        sql = """
+        SELECT
+            c.id AS id,
+            c.title AS title,
+            MIN(rank) AS best_rank,
+            group_concat(
+                COALESCE(m.sender, 'unknown') || ': ' || m.content, char(10)
+            ) AS content
+        FROM messages_fts fts
+        JOIN messages m ON fts.rowid = m.rowid
+        JOIN conversations c ON m.conversation_id = c.id
+        WHERE fts.messages_fts MATCH ?
+          AND m.deleted = 0
+          AND c.deleted = 0
+        GROUP BY c.id
+        ORDER BY best_rank
+        LIMIT ?
+        """
+        try:
+            cursor = conn.execute(sql, (escaped_query, limit))
+            return [
+                {
+                    "id": row["id"],
+                    "title": row["title"] or f"Conversation {row['id']}",
+                    "content": row["content"] or "",
+                }
+                for row in cursor
+            ]
+        except sqlite3.Error as e:
+            logger.warning(
+                f"Conversations keyword sub-leg failed: {e}; returning no "
+                "conversation rows."
+            )
             return []
 
     async def _hybrid_search(
@@ -1162,13 +1581,70 @@ class RAGService:
 
     # === Management Methods ===
 
+    @staticmethod
+    def _keyword_row_metadata(
+        item: Dict, content: str, source_type: str
+    ) -> Dict[str, Any]:
+        """Build one keyword-leg row's metadata, for any sub-leg.
+
+        Args:
+            item: The raw sub-leg row (media / note / conversation).
+            content: The already size-limited document text.
+            source_type: The sub-leg's ``SOURCE_TYPE_*`` value. Stamped
+                verbatim -- ``_fusion_doc_key`` compares these raw strings
+                against what ``ingestion_indexing`` stamps on the vector
+                side, so the singular vocabulary is load-bearing.
+
+        Returns:
+            The row metadata. ``source_id`` is the BARE row id, which is
+            both what ``_fusion_doc_key`` prefers and what the vector leg
+            carries (spread from the ingestion document into every chunk);
+            ``doc_id`` keeps the same value for the media leg's existing
+            consumers.
+        """
+        return {
+            "doc_id": str(item["id"]),
+            # The keyword leg used to stamp only `doc_id`, leaving
+            # `_semantic_row` to fall back to the PREFIXED row id
+            # (`media_15`) as the row's source id -- unlike every vector-leg
+            # row, whose `source_id` is the bare id. Stamping it here makes
+            # the two legs agree for fusion and gives the Library's "open
+            # source" action an id it can actually resolve.
+            "source_id": str(item["id"]),
+            "doc_title": item.get("title", "Untitled"),
+            # The display key. The vector leg gets `title` for free
+            # (the indexing call spreads the document's own metadata
+            # into every chunk); this leg builds its metadata from
+            # scratch, so without this a keyword-leg row reaches the
+            # Library evidence list as "Untitled source" -- observed
+            # live under Hybrid Full with an empty semantic leg.
+            # `_semantic_row` (library_local_rag_search_service) reads
+            # `title`/`document_title` and never `doc_title`.
+            "title": item.get("title") or "",
+            "media_type": item.get("type"),
+            "url": item.get("url"),
+            "author": item.get("author"),
+            "ingestion_date": item.get("ingestion_date"),
+            "text_preview": content[:200],
+            "source_type": source_type,
+            "source": source_type,
+        }
+
     def _process_keyword_results_basic(
         self,
         search_results: List[Dict],
         filter_metadata: Optional[Dict[str, Any]],
         top_k: int,
+        source_type: str = SOURCE_TYPE_MEDIA,
     ) -> List[SearchResult]:
-        """Process keyword search results without citations."""
+        """Process keyword search results without citations.
+
+        Args:
+            search_results: Raw sub-leg rows, best first.
+            filter_metadata: Optional metadata equality filters.
+            top_k: Maximum rows to return.
+            source_type: Which sub-leg produced these rows.
+        """
         results = []
 
         for item in search_results:
@@ -1176,7 +1652,8 @@ class RAGService:
             if filter_metadata:
                 item_meta = {
                     "media_type": item.get("type"),
-                    "source": "media",
+                    "source": source_type,
+                    "source_type": source_type,
                     "author": item.get("author"),
                 }
                 if not all(
@@ -1190,29 +1667,10 @@ class RAGService:
             content = item.get("content", "")[:1000]  # Limit content size
 
             base_result = SearchResult(
-                id=f"media_{item['id']}",
+                id=f"{source_type}_{item['id']}",
                 score=KEYWORD_SEARCH_SCORE,  # FTS5 doesn't provide normalized scores
                 document=content,
-                metadata={
-                    "doc_id": str(item["id"]),
-                    "doc_title": item.get("title", "Untitled"),
-                    # The display key. The vector leg gets `title` for free
-                    # (the indexing call spreads the document's own metadata
-                    # into every chunk); this leg builds its metadata from
-                    # scratch, so without this a keyword-leg row reaches the
-                    # Library evidence list as "Untitled source" -- observed
-                    # live under Hybrid Full with an empty semantic leg.
-                    # `_semantic_row` (library_local_rag_search_service) reads
-                    # `title`/`document_title` and never `doc_title`.
-                    "title": item.get("title") or "",
-                    "media_type": item.get("type"),
-                    "url": item.get("url"),
-                    "author": item.get("author"),
-                    "ingestion_date": item.get("ingestion_date"),
-                    "text_preview": content[:200],
-                    "source_type": "media",
-                    "source": "media",
-                },
+                metadata=self._keyword_row_metadata(item, content, source_type),
             )
             results.append(base_result)
 
@@ -1227,8 +1685,17 @@ class RAGService:
         query: str,
         filter_metadata: Optional[Dict[str, Any]],
         top_k: int,
+        source_type: str = SOURCE_TYPE_MEDIA,
     ) -> List[SearchResultWithCitations]:
-        """Process keyword search results with citations - batch processing for efficiency."""
+        """Process keyword search results with citations - batch processing for efficiency.
+
+        Args:
+            search_results: Raw sub-leg rows, best first.
+            query: Raw user query (used to locate citation spans).
+            filter_metadata: Optional metadata equality filters.
+            top_k: Maximum rows to return.
+            source_type: Which sub-leg produced these rows.
+        """
         import asyncio
 
         results = []
@@ -1243,7 +1710,7 @@ class RAGService:
             batch_results = await asyncio.gather(
                 *[
                     self._create_keyword_result_with_citations(
-                        item, query, filter_metadata
+                        item, query, filter_metadata, source_type=source_type
                     )
                     for item in batch
                 ]
@@ -1259,16 +1726,31 @@ class RAGService:
         return results
 
     async def _create_keyword_result_with_citations(
-        self, item: Dict, query: str, filter_metadata: Optional[Dict[str, Any]]
+        self,
+        item: Dict,
+        query: str,
+        filter_metadata: Optional[Dict[str, Any]],
+        source_type: str = SOURCE_TYPE_MEDIA,
     ) -> Optional[SearchResultWithCitations]:
-        """Create a single keyword result with citations."""
+        """Create a single keyword result with citations.
+
+        Args:
+            item: One raw sub-leg row.
+            query: Raw user query (used to locate citation spans).
+            filter_metadata: Optional metadata equality filters.
+            source_type: Which sub-leg produced this row.
+
+        Returns:
+            The row, or ``None`` when the metadata filters exclude it.
+        """
         import re
 
         # Apply metadata filters
         if filter_metadata:
             item_meta = {
                 "media_type": item.get("type"),
-                "source": "media",
+                "source": source_type,
+                "source_type": source_type,
                 "author": item.get("author"),
             }
             if not all(
@@ -1280,20 +1762,7 @@ class RAGService:
 
         # Create base result
         content = item.get("content", "")[:1000]
-        base_metadata = {
-            "doc_id": str(item["id"]),
-            "doc_title": item.get("title", "Untitled"),
-            # See the sibling metadata block in `_keyword_search`: `title` is
-            # the key the Library evidence row mapper reads, `doc_title` is not.
-            "title": item.get("title") or "",
-            "media_type": item.get("type"),
-            "url": item.get("url"),
-            "author": item.get("author"),
-            "ingestion_date": item.get("ingestion_date"),
-            "text_preview": content[:200],
-            "source_type": "media",
-            "source": "media",
-        }
+        base_metadata = self._keyword_row_metadata(item, content, source_type)
 
         # Find citations
         escaped_query = re.escape(query)
@@ -1312,7 +1781,7 @@ class RAGService:
             citation = Citation(
                 document_id=str(item["id"]),
                 document_title=item.get("title", "Untitled"),
-                chunk_id=f"media_{item['id']}_kw_{match.start()}",
+                chunk_id=f"{source_type}_{item['id']}_kw_{match.start()}",
                 text=full_content[start_context:end_context],
                 start_char=match.start(),
                 end_char=match.end(),
@@ -1331,7 +1800,7 @@ class RAGService:
             citation = Citation(
                 document_id=str(item["id"]),
                 document_title=item.get("title", "Untitled"),
-                chunk_id=f"media_{item['id']}_general",
+                chunk_id=f"{source_type}_{item['id']}_general",
                 text=content,
                 start_char=0,
                 end_char=len(content),
@@ -1342,7 +1811,7 @@ class RAGService:
             citations.append(citation)
 
         return SearchResultWithCitations(
-            id=f"media_{item['id']}",
+            id=f"{source_type}_{item['id']}",
             score=KEYWORD_SEARCH_SCORE,
             document=content,
             metadata=base_metadata,
