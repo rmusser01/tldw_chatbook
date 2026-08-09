@@ -43,10 +43,8 @@ def _scratch_video_config(tmp_path: Path, monkeypatch):
     config_path = tmp_path / "video-generation-config.toml"
     config_path.write_text(_video_toml("minimax_h3_t2v_spectrum.json"), encoding="utf-8")
     original_path = os.environ.get("TLDW_CONFIG_PATH")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
-    app_config.load_settings(force_reload=True)
-    reset_video_generation_runtime()
     try:
+        monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
         yield config_path, cache_state
     finally:
         if original_path is None:
@@ -66,7 +64,7 @@ def _scratch_video_config(tmp_path: Path, monkeypatch):
 def test_persisted_video_settings_project_to_runtime_and_refresh(tmp_path, monkeypatch):
     """A profile's global and nested video tables drive fresh runtime instances."""
     with _scratch_video_config(tmp_path, monkeypatch) as (config_path, cache_state):
-        settings = app_config.load_settings(force_reload=True)
+        settings = app_config.load_settings()
         assert settings["video_generation"] == {
             "default_backend": "comfyui",
             "enabled_backends": ["comfyui"],
