@@ -534,6 +534,10 @@ class ConsoleComposerBar(Horizontal):
         #: cannot stomp the chip back to "0:00" mid-capture.
         self._voice_partial: str = ""
         self._voice_elapsed_seconds: int = 0
+        #: Derived presentation latch for the one overlength preparing copy.
+        #: It hides only redundant row chrome; canonical draft/editor state
+        #: remains untouched and is revealed by every later ordinary repaint.
+        self._voice_full_width_preparing = False
         #: Latest model-preparation status for the chip, held for the same
         #: reason `_voice_partial` is: `sync_dictation_state` is called
         #: unconditionally by every control-bar refresh (changing a provider,
@@ -1301,6 +1305,11 @@ class ConsoleComposerBar(Horizontal):
             strip.styles.max_width = 0
             strip.styles.height = 0
             strip.styles.min_height = 0
+        if self._voice_full_width_preparing:
+            # The exact executor-wait copy and unchanged Mic/Send budget fill
+            # the row. Keep this redundant guidance cached but out of layout
+            # until the next ordinary voice-status repaint restores it.
+            strip.styles.display = "none"
 
     def sync_action_state(
         self,
@@ -4305,6 +4314,7 @@ class ConsoleComposerBar(Horizontal):
             return
 
         if state in ("idle", "unavailable"):
+            self._sync_full_width_voice_presentation(False)
             chip.styles.display = "none"
             chip.styles.width = 0
             chip.styles.min_width = 0
@@ -4354,16 +4364,42 @@ class ConsoleComposerBar(Horizontal):
         chip.styles.min_width = 0
         chip.styles.height = 1
         chip.styles.min_height = 1
-        # Production CSS resolves the 53-cell ceiling to 52 cells here. A
-        # full-width preparing message therefore needs one of the two padding
-        # cells back; keep the leading pad and restore both for every ordinary
-        # state on its next write.
-        if state == STATE_PREPARING and cell_len(body) + 2 >= self.VOICE_CHIP_MAX_WIDTH:
+        # Production CSS resolves the 53-cell ceiling to 52 cells here. The
+        # 51-cell executor-wait copy therefore gives back its trailing padding,
+        # keeps the normal one-cell right margin, and temporarily hides only
+        # presentation chrome; every ordinary repaint restores both padding
+        # and chrome without touching draft/editor state.
+        full_width_preparing = (
+            state == STATE_PREPARING and cell_len(body) + 2 >= self.VOICE_CHIP_MAX_WIDTH
+        )
+        self._sync_full_width_voice_presentation(full_width_preparing)
+        if full_width_preparing:
             chip.styles.padding = (0, 0, 0, 1)
         else:
             chip.styles.padding = None
+        chip.styles.margin = None
         chip.set_class(state == "error", "console-voice-status-error")
         chip.update(Content(body))
+
+    def _sync_full_width_voice_presentation(self, active: bool) -> None:
+        """Make room for the persistent executor-wait copy without data loss."""
+        self._voice_full_width_preparing = active
+        try:
+            controls = (
+                self.query_one("#console-composer-collapse", Button),
+                self.query_one("#console-composer-menu", Button),
+                self.query_one("#console-command-visible-text", Static),
+            )
+        except NoMatches:
+            return
+
+        for control in controls:
+            control.styles.display = "none" if active else "block"
+        self._sync_collapsed_presentation()
+        self._sync_send_disabled_reason(
+            self._send_disabled_reason,
+            muted=not self._send_blocked,
+        )
 
     def compose(self) -> ComposeResult:
         """Build the expanded and collapsed composer presentations.

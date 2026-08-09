@@ -211,6 +211,20 @@ async def test_busy_dictation_copy_uses_the_existing_chip_and_clears_at_idle():
     async with app.run_test(size=(80, 12)) as pilot:
         composer = app.query_one(ConsoleComposerBar)
         message = "Local transcription busy — dictation will run next."
+        presentation = [
+            composer.query_one(selector)
+            for selector in (
+                "#console-composer-collapse",
+                "#console-composer-menu",
+                "#console-command-visible-text",
+                "#console-send-disabled-reason",
+            )
+        ]
+        actions = composer.query_one("#console-composer-actions")
+        mic = composer.query_one("#console-dictation")
+        idle_action_width = actions.region.width
+        idle_mic_width = mic.region.width
+        assert all(_visible(widget) for widget in presentation)
 
         composer.sync_dictation_state("starting")
         composer.set_voice_preparing_message(message)
@@ -219,6 +233,14 @@ async def test_busy_dictation_copy_uses_the_existing_chip_and_clears_at_idle():
 
         assert message in _painted(chip)
         assert _visible(chip)
+        assert all(not _visible(widget) for widget in presentation)
+        assert idle_action_width == 25
+        assert actions.region.width == idle_action_width
+        assert mic.region.width == idle_mic_width
+        assert actions.region.right <= composer.region.right <= app.size.width
+        assert mic.region.right <= composer.region.right
+        assert _visible(mic)
+        assert await pilot.click(mic) is True
 
         # An ordinary control-bar refresh must not erase the busy status.
         composer.sync_dictation_state("starting")
@@ -229,6 +251,46 @@ async def test_busy_dictation_copy_uses_the_existing_chip_and_clears_at_idle():
         await pilot.pause()
         assert chip.styles.width.value == 0
         assert _painted(chip) == ""
+        assert all(_visible(widget) for widget in presentation)
+
+
+@pytest.mark.asyncio
+async def test_busy_presentation_preserves_draft_and_caret_then_restores_recording():
+    app = ProductionCssComposerApp()
+    async with app.run_test(size=(80, 12)) as pilot:
+        composer = app.query_one(ConsoleComposerBar)
+        composer.load_draft("keep this draft")
+        for _ in range(5):
+            composer.move_cursor_left()
+        before_text = composer.draft_text()
+        before_caret = composer.cursor_index
+        controls = [
+            composer.query_one(selector)
+            for selector in (
+                "#console-composer-collapse",
+                "#console-composer-menu",
+                "#console-command-visible-text",
+            )
+        ]
+        reason = composer.query_one("#console-send-disabled-reason")
+
+        composer.sync_dictation_state("starting")
+        composer.set_voice_preparing_message(
+            "Local transcription busy — dictation will run next."
+        )
+        await pilot.pause()
+
+        assert all(not _visible(widget) for widget in (*controls, reason))
+        assert composer.draft_text() == before_text
+        assert composer.cursor_index == before_caret
+
+        composer.sync_dictation_state("recording")
+        await pilot.pause()
+
+        assert all(_visible(widget) for widget in controls)
+        assert not _visible(reason)
+        assert composer.draft_text() == before_text
+        assert composer.cursor_index == before_caret
 
 
 @pytest.mark.asyncio
@@ -267,12 +329,16 @@ async def test_production_css_ordinary_voice_states_restore_normal_padding():
         assert "Loading model…" in _painted(chip)
         assert chip.styles.padding.left == 1
         assert chip.styles.padding.right == 1
+        assert chip.styles.margin.left == 0
+        assert chip.styles.margin.right == 1
 
         composer.set_voice_status(STATE_ERROR, message="No microphone access.")
         await pilot.pause()
         assert "No microphone access." in _painted(chip)
         assert chip.styles.padding.left == 1
         assert chip.styles.padding.right == 1
+        assert chip.styles.margin.left == 0
+        assert chip.styles.margin.right == 1
 
         composer.set_voice_status(
             STATE_LISTENING,
@@ -284,6 +350,8 @@ async def test_production_css_ordinary_voice_states_restore_normal_padding():
         assert "ordinary listening partial" in _painted(chip)
         assert chip.styles.padding.left == 1
         assert chip.styles.padding.right == 1
+        assert chip.styles.margin.left == 0
+        assert chip.styles.margin.right == 1
 
 
 @pytest.mark.asyncio

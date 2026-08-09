@@ -24,6 +24,9 @@ from Tests.UI.test_console_dictation import (
     _ready_host,
     _wait_for_mic_label,
 )
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
+)
 from tldw_chatbook.Chat import console_voice_input as voice_module
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_voice_input import VoiceCommand, VoiceFailed
@@ -319,6 +322,74 @@ async def test_busy_parakeet_capture_stays_live_then_inserts_without_sending(
                 == message_count
             )
             assert service.start_calls == 1
+    finally:
+        service.start_gate.set()
+
+
+@pytest.mark.asyncio
+async def test_busy_parakeet_mic_stays_reachable_and_cancels_at_80_columns(
+    monkeypatch,
+):
+    service = FakeDictationService()
+    service.uses_deferred_dictation = True
+    service.waiting_for_executor = True
+    service.start_gate = threading.Event()
+    _patch_availability(monkeypatch, provider="parakeet-onnx")
+    _install_streaming_session(monkeypatch, service)
+    monkeypatch.setattr(ConsoleHarness, "CSS_PATH", str(_BUNDLED_STYLESHEET))
+    _, host = _ready_host()
+
+    try:
+        async with host.run_test(size=(80, 42)) as pilot:
+            console = await _mounted_console(host, pilot)
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+            await pilot.click("#console-dictation")
+            deadline = time.monotonic() + 4
+            while (
+                time.monotonic() < deadline
+                and composer._voice_preparing_message
+                != "Local transcription busy — dictation will run next."
+            ):
+                await pilot.pause(0.01)
+            await pilot.pause()
+
+            actions = composer.query_one("#console-composer-actions")
+            mic = composer.query_one("#console-dictation", Button)
+            assert "Local transcription busy — dictation will run next." in _painted(
+                composer.query_one("#console-voice-status", Static)
+            )
+            assert actions.region.width == 25
+            assert actions.region.right <= composer.region.right <= host.size.width
+            assert mic.region.right <= composer.region.right
+            assert mic.visible
+            assert not mic.disabled
+            click_offset = (
+                mic.region.x + mic.region.width // 2,
+                mic.region.y,
+            )
+            hit_widget, _ = host.screen.get_widget_at(*click_offset)
+            assert hit_widget is mic
+
+            # Textual deliberately ignores a second Click while the first
+            # press's short `-active` visual effect is still running. Wait
+            # for that stock button animation, not for layout: the capture
+            # must remain starting and the same Mic cell must stay targeted.
+            deadline = time.monotonic() + 1
+            while time.monotonic() < deadline and mic.has_class("-active"):
+                await pilot.pause(0.01)
+            assert console._console_dictation_state == "starting"
+            hit_widget, _ = host.screen.get_widget_at(*click_offset)
+            assert hit_widget is mic
+            assert await pilot.click(offset=click_offset) is True
+            await _wait_for_mic_label(composer, pilot, "Dictate")
+
+            assert console._console_dictation_state == "idle"
+            assert console._console_dictation_session is None
+            assert composer.query_one("#console-composer-collapse").display
+            assert composer.query_one("#console-composer-menu").display
+            assert composer.query_one("#console-command-visible-text").display
+            assert composer.query_one("#console-send-disabled-reason").display
     finally:
         service.start_gate.set()
 
