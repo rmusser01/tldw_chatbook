@@ -3,7 +3,11 @@ import sqlite3
 
 import pytest
 
-from tldw_chatbook.DB.Prompts_DB import InputError, PromptsDatabase, add_or_update_prompt
+from tldw_chatbook.DB.Prompts_DB import (
+    InputError,
+    PromptsDatabase,
+    add_or_update_prompt,
+)
 
 
 def seed_v2_prompt_database(database_path, *, name, user_prompt):
@@ -230,7 +234,10 @@ def test_v2_migration_defaults_existing_rows_to_prompt_and_preserves_sync_and_ft
     database = PromptsDatabase(database_path, client_id="migration-test")
     try:
         detail = database.fetch_prompt_details("Existing")
-        assert database._get_db_version(database.get_connection()) == 3
+        assert (
+            database._get_db_version(database.get_connection())
+            == database._CURRENT_SCHEMA_VERSION
+        )
         assert detail["artifact_type"] == "prompt"
         assert detail["prompt_format"] == "structured"
         assert detail["prompt_schema_version"] == 1
@@ -276,7 +283,11 @@ def test_standalone_overwrite_helper_preserves_recipe_artifact_type():
             user_prompt="initial compiled text",
             prompt_format="structured",
             prompt_schema_version=2,
-            prompt_definition={"kind": "block_recipe", "schema_version": 2, "lanes": []},
+            prompt_definition={
+                "kind": "block_recipe",
+                "schema_version": 2,
+                "lanes": [],
+            },
             artifact_type="recipe",
         )
         add_or_update_prompt(

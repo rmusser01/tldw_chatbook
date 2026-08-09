@@ -38,7 +38,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from math import ceil
 from pathlib import Path
-from typing import List, Tuple, Dict, Any, Iterator, Optional, Union
+from typing import Callable, List, Tuple, Dict, Any, Iterator, Optional, Union
 
 #
 # Third-Party Libraries
@@ -85,10 +85,13 @@ class ConflictError(DatabaseError):
         message="Conflict detected: Record modified concurrently.",
         entity=None,
         identifier=None,
+        *,
+        code="conflict",
     ):
         super().__init__(message)
         self.entity = entity
         self.identifier = identifier
+        self.code = code
 
     def __str__(self):
         base = super().__str__()
@@ -100,9 +103,58 @@ class ConflictError(DatabaseError):
         return f"{base} ({', '.join(details)})" if details else base
 
 
+class ExpectedVersionConflictError(ConflictError):
+    """A conditional write observed a newer persisted version."""
+
+    def __init__(self, message, entity=None, identifier=None):
+        super().__init__(
+            message,
+            entity,
+            identifier,
+            code="expected_version",
+        )
+
+
+class PromptNameConflictError(ConflictError):
+    """A Prompt write would duplicate another active Prompt name."""
+
+    def __init__(self, message, entity=None, identifier=None):
+        super().__init__(message, entity, identifier, code="name_conflict")
+
+
 # --- Database Class ---
 class PromptsDatabase:
-    _CURRENT_SCHEMA_VERSION = 3
+    _CURRENT_SCHEMA_VERSION = 4
+    _PROMPT_HISTORY_INDEX_NAME = "idx_sync_log_prompt_history"
+    _PROMPT_HISTORY_INDEX_COLUMNS = (
+        ("entity", False),
+        ("entity_uuid", False),
+        ("change_id", True),
+        ("operation", False),
+    )
+    _PROMPT_HISTORY_INDEX_PREDICATE = (
+        "entity = 'prompts' and operation in ('create', 'update')"
+    )
+    _PROMPT_HISTORY_INDEX_SQL = """
+        CREATE INDEX idx_sync_log_prompt_history
+        ON sync_log (
+            entity,
+            entity_uuid,
+            change_id DESC,
+            operation
+        )
+        WHERE entity = 'Prompts'
+          AND operation IN ('create', 'update')
+    """
+    _PROMPT_HISTORY_MAX_PAGE_SIZE = 100
+    _SQLITE_SIGNED_INTEGER_MAX = (2**63) - 1
+    _PROMPT_HISTORY_COUNT_SQL = """
+        SELECT COUNT(*)
+        FROM sync_log
+        WHERE entity = 'Prompts'
+          AND entity_uuid = ?
+          AND operation IN ('create', 'update')
+    """
     # task-261: idle window within which the per-call `SELECT 1` liveness
     # ping is skipped for a recently-used thread-local connection (see
     # `_get_thread_connection`).
@@ -616,6 +668,11 @@ class PromptsDatabase:
             "function": "_apply_migration_v2_to_v3",
             "description": "Add prompt artifact type",
         },
+        3: {
+            "to_version": 4,
+            "function": "_apply_migration_v3_to_v4",
+            "description": "Add retained Prompt history index",
+        },
     }
 
     def _apply_schema_v1(self, conn: sqlite3.Connection):
@@ -763,6 +820,70 @@ class PromptsDatabase:
             )
             raise DatabaseError(f"Migration v2->v3 failed: {e}") from e
 
+    def _apply_migration_v3_to_v4(self, conn: sqlite3.Connection):
+        """Add an index for bounded retained Prompt history reads."""
+        logging.info(
+            f"Applying prompts migration from version 3 to 4 for DB: {self.db_path_str}..."
+        )
+        try:
+            with self.transaction():
+                conn.execute(f"DROP INDEX IF EXISTS {self._PROMPT_HISTORY_INDEX_NAME}")
+                conn.execute(self._PROMPT_HISTORY_INDEX_SQL)
+
+                index_row = conn.execute(
+                    """
+                    SELECT sql
+                    FROM sqlite_master
+                    WHERE type = 'index' AND name = ?
+                    """,
+                    (self._PROMPT_HISTORY_INDEX_NAME,),
+                ).fetchone()
+                if index_row is None:
+                    raise SchemaError(
+                        "Validation Error: retained Prompt history index is missing."
+                    )
+
+                actual_columns = tuple(
+                    (row["name"], bool(row["desc"]))
+                    for row in conn.execute(
+                        f"PRAGMA index_xinfo({self._PROMPT_HISTORY_INDEX_NAME})"
+                    )
+                    if row["key"]
+                )
+                if actual_columns != self._PROMPT_HISTORY_INDEX_COLUMNS:
+                    raise SchemaError(
+                        "Validation Error: retained Prompt history index columns "
+                        "do not match the required order."
+                    )
+
+                normalized_sql = " ".join(str(index_row["sql"]).lower().split())
+                _prefix, separator, actual_predicate = normalized_sql.partition(
+                    " where "
+                )
+                if (
+                    not separator
+                    or actual_predicate != self._PROMPT_HISTORY_INDEX_PREDICATE
+                ):
+                    raise SchemaError(
+                        "Validation Error: retained Prompt history index predicate "
+                        "does not match the required filter."
+                    )
+
+                conn.execute("UPDATE schema_version SET version = 4 WHERE version = 3")
+
+                version_in_tx = conn.execute(
+                    "SELECT version FROM schema_version LIMIT 1"
+                ).fetchone()
+                if not version_in_tx or version_in_tx["version"] != 4:
+                    raise SchemaError(
+                        "Schema version update to 4 did not take effect within transaction."
+                    )
+        except sqlite3.Error as e:
+            logging.opt(exception=True).error(
+                f"[Migration v3->v4] Failed during migration: {e}"
+            )
+            raise DatabaseError(f"Migration v3->v4 failed: {e}") from e
+
     def _initialize_schema(self):
         conn = self.get_connection()
         try:
@@ -842,6 +963,19 @@ class PromptsDatabase:
     def _normalize_keyword(self, keyword: str) -> str:
         return re.sub(r"\s+", " ", keyword.strip().lower())
 
+    def _canonicalize_prompt_keywords(self, keywords_list: Any) -> List[str]:
+        """Validate and canonicalize a Prompt's requested keyword membership."""
+        if not isinstance(keywords_list, list):
+            raise InputError("keywords must be a list of strings.")
+
+        normalized_keywords = set()
+        for keyword in keywords_list:
+            if not isinstance(keyword, str):
+                raise InputError("keyword list members must be strings.")
+            if keyword.strip():
+                normalized_keywords.add(self._normalize_keyword(keyword))
+        return sorted(normalized_keywords)
+
     def _normalize_prompt_format(self, prompt_format: Optional[str]) -> str:
         if prompt_format is None:
             return "legacy"
@@ -917,6 +1051,17 @@ class PromptsDatabase:
             raise DatabaseError(f"Failed to fetch current version: {e}") from e
         return None
 
+    @staticmethod
+    def _serialize_sync_payload(payload: Optional[Dict]) -> Optional[str]:
+        """Serialize sync payloads consistently, including SQLite datetimes."""
+        if payload and isinstance(payload, dict):
+            serializable_payload = {
+                key: value.isoformat() if isinstance(value, datetime) else value
+                for key, value in payload.items()
+            }
+            return json.dumps(serializable_payload, separators=(",", ":"))
+        return json.dumps(payload, separators=(",", ":")) if payload else None
+
     def _log_sync_event(
         self,
         conn: sqlite3.Connection,
@@ -925,27 +1070,15 @@ class PromptsDatabase:
         operation: str,
         version: int,
         payload: Optional[Dict] = None,
-    ):
+    ) -> Optional[int]:
         if not entity or not entity_uuid or not operation:
             logging.error("Sync log attempt with missing entity, uuid, or operation.")
             return
         current_time = self._get_current_utc_timestamp_str()
         client_id = self.client_id
-        # Convert datetime objects to strings for JSON serialization
-        if payload and isinstance(payload, dict):
-            serializable_payload = {}
-            for key, value in payload.items():
-                if isinstance(value, datetime):
-                    serializable_payload[key] = value.isoformat()
-                else:
-                    serializable_payload[key] = value
-            payload_json = json.dumps(serializable_payload, separators=(",", ":"))
-        else:
-            payload_json = (
-                json.dumps(payload, separators=(",", ":")) if payload else None
-            )
+        payload_json = self._serialize_sync_payload(payload)
         try:
-            conn.execute(
+            cursor = conn.execute(
                 """
                          INSERT INTO sync_log (entity, entity_uuid, operation, timestamp, client_id, version, payload)
                          VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -960,14 +1093,64 @@ class PromptsDatabase:
                     payload_json,
                 ),
             )
+            if cursor.lastrowid is None:
+                raise DatabaseError("Failed to get change ID for sync event.")
             logging.debug(
                 f"Logged sync: {entity} {entity_uuid} {operation} v{version} at {current_time}"
             )
+            return int(cursor.lastrowid)
         except sqlite3.Error as e:
             logging.opt(exception=True).error(
                 f"Failed insert sync_log for {entity} {entity_uuid}: {e}"
             )
             raise DatabaseError(f"Failed to log sync event: {e}") from e
+
+    def _finalize_prompt_sync_snapshot(
+        self,
+        conn: sqlite3.Connection,
+        change_id: Optional[int],
+        prompt_id: int,
+        payload: Dict[str, Any],
+    ) -> None:
+        """Finalize one pending Prompt event after keyword membership settles."""
+        if change_id is None:
+            raise DatabaseError(
+                "Failed to finalize Prompt sync snapshot: missing change ID."
+            )
+
+        try:
+            keyword_rows = conn.execute(
+                """
+                SELECT k.keyword
+                FROM PromptKeywordsTable AS k
+                JOIN PromptKeywordLinks AS link ON link.keyword_id = k.id
+                WHERE link.prompt_id = ? AND k.deleted = 0
+                """,
+                (prompt_id,),
+            ).fetchall()
+            snapshot_payload = dict(payload)
+            snapshot_payload["keywords"] = sorted(
+                {row["keyword"] for row in keyword_rows}
+            )
+            snapshot_payload["keywords_captured"] = True
+            serialized_payload = self._serialize_sync_payload(snapshot_payload)
+            cursor = conn.execute(
+                """
+                UPDATE sync_log
+                SET payload = ?
+                WHERE change_id = ? AND entity = 'Prompts'
+                """,
+                (serialized_payload, change_id),
+            )
+            if cursor.rowcount != 1:
+                raise DatabaseError(
+                    "Failed to finalize Prompt sync snapshot: event not found."
+                )
+        except sqlite3.Error as e:
+            logging.opt(exception=True).error(
+                f"Failed to finalize Prompt sync snapshot {change_id}: {e}"
+            )
+            raise DatabaseError(f"Failed to finalize Prompt sync snapshot: {e}") from e
 
     # --- FTS Helper Methods ---
     def _update_fts_prompt(
@@ -1215,6 +1398,11 @@ class PromptsDatabase:
             else None
         )
         normalized_artifact_type = self._normalize_artifact_type(artifact_type)
+        normalized_keywords = (
+            self._canonicalize_prompt_keywords(keywords)
+            if keywords is not None
+            else None
+        )
 
         try:
             with self.transaction(immediate=serialize_create) as conn:
@@ -1232,6 +1420,8 @@ class PromptsDatabase:
 
                 prompt_id: Optional[int] = None
                 prompt_uuid: Optional[str] = None
+                prompt_sync_change_id: Optional[int] = None
+                prompt_snapshot_payload: Optional[Dict[str, Any]] = None
                 action_taken: str = "skipped"
 
                 if existing:
@@ -1353,7 +1543,8 @@ class PromptsDatabase:
                             f"Failed to update prompt '{name}'.", "Prompts", prompt_id
                         )
 
-                    self._log_sync_event(
+                    prompt_snapshot_payload = update_data
+                    prompt_sync_change_id = self._log_sync_event(
                         conn, "Prompts", prompt_uuid, "update", new_version, update_data
                     )
                     self._update_fts_prompt(
@@ -1423,7 +1614,8 @@ class PromptsDatabase:
                     prompt_id = cursor.lastrowid
                     if not prompt_id:
                         raise DatabaseError("Failed to get ID for new prompt.")
-                    self._log_sync_event(
+                    prompt_snapshot_payload = insert_data
+                    prompt_sync_change_id = self._log_sync_event(
                         conn, "Prompts", prompt_uuid, "create", new_version, insert_data
                     )
                     self._update_fts_prompt(
@@ -1437,11 +1629,20 @@ class PromptsDatabase:
                     )
 
                 if (
-                    prompt_id and keywords is not None
+                    prompt_id and normalized_keywords is not None
                 ):  # keywords can be empty list to remove all
                     self.update_keywords_for_prompt(
-                        prompt_id, keywords_list=keywords
+                        prompt_id, keywords_list=normalized_keywords
                     )  # This is an instance method
+
+                if prompt_id is None or prompt_snapshot_payload is None:
+                    raise DatabaseError("Failed to prepare Prompt sync snapshot.")
+                self._finalize_prompt_sync_snapshot(
+                    conn,
+                    prompt_sync_change_id,
+                    prompt_id,
+                    prompt_snapshot_payload,
+                )
 
                 msg = f"Prompt '{name}' {action_taken} successfully."
 
@@ -1511,17 +1712,7 @@ class PromptsDatabase:
                 raise DatabaseError(f"Failed to process prompt '{name}': {e}") from e
 
     def update_keywords_for_prompt(self, prompt_id: int, keywords_list: List[str]):
-        normalized_new_keywords = sorted(
-            list(
-                set(
-                    [
-                        self._normalize_keyword(k)
-                        for k in keywords_list
-                        if k and k.strip()
-                    ]
-                )
-            )
-        )
+        normalized_new_keywords = self._canonicalize_prompt_keywords(keywords_list)
 
         try:
             # This method is called within an existing transaction (e.g. from add_prompt)
@@ -1663,6 +1854,11 @@ class PromptsDatabase:
             not update_data["name"] or not update_data["name"].strip()
         ):
             raise InputError("Prompt name cannot be empty if provided for update.")
+        normalized_keywords = None
+        if "keywords" in update_data:
+            normalized_keywords = self._canonicalize_prompt_keywords(
+                update_data["keywords"]
+            )
         expected_version = self._normalize_expected_version(expected_version)
         normalized_artifact_type = None
         if "artifact_type" in update_data:
@@ -1702,7 +1898,7 @@ class PromptsDatabase:
                 if expected_version is not None and expected_version != int(
                     current_version
                 ):
-                    raise ConflictError(
+                    raise ExpectedVersionConflictError(
                         "Prompt changed after it was opened.", "Prompts", prompt_id
                     )
 
@@ -1721,7 +1917,7 @@ class PromptsDatabase:
                     )
                     conflicting_prompt = cursor.fetchone()
                     if conflicting_prompt:
-                        raise ConflictError(
+                        raise PromptNameConflictError(
                             f"Another active prompt with name '{new_name}' already exists (ID: {conflicting_prompt['id']})."
                         )
 
@@ -1792,7 +1988,7 @@ class PromptsDatabase:
                 # Fetch the full updated row for payload
                 cursor.execute("SELECT * FROM Prompts WHERE id = ?", (prompt_id,))
                 updated_payload = dict(cursor.fetchone())
-                self._log_sync_event(
+                prompt_sync_change_id = self._log_sync_event(
                     conn,
                     "Prompts",
                     original_uuid,
@@ -1813,12 +2009,17 @@ class PromptsDatabase:
                 )
 
                 # Handle keywords if provided in update_data (assuming 'keywords' is a list of strings)
-                if "keywords" in update_data and isinstance(
-                    update_data["keywords"], list
-                ):
+                if normalized_keywords is not None:
                     self.update_keywords_for_prompt(
-                        prompt_id, update_data["keywords"]
+                        prompt_id, normalized_keywords
                     )  # Call existing method
+
+                self._finalize_prompt_sync_snapshot(
+                    conn,
+                    prompt_sync_change_id,
+                    prompt_id,
+                    updated_payload,
+                )
 
                 # Log success metrics
                 duration = time.time() - start_time
@@ -3046,6 +3247,301 @@ class PromptsDatabase:
             raise DatabaseError(f"Failed to search prompts: {e}") from e
 
     # --- Sync Log Access Methods ---
+    @staticmethod
+    def _validate_prompt_history_entity_uuid(entity_uuid: str) -> str:
+        if not isinstance(entity_uuid, str) or not entity_uuid.strip():
+            raise InputError("entity_uuid must be a non-empty string.")
+        return entity_uuid
+
+    @staticmethod
+    def _validate_prompt_history_positive_int(
+        value: int, *, name: str, maximum: int
+    ) -> int:
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or value <= 0
+            or value > maximum
+        ):
+            raise InputError(
+                f"{name} must be a positive integer no greater than {maximum}."
+            )
+        return value
+
+    @staticmethod
+    def _decode_prompt_history_row(row: sqlite3.Row) -> Dict[str, Any]:
+        row_dict = dict(row)
+        timestamp = row_dict.get("timestamp")
+        if isinstance(timestamp, datetime):
+            row_dict["timestamp"] = timestamp.isoformat()
+        raw_payload = row_dict.get("payload")
+        row_dict["payload_error"] = None
+        row_dict["raw_payload"] = None
+        if raw_payload is not None:
+            try:
+                row_dict["payload"] = json.loads(raw_payload)
+            except (json.JSONDecodeError, TypeError, UnicodeDecodeError):
+                row_dict["payload"] = None
+                row_dict["payload_error"] = "malformed_json"
+                row_dict["raw_payload"] = raw_payload
+        return row_dict
+
+    def get_prompt_history_count(self, entity_uuid: str) -> int:
+        """Return the exact retained create/update count for one Prompt UUID."""
+        validated_uuid = self._validate_prompt_history_entity_uuid(entity_uuid)
+        try:
+            with self.transaction() as conn:
+                row = conn.execute(
+                    self._PROMPT_HISTORY_COUNT_SQL, (validated_uuid,)
+                ).fetchone()
+            return int(row[0]) if row is not None else 0
+        except sqlite3.Error as e:
+            logging.opt(exception=True).error(
+                f"Failed to count retained Prompt history for {validated_uuid}: {e}"
+            )
+            raise DatabaseError("Failed to count retained Prompt history") from e
+
+    def get_prompt_history_entries(
+        self,
+        entity_uuid: str,
+        page_size: int,
+        before_change_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Read one bounded retained Prompt history page and its predecessor."""
+        validated_uuid = self._validate_prompt_history_entity_uuid(entity_uuid)
+        validated_page_size = self._validate_prompt_history_positive_int(
+            page_size,
+            name="page_size",
+            maximum=self._PROMPT_HISTORY_MAX_PAGE_SIZE,
+        )
+        if before_change_id is not None:
+            before_change_id = self._validate_prompt_history_positive_int(
+                before_change_id,
+                name="before_change_id",
+                maximum=self._SQLITE_SIGNED_INTEGER_MAX,
+            )
+
+        row_query = """
+            SELECT *
+            FROM sync_log
+            WHERE entity = 'Prompts'
+              AND entity_uuid = ?
+              AND operation IN ('create', 'update')
+        """
+        row_params: List[Any] = [validated_uuid]
+        if before_change_id is not None:
+            row_query += " AND change_id < ?"
+            row_params.append(before_change_id)
+        row_query += " ORDER BY change_id DESC LIMIT ?"
+        row_params.append(validated_page_size + 1)
+
+        try:
+            with self.transaction() as conn:
+                count_row = conn.execute(
+                    self._PROMPT_HISTORY_COUNT_SQL, (validated_uuid,)
+                ).fetchone()
+                raw_rows = conn.execute(row_query, tuple(row_params)).fetchall()
+        except sqlite3.Error as e:
+            logging.opt(exception=True).error(
+                f"Failed to read retained Prompt history for {validated_uuid}: {e}"
+            )
+            raise DatabaseError("Failed to read retained Prompt history") from e
+
+        decoded_rows = [self._decode_prompt_history_row(row) for row in raw_rows]
+        has_more = len(decoded_rows) > validated_page_size
+        items = decoded_rows[:validated_page_size]
+        predecessor = decoded_rows[validated_page_size] if has_more else None
+        next_before_change_id = items[-1]["change_id"] if has_more and items else None
+        return {
+            "items": items,
+            "predecessor": predecessor,
+            "total_count": int(count_row[0]) if count_row is not None else 0,
+            "has_more": has_more,
+            "next_before_change_id": next_before_change_id,
+        }
+
+    def restore_prompt_history_entry(
+        self,
+        entity_uuid: str,
+        *,
+        change_id: int,
+        version: int,
+        expected_version: int,
+        snapshot_validator: Callable[[Dict[str, Any]], Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Restore one retained Prompt snapshot through the ordinary update path.
+
+        The retained row and current Prompt are deliberately re-resolved after
+        acquiring SQLite's write lock.  ``snapshot_validator`` is supplied by
+        the source-service boundary so compatibility/capability validation runs
+        *inside* that same transaction without teaching the DB layer about UI
+        artifact policy.
+        """
+        validated_uuid = self._validate_prompt_history_entity_uuid(entity_uuid)
+        validated_change_id = self._validate_prompt_history_positive_int(
+            change_id,
+            name="change_id",
+            maximum=self._SQLITE_SIGNED_INTEGER_MAX,
+        )
+        validated_version = self._validate_prompt_history_positive_int(
+            version,
+            name="version",
+            maximum=self._SQLITE_SIGNED_INTEGER_MAX,
+        )
+        validated_expected_version = self._normalize_expected_version(expected_version)
+        if validated_expected_version is None:
+            raise InputError("expected_version is required for retained restore.")
+        if not callable(snapshot_validator):
+            raise InputError("snapshot_validator must be callable.")
+
+        unavailable = {
+            "outcome": "snapshot_unavailable",
+            "snapshot_unavailable": True,
+            "no_change": False,
+            "source_version": validated_version,
+            "current_version": None,
+            "new_version": None,
+            "retained_current_keywords": False,
+        }
+        with self.transaction(immediate=True) as conn:
+            snapshot_row = conn.execute(
+                """
+                SELECT *
+                FROM sync_log
+                WHERE entity = 'Prompts'
+                  AND entity_uuid = ?
+                  AND operation IN ('create', 'update')
+                  AND change_id = ?
+                  AND version = ?
+                """,
+                (validated_uuid, validated_change_id, validated_version),
+            ).fetchone()
+            if snapshot_row is None:
+                return unavailable
+
+            current_row = conn.execute(
+                "SELECT * FROM Prompts WHERE uuid = ?", (validated_uuid,)
+            ).fetchone()
+            if current_row is None or current_row["deleted"]:
+                return {
+                    **unavailable,
+                    "outcome": "current_unavailable",
+                    "snapshot_unavailable": False,
+                    "current_version": (
+                        int(current_row["version"]) if current_row is not None else None
+                    ),
+                }
+            current_version = int(current_row["version"])
+            if current_version != validated_expected_version:
+                raise ExpectedVersionConflictError(
+                    "Prompt changed after it was opened.",
+                    "Prompts",
+                    int(current_row["id"]),
+                )
+
+            validated_snapshot = snapshot_validator(
+                self._decode_prompt_history_row(snapshot_row)
+            )
+            if not isinstance(validated_snapshot, dict):
+                raise InputError("snapshot_validator must return a mapping.")
+            update_data = validated_snapshot.get("update_data")
+            keywords_captured = validated_snapshot.get("keywords_captured")
+            if not isinstance(update_data, dict) or type(keywords_captured) is not bool:
+                raise InputError(
+                    "snapshot_validator must return update_data and keywords_captured."
+                )
+            required_fields = (
+                "name",
+                "author",
+                "details",
+                "system_prompt",
+                "user_prompt",
+                "prompt_format",
+                "prompt_schema_version",
+                "prompt_definition",
+                "artifact_type",
+            )
+            if any(field not in update_data for field in required_fields):
+                raise InputError(
+                    "Retained snapshot is missing restorable Prompt fields."
+                )
+
+            current_keywords = sorted(
+                row["keyword"]
+                for row in conn.execute(
+                    """
+                    SELECT keyword
+                    FROM PromptKeywordsTable AS keyword_table
+                    JOIN PromptKeywordLinks AS link
+                      ON link.keyword_id = keyword_table.id
+                    WHERE link.prompt_id = ? AND keyword_table.deleted = 0
+                    """,
+                    (int(current_row["id"]),),
+                ).fetchall()
+            )
+            if keywords_captured:
+                desired_keywords = self._canonicalize_prompt_keywords(
+                    validated_snapshot.get("keywords")
+                )
+            else:
+                desired_keywords = current_keywords
+
+            candidate = dict(update_data)
+            candidate["keywords"] = desired_keywords
+            desired_definition = self._serialize_prompt_definition(
+                validated_snapshot.get(
+                    "durable_prompt_definition", candidate["prompt_definition"]
+                )
+            )
+            desired_values = {
+                "name": candidate["name"].strip()
+                if isinstance(candidate["name"], str)
+                else candidate["name"],
+                "author": candidate["author"],
+                "details": candidate["details"],
+                "system_prompt": candidate["system_prompt"],
+                "user_prompt": candidate["user_prompt"],
+                "prompt_format": self._normalize_prompt_format(
+                    candidate["prompt_format"]
+                ),
+                "prompt_schema_version": candidate["prompt_schema_version"],
+                "prompt_definition": desired_definition,
+                "artifact_type": self._normalize_artifact_type(
+                    candidate["artifact_type"]
+                ),
+            }
+            if (
+                all(
+                    current_row[field] == desired_value
+                    for field, desired_value in desired_values.items()
+                )
+                and current_keywords == desired_keywords
+            ):
+                return {
+                    "outcome": "no_change",
+                    "snapshot_unavailable": False,
+                    "no_change": True,
+                    "source_version": validated_version,
+                    "current_version": current_version,
+                    "new_version": current_version,
+                    "retained_current_keywords": not keywords_captured,
+                }
+
+            self.update_prompt_by_id(
+                int(current_row["id"]),
+                candidate,
+                expected_version=current_version,
+            )
+            return {
+                "outcome": "restored",
+                "snapshot_unavailable": False,
+                "no_change": False,
+                "source_version": validated_version,
+                "current_version": current_version,
+                "new_version": current_version + 1,
+                "retained_current_keywords": not keywords_captured,
+            }
+
     def get_sync_log_entries(
         self, since_change_id: int = 0, limit: Optional[int] = None
     ) -> List[Dict]:

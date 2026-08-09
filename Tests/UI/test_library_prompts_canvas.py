@@ -23,6 +23,8 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -30,15 +32,25 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.app import App
-from textual.containers import VerticalScroll
-from textual.widgets import Button, Checkbox, Input, Static, TextArea
+from textual.containers import Container, VerticalScroll
+from textual.widgets import Button, Checkbox, Collapsible, Input, Static, TextArea
 
-from tldw_chatbook.DB.Prompts_DB import ConflictError, PromptsDatabase
+from tldw_chatbook.DB.Prompts_DB import ConflictError, DatabaseError, PromptsDatabase
 from tldw_chatbook.Library.library_prompts_state import (
     PromptEditorState,
+    PromptHistoryState,
+    PromptHistoryRestoreOutcome,
     PromptListRow,
     PromptsListState,
+    apply_prompt_history_count,
+    apply_prompt_history_page,
+    apply_prompt_history_preview,
     build_prompt_editor_state,
+    build_prompt_history_page,
+    build_prompt_history_state,
+    begin_prompt_history_count,
+    begin_prompt_history_page,
+    begin_prompt_history_preview,
     prepare_prompt_artifact_save,
 )
 from tldw_chatbook.Library.library_shell_state import (
@@ -51,15 +63,30 @@ from tldw_chatbook.Prompt_Management.Prompts_Interop import (
 from tldw_chatbook.Prompt_Management.prompt_markdown_export import (
     render_prompt_markdown,
 )
+from tldw_chatbook.Prompt_Management.prompt_restore_errors import (
+    PromptRestoreError,
+    PromptRestoreErrorCode,
+)
+from tldw_chatbook.Prompt_Management import (
+    prompt_scope_service as prompt_scope_service_module,
+)
 from tldw_chatbook.Prompt_Management.prompt_scope_service import (
     LocalPromptService as ScopeLocalPromptService,
     PromptScopeService,
+)
+from tldw_chatbook.Prompt_Management.prompt_source_capabilities import (
+    local_prompt_capabilities,
 )
 from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, FileSave
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
+from tldw_chatbook.UI.Library_Modules import (
+    LibraryPromptHistoryRegion,
+    prompt_history as prompt_history_module,
+)
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 from tldw_chatbook.Widgets.Library.library_prompts_canvas import (
     LibraryPromptsListCanvas,
@@ -101,6 +128,48 @@ def _css_block(text: str, selector: str) -> str:
     return text[block_start:block_end]
 
 
+def _painted_relative_luminance(color) -> float:
+    """Return WCAG luminance for a compositor-painted Rich colour."""
+    triplet = color.get_truecolor()
+
+    def channel(value: int) -> float:
+        srgb = value / 255
+        return srgb / 12.92 if srgb <= 0.04045 else ((srgb + 0.055) / 1.055) ** 2.4
+
+    return (
+        0.2126 * channel(triplet.red)
+        + 0.7152 * channel(triplet.green)
+        + 0.0722 * channel(triplet.blue)
+    )
+
+
+def _painted_contrast(first, second) -> float:
+    lighter, darker = sorted(
+        (_painted_relative_luminance(first), _painted_relative_luminance(second)),
+        reverse=True,
+    )
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def _painted_style_of_text(app: App, region, needle: str):
+    """Return the final compositor style painting ``needle`` in ``region``."""
+    strips = list(app.screen._compositor.render_strips())
+    for y in range(region.y, region.y + region.height):
+        if y >= len(strips):
+            break
+        segments = list(strips[y]._segments)
+        row_text = "".join(segment.text for segment in segments)
+        index = row_text.find(needle)
+        if index == -1:
+            continue
+        x = 0
+        for segment in segments:
+            if x + len(segment.text) > index:
+                return segment.style
+            x += len(segment.text)
+    return None
+
+
 def _three_row_state(*, sort: str = "newest") -> PromptsListState:
     return PromptsListState(
         rows=(
@@ -131,6 +200,19 @@ class _StyledCanvasHost(_CanvasHost):
     """Canvas harness with the application's real layout rules loaded."""
 
     CSS_PATH = str(BUNDLED_STYLESHEET)
+
+
+def _capture_region_messages(region: LibraryPromptHistoryRegion) -> list[Any]:
+    """Capture semantic messages emitted by one mounted history region."""
+    posted: list[Any] = []
+    original_post_message = region.post_message
+
+    def capture(message):
+        posted.append(message)
+        return original_post_message(message)
+
+    region.post_message = capture  # type: ignore[method-assign]
+    return posted
 
 
 def _structured_editor_state(*, artifact_type: str = "prompt") -> PromptEditorState:
@@ -178,9 +260,312 @@ def _structured_editor_state(*, artifact_type: str = "prompt") -> PromptEditorSt
     )
 
 
+def _history_state(
+    *,
+    current_version: int = 3,
+    selected_version: int | None = 2,
+    restore_eligible: bool = True,
+    compatibility_reason: str = "",
+    keywords_captured: bool = False,
+) -> PromptHistoryState:
+    """Build one loaded real reducer state for widget-level history pilots."""
+    state = build_prompt_history_state(
+        prompt_uuid="prompt-history-uuid",
+        current_version=current_version,
+        scope_token=1,
+    )
+    state, count_request = begin_prompt_history_count(state, request_token=1)
+    state = apply_prompt_history_count(state, count_request, total_count=2)
+    state, page_request = begin_prompt_history_page(state, request_token=2)
+    state = apply_prompt_history_page(
+        state,
+        page_request,
+        build_prompt_history_page(
+            {
+                "items": [
+                    {
+                        "prompt_uuid": "prompt-history-uuid",
+                        "change_id": 22,
+                        "version": 2,
+                        "timestamp": "2026-08-08T12:00:00+00:00",
+                        "artifact_type": "prompt",
+                        "artifact_type_raw": "",
+                        "name": "Current-ish [draft]",
+                        "author": "A",
+                        "details": "Second retained row",
+                        "system_prompt": "[bold]literal system[/bold]",
+                        "user_prompt": "[/] literal user [wip]",
+                        "keywords": ["alpha"],
+                        "keywords_captured": keywords_captured,
+                        "compatibility_state": (
+                            "compatible" if restore_eligible else "future_artifact_type"
+                        ),
+                        "compatibility_reason": compatibility_reason,
+                        "restore_eligible": restore_eligible,
+                        "changed_fields": ["system_prompt"],
+                        "change_summary": "System prompt",
+                    },
+                    {
+                        "prompt_uuid": "prompt-history-uuid",
+                        "change_id": 11,
+                        "version": 1,
+                        "timestamp": "2026-08-08T11:00:00+00:00",
+                        "artifact_type": "prompt",
+                        "artifact_type_raw": "future-artifact",
+                        "name": "Original",
+                        "author": "A",
+                        "details": "First retained row",
+                        "system_prompt": "old system",
+                        "user_prompt": "old user",
+                        "keywords": [],
+                        "keywords_captured": False,
+                        "compatibility_state": "future_artifact_type",
+                        "compatibility_reason": "Future artifact types are preview-only.",
+                        "restore_eligible": False,
+                        "changed_fields": [],
+                        "change_summary": "Created",
+                    },
+                ],
+                "total_count": 2,
+                "has_more": False,
+                "next_before_change_id": None,
+            }
+        ),
+    )
+    if selected_version is None:
+        return state
+    selected = next(row for row in state.rows if row.version == selected_version)
+    state, preview_request = begin_prompt_history_preview(
+        state,
+        change_id=selected.change_id,
+        source_version=selected.version,
+        request_token=3,
+    )
+    return apply_prompt_history_preview(state, preview_request)
+
+
 # ---------------------------------------------------------------------------
 # Widget-only tests (Step 2 of the brief)
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_prompt_history_region_owns_disclosure_row_page_and_restore_events():
+    """The screen-specific region emits semantic events instead of leaking children."""
+    history = replace(_history_state(), has_more=True, next_before_change_id=11)
+    app = _CanvasHost(
+        None,
+        mode="editor",
+        editor_state=_structured_editor_state(),
+        history_state=history,
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        region = pilot.app.query_one(LibraryPromptHistoryRegion)
+        posted = _capture_region_messages(region)
+        disclosure = region.query_one(
+            "#library-prompt-history-collapsible", Collapsible
+        )
+
+        disclosure.collapsed = True
+        await pilot.pause()
+        disclosure.collapsed = False
+        await pilot.pause()
+        region.query_one("#library-prompt-history-row-11", Button).press()
+        region.query_one("#library-prompt-history-load-older", Button).press()
+        region.query_one("#library-prompt-history-restore", Button).press()
+        await pilot.pause()
+
+        assert any(
+            isinstance(message, LibraryPromptHistoryRegion.DisclosureClosed)
+            for message in posted
+        )
+        assert any(
+            isinstance(message, LibraryPromptHistoryRegion.DisclosureOpened)
+            for message in posted
+        )
+        selected = next(
+            message
+            for message in posted
+            if isinstance(message, LibraryPromptHistoryRegion.RowSelected)
+        )
+        assert (selected.change_id, selected.source_version) == (11, 1)
+        assert any(
+            isinstance(message, LibraryPromptHistoryRegion.PageRequested)
+            for message in posted
+        )
+        assert any(
+            isinstance(message, LibraryPromptHistoryRegion.RestoreRequested)
+            for message in posted
+        )
+        scoped = [
+            message
+            for message in posted
+            if isinstance(
+                message,
+                (
+                    LibraryPromptHistoryRegion.DisclosureClosed,
+                    LibraryPromptHistoryRegion.DisclosureOpened,
+                    LibraryPromptHistoryRegion.PageRequested,
+                    LibraryPromptHistoryRegion.RowSelected,
+                    LibraryPromptHistoryRegion.RestoreRequested,
+                ),
+            )
+        ]
+        assert scoped
+        assert {(message.prompt_uuid, message.scope_token) for message in scoped} == {
+            ("prompt-history-uuid", 1)
+        }
+        with pytest.raises(AttributeError):
+            scoped[0].prompt_uuid = "mutated"
+
+
+@pytest.mark.asyncio
+async def test_prompt_history_region_owns_retry_and_snapshot_reload_events():
+    """Every recovery control is translated into one typed region event."""
+    app = _CanvasHost(
+        None,
+        mode="editor",
+        editor_state=_structured_editor_state(),
+        history_state=replace(_history_state(), count_status="error"),
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        region = pilot.app.query_one(LibraryPromptHistoryRegion)
+        posted = _capture_region_messages(region)
+
+        region.query_one("#library-prompt-history-retry-count", Button).press()
+        await pilot.pause()
+        region.sync_state(
+            replace(
+                _history_state(),
+                rows=(),
+                page_status="error",
+                error="Couldn't load retained history.",
+            ),
+            dirty=False,
+            current_compatible=True,
+        )
+        await pilot.pause()
+        region.query_one("#library-prompt-history-retry-page", Button).press()
+        await pilot.pause()
+        region.sync_state(
+            replace(
+                _history_state(),
+                restore_outcome=PromptHistoryRestoreOutcome(
+                    kind="snapshot_unavailable",
+                    message="The retained snapshot is unavailable. Reload retained history.",
+                    reload_required=True,
+                ),
+            ),
+            dirty=False,
+            current_compatible=True,
+        )
+        await pilot.pause()
+        assert (
+            str(
+                region.query_one(
+                    "#library-prompt-history-restore-reason", Static
+                ).renderable
+            )
+            == "The retained snapshot is unavailable. Reload retained history."
+        )
+        assert len(region.query("#library-prompt-history-outcome")) == 0
+        region.query_one("#library-prompt-history-reload", Button).press()
+        await pilot.pause()
+
+        assert any(
+            isinstance(message, LibraryPromptHistoryRegion.CountRetryRequested)
+            for message in posted
+        )
+        assert (
+            sum(
+                isinstance(message, LibraryPromptHistoryRegion.PageRequested)
+                for message in posted
+            )
+            == 1
+        )
+        assert any(
+            isinstance(message, LibraryPromptHistoryRegion.ReloadRequested)
+            for message in posted
+        )
+        scoped = [
+            message
+            for message in posted
+            if isinstance(
+                message,
+                (
+                    LibraryPromptHistoryRegion.CountRetryRequested,
+                    LibraryPromptHistoryRegion.PageRequested,
+                    LibraryPromptHistoryRegion.ReloadRequested,
+                ),
+            )
+        ]
+        assert {(message.prompt_uuid, message.scope_token) for message in scoped} == {
+            ("prompt-history-uuid", 1)
+        }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["close", "page", "reload", "row", "restore"])
+async def test_prompt_history_region_old_dom_action_keeps_rendered_scope(
+    action: str,
+):
+    """An outgoing control emits its rendered scope during recompose overlap."""
+    old_state = replace(
+        _history_state(),
+        has_more=True,
+        next_before_change_id=11,
+        restore_outcome=PromptHistoryRestoreOutcome(
+            kind="snapshot_unavailable",
+            message="This retained version is no longer available. Reload retained history.",
+            reload_required=True,
+        ),
+    )
+    app = _CanvasHost(
+        None,
+        mode="editor",
+        editor_state=_structured_editor_state(),
+        history_state=old_state,
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        region = pilot.app.query_one(LibraryPromptHistoryRegion)
+        posted = _capture_region_messages(region)
+        old_disclosure = region.query_one(
+            "#library-prompt-history-collapsible", Collapsible
+        )
+        old_page = region.query_one("#library-prompt-history-load-older", Button)
+        old_reload = region.query_one("#library-prompt-history-reload", Button)
+        old_row = region.query_one("#library-prompt-history-row-11", Button)
+        old_restore = region.query_one("#library-prompt-history-restore", Button)
+        new_state = build_prompt_history_state(
+            prompt_uuid="new-prompt-uuid",
+            current_version=9,
+            scope_token=2,
+        )
+
+        region.sync_state(new_state, dirty=False, current_compatible=True)
+        assert region.view_model[0] is new_state
+        before = len(posted)
+        if action == "close":
+            old_disclosure.collapsed = True
+            region._on_disclosure_toggled(Collapsible.Toggled(old_disclosure))
+        elif action == "page":
+            region._on_page_requested(Button.Pressed(old_page))
+        elif action == "reload":
+            region._on_reload_requested(Button.Pressed(old_reload))
+        elif action == "row":
+            region._on_row_selected(Button.Pressed(old_row))
+        else:
+            region._on_restore_requested(Button.Pressed(old_restore))
+
+        emitted = posted[before:]
+        assert len(emitted) == 1
+        assert (emitted[0].prompt_uuid, emitted[0].scope_token) == (
+            "prompt-history-uuid",
+            1,
+        )
 
 
 @pytest.mark.asyncio
@@ -377,6 +762,121 @@ async def test_prompts_canvas_list_toolbar_has_no_dead_export_button():
     app = _CanvasHost(_three_row_state())
     async with app.run_test() as pilot:
         assert len(pilot.app.query("#library-prompts-export")) == 0
+
+
+@pytest.mark.asyncio
+async def test_prompt_history_canvas_renders_expanded_literal_read_only_preview():
+    """Removing history composition loses the disclosure and exact stored lanes."""
+    history = _history_state()
+    app = _CanvasHost(
+        None,
+        mode="editor",
+        editor_state=_structured_editor_state(),
+        history_state=history,
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        disclosure = pilot.app.query_one(
+            "#library-prompt-history-collapsible", Collapsible
+        )
+        assert disclosure.collapsed is False
+        assert str(disclosure.title) == "Retained history (2)"
+        assert [
+            button.source_version
+            for button in pilot.app.query(".library-prompt-history-row")
+        ] == [2, 1]
+        selected_label = str(
+            pilot.app.query_one("#library-prompt-history-row-22", Button).label
+        )
+        assert "v2 · change 22" in selected_label
+        assert "System prompt" in selected_label
+        future_label = str(
+            pilot.app.query_one("#library-prompt-history-row-11", Button).label
+        )
+        assert "future-artifact" in future_label
+
+        system = pilot.app.query_one("#library-prompt-history-system", TextArea)
+        user = pilot.app.query_one("#library-prompt-history-user", TextArea)
+        assert system.read_only is True
+        assert user.read_only is True
+        assert system.text == "[bold]literal system[/bold]"
+        assert user.text == "[/] literal user [wip]"
+        assert "Current keywords were not captured" in str(
+            pilot.app.query_one(
+                "#library-prompt-history-keywords-disclosure", Static
+            ).renderable
+        )
+        assert len(pilot.app.query(PromptBlockEditor)) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("history", "dirty", "current_compatible", "reason"),
+    [
+        (
+            _history_state(),
+            True,
+            True,
+            "Save or discard unsaved changes before restoring retained history.",
+        ),
+        (
+            _history_state(),
+            False,
+            False,
+            "This compatibility-only editor cannot restore retained history.",
+        ),
+        (
+            _history_state(
+                restore_eligible=False,
+                compatibility_reason="Future artifact types are preview-only.",
+            ),
+            False,
+            True,
+            "Future artifact types are preview-only.",
+        ),
+        (
+            _history_state(selected_version=None),
+            False,
+            True,
+            "Select a retained version to restore.",
+        ),
+    ],
+    ids=["dirty", "compatibility-editor", "preview-only-row", "no-selection"],
+)
+async def test_prompt_history_restore_disabled_reason_is_visible_while_preview_remains_available(
+    history: PromptHistoryState,
+    dirty: bool,
+    current_compatible: bool,
+    reason: str,
+):
+    """Each restore refusal must disable only restore, never retained viewing."""
+    app = _CanvasHost(
+        None,
+        mode="editor",
+        editor_state=_structured_editor_state(),
+        history_state=history,
+        dirty=dirty,
+        history_current_compatible=current_compatible,
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        assert (
+            pilot.app.query_one(
+                "#library-prompt-history-collapsible", Collapsible
+            ).collapsed
+            is False
+        )
+        restore = pilot.app.query_one("#library-prompt-history-restore", Button)
+        assert restore.disabled is True
+        assert (
+            str(
+                pilot.app.query_one(
+                    "#library-prompt-history-restore-reason", Static
+                ).renderable
+            )
+            == reason
+        )
+        assert len(pilot.app.query(".library-prompt-history-row")) == 2
 
 
 @pytest.mark.asyncio
@@ -942,6 +1442,89 @@ def _real_prompt_scope_service(tmp_path):
     return db, service
 
 
+class _RecordingHistoryPromptScopeService:
+    """Delegate to the real scope while exposing its UI-facing history calls."""
+
+    def __init__(
+        self,
+        service: PromptScopeService,
+        *,
+        count_failures: int = 0,
+        page_failures: int = 0,
+        restore_error: Exception | None = None,
+        restore_result: Mapping[str, Any] | None = None,
+        count_gate: threading.Event | None = None,
+        page_gate: threading.Event | None = None,
+        restore_gate: threading.Event | None = None,
+        post_restore_detail_gate: threading.Event | None = None,
+        post_restore_detail_started: threading.Event | None = None,
+    ) -> None:
+        self.service = service
+        self.count_calls: list[str | int] = []
+        self.page_calls: list[tuple[str | int, int, int | None]] = []
+        self.restore_calls: list[tuple[str | int, int, int, int]] = []
+        self.count_failures = count_failures
+        self.page_failures = page_failures
+        self.restore_error = restore_error
+        self.restore_result = restore_result
+        self.count_gate = count_gate
+        self.page_gate = page_gate
+        self.restore_gate = restore_gate
+        self.post_restore_detail_gate = post_restore_detail_gate
+        self.post_restore_detail_started = post_restore_detail_started
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.service, name)
+
+    async def count_prompt_versions(self, **kwargs: Any) -> int:
+        self.count_calls.append(kwargs["prompt_identifier"])
+        if self.count_gate is not None:
+            self.count_gate.wait(timeout=5)
+        if self.count_failures:
+            self.count_failures -= 1
+            raise RuntimeError("injected count failure")
+        return await self.service.count_prompt_versions(**kwargs)
+
+    async def list_prompt_versions(self, **kwargs: Any) -> dict[str, Any]:
+        self.page_calls.append(
+            (
+                kwargs["prompt_identifier"],
+                kwargs["page_size"],
+                kwargs.get("before_change_id"),
+            )
+        )
+        if self.page_gate is not None:
+            self.page_gate.wait(timeout=5)
+        if self.page_failures:
+            self.page_failures -= 1
+            raise RuntimeError("injected page failure")
+        return await self.service.list_prompt_versions(**kwargs)
+
+    async def restore_prompt_version(self, **kwargs: Any) -> dict[str, Any]:
+        self.restore_calls.append(
+            (
+                kwargs["prompt_identifier"],
+                kwargs["change_id"],
+                kwargs["version"],
+                kwargs["expected_version"],
+            )
+        )
+        if self.restore_gate is not None:
+            self.restore_gate.wait(timeout=5)
+        if self.restore_error is not None:
+            raise self.restore_error
+        if self.restore_result is not None:
+            return dict(self.restore_result)
+        return await self.service.restore_prompt_version(**kwargs)
+
+    async def get_prompt(self, **kwargs: Any) -> dict[str, Any]:
+        if self.restore_calls and self.post_restore_detail_gate is not None:
+            if self.post_restore_detail_started is not None:
+                self.post_restore_detail_started.set()
+            self.post_restore_detail_gate.wait(timeout=5)
+        return await self.service.get_prompt(**kwargs)
+
+
 def _real_prompt_scope_service_with_production_policy_enforcer(tmp_path):
     """Like ``_real_prompt_scope_service``, but wires the real production
     runtime-policy seam instead of leaving ``policy_enforcer`` unset.
@@ -998,6 +1581,1810 @@ async def _wait_for_prompt_status(screen, pilot, *, attempts=150) -> str:
             return status_text
         await pilot.pause(0.02)
     return status_text
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_history_count_is_index_only_and_first_page_is_lazy(
+    tmp_path,
+):
+    """Opening a saved local Prompt counts first and reads no page until expand."""
+    db, real_service = _real_prompt_scope_service(tmp_path)
+    prompt_id, prompt_uuid, _msg = db.add_prompt(
+        name="Retained",
+        author="A",
+        details="v1",
+        system_prompt="[bold]literal system[/bold]",
+        user_prompt="[/] literal user [wip]",
+    )
+    db.update_prompt_by_id(prompt_id, {"details": "v2"}, expected_version=1)
+    service = _RecordingHistoryPromptScopeService(real_service)
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+
+        disclosure = await _wait_for_selector(
+            screen, pilot, "#library-prompt-history-collapsible"
+        )
+        for _ in range(150):
+            if str(disclosure.title) == "Retained history (2)":
+                break
+            await pilot.pause(0.02)
+
+        assert disclosure.collapsed is True
+        assert str(disclosure.title) == "Retained history (2)"
+        assert service.count_calls == [prompt_uuid]
+        assert service.page_calls == []
+        assert len(screen.query(".library-prompt-history-row")) == 0
+
+        disclosure.collapsed = False
+        await pilot.pause()
+        for _ in range(150):
+            if len(screen.query(".library-prompt-history-row")) == 2:
+                break
+            await pilot.pause(0.02)
+
+        assert len(service.page_calls) == 1
+        assert service.page_calls[0] == (prompt_uuid, 10, None)
+        assert [
+            row.source_version for row in screen.query(".library-prompt-history-row")
+        ] == [2, 1]
+
+        oldest = next(
+            row
+            for row in screen.query(".library-prompt-history-row")
+            if row.source_version == 1
+        )
+        oldest.press()
+        await pilot.pause()
+        assert screen.query_one("#library-prompt-history-system", TextArea).text == (
+            "[bold]literal system[/bold]"
+        )
+        assert screen.query_one("#library-prompt-history-user", TextArea).text == (
+            "[/] literal user [wip]"
+        )
+        assert screen.query_one("#library-prompt-history-system", TextArea).read_only
+        assert screen.query_one("#library-prompt-history-user", TextArea).read_only
+        assert len(screen.query(PromptBlockEditor)) == 1
+
+        screen.refresh(recompose=True)
+        await pilot.pause()
+        remounted = screen.query_one("#library-prompt-history-collapsible", Collapsible)
+        assert remounted.collapsed is False
+        assert screen.query_one("#library-prompt-history-system", TextArea).text == (
+            "[bold]literal system[/bold]"
+        )
+        assert len(service.page_calls) == 1
+
+        screen.query_one("#library-prompt-author", Input).value = "Dirty"
+        await pilot.pause()
+        assert screen._library_prompt_dirty is True
+        assert len(screen.query(".library-prompt-history-row")) == 2
+        assert screen.query_one("#library-prompt-history-restore", Button).disabled
+        assert (
+            str(
+                screen.query_one(
+                    "#library-prompt-history-restore-reason", Static
+                ).renderable
+            )
+            == "Save or discard unsaved changes before restoring retained history."
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("snapshot_kind", "reason", "system_preview", "user_preview"),
+    [
+        (
+            "legacy-recipe",
+            "Legacy Recipe snapshots are preview-only.",
+            "[bold]literal legacy system[/bold]",
+            "literal legacy user",
+        ),
+        (
+            "over-limit-structured",
+            "This retained version is not supported by current local Prompt "
+            "capabilities.",
+            "",
+            "literal structured user",
+        ),
+    ],
+)
+async def test_library_prompt_history_previews_nonrestorable_local_snapshots_without_mutation(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    snapshot_kind: str,
+    reason: str,
+    system_preview: str,
+    user_preview: str,
+) -> None:
+    capabilities = replace(local_prompt_capabilities(), compiled_lane_limit=4)
+    monkeypatch.setattr(
+        prompt_scope_service_module,
+        "local_prompt_capabilities",
+        lambda: capabilities,
+    )
+    db, service = _real_prompt_scope_service(tmp_path)
+    if snapshot_kind == "legacy-recipe":
+        prompt_id, prompt_uuid, _message = db.add_prompt(
+            name="History compatibility",
+            author="A",
+            details="legacy recipe",
+            system_prompt=system_preview,
+            user_prompt=user_preview,
+            prompt_format="legacy",
+            artifact_type="recipe",
+        )
+    else:
+        definition = {
+            "schema_version": 2,
+            "kind": "block_prompt",
+            "lanes": [
+                {"id": "system", "blocks": []},
+                {
+                    "id": "user",
+                    "blocks": [
+                        {
+                            "id": "user-1",
+                            "title": "User",
+                            "syntax": "freeform",
+                            "content": user_preview,
+                        }
+                    ],
+                },
+            ],
+        }
+        prompt_id, prompt_uuid, _message = db.add_prompt(
+            name="History compatibility",
+            author="A",
+            details="structured over limit",
+            system_prompt=system_preview,
+            user_prompt=user_preview,
+            prompt_format="structured",
+            prompt_schema_version=2,
+            prompt_definition=definition,
+            artifact_type="prompt",
+        )
+    db.update_prompt_by_id(
+        prompt_id,
+        {
+            "details": "current Prompt",
+            "system_prompt": "current system",
+            "user_prompt": "current user",
+            "prompt_format": "legacy",
+            "prompt_schema_version": None,
+            "prompt_definition": None,
+            "artifact_type": "prompt",
+        },
+        expected_version=1,
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        disclosure = await _wait_for_selector(
+            screen, pilot, "#library-prompt-history-collapsible"
+        )
+        disclosure.collapsed = False
+        for _ in range(150):
+            rows = list(screen.query(".library-prompt-history-row"))
+            if len(rows) == 2:
+                break
+            await pilot.pause(0.02)
+        source = next(row for row in rows if row.source_version == 1)
+        source.press()
+        for _ in range(150):
+            if screen.query("#library-prompt-history-compatibility"):
+                break
+            await pilot.pause(0.02)
+
+        assert screen.query_one("#library-prompt-history-system", TextArea).text == (
+            system_preview
+        )
+        assert screen.query_one("#library-prompt-history-user", TextArea).text == (
+            user_preview
+        )
+        assert (
+            str(
+                screen.query_one(
+                    "#library-prompt-history-compatibility", Static
+                ).renderable
+            )
+            == reason
+        )
+        assert screen.query_one("#library-prompt-history-restore", Button).disabled
+        assert (
+            str(
+                screen.query_one(
+                    "#library-prompt-history-restore-reason", Static
+                ).renderable
+            )
+            == reason
+        )
+
+        before_detail = db.fetch_prompt_details(prompt_uuid)
+        before_count = db.get_prompt_history_count(prompt_uuid)
+        history_source = next(
+            row
+            for row in screen._library_prompt_history_controller.state.rows
+            if row.version == 1
+        )
+        with pytest.raises(PromptRestoreError) as exc_info:
+            await service.restore_prompt_version(
+                mode="local",
+                prompt_identifier=prompt_uuid,
+                change_id=history_source.change_id,
+                version=history_source.version,
+                expected_version=before_detail["version"],
+            )
+
+        assert exc_info.value.code is PromptRestoreErrorCode.VALIDATION
+        assert db.fetch_prompt_details(prompt_uuid) == before_detail
+        assert db.get_prompt_history_count(prompt_uuid) == before_count
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_history_title_starts_with_ellipsis_before_count_settles(
+    tmp_path,
+):
+    """The collapsed disclosure is truthful while the scalar worker is pending."""
+    db, real_service = _real_prompt_scope_service(tmp_path)
+    prompt_id, prompt_uuid, _msg = db.add_prompt(
+        name="Pending count", author="", details="", user_prompt="v1"
+    )
+    count_gate = threading.Event()
+    service = _RecordingHistoryPromptScopeService(real_service, count_gate=count_gate)
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=(80, 24)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _open_prompt_editor(screen, pilot, prompt_id)
+            disclosure = screen.query_one(
+                "#library-prompt-history-collapsible", Collapsible
+            )
+
+            assert str(disclosure.title) == "Retained history (…)"
+            assert disclosure.collapsed is True
+            assert service.count_calls == [prompt_uuid]
+            assert service.page_calls == []
+
+            count_gate.set()
+            for _ in range(150):
+                disclosure = screen.query_one(
+                    "#library-prompt-history-collapsible", Collapsible
+                )
+                if str(disclosure.title) == "Retained history (1)":
+                    break
+                await pilot.pause(0.02)
+            assert str(disclosure.title) == "Retained history (1)"
+    finally:
+        count_gate.set()
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_history_collapse_resets_page_without_refetching_count(
+    tmp_path,
+):
+    """Close uses the pure reset while preserving the already-settled count."""
+    db, real_service = _real_prompt_scope_service(tmp_path)
+    prompt_id, prompt_uuid, _msg = db.add_prompt(
+        name="Collapse retained", author="", details="", user_prompt="v1"
+    )
+    db.update_prompt_by_id(prompt_id, {"details": "v2"}, expected_version=1)
+    service = _RecordingHistoryPromptScopeService(real_service)
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        disclosure = screen.query_one(
+            "#library-prompt-history-collapsible", Collapsible
+        )
+        disclosure.collapsed = False
+        for _ in range(150):
+            if len(screen.query(".library-prompt-history-row")) == 2:
+                break
+            await pilot.pause(0.02)
+        screen.query_one("#library-prompt-history-row-1", Button).press()
+        await pilot.pause()
+        assert screen._library_prompt_history_state.selected is not None
+
+        screen.query_one(
+            "#library-prompt-history-collapsible", Collapsible
+        ).collapsed = True
+        for _ in range(100):
+            state = screen._library_prompt_history_state
+            if state is not None and not state.is_open and not state.rows:
+                break
+            await pilot.pause(0.02)
+        state = screen._library_prompt_history_state
+        assert state is not None
+        assert state.prompt_uuid == prompt_uuid
+        assert state.retained_count == 2
+        assert state.count_status == "loaded"
+        assert state.rows == ()
+        assert state.selected is None
+        assert state.page_request is None
+        assert service.count_calls == [prompt_uuid]
+
+        screen.query_one(
+            "#library-prompt-history-collapsible", Collapsible
+        ).collapsed = False
+        for _ in range(150):
+            if len(screen.query(".library-prompt-history-row")) == 2:
+                break
+            await pilot.pause(0.02)
+        assert service.count_calls == [prompt_uuid]
+        assert len(service.page_calls) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("late_kind", ["count", "page", "restore"])
+async def test_library_prompt_history_late_results_after_prompt_switch_are_noops(
+    tmp_path,
+    late_kind: str,
+):
+    """Prompt UUID + scope + request guards reject every late worker class."""
+    db, real_service = _real_prompt_scope_service(tmp_path)
+    first_id, first_uuid, _msg = db.add_prompt(
+        name="First retained", author="", details="", user_prompt="first v1"
+    )
+    db.update_prompt_by_id(first_id, {"details": "first v2"}, expected_version=1)
+    second_id, second_uuid, _msg = db.add_prompt(
+        name="Second retained", author="", details="", user_prompt="second"
+    )
+    gate = threading.Event()
+    service = _RecordingHistoryPromptScopeService(
+        real_service,
+        count_gate=gate if late_kind == "count" else None,
+        page_gate=gate if late_kind == "page" else None,
+        restore_gate=gate if late_kind == "restore" else None,
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=(100, 30)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _open_prompt_editor(screen, pilot, first_id)
+            if late_kind in {"page", "restore"}:
+                screen.query_one(
+                    "#library-prompt-history-collapsible", Collapsible
+                ).collapsed = False
+                for _ in range(150):
+                    if late_kind == "page" and service.page_calls:
+                        break
+                    if (
+                        late_kind == "restore"
+                        and len(screen.query(".library-prompt-history-row")) == 2
+                    ):
+                        break
+                    await pilot.pause(0.02)
+            if late_kind == "restore":
+                row = next(
+                    row
+                    for row in screen.query(".library-prompt-history-row")
+                    if row.source_version == 1
+                )
+                row.press()
+                await pilot.pause()
+                screen.query_one("#library-prompt-history-restore", Button).press()
+                await pilot.pause()
+                assert isinstance(host.screen, ConfirmationDialog)
+                host.screen.query_one("#confirm-button", Button).press()
+                for _ in range(100):
+                    if service.restore_calls:
+                        break
+                    await pilot.pause(0.02)
+                assert service.restore_calls
+            elif late_kind == "count":
+                for _ in range(100):
+                    if service.count_calls:
+                        break
+                    await pilot.pause(0.02)
+                assert service.count_calls == [first_uuid]
+            else:
+                assert service.page_calls
+
+            for _ in range(100):
+                if host.screen is screen:
+                    break
+                await pilot.pause(0.02)
+            screen.query_one("#library-prompt-back", Button).press()
+            await _wait_for_selector(screen, pilot, f"#library-prompt-row-{second_id}")
+            screen.query_one(f"#library-prompt-row-{second_id}", Button).press()
+            gate.set()
+            for _ in range(200):
+                state = screen._library_prompt_history_state
+                if (
+                    screen._selected_prompt_id == second_id
+                    and isinstance(screen._library_prompt_detail, Mapping)
+                    and screen._library_prompt_detail.get("uuid") == second_uuid
+                    and state is not None
+                    and state.prompt_uuid == second_uuid
+                    and state.count_status == "loaded"
+                ):
+                    break
+                await pilot.pause(0.02)
+
+            state = screen._library_prompt_history_state
+            assert screen._selected_prompt_id == second_id
+            assert state is not None
+            assert state.prompt_uuid == second_uuid
+            assert state.rows == ()
+            assert state.selected is None
+            assert screen._library_prompt_version == 1
+            for _ in range(100):
+                disclosures = list(screen.query("#library-prompt-history-collapsible"))
+                if not disclosures:
+                    await pilot.pause(0.02)
+                    continue
+                disclosure = disclosures[0]
+                if str(disclosure.title) == "Retained history (1)":
+                    break
+                await pilot.pause(0.02)
+            assert disclosures
+            assert str(disclosure.title) == "Retained history (1)"
+    finally:
+        gate.set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "action",
+    ["close", "reload", "page", "restore", "select"],
+)
+async def test_queued_outgoing_history_action_is_noop_after_prompt_adoption(
+    tmp_path,
+    action: str,
+):
+    """A queued semantic action cannot cross the immutable Prompt scope."""
+    db, real_service = _real_prompt_scope_service(tmp_path)
+    first_id, _first_uuid, _message = db.add_prompt(
+        name="Outgoing history", author="", details="v1", user_prompt="first"
+    )
+    db.update_prompt_by_id(first_id, {"details": "v2"}, expected_version=1)
+    second_id, second_uuid, _message = db.add_prompt(
+        name="Current history", author="", details="v1", user_prompt="second"
+    )
+    db.update_prompt_by_id(second_id, {"details": "v2"}, expected_version=1)
+    second_detail = await real_service.get_prompt(
+        mode="local", prompt_identifier=second_id, include_deleted=True
+    )
+    second_page_payload = await real_service.list_prompt_versions(
+        mode="local",
+        prompt_identifier=second_uuid,
+        page_size=10,
+        before_change_id=None,
+    )
+    service = _RecordingHistoryPromptScopeService(real_service)
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, first_id)
+        disclosure = screen.query_one(
+            "#library-prompt-history-collapsible", Collapsible
+        )
+        disclosure.collapsed = False
+        for _ in range(150):
+            if len(screen.query(".library-prompt-history-row")) == 2:
+                break
+            await pilot.pause(0.02)
+        first_row = next(
+            row
+            for row in screen.query(".library-prompt-history-row")
+            if row.source_version == 1
+        )
+        first_row.press()
+        await pilot.pause()
+        outgoing_state = screen._library_prompt_history_state
+        assert outgoing_state is not None
+        scoped = {
+            "prompt_uuid": outgoing_state.prompt_uuid,
+            "scope_token": outgoing_state.scope_token,
+        }
+        if action == "close":
+            stale_message = LibraryPromptHistoryRegion.DisclosureClosed(**scoped)
+        elif action == "reload":
+            stale_message = LibraryPromptHistoryRegion.ReloadRequested(**scoped)
+        elif action == "page":
+            stale_message = LibraryPromptHistoryRegion.PageRequested(**scoped)
+        elif action == "restore":
+            stale_message = LibraryPromptHistoryRegion.RestoreRequested(**scoped)
+        else:
+            stale_message = LibraryPromptHistoryRegion.RowSelected(
+                **scoped,
+                change_id=first_row.change_id,
+                source_version=first_row.source_version,
+            )
+
+        outgoing_region = screen.query_one(LibraryPromptHistoryRegion)
+        screen._adopt_library_prompt_persisted_detail(
+            second_detail,
+            open_history=True,
+        )
+        adopted = screen._library_prompt_history_state
+        assert adopted is not None
+        current = build_prompt_history_state(
+            prompt_uuid=second_uuid,
+            current_version=2,
+            scope_token=adopted.scope_token,
+        )
+        current, count_request = begin_prompt_history_count(
+            current, request_token=10_000
+        )
+        current = apply_prompt_history_count(current, count_request, total_count=2)
+        current, page_request = begin_prompt_history_page(current, request_token=10_001)
+        current = apply_prompt_history_page(
+            current,
+            page_request,
+            build_prompt_history_page(second_page_payload),
+        )
+        second_row = next(row for row in current.rows if row.version == 1)
+        current, preview_request = begin_prompt_history_preview(
+            current,
+            change_id=second_row.change_id,
+            source_version=second_row.version,
+            request_token=10_002,
+        )
+        current = apply_prompt_history_preview(current, preview_request)
+        current = replace(
+            current,
+            has_more=True,
+            next_before_change_id=current.rows[-1].change_id,
+        )
+        screen._library_prompt_history_controller._publish(current)
+        for _ in range(150):
+            if any(call[0] == second_uuid for call in service.page_calls):
+                break
+            await pilot.pause(0.02)
+        before = screen._library_prompt_history_state
+        page_calls = list(service.page_calls)
+        restore_calls = list(service.restore_calls)
+
+        outgoing_region.post_message(stale_message)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert host.screen is screen
+        assert screen._selected_prompt_id == second_id
+        assert screen._library_prompt_history_state == before
+        assert screen._library_prompt_history_state.prompt_uuid == second_uuid
+        assert service.page_calls == page_calls
+        assert service.restore_calls == restore_calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("late_kind", ["count", "page"])
+async def test_library_prompt_history_late_load_is_noop_after_duplicate_detaches(
+    tmp_path,
+    late_kind: str,
+):
+    """A saved-to-unsaved transition invalidates the source worker scope."""
+    db, real_service = _real_prompt_scope_service(tmp_path)
+    prompt_id, prompt_uuid, _message = db.add_prompt(
+        name="Detach while paging",
+        author="Author",
+        details="v1",
+        user_prompt="User",
+    )
+    db.update_prompt_by_id(prompt_id, {"details": "v2"}, expected_version=1)
+    load_gate = threading.Event()
+    service = _RecordingHistoryPromptScopeService(
+        real_service,
+        count_gate=load_gate if late_kind == "count" else None,
+        page_gate=load_gate if late_kind == "page" else None,
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=(100, 30)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _open_prompt_editor(screen, pilot, prompt_id)
+            assert screen._library_prompt_history_state is not None
+            assert screen._library_prompt_history_state.prompt_uuid == prompt_uuid
+            if late_kind == "page":
+                screen.query_one(
+                    "#library-prompt-history-collapsible", Collapsible
+                ).collapsed = False
+            for _ in range(100):
+                if (
+                    late_kind == "count"
+                    and service.count_calls
+                    or late_kind == "page"
+                    and service.page_calls
+                ):
+                    break
+                await pilot.pause(0.02)
+            assert service.count_calls if late_kind == "count" else service.page_calls
+
+            screen.query_one("#library-prompt-duplicate", Button).press()
+            await pilot.pause()
+            assert screen._selected_prompt_id is None
+            assert screen._library_prompt_history_state is None
+            assert len(screen.query("#library-prompt-history-collapsible")) == 0
+            assert "uuid" not in screen._library_prompt_detail
+
+            load_gate.set()
+            for _ in range(100):
+                await pilot.pause(0.02)
+            assert screen._library_prompt_history_state is None
+            assert len(screen.query("#library-prompt-history-collapsible")) == 0
+    finally:
+        load_gate.set()
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_history_retries_count_and_page_errors(tmp_path):
+    """Removing either retry leaves a real worker failure permanently stuck."""
+    db, real_service = _real_prompt_scope_service(tmp_path)
+    prompt_id, prompt_uuid, _msg = db.add_prompt(
+        name="Retry retained", author="", details="", user_prompt="v1"
+    )
+    service = _RecordingHistoryPromptScopeService(
+        real_service,
+        count_failures=1,
+        page_failures=1,
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        disclosure = screen.query_one(
+            "#library-prompt-history-collapsible", Collapsible
+        )
+        for _ in range(150):
+            if screen._library_prompt_history_state.count_status == "error":
+                break
+            await pilot.pause(0.02)
+
+        disclosure.collapsed = False
+        await pilot.pause()
+        await _wait_for_selector(screen, pilot, "#library-prompt-history-retry-count")
+        screen.query_one("#library-prompt-history-retry-count", Button).press()
+        for _ in range(150):
+            if str(disclosure.title) == "Retained history (1)":
+                break
+            disclosure = screen.query_one(
+                "#library-prompt-history-collapsible", Collapsible
+            )
+            await pilot.pause(0.02)
+        assert service.count_calls == [prompt_uuid, prompt_uuid]
+        assert str(disclosure.title) == "Retained history (1)"
+
+        retry_page = await _wait_for_selector(
+            screen, pilot, "#library-prompt-history-retry-page"
+        )
+        retry_page.press()
+        for _ in range(150):
+            if len(screen.query(".library-prompt-history-row")) == 1:
+                break
+            await pilot.pause(0.02)
+        assert len(service.page_calls) == 2
+        assert len(screen.query(".library-prompt-history-row")) == 1
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_history_loads_older_pages_once_per_cursor(tmp_path):
+    """Paging appends strictly older rows and rejects duplicate in-flight presses."""
+    db, real_service = _real_prompt_scope_service(tmp_path)
+    prompt_id, prompt_uuid, _msg = db.add_prompt(
+        name="Paged", author="", details="", user_prompt="v1"
+    )
+    for version in range(1, 12):
+        db.update_prompt_by_id(
+            prompt_id,
+            {"details": f"v{version + 1}"},
+            expected_version=version,
+        )
+    service = _RecordingHistoryPromptScopeService(real_service)
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        disclosure = screen.query_one(
+            "#library-prompt-history-collapsible", Collapsible
+        )
+        disclosure.collapsed = False
+        await pilot.pause()
+        for _ in range(150):
+            if len(screen.query(".library-prompt-history-row")) == 10:
+                break
+            await pilot.pause(0.02)
+        first_versions = [
+            row.source_version for row in screen.query(".library-prompt-history-row")
+        ]
+        assert first_versions == list(range(12, 2, -1))
+
+        load_older = screen.query_one("#library-prompt-history-load-older", Button)
+        load_older.press()
+        load_older.press()
+        await pilot.pause()
+        for _ in range(150):
+            if len(screen.query(".library-prompt-history-row")) == 12:
+                break
+            await pilot.pause(0.02)
+
+        assert len(service.page_calls) == 2
+        assert service.page_calls[0] == (prompt_uuid, 10, None)
+        assert service.page_calls[1][0:2] == (prompt_uuid, 10)
+        assert service.page_calls[1][2] is not None
+        assert [
+            row.source_version for row in screen.query(".library-prompt-history-row")
+        ] == list(range(12, 0, -1))
+        assert len(screen.query("#library-prompt-history-load-older")) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "type_change", [False, True], ids=["same-type", "prompt-to-recipe"]
+)
+async def test_library_prompt_history_confirms_and_restores_as_new_current_version(
+    tmp_path,
+    type_change: bool,
+):
+    """Restore confirmation names both versions and any artifact-type change."""
+    db, real_service = _real_prompt_scope_service(tmp_path)
+    prompt_definition = {
+        "kind": "block_prompt",
+        "schema_version": 2,
+        "lanes": [
+            {"id": "system", "blocks": []},
+            {
+                "id": "user",
+                "blocks": [
+                    {
+                        "id": "goal",
+                        "title": "Goal",
+                        "syntax": "freeform",
+                        "content": "Original",
+                    }
+                ],
+            },
+        ],
+    }
+    prompt_id, prompt_uuid, _msg = db.add_prompt(
+        name="Restore source",
+        author="",
+        details="",
+        user_prompt="Original",
+        prompt_format="structured",
+        prompt_schema_version=2,
+        prompt_definition=prompt_definition,
+        artifact_type="prompt",
+    )
+    update: dict[str, Any] = {"details": "Current"}
+    if type_change:
+        update.update(
+            {
+                "artifact_type": "recipe",
+                "user_prompt": "Current recipe",
+                "prompt_definition": {
+                    **prompt_definition,
+                    "kind": "block_recipe",
+                    "lanes": [
+                        {"id": "system", "blocks": []},
+                        {
+                            "id": "user",
+                            "blocks": [
+                                {
+                                    "id": "goal",
+                                    "title": "Goal",
+                                    "syntax": "freeform",
+                                    "content": "Current recipe",
+                                }
+                            ],
+                        },
+                    ],
+                },
+            }
+        )
+    db.update_prompt_by_id(prompt_id, update, expected_version=1)
+    service = _RecordingHistoryPromptScopeService(real_service)
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        screen.app_instance.notify = host.notify
+        host._notifications.clear()
+        disclosure = screen.query_one(
+            "#library-prompt-history-collapsible", Collapsible
+        )
+        disclosure.collapsed = False
+        await pilot.pause()
+        for _ in range(150):
+            if len(screen.query(".library-prompt-history-row")) == 2:
+                break
+            await pilot.pause(0.02)
+        source = next(
+            row
+            for row in screen.query(".library-prompt-history-row")
+            if row.source_version == 1
+        )
+        source.press()
+        await pilot.pause()
+        screen.query_one("#library-prompt-history-restore", Button).press()
+        await pilot.pause()
+
+        modal = host.screen
+        assert isinstance(modal, ConfirmationDialog)
+        assert "retained v1" in modal.message
+        assert "current v2" in modal.message
+        assert "creates a new current version" in modal.message
+        if type_change:
+            assert "Recipe to Prompt" in modal.message
+        else:
+            assert "changes the artifact type" not in modal.message
+
+        modal.query_one("#confirm-button", Button).press()
+        for _ in range(200):
+            restored = db.fetch_prompt_details(prompt_id)
+            if (
+                host.screen is screen
+                and restored
+                and restored["version"] == 3
+                and screen._library_prompt_version == 3
+                and host._notifications
+            ):
+                break
+            await pilot.pause(0.02)
+        restored = db.fetch_prompt_details(prompt_id)
+        assert restored is not None
+        assert restored["version"] == 3
+        assert restored["artifact_type"] == "prompt"
+        assert len(service.restore_calls) == 1
+        assert service.restore_calls[0][0] == prompt_uuid
+        assert type(service.restore_calls[0][1]) is int
+        assert service.restore_calls[0][2:] == (1, 2)
+        assert [notice.message for notice in host._notifications] == [
+            "Restored v1 as current v3."
+        ]
+        assert screen._library_prompt_version == 3
+        disclosure = await _wait_for_selector(
+            screen, pilot, "#library-prompt-history-collapsible"
+        )
+        assert disclosure.collapsed is False
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_history_restore_stays_gated_until_detail_adoption(
+    tmp_path,
+):
+    """A successful write cannot be restored again while detail refresh waits."""
+    db, real_service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _prompt_uuid, _message = db.add_prompt(
+        name="Adoption gate", author="", details="v1", user_prompt="source"
+    )
+    db.update_prompt_by_id(prompt_id, {"details": "v2"}, expected_version=1)
+    detail_gate = threading.Event()
+    service = _RecordingHistoryPromptScopeService(
+        real_service,
+        post_restore_detail_gate=detail_gate,
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=(100, 30)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _open_prompt_editor(screen, pilot, prompt_id)
+            screen.query_one(
+                "#library-prompt-history-collapsible", Collapsible
+            ).collapsed = False
+            for _ in range(150):
+                if len(screen.query(".library-prompt-history-row")) == 2:
+                    break
+                await pilot.pause(0.02)
+            source = next(
+                row
+                for row in screen.query(".library-prompt-history-row")
+                if row.source_version == 1
+            )
+            source.press()
+            await pilot.pause()
+            restore_gate = screen._library_prompt_history_controller.restore_gate(
+                dirty=False
+            )
+            assert restore_gate is not None and restore_gate.target is not None
+            target = restore_gate.target
+            screen.query_one("#library-prompt-history-restore", Button).press()
+            await pilot.pause()
+            assert isinstance(host.screen, ConfirmationDialog)
+            host.screen.query_one("#confirm-button", Button).press()
+            for _ in range(150):
+                state = screen._library_prompt_history_state
+                if (
+                    state is not None
+                    and state.restore_outcome is not None
+                    and state.restore_outcome.kind == "restored"
+                ):
+                    break
+                await pilot.pause(0.02)
+
+            state = screen._library_prompt_history_state
+            assert state is not None
+            assert state.restore_refresh_pending is True
+            restore = await _wait_for_selector(
+                screen, pilot, "#library-prompt-history-restore"
+            )
+            assert restore.disabled is True
+            assert (
+                str(
+                    screen.query_one(
+                        "#library-prompt-history-restore-reason", Static
+                    ).renderable
+                )
+                == "Refreshing the restored Prompt…"
+            )
+            restore.press()
+            screen._confirm_library_prompt_history_restore(
+                True,
+                prompt_uuid=target.prompt_uuid,
+                change_id=target.change_id,
+                source_version=target.source_version,
+                expected_current_version=target.expected_current_version,
+            )
+            await pilot.pause(0.1)
+
+            assert len(service.restore_calls) == 1
+            assert screen._library_prompt_conflict_snapshot is None
+
+            detail_gate.set()
+            for _ in range(200):
+                state = screen._library_prompt_history_state
+                if (
+                    screen._library_prompt_version == 3
+                    and state is not None
+                    and state.current_version == 3
+                    and not state.restore_refresh_pending
+                ):
+                    break
+                await pilot.pause(0.02)
+
+            state = screen._library_prompt_history_state
+            assert state is not None
+            assert state.current_version == 3
+            assert state.restore_refresh_pending is False
+            assert len(service.restore_calls) == 1
+            assert screen._library_prompt_conflict_snapshot is None
+    finally:
+        detail_gate.set()
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_history_restore_refresh_rejects_same_id_aba_scope(
+    tmp_path,
+):
+    """An old restore refresh cannot adopt into a reopened same-id editor."""
+    db, real_service = _real_prompt_scope_service(tmp_path)
+    prompt_id, prompt_uuid, _message = db.add_prompt(
+        name="ABA refresh", author="", details="v1", user_prompt="source"
+    )
+    db.update_prompt_by_id(prompt_id, {"details": "v2"}, expected_version=1)
+    detail_gate = threading.Event()
+    detail_started = threading.Event()
+    service = _RecordingHistoryPromptScopeService(
+        real_service,
+        post_restore_detail_gate=detail_gate,
+        post_restore_detail_started=detail_started,
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=(100, 30)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _open_prompt_editor(screen, pilot, prompt_id)
+            screen.query_one(
+                "#library-prompt-history-collapsible", Collapsible
+            ).collapsed = False
+            for _ in range(150):
+                if len(screen.query(".library-prompt-history-row")) == 2:
+                    break
+                await pilot.pause(0.02)
+            source = next(
+                row
+                for row in screen.query(".library-prompt-history-row")
+                if row.source_version == 1
+            )
+            source.press()
+            await pilot.pause()
+            screen.query_one("#library-prompt-history-restore", Button).press()
+            await pilot.pause()
+            assert isinstance(host.screen, ConfirmationDialog)
+            host.screen.query_one("#confirm-button", Button).press()
+            for _ in range(200):
+                if detail_started.is_set():
+                    break
+                await pilot.pause(0.02)
+            assert detail_started.is_set()
+            old_state = screen._library_prompt_history_state
+            assert old_state is not None
+            assert old_state.prompt_uuid == prompt_uuid
+            old_scope_token = old_state.scope_token
+
+            latest = await real_service.get_prompt(
+                mode="local",
+                prompt_identifier=prompt_id,
+                include_deleted=True,
+            )
+            screen._reset_library_prompt_editor_state()
+            screen._selected_prompt_id = prompt_id
+            screen._library_selected_row_id = LIBRARY_ROW_BROWSE_PROMPTS
+            screen._library_prompts_view = "editor"
+            screen._adopt_library_prompt_persisted_detail(latest, open_history=False)
+            screen.refresh(recompose=True)
+            screen.call_after_refresh(screen._arm_library_prompt_editor)
+            await pilot.pause()
+            reopened = screen._library_prompt_history_state
+            assert reopened is not None
+            assert reopened.prompt_uuid == prompt_uuid
+            assert reopened.scope_token != old_scope_token
+            reopened_scope_token = reopened.scope_token
+            name = screen.query_one("#library-prompt-name", Input)
+            name.value = "ABA dirty working copy"
+            await pilot.pause()
+            assert screen._library_prompt_dirty is True
+
+            detail_gate.set()
+            for _ in range(200):
+                if not any(
+                    worker.name == "library_prompt_history_restore"
+                    for worker in screen.workers
+                ):
+                    break
+                await pilot.pause(0.02)
+            await pilot.pause()
+
+            current = screen._library_prompt_history_state
+            assert current is not None
+            assert current.prompt_uuid == prompt_uuid
+            assert current.scope_token == reopened_scope_token
+            assert screen._selected_prompt_id == prompt_id
+            assert screen.query_one("#library-prompt-name", Input).value == (
+                "ABA dirty working copy"
+            )
+            assert screen._library_prompt_dirty is True
+    finally:
+        detail_gate.set()
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_history_collapse_during_restore_detail_fetch_stays_closed(
+    tmp_path,
+):
+    """Collapse during post-restore fetch stays closed after detail adoption."""
+    db, real_service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _prompt_uuid, _message = db.add_prompt(
+        name="Collapse restore", author="", details="v1", user_prompt="source"
+    )
+    db.update_prompt_by_id(prompt_id, {"details": "v2"}, expected_version=1)
+    detail_gate = threading.Event()
+    detail_started = threading.Event()
+    service = _RecordingHistoryPromptScopeService(
+        real_service,
+        post_restore_detail_gate=detail_gate,
+        post_restore_detail_started=detail_started,
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=(100, 30)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _open_prompt_editor(screen, pilot, prompt_id)
+            screen.app_instance.notify = host.notify
+            host._notifications.clear()
+            disclosure = screen.query_one(
+                "#library-prompt-history-collapsible", Collapsible
+            )
+            disclosure.collapsed = False
+            for _ in range(150):
+                if len(screen.query(".library-prompt-history-row")) == 2:
+                    break
+                await pilot.pause(0.02)
+            source = next(
+                row
+                for row in screen.query(".library-prompt-history-row")
+                if row.source_version == 1
+            )
+            source.press()
+            await pilot.pause()
+            screen.query_one("#library-prompt-history-restore", Button).press()
+            await pilot.pause()
+            assert isinstance(host.screen, ConfirmationDialog)
+            host.screen.query_one("#confirm-button", Button).press()
+            for _ in range(200):
+                if detail_started.is_set():
+                    break
+                await pilot.pause(0.02)
+            assert len(service.restore_calls) == 1
+            assert detail_started.is_set()
+            persisted = db.fetch_prompt_details(prompt_id)
+            assert persisted is not None and persisted["version"] == 3
+            assert screen._library_prompt_version == 2
+
+            disclosure = screen.query_one(
+                "#library-prompt-history-collapsible", Collapsible
+            )
+            disclosure.collapsed = True
+            for _ in range(100):
+                state = screen._library_prompt_history_state
+                if state is not None and not state.is_open:
+                    break
+                await pilot.pause(0.02)
+            collapsed = screen._library_prompt_history_state
+            assert collapsed is not None
+            assert collapsed.is_open is False
+            assert collapsed.rows == ()
+            assert collapsed.selected is None
+            assert collapsed.restore_request is None
+            assert collapsed.restore_refresh_pending is True
+
+            detail_gate.set()
+            for _ in range(250):
+                persisted = db.fetch_prompt_details(prompt_id)
+                current = screen._library_prompt_history_state
+                if (
+                    persisted is not None
+                    and persisted["version"] == 3
+                    and screen._library_prompt_version == 3
+                    and current is not None
+                    and current.current_version == 3
+                    and host._notifications
+                ):
+                    break
+                await pilot.pause(0.02)
+
+            persisted = db.fetch_prompt_details(prompt_id)
+            assert persisted is not None and persisted["version"] == 3
+            assert screen._library_prompt_version == 3
+            assert [notice.message for notice in host._notifications] == [
+                "Restored v1 as current v3."
+            ]
+            current = screen._library_prompt_history_state
+            assert current is not None
+            assert current.current_version == 3
+            disclosure = await _wait_for_selector(
+                screen, pilot, "#library-prompt-history-collapsible"
+            )
+            assert disclosure.collapsed is True
+    finally:
+        detail_gate.set()
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_history_no_change_keeps_selection_and_retry_available(
+    tmp_path,
+):
+    """Restoring a byte-identical current snapshot reports no new version."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _prompt_uuid, _message = db.add_prompt(
+        name="Already current",
+        author="Author",
+        details="Same",
+        user_prompt="Same user",
+        keywords=["same"],
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        screen.query_one(
+            "#library-prompt-history-collapsible", Collapsible
+        ).collapsed = False
+        for _ in range(150):
+            if len(screen.query(".library-prompt-history-row")) == 1:
+                break
+            await pilot.pause(0.02)
+        screen.query_one(".library-prompt-history-row", Button).press()
+        await pilot.pause()
+        screen.query_one("#library-prompt-history-restore", Button).press()
+        await pilot.pause()
+        assert isinstance(host.screen, ConfirmationDialog)
+        host.screen.query_one("#confirm-button", Button).press()
+        for _ in range(150):
+            state = screen._library_prompt_history_state
+            if state is not None and state.restore_outcome is not None:
+                break
+            await pilot.pause(0.02)
+
+        state = screen._library_prompt_history_state
+        assert state is not None
+        assert state.restore_outcome is not None
+        assert state.restore_outcome.kind == "no_change"
+        assert state.restore_outcome.message == (
+            "Retained v1 already matches current v1; no new version was created."
+        )
+        assert state.selected is not None
+        assert state.selected.source_version == 1
+        assert (
+            screen.query_one("#library-prompt-history-restore", Button).disabled
+            is False
+        )
+        assert db.fetch_prompt_details(prompt_id)["version"] == 1
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_history_snapshot_unavailable_has_first_page_reload(
+    tmp_path,
+):
+    """Snapshot recovery reloads page zero while retaining the settled count."""
+    db, real_service = _real_prompt_scope_service(tmp_path)
+    prompt_id, prompt_uuid, _message = db.add_prompt(
+        name="Missing snapshot",
+        author="",
+        details="v1",
+        user_prompt="User",
+    )
+    db.update_prompt_by_id(prompt_id, {"details": "v2"}, expected_version=1)
+    service = _RecordingHistoryPromptScopeService(
+        real_service,
+        restore_result={
+            "outcome": "snapshot_unavailable",
+            "snapshot_unavailable": True,
+            "no_change": False,
+            "source_version": 1,
+            "current_version": 2,
+            "new_version": None,
+            "retained_current_keywords": False,
+        },
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        screen.query_one(
+            "#library-prompt-history-collapsible", Collapsible
+        ).collapsed = False
+        for _ in range(150):
+            if len(screen.query(".library-prompt-history-row")) == 2:
+                break
+            await pilot.pause(0.02)
+        source = next(
+            row
+            for row in screen.query(".library-prompt-history-row")
+            if row.source_version == 1
+        )
+        source.press()
+        await pilot.pause()
+        screen.query_one("#library-prompt-history-restore", Button).press()
+        await pilot.pause()
+        assert isinstance(host.screen, ConfirmationDialog)
+        host.screen.query_one("#confirm-button", Button).press()
+        reload_button = await _wait_for_selector(
+            screen, pilot, "#library-prompt-history-reload"
+        )
+        await pilot.pause()
+        reload_button = screen.query_one("#library-prompt-history-reload", Button)
+
+        assert str(reload_button.label) == "Reload retained history"
+        assert service.count_calls == [prompt_uuid]
+        assert len(service.page_calls) == 1
+        reload_button.press()
+        for _ in range(150):
+            state = screen._library_prompt_history_state
+            if (
+                state is not None
+                and state.restore_outcome is None
+                and state.page_status == "loaded"
+                and len(service.page_calls) == 2
+            ):
+                break
+            await pilot.pause(0.02)
+
+        state = screen._library_prompt_history_state
+        assert state is not None
+        assert state.selected is None
+        assert state.restore_outcome is None
+        assert [row.version for row in state.rows] == [2, 1]
+        assert service.count_calls == [prompt_uuid]
+        assert len(service.page_calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_history_generic_db_failure_is_private_and_retryable(
+    tmp_path,
+    monkeypatch,
+):
+    """A generic DB boundary failure crosses real services with private copy."""
+    logger_spy = Mock()
+    monkeypatch.setattr(prompt_history_module, "logger", logger_spy)
+    db, real_service = _real_prompt_scope_service(tmp_path)
+    prompt_id, prompt_uuid, _msg = db.add_prompt(
+        name="Generic DB refusal",
+        author="",
+        details="v1",
+        user_prompt="private body",
+        keywords=["original"],
+    )
+    db.update_prompt_by_id(prompt_id, {"details": "v2"}, expected_version=1)
+    before_detail = db.fetch_prompt_details(prompt_id)
+    before_history = db.get_prompt_history_entries(prompt_uuid, page_size=10)
+
+    def fail_restore(*_args: Any, **_kwargs: Any):
+        raise DatabaseError("SECRET retained prompt body from SQLite")
+
+    monkeypatch.setattr(db, "restore_prompt_history_entry", fail_restore)
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = real_service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        screen.query_one(
+            "#library-prompt-history-collapsible", Collapsible
+        ).collapsed = False
+        await pilot.pause()
+        for _ in range(150):
+            if len(screen.query(".library-prompt-history-row")) == 2:
+                break
+            await pilot.pause(0.02)
+        source = next(
+            row
+            for row in screen.query(".library-prompt-history-row")
+            if row.source_version == 1
+        )
+        source.press()
+        await pilot.pause()
+        screen.query_one("#library-prompt-history-restore", Button).press()
+        await pilot.pause()
+        modal = host.screen
+        assert isinstance(modal, ConfirmationDialog)
+        modal.query_one("#confirm-button", Button).press()
+        for _ in range(150):
+            outcome = screen._library_prompt_history_state.restore_outcome
+            if outcome is not None:
+                break
+            await pilot.pause(0.02)
+
+        state = screen._library_prompt_history_state
+        assert state is not None
+        assert state.selected is not None
+        assert state.selected.source_version == 1
+        assert state.restore_outcome is not None
+        assert state.restore_outcome.kind == "error"
+        outcome_widget = await _wait_for_selector(
+            screen, pilot, "#library-prompt-history-outcome"
+        )
+        assert str(outcome_widget.renderable) == "Couldn't restore retained history."
+        assert (
+            screen.query_one("#library-prompt-history-restore", Button).disabled
+            is False
+        )
+        assert db.fetch_prompt_details(prompt_id) == before_detail
+        assert (
+            db.get_prompt_history_entries(prompt_uuid, page_size=10) == before_history
+        )
+        rendered = " ".join(str(static.renderable) for static in screen.query("Static"))
+        assert "SECRET retained prompt body" not in rendered
+        assert "private body" not in rendered
+        assert "SECRET retained prompt body" not in str(logger_spy.method_calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("restore_error", "expected_copy", "enters_conflict"),
+    [
+        (
+            RuntimeError("SECRET retained body from adapter"),
+            "Couldn't restore retained history.",
+            False,
+        ),
+        (
+            ValueError("SECRET validation payload from adapter"),
+            "Couldn't restore retained history.",
+            False,
+        ),
+        (
+            PromptRestoreError(PromptRestoreErrorCode.EXPECTED_VERSION),
+            "This Prompt changed elsewhere. Reload before restoring.",
+            True,
+        ),
+    ],
+    ids=[
+        "privacy-safe-generic",
+        "privacy-safe-unexpected-value-error",
+        "expected-version-conflict",
+    ],
+)
+async def test_library_prompt_history_restore_failures_are_truthful_and_guarded(
+    tmp_path,
+    restore_error: Exception,
+    expected_copy: str,
+    enters_conflict: bool,
+    monkeypatch,
+):
+    """Unexpected details stay private; stale expected versions enter conflict."""
+    logger_spy = Mock()
+    monkeypatch.setattr(prompt_history_module, "logger", logger_spy)
+    db, real_service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _prompt_uuid, _msg = db.add_prompt(
+        name="Guarded restore", author="", details="", user_prompt="v1"
+    )
+    db.update_prompt_by_id(prompt_id, {"details": "v2"}, expected_version=1)
+    service = _RecordingHistoryPromptScopeService(
+        real_service,
+        restore_error=restore_error,
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        screen.query_one(
+            "#library-prompt-history-collapsible", Collapsible
+        ).collapsed = False
+        for _ in range(150):
+            if len(screen.query(".library-prompt-history-row")) == 2:
+                break
+            await pilot.pause(0.02)
+        source = next(
+            row
+            for row in screen.query(".library-prompt-history-row")
+            if row.source_version == 1
+        )
+        source.press()
+        await pilot.pause()
+        screen.query_one("#library-prompt-history-restore", Button).press()
+        await pilot.pause()
+        assert isinstance(host.screen, ConfirmationDialog)
+        host.screen.query_one("#confirm-button", Button).press()
+        for _ in range(150):
+            outcome = screen._library_prompt_history_state.restore_outcome
+            if outcome is not None:
+                break
+            await pilot.pause(0.02)
+
+        outcome = screen._library_prompt_history_state.restore_outcome
+        assert outcome is not None
+        assert outcome.message == expected_copy
+        assert "SECRET retained body" not in outcome.message
+        assert "SECRET validation payload" not in outcome.message
+        assert (screen._library_prompt_conflict_snapshot is not None) is enters_conflict
+        if enters_conflict:
+            await _wait_for_selector(screen, pilot, "#library-prompt-conflict-copy")
+            assert len(screen.query("#library-prompt-conflict-copy")) == 1
+        else:
+            assert screen._library_prompt_history_state.selected is not None
+            restore = await _wait_for_selector(
+                screen, pilot, "#library-prompt-history-restore"
+            )
+            assert restore.disabled is False
+        logged = str(logger_spy.method_calls)
+        assert "SECRET retained body" not in logged
+        assert "SECRET validation payload" not in logged
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_history_duplicate_name_is_retryable_not_stale_conflict(
+    tmp_path,
+):
+    """The real DB/service/scope/UI stack must distinguish name collisions."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, prompt_uuid, _message = db.add_prompt(
+        name="Retained name",
+        author="Original author",
+        details="Original details",
+        user_prompt="Original user",
+        keywords=["original-keyword"],
+    )
+    db.update_prompt_by_id(
+        prompt_id,
+        {
+            "name": "Current name",
+            "author": "Current author",
+            "details": "Current details",
+            "user_prompt": "Current user",
+            "keywords": ["current-keyword"],
+        },
+        expected_version=1,
+    )
+    db.add_prompt(
+        name="Retained name",
+        author="Other owner",
+        details="Occupies the retained name",
+        user_prompt="Other user",
+    )
+    before_detail = db.fetch_prompt_details(prompt_id)
+    before_history = db.get_prompt_history_entries(prompt_uuid, page_size=10)
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        screen.query_one(
+            "#library-prompt-history-collapsible", Collapsible
+        ).collapsed = False
+        for _ in range(150):
+            if len(screen.query(".library-prompt-history-row")) == 2:
+                break
+            await pilot.pause(0.02)
+        source = next(
+            row
+            for row in screen.query(".library-prompt-history-row")
+            if row.source_version == 1
+        )
+        source.press()
+        await pilot.pause()
+        screen.query_one("#library-prompt-history-restore", Button).press()
+        await pilot.pause()
+        assert isinstance(host.screen, ConfirmationDialog)
+        host.screen.query_one("#confirm-button", Button).press()
+        for _ in range(150):
+            state = screen._library_prompt_history_state
+            if state is not None and state.restore_outcome is not None:
+                break
+            await pilot.pause(0.02)
+
+        state = screen._library_prompt_history_state
+        assert state is not None
+        assert state.restore_outcome is not None
+        assert state.restore_outcome.kind == "name_conflict"
+        assert state.restore_outcome.message == (
+            "Another active Prompt already uses this name. "
+            "Rename it or choose another retained version, then retry."
+        )
+        assert screen._library_prompt_conflict_snapshot is None
+        assert state.selected is not None
+        assert state.selected.source_version == 1
+        assert (
+            screen.query_one("#library-prompt-history-restore", Button).disabled
+            is False
+        )
+
+    after_detail = db.fetch_prompt_details(prompt_id)
+    after_history = db.get_prompt_history_entries(prompt_uuid, page_size=10)
+    assert after_detail == before_detail
+    assert after_history == before_history
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_history_stale_conflict_reload_refreshes_and_can_retry(
+    tmp_path,
+):
+    """Reload adopts persisted identity/version and rebuilds the open disclosure."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, prompt_uuid, _message = db.add_prompt(
+        name="Reload after conflict",
+        author="Author",
+        details="Retained v1",
+        user_prompt="User",
+    )
+    db.update_prompt_by_id(prompt_id, {"details": "Opened v2"}, expected_version=1)
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        screen.app_instance.notify = host.notify
+        host._notifications.clear()
+        screen.query_one(
+            "#library-prompt-history-collapsible", Collapsible
+        ).collapsed = False
+        for _ in range(150):
+            if len(screen.query(".library-prompt-history-row")) == 2:
+                break
+            await pilot.pause(0.02)
+        source = next(
+            row
+            for row in screen.query(".library-prompt-history-row")
+            if row.source_version == 1
+        )
+        source.press()
+        await pilot.pause()
+
+        db.update_prompt_by_id(
+            prompt_id, {"details": "External v3"}, expected_version=2
+        )
+        screen.query_one("#library-prompt-history-restore", Button).press()
+        await pilot.pause()
+        assert isinstance(host.screen, ConfirmationDialog)
+        host.screen.query_one("#confirm-button", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-prompt-conflict-copy")
+        assert screen._library_prompt_history_state is not None
+        assert screen._library_prompt_history_state.restore_outcome is not None
+        assert screen._library_prompt_history_state.restore_outcome.kind == "conflict"
+
+        screen.query_one("#library-prompt-conflict-reload", Button).press()
+        for _ in range(200):
+            state = screen._library_prompt_history_state
+            if (
+                state is not None
+                and state.current_version == 3
+                and state.page_status == "loaded"
+                and len(state.rows) == 3
+                and len(screen.query("#library-prompt-conflict-copy")) == 0
+                and any(
+                    row.source_version == 1
+                    for row in screen.query(".library-prompt-history-row")
+                )
+            ):
+                break
+            await pilot.pause(0.02)
+
+        state = screen._library_prompt_history_state
+        assert state is not None
+        assert state.prompt_uuid == prompt_uuid
+        assert state.current_version == 3
+        assert state.is_open is True
+        assert state.restore_outcome is None
+        assert state.selected is None
+        assert [row.version for row in state.rows] == [3, 2, 1]
+        assert screen._library_prompt_detail["uuid"] == prompt_uuid
+        assert screen._library_prompt_version == 3
+
+        source = next(
+            row
+            for row in screen.query(".library-prompt-history-row")
+            if row.source_version == 1
+        )
+        source.press()
+        await pilot.pause()
+        screen.query_one("#library-prompt-history-restore", Button).press()
+        await pilot.pause()
+        assert isinstance(host.screen, ConfirmationDialog)
+        host.screen.query_one("#confirm-button", Button).press()
+        for _ in range(200):
+            detail = db.fetch_prompt_details(prompt_id)
+            if detail is not None and detail["version"] == 4:
+                break
+            await pilot.pause(0.02)
+
+        detail = db.fetch_prompt_details(prompt_id)
+        assert detail is not None
+        assert detail["version"] == 4
+        assert [notice.message for notice in host._notifications] == [
+            "Restored v1 as current v4."
+        ]
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_conflict_overwrite_adopts_persisted_detail_and_history(
+    tmp_path,
+):
+    """The overwrite seam adopts its returned persisted record like Reload."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, prompt_uuid, _message = db.add_prompt(
+        name="Overwrite conflict",
+        author="Author",
+        details="v1",
+        user_prompt="User",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        screen.query_one(
+            "#library-prompt-history-collapsible", Collapsible
+        ).collapsed = False
+        for _ in range(150):
+            state = screen._library_prompt_history_state
+            if state is not None and state.page_status == "loaded":
+                break
+            await pilot.pause(0.02)
+        db.update_prompt_by_id(
+            prompt_id, {"details": "external v2"}, expected_version=1
+        )
+        screen._enter_library_prompt_conflict(
+            name="Overwrite conflict",
+            author="Author",
+            details="kept overwrite v3",
+            system_prompt="",
+            user_prompt="User",
+            keywords_text="",
+        )
+        await pilot.pause()
+
+        await screen._resolve_library_prompt_conflict(overwrite=True)
+        for _ in range(200):
+            state = screen._library_prompt_history_state
+            if (
+                state is not None
+                and state.current_version == 3
+                and state.page_status == "loaded"
+            ):
+                break
+            await pilot.pause(0.02)
+
+        persisted = db.fetch_prompt_details(prompt_id)
+        state = screen._library_prompt_history_state
+        assert persisted is not None
+        assert persisted["version"] == 3
+        assert persisted["details"] == "kept overwrite v3"
+        assert screen._library_prompt_detail["uuid"] == persisted["uuid"] == prompt_uuid
+        assert screen._library_prompt_detail["version"] == 3
+        assert screen._library_prompt_version == 3
+        assert state is not None
+        assert state.prompt_uuid == prompt_uuid
+        assert state.current_version == 3
+        assert state.is_open is True
+        assert state.restore_outcome is None
 
 
 @pytest.mark.asyncio
@@ -1219,6 +3606,60 @@ async def test_library_prompt_save_stale_version_shows_conflict_bar(tmp_path):
 
         assert screen.query_one("#library-prompt-conflict-save-new", Button)
         assert screen.query_one("#library-prompt-conflict-reload", Button)
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_conflict_save_as_new_replaces_source_history_identity(
+    tmp_path,
+):
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, source_uuid, _message = db.add_prompt(
+        name="Conflict source", author="Author", details="v1", user_prompt="User"
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        assert screen._library_prompt_history_state is not None
+        assert screen._library_prompt_history_state.prompt_uuid == source_uuid
+
+        await service.save_prompt(
+            mode="local", prompt_identifier=prompt_id, details="external v2"
+        )
+        screen.query_one("#library-prompt-name", Input).value = "Conflict copy"
+        await pilot.pause()
+        screen.query_one("#library-prompt-save", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-prompt-conflict-save-new")
+
+        screen.query_one("#library-prompt-conflict-save-new", Button).press()
+        for _ in range(200):
+            state = screen._library_prompt_history_state
+            if (
+                screen._selected_prompt_id is not None
+                and screen._selected_prompt_id != prompt_id
+                and state is not None
+                and state.prompt_uuid != source_uuid
+                and state.count_status == "loaded"
+            ):
+                break
+            await pilot.pause(0.02)
+
+        new_id = screen._selected_prompt_id
+        persisted = db.fetch_prompt_details(new_id)
+        state = screen._library_prompt_history_state
+        assert new_id is not None and new_id != prompt_id
+        assert persisted is not None
+        assert persisted["name"] == "Conflict copy"
+        assert state is not None
+        assert state.prompt_uuid == persisted["uuid"]
+        assert state.prompt_uuid != source_uuid
+        assert state.current_version == 1
+        assert screen._library_prompt_detail["uuid"] == persisted["uuid"]
 
 
 @pytest.mark.asyncio
@@ -1482,6 +3923,11 @@ async def test_library_shell_create_prompt_write_time_conflict_save_as_new_retri
         assert persisted is not None
         assert persisted["name"] == "Brand New"
         assert persisted["user_prompt"] == "Hello {name}"
+        assert screen._library_prompt_detail["uuid"] == persisted["uuid"]
+        assert screen._library_prompt_detail["version"] == persisted["version"] == 1
+        assert screen._library_prompt_history_state is not None
+        assert screen._library_prompt_history_state.prompt_uuid == persisted["uuid"]
+        assert screen._library_prompt_history_state.current_version == 1
 
         allowed = await screen.flush_pending_work()
         assert allowed is True
@@ -1557,7 +4003,9 @@ async def test_library_prompt_delete_returns_to_list_and_decrements_count(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_library_prompt_delete_modal_cancel_preserves_dirty_editor_and_request(tmp_path):
+async def test_library_prompt_delete_modal_cancel_preserves_dirty_editor_and_request(
+    tmp_path,
+):
     """Delete opens a typed dirty request; Cancel performs no soft delete."""
     db, service = _real_prompt_scope_service(tmp_path)
     prompt_id, _uuid, _msg = db.add_prompt(
@@ -1625,7 +4073,9 @@ async def test_library_prompt_delete_rejects_a_stale_modal_result(tmp_path):
         assert host.screen is screen
         assert db.fetch_prompt_details(first_id) is not None
         assert db.fetch_prompt_details(second_id) is not None
-        assert screen._library_prompt_status == "Delete confirmation is no longer current."
+        assert (
+            screen._library_prompt_status == "Delete confirmation is no longer current."
+        )
 
 
 def test_library_prompt_delete_ignores_duplicate_modal_settlement() -> None:
@@ -1737,6 +4187,57 @@ async def test_library_save_recipe_respects_explicit_starter_content_choice(
             assert contents == ["", ""]
             assert persisted["system_prompt"] == ""
             assert persisted["user_prompt"] == ""
+
+
+@pytest.mark.asyncio
+async def test_library_embedded_save_prompt_adopts_complete_new_identity(tmp_path):
+    """Save Prompt as-new must replace every persisted identity field."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    source_id, source_uuid, _message = db.add_prompt(
+        name="Embedded source",
+        author="A",
+        details="source",
+        system_prompt="System",
+        user_prompt="User",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, source_id)
+        assert screen._library_prompt_detail["local_id"] == source_id
+        assert screen._library_prompt_detail["uuid"] == source_uuid
+
+        screen.query_one("#library-prompt-name", Input).value = "Embedded saved copy"
+        screen.query_one("#prompt-editor-save-prompt", Button).press()
+        for _ in range(200):
+            persisted = db.fetch_prompt_details("Embedded saved copy")
+            state = screen._library_prompt_history_state
+            if (
+                persisted is not None
+                and state is not None
+                and state.prompt_uuid == persisted["uuid"]
+            ):
+                break
+            await pilot.pause(0.02)
+
+        persisted = db.fetch_prompt_details("Embedded saved copy")
+        assert persisted is not None
+        new_id = persisted["id"]
+        new_uuid = persisted["uuid"]
+        assert new_id != source_id
+        assert new_uuid != source_uuid
+        assert screen._selected_prompt_id == new_id
+        assert screen._library_prompt_detail["id"] == new_id
+        assert screen._library_prompt_detail["local_id"] == new_id
+        assert screen._library_prompt_detail["uuid"] == new_uuid
+        assert screen._current_library_prompt_editor_state().prompt_id == new_id
+        assert screen._library_prompt_history_state is not None
+        assert screen._library_prompt_history_state.prompt_uuid == new_uuid
 
 
 @pytest.mark.asyncio
@@ -2587,6 +5088,147 @@ async def test_library_prompt_editor_geometry_keeps_actions_visible_without_cove
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (100, 30), (140, 40), (200, 50)])
+@pytest.mark.parametrize(
+    "history_mode", ["normal", "dirty", "error", "snapshot-unavailable"]
+)
+async def test_library_prompt_history_geometry_uses_only_the_outer_editor_scroll(
+    size: tuple[int, int],
+    history_mode: str,
+):
+    """History, dirty gates, and recovery copy preserve the fixed actions."""
+    history = _history_state()
+    if history_mode == "error":
+        history = replace(
+            history,
+            page_status="error",
+            rows=(),
+            selected=None,
+            has_more=False,
+            next_before_change_id=None,
+            error="Couldn't load retained history. Try again.",
+        )
+    elif history_mode == "snapshot-unavailable":
+        history = replace(
+            history,
+            restore_outcome=PromptHistoryRestoreOutcome(
+                kind="snapshot_unavailable",
+                message=(
+                    "This retained version is no longer available. "
+                    "Reload retained history."
+                ),
+                reload_required=True,
+            ),
+        )
+    app = _StyledCanvasHost(
+        None,
+        mode="editor",
+        editor_state=_structured_editor_state(),
+        history_state=history,
+        dirty=history_mode == "dirty",
+    )
+
+    async with app.run_test(size=size) as pilot:
+        canvas = pilot.app.query_one("#library-prompts-canvas")
+        shell = pilot.app.query_one("#library-prompt-editor-shell")
+        content = pilot.app.query_one("#library-prompt-editor-content")
+        actions = pilot.app.query_one("#library-prompt-editor-actions")
+        history_region = pilot.app.query_one("#library-prompt-history-region")
+
+        assert canvas.region.contains_region(shell.region)
+        assert shell.region.contains_region(actions.region)
+        assert actions.region.width > 0
+        assert actions.region.height > 0
+        assert actions.max_scroll_y == 0
+        assert list(content.query(VerticalScroll)) == []
+        assert history_region.region.width > 0
+        assert not history_region.region.overlaps(actions.region)
+        for action in actions.query(Button):
+            assert action.region.width > 0
+            assert action.region.height > 0
+            assert pilot.app.screen.region.contains_region(action.region)
+
+        if history_mode == "dirty":
+            restore = pilot.app.query_one("#library-prompt-history-restore", Button)
+            assert restore.disabled is True
+            assert restore.styles.opacity == 1.0
+            content.scroll_to_widget(restore, animate=False, force=True)
+            await pilot.pause()
+            painted = _painted_style_of_text(
+                pilot.app, restore.region, "Restore selected version"
+            )
+            assert painted is not None
+            assert painted.color is not None and painted.bgcolor is not None
+            ratio = _painted_contrast(painted.color, painted.bgcolor)
+            assert ratio >= 3.0, f"disabled restore paints at only {ratio:.2f}:1"
+
+        if history_mode != "error":
+            unselected = pilot.app.query_one("#library-prompt-history-row-11", Button)
+            height_before = unselected.region.height
+            unselected.add_class("history-selected")
+            await pilot.pause()
+            assert unselected.region.height == height_before
+            content.scroll_to_widget(unselected, animate=False, force=True)
+            await pilot.pause()
+            assert not unselected.region.overlaps(actions.region)
+            if history_mode == "snapshot-unavailable":
+                reload_history = pilot.app.query_one(
+                    "#library-prompt-history-reload", Button
+                )
+                content.scroll_to_widget(
+                    reload_history,
+                    animate=False,
+                    force=True,
+                )
+                await pilot.pause()
+                assert not reload_history.region.overlaps(actions.region)
+        else:
+            retry = pilot.app.query_one("#library-prompt-history-retry-page", Button)
+            content.scroll_to_widget(retry, animate=False, force=True)
+            await pilot.pause()
+            assert retry.region.width > 0
+            assert retry.region.height > 0
+            assert not retry.region.overlaps(actions.region)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (100, 30), (140, 40), (200, 50)])
+async def test_library_prompt_history_confirmation_geometry_is_contained(
+    size: tuple[int, int],
+):
+    """The validated confirmation remains readable at supported geometries."""
+    app = _StyledCanvasHost(
+        None,
+        mode="editor",
+        editor_state=_structured_editor_state(),
+        history_state=_history_state(),
+    )
+
+    async with app.run_test(size=size) as pilot:
+        modal = ConfirmationDialog(
+            title="Restore retained version?",
+            message=(
+                "Restore retained v1 over current v2? This changes the artifact "
+                "type from Recipe to Prompt. Confirming creates a new current "
+                "version."
+            ),
+            confirm_label="Restore",
+            cancel_label="Cancel",
+        )
+        pilot.app.push_screen(modal)
+        await pilot.pause()
+        dialog = modal.query_one(Container)
+        assert modal.region.contains_region(dialog.region)
+        assert dialog.region.width > 0
+        assert dialog.region.height > 0
+        for button_id in ("confirm-button", "cancel-button"):
+            button = modal.query_one(f"#{button_id}", Button)
+            assert dialog.region.contains_region(button.region)
+            assert button.region.width > 0
+            assert button.region.height > 0
+
+
+@pytest.mark.asyncio
 async def test_library_prompt_action_groups_preserve_normal_dom_and_focus_order():
     """Catches the action-group wrapper mutation replacing the flat toolbar."""
     app = _StyledCanvasHost(
@@ -2647,9 +5289,10 @@ async def test_library_prompt_action_groups_preserve_conflict_action_order():
             "library-prompt-conflict-save-new",
             "library-prompt-conflict-reload",
         ]
-        assert [
-            str(button.label) for button in actions.query(Button)
-        ] == ["Save as new", "Reload"]
+        assert [str(button.label) for button in actions.query(Button)] == [
+            "Save as new",
+            "Reload",
+        ]
 
 
 @pytest.mark.asyncio
@@ -2821,7 +5464,9 @@ async def test_library_prompt_copy_warns_when_clipboard_is_unavailable(tmp_path)
 
 
 @pytest.mark.asyncio
-async def test_library_prompt_copy_reports_clipboard_error_without_success_notice(tmp_path):
+async def test_library_prompt_copy_reports_clipboard_error_without_success_notice(
+    tmp_path,
+):
     """Catches the missing clipboard-exception branch in the copy handler."""
     db, service = _real_prompt_scope_service(tmp_path)
     prompt_id, _uuid, _msg = db.add_prompt(
@@ -3117,7 +5762,7 @@ async def test_library_prompt_copy_after_compatibility_recipe_conversion_uses_pr
         "opaque": {"source": "must not survive conversion"},
     }
     db, service = _real_prompt_scope_service(tmp_path)
-    prompt_id, _uuid, _msg = db.add_prompt(
+    prompt_id, source_uuid, _msg = db.add_prompt(
         name="Compatibility recipe",
         author="A",
         details="d",
@@ -3139,10 +5784,16 @@ async def test_library_prompt_copy_after_compatibility_recipe_conversion_uses_pr
         await _wait_for_library_shell(screen, pilot)
         await _open_prompt_editor(screen, pilot, prompt_id)
         assert screen._library_prompt_block_state is None
+        assert screen._library_prompt_history_state is not None
+        assert screen._library_prompt_history_state.prompt_uuid == source_uuid
 
         screen.query_one("#library-prompt-convert", Button).press()
         await pilot.pause()
         assert screen._selected_prompt_id is None
+        assert screen._library_prompt_history_state is None
+        assert len(screen.query("#library-prompt-history-collapsible")) == 0
+        assert "uuid" not in screen._library_prompt_detail
+        assert "version" not in screen._library_prompt_detail
         detached_state = screen._current_library_prompt_editor_state()
         assert detached_state.prompt_id is None
         save = screen.query_one("#library-prompt-save", Button)
@@ -3369,7 +6020,9 @@ async def test_library_prompt_delete_reset_rejects_a_late_modal_dismissal(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_library_prompt_copy_and_delete_fail_closed_for_unknown_future_type(tmp_path):
+async def test_library_prompt_copy_and_delete_fail_closed_for_unknown_future_type(
+    tmp_path,
+):
     """An explicit future artifact type cannot copy flattened data or delete."""
     db, service = _real_prompt_scope_service(tmp_path)
     prompt_id, _uuid, _msg = db.add_prompt(
@@ -3761,7 +6414,7 @@ async def test_library_prompt_copy_uses_unsaved_structured_duplicate_working_cop
         ],
     }
     db, service = _real_prompt_scope_service(tmp_path)
-    prompt_id, _uuid, _msg = db.add_prompt(
+    prompt_id, source_uuid, _msg = db.add_prompt(
         name="Structured source",
         author="A",
         details="d",
@@ -3782,12 +6435,18 @@ async def test_library_prompt_copy_uses_unsaved_structured_duplicate_working_cop
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await _open_prompt_editor(screen, pilot, prompt_id)
+        assert screen._library_prompt_history_state is not None
+        assert screen._library_prompt_history_state.prompt_uuid == source_uuid
         screen.query_one("#prompt-block-content-role", TextArea).text = "Edited role."
         await pilot.pause()
         screen.query_one("#library-prompt-duplicate", Button).press()
         await pilot.pause()
 
         assert screen._selected_prompt_id is None
+        assert screen._library_prompt_history_state is None
+        assert len(screen.query("#library-prompt-history-collapsible")) == 0
+        assert "uuid" not in screen._library_prompt_detail
+        assert "version" not in screen._library_prompt_detail
         block_state = screen._library_prompt_block_state
         assert block_state is not None
         assert block_state.definition.lanes[0].blocks[0].content == "Edited role."
@@ -4250,6 +6909,61 @@ async def test_library_prompts_import_browse_button_fills_path_input(tmp_path):
 # and consumer route is exercised by the full production application in
 # ``Tests/ProductionApp/test_personas_library_root_state.py``.
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_library_recipe_use_in_console_detaches_source_history(tmp_path):
+    definition = {
+        "kind": "block_recipe",
+        "schema_version": 2,
+        "lanes": [
+            {"id": "system", "blocks": []},
+            {
+                "id": "user",
+                "blocks": [
+                    {
+                        "id": "goal",
+                        "title": "Goal",
+                        "syntax": "freeform",
+                        "content": "Recipe content",
+                    }
+                ],
+            },
+        ],
+    }
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, prompt_uuid, _message = db.add_prompt(
+        name="Recipe source",
+        author="Author",
+        details="Details",
+        user_prompt="Recipe content",
+        prompt_format="structured",
+        prompt_schema_version=2,
+        prompt_definition=definition,
+        artifact_type="recipe",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        assert screen._library_prompt_history_state is not None
+        assert screen._library_prompt_history_state.prompt_uuid == prompt_uuid
+
+        screen.query_one("#library-prompt-insert-console", Button).press()
+        await pilot.pause()
+
+        assert screen._selected_prompt_id is None
+        assert screen._library_prompt_version is None
+        assert screen._library_prompt_history_state is None
+        assert len(screen.query("#library-prompt-history-collapsible")) == 0
+        assert "uuid" not in screen._library_prompt_detail
+        assert "version" not in screen._library_prompt_detail
+        assert screen._library_prompt_dirty is True
 
 
 def test_library_prompt_insert_console_refuses_while_dirty():

@@ -6,71 +6,85 @@ from tldw_chatbook.Prompt_Management.local_prompt_service import LocalPromptServ
 class FakePromptDB:
     def __init__(self):
         self.updated = None
-        self.sync_entries = [
-            {
-                "change_id": 1,
-                "entity": "Prompts",
-                "entity_uuid": "prompt-uuid",
-                "operation": "create",
-                "timestamp": "2026-04-20T00:00:00Z",
-                "version": 1,
-                "payload": {
-                    "id": 1,
-                    "uuid": "prompt-uuid",
-                    "name": "Original",
-                    "author": "Author",
-                    "details": "v1 details",
-                    "system_prompt": "sys v1",
-                    "user_prompt": "user v1",
-                    "prompt_format": "legacy",
-                    "prompt_schema_version": None,
-                    "prompt_definition": None,
-                    "artifact_type": "prompt",
+        self.history_calls = []
+        self.history_page = {
+            "total_count": 2,
+            "has_more": False,
+            "next_before_change_id": None,
+            "predecessor": None,
+            "items": [
+                {
+                    "change_id": 1,
+                    "entity": "Prompts",
+                    "entity_uuid": "prompt-uuid",
+                    "operation": "create",
+                    "timestamp": "2026-04-20T00:00:00Z",
                     "version": 1,
-                    "last_modified": "2026-04-20T00:00:00Z",
+                    "payload": {
+                        "id": 1,
+                        "uuid": "prompt-uuid",
+                        "name": "Original",
+                        "author": "Author",
+                        "details": "v1 details",
+                        "system_prompt": "sys v1",
+                        "user_prompt": "user v1",
+                        "prompt_format": "legacy",
+                        "prompt_schema_version": None,
+                        "prompt_definition": None,
+                        "artifact_type": "prompt",
+                        "version": 1,
+                        "last_modified": "2026-04-20T00:00:00Z",
+                    },
                 },
-            },
-            {
-                "change_id": 2,
-                "entity": "Prompts",
-                "entity_uuid": "other-prompt",
-                "operation": "update",
-                "timestamp": "2026-04-20T00:01:00Z",
-                "version": 2,
-                "payload": {"uuid": "other-prompt", "version": 2},
-            },
-            {
-                "change_id": 3,
-                "entity": "Prompts",
-                "entity_uuid": "prompt-uuid",
-                "operation": "update",
-                "timestamp": "2026-04-20T00:02:00Z",
-                "version": 2,
-                "payload": {
-                    "id": 1,
-                    "uuid": "prompt-uuid",
-                    "name": "Updated",
-                    "author": "Author",
-                    "details": "v2 details",
-                    "system_prompt": "sys v2",
-                    "user_prompt": "user v2",
-                    "prompt_format": "structured",
-                    "prompt_schema_version": 1,
-                    "prompt_definition": '{"messages":[{"role":"user","content":"hi"}]}',
-                    "artifact_type": "recipe",
+                {
+                    "change_id": 3,
+                    "entity": "Prompts",
+                    "entity_uuid": "prompt-uuid",
+                    "operation": "update",
+                    "timestamp": "2026-04-20T00:02:00Z",
                     "version": 2,
-                    "last_modified": "2026-04-20T00:02:00Z",
+                    "payload": {
+                        "id": 1,
+                        "uuid": "prompt-uuid",
+                        "name": "Updated",
+                        "author": "Author",
+                        "details": "v2 details",
+                        "system_prompt": "sys v2",
+                        "user_prompt": "user v2",
+                        "prompt_format": "structured",
+                        "prompt_schema_version": 1,
+                        "prompt_definition": '{"messages":[{"role":"user","content":"hi"}]}',
+                        "artifact_type": "recipe",
+                        "version": 2,
+                        "last_modified": "2026-04-20T00:02:00Z",
+                    },
                 },
-            },
-        ]
+            ],
+        }
 
-    def get_sync_log_entries(self, since_change_id=0, limit=None):
-        del since_change_id, limit
-        return list(self.sync_entries)
+    def get_prompt_history_entries(self, entity_uuid, page_size, before_change_id=None):
+        self.history_calls.append((entity_uuid, page_size, before_change_id))
+        return self.history_page
 
-    def update_prompt_by_id(self, prompt_id, update_data):
-        self.updated = (prompt_id, update_data)
-        return "prompt-uuid", "restored"
+    def restore_prompt_history_entry(
+        self,
+        prompt_uuid,
+        change_id,
+        version,
+        expected_version,
+        snapshot_validator,
+    ):
+        del snapshot_validator
+        self.updated = (prompt_uuid, change_id, version, expected_version)
+        return {
+            "outcome": "restored",
+            "snapshot_unavailable": False,
+            "no_change": False,
+            "source_version": version,
+            "current_version": expected_version,
+            "new_version": expected_version + 1,
+            "retained_current_keywords": False,
+        }
 
 
 class FakePromptInterop:
@@ -93,51 +107,46 @@ class FakePromptInterop:
 
 
 @pytest.mark.asyncio
-async def test_local_prompt_service_lists_prompt_versions_from_sync_log_snapshots():
-    service = LocalPromptService(interop_module=FakePromptInterop())
-
-    versions = await service.list_prompt_versions("prompt-uuid")
-
-    assert [version["version"] for version in versions] == [2, 1]
-    assert versions[0]["prompt_uuid"] == "prompt-uuid"
-    assert versions[0]["operation"] == "update"
-    assert (
-        versions[0]["prompt_definition"]
-        == '{"messages":[{"role":"user","content":"hi"}]}'
-    )
-    assert versions[0]["artifact_type"] == "recipe"
-
-
-@pytest.mark.asyncio
-async def test_local_prompt_service_restores_prompt_version_from_sync_log_snapshot():
+async def test_local_prompt_service_lists_versions_with_one_bounded_database_page_call():
     interop = FakePromptInterop()
     service = LocalPromptService(interop_module=interop)
 
-    restored = await service.restore_prompt_version("prompt-uuid", 1)
-
-    assert restored["uuid"] == "prompt-uuid"
-    assert interop.db.updated == (
-        1,
-        {
-            "name": "Original",
-            "author": "Author",
-            "details": "v1 details",
-            "system_prompt": "sys v1",
-            "user_prompt": "user v1",
-            "prompt_format": "legacy",
-            "prompt_schema_version": None,
-            "prompt_definition": None,
-            "artifact_type": "prompt",
-        },
+    page = await service.list_prompt_versions(
+        "prompt-uuid", page_size=13, before_change_id=99
     )
+
+    assert interop.db.history_calls == [("prompt-uuid", 13, 99)]
+    versions = page["items"]
+    assert [version["version"] for version in versions] == [1, 2]
+    assert versions[0]["entity_uuid"] == "prompt-uuid"
+    assert versions[1]["operation"] == "update"
+    assert (
+        versions[1]["payload"]["prompt_definition"]
+        == '{"messages":[{"role":"user","content":"hi"}]}'
+    )
+    assert versions[1]["payload"]["artifact_type"] == "recipe"
 
 
 @pytest.mark.asyncio
-async def test_local_prompt_service_rejects_missing_prompt_version_snapshot():
-    service = LocalPromptService(interop_module=FakePromptInterop())
+async def test_local_prompt_service_restores_exact_retained_version_conditionally():
+    interop = FakePromptInterop()
+    service = LocalPromptService(interop_module=interop)
 
-    with pytest.raises(ValueError, match="Local prompt version 99 was not found"):
-        await service.restore_prompt_version("prompt-uuid", 99)
+    restored = await service.restore_prompt_version(
+        "prompt-uuid", change_id=1, version=1, expected_version=2
+    )
+
+    assert restored["outcome"] == "restored"
+    assert interop.db.updated == ("prompt-uuid", 1, 1, 2)
+
+
+@pytest.mark.asyncio
+async def test_local_prompt_service_source_contains_no_whole_sync_log_scan():
+    import inspect
+
+    source = inspect.getsource(LocalPromptService)
+
+    assert "get_sync_log_entries" not in source
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +157,10 @@ async def test_local_prompt_service_rejects_missing_prompt_version_snapshot():
 class FakeLibraryPromptInterop:
     def __init__(self):
         self.calls = []
-        self.page_payload = {"items": [{"id": 1, "uuid": "u-1", "name": "One"}], "total": 7}
+        self.page_payload = {
+            "items": [{"id": 1, "uuid": "u-1", "name": "One"}],
+            "total": 7,
+        }
         self.search_payload = {
             "items": [
                 {

@@ -19,8 +19,12 @@ from textual.widgets import Button, Checkbox, Input, Static, TextArea
 
 from tldw_chatbook.Library.library_prompts_state import (
     PromptEditorState,
+    PromptHistoryState,
     PromptsListState,
     prompt_editor_meta_line,
+)
+from tldw_chatbook.UI.Library_Modules.prompt_history_region import (
+    LibraryPromptHistoryRegion,
 )
 from tldw_chatbook.Widgets.Prompts.prompt_block_editor import PromptBlockEditor
 from tldw_chatbook.Widgets.Prompts.prompt_block_editor_state import (
@@ -104,6 +108,8 @@ class LibraryPromptsListCanvas(Vertical):
         dirty: bool = False,
         can_update_original: bool = False,
         include_starter_content: bool = False,
+        history_state: PromptHistoryState | None = None,
+        history_current_compatible: bool = True,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -121,6 +127,8 @@ class LibraryPromptsListCanvas(Vertical):
         self.dirty = dirty
         self.can_update_original = can_update_original
         self.include_starter_content = include_starter_content
+        self.history_state = history_state
+        self.history_current_compatible = history_current_compatible
         self.styles.width = "1fr"
         self.styles.min_width = 40
 
@@ -289,7 +297,9 @@ class LibraryPromptsListCanvas(Vertical):
                 yield Input(value=editor_state.name, id="library-prompt-name")
                 # Task 8b U4: rendered label only -- the DB/record field name
                 # (``details``, ``#library-prompt-details``) is untouched.
-                yield Static("Description", classes="library-prompt-field-label", markup=False)
+                yield Static(
+                    "Description", classes="library-prompt-field-label", markup=False
+                )
                 yield Input(value=editor_state.details, id="library-prompt-details")
                 yield Static(
                     (
@@ -346,7 +356,9 @@ class LibraryPromptsListCanvas(Vertical):
                     markup=False,
                 )
                 yield Static(
-                    _SYSTEM_PROMPT_HINT, classes="library-prompt-field-hint", markup=False
+                    _SYSTEM_PROMPT_HINT,
+                    classes="library-prompt-field-hint",
+                    markup=False,
                 )
                 yield TextArea(
                     editor_state.compiled_system_preview,
@@ -371,7 +383,9 @@ class LibraryPromptsListCanvas(Vertical):
                     placeholder="Keywords (comma-separated)",
                     id="library-prompt-keywords",
                 )
-                yield Static("Author", classes="library-prompt-field-label", markup=False)
+                yield Static(
+                    "Author", classes="library-prompt-field-label", markup=False
+                )
                 yield Input(value=editor_state.author, id="library-prompt-author")
                 yield Static(
                     prompt_editor_meta_line(editor_state, dirty=self.dirty),
@@ -403,6 +417,15 @@ class LibraryPromptsListCanvas(Vertical):
                             classes="library-canvas-action",
                             compact=True,
                         )
+                # Keep the empty region mounted for an unsaved editor so its
+                # first successful create can reveal history without
+                # remounting the editor fields or persistent action strip.
+                yield LibraryPromptHistoryRegion(
+                    self.history_state,
+                    dirty=self.dirty,
+                    current_compatible=self.history_current_compatible,
+                    id="library-prompt-history-region",
+                )
 
             with Vertical(id="library-prompt-editor-actions"):
                 if self.conflict:
@@ -431,7 +454,9 @@ class LibraryPromptsListCanvas(Vertical):
                             compact=True,
                             disabled=(
                                 editor_state.prompt_id is not None
-                                and (block_state is None or not self.can_update_original)
+                                and (
+                                    block_state is None or not self.can_update_original
+                                )
                             ),
                         )
                     with Vertical(id="library-prompt-actions-content"):

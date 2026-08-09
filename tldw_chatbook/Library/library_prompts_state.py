@@ -13,7 +13,7 @@ import sqlite3
 import json
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
-from typing import Any, Mapping, Sequence, cast
+from typing import Any, Literal, Mapping, Sequence, cast
 
 from tldw_chatbook.Prompt_Management.prompt_artifact_models import (
     ArtifactDefinitionState,
@@ -25,6 +25,10 @@ from tldw_chatbook.Prompt_Management.prompt_artifact_codec import (
 )
 from tldw_chatbook.Prompt_Management.prompt_legacy_decomposer import (
     decompose_legacy_lanes,
+)
+from tldw_chatbook.Prompt_Management.prompt_restore_errors import (
+    PromptRestoreError,
+    PromptRestoreErrorCode,
 )
 from tldw_chatbook.Prompt_Management.prompt_source_capabilities import (
     CANONICAL_JSON_UTF8_V1,
@@ -42,6 +46,674 @@ from tldw_chatbook.Workspaces.conversation_browser_state import (
 )
 
 _TIMESTAMP_KEYS = ("last_modified", "created_at")
+
+
+PromptHistoryPageStatus = Literal["closed", "loading", "loaded", "error"]
+PromptHistoryCountStatus = Literal["idle", "loading", "loaded", "error"]
+PromptHistoryRestoreKind = Literal[
+    "restored",
+    "no_change",
+    "conflict",
+    "snapshot_unavailable",
+    "current_unavailable",
+    "validation_error",
+    "name_conflict",
+    "error",
+]
+
+
+@dataclass(frozen=True)
+class PromptHistoryRow:
+    """One normalized retained Prompt/Recipe snapshot for a read-only preview."""
+
+    prompt_uuid: str
+    change_id: int
+    version: int
+    timestamp: str
+    artifact_type: str
+    artifact_type_raw: str
+    name: str
+    author: str
+    details: str
+    system_preview: str
+    user_preview: str
+    keywords: tuple[str, ...]
+    keywords_captured: bool
+    compatibility_state: str
+    compatibility_reason: str
+    restore_eligible: bool
+    changed_fields: tuple[str, ...]
+    change_summary: str
+
+
+@dataclass(frozen=True)
+class PromptHistoryPage:
+    """A single normalized local retained-history page."""
+
+    items: tuple[PromptHistoryRow, ...]
+    total_count: int
+    has_more: bool
+    next_before_change_id: int | None
+
+
+@dataclass(frozen=True)
+class PromptHistoryRequest:
+    """Prompt identity and scope token shared by one asynchronous history request."""
+
+    prompt_uuid: str
+    scope_token: int
+    request_token: int
+
+
+@dataclass(frozen=True)
+class PromptHistoryPageRequest(PromptHistoryRequest):
+    """One page request, including its exact retained-history cursor."""
+
+    before_change_id: int | None
+
+
+@dataclass(frozen=True)
+class PromptHistoryPreviewRequest(PromptHistoryRequest):
+    """One selected retained snapshot preview request."""
+
+    change_id: int
+    source_version: int
+
+
+@dataclass(frozen=True)
+class PromptHistorySelection:
+    """The retained snapshot currently selected for inspection or restoration."""
+
+    prompt_uuid: str
+    change_id: int
+    source_version: int
+    row: PromptHistoryRow
+
+
+@dataclass(frozen=True)
+class PromptHistoryRestoreTarget:
+    """The exact conditional-restore values captured from one selected row."""
+
+    prompt_uuid: str
+    change_id: int
+    source_version: int
+    expected_current_version: int
+
+
+@dataclass(frozen=True)
+class PromptHistoryRestoreRequest(PromptHistoryRestoreTarget):
+    """A restore target bound to the editor scope and one worker request."""
+
+    scope_token: int
+    request_token: int
+
+
+@dataclass(frozen=True)
+class PromptHistoryRestoreGate:
+    """Whether the selected snapshot may be restored from the current editor."""
+
+    enabled: bool
+    reason: str
+    target: PromptHistoryRestoreTarget | None
+
+
+@dataclass(frozen=True)
+class PromptHistoryRestoreOutcome:
+    """Stable user-facing interpretation of one local restore result."""
+
+    kind: PromptHistoryRestoreKind
+    message: str
+    reload_required: bool
+    keyword_disclosure: str = ""
+
+
+@dataclass(frozen=True)
+class PromptHistoryState:
+    """Immutable retained-history display state for one open Library prompt."""
+
+    prompt_uuid: str
+    current_version: int | None
+    scope_token: int
+    is_open: bool = False
+    page_status: PromptHistoryPageStatus = "closed"
+    count_status: PromptHistoryCountStatus = "idle"
+    retained_count: int | None = None
+    rows: tuple[PromptHistoryRow, ...] = ()
+    has_more: bool = False
+    next_before_change_id: int | None = None
+    selected: PromptHistorySelection | None = None
+    count_request: PromptHistoryRequest | None = None
+    page_request: PromptHistoryPageRequest | None = None
+    preview_request: PromptHistoryPreviewRequest | None = None
+    restore_request: PromptHistoryRestoreRequest | None = None
+    restore_outcome: PromptHistoryRestoreOutcome | None = None
+    restore_refresh_pending: bool = False
+    error: str = ""
+    last_request_token: int = -1
+
+
+def _history_positive_int(value: Any, *, field: str) -> int:
+    if type(value) is not int or value <= 0:
+        raise ValueError(f"{field} must be a positive integer.")
+    return value
+
+
+def _history_text(value: Any) -> str:
+    """Return literal display text without stripping previews or metadata."""
+    return value if isinstance(value, str) else ""
+
+
+def _history_string_tuple(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        return ()
+    return tuple(item for item in value if isinstance(item, str))
+
+
+def build_prompt_history_row(record: Mapping[str, Any]) -> PromptHistoryRow:
+    """Build an immutable row from the normalized retained-history contract."""
+    if not isinstance(record, Mapping):
+        raise TypeError("Retained history row must be a mapping.")
+    prompt_uuid = record.get("prompt_uuid")
+    if not isinstance(prompt_uuid, str) or not prompt_uuid:
+        raise ValueError("Retained history row must include prompt_uuid.")
+    timestamp = record.get("timestamp")
+    if not isinstance(timestamp, str) or not timestamp:
+        raise ValueError("Retained history row must include timestamp.")
+    restore_eligible = record.get("restore_eligible")
+    if type(restore_eligible) is not bool:
+        raise TypeError("Retained history row restore_eligible must be a bool.")
+    keywords_captured = record.get("keywords_captured")
+    if type(keywords_captured) is not bool:
+        raise TypeError("Retained history row keywords_captured must be a bool.")
+    return PromptHistoryRow(
+        prompt_uuid=prompt_uuid,
+        change_id=_history_positive_int(record.get("change_id"), field="change_id"),
+        version=_history_positive_int(record.get("version"), field="version"),
+        timestamp=timestamp,
+        artifact_type=_history_text(record.get("artifact_type")) or "prompt",
+        artifact_type_raw=_history_text(record.get("artifact_type_raw")),
+        name=_history_text(record.get("name")),
+        author=_history_text(record.get("author")),
+        details=_history_text(record.get("details")),
+        system_preview=_history_text(
+            record["system_prompt"]
+            if "system_prompt" in record
+            else record.get("compiled_system_prompt")
+        ),
+        user_preview=_history_text(
+            record["user_prompt"]
+            if "user_prompt" in record
+            else record.get("compiled_user_prompt")
+        ),
+        keywords=_history_string_tuple(record.get("keywords")),
+        keywords_captured=keywords_captured,
+        compatibility_state=_history_text(record.get("compatibility_state")),
+        compatibility_reason=_history_text(record.get("compatibility_reason")),
+        restore_eligible=restore_eligible,
+        changed_fields=_history_string_tuple(record.get("changed_fields")),
+        change_summary=_history_text(record.get("change_summary")),
+    )
+
+
+def build_prompt_history_page(record: Mapping[str, Any]) -> PromptHistoryPage:
+    """Build a bounded retained-history page from the local normalized shape."""
+    if not isinstance(record, Mapping):
+        raise TypeError("Retained history page must be a mapping.")
+    raw_items = record.get("items")
+    if not isinstance(raw_items, Sequence) or isinstance(raw_items, (str, bytes)):
+        raise TypeError("Retained history page items must be a sequence.")
+    items = tuple(build_prompt_history_row(item) for item in raw_items)
+    change_ids = tuple(row.change_id for row in items)
+    if len(change_ids) != len(set(change_ids)):
+        raise ValueError("Retained history page cannot contain duplicate change IDs.")
+    if any(newer <= older for newer, older in zip(change_ids, change_ids[1:])):
+        raise ValueError("Retained history page rows must be newest first.")
+    prompt_uuids = {row.prompt_uuid for row in items}
+    if len(prompt_uuids) > 1:
+        raise ValueError("Retained history page rows must share one prompt UUID.")
+    total_count = record.get("total_count")
+    if type(total_count) is not int or total_count < len(items) or total_count < 0:
+        raise ValueError("Retained history page total_count is invalid.")
+    has_more = record.get("has_more")
+    if type(has_more) is not bool:
+        raise TypeError("Retained history page has_more must be a bool.")
+    cursor = record.get("next_before_change_id")
+    if has_more:
+        if not items or type(cursor) is not int or cursor != items[-1].change_id:
+            raise ValueError("Retained history page cursor is invalid.")
+    elif cursor is not None:
+        raise ValueError("Final retained history pages cannot have a cursor.")
+    return PromptHistoryPage(
+        items=items,
+        total_count=total_count,
+        has_more=has_more,
+        next_before_change_id=cursor,
+    )
+
+
+def build_prompt_history_state(
+    *, prompt_uuid: str, current_version: int | None, scope_token: int
+) -> PromptHistoryState:
+    """Start a closed retained-history scope for one selected local Prompt."""
+    if not isinstance(prompt_uuid, str) or not prompt_uuid:
+        raise ValueError("prompt_uuid is required for retained history.")
+    if current_version is not None:
+        _history_positive_int(current_version, field="current_version")
+    _history_positive_int(scope_token, field="scope_token")
+    return PromptHistoryState(
+        prompt_uuid=prompt_uuid,
+        current_version=current_version,
+        scope_token=scope_token,
+    )
+
+
+def close_prompt_history(state: PromptHistoryState) -> PromptHistoryState:
+    """Collapse page UI without cancelling an accepted conditional restore."""
+    return replace(
+        state,
+        is_open=False,
+        page_status="closed",
+        rows=(),
+        has_more=False,
+        next_before_change_id=None,
+        selected=None,
+        page_request=None,
+        preview_request=None,
+        restore_outcome=None,
+        error="",
+    )
+
+
+def reset_prompt_history_page(state: PromptHistoryState) -> PromptHistoryState:
+    """Clear page-scoped work for an explicit first-page reload."""
+    return replace(
+        state,
+        is_open=True,
+        page_status="closed",
+        rows=(),
+        has_more=False,
+        next_before_change_id=None,
+        selected=None,
+        page_request=None,
+        preview_request=None,
+        restore_request=None,
+        restore_outcome=None,
+        error="",
+    )
+
+
+def _next_history_request_token(state: PromptHistoryState, request_token: int) -> int:
+    _history_positive_int(request_token, field="request_token")
+    if request_token <= state.last_request_token:
+        raise ValueError(
+            "Retained history request tokens must increase within a scope."
+        )
+    return request_token
+
+
+def begin_prompt_history_count(
+    state: PromptHistoryState, *, request_token: int
+) -> tuple[PromptHistoryState, PromptHistoryRequest]:
+    """Mark the independent retained-count request loading and return its guard."""
+    token = _next_history_request_token(state, request_token)
+    request = PromptHistoryRequest(state.prompt_uuid, state.scope_token, token)
+    return (
+        replace(
+            state,
+            count_status="loading",
+            count_request=request,
+            error="",
+            last_request_token=token,
+        ),
+        request,
+    )
+
+
+def apply_prompt_history_count(
+    state: PromptHistoryState,
+    request: PromptHistoryRequest,
+    *,
+    total_count: int | None = None,
+    error: str = "",
+) -> PromptHistoryState:
+    """Settle a count only when its prompt identity, scope, and token still match."""
+    if state.count_request != request:
+        return state
+    if error:
+        return replace(state, count_status="error", count_request=None, error=error)
+    if type(total_count) is not int or total_count < 0:
+        return replace(
+            state,
+            count_status="error",
+            count_request=None,
+            error="Retained history count was invalid.",
+        )
+    return replace(
+        state,
+        count_status="loaded",
+        retained_count=total_count,
+        count_request=None,
+    )
+
+
+def prompt_history_count_label(state: PromptHistoryState) -> str:
+    """Render the exact collapsed disclosure label for the settled retained count."""
+    if state.retained_count is None:
+        return "Retained history (…)"
+    return f"Retained history ({state.retained_count})"
+
+
+def begin_prompt_history_page(
+    state: PromptHistoryState, *, request_token: int
+) -> tuple[PromptHistoryState, PromptHistoryPageRequest]:
+    """Open/retry/load an older bounded page and return its exact cursor guard."""
+    if state.rows and not state.has_more:
+        raise ValueError("No older retained history pages are available.")
+    token = _next_history_request_token(state, request_token)
+    before_change_id = state.next_before_change_id if state.rows else None
+    request = PromptHistoryPageRequest(
+        state.prompt_uuid, state.scope_token, token, before_change_id
+    )
+    return (
+        replace(
+            state,
+            is_open=True,
+            page_status="loading",
+            page_request=request,
+            error="",
+            last_request_token=token,
+        ),
+        request,
+    )
+
+
+def apply_prompt_history_page(
+    state: PromptHistoryState,
+    request: PromptHistoryPageRequest,
+    page: PromptHistoryPage | None,
+    *,
+    error: str = "",
+) -> PromptHistoryState:
+    """Merge one matching page append-only, refreshing count from its same read."""
+    if state.page_request != request:
+        return state
+    if error:
+        return replace(state, page_status="error", page_request=None, error=error)
+    if page is None or any(row.prompt_uuid != state.prompt_uuid for row in page.items):
+        return replace(
+            state,
+            page_status="error",
+            page_request=None,
+            error="Retained history page was invalid.",
+        )
+    existing_ids = {row.change_id for row in state.rows}
+    incoming_ids = {row.change_id for row in page.items}
+    if existing_ids.intersection(incoming_ids):
+        return replace(
+            state,
+            page_status="error",
+            page_request=None,
+            error="Retained history page overlaps an already loaded row.",
+        )
+    if state.rows and (
+        request.before_change_id != state.next_before_change_id
+        or any(row.change_id >= request.before_change_id for row in page.items)
+    ):
+        return replace(
+            state,
+            page_status="error",
+            page_request=None,
+            error="Retained history page cursor no longer matches.",
+        )
+    rows = state.rows + page.items
+    count_updates: dict[str, Any] = {}
+    if (
+        state.count_request is None
+        or state.count_request.request_token < request.request_token
+    ):
+        count_updates = {
+            "retained_count": page.total_count,
+            "count_status": "loaded",
+            "count_request": None,
+        }
+    return replace(
+        state,
+        page_status="loaded",
+        page_request=None,
+        rows=rows,
+        has_more=page.has_more,
+        next_before_change_id=page.next_before_change_id,
+        **count_updates,
+    )
+
+
+def begin_prompt_history_preview(
+    state: PromptHistoryState,
+    *,
+    change_id: int,
+    source_version: int,
+    request_token: int,
+) -> tuple[PromptHistoryState, PromptHistoryPreviewRequest]:
+    """Capture an existing row as a stale-guarded retained preview selection."""
+    _history_positive_int(change_id, field="change_id")
+    _history_positive_int(source_version, field="source_version")
+    if not any(
+        row.change_id == change_id and row.version == source_version
+        for row in state.rows
+    ):
+        raise ValueError("Selected retained history row is not loaded.")
+    token = _next_history_request_token(state, request_token)
+    request = PromptHistoryPreviewRequest(
+        state.prompt_uuid, state.scope_token, token, change_id, source_version
+    )
+    return replace(state, preview_request=request, last_request_token=token), request
+
+
+def apply_prompt_history_preview(
+    state: PromptHistoryState, request: PromptHistoryPreviewRequest
+) -> PromptHistoryState:
+    """Select a loaded row only if its identity and request token still match."""
+    if state.preview_request != request:
+        return state
+    row = next(
+        (
+            candidate
+            for candidate in state.rows
+            if candidate.prompt_uuid == request.prompt_uuid
+            and candidate.change_id == request.change_id
+            and candidate.version == request.source_version
+        ),
+        None,
+    )
+    if row is None:
+        return replace(
+            state,
+            preview_request=None,
+            error="Selected retained version is no longer loaded.",
+        )
+    return replace(
+        state,
+        selected=PromptHistorySelection(
+            prompt_uuid=request.prompt_uuid,
+            change_id=request.change_id,
+            source_version=request.source_version,
+            row=row,
+        ),
+        preview_request=None,
+    )
+
+
+def history_restore_gate(
+    state: PromptHistoryState, *, dirty: bool
+) -> PromptHistoryRestoreGate:
+    """Return the pure restore gate while leaving history viewing always available."""
+    if state.restore_refresh_pending:
+        return PromptHistoryRestoreGate(False, "Refreshing the restored Prompt…", None)
+    if state.selected is None:
+        return PromptHistoryRestoreGate(
+            False, "Select a retained version to restore.", None
+        )
+    if dirty:
+        return PromptHistoryRestoreGate(
+            False,
+            "Save or discard unsaved changes before restoring retained history.",
+            None,
+        )
+    if state.current_version is None:
+        return PromptHistoryRestoreGate(
+            False, "Reload this Prompt before restoring retained history.", None
+        )
+    if not state.selected.row.restore_eligible:
+        return PromptHistoryRestoreGate(
+            False,
+            state.selected.row.compatibility_reason
+            or "This retained version is preview-only and cannot be restored.",
+            None,
+        )
+    return PromptHistoryRestoreGate(
+        True,
+        "",
+        PromptHistoryRestoreTarget(
+            prompt_uuid=state.selected.prompt_uuid,
+            change_id=state.selected.change_id,
+            source_version=state.selected.source_version,
+            expected_current_version=state.current_version,
+        ),
+    )
+
+
+def begin_prompt_history_restore(
+    state: PromptHistoryState, *, request_token: int, dirty: bool
+) -> tuple[
+    PromptHistoryState, PromptHistoryRestoreRequest | None, PromptHistoryRestoreGate
+]:
+    """Capture a gated conditional restore request for one selected snapshot."""
+    gate = history_restore_gate(state, dirty=dirty)
+    if not gate.enabled or gate.target is None:
+        return state, None, gate
+    token = _next_history_request_token(state, request_token)
+    target = gate.target
+    request = PromptHistoryRestoreRequest(
+        prompt_uuid=target.prompt_uuid,
+        change_id=target.change_id,
+        source_version=target.source_version,
+        expected_current_version=target.expected_current_version,
+        scope_token=state.scope_token,
+        request_token=token,
+    )
+    return (
+        replace(
+            state,
+            restore_request=request,
+            restore_outcome=None,
+            error="",
+            last_request_token=token,
+        ),
+        request,
+        gate,
+    )
+
+
+def _outcome_versions(result: Mapping[str, Any]) -> tuple[int | None, int | None]:
+    source_version = result.get("source_version")
+    current_version = result.get("current_version")
+    return (
+        source_version if type(source_version) is int and source_version > 0 else None,
+        current_version
+        if type(current_version) is int and current_version > 0
+        else None,
+    )
+
+
+def format_prompt_history_restore_outcome(
+    result: Mapping[str, Any] | None = None, *, error: Exception | None = None
+) -> PromptHistoryRestoreOutcome:
+    """Classify local restore results into stable UI copy without side effects."""
+    if isinstance(error, PromptRestoreError):
+        if error.code == PromptRestoreErrorCode.EXPECTED_VERSION:
+            return PromptHistoryRestoreOutcome(
+                "conflict",
+                "This Prompt changed elsewhere. Reload before restoring.",
+                True,
+            )
+        if error.code == PromptRestoreErrorCode.NAME_CONFLICT:
+            return PromptHistoryRestoreOutcome(
+                "name_conflict",
+                "Another active Prompt already uses this name. Rename it or choose another retained version, then retry.",
+                False,
+            )
+        return PromptHistoryRestoreOutcome(
+            "validation_error",
+            "This retained version couldn't be validated for restore. Choose another retained version, then retry.",
+            False,
+        )
+    if error is not None:
+        return PromptHistoryRestoreOutcome(
+            "error", "Couldn't restore retained history.", False
+        )
+    if not isinstance(result, Mapping):
+        return PromptHistoryRestoreOutcome(
+            "error", "Couldn't restore retained history.", False
+        )
+    kind = result.get("outcome")
+    source_version, current_version = _outcome_versions(result)
+    retained_keywords = result.get("retained_current_keywords") is True
+    disclosure = (
+        "Current keywords were retained because this older retained version did not capture keywords."
+        if retained_keywords
+        else ""
+    )
+    if kind == "restored" and source_version is not None:
+        new_version = result.get("new_version")
+        if type(new_version) is int and new_version > 0:
+            return PromptHistoryRestoreOutcome(
+                "restored",
+                f"Restored v{source_version} as current v{new_version}.",
+                False,
+                disclosure,
+            )
+    if (
+        kind == "no_change"
+        and source_version is not None
+        and current_version is not None
+    ):
+        return PromptHistoryRestoreOutcome(
+            "no_change",
+            f"Retained v{source_version} already matches current v{current_version}; no new version was created.",
+            False,
+            disclosure,
+        )
+    if kind == "snapshot_unavailable":
+        return PromptHistoryRestoreOutcome(
+            "snapshot_unavailable",
+            "This retained version is no longer available. Reload retained history.",
+            True,
+        )
+    if kind == "current_unavailable":
+        return PromptHistoryRestoreOutcome(
+            "current_unavailable",
+            "This Prompt is no longer available. Reload the Library.",
+            True,
+        )
+    return PromptHistoryRestoreOutcome(
+        "error", "Couldn't restore retained history.", False
+    )
+
+
+def apply_prompt_history_restore(
+    state: PromptHistoryState,
+    request: PromptHistoryRestoreRequest,
+    outcome: PromptHistoryRestoreOutcome,
+) -> PromptHistoryState:
+    """Apply an outcome only to its exact accepted conditional-write request."""
+    if state.restore_request != request:
+        return state
+    return replace(
+        state,
+        restore_request=None,
+        restore_outcome=outcome,
+        restore_refresh_pending=outcome.kind == "restored",
+    )
 
 
 @dataclass(frozen=True)
