@@ -9,6 +9,8 @@ import re
 from collections.abc import Awaitable, Callable, Iterable
 from typing import TYPE_CHECKING, Any, NoReturn
 
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError
 from mcp_unified.gateway import (
     GatewayJSONValue,
     GatewayRequestContext,
@@ -168,6 +170,14 @@ class ChatbookGatewayRuntime:
                 raise ValueError("local tool description must be a bounded string")
             if not isinstance(parameters, dict) or parameters.get("type") != "object":
                 raise ValueError("local tool parameters must have type object")
+            try:
+                Draft202012Validator.check_schema(parameters)
+            except SchemaError:
+                parameters_are_valid = False
+            else:
+                parameters_are_valid = True
+            if not parameters_are_valid:
+                raise ValueError("local tool parameters must be valid JSON Schema")
             if not callable(handler):
                 raise ValueError("local tool handler must be callable")
 

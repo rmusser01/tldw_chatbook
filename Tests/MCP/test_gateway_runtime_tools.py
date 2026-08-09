@@ -637,6 +637,18 @@ async def test_successful_local_tool_result_content_is_returned_raw() -> None:
             id="non-object-schema",
         ),
         pytest.param(
+            [
+                _local_registration(
+                    parameters={
+                        "type": "object",
+                        "properties": [],
+                        "required": [],
+                    }
+                )
+            ],
+            id="malformed-object-schema",
+        ),
+        pytest.param(
             [_local_registration(handler="not callable")],
             id="non-callable-handler",
         ),
@@ -646,6 +658,20 @@ async def test_successful_local_tool_result_content_is_returned_raw() -> None:
                 _local_registration("invalid_second", parameters={"type": "array"}),
             ],
             id="mid-list-invalid",
+        ),
+        pytest.param(
+            [
+                _local_registration("valid_first"),
+                _local_registration(
+                    "invalid_second",
+                    parameters={
+                        "type": "object",
+                        "properties": [],
+                        "required": [],
+                    },
+                ),
+            ],
+            id="mid-list-malformed-object-schema",
         ),
         pytest.param(
             [_local_registration(description="")],
