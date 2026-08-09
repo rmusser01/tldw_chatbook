@@ -4171,6 +4171,45 @@ _CONFIG_CACHE: Optional[Dict[str, Any]] = None
 _CONFIG_CACHE_SOURCE: Optional[Path] = None
 
 
+class ConfigLoadFailure(NamedTuple):
+    """The most recent config parse failure -- TASK-13157.
+
+    ``_load_cli_config_bootstrap_unlocked`` already logs a TOMLDecodeError
+    via loguru, but both of its callers (``load_cli_config_and_ensure_
+    existence`` and ``load_settings``) discard the ``_ConfigBootstrapResult.
+    succeeded`` flag and hand back bare in-memory defaults with no signal a
+    caller can act on. A live-verification incident found this produces a
+    silent, user-invisible fallback to the ``default_user`` profile -- the
+    loaded config simply has no ``[general] users_name`` because the file
+    that would have carried it never parsed. This module-level record is the
+    "user-visible path" half of the fix: ``app.py`` reads it once at boot
+    (mirroring the existing ``_instance_lock_status``/``_maybe_warn_second_
+    instance`` pattern) and surfaces a persistent notification naming the
+    file and the parse error, instead of leaving the degradation invisible.
+    """
+
+    path: Path
+    message: str
+
+
+#: Set inside the TOMLDecodeError branch below, cleared on the next
+#: successful bootstrap. See ``ConfigLoadFailure`` and ``get_config_load_
+#: failure()``.
+_LAST_CONFIG_LOAD_FAILURE: Optional[ConfigLoadFailure] = None
+
+
+def get_config_load_failure() -> Optional[ConfigLoadFailure]:
+    """Return the most recent CLI config TOML parse failure, if any.
+
+    ``None`` means the last bootstrap attempt (or no attempt yet) did not
+    hit a TOML parse error -- it says nothing about OTHER bootstrap failure
+    modes (permission/posture errors, decryption failures), which already
+    have their own handling and are out of scope for this signal.
+    """
+
+    return _LAST_CONFIG_LOAD_FAILURE
+
+
 class _ConfigBootstrapResult(NamedTuple):
     config: Dict[str, Any]
     succeeded: bool
@@ -4179,7 +4218,7 @@ class _ConfigBootstrapResult(NamedTuple):
 def _load_cli_config_bootstrap_unlocked(
     force_reload: bool = False,
 ) -> _ConfigBootstrapResult:
-    global _CONFIG_CACHE, _CONFIG_CACHE_SOURCE
+    global _CONFIG_CACHE, _CONFIG_CACHE_SOURCE, _LAST_CONFIG_LOAD_FAILURE
     config_path = _get_effective_config_path()
     if (
         _CONFIG_CACHE is not None
@@ -4248,6 +4287,14 @@ def _load_cli_config_bootstrap_unlocked(
         logger.opt(exception=True).error(
             f"Error decoding CLI TOML config file {config_path}: {e}. Using internal defaults + any previous successful load."
         )
+        # TASK-13157: this except branch is the exact point a real user's
+        # config parse failure previously vanished -- logged here, then
+        # thrown away by every caller (`load_cli_config_and_ensure_
+        # existence`/`load_settings` both return only `.config`, never
+        # `.succeeded`). Recording it lets `app.py` surface a loud,
+        # user-visible notification instead of a silent `default_user`
+        # fallback (see `ConfigLoadFailure`/`get_config_load_failure`).
+        _LAST_CONFIG_LOAD_FAILURE = ConfigLoadFailure(path=config_path, message=str(e))
     except Exception as e:
         logger.opt(exception=True).error(
             f"An unexpected error occurred while loading CLI config {config_path}: {e}. Using internal defaults + any previous successful load."
@@ -4256,6 +4303,9 @@ def _load_cli_config_bootstrap_unlocked(
     if bootstrap_succeeded:
         _CONFIG_CACHE = loaded_config
         _CONFIG_CACHE_SOURCE = config_path
+        # A later successful load (e.g. the user or the app repaired the
+        # file) retires any previously recorded parse failure.
+        _LAST_CONFIG_LOAD_FAILURE = None
     # Log the keys of the configuration being returned to verify its structure
     logger.debug(
         f"load_cli_config_and_ensure_existence returning config with top-level keys: {list(loaded_config.keys())}"
@@ -4449,16 +4499,63 @@ def _invalidate_config_caches() -> None:
     _SETTINGS_CACHE_SOURCE = None
 
 
+class ConfigSerializationError(ValueError):
+    """A config rewrite would have committed unparseable TOML -- TASK-13157.
+
+    ``ValueError`` on purpose: ``replace_cli_config_serialized`` already uses
+    a plain ``ValueError`` as its "config write rejected" signal (see
+    ``_enforce_existing_encryption``), and ``persist_cli_config_for_
+    shutdown`` already catches ``ValueError`` in its failure tuple -- making
+    this a subclass means every existing call site's exception handling
+    covers it without modification.
+    """
+
+
 def _write_raw_cli_config_unlocked(
     config_path: Path,
     config_data: Mapping[str, Any],
 ) -> None:
-    """Atomically write a private on-disk config while the lock is held."""
+    """Atomically write a private on-disk config while the lock is held.
+
+    TASK-13157: every config-rewrite pass (settings-screen edits, the
+    first-run wizard, and -- notably -- the full default+user re-merge every
+    process shutdown persists via ``persist_cli_config_for_shutdown``) ends
+    up here. The in-memory ``config_data`` is always a plain ``dict`` with
+    inherently unique keys, so it cannot itself carry a duplicate key -- but
+    ``toml.dumps`` (the third-party encoder) and ``tomllib`` (the stdlib
+    reader the NEXT boot uses) are two independent implementations with no
+    guaranteed round-trip contract between them. Before this fix, nothing
+    verified the encoder's own output was still valid TOML before it was
+    committed to disk; a bad serialization would sit there until the next
+    boot's read failed, at which point the failure was ALSO silent (see
+    ``ConfigLoadFailure``). Parsing the freshly serialized text back through
+    the exact reader used on the next boot, before the atomic write, makes
+    it categorically impossible for this function to leave behind a file its
+    own next read cannot parse -- the write is idempotent by construction:
+    re-running it against its own output can never change the on-disk
+    result, and it can never regress a previously-valid file into an
+    invalid one.
+    """
 
     application_directory = _prepare_config_parent(config_path)
+    serialized = toml.dumps(dict(config_data))
+    try:
+        tomllib.loads(serialized)
+    except tomllib.TOMLDecodeError as exc:
+        logger.error(
+            "Refusing to write CLI config to {} -- the freshly serialized "
+            "TOML failed to parse back (error_type={}): {}",
+            config_path,
+            type(exc).__name__,
+            exc,
+        )
+        raise ConfigSerializationError(
+            f"Refusing to write {config_path}: the serialized configuration "
+            f"does not parse back as valid TOML ({exc})"
+        ) from exc
     result = atomic_private_write_text(
         config_path,
-        toml.dumps(dict(config_data)),
+        serialized,
         application_owned_directory=application_directory,
     )
     _report_config_path_posture(result)
