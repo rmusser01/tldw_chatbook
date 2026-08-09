@@ -58,7 +58,15 @@ def test_parse_probe_json_requires_video():
 class _FakeProc:
     _next_pid = 5000
 
-    def __init__(self, cmd, *, fake_stdout=None, timeout_once=False, **kwargs):
+    def __init__(
+        self,
+        cmd,
+        *,
+        fake_stdout=None,
+        timeout_once=False,
+        final_wait_error=None,
+        **kwargs,
+    ):
         self.cmd = cmd
         self.kwargs = kwargs
         self.pid = _FakeProc._next_pid
@@ -69,6 +77,7 @@ class _FakeProc:
         self.signals: list[int] = []
         self.events: list[object] = []
         self._timeout_once = timeout_once
+        self._final_wait_error = final_wait_error
 
     def poll(self):
         return None
@@ -82,6 +91,8 @@ class _FakeProc:
         if timeout == 2 and self._timeout_once:
             self._timeout_once = False
             raise subprocess.TimeoutExpired(self.cmd, timeout)
+        if timeout is None and self._final_wait_error is not None:
+            raise self._final_wait_error
         return 0
 
     def kill(self):
@@ -90,12 +101,20 @@ class _FakeProc:
 
 
 class _SpawnRecorder:
-    def __init__(self, stdout_factory=None, *, fail_at=None, timeout_at=None):
+    def __init__(
+        self,
+        stdout_factory=None,
+        *,
+        fail_at=None,
+        timeout_at=None,
+        final_wait_error_at=None,
+    ):
         self.calls: list[_FakeProc] = []
         self._stdout_factory = stdout_factory
         self._fail_at = fail_at
         self._attempts = 0
         self._timeout_at = timeout_at
+        self._final_wait_error_at = final_wait_error_at
 
     def __call__(self, cmd, **kwargs):
         self._attempts += 1
@@ -108,6 +127,11 @@ class _SpawnRecorder:
             cmd,
             fake_stdout=stdout,
             timeout_once=self._attempts == self._timeout_at,
+            final_wait_error=(
+                OSError("final wait failed")
+                if self._attempts == self._final_wait_error_at
+                else None
+            ),
             **kwargs,
         )
         self.calls.append(proc)
@@ -217,6 +241,42 @@ def test_second_spawn_failure_reaps_ffmpeg_and_closes_stdout_and_pipe_fds(
     assert stdout.close_calls == 1
     assert sorted(closed) == sorted(fds)
     _assert_fds_closed(fds)
+    assert pipeline._ffmpeg is None and pipeline._ffplay is None
+    assert pipeline.current_run is None
+
+
+def test_audio_read_fd_close_failure_rolls_back_private_run_and_children(monkeypatch):
+    real_pipe = os.pipe
+    real_close = os.close
+    fds: list[int] = []
+    close_attempts: list[int] = []
+
+    def recording_pipe():
+        pair = real_pipe()
+        fds.extend(pair)
+        return pair
+
+    def close_then_fail_on_audio_read(fd):
+        close_attempts.append(fd)
+        real_close(fd)
+        if fds and fd == fds[0]:
+            raise OSError("audio read fd close failed")
+
+    monkeypatch.setattr(pp.os, "pipe", recording_pipe)
+    monkeypatch.setattr(pp.os, "close", close_then_fail_on_audio_read)
+    stdout = _FakeStdout(b"", chunk=1)
+    spawn = _SpawnRecorder(stdout_factory=lambda: stdout)
+    pipeline = pp.PlayerPipeline("clip.mp4", _probe(), spawn=spawn)
+
+    with pytest.raises(OSError, match="audio read fd close failed"):
+        pipeline.start()
+
+    assert sorted(close_attempts) == sorted(fds)
+    _assert_fds_closed(fds)
+    ffmpeg, ffplay = spawn.calls
+    assert ffplay.events == ["terminate", ("wait", 2)]
+    assert ffmpeg.events == ["terminate", ("wait", 2)]
+    assert stdout.close_calls == 1
     assert pipeline._ffmpeg is None and pipeline._ffplay is None
     assert pipeline.current_run is None
 
@@ -353,12 +413,13 @@ def test_pause_and_resume_signal_only_captured_run_during_restart(
 
 
 class _FakeStdout:
-    def __init__(self, payload: bytes, chunk: int):
+    def __init__(self, payload: bytes, chunk: int, *, close_error=None):
         self._payload = payload
         self._chunk = chunk
         self._pos = 0
         self.read_calls = 0
         self.close_calls = 0
+        self.close_error = close_error
 
     def read(self, size=-1):
         self.read_calls += 1
@@ -372,6 +433,30 @@ class _FakeStdout:
 
     def close(self):
         self.close_calls += 1
+        if self.close_error is not None:
+            raise self.close_error
+
+
+class _RaisingStdout(_FakeStdout):
+    def __init__(self, error):
+        super().__init__(b"", chunk=1)
+        self.error = error
+
+    def read(self, size=-1):
+        self.read_calls += 1
+        raise self.error
+
+
+class _BarrierRaisingStdout(_RaisingStdout):
+    def __init__(self, error):
+        super().__init__(error)
+        self.read_started = threading.Event()
+        self.release_read = threading.Event()
+
+    def read(self, size=-1):
+        self.read_started.set()
+        assert self.release_read.wait(timeout=2), "test did not release pipe read"
+        return super().read(size)
 
 
 def test_iter_frames_exact_reads_and_pts_sequence():
@@ -386,6 +471,53 @@ def test_iter_frames_exact_reads_and_pts_sequence():
     assert [pts for pts, _ in frames] == pytest.approx([1.0, 1.0 + 1 / fps, 1.0 + 2 / fps])
     assert all(len(data) == 24 for _, data in frames)
     assert run.eof
+
+
+@pytest.mark.parametrize("error_type", [OSError, ValueError])
+def test_current_run_pipe_error_propagates_and_closes_stdout(error_type):
+    stdout = _RaisingStdout(error_type("pipe read failed"))
+    pipeline = pp.PlayerPipeline(
+        "silent.mp4",
+        _probe(has_audio=False),
+        spawn=_SpawnRecorder(stdout_factory=lambda: stdout),
+    )
+    run = pipeline.start()
+
+    with pytest.raises(error_type, match="pipe read failed"):
+        list(pipeline.iter_frames(run))
+
+    assert stdout.close_calls == 1
+
+
+@pytest.mark.parametrize("error_type", [OSError, ValueError])
+def test_lifecycle_invalidated_run_treats_pipe_error_as_eof(error_type):
+    stdout = _BarrierRaisingStdout(error_type("closed pipe"))
+    pipeline = pp.PlayerPipeline(
+        "silent.mp4",
+        _probe(has_audio=False),
+        spawn=_SpawnRecorder(stdout_factory=lambda: stdout),
+    )
+    run = pipeline.start()
+    frames: list[tuple[float, bytes]] = []
+    errors: list[Exception] = []
+
+    def pump():
+        try:
+            frames.extend(pipeline.iter_frames(run))
+        except Exception as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=pump, daemon=True)
+    thread.start()
+    assert stdout.read_started.wait(timeout=2), "frame iterator did not start reading"
+    pipeline.stop()
+    stdout.release_read.set()
+    thread.join(timeout=2)
+
+    assert not thread.is_alive()
+    assert frames == [] and errors == []
+    assert run.eof is True
+    assert stdout.close_calls == 1
 
 
 def test_lazy_old_iterator_never_reads_replacement_stdout():
@@ -406,11 +538,10 @@ def test_lazy_old_iterator_never_reads_replacement_stdout():
 
     replacement = pipeline.seek(2.0)
     replacement_stdout = replacement.stdout
-    old_pts, old_data = next(old_iterator)
+    with pytest.raises(StopIteration):
+        next(old_iterator)
 
-    assert old_pts == pytest.approx(1.0)
-    assert old_data == b"o" * frame_bytes
-    assert old_stdout.read_calls == 1
+    assert old_stdout.read_calls == 0
     assert replacement_stdout.read_calls == 0
     replacement_pts, replacement_data = next(pipeline.iter_frames(replacement))
     assert replacement_pts == pytest.approx(2.0)
@@ -604,6 +735,42 @@ def test_ffplay_timeout_force_kills_and_finally_reaps_before_ffmpeg():
         ("wait", None),
     ]
     assert ffmpeg.events == ["terminate", ("wait", 2)]
+
+
+def test_ffplay_terminal_cleanup_failure_does_not_skip_ffmpeg_or_stdout():
+    stdout = _FakeStdout(b"", chunk=1)
+    spawn = _SpawnRecorder(
+        stdout_factory=lambda: stdout,
+        timeout_at=2,
+        final_wait_error_at=2,
+    )
+    pipeline = pp.PlayerPipeline("clip.mp4", _probe(), spawn=spawn)
+    pipeline.start()
+
+    with pytest.raises(OSError, match="final wait failed"):
+        pipeline.stop()
+
+    ffmpeg, ffplay = spawn.calls
+    assert ffplay.events == [
+        "terminate",
+        ("wait", 2),
+        "kill",
+        ("wait", None),
+    ]
+    assert ffmpeg.events == ["terminate", ("wait", 2)]
+    assert stdout.close_calls == 1
+
+
+def test_stdout_is_detached_even_when_native_close_fails():
+    stdout = _FakeStdout(b"", chunk=1, close_error=OSError("close failed"))
+    run = pp.PlayerRun(generation=1, stdout=stdout, offset_seconds=0.0)
+
+    with pytest.raises(OSError, match="close failed"):
+        run.close_stdout_once()
+
+    assert run.stdout is None
+    run.close_stdout_once()
+    assert stdout.close_calls == 1
 
 
 def test_stop_is_idempotent():

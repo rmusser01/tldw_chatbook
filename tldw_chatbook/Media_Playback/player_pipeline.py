@@ -148,7 +148,7 @@ class PlayerRun:
     """State owned by one playback process generation."""
 
     generation: int
-    stdout: Any
+    stdout: Any | None
     offset_seconds: float
     started_wall: float | None = None
     pause_started: float | None = None
@@ -166,6 +166,7 @@ class PlayerRun:
                 return
             self._stdout_closed = True
             stdout = self.stdout
+            self.stdout = None
         if stdout is not None:
             stdout.close()
 
@@ -228,6 +229,8 @@ class PlayerPipeline:
             audio_w: int | None = None
             ffmpeg: subprocess.Popen | None = None
             ffplay: subprocess.Popen | None = None
+            run: PlayerRun | None = None
+            failure: Exception | None = None
             if self._probe.has_audio:
                 audio_r, audio_w = os.pipe()
             seek_args = ["-ss", f"{offset:.3f}"] if offset else []
@@ -269,9 +272,11 @@ class PlayerPipeline:
                     stderr=subprocess.DEVNULL,
                     pass_fds=pass_fds,
                 )
+                run = PlayerRun(generation, ffmpeg.stdout, offset)
                 if audio_w is not None:
-                    os.close(audio_w)  # the ffmpeg child holds its own copy now
+                    inherited_audio_w = audio_w
                     audio_w = None
+                    os.close(inherited_audio_w)  # the ffmpeg child has its own copy
                     ffplay_cmd = [
                         "ffplay", "-autoexit", "-nodisp", "-loglevel", "error",
                         "-volume", str(self._volume),
@@ -284,25 +289,41 @@ class PlayerPipeline:
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
                     )
-                run = PlayerRun(generation, ffmpeg.stdout, offset)
-            except Exception:
+            except Exception as exc:
+                failure = exc
+            for fd in (audio_r, audio_w):
+                if fd is not None:
+                    try:
+                        os.close(fd)
+                    except Exception as exc:
+                        if failure is None:
+                            failure = exc
+            if failure is not None:
                 if ffplay is not None:
-                    self._stop_process(ffplay)
+                    try:
+                        self._stop_process(ffplay)
+                    except Exception:
+                        pass
                 if ffmpeg is not None:
-                    self._stop_process(ffmpeg)
-                    if ffmpeg.stdout is not None:
-                        try:
-                            ffmpeg.stdout.close()
-                        except Exception:
-                            pass
+                    try:
+                        self._stop_process(ffmpeg)
+                    except Exception:
+                        pass
+                if run is not None:
+                    try:
+                        run.close_stdout_once()
+                    except Exception:
+                        pass
+                elif ffmpeg is not None and ffmpeg.stdout is not None:
+                    try:
+                        ffmpeg.stdout.close()
+                    except Exception:
+                        pass
                 self._ffmpeg = None
                 self._ffplay = None
                 self._current_run = None
-                raise
-            finally:
-                for fd in (audio_r, audio_w):
-                    if fd is not None:
-                        os.close(fd)
+                raise failure
+            assert ffmpeg is not None and run is not None
             self._generation = generation
             self._ffmpeg = ffmpeg
             self._ffplay = ffplay
@@ -316,14 +337,18 @@ class PlayerPipeline:
             proc.terminate()
             proc.wait(timeout=2)
         except Exception:
+            terminal_failure: Exception | None = None
             try:
                 proc.kill()
-            except Exception:
-                pass
+            except Exception as exc:
+                terminal_failure = exc
             try:
                 proc.wait()
-            except Exception:
-                pass
+            except Exception as exc:
+                if terminal_failure is None:
+                    terminal_failure = exc
+            if terminal_failure is not None:
+                raise terminal_failure
 
     @property
     def current_run(self) -> PlayerRun | None:
@@ -385,6 +410,8 @@ class PlayerPipeline:
                 try:
                     data = _read_exact(stdout, frame_bytes)
                 except (OSError, ValueError):
+                    if not run.eof:
+                        raise
                     data = b""
                 if not data:
                     run.eof = True
@@ -449,14 +476,26 @@ class PlayerPipeline:
             self._current_run = None
             if run is not None:
                 run.eof = True
-        try:
-            if ffplay is not None:
+        failure: Exception | None = None
+        if ffplay is not None:
+            try:
                 self._stop_process(ffplay)
-            if ffmpeg is not None:
+            except Exception as exc:
+                failure = exc
+        if ffmpeg is not None:
+            try:
                 self._stop_process(ffmpeg)
-        finally:
-            if run is not None:
+            except Exception as exc:
+                if failure is None:
+                    failure = exc
+        if run is not None:
+            try:
                 run.close_stdout_once()
+            except Exception as exc:
+                if failure is None:
+                    failure = exc
+        if failure is not None:
+            raise failure
 
     @property
     def at_eof(self) -> bool:
