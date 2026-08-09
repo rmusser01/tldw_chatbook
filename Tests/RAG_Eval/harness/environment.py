@@ -18,6 +18,10 @@ Three conditions, each with its own actionable reason:
 3. The embedding model is already in the local model cache — a harness that
    silently downloads 87 MB on a cold machine is a harness that fails in CI
    for a reason nobody can see. If it is not cached, we say so and skip.
+   Checked against the model snapshot's COMPLETE file list, not the minimum
+   the loader can scrape by on: downloads are genuinely blocked during a run
+   (see the offline latch below), so a half-populated cache has to land on
+   the skip-with-reason path rather than raise mid-run.
 
 **The cache-directory invariant.** Condition 3 is only meaningful if the
 directory it checks is the directory the run will actually load from. The
@@ -48,6 +52,49 @@ from typing import Optional
 
 import pytest
 
+#: Env var that opts a run into the (slow, real-model) harness. Defined
+#: before the offline latch below, which reads it.
+RAG_EVAL_ENV_VAR = "RAG_EVAL"
+
+# ---------------------------------------------------------------------------
+# Offline latch — MUST run before `huggingface_hub.constants` is evaluated
+# ---------------------------------------------------------------------------
+# `huggingface_hub.constants.HF_HUB_OFFLINE` is computed ONCE, at import
+# (constants.py L171 in hf_hub 1.12.0), from the environment as it stood at
+# that instant; `constants.is_offline_mode()` just returns that global, and
+# transformers 5.x imports that same function (`utils/hub.py` L363). So
+# setting the env var from a pytest fixture — i.e. at test SETUP, after
+# collection has already imported half the world — does nothing at all.
+#
+# Measured, on a passing gated test with the env var set from the fixture:
+#     ENV HF_HUB_OFFLINE='1'   constants.HF_HUB_OFFLINE=False
+#                              constants.is_offline_mode()=False
+# The enforcement was inert, and a cache miss would have silently downloaded
+# into the user's real cache (which this module deliberately points at).
+#
+# Both halves are needed and neither is sufficient alone:
+#   * this env write, which lands before `huggingface_hub.constants` is
+#     evaluated in the common case — note that is a weaker condition than
+#     "before huggingface_hub is imported", because hf_hub loads its
+#     submodules lazily, so `constants` can still be unevaluated while
+#     `huggingface_hub` sits in sys.modules; and
+#   * `Tests/RAG_Eval/conftest.py`'s `monkeypatch.setattr` on the constant,
+#     the only thing that works once `constants` HAS been evaluated with the
+#     var unset (any earlier test that touched transformers does this).
+#
+# Both halves were mutation-tested, forcing the hard case by evaluating
+# `huggingface_hub.constants` from `Tests/RAG_Eval/__init__.py` (i.e. before
+# this latch):
+#     constants pre-evaluated, conftest setattr removed -> is_offline_mode() False
+#     constants pre-evaluated, conftest setattr present -> is_offline_mode() True
+# and the assertion in test_harness_smoke.py fails ("assert False is True")
+# in the first configuration. Setting the constant works because
+# `is_offline_mode()` reads it as a module global at call time; transformers
+# 5.x imports that same function, so it inherits the change (also measured).
+if os.environ.get(RAG_EVAL_ENV_VAR) == "1":
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+
 __all__ = [
     "EMBEDDING_MODEL_REPO_ID",
     "PROFILE_EMBEDDING_MODEL",
@@ -57,9 +104,6 @@ __all__ = [
     "model_cache_dir",
     "skip_reason",
 ]
-
-#: Env var that opts a run into the (slow, real-model) harness.
-RAG_EVAL_ENV_VAR = "RAG_EVAL"
 
 #: Profile the harness builds from. Its `default_search_mode` is "hybrid";
 #: Task 6 switches `service.config.search.default_search_mode` per pass.
@@ -79,13 +123,35 @@ EMBEDDING_MODEL_REPO_ID = "sentence-transformers/all-MiniLM-L6-v2"
 #: Escape hatch for a machine that keeps its HF cache somewhere exotic.
 MODEL_CACHE_ENV_VAR = "TLDW_RAG_EVAL_MODEL_CACHE"
 
-#: `config.json` is mandatory; the other two groups are any-of, because a
-#: repo may ship safetensors or a pickled checkpoint, and a fast tokenizer
-#: or a plain vocab.
+#: Every file this model's snapshot ships, as any-of groups.
+#:
+#: Deliberately the COMPLETE snapshot, not the strict minimum. A leave-one-out
+#: probe against the real cache (copy the snapshot to a temp dir, drop one
+#: file, `AutoTokenizer`+`AutoModel.from_pretrained(..., local_files_only=True)`
+#: — the app's actual loader, `Embeddings_Lib._HFEmbedder`, which uses
+#: transformers rather than sentence-transformers' own loader) found only two
+#: files strictly load-bearing:
+#:
+#:     omit config.json             -> FAILS (ValueError: Unrecognized model)
+#:     omit model.safetensors       -> FAILS (OSError: no file named ...)
+#:     omit special_tokens_map.json -> LOADS
+#:     omit tokenizer_config.json   -> LOADS
+#:     omit tokenizer.json          -> LOADS   (vocab.txt covers it)
+#:     omit vocab.txt               -> LOADS   (tokenizer.json covers it)
+#:
+#: The tokenizer pair is therefore a genuine any-of and is encoded as one.
+#: The two optional JSONs are still required here because the gate's job is
+#: not "can this scrape by" but "is this cache whole": now that offline mode
+#: is genuinely enforced, a half-downloaded cache must land on the
+#: skip-with-reason path rather than raise somewhere in the middle of a run.
+#: The weights group stays any-of because safetensors-vs-pickle is a real
+#: format alternative that changes across snapshots.
 _REQUIRED_CACHE_FILES: tuple[tuple[str, ...], ...] = (
     ("config.json",),
     ("model.safetensors", "pytorch_model.bin"),
     ("tokenizer.json", "vocab.txt"),
+    ("tokenizer_config.json",),
+    ("special_tokens_map.json",),
 )
 
 _EXTRAS_HINT = 'pip install "tldw_chatbook[embeddings_rag]"'

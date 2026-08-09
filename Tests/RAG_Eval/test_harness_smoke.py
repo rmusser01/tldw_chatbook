@@ -25,6 +25,26 @@ PLANTED_SLUG = "note-zephyr-flywheel"
 PLANTED_QUERY = "Zephyr-9 flywheel assembly balance tolerance"
 
 
+def test_model_downloads_are_blocked_for_the_duration_of_a_harness_run():
+    """Offline mode is *in effect*, not merely requested.
+
+    Asserts the resolved state rather than the environment variable on
+    purpose. `HF_HUB_OFFLINE` is frozen into
+    `huggingface_hub.constants.HF_HUB_OFFLINE` at import time, so setting the
+    env var from a fixture leaves the env reading "1" while offline mode is
+    still off — exactly the inert configuration this test exists to catch.
+    A regression here means a cache miss downloads ~87 MB into the user's
+    real cache instead of failing.
+    """
+    from huggingface_hub import constants
+    from transformers.utils.hub import is_offline_mode as transformers_is_offline
+
+    assert constants.is_offline_mode() is True
+    # transformers reaches the same global through its own import; if that
+    # ever stops being true, hf_hub being offline would not stop it.
+    assert transformers_is_offline() is True
+
+
 def test_corpus_ingests_and_semantic_search_finds_a_planted_doc(tmp_path):
     from tldw_chatbook.Library.library_local_rag_search_service import (
         LibraryLocalRagSearchService,
