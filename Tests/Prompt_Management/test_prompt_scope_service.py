@@ -276,6 +276,26 @@ class FakeLocalPromptService:
             "prompt_ids": payload.get("prompt_ids") or [],
         }
 
+    def list_prompt_collection_memberships(self, prompt_id):
+        self.calls.append(("list_prompt_collection_memberships", prompt_id))
+        return {
+            "prompt_id": prompt_id,
+            "collection_ids": (3, 8),
+            "changed": False,
+            "saved": True,
+        }
+
+    def replace_prompt_collection_memberships(self, prompt_id, collection_ids):
+        self.calls.append(
+            ("replace_prompt_collection_memberships", prompt_id, collection_ids)
+        )
+        return {
+            "prompt_id": prompt_id,
+            "collection_ids": tuple(sorted(collection_ids)),
+            "changed": True,
+            "saved": True,
+        }
+
 
 class FakeServerPromptService:
     def __init__(self, *, health=None, search_items=None):
@@ -1418,6 +1438,109 @@ async def test_prompt_scope_routes_local_prompt_collections_with_policy():
         "prompts.collections.detail.local",
         "prompts.collections.update.local",
     ]
+
+
+@pytest.mark.asyncio
+async def test_prompt_scope_routes_local_prompt_memberships_with_bounded_outcomes():
+    policy = FakePolicyEnforcer()
+    local = FakeLocalPromptService()
+    server = FakeServerPromptService()
+    service = PromptScopeService(local, server, policy)
+
+    listed = await service.list_prompt_collection_memberships(mode="local", prompt_id=7)
+    replaced = await service.replace_prompt_collection_memberships(
+        mode=PromptBackend.LOCAL,
+        prompt_id=7,
+        collection_ids=[8, 3],
+    )
+
+    assert listed == {
+        "prompt_id": 7,
+        "collection_ids": (3, 8),
+        "changed": False,
+    }
+    assert replaced == {
+        "prompt_id": 7,
+        "collection_ids": (3, 8),
+        "changed": True,
+    }
+    assert policy.actions == [
+        "prompts.collections.detail.local",
+        "prompts.collections.update.local",
+    ]
+    assert local.calls[-2:] == [
+        ("list_prompt_collection_memberships", 7),
+        ("replace_prompt_collection_memberships", 7, (3, 8)),
+    ]
+    assert server.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["server", "all", "mixed", None])
+async def test_prompt_scope_rejects_non_local_membership_modes_before_policy_or_adapter(
+    mode,
+):
+    policy = FakePolicyEnforcer()
+    local = FakeLocalPromptService()
+    server = FakeServerPromptService()
+    service = PromptScopeService(local, server, policy)
+
+    with pytest.raises(ValueError, match="local-only"):
+        await service.list_prompt_collection_memberships(mode=mode, prompt_id=7)
+    with pytest.raises(ValueError, match="local-only"):
+        await service.replace_prompt_collection_memberships(
+            mode=mode, prompt_id=7, collection_ids=[3]
+        )
+
+    assert policy.actions == []
+    assert local.calls == []
+    assert server.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("prompt_id", "collection_ids"),
+    [
+        (True, [3]),
+        (0, [3]),
+        (2**63, [3]),
+        ("7", [3]),
+        (7, None),
+        (7, "3"),
+        (7, [3, True]),
+        (7, [3, 4, 3]),
+        (7, [3, 2**63]),
+    ],
+)
+async def test_prompt_scope_rejects_invalid_memberships_before_policy_or_adapter(
+    prompt_id, collection_ids
+):
+    policy = FakePolicyEnforcer()
+    local = FakeLocalPromptService()
+    server = FakeServerPromptService()
+    service = PromptScopeService(local, server, policy)
+
+    with pytest.raises(ValueError):
+        await service.replace_prompt_collection_memberships(
+            mode="local", prompt_id=prompt_id, collection_ids=collection_ids
+        )
+
+    assert policy.actions == []
+    assert local.calls == []
+    assert server.calls == []
+
+
+@pytest.mark.asyncio
+async def test_prompt_scope_membership_policy_denial_stops_before_local_adapter():
+    policy = FakePolicyEnforcer.deny()
+    local = FakeLocalPromptService()
+    service = PromptScopeService(local, FakeServerPromptService(), policy)
+
+    with pytest.raises(PermissionError):
+        await service.list_prompt_collection_memberships(mode="local", prompt_id=7)
+
+    assert policy.actions == ["prompts.collections.detail.local"]
+    assert local.calls == []
 
 
 @pytest.mark.asyncio

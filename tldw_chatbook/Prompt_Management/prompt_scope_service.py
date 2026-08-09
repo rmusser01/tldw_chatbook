@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import inspect
 import sqlite3
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -41,6 +41,25 @@ from .server_prompt_adapter import normalize_artifact_type
 
 
 _SQLITE_SIGNED_INTEGER_MAX = PromptsDatabase._SQLITE_SIGNED_INTEGER_MAX
+
+
+def _positive_signed_id(value: Any, *, field_name: str) -> int:
+    """Return one strict positive SQLite identifier."""
+    if type(value) is not int or value < 1 or value > _SQLITE_SIGNED_INTEGER_MAX:
+        raise ValueError(f"{field_name} must be a positive signed 64-bit integer.")
+    return value
+
+
+def _unique_positive_signed_ids(values: Any, *, field_name: str) -> tuple[int, ...]:
+    """Return unique, strict positive SQLite identifiers in caller order."""
+    if isinstance(values, (str, bytes, bytearray)) or not isinstance(values, Sequence):
+        raise ValueError(f"{field_name} must be a sequence of unique identifiers.")
+    resolved = tuple(
+        _positive_signed_id(value, field_name=field_name) for value in values
+    )
+    if len(set(resolved)) != len(resolved):
+        raise ValueError(f"{field_name} must not contain duplicate identifiers.")
+    return resolved
 
 
 class PromptBackend(str, Enum):
@@ -342,19 +361,42 @@ class LocalPromptService:
         return resolved
 
     @staticmethod
-    def _prompt_ids(prompt_ids: Optional[list[int]]) -> list[int]:
-        resolved: list[int] = []
-        for prompt_id in prompt_ids or []:
-            if (
-                type(prompt_id) is not int
-                or prompt_id < 1
-                or prompt_id > _SQLITE_SIGNED_INTEGER_MAX
-            ):
+    def _prompt_ids(prompt_ids: Optional[Sequence[int]]) -> list[int]:
+        if prompt_ids is None:
+            return []
+        return list(_unique_positive_signed_ids(prompt_ids, field_name="prompt_ids"))
+
+    @staticmethod
+    def _require_active_prompt_ids(
+        conn: sqlite3.Connection, prompt_ids: Sequence[int]
+    ) -> None:
+        for prompt_id in prompt_ids:
+            active = conn.execute(
+                "SELECT 1 FROM Prompts WHERE id = ? AND deleted = 0",
+                (prompt_id,),
+            ).fetchone()
+            if active is None:
                 raise ValueError(
-                    "Prompt collection prompt_ids must contain positive signed 64-bit integers."
+                    "Each prompt reference must identify an active Prompt."
                 )
-            resolved.append(prompt_id)
-        return resolved
+
+    @staticmethod
+    def _require_active_collection_ids(
+        conn: sqlite3.Connection, collection_ids: Sequence[int]
+    ) -> None:
+        for collection_id in collection_ids:
+            active = conn.execute(
+                """
+                SELECT 1
+                FROM LocalPromptCollections
+                WHERE collection_id = ? AND deleted = 0
+                """,
+                (collection_id,),
+            ).fetchone()
+            if active is None:
+                raise ValueError(
+                    "Prompt memberships must reference active collections."
+                )
 
     def _set_collection_prompt_ids(
         self, conn: sqlite3.Connection, collection_id: int, prompt_ids: list[int]
@@ -694,6 +736,7 @@ class LocalPromptService:
                     (name, description),
                 )
                 collection_id = int(cursor.lastrowid)
+                self._require_active_prompt_ids(conn, prompt_ids)
                 self._set_collection_prompt_ids(conn, collection_id, prompt_ids)
         except sqlite3.IntegrityError as exc:
             raise ValueError(
@@ -876,6 +919,7 @@ class LocalPromptService:
                             f"Prompt collection '{collection_id}' not found."
                         )
                 if prompt_ids is not None:
+                    self._require_active_prompt_ids(conn, prompt_ids)
                     self._set_collection_prompt_ids(
                         conn, resolved_collection_id, prompt_ids
                     )
@@ -897,6 +941,144 @@ class LocalPromptService:
                 "Prompt collection update failed because a name or prompt reference is invalid."
             ) from exc
         return self._collection_record(resolved_collection_id)
+
+    def list_prompt_collection_memberships(
+        self, prompt_id: int
+    ) -> dict[str, int | tuple[int, ...] | bool]:
+        """List active collection memberships for one active local Prompt.
+
+        Args:
+            prompt_id: Positive local Prompt identifier.
+
+        Returns:
+            A bounded mapping with the Prompt ID, ordered collection IDs, and
+            ``changed=False``.
+
+        Raises:
+            ValueError: If the Prompt identifier is invalid or inactive.
+        """
+        resolved_prompt_id = _positive_signed_id(prompt_id, field_name="prompt_id")
+        db = self._require_collection_db()
+        with db.transaction() as conn:
+            self._require_active_prompt_ids(conn, (resolved_prompt_id,))
+            rows = conn.execute(
+                """
+                SELECT item.collection_id
+                FROM LocalPromptCollectionItems AS item
+                JOIN LocalPromptCollections AS collection
+                  ON collection.collection_id = item.collection_id
+                WHERE item.prompt_id = ? AND collection.deleted = 0
+                ORDER BY item.collection_id ASC
+                """,
+                (resolved_prompt_id,),
+            ).fetchall()
+        return {
+            "prompt_id": resolved_prompt_id,
+            "collection_ids": tuple(int(row["collection_id"]) for row in rows),
+            "changed": False,
+        }
+
+    def replace_prompt_collection_memberships(
+        self, prompt_id: int, collection_ids: Sequence[int]
+    ) -> dict[str, int | tuple[int, ...] | bool]:
+        """Atomically replace one active Prompt's local collection memberships.
+
+        Args:
+            prompt_id: Positive local Prompt identifier.
+            collection_ids: Unique positive active collection identifiers.
+
+        Returns:
+            A bounded mapping containing the normalized membership set and whether
+            it changed.
+
+        Raises:
+            ValueError: If an identifier is invalid or inactive, or persistence
+                rejects the membership update.
+        """
+        resolved_prompt_id = _positive_signed_id(prompt_id, field_name="prompt_id")
+        resolved_collection_ids = tuple(
+            sorted(
+                _unique_positive_signed_ids(collection_ids, field_name="collection_ids")
+            )
+        )
+        db = self._require_collection_db()
+        try:
+            with db.transaction(immediate=True) as conn:
+                self._require_active_prompt_ids(conn, (resolved_prompt_id,))
+                self._require_active_collection_ids(conn, resolved_collection_ids)
+                current_collection_ids = tuple(
+                    int(row["collection_id"])
+                    for row in conn.execute(
+                        """
+                        SELECT collection_id
+                        FROM LocalPromptCollectionItems
+                        WHERE prompt_id = ?
+                        ORDER BY collection_id ASC
+                        """,
+                        (resolved_prompt_id,),
+                    ).fetchall()
+                )
+                if current_collection_ids == resolved_collection_ids:
+                    return {
+                        "prompt_id": resolved_prompt_id,
+                        "collection_ids": resolved_collection_ids,
+                        "changed": False,
+                    }
+
+                current = set(current_collection_ids)
+                requested = set(resolved_collection_ids)
+                removed = tuple(sorted(current - requested))
+                added = tuple(sorted(requested - current))
+
+                if removed:
+                    placeholders = ", ".join("?" for _ in removed)
+                    conn.execute(
+                        f"""
+                        DELETE FROM LocalPromptCollectionItems
+                        WHERE prompt_id = ?
+                          AND collection_id IN ({placeholders})
+                        """,
+                        (resolved_prompt_id, *removed),
+                    )
+                for collection_id in added:
+                    position = int(
+                        conn.execute(
+                            """
+                            SELECT COALESCE(MAX(position), -1) + 1
+                            FROM LocalPromptCollectionItems
+                            WHERE collection_id = ?
+                            """,
+                            (collection_id,),
+                        ).fetchone()[0]
+                    )
+                    conn.execute(
+                        """
+                        INSERT INTO LocalPromptCollectionItems
+                            (collection_id, prompt_id, position)
+                        VALUES (?, ?, ?)
+                        """,
+                        (collection_id, resolved_prompt_id, position),
+                    )
+
+                impacted = tuple(sorted(set(removed) | set(added)))
+                if impacted:
+                    placeholders = ", ".join("?" for _ in impacted)
+                    conn.execute(
+                        f"""
+                        UPDATE LocalPromptCollections
+                        SET updated_at = CURRENT_TIMESTAMP, version = version + 1
+                        WHERE deleted = 0
+                          AND collection_id IN ({placeholders})
+                        """,
+                        impacted,
+                    )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("Prompt collection membership update failed.") from exc
+        return {
+            "prompt_id": resolved_prompt_id,
+            "collection_ids": resolved_collection_ids,
+            "changed": True,
+        }
 
 
 class PromptScopeService:
@@ -1007,6 +1189,37 @@ class PromptScopeService:
     @staticmethod
     def _collection_action_id(mode: PromptBackend, action: str) -> str:
         return f"prompts.collections.{action}.{mode.value}"
+
+    @staticmethod
+    def _local_membership_mode(mode: PromptBackend | str) -> PromptBackend:
+        if mode != PromptBackend.LOCAL and mode != PromptBackend.LOCAL.value:
+            raise ValueError("Prompt collection memberships are local-only.")
+        return PromptBackend.LOCAL
+
+    @staticmethod
+    def _membership_outcome(
+        response: Any, *, prompt_id: int, changed: bool | None = None
+    ) -> dict[str, int | tuple[int, ...] | bool]:
+        if not isinstance(response, Mapping):
+            raise ValueError("Local Prompt membership response must be a mapping.")
+        collection_ids = tuple(
+            sorted(
+                _unique_positive_signed_ids(
+                    response.get("collection_ids"), field_name="collection_ids"
+                )
+            )
+        )
+        if changed is None:
+            changed = response.get("changed")
+            if type(changed) is not bool:
+                raise ValueError(
+                    "Local Prompt membership response changed flag must be boolean."
+                )
+        return {
+            "prompt_id": prompt_id,
+            "collection_ids": collection_ids,
+            "changed": changed,
+        }
 
     async def list_prompts(
         self,
@@ -1530,6 +1743,76 @@ class PromptScopeService:
         return normalize_prompt_collection_record(
             response, backend=normalized_mode.value
         )
+
+    async def list_prompt_collection_memberships(
+        self,
+        *,
+        mode: PromptBackend | str = PromptBackend.LOCAL,
+        prompt_id: int,
+    ) -> dict[str, int | tuple[int, ...] | bool]:
+        """List one active local Prompt's collection memberships.
+
+        Args:
+            mode: Backend selection; only ``local`` is accepted.
+            prompt_id: Positive local Prompt identifier.
+
+        Returns:
+            A bounded mapping with ordered collection IDs and ``changed=False``.
+
+        Raises:
+            ValueError: If the mode or Prompt identifier is invalid, the Prompt is
+                inactive, or the local response is malformed.
+            PolicyDeniedError: If runtime policy denies local collection detail.
+        """
+        normalized_mode = self._local_membership_mode(mode)
+        resolved_prompt_id = _positive_signed_id(prompt_id, field_name="prompt_id")
+        self._enforce_policy(self._collection_action_id(normalized_mode, "detail"))
+        service = self._service_for_mode(normalized_mode)
+        response = await self._maybe_await(
+            service.list_prompt_collection_memberships(resolved_prompt_id)
+        )
+        return self._membership_outcome(
+            response, prompt_id=resolved_prompt_id, changed=False
+        )
+
+    async def replace_prompt_collection_memberships(
+        self,
+        *,
+        mode: PromptBackend | str = PromptBackend.LOCAL,
+        prompt_id: int,
+        collection_ids: Sequence[int],
+    ) -> dict[str, int | tuple[int, ...] | bool]:
+        """Replace one active local Prompt's collection memberships atomically.
+
+        Args:
+            mode: Backend selection; only ``local`` is accepted.
+            prompt_id: Positive local Prompt identifier.
+            collection_ids: Unique positive active local collection identifiers.
+
+        Returns:
+            A bounded mapping containing the normalized membership set and whether
+            it changed.
+
+        Raises:
+            ValueError: If the mode, Prompt ID, or collection IDs are invalid or
+                inactive, or the local response is malformed.
+            PolicyDeniedError: If runtime policy denies local collection update.
+        """
+        normalized_mode = self._local_membership_mode(mode)
+        resolved_prompt_id = _positive_signed_id(prompt_id, field_name="prompt_id")
+        resolved_collection_ids = tuple(
+            sorted(
+                _unique_positive_signed_ids(collection_ids, field_name="collection_ids")
+            )
+        )
+        self._enforce_policy(self._collection_action_id(normalized_mode, "update"))
+        service = self._service_for_mode(normalized_mode)
+        response = await self._maybe_await(
+            service.replace_prompt_collection_memberships(
+                resolved_prompt_id, resolved_collection_ids
+            )
+        )
+        return self._membership_outcome(response, prompt_id=resolved_prompt_id)
 
 
 def _build_server_prompt_service_from_config(
