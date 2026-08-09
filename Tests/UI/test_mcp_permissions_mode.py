@@ -626,6 +626,53 @@ async def test_legend_line_renders_fixed_marker_key():
         )
 
 
+# -- task-3240: gate-off breadcrumb appended to the legend -------------------
+
+
+@pytest.mark.asyncio
+async def test_update_matrix_appends_gate_breadcrumb_to_the_legend():
+    """PRIMARY discoverability breadcrumb (task-3240): when the workbench
+    passes a non-None `gate_breadcrumb`, it renders as a second line under
+    the fixed `_LEGEND_TEXT` -- the legend itself must stay intact so the
+    marker key it already teaches is never lost."""
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        await canvas.update_matrix(
+            [_global_row()],
+            kill_switch=False,
+            preview="",
+            gate_breadcrumb="3 tool gate(s) are off — enable them in the "
+            "built-in server's detail (Servers mode).",
+        )
+        await pilot.pause()
+        legend = str(app.query_one("#mcp-perm-legend", Static).renderable)
+        assert "• override" in legend  # base legend text survives
+        assert "3 tool gate(s) are off" in legend
+
+
+@pytest.mark.asyncio
+async def test_update_matrix_with_no_gate_breadcrumb_shows_bare_legend():
+    """`gate_breadcrumb=None` (the default -- every gate is on) must render
+    exactly the bare legend, and a later call must be how a previously
+    shown breadcrumb clears (mirrors `echo`'s own "next render clears"
+    contract)."""
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        await canvas.update_matrix(
+            [_global_row()], kill_switch=False, preview="", gate_breadcrumb="2 off"
+        )
+        await pilot.pause()
+        await canvas.update_matrix([_global_row()], kill_switch=False, preview="")
+        await pilot.pause()
+        legend = str(app.query_one("#mcp-perm-legend", Static).renderable)
+        assert legend == (
+            "• override · ⚠ definition changed · ⚑ high-risk floor · "
+            "Space cycles Inherit → Allow → Ask → Off"
+        )
+
+
 # -- UX batch item 11: adaptive Tags column ----------------------------------
 
 

@@ -22,7 +22,7 @@ from textual.reactive import reactive
 from textual.widgets import ContentSwitcher
 from textual.worker import Worker
 
-from tldw_chatbook.Agents.builtin_tool_gate import builtin_permission_rows
+from tldw_chatbook.Agents.builtin_tool_gate import builtin_permission_rows, tool_gate_breadcrumb
 from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 from tldw_chatbook.config import (
     coerce_bool_setting,
@@ -1736,18 +1736,43 @@ class MCPWorkbench(Container):
         cache-invalidating resync (`_refresh_server_discovery()`, see
         `on_mcp_tools_mode_empty_action_requested()`) rather than a bare
         mode switch.
+
+        task-3240 (SECONDARY/partial discoverability breadcrumb): whenever
+        one or more `[tools]`/`[console]` registration gates are off, that
+        is APPENDED to whichever message above applies. Honestly partial,
+        not a full breadcrumb: this method only ever runs when the whole
+        Tools-mode catalog is empty (see the caller, `_sync_tools_mode()`),
+        so it stays silent whenever ANY unrelated local tool source (an MCP
+        server, a connected local profile) already produced tools -- the
+        PRIMARY breadcrumb (the Permissions matrix's always-visible legend,
+        `_sync_permissions_mode()`) has no such blind spot.
         """
         if self._source == "server":
-            return (
+            message, action = (
                 "No tools visible from this server — refresh or check the server.",
                 "refresh",
             )
-        relevant = [snap for snap in self._snapshots if snap.source == self._source]
-        if not relevant:
-            return ("No servers configured — add one to see its tools.", "add_server")
-        if all(snap.state is ReadinessState.NEEDS_SETUP for snap in relevant):
-            return ("No tools discovered yet — connect or refresh a server.", "connect")
-        return ("No tools found — try refreshing a server's discovery.", "refresh")
+        else:
+            relevant = [snap for snap in self._snapshots if snap.source == self._source]
+            if not relevant:
+                message, action = (
+                    "No servers configured — add one to see its tools.",
+                    "add_server",
+                )
+            elif all(snap.state is ReadinessState.NEEDS_SETUP for snap in relevant):
+                message, action = (
+                    "No tools discovered yet — connect or refresh a server.",
+                    "connect",
+                )
+            else:
+                message, action = (
+                    "No tools found — try refreshing a server's discovery.",
+                    "refresh",
+                )
+        breadcrumb = tool_gate_breadcrumb()
+        if breadcrumb:
+            message = f"{message} {breadcrumb}"
+        return (message, action)
 
     # -- T6: Permissions mode (matrix, kill switch, policy preview) -----------
 
@@ -2065,8 +2090,16 @@ class MCPWorkbench(Container):
         # `_last_effective_states` immediately above.
         self._last_cascade = cascade_map
         rows = rows + builtin_rows
+        # task-3240 PRIMARY breadcrumb: computed fresh every pass (cheap --
+        # the same settings-time-enumeration cost `_builtin_permission_
+        # matrix_rows()` above already pays every pass) so it can never
+        # drift from the gates' actual current state.
         await self.query_one(MCPPermissionsMode).update_matrix(
-            rows, kill_switch=kill_switch, preview=preview, echo=echo
+            rows,
+            kill_switch=kill_switch,
+            preview=preview,
+            echo=echo,
+            gate_breadcrumb=tool_gate_breadcrumb(),
         )
         await self.query_one(MCPPermissionsMode).update_server_profiles(
             await self._server_governance_profiles(service, refresh=refresh_governance)
@@ -3957,6 +3990,49 @@ class MCPWorkbench(Container):
             saved = await asyncio.to_thread(save_setting_to_cli_config, "mcp", key, value)
         except Exception as exc:
             logger.warning(f"MCP built-in flag save failed: {exc}")
+            self.app.notify(_toast(f"Failed to save {key}: {exc}"), severity="error")
+            return
+        if not saved:
+            self.app.notify(f"Failed to save {key}.", severity="error")
+            return
+        self._snapshots = await self._collect_snapshots()
+        await self._sync_children()
+
+    def on_mcp_servers_mode_tool_gate_changed(
+        self, event: MCPServersMode.ToolGateChanged
+    ) -> None:
+        """Dispatch a `[tools]`/`[console]` gate toggle in the background.
+
+        task-3240 sibling of `on_mcp_servers_mode_builtin_flag_changed()` --
+        identical shape (sync handler, `exclusive=True` group so a rapid
+        second toggle simply cancels and restarts from the latest event),
+        just routed to `_save_tool_gate()` instead of `_save_builtin_flag()`
+        so the write targets the event's own `section`, not a hardcoded
+        `"mcp"`.
+        """
+        event.stop()
+        self.run_worker(
+            self._save_tool_gate(event.section, event.key, event.value),
+            group="mcp-tool-gate",
+            exclusive=True,
+        )
+
+    async def _save_tool_gate(self, section: str, key: str, value: bool) -> None:
+        """Persist one `[tools]`/`[console]` registration gate, then reload.
+
+        Mirrors `_save_builtin_flag()` exactly (same offload-then-resync
+        shape) except `section` is a parameter rather than hardcoded --
+        task-3240's gates span both `[tools]` (the `_GATEABLE_BUILTINS` rows
+        plus `web_deep_search`) and `[console]` (the local group's master
+        switch, `local_tools_enabled`). The resync's `_show_selected_detail()`
+        call rebuilds the gate checkboxes fresh from `all_tool_gates()`
+        (via `MCPServersMode._rebuild_tool_gate_checkboxes()`), so a failed
+        write shows the truth rather than an optimistic local flip.
+        """
+        try:
+            saved = await asyncio.to_thread(save_setting_to_cli_config, section, key, value)
+        except Exception as exc:
+            logger.warning(f"MCP tool gate save failed: {exc}")
             self.app.notify(_toast(f"Failed to save {key}: {exc}"), severity="error")
             return
         if not saved:

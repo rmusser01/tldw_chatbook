@@ -14,6 +14,7 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Checkbox, DataTable, Static
 
+from tldw_chatbook.Agents.builtin_tool_gate import ToolGate, all_tool_gates
 from tldw_chatbook.MCP.readiness import (
     STATE_CSS_CLASSES,
     STATE_GLYPHS,
@@ -186,6 +187,23 @@ _BUILTIN_CHECKBOX_KEYS: dict[str, str] = {
     "mcp-builtin-expose-prompts": "expose_prompts",
 }
 
+# task-3240: prefix for a [tools]/[console] gate Checkbox's id -- the
+# `(section, key)` each one edits is looked up from `_tool_gate_ids`
+# (instance state, rebuilt every `_tool_gate_widgets()` call from
+# `all_tool_gates()` -- see that method) rather than a second static table,
+# so it cannot drift from the enumerator that built the checkboxes.
+_TOOL_GATE_ID_PREFIX = "mcp-gate-"
+
+# task-3240 (spec §5): the adapted restart note for gate checkboxes -- NOT
+# `_builtin_toggle_widgets()`'s "next client launch" wording. These gates
+# affect the in-process AGENT tool catalog (BuiltinToolProvider/
+# LocalToolProvider construction), not the MCP client/server handshake --
+# no MCP client is involved at all.
+_TOOL_GATE_NOTE_TEXT = (
+    "Applies on next app restart — tool providers build their catalogs "
+    "at startup."
+)
+
 
 class MCPServersMode(DataTableClickSelectMixin, Vertical):
     """Canvas for the Servers mode."""
@@ -230,6 +248,10 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         width: 1fr;
     }
     #mcp-detail-builtin-toggles {
+        height: auto;
+        min-height: 0;
+    }
+    #mcp-detail-tool-gates {
         height: auto;
         min-height: 0;
     }
@@ -312,6 +334,27 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             self.key = key
             self.value = value
 
+    class ToolGateChanged(Message, namespace="mcp_servers_mode"):
+        """Posted when a `[tools]`/`[console]` registration-gate Checkbox
+        (task-3240) is toggled.
+
+        Unlike `BuiltinFlagChanged` (hardcoded to the `[mcp]` section),
+        `section` is explicit here: task-3240's gates span both `[tools]`
+        (the `_GATEABLE_BUILTINS` rows plus `web_deep_search`) and
+        `[console]` (the local group's master switch,
+        `local_tools_enabled`). The workbench owns writing it via
+        `save_setting_to_cli_config(section, key, value)` (see
+        `MCPWorkbench._save_tool_gate()`, which mirrors
+        `_save_builtin_flag()`) and then reloading so the checkbox --
+        rebuilt fresh from `all_tool_gates()` -- reflects the round trip.
+        """
+
+        def __init__(self, section: str, key: str, value: bool) -> None:
+            super().__init__()
+            self.section = section
+            self.key = key
+            self.value = value
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._snapshots: list[ReadinessSnapshot] = []
@@ -351,6 +394,12 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         # F-057: the table width the current column set was fitted to
         # (0 = never fitted) -- `on_resize` refits only on real changes.
         self._table_width: int = 0
+        # task-3240: id -> (section, key) for the currently-mounted gate
+        # Checkboxes, rebuilt fresh by every `_tool_gate_widgets()` call --
+        # `on_checkbox_changed` reads it to route a toggle to the right
+        # `ToolGateChanged`. Empty whenever the detail isn't builtin-source
+        # (mirrors `_tool_gate_widgets()` returning `[]` there).
+        self._tool_gate_ids: dict[str, tuple[str, str]] = {}
 
     def on_resize(self) -> None:
         """F-057: refit the overview's column set when the table's rendered
@@ -423,6 +472,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             with VerticalScroll(id="mcp-detail-scroll"):
                 yield Static("", id="mcp-detail-body", classes="ds-field-row", markup=False)
                 yield Vertical(id="mcp-detail-builtin-toggles")
+                yield Vertical(id="mcp-detail-tool-gates")
                 yield Button(
                     "Copy client config",
                     id="mcp-detail-copy-snippet",
@@ -799,6 +849,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             if not form_visible:
                 self._show_overview_container(True)
             await self._rebuild_builtin_toggles()
+            await self._rebuild_tool_gate_checkboxes()
             await self._rebuild_detail_toolbar()
             # Task 11: selection restoration -- returning to the overview
             # (breadcrumb, or any other path that clears the selection)
@@ -820,6 +871,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             snapshot.source == "builtin"
         )
         await self._rebuild_builtin_toggles()
+        await self._rebuild_tool_gate_checkboxes()
         await self._rebuild_detail_toolbar()
 
     def _restore_overview_cursor(self) -> None:
@@ -1022,6 +1074,95 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         if widgets:
             await container.mount_all(widgets)
 
+    def _gate_checkbox(self, gate: ToolGate) -> Checkbox:
+        return Checkbox(
+            gate.tool_name,
+            value=gate.enabled,
+            id=f"{_TOOL_GATE_ID_PREFIX}{gate.key}",
+            compact=True,
+            tooltip=gate.description,
+        )
+
+    def _tool_gate_widgets(self) -> list[Widget]:
+        """Build the `[tools]`/`[console]` gate Checkbox rows (task-3240).
+
+        Builtin-source snapshots only, same gate as `_builtin_toggle_
+        widgets()` -- spec review finding 5 (branch (b)): `_collect_
+        snapshots()` never produces a `local:__local__` row, so this is the
+        only reachable place for ALL nine gates. Rendered under two
+        subheadings ("Agent built-ins" / "Local workspace tools") so the
+        accepted UX trade-off stays visible rather than papered over: this
+        pane is badged as the built-in MCP SERVER, but these checkboxes
+        control the in-process AGENT tool catalog -- a different subsystem.
+
+        Also rebuilds `self._tool_gate_ids` (id -> (section, key)) fresh
+        from the same `all_tool_gates()` batch the checkboxes were built
+        from, so `on_checkbox_changed` can never route a toggle against a
+        stale mapping.
+        """
+        snapshot = self._detail_snapshot
+        if snapshot is None or snapshot.source != "builtin":
+            self._tool_gate_ids = {}
+            return []
+        gates = all_tool_gates()
+        self._tool_gate_ids = {
+            f"{_TOOL_GATE_ID_PREFIX}{gate.key}": (gate.section, gate.key)
+            for gate in gates
+        }
+        builtin_gates = [gate for gate in gates if gate.group == "builtin"]
+        local_gates = [gate for gate in gates if gate.group == "local"]
+
+        widgets: list[Widget] = [
+            Static(
+                "Tool gates",
+                id="mcp-gate-section-title",
+                classes="destination-section",
+                markup=False,
+            ),
+        ]
+        if builtin_gates:
+            widgets.append(
+                Static(
+                    "Agent built-ins",
+                    id="mcp-gate-heading-builtin",
+                    classes="ds-field-row",
+                    markup=False,
+                )
+            )
+            widgets.extend(self._gate_checkbox(gate) for gate in builtin_gates)
+        if local_gates:
+            widgets.append(
+                Static(
+                    "Local workspace tools",
+                    id="mcp-gate-heading-local",
+                    classes="ds-field-row",
+                    markup=False,
+                )
+            )
+            widgets.extend(self._gate_checkbox(gate) for gate in local_gates)
+        widgets.append(
+            Static(
+                _TOOL_GATE_NOTE_TEXT,
+                id="mcp-gate-toggles-note",
+                classes="ds-field-row",
+                markup=False,
+            )
+        )
+        return widgets
+
+    async def _rebuild_tool_gate_checkboxes(self) -> None:
+        """Rebuild `#mcp-detail-tool-gates` from `_tool_gate_widgets()`.
+
+        Mirrors `_rebuild_builtin_toggles()`'s awaited remove-then-mount
+        discipline for the identical reason.
+        """
+        container = self.query_one("#mcp-detail-tool-gates", Vertical)
+        await container.remove_children()
+        widgets = self._tool_gate_widgets()
+        container.display = bool(widgets)
+        if widgets:
+            await container.mount_all(widgets)
+
     def _detail_text(self, snapshot: ReadinessSnapshot, *, mutations_available: bool = False) -> str:
         detail = snapshot.detail or {}
         lines: list[str] = [snapshot.message, ""]
@@ -1113,7 +1254,8 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             self.post_message(self.ServerRowSelected(server_key))
 
     def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
-        """Forward a built-in enable/expose Checkbox toggle as `BuiltinFlagChanged`.
+        """Forward a detail-pane Checkbox toggle as `BuiltinFlagChanged` or
+        `ToolGateChanged` (task-3240), whichever id table matches.
 
         Mount-echo note (verified against `textual.widgets._toggle_button.
         ToggleButton`, Task 10): the base class wraps its constructor's
@@ -1123,13 +1265,20 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         constructing/mounting a Checkbox with a non-default initial value
         does NOT itself fire `Changed`. No compare-before-post guard is
         needed here; `test_showing_builtin_detail_does_not_post_builtin_
-        flag_changed` in test_mcp_servers_mode.py pins this down.
+        flag_changed` in test_mcp_servers_mode.py pins this down, and its
+        task-3240 sibling pins the same for gate checkboxes.
         """
-        key = _BUILTIN_CHECKBOX_KEYS.get(event.checkbox.id or "")
-        if key is None:
+        checkbox_id = event.checkbox.id or ""
+        key = _BUILTIN_CHECKBOX_KEYS.get(checkbox_id)
+        if key is not None:
+            event.stop()
+            self.post_message(self.BuiltinFlagChanged(key, event.value))
             return
-        event.stop()
-        self.post_message(self.BuiltinFlagChanged(key, event.value))
+        gate_target = self._tool_gate_ids.get(checkbox_id)
+        if gate_target is not None:
+            event.stop()
+            section, gate_key = gate_target
+            self.post_message(self.ToolGateChanged(section, gate_key, event.value))
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""

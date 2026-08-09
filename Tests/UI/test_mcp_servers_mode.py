@@ -78,6 +78,9 @@ class CanvasApp(App):
     def on_mcp_servers_mode_builtin_flag_changed(self, event) -> None:
         self.events.append(event)
 
+    def on_mcp_servers_mode_tool_gate_changed(self, event) -> None:
+        self.events.append(event)
+
 
 class CanvasAppWithBundledCSS(CanvasApp):
     """Same harness but with the real bundled stylesheet loaded, so rules
@@ -683,6 +686,11 @@ async def test_builtin_toggles_container_does_not_expand_past_content():
     render directly under. Guards both halves of the fix: the container is
     sized to its content (not the pane remainder), and the copy button
     renders immediately below it rather than far down the scroll region.
+
+    task-3240: `#mcp-detail-tool-gates` (the new gate-checkbox group) is now
+    the sibling directly above the copy button -- both containers must stay
+    content-sized (never `1fr`), so the button still sits directly under
+    whichever one rendered last, not dozens of rows further down.
     """
     app = CanvasApp()
     async with app.run_test() as pilot:
@@ -698,16 +706,23 @@ async def test_builtin_toggles_container_does_not_expand_past_content():
         await pilot.pause()
 
         toggles = app.query_one("#mcp-detail-builtin-toggles")
+        tool_gates = app.query_one("#mcp-detail-tool-gates")
         copy_button = app.query_one("#mcp-detail-copy-snippet", Button)
 
         # Four checkboxes + the next-launch note is a handful of rows --
         # nowhere near the height of an expanding 1fr container consuming
         # whatever vertical space the scroll pane has left.
         assert toggles.size.height < 12
+        # Nine gate checkboxes + a title + two subheadings + a note -- still
+        # a content-sized handful of rows, not an expanding 1fr container.
+        assert tool_gates.size.height < 20
 
-        # The copy button must sit directly under the toggles container,
-        # not dozens of rows further down the scroll pane.
-        gap = copy_button.region.y - (toggles.region.y + toggles.region.height)
+        # The tool-gates container sits directly under the [mcp] toggles.
+        gap_between = tool_gates.region.y - (toggles.region.y + toggles.region.height)
+        assert 0 <= gap_between <= 2
+        # The copy button sits directly under the tool-gates container, not
+        # dozens of rows further down the scroll pane.
+        gap = copy_button.region.y - (tool_gates.region.y + tool_gates.region.height)
         assert 0 <= gap <= 2
 
 
@@ -744,6 +759,121 @@ async def test_showing_builtin_detail_does_not_post_builtin_flag_changed():
         )
         await pilot.pause()
         assert not app.events
+
+
+# --- task-3240: [tools]/[console] gate checkboxes in the builtin detail ----
+
+
+@pytest.mark.asyncio
+async def test_tool_gate_checkboxes_render_under_builtin_detail_with_subheadings_and_note(
+    monkeypatch,
+):
+    """The builtin detail pane also renders a "Tool gates" group -- one
+    Checkbox per `all_tool_gates()` entry, under two subheadings ("Agent
+    built-ins" / "Local workspace tools"), plus the ADAPTED restart note
+    (NOT the `[mcp]` toggles' "next client launch" wording -- these gates
+    affect the in-process agent runtime, no MCP client involved).
+    """
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
+    from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
+
+    first_builtin_key = _GATEABLE_BUILTINS[0].gate_key
+
+    def fake_get_cli_setting(section, key=None, default=None):
+        if key == first_builtin_key:
+            return True
+        if key == "local_tools_enabled":
+            return True
+        return default
+
+    monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
+
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.show_detail(builtin_readiness(enabled=True))
+        await pilot.pause()
+
+        heading_builtin = app.query_one("#mcp-gate-heading-builtin", Static)
+        heading_local = app.query_one("#mcp-gate-heading-local", Static)
+        assert "Agent built-ins" in str(heading_builtin.renderable)
+        assert "Local workspace tools" in str(heading_local.renderable)
+
+        first_cb = app.query_one(f"#mcp-gate-{first_builtin_key}", Checkbox)
+        assert first_cb.value is True
+        assert first_cb.tooltip
+
+        master_cb = app.query_one("#mcp-gate-local_tools_enabled", Checkbox)
+        assert master_cb.value is True
+
+        web_deep_search_cb = app.query_one(
+            f"#mcp-gate-{WEB_DEEP_SEARCH_GATE_KEY}", Checkbox
+        )
+        assert web_deep_search_cb.value is False  # not overridden -> default off
+
+        note = str(app.query_one("#mcp-gate-toggles-note", Static).renderable)
+        assert "Applies on next app restart" in note
+        assert "tool providers build their catalogs at startup" in note
+        assert "next client launch" not in note
+
+
+@pytest.mark.asyncio
+async def test_tool_gate_checkboxes_do_not_appear_for_non_builtin_detail():
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.show_detail(_snap("local:docs", "docs"))
+        await pilot.pause()
+        assert not list(app.query("#mcp-gate-toggles-note"))
+        assert not list(app.query("#mcp-gate-heading-builtin"))
+        assert not list(app.query("#mcp-gate-heading-local"))
+
+
+@pytest.mark.asyncio
+async def test_showing_builtin_detail_does_not_post_tool_gate_changed(monkeypatch):
+    """Mount-echo guard, gate-checkbox sibling of the BuiltinFlagChanged
+    test above -- same Checkbox-construction mechanism, same requirement."""
+    import tldw_chatbook.config as config_module
+
+    monkeypatch.setattr(
+        config_module, "get_cli_setting", lambda section, key=None, default=None: True
+    )
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.show_detail(builtin_readiness(enabled=True))
+        await pilot.pause()
+        assert not app.events
+
+
+@pytest.mark.asyncio
+async def test_toggling_tool_gate_checkbox_posts_tool_gate_changed_with_section_and_key():
+    """A [tools]-section gate (web_deep_search) and the [console]-section
+    master switch must each post `ToolGateChanged` with their own real
+    section/key -- unlike `BuiltinFlagChanged`, which hardcodes "mcp"."""
+    from tldw_chatbook.Agents.local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
+
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.show_detail(builtin_readiness(enabled=True))
+        await pilot.pause()
+
+        await pilot.click(f"#mcp-gate-{WEB_DEEP_SEARCH_GATE_KEY}")
+        await pilot.pause()
+        assert len(app.events) == 1
+        event = app.events[0]
+        assert event.section == "tools"
+        assert event.key == WEB_DEEP_SEARCH_GATE_KEY
+        assert event.value is True  # default off -> the click turns it on
+
+        await pilot.click("#mcp-gate-local_tools_enabled")
+        await pilot.pause()
+        assert len(app.events) == 2
+        event2 = app.events[1]
+        assert event2.section == "console"
+        assert event2.key == "local_tools_enabled"
 
 
 @pytest.mark.asyncio

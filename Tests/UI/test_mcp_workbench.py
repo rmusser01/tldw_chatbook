@@ -846,6 +846,72 @@ async def test_builtin_expose_flag_toggle_saves_matching_key(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_tool_gate_checkbox_toggle_saves_setting_and_reloads_catalog(monkeypatch):
+    """task-3240 round-trip, sibling of test_builtin_flag_toggle_saves_
+    setting_and_reloads_catalog: toggling a `[tools]`/`[console]` gate
+    Checkbox must call `save_setting_to_cli_config(section, key, value)`
+    with the checkbox's OWN section (not a hardcoded "mcp"), then reload so
+    the checkbox -- rebuilt fresh from `all_tool_gates()` -- reflects the
+    real write, not an optimistic local flip.
+
+    Seam namespace (spec review, Minor 6): the write goes through
+    `workbench_module.save_setting_to_cli_config` (same seam
+    `_save_builtin_flag`'s own test patches), but the RELOAD reads through
+    `all_tool_gates()`'s function-local `from ..config import
+    get_cli_setting` -- that resolves `tldw_chatbook.config.get_cli_setting`
+    at call time, a DIFFERENT name than `workbench_module`'s own imported
+    one, so both must be patched here (backed by the SAME `flags` dict) or
+    the reload assertion would read real disk config instead of this
+    test's fake.
+    """
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
+
+    flags: dict[tuple[str, str], Any] = {}
+    save_calls: list[tuple[str, str, Any]] = []
+
+    def fake_get_cli_setting(section, key=None, default=None):
+        return flags.get((section, key), default)
+
+    def fake_save_setting_to_cli_config(section, key, value):
+        save_calls.append((section, key, value))
+        flags[(section, key)] = value
+        return True
+
+    monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
+    monkeypatch.setattr(
+        mcp_workbench_module, "save_setting_to_cli_config", fake_save_setting_to_cli_config
+    )
+
+    app = WorkbenchApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}1")  # builtin row
+        await pilot.pause()
+        checkbox_id = f"#mcp-gate-{WEB_DEEP_SEARCH_GATE_KEY}"
+        checkbox = app.query_one(checkbox_id, Checkbox)
+        assert checkbox.value is False  # nothing overridden yet -> default off
+
+        await pilot.click(checkbox_id)
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert ("tools", WEB_DEEP_SEARCH_GATE_KEY, True) in save_calls
+        reloaded_checkbox = app.query_one(checkbox_id, Checkbox)
+        assert reloaded_checkbox.value is True
+
+        # The [console]-section master switch must save under ITS OWN
+        # section too -- not "tools", proving `section` really is threaded
+        # through end to end rather than hardcoded anywhere on the path.
+        await pilot.click("#mcp-gate-local_tools_enabled")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert ("console", "local_tools_enabled", True) in save_calls
+
+
+@pytest.mark.asyncio
 async def test_restore_tolerates_legacy_and_garbage_state():
     app = WorkbenchApp()
     async with app.run_test() as pilot:
@@ -2769,7 +2835,54 @@ async def test_empty_diagnosis_no_servers_shows_add_server_and_button_opens_form
         empty = canvas.query_one("#mcp-tools-empty")
         assert empty.display is True
         message = str(canvas.query_one("#mcp-tools-empty-message", Static).renderable)
+        # task-3240: a trailing "N tool gate(s) are off ..." breadcrumb may
+        # follow (the isolated test config's [tools]/[console] gates all
+        # default off) -- startswith isolates this test's own concern from
+        # that unrelated, separately-tested addition.
+        assert message.startswith("No servers configured — add one to see its tools.")
+
+
+@pytest.mark.asyncio
+async def test_empty_diagnosis_names_the_gate_off_count_when_gates_are_off():
+    """task-3240 SECONDARY breadcrumb: `_empty_tools_diagnosis()` appends
+    "N tool gate(s) are off ..." whenever `all_tool_gates()` finds any --
+    the isolated test config defaults every gate off, so all 9 are named."""
+    app = NoServersApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        canvas = app.query_one(MCPToolsMode)
+        message = str(canvas.query_one("#mcp-tools-empty-message", Static).renderable)
+        assert "9 tool gate(s) are off" in message
+        assert "Servers mode" in message
+
+
+@pytest.mark.asyncio
+async def test_empty_diagnosis_omits_gate_breadcrumb_when_all_gates_are_on(monkeypatch):
+    """Mirror of the test above: no breadcrumb at all once every gate is on."""
+    import tldw_chatbook.config as config_module
+
+    real_get_cli_setting = config_module.get_cli_setting
+
+    def fake_get_cli_setting(section, key=None, default=None):
+        if section in ("tools", "console"):
+            return True
+        return real_get_cli_setting(section, key, default)
+
+    monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
+
+    app = NoServersApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        canvas = app.query_one(MCPToolsMode)
+        message = str(canvas.query_one("#mcp-tools-empty-message", Static).renderable)
         assert message == "No servers configured — add one to see its tools."
+        assert "tool gate" not in message
 
         await pilot.click("#mcp-tools-empty-action")
         await pilot.pause()
@@ -2793,7 +2906,9 @@ async def test_empty_diagnosis_connect_routes_to_servers_mode_with_notify():
         await pilot.pause()
         canvas = app.query_one(MCPToolsMode)
         message = str(canvas.query_one("#mcp-tools-empty-message", Static).renderable)
-        assert message == "No tools discovered yet — connect or refresh a server."
+        # task-3240: see the sibling comment above -- a trailing gate
+        # breadcrumb may follow.
+        assert message.startswith("No tools discovered yet — connect or refresh a server.")
 
         notifications = _capture_notifications(app)
         await pilot.click("#mcp-tools-empty-action")
@@ -8008,7 +8123,12 @@ async def test_server_source_empty_tools_diagnosis_uses_refresh_not_disabled_act
         await pilot.pause()
         canvas = app.query_one(MCPToolsMode)
         message = str(canvas.query_one("#mcp-tools-empty-message", Static).renderable)
-        assert message == "No tools visible from this server — refresh or check the server."
+        # task-3240: see the sibling comment in test_empty_diagnosis_no_
+        # servers_shows_add_server_and_button_opens_form -- a trailing gate
+        # breadcrumb may follow.
+        assert message.startswith(
+            "No tools visible from this server — refresh or check the server."
+        )
 
         notifications = _capture_notifications(app)
         await pilot.click("#mcp-tools-empty-action")
