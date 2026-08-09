@@ -235,10 +235,7 @@ class ExternalParakeetVerifier:
         def __init__(self) -> None:
             self.stop = threading.Event()
             self.future: Future[VerifiedExternalParakeet] | None = None
-            self.waiters: dict[
-                object,
-                tuple[Callable[[], bool], Callable[[int, int], None] | None],
-            ] = {}
+            self.waiters: dict[object, Callable[[int, int], None] | None] = {}
             self.owners: set[_Owner] = set()
             self.result: VerifiedExternalParakeet | None = None
 
@@ -268,7 +265,7 @@ class ExternalParakeetVerifier:
             descriptor: Trusted catalog descriptor for the requested bundle.
             directory: User-owned directory that supplies the declared bytes.
             owner: Optional configured-selection or live-scope cache owner.
-            cancelled: Callback polled between fixed-size hash chunks.
+            cancelled: Callback polled on this calling waiter thread.
             progress: Optional determinate ``(bytes_done, bytes_total)`` callback.
 
         Returns:
@@ -310,7 +307,7 @@ class ExternalParakeetVerifier:
             if entry is None:
                 entry = self._Entry()
                 self._entries[cache_key] = entry
-                entry.waiters[waiter] = (cancelled, progress)
+                entry.waiters[waiter] = progress
                 entry.future = self._executor.submit(
                     self._verify_uncached,
                     descriptor,
@@ -319,7 +316,7 @@ class ExternalParakeetVerifier:
                     lambda done, total: self._fanout(entry, done, total),
                 )
             else:
-                entry.waiters[waiter] = (cancelled, progress)
+                entry.waiters[waiter] = progress
             future = entry.future
         assert future is not None
 
@@ -409,7 +406,7 @@ class ExternalParakeetVerifier:
                     self._verify_uncached,
                     descriptor,
                     root,
-                    lambda: stop.is_set() or cancelled(),
+                    stop.is_set,
                     progress,
                 )
             except BaseException:
@@ -432,22 +429,9 @@ class ExternalParakeetVerifier:
 
     def _fanout(self, entry: _Entry, done: int, total: int) -> None:
         with self._lock:
-            waiters = tuple(entry.waiters.items())
-        cancelled_waiters: list[object] = []
-        for waiter, (cancelled, callback) in waiters:
+            callbacks = tuple(entry.waiters.values())
+        for callback in callbacks:
             _emit_progress(callback, done, total)
-            try:
-                if cancelled():
-                    cancelled_waiters.append(waiter)
-            except Exception:
-                cancelled_waiters.append(waiter)
-        if not cancelled_waiters:
-            return
-        with self._lock:
-            for waiter in cancelled_waiters:
-                entry.waiters.pop(waiter, None)
-            if not entry.waiters and entry.result is None:
-                entry.stop.set()
 
     def _drop_waiter(
         self,

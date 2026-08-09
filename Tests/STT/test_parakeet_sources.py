@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+import tldw_chatbook.STT.parakeet_external as parakeet_external
 from tldw_chatbook.Local_Ingestion.stt_batch_routing import (
     PARAKEET_V2_MODEL,
     PARAKEET_V3_MODEL,
@@ -485,16 +486,49 @@ def test_retain_prepared_requires_unchanged_matching_selection(tmp_path: Path) -
 
 def test_release_scopes_except_releases_only_previously_observed_scopes(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     key = ParakeetSourceKey.V2_INT8
-    root = tmp_path / "external"
-    _materialize(root)
+    pending_root = tmp_path / "pending"
+    active_root = tmp_path / "active"
+    _materialize(pending_root)
+    _materialize(active_root)
     service = _service(_Config())
-    prepared = service.prepare_external(key, root, owner=("scope", "pending"))
-    service.retain_prepared("pending", prepared)
+    real_open = parakeet_external.os.open
+    open_count = 0
+
+    def counted_open(path, flags):
+        nonlocal open_count
+        open_count += 1
+        return real_open(path, flags)
+
+    monkeypatch.setattr(parakeet_external.os, "open", counted_open)
+    pending = service.prepare_external(
+        key,
+        pending_root,
+        owner=("scope", "pending"),
+    )
+    service.retain_prepared("pending", pending)
+    assert open_count == 1
 
     service.release_scopes_except(set())
-    service.release_scopes_except({"pending"})
-    service.release_scopes_except(set())
-    service.release_scope("pending")
+    service.prepare_external(key, pending_root)
+    assert open_count == 1
+
+    active = service.prepare_external(
+        key,
+        active_root,
+        owner=("scope", "active"),
+    )
+    service.retain_prepared("active", active)
+    service.release_scopes_except({"pending", "active"})
+    service.prepare_external(key, pending_root)
+    service.prepare_external(key, active_root)
+    assert open_count == 2
+
+    service.release_scopes_except({"active"})
+    service.prepare_external(key, pending_root)
+    service.prepare_external(key, active_root)
     service.close()
+
+    assert open_count == 3

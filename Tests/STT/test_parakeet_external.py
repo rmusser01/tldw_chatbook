@@ -458,8 +458,10 @@ def test_rejects_snapshot_of_temporary_file_identity(
     assert substituted
 
 
-def test_polls_cancellation_within_hash_chunk_loop(tmp_path: Path) -> None:
-    payload = b"x" * (HASH_CHUNK_BYTES + 1)
+def test_waiter_cancellation_wins_when_hash_finishes_before_next_poll(
+    tmp_path: Path,
+) -> None:
+    payload = b"x" * HASH_CHUNK_BYTES
     files = {"model.onnx": payload}
     root = tmp_path / "external-cancelled"
     _materialize(root, files)
@@ -479,7 +481,52 @@ def test_polls_cancellation_within_hash_chunk_loop(tmp_path: Path) -> None:
         cancelled=lambda: cancel,
         progress=progress,
     )
-    assert observed == [(0, len(payload)), (HASH_CHUNK_BYTES, len(payload))]
+    assert observed == [(0, len(payload)), (len(payload), len(payload))]
+
+
+@pytest.mark.parametrize("metadata_probe_fallback", (False, True))
+def test_cancel_callback_runs_only_on_waiter_thread(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    metadata_probe_fallback: bool,
+) -> None:
+    files = {"model.onnx": b"expected"}
+    root = tmp_path / "external-cancel-thread"
+    _materialize(root, files)
+    verifier = ExternalParakeetVerifier()
+    if metadata_probe_fallback:
+        monkeypatch.setattr(verifier, "_cache_key", lambda *_args: None)
+    waiter_thread = threading.get_ident()
+    worker_entered = threading.Event()
+    caller_entered = threading.Event()
+    state_lock = threading.Lock()
+    callback_threads: set[int] = set()
+    active_calls = 0
+    max_active_calls = 0
+
+    def cancelled() -> bool:
+        nonlocal active_calls, max_active_calls
+        current = threading.get_ident()
+        with state_lock:
+            callback_threads.add(current)
+            active_calls += 1
+            max_active_calls = max(max_active_calls, active_calls)
+        try:
+            if current != waiter_thread:
+                worker_entered.set()
+                caller_entered.wait(timeout=2)
+            elif worker_entered.is_set():
+                caller_entered.set()
+            return False
+        finally:
+            with state_lock:
+                active_calls -= 1
+
+    verifier.verify(_descriptor(files), root, cancelled=cancelled)
+    verifier.close()
+
+    assert callback_threads == {waiter_thread}
+    assert max_active_calls == 1
 
 
 def test_reports_determinate_cumulative_byte_progress(tmp_path: Path) -> None:
@@ -626,14 +673,22 @@ def test_cancelling_last_waiter_stops_shared_hash(tmp_path: Path, monkeypatch) -
     verifier = ExternalParakeetVerifier()
     cancel = threading.Event()
     progressed = threading.Event()
+    waiter_dropped = threading.Event()
     observed: list[int] = []
     monkeypatch.setattr(parakeet_external, "_HASH_CHUNK_BYTES", 1)
+    real_drop_waiter = verifier._drop_waiter
+
+    def observed_drop_waiter(*args) -> None:
+        real_drop_waiter(*args)
+        waiter_dropped.set()
+
+    monkeypatch.setattr(verifier, "_drop_waiter", observed_drop_waiter)
 
     def progress(done: int, _total: int) -> None:
         observed.append(done)
         if done:
             progressed.set()
-            assert cancel.wait(timeout=2)
+            assert waiter_dropped.wait(timeout=2)
 
     with ThreadPoolExecutor(max_workers=1) as pool:
         pending = pool.submit(
