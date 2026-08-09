@@ -913,3 +913,7 @@ def test_spawn_passes_agent_kwarg_only_when_present():
     assert out.status == RUN_DONE
     assert seen[0] == ("plain", {})
     assert seen[1] == ("named", {"agent": "researcher"})
+    spawn_steps = [s for s in out.steps if s.kind == STEP_SPAWN]
+    assert len(spawn_steps) == 2
+    assert spawn_steps[0].summary == "plain"
+    assert spawn_steps[1].summary.startswith("[researcher] ")

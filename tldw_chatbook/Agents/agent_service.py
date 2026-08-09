@@ -711,6 +711,9 @@ class AgentService:
             # Fleet spec §4: the skill path (allowed_tools override) and
             # the named-definition path are disjoint by construction --
             # skills never pass `agent`.
+            # Structural invariant, not input validation: unreachable in
+            # production (both call sites are internal, neither can supply
+            # both kwargs at once) and stripped entirely under `python -O`.
             assert not (agent and allowed_tools is not None)
             resolved = None
             if agent:
