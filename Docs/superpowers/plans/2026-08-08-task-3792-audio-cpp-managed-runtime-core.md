@@ -35,7 +35,7 @@ ADR paths:
 - `backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md`
 - `backlog/decisions/039-global-and-studio-tts-settings-ownership.md`
 
-Reason: TASK-3604 implements the accepted provider-runtime, process-ownership, staged-configuration, shutdown, security, and cross-module service boundaries. Both ADRs were amended and landed before this plan; no third ADR is required.
+Reason: TASK-3792 implements the accepted provider-runtime, process-ownership, staged-configuration, shutdown, security, and cross-module service boundaries. Both ADRs were amended and landed before this plan; no third ADR is required.
 
 ---
 
@@ -1348,12 +1348,12 @@ git commit -m "test(tts): prove managed audio.cpp process ownership"
 
 ---
 
-### Task 7: Documentation, full verification, and TASK-3604 closeout
+### Task 7: Documentation, full verification, and TASK-3792 closeout
 
 **Files:**
 
 - Modify: `Docs/Development/TTS/TTS_MODULE_GUIDE.md`
-- Modify: `backlog/tasks/task-3604 - Add-dormant-managed-audio.cpp-runtime-core.md`
+- Modify: `backlog/tasks/task-3792 - Add-dormant-managed-audio.cpp-runtime-core.md`
 
 **Interfaces:**
 
@@ -1532,18 +1532,18 @@ Run a placeholder-language audit over the implementation plan and task; remove e
 
 After all evidence exists:
 
-1. check every TASK-3604 acceptance criterion and Definition of Done item;
+1. check every TASK-3792 acceptance criterion and Definition of Done item;
 2. add concise Implementation Notes with exact tests and any baseline comparison;
 3. state ADR-023 and ADR-039 conformance and no-new-ADR reasoning;
 4. add a lessons entry only if implementation produced a new evidenced reusable trap; and
-5. set TASK-3604 to Done with the Backlog CLI.
+5. set TASK-3792 to Done with the Backlog CLI.
 
 - [ ] **Step 8: Commit documentation and task closeout**
 
 ~~~bash
 git add \
   Docs/Development/TTS/TTS_MODULE_GUIDE.md \
-  "backlog/tasks/task-3604 - Add-dormant-managed-audio.cpp-runtime-core.md"
+  "backlog/tasks/task-3792 - Add-dormant-managed-audio.cpp-runtime-core.md"
 git commit -m "docs(tts): close managed audio.cpp runtime core"
 ~~~
 
@@ -1554,18 +1554,18 @@ After Step 8, fetch current refs and run:
 ~~~bash
 git diff origin/dev...HEAD --check
 git status --short
-backlog task 3604 --plain
+backlog task 3792 --plain
 ~~~
 
-Expected: the cumulative branch diff exits zero, status is clean, and TASK-3604
+Expected: the cumulative branch diff exits zero, status is clean, and TASK-3792
 renders with the intended task, plan, ADRs, completed acceptance criteria, and
 implementation evidence.
 
 Immediately before PR/merge, repeat the repository's
 `lessons-backlog-hygiene.md` sweep across every fetched local/remote ref and
-checked-out worktree, plus an open-PR search for `TASK-3604`. Multiple refs that
+checked-out worktree, plus an open-PR search for `TASK-3792`. Multiple refs that
 contain this same branch/file are expected; any different task title or path
-using 3604 is a collision and must be resolved before proceeding.
+using 3792 is a collision and must be resolved before proceeding.
 
 ## Plan Self-Review Record
 

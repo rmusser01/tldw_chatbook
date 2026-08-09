@@ -508,7 +508,7 @@ content only.
 
 ---
 
-## A child return code does not prove `asyncio.Process.wait()` can finish when descendants inherit its pipes (TASK-3604, 2026-08-08)
+## A child return code does not prove `asyncio.Process.wait()` can finish when descendants inherit its pipes (TASK-3792, 2026-08-08)
 
 **What happened.** The managed audio.cpp supervisor's injected-process suite was
 green, but the first real subprocess fixture on macOS exposed a cleanup hang. The
