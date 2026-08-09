@@ -98,14 +98,16 @@ async def test_production_routes_own_and_preserve_contextual_footer_hints():
                 # task-2237 (R2): the landing footer advertises the full
                 # keyboard story that works there (F-012 started with just
                 # `/` focus search).
-                # Merged footer (AppFooterStatus): the "F6 next pane" entry is
-                # filtered as a reserved global key (the global hints already
-                # advertise F6), and the protected global hints follow the
-                # screen's own hints.
+                # Merged footer (AppFooterStatus): task-2860 -- the screen's
+                # own "F6 next pane" entry now renders verbatim (it used to
+                # be silently dropped as a "reserved global key", leaving
+                # only the generic "F6 panes" copy); the global cluster in
+                # turn excludes "F6 panes" since the screen already covers
+                # that key, so F1/Ctrl+P/Ctrl+Q are the only globals left.
                 assert (
                     screen.query_one(AppFooterStatus).shortcut_text
                     == "/ focus search | i import content | n new note | "
-                    f"{AppFooterStatus.GLOBAL_HINTS}"
+                    "F6 next pane | F1 help · Ctrl+P palette · Ctrl+Q quit"
                 )
                 for _ in range(300):
                     rows = list(screen.query("#library-row-browse-search"))

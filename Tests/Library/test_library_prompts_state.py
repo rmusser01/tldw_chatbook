@@ -22,6 +22,7 @@ from tldw_chatbook.Library.library_prompts_state import (
     build_prompt_history_page,
     build_prompt_history_state,
     close_prompt_history,
+    definition_state_display_label,
     prepare_prompt_artifact_save,
     build_prompt_editor_state,
     build_prompts_list_state,
@@ -301,6 +302,19 @@ def test_editor_state_keeps_foreign_or_malformed_artifacts_read_only_and_visible
     assert state.compiled_system_preview == "stale compatibility text"
     assert state.can_convert_as_new is True
     assert "read-only" in state.compatibility_reason.lower()
+
+
+def test_definition_state_display_label_replaces_internal_version_talk():
+    """task-2859 item 2: a brand-new prompt's ``definition_state`` defaults
+    to ``"legacy"`` -- the internal name for the flat-text storage format,
+    not a claim the prompt is old/deprecated. The prompt editor's
+    artifact-status line reads this display label, not the raw internal
+    value, so a fresh prompt no longer says "legacy" verbatim."""
+    assert definition_state_display_label("legacy") == "text format"
+    assert definition_state_display_label("supported_v2") == "structured format"
+    assert definition_state_display_label("foreign_v1") == "external format"
+    # An unrecognized value still degrades gracefully (underscores spaced).
+    assert definition_state_display_label("made_up_state") == "made up state"
 
 
 def test_outcome_first_recipe_has_stable_blank_markdown_blocks_in_both_lanes():

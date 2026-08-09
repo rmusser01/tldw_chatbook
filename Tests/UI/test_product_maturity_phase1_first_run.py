@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from textual.containers import Horizontal
 from textual.widgets import Button, Static
 
 from Tests.UI.app_factory import _build_test_app
@@ -103,6 +104,77 @@ async def _wait_until(
     raise AssertionError(f"condition was not met within {timeout_seconds:.1f}s")
 
 
+def _nav_button_is_clickable(app, button_id: str) -> bool:
+    """True when a nav destination is where a real mouse click could land it.
+
+    "Clickable" here means fully inside the destination strip's scroll
+    viewport and not disabled -- i.e. the button is actually painted, in
+    full, on screen.
+    """
+    try:
+        button = app.screen.query_one(f"#{button_id}", Button)
+        strip = app.screen.query_one("#nav-destination-strip", Horizontal)
+    except Exception:
+        return False
+    region = button.region
+    viewport = strip.region
+    return (
+        not button.disabled
+        and region.width > 0
+        and region.x >= viewport.x
+        and region.right <= viewport.right
+    )
+
+
+async def _click_nav_destination(
+    pilot,
+    app,
+    button_id: str,
+    *,
+    timeout_seconds: float = 10.0,
+) -> None:
+    """Bring a nav destination into view, then press it -- what a click needs.
+
+    task-3200 (backlog task-3224) made a genuinely clip-ghosted nav button
+    ``disabled``: at 140 columns not every destination fits the strip, and
+    the one straddling the viewport edge is painted as blank space, so a
+    real mouse click could never land on it and Enter on an invisible
+    button was the exact defect that change closed. This test used to press
+    ``#nav-settings`` by id with the strip still anchored at its default
+    scroll position, which silently no-opped once that button was ghosted
+    and then timed out waiting for a screen transition that was never going
+    to happen.
+
+    The contract this test protects is "every one of these destinations is
+    reachable from the nav bar and renders its copy" -- not "a programmatic
+    press works on an off-screen widget" -- so this helper reveals the
+    target first, using the product's own affordance ("More ›", the pager
+    the bar shows exactly when destinations overflow), and only presses
+    once the button is genuinely on screen.
+
+    The retry loop is not defensive padding: ``MainNavigationBar``'s 0.5s
+    settle interval re-anchors the strip on the ACTIVE destination, so a
+    paged-in destination can scroll back out before the press lands. Each
+    pass re-checks and pages again if needed.
+    """
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if _nav_button_is_clickable(app, button_id):
+            app.screen.query_one(f"#{button_id}", Button).press()
+            return
+        overflow_hint = app.screen.query_one("#nav-overflow-hint", Button)
+        if not overflow_hint.display:
+            # Nothing overflows: the button is already as reachable as it
+            # will ever get, so press it and let the assertions speak.
+            app.screen.query_one(f"#{button_id}", Button).press()
+            return
+        overflow_hint.press()
+        await pilot.pause(0.05)
+    raise AssertionError(
+        f"#{button_id} never became clickable within {timeout_seconds:.1f}s"
+    )
+
+
 @pytest.mark.asyncio
 async def test_clean_first_run_launches_home_and_exposes_setup_orientation(
     monkeypatch: pytest.MonkeyPatch,
@@ -162,7 +234,7 @@ async def test_clean_first_run_launches_home_and_exposes_setup_orientation(
                     ("Settings", "Global preferences", "Appearance"),
                 ),
             ):
-                app.screen.query_one(f"#{button_id}", Button).press()
+                await _click_nav_destination(pilot, app, button_id)
                 await _wait_until(
                     pilot,
                     lambda current_tab=current_tab, screen_name=screen_name: (

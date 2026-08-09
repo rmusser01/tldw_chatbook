@@ -13,9 +13,9 @@ from tldw_chatbook.Library.library_export_state import (
     DESTINATION_PLACEHOLDER_COPY,
     EXPORT_BUTTON_COPY,
     EXPORT_HEADER_COPY,
-    MEDIA_QUALITY_HELPER_COPY,
     LibraryExportFormState,
     export_button_tooltip,
+    media_quality_helper_copy,
 )
 
 
@@ -90,7 +90,7 @@ class LibraryExportCanvas(VerticalScroll):
                 compact=True,
             )
             yield Static(
-                MEDIA_QUALITY_HELPER_COPY,
+                media_quality_helper_copy(state.media_quality),
                 id="library-export-quality-helper",
                 classes="library-export-quiet-line",
                 markup=False,

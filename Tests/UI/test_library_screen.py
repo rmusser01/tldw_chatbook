@@ -49,8 +49,26 @@ async def test_ingest_button_present(library_screen):
 
 
 def _minimal_ingest_screen() -> LibraryScreen:
-    """Return a LibraryScreen instance without mounting the full UI."""
-    screen = object.__new__(LibraryScreen)
+    """Return a fully-initialized LibraryScreen without mounting the full UI.
+
+    (task-3022) This used to bypass ``__init__`` entirely via
+    ``object.__new__(LibraryScreen)``, leaving every ingest-canvas instance
+    attribute ``__init__`` sets -- the pre-flight-cancellation generation
+    stamp (task-2011's ``_library_ingest_preflight_generation``),
+    ``_library_ingest_clear_finished_armed``, ``_library_selected_row_id``,
+    and others -- missing, so any exercised code path that touched one
+    raised ``AttributeError`` (e.g. ``_do_submit_ingest`` /
+    ``handle_library_ingest_backend_switch`` via
+    ``_cancel_library_ingest_preflight``/``_invalidate_library_ingest_
+    preflight``, or ``handle_library_ingest_retry_faster_whisper`` /
+    ``_build_library_ingest_state`` directly). ``LibraryScreen.__init__`` is
+    pure attribute setup -- no I/O, no ``compose()``, no worker starts --
+    so constructing for real with a throwaway app stand-in is both cheap
+    and immune to future attributes added there. Every test below
+    immediately replaces ``app_instance`` with its own ``MagicMock`` for
+    its own assertions, same as before.
+    """
+    screen = LibraryScreen(MagicMock())
     screen._library_ingest_form = LibraryIngestFormState()
     screen._transcribe_cpp_configured = False
     # Set by ``__init__``, which this shortcut bypasses. (task-3303 branch

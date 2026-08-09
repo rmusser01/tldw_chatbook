@@ -23,9 +23,14 @@ fills the center of the screen.
 
 Both list canvases follow the same shape, top to bottom:
 
-- **Toolbar** — the panel heading with a count ("Media (3)"), plus
-  "Export…" and "Select". Media adds a cycling "type: All ▸" filter;
-  Conversations instead has a "Filter conversations… (Enter)" text box.
+- **Toolbar** — the panel heading with a count ("Media (3)" /
+  "Conversations (3)" — task-2859: Conversations previously had no
+  heading at all, so its top row read as bare "Export…"/"Select" with
+  nothing naming the canvas), plus "Export…" and "Select". Media adds a
+  cycling "type: All ▸" filter right after the heading; Conversations
+  instead has a "Filter conversations… (Enter)" text box, which now
+  renders above the empty-state text (task-2859: it used to sit below
+  "No conversations yet.", reading as an afterthought).
 - **Row list** — one two-line row per item: the title with a **▸** marker,
   then a dimmer second line (Media: type and age; Conversations:
   "3 messages - 4h"). Hovering a row shows its full title as a tooltip.
@@ -116,7 +121,7 @@ of type 'pdf'."
 | "Use in Console" | Stages this item as context for your next Console message. |
 | "Read it later" ↔ "Remove from read-it-later" | Toggles the item on your read-it-later list. |
 | "Open in Library ▸ Media" | Returns to Library's own Media surface (the separate Media screen was retired). |
-| "Delete" | Two-step: shows "Delete this media? This moves it to trash." with "Delete" / "Cancel". |
+| "Delete" | Two-step: shows "Delete this media? This moves it to trash." with "Delete" / "Cancel". Confirming trashes the item, returns to the list, and drops the rail's "Media N" count by one immediately, the same as the list's own "Delete selected". |
 
 ### Conversations
 
@@ -244,3 +249,15 @@ Media manager" is now "Open in Library ▸ Media" — task-2851 had already
 retired the separate Media screen it used to jump to; "Export…"/"Export
 selected" now open the "Export bundle (.zip)" form, not "Export
 chatbook"; "Analyze after ingest" is now "Analyze after import").*
+
+*Verified against dev @ 023a04a48 — 2026-08-07 (task-2859: the
+Conversations canvas now opens with a "Conversations (N)" title header
+matching Media's, and its filter box renders above the empty-state text
+instead of below it).*
+
+*Verified against dev @ 023a04a48 — 2026-08-07 (task-3020: the media
+viewer's single-item "Delete" now drops the rail's "Media N" count
+immediately too, matching "Delete selected"; Library-wide Escape/keyboard
+behavior for the bulk-delete confirmation is covered in the
+[Library overview](../library.md#keyboard--commands), not duplicated
+here).*

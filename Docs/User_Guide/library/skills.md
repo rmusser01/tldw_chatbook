@@ -86,7 +86,7 @@ SKILL.md file), **Browse folder…** (pick a skill folder), **Import**, and
 | "User can invoke: yes/no ▸" | Toggle — whether `$name` works for you. |
 | "Agent can invoke: yes/no ▸" | Toggle — whether the agent may use it as a tool. |
 | "Runs in: inline (this conversation) ▸" / "Runs in: fork (sub-agent) ▸" | Toggle between running in your conversation or a sub-agent. |
-| Model override | Disabled: "Not applied in v1 — shown for SKILL.md round-tripping only." |
+| Model override | Disabled: "Not used when running this skill — kept so saving doesn't lose the value." (task-2859: replaced "Not applied in v1 — shown for SKILL.md round-tripping only.", internal-version talk with no meaning to a user.) |
 | Body | The skill's instructions (the SKILL.md content). |
 | Supporting files | Read-only list ("name (N bytes)"; "No supporting files." when empty). |
 

@@ -15,6 +15,26 @@ from tldw_chatbook.Widgets.destination_rail import (
 )
 
 
+class _SectionHeaderHarness(App[None]):
+    """Minimal host: one section header, over a body Static the header's
+    own owning screen would normally show/hide -- mirrors how every real
+    consumer (Console/Home/Library rails) wires the toggle Button's
+    ``Pressed`` message to its own open/closed state."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.pressed_ids: list[str] = []
+
+    def compose(self) -> ComposeResult:
+        yield DestinationRailSectionHeader(
+            "Details", section_id="lab-details", open=True
+        )
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id:
+            self.pressed_ids.append(event.button.id)
+
+
 class _HandleHarness(App[None]):
     def __init__(self, handle: DestinationRailHandle) -> None:
         super().__init__()
@@ -122,6 +142,44 @@ def test_console_reexports_the_shared_disclosure_glyphs():
 
     assert console_glyphs.GLYPH_EXPANDED is GLYPH_EXPANDED
     assert console_glyphs.GLYPH_COLLAPSED is GLYPH_COLLAPSED
+
+
+@pytest.mark.asyncio
+async def test_clicking_the_section_title_posts_the_same_pressed_message_as_the_toggle():
+    """task-2859 item 5: only the ``▸`` chip used to respond to a click --
+    clicking the "Details" LABEL itself did nothing. The title now presses
+    the toggle Button on click, posting the identical ``Button.Pressed``
+    the owning screen's handler already expects (no new message type, no
+    new wiring needed at any of the three consumers)."""
+    app = _SectionHeaderHarness()
+    async with app.run_test(size=(40, 12)) as pilot:
+        await pilot.pause()
+        title = app.query_one(
+            "#console-rail-section-title-lab-details", Static
+        )
+        await pilot.click(title)
+        await pilot.pause()
+
+        assert app.pressed_ids == [f"{RAIL_SECTION_TOGGLE_PREFIX}lab-details"]
+
+
+@pytest.mark.asyncio
+async def test_clicking_the_toggle_chip_itself_does_not_double_fire():
+    """The title's click handler must not ALSO fire when the toggle chip
+    itself is clicked directly -- Button already stops its own Click event
+    (``Button._on_click`` calls ``event.stop()``), so this pins that the
+    header's own handler never sees it and presses the toggle a second
+    time."""
+    app = _SectionHeaderHarness()
+    async with app.run_test(size=(40, 12)) as pilot:
+        await pilot.pause()
+        toggle = app.query_one(
+            f"#{RAIL_SECTION_TOGGLE_PREFIX}lab-details", Button
+        )
+        await pilot.click(toggle)
+        await pilot.pause()
+
+        assert app.pressed_ids == [f"{RAIL_SECTION_TOGGLE_PREFIX}lab-details"]
 
 
 def _console_handle(**overrides) -> ConsoleRailHandle:

@@ -1075,9 +1075,19 @@ async def test_details_shows_db_sizes_from_the_app_cache():
 
         sizes = screen.query_one("#library-details-db-sizes", Static)
         text = str(sizes.renderable)
-        assert "Prompts 1.0 KB" in text
-        assert "Chats/Notes 2.0 KB" in text
-        assert "Media 3.0 KB" in text
+        # task-2859 item 5: the space between each size's number and its
+        # unit is now dropped entirely, so the rail never wraps mid-unit
+        # ("Prompts 144.0 / KB"). A non-breaking space was tried first and
+        # does NOT work here -- Rich's word-wrap splitter's `\s` regex
+        # matches U+00A0 same as an ordinary space (see
+        # `_unbreakable_size_text`'s docstring for the live repro) -- so
+        # this asserts the space is GONE, not merely a different kind of
+        # space.
+        assert "Prompts 1.0KB" in text
+        assert "Chats/Notes 2.0KB" in text
+        assert "Media 3.0KB" in text
+        assert "1.0 KB" not in text
+        assert "1.0\N{NO-BREAK SPACE}KB" not in text
 
 
 @pytest.mark.asyncio
@@ -1222,9 +1232,15 @@ async def test_landing_footer_advertises_the_landing_keyboard_story():
         await _wait_for_library_shell(screen, pilot)
 
         footer = screen.query_one(AppFooterStatus)
+        # (task-3022, coordinating with task-2860) The always-present-globals
+        # contract (ADR-031) means F1/Ctrl+P/Ctrl+Q still trail the screen's
+        # own hints even though the screen's own "F6 next pane" copy now
+        # covers F6 and excludes "F6 panes" from that trailing cluster --
+        # see Tests/UI/test_screen_footer_hints.py for the identical,
+        # already-updated pin on the same landing-footer string.
         assert footer.shortcut_text == (
-            "/ focus search | i import content | n new note | "
-            f"{AppFooterStatus.GLOBAL_HINTS}"
+            "/ focus search | i import content | n new note | F6 next pane | "
+            "F1 help · Ctrl+P palette · Ctrl+Q quit"
         )
 
 
@@ -1945,6 +1961,63 @@ async def test_library_shell_search_rag_mode_blocks_run_when_endpoint_named_but_
         assert "Select a provider/model" not in visible
         assert "OPENAI_API_KEY" in visible
         assert "api_settings.openai" in visible
+
+
+@pytest.mark.asyncio
+async def test_library_shell_search_rag_snippet_shares_the_title_rows_left_padding():
+    """task-2859 item 10: the evidence snippet used to sit flush against
+    the card's left border (`.library-rag-result-snippet` had no CSS rule
+    at all) while its title/badges siblings both carry `padding: 0 1`.
+
+    Rendered-geometry via `content_region` (padding narrows the CONTENT
+    box, not the widget's own `region` -- a plain `region.x` comparison
+    would pass even with zero padding, since sibling Statics still span
+    the same card width). Uses `LibraryHarness`, the ONE Library test
+    harness that sets `CSS_PATH` to the real app bundle
+    (`css/tldw_cli_modular.tcss`) -- `DestinationHarness` (used by most of
+    `test_library_content_hub.py`) hosts the screen under a bare `App`
+    with no `CSS_PATH`, so a bundle-only rule like this one's is invisible
+    to rendered-geometry checks there.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    service = _StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "Result",
+                    "snippet": "Useful answer evidence from the selected note.",
+                    "source_id": "id-1",
+                }
+            ]
+        }
+    )
+    app.library_rag_search_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-search").press()
+        await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+
+        screen.query_one("#library-rag-query-input", Input).value = "alpha"
+        await _wait_for_library_rag_query_ready(screen, pilot, "alpha")
+        screen.query_one("#library-rag-run-query", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-result-snippet-0")
+
+        title_row = screen.query_one("#library-rag-result-0")
+        snippet = screen.query_one("#library-rag-result-snippet-0")
+        assert snippet.content_region.x == title_row.content_region.x, (
+            f"snippet content left edge {snippet.content_region.x} != title "
+            f"row content left edge {title_row.content_region.x}"
+        )
+        assert snippet.content_region.x > snippet.region.x, (
+            "snippet has no left padding at all "
+            f"(content_region.x={snippet.content_region.x}, "
+            f"region.x={snippet.region.x})"
+        )
 
 
 @pytest.mark.asyncio
@@ -9277,7 +9350,16 @@ async def test_library_shell_note_save_result_after_switch_is_discarded():
             raise AssertionError("n-2 detail never loaded.")
 
         assert screen._library_note_version == 1  # n-2's own seeded version
-        n2_meta_before = str(screen.query_one("#library-note-meta").renderable)
+        # (task-3022) The same state-then-DOM race task-699 diagnosed for
+        # the note-conflict family: ``_library_note_detail`` flips to n-2
+        # a tick before the recompose that mounts ITS OWN
+        # ``#library-note-meta`` (a fresh widget instance, not a reused
+        # one) actually lands -- polling state alone (as above) can pass
+        # while the query below still sees the old/no widget. Await the
+        # widget itself, not just the state, before reading it.
+        n2_meta_before = str(
+            (await _wait_for_selector(screen, pilot, "#library-note-meta")).renderable
+        )
         assert "saved" not in n2_meta_before
 
         # Now let the stale n-1 save resolve and give the (buggy) mutation a
@@ -9296,7 +9378,9 @@ async def test_library_shell_note_save_result_after_switch_is_discarded():
             "n-1's stale save result clobbered n-2's version: "
             f"{screen._library_note_version!r}"
         )
-        n2_meta_after = str(screen.query_one("#library-note-meta").renderable)
+        n2_meta_after = str(
+            (await _wait_for_selector(screen, pilot, "#library-note-meta")).renderable
+        )
         assert "saved" not in n2_meta_after, (
             f"n-1's stale save result leaked into n-2's meta line: {n2_meta_after!r}"
         )
@@ -9718,10 +9802,18 @@ async def test_library_shell_note_conflict_reload_discards_local_edits():
         )
 
         assert screen.query_one("#library-note-conflict-region").display is False
-        assert (
-            screen.query_one("#library-note-body", TextArea).text
-            == "Server-side content"
-        )
+        # (task-3022) Same state-then-DOM race task-699 diagnosed for the
+        # note-conflict family: the state check above (autosave idle +
+        # view "editor") can pass a tick before the recompose that mounts
+        # the freshly-reloaded editor's OWN ``#library-note-body``/
+        # ``#library-note-title`` widgets actually lands. Await the body
+        # widget itself before reading either field. (Rebase note: dev's
+        # parallel fix asserts the display-managed conflict REGION, which
+        # is the current DOM shape -- kept; the awaited body read is this
+        # branch's race fix -- also kept.)
+        body = await _wait_for_selector(screen, pilot, "#library-note-body")
+        assert isinstance(body, TextArea)
+        assert body.text == "Server-side content"
         assert (
             screen.query_one("#library-note-title", Input).value == "Server-side title"
         )
@@ -13496,7 +13588,17 @@ async def test_library_shell_notes_sync_now_calls_recording_service_with_chosen_
         else:
             raise AssertionError("Sync run never completed.")
 
-        status_widget_after = screen.query_one("#library-notes-sync-status", Static)
+        # (task-3022) Same state-then-DOM race task-699 diagnosed for the
+        # note-conflict family, a third instance of the same shape:
+        # ``_library_notes_sync_running`` flips to False a tick before the
+        # finish-of-run recompose that unmounts THIS status Static and
+        # mounts its replacement actually lands, so a bare ``query_one``
+        # right after the state-poll above can transiently find neither --
+        # ``_wait_for_selector`` polls via ``screen.query`` (an empty list,
+        # never an exception) instead of a one-shot ``query_one``.
+        status_widget_after = await _wait_for_selector(
+            screen, pilot, "#library-notes-sync-status"
+        )
         assert "done" in str(status_widget_after.renderable)
 
         # A3: the finish-of-run recompose restores "Sync now", re-enabled.
@@ -14973,7 +15075,7 @@ async def test_library_ingest_canvas_counts_line_shown_when_jobs_present():
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         await pilot.pause()
         counts_line = host.query_one("#library-ingest-queue-counts", Static)
-        assert str(counts_line.renderable) == "1 queued — in queue"
+        assert str(counts_line.renderable) == "This queue: 1 queued"
         assert not list(host.query("#library-ingest-queue-empty"))
 
 

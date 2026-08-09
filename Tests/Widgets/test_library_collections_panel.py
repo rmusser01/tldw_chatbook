@@ -15,6 +15,36 @@ from tldw_chatbook.Widgets.Library.library_collections_panel import (
 pytestmark = pytest.mark.asyncio
 
 
+# task-2859 item 7: canvas titles drop the "Library " prefix and match the
+# sibling "Name (n)" pattern (Media/Notes/Prompts/Skills already do this;
+# Collections used to render the bare, count-less "Library Collections").
+
+
+async def test_library_collections_panel_title_matches_the_sibling_name_count_pattern(
+    widget_pilot,
+):
+    state = LibraryCollectionsPanelState.from_values(
+        collections=(
+            {"collection_id": "collection-1", "name": "Research", "item_count": 2},
+            {"collection_id": "collection-2", "name": "Reading list", "item_count": 0},
+        ),
+    )
+
+    async with await widget_pilot(LibraryCollectionsPanel, state=state) as pilot:
+        await pilot.pause()
+        title = pilot.app.query_one("#library-collections-title", Static)
+        assert str(title.renderable) == "Collections (2)"
+
+
+async def test_library_collections_panel_empty_title_shows_zero_count(widget_pilot):
+    state = LibraryCollectionsPanelState.from_values(collections=(), status="empty")
+
+    async with await widget_pilot(LibraryCollectionsPanel, state=state) as pilot:
+        await pilot.pause()
+        title = pilot.app.query_one("#library-collections-title", Static)
+        assert str(title.renderable) == "Collections (0)"
+
+
 async def test_library_collections_panel_renders_read_only_sync_dry_run_detail(
     widget_pilot,
 ):

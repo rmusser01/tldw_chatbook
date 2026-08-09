@@ -47,17 +47,22 @@ class DBStatusManager:
                 get_chachanotes_db_path,
                 get_media_db_path,
             )
-            from tldw_chatbook.Utils.Utils import get_formatted_file_size
+            from tldw_chatbook.Utils.Utils import get_formatted_db_size_with_wal
 
-            # Get database sizes
+            # Get database sizes -- WAL-inclusive (task-2859 item 5): a
+            # busy, uncheckpointed DB can hold most of its recent writes in
+            # its `-wal` sidecar, so the main file's size alone understates
+            # the real footprint.
             db_sizes = {
                 "prompts": self._get_db_size(
-                    get_prompts_db_path, get_formatted_file_size
+                    get_prompts_db_path, get_formatted_db_size_with_wal
                 ),
                 "chachanotes": self._get_db_size(
-                    get_chachanotes_db_path, get_formatted_file_size
+                    get_chachanotes_db_path, get_formatted_db_size_with_wal
                 ),
-                "media": self._get_db_size(get_media_db_path, get_formatted_file_size),
+                "media": self._get_db_size(
+                    get_media_db_path, get_formatted_db_size_with_wal
+                ),
             }
 
             self.app.db_sizes_status = db_sizes

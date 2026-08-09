@@ -21,7 +21,9 @@ Press **Ctrl+3** (or click **⌃3 Library** in the nav bar, or **Ctrl+P** →
 
 ![Collections](../images/library/collections.svg)
 
-The canvas is titled **"Library Collections"**. Top to bottom:
+The canvas is titled **"Collections (N)"** (task-2859: dropped the
+redundant "Library " prefix and matches the sibling "Name (n)" pattern
+Media/Notes/Prompts/Skills already use). Top to bottom:
 
 - **Empty state** (before your first Collection) — "No Collections yet.",
   "Create a local Collection record to start reviewing saved content.",

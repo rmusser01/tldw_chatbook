@@ -494,7 +494,7 @@ def test_queue_counts_line_lists_only_nonzero_states_in_fixed_order():
     state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
     assert (
         state.queue_counts_line
-        == "1 parsing · 1 writing · 1 queued · 2 done · 1 failed — in queue"
+        == "This queue: 1 parsing · 1 writing · 1 queued · 2 done · 1 failed"
     )
 
 
@@ -523,9 +523,13 @@ def test_queue_counts_line_omits_zero_states():
         ),
     )
     state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
-    # (task-3305, MI-14) All jobs terminal: the "— in queue" suffix
-    # would read as a contradiction over a finished run.
-    assert state.queue_counts_line == "2 done · 1 failed"
+    # (task-2043) The suffix says the totals span ALL ingests (the
+    # registry restores prior sessions from the jobs DB).
+    # (task-3305, MI-14) All jobs terminal: a trailing "— in queue" would
+    # read as a contradiction over a finished run.
+    # (task-2859 item 4) "This queue:" scopes the tally as a leading label
+    # instead, without ever claiming a segment is still active.
+    assert state.queue_counts_line == "This queue: 2 done · 1 failed"
 
 
 def test_queue_counts_line_hidden_with_no_jobs():
@@ -1881,7 +1885,7 @@ def test_queue_counts_line_shows_in_flight_batch_work():
     )
     state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
     assert state.queue_counts_line == (
-        "1 parsing · 2 queued · 1 done — in queue"
+        "This queue: 1 parsing · 2 queued · 1 done"
     )
 
 
@@ -2069,7 +2073,7 @@ def test_skipped_jobs_render_neutral_and_count_separately():
     assert row.line.startswith("○ skipped · photo.jpg")
     assert row.can_retry is False
     assert row.can_dismiss is True
-    assert state.queue_counts_line == "1 done · 1 skipped"
+    assert state.queue_counts_line == "This queue: 1 done · 1 skipped"
     assert state.queue_clear_finished_label == (
         "Press again to clear 2 finished"
     )
@@ -2396,7 +2400,7 @@ def test_queue_tally_and_group_header_agree_on_matched() -> None:
     state = build_library_ingest_state(
         (imported, matched), form=LibraryIngestFormState()
     )
-    assert state.queue_counts_line == "1 done · 1 matched"
+    assert state.queue_counts_line == "This queue: 1 done · 1 matched"
     headed = next(g for g in state.queue_groups if g.header_line)
     assert "1 done" in headed.header_line
     assert "1 matched" in headed.header_line
@@ -2515,13 +2519,19 @@ def test_warning_commands_empty_without_preflight() -> None:
 def test_counts_line_drops_in_queue_suffix_when_every_job_is_terminal():
     """(task-3305, MI-14) "1 done — in queue" over a finished run read as a
     contradiction; the queue-scope suffix belongs only while something is
-    still actually queued/working."""
+    still actually queued/working.
+
+    (rebase note, task-2859 item 4) The fix landed as an unconditional
+    "This queue:" leading label rather than a conditional trailing suffix
+    -- it never claims a segment is active, so the check below no longer
+    needs to branch on job state at all.
+    """
     jobs = (
         _job(job_id="ingest-job-1", state=IngestJobState.DONE),
         _job(job_id="ingest-job-2", state=IngestJobState.FAILED, error="x"),
     )
     state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
-    assert state.queue_counts_line == "1 done · 1 failed"
+    assert state.queue_counts_line == "This queue: 1 done · 1 failed"
 
 
 def test_counts_line_keeps_in_queue_suffix_while_any_job_is_active():
@@ -2530,7 +2540,7 @@ def test_counts_line_keeps_in_queue_suffix_while_any_job_is_active():
         _job(job_id="ingest-job-2", state=IngestJobState.QUEUED),
     )
     state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
-    assert state.queue_counts_line == "1 queued · 1 done — in queue"
+    assert state.queue_counts_line == "This queue: 1 queued · 1 done"
 
 
 def test_type_breakdown_names_web_pages():

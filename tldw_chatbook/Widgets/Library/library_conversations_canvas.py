@@ -61,6 +61,16 @@ class LibraryConversationsCanvas(RecomposeCaptureGuard, Vertical):
         # media), so ``len(self.canvas.rows)`` is the only correct source for
         # "how many rows are shown right now".
         rendered_count = len(self.canvas.rows)
+        # task-2859 item 1: every sibling canvas (Media/Notes/Prompts/Skills)
+        # opens with a "Name (n)" title Static; Conversations had none at
+        # all, so its top row read as "Export… / Select" with no label
+        # naming what the canvas even is.
+        yield Static(
+            f"Conversations ({rendered_count})",
+            id="library-conversations-title",
+            classes="destination-section",
+            markup=False,
+        )
         export_btn = Button(
             "Export…",
             id="library-conversations-export",
@@ -124,6 +134,16 @@ class LibraryConversationsCanvas(RecomposeCaptureGuard, Vertical):
                 )
                 yield export_selected
 
+        # task-2859 item 1: the filter box now renders ABOVE the empty-state/
+        # status text, matching Notes/Prompts (title -> filter -> toolbar ->
+        # empty-or-rows) -- it used to sit below the empty-state Static,
+        # which read as an afterthought under "No conversations yet.".
+        yield Input(
+            value=self.canvas.query,
+            placeholder="Filter conversations… (Enter)",
+            id="library-conversations-filter",
+        )
+
         status_text = self.canvas.status_copy or self.canvas.empty_copy
         status = Static(
             status_text,
@@ -132,12 +152,6 @@ class LibraryConversationsCanvas(RecomposeCaptureGuard, Vertical):
         )
         status.display = bool(status_text)
         yield status
-
-        yield Input(
-            value=self.canvas.query,
-            placeholder="Filter conversations… (Enter)",
-            id="library-conversations-filter",
-        )
 
         conversation_list = Vertical(id="library-conversations-list")
         conversation_list.styles.height = "auto"

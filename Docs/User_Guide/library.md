@@ -138,7 +138,8 @@ the **Database** link) returns to the notes list — see
 
 ### Details
 
-Collapsed by default; click the **Details** header to open it.
+Collapsed by default; click anywhere on the **Details** header — the label
+text or the **▾**/**▸** chip — to open it.
 
 | Group | Contents |
 |---|---|
@@ -222,6 +223,14 @@ you're on:
 - **On the plain list** — Escape moves focus to the rail's **Search
   Library…** box (the same target `/` and F6 use); it never leaves the
   canvas or changes what's shown.
+- **A pending bulk-delete confirmation on the Media list** (Select mode's
+  "Delete selected", which swaps the list's toolbar for "Delete N
+  selected items? This moves them to trash.") — Escape cancels it in
+  place, exactly like its own **Cancel** button, instead of moving focus
+  to the rail; the footer's hint reads "cancel delete" while it's armed.
+  Confirming with **Delete** when only some items can be removed leaves
+  the failed one(s) checked and focuses the first of them, rather than
+  leaving nothing focused or landing on an item you never selected.
 - **In an item's viewer or editor** (the media viewer; the Notes,
   Prompts, or Skills editor) — Escape returns to that list, re-focusing
   its first row, exactly like pressing **‹ Back to list**. A dirty note
@@ -299,3 +308,28 @@ glosses/counts follow one rule across visits (LIB-15); the search box
 selects a stale query on click too, not just on a second "/" (LIB-17);
 Conversations/Flashcards/Collections fall back to a short label instead
 of a mid-word ellipsis at narrow widths (LIB-18)).*
+*Verified against dev @ 023a04a48 — 2026-08-07 (task-2860: the "F6 next
+pane" footer hint above was previously true in description only — a
+`AppFooterStatus` filter silently dropped the landing's own F6 hint and
+substituted the generic global "F6 panes" text instead. The footer now
+renders the screen's own copy, live-verified at 170 and 100 columns; at
+80 columns the whole screen-hint cluster (not just F6) already yields to
+the width ladder described above, unchanged by this fix).*
+*Verified against dev @ 023a04a48 — 2026-08-07 (task-2859 UAT P3 polish
+batch, live-verified at 170x50: the Conversations canvas now opens with a
+"Conversations (N)" title matching every sibling, and its filter box
+renders above the empty-state text instead of below; the Collections
+canvas title reads "Collections (N)" (was "Library Collections"); clicking
+the Details header's LABEL (not just its **▾**/**▸** chip) now opens/closes
+it too; the export quality caption ("keeps a small preview image…" /
+"shrinks media files…" / "copies full media files…") now matches whichever
+option is actually selected, not always "original"; the ingest queue tally
+reads "This queue: N done" instead of the self-contradicting "N done — in
+queue"; DB sizes in the Details disclosure include their `-wal`/`-shm`
+sidecars, and the number/unit pair ("144.0KB") no longer wraps across two
+lines at the rail's narrow width).*
+*Verified against dev @ 023a04a48 — 2026-08-07 (task-3020: Escape now
+cancels an armed Media bulk-delete confirmation instead of moving focus to
+the rail with it still showing, matching the media viewer's own confirm;
+a partial bulk-delete failure now focuses the first still-checked row
+instead of leaving nothing focused).*

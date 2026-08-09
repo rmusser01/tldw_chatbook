@@ -1046,22 +1046,15 @@ def _queue_counts_line(jobs: Sequence[LibraryIngestJob]) -> str:
     # clears finished rows, while Recent imports keeps the real history.
     # Saying "all ingests" over a number that shrinks was a lie the label
     # itself denied.
-    # (task-3305, MI-14) But "1 done — in queue" over a FINISHED run reads
-    # as a contradiction: the suffix stays only while something is still
-    # actually queued or working; a fully terminal tally sits under the
-    # "Queue" heading, which already scopes it.
-    if not joined:
-        return ""
-    any_active = any(
-        job.state
-        in (
-            IngestJobState.QUEUED,
-            IngestJobState.PARSING,
-            IngestJobState.WRITING,
-        )
-        for job in jobs
-    )
-    return f"{joined} — in queue" if any_active else joined
+    # (task-3305, MI-14) A trailing "— in queue" self-contradicted whenever
+    # every listed segment was a terminal outcome (e.g. "2 done · 1 failed
+    # — in queue" -- nothing there is actually still queued).
+    # (task-2859 item 4) "This queue:" as a leading scope label instead
+    # names WHERE the tally is scoped (this queue's lifetime, as opposed to
+    # Recent imports' full history) unconditionally, without ever claiming
+    # a segment is in an active, not-yet-run state -- this supersedes the
+    # narrower any-active-suffix approach task-3305 first landed with.
+    return f"This queue: {joined}" if joined else ""
 
 
 #: Suffix appended to a queue row for a job that runs on the server. Local is

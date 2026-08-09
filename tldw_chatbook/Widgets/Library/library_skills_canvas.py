@@ -87,7 +87,13 @@ _NEEDS_REVIEW_WARNING = (
     'Saving marks this skill "needs review" — re-approve it in the trust '
     "panel after saving."
 )
-MODEL_HINT_COPY = "Not applied in v1 — shown for SKILL.md round-tripping only."
+# task-2859 item 9: "v1"/"round-tripping" is internal-version talk (DESIGN.md
+# plain-language rule) -- what the field actually does is unaffected by
+# renaming it: the value has no effect when the skill runs, and is kept
+# read-only here only so re-saving doesn't drop it from the imported file.
+MODEL_HINT_COPY = (
+    "Not used when running this skill — kept so saving doesn't lose the value."
+)
 
 # Fix wave (Skills Phase-1 gate, FIX 2): a brand-new install has no trust
 # manifest at all (``trust_status == "trust_uninitialized"``) -- the Library

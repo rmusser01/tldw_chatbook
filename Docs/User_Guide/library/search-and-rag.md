@@ -27,7 +27,9 @@ Two ways, both inside the Library screen (**Ctrl+3** — see
 
 Top to bottom on the main canvas:
 
-- **"Library Search/RAG"** — the canvas title.
+- **"Search / RAG"** — the canvas title (task-2859: dropped the redundant
+  "Library " prefix and now matches the rail row's own "Search / RAG"
+  spacing; it used to read "Library Search/RAG").
 - **Query row** — the **"mode: Search ▸"** button (click to cycle to
   "mode: RAG Answer ▸" and back), the query box ("Ask or search Library
   sources"), and **Run** (reads "Searching…" while a search is in flight).
@@ -47,6 +49,13 @@ Top to bottom on the main canvas:
   (RAG Answer mode) — the result rows (anatomy below). RAG Answer mode
   drops "per source" because it runs one merged semantic query, not one
   query per source the way Search mode does.
+- **"N results for 'query'."** (task-2859) — a headline right above the
+  evidence cards once results land, naming the count actually on screen
+  and the query that produced it. Absent while there are no results yet
+  (empty state, in-flight search, or a recovery message covers that
+  instead), and it tracks whichever rows a source-scope toggle currently
+  shows — unlike "Evidence · top N" above it, which stays fixed across a
+  toggle.
 - **"Recent searches"** — a collapsible fold of your recent queries.
 
 ## Features & controls

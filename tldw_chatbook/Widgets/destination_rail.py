@@ -22,8 +22,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from textual import events
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.message_pump import active_message_pump
 from textual.widgets import Button, Static
 
 from .glyph_fallback import resolve_glyph
@@ -215,6 +217,46 @@ class DestinationRailSectionHeader(Horizontal):
         toggle.styles.min_width = 3
         toggle.styles.max_width = 3
         yield toggle
+
+    def _on_click(self, event: events.Click) -> None:
+        """Press the toggle Button when the LABEL (not the chip) is clicked.
+
+        task-2859 item 5: only the ``▸``/``▾`` toggle chip used to respond
+        to a click -- clicking the "Details" text itself did nothing, a
+        common miss-click target on a one-line header. ``Button._on_click``
+        already calls ``event.stop()`` on its own click, so a direct click
+        on the toggle never reaches here -- this only fires for a click
+        elsewhere in the header (the title). Reusing ``Button.press()``
+        posts the exact same ``Button.Pressed`` message a real toggle click
+        would, so every existing consumer's handler (Console/Home/Library,
+        all three matching on ``RAIL_SECTION_TOGGLE_PREFIX``) needs no new
+        wiring.
+
+        The ``active_message_pump`` dance below is load-bearing, not
+        decoration: ``Message.__post_init__`` stamps a new message's
+        ``_sender`` from that contextvar, which -- absent this reset --
+        still reads as THIS header (we are executing inside the header's
+        own dispatch of the bubbled Click) rather than the toggle Button
+        that logically sent the Pressed message. ``MessagePump._on_message``
+        special-cases exactly that shape ("parent is sender, so we stop
+        propagation after parent") and calls ``message.stop()`` the moment
+        the toggle's own bubble-up reaches back to this header -- so the
+        Pressed message would reach this header and NEVER go further,
+        silently swallowed before any consumer's screen-level handler ever
+        saw it (reproduced live: the toggle's own CSS class flipped to
+        ``-active``, proving ``press()`` ran, while zero ``Button.Pressed``
+        handlers anywhere fired). Pinned by
+        ``test_clicking_the_section_title_posts_the_same_pressed_message_
+        as_the_toggle`` in ``Tests/UI/test_destination_rail.py``.
+        """
+        toggle = self.query_one(
+            f"#{RAIL_SECTION_TOGGLE_PREFIX}{self.section_id}", Button
+        )
+        token = active_message_pump.set(toggle)
+        try:
+            toggle.press()
+        finally:
+            active_message_pump.reset(token)
 
     def sync_open(self, open: bool) -> None:
         """Refresh the toggle affordance after body visibility changes.

@@ -241,7 +241,18 @@ def build_library_shell_state(
             target_id="prompts",
             count=state.prompts_count,
             count_known=state.prompts_known,
-            subtitle="AI asks",
+            # task-2859 item 2: "AI asks" (jargon noun for "the things you
+            # ask the AI") read as cryptic in UAT -- "reuse" is plain
+            # language. Live-verified at 170x50 (the plan's required
+            # verification width): two longer drafts ("saved
+            # instructions", then "reuse text") both silently dropped at
+            # this exact width even though a hand-computed budget check
+            # said they should fit -- "Prompts" is one cell longer than
+            # "Skills", and the F-015 "gloss renders whole or not at all"
+            # rule is unforgiving of being even one cell over. Kept short
+            # with margin rather than re-deriving the rail's exact
+            # available width precisely.
+            subtitle="reuse",
             count_loading=state.counts_loading,
         ),
         LibraryRailRow(

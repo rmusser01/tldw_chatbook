@@ -662,6 +662,58 @@ never what the screen shows; the composited screen is the only authority (third
 recorded instance of this lesson class). When a live report contradicts a green suite,
 suspect the harness before the reporter.
 
+**Fourth instance (2026-08-07, task-2859 item 10, padding not clipping this time).** A
+`.library-rag-result-snippet { padding: 0 1; }` bundle rule (fixing a snippet sitting
+flush against its card border) tested green with `snippet.region.x ==
+title_row.region.x` under `DestinationHarness` (`Tests/UI/test_library_content_hub.py`)
+— because `region` never reflects padding at all (only layout position/size;
+`content_region = region.shrink(styles.gutter)` is the one that does), AND because
+`DestinationHarness` is a bare `App` with no `CSS_PATH`, so `title_row.styles.padding`
+itself came back `Spacing(0,0,0,0)` regardless of what the .tcss said. Direct proof:
+`screen.app.css_path == []` and `type(screen.app).CSS_PATH is None` under this harness,
+vs. the real string when `TldwCli` is imported and inspected directly outside any test.
+Moving the exact same assertion to `LibraryHarness` (`Tests/UI/test_library_shell.py`,
+which sets `CSS_PATH` to the real bundle — "Mount a single LibraryScreen with the real
+app stylesheet" is literally its docstring) reproduced the missing-padding RED
+correctly and went GREEN once the CSS rule existed. Two independent traps stacked here,
+either one alone would have hidden the bug: use `content_region`, not `region`, for
+padding; and know which harness in a file actually loads CSS before trusting geometry
+from it — `Tests/UI/test_library_content_hub.py` uses `DestinationHarness` (no CSS) for
+most of its tests, `Tests/UI/test_library_shell.py` uses `LibraryHarness` (real CSS) —
+same directory, same screen under test, opposite answer to "does this rule apply".
+
+**Fifth instance (2026-08-08, task-3200 review round 1, cascade PRIORITY not just
+missing rules this time).** `MainNavigationBar.DEFAULT_CSS` ghosts a straddling nav
+button by setting `color`/`background`/`opacity`/`text-opacity` all to `$background`
+`!important`, intending a pixel-exact invisible button once it's also `disabled`. The
+bare-`App`-no-`CSS_PATH` test (`test_nav_strip_never_renders_a_partial_destination_
+label`) confirmed exact-match compositor colors and stayed green — but live tmux
+showed the ghosted fragment as a faintly-but-genuinely readable `rgb(43-62,43-62,
+43-62)` against `rgb(16,16,16)`, not a match. Root cause was NOT a missing bundle
+rule (the earlier four instances) but a PRIORITY one: `tldw_chatbook/css/components/
+_buttons.tcss`'s app-wide `Button:disabled { opacity: 50%; }`, loaded via `App.
+CSS_PATH`, outranks ANY widget `DEFAULT_CSS` rule as a TIER, regardless of
+`!important` on the `DEFAULT_CSS` side — confirmed by direct introspection
+(`button.styles.opacity` read `0.5` under the real `TldwCli` app + `HomeHarness`
+despite the widget's own `opacity: 100% !important`, but read `1.0` under the bare
+test harness where no `CSS_PATH` rule existed to compete). This codebase had already
+hit and fixed the identical defect once before (`Tests/UI/test_mcp_inspector.py`'s
+`test_disabled_action_buttons_stay_legible_with_bundled_css`, for the MCP inspector's
+action buttons) — that precedent was not consulted before initially trying
+`!important` in `DEFAULT_CSS`, which was the wrong tier to fight from. The fix that
+actually works: add the override to a `CSS_PATH`-bundled source file (`_navigation.
+tcss` here), in the SAME tier as the rule being overridden, where ordinary
+specificity resolves it without needing `!important` at all.
+
+**What to do (all five instances).** Never trust a bare-`App`-no-`CSS_PATH` test's
+color/opacity or geometry as proof of live behavior — it can miss a rule entirely
+(instances 1-4) or miss a PRIORITY inversion where `CSS_PATH` beats `DEFAULT_CSS`
+regardless of `!important` (instance 5). Before shipping any "hide via CSS" trick
+(`color == background`, opacity-to-zero, etc.), grep for prior art
+(`Button:disabled`, `:disabled` opacity overrides already exist for MCP inspector)
+and verify with `button.styles.opacity`/`get_visual_style()` under a REAL-bundle
+harness or live tmux, not just a bare widget construction.
+
 ---
 
 ## A zero-latency fake makes loop-starvation bugs invisible (2026-07-30)
@@ -1420,3 +1472,245 @@ state (`is_offline_mode()`), never the env var's string value: a `"1"` that arri
 late reads as success on an env-var check while the flag it was meant to control stayed
 `False`. And when closing a hole like this with a two-part fix, mutation-test each half
 independently — here, either half alone was silently insufficient.
+
+---
+
+## "Order-dependent" in the backlog is a hypothesis, not a diagnosis — a state flip is not proof the DOM caught up
+
+**TASK-3022, 2026-08-07.** The backlog described two `Tests/UI/test_library_shell.py`
+tests as "order-dependent notes-tail failures" (plus a third found during this task's
+own sweep, `test_library_shell_notes_sync_now_calls_recording_service_with_chosen_enums`).
+All three, when actually run alone, repeatedly (3/3, 3/3, and 2/3 samples respectively)
+failed with `NoMatches` on a widget query, not intermittently the way real cross-test
+pollution would present. Each had the identical shape: poll a plain/reactive attribute
+(`_library_note_detail`, `_library_notes_view` + `_library_note_autosave_state`,
+`_library_notes_sync_running`) in a `for _ in range(N): await pilot.pause(...)` loop,
+then immediately do a **one-shot** `screen.query_one(...)` on a widget the same state
+transition is supposed to (re)mount. Task-699 (2026-07-26) had already diagnosed and
+fixed the first known instance of exactly this shape in the same file; these three were
+new instances introduced by later test additions that never saw that diagnosis.
+
+**Why it happens.** The Python attribute write and the Textual recompose that renders it
+are not atomic. A handler sets `self._library_note_detail = new_value` and only later
+`await`s back into the event loop for the recompose to actually mount the widget that
+implies. A poll loop watching the ATTRIBUTE exits the instant it flips — one event-loop
+tick before the widget it implies is guaranteed to exist. Whether a given run's timing
+window is wide enough to hide this varies with machine load, which is exactly why it had
+been filed as "order-dependent" rather than diagnosed: it LOOKS like flakiness (some runs
+pass) without actually depending on any other test.
+
+**What to do.**
+1. Do not accept a backlog description of "order-dependent"/"flaky" at face value — a
+   test that fails when run completely alone, even once, is not proof of cross-test
+   pollution. Run it alone, several times, before hunting for a preceding-test trigger
+   that may not exist.
+2. Once a poll loop has established the STATE you care about, wait for the WIDGET too
+   via `_wait_for_selector` (this file's helper — polls `screen.query`, a list, so zero
+   matches is just "not yet") before reading it — never a bare `query_one` right after a
+   state-only poll, since it raises the moment the DOM lags the state by even one tick.
+   Cheap enough to apply proactively, not just after a failure is observed.
+
+---
+
+## A non-breaking space does NOT stop Rich/Textual from wrapping there (2026-08-07)
+
+**Incident.** Task-2859 item 5's mid-unit wrap fix ("Prompts 144.0 / KB" splitting a
+size number from its unit in the Library rail's narrow Details column) was first
+"fixed" by replacing the space between number and unit with U+00A0 (non-breaking
+space) — the textbook answer, and it read correctly in two quick manual checks (widths
+20 and 29). A live tmux capture at the batch's own required 170x50 caught it still
+broken: `"144.0"` on one line, `"KB"` alone starting the next, NBSP already in place.
+Direct proof against `rich._wrap` (the module every plain `Static` wraps through):
+`rich._wrap.words()` tokenizes with `re_word = re.compile(r"\s*\S+\s*")`, and Python's
+`re` module's Unicode-aware `\s` **matches U+00A0 identically to an ordinary space** —
+confirmed with `re.match(r"\s", "\xa0")` returning a match. So `"144.0\xa0KB"` is parsed
+as TWO separate "words" for wrap purposes exactly like `"144.0 KB"` was; NBSP only
+prevented the SPECIFIC widths tried by accident (enough room remained either way, or
+"Prompts" itself already pushed the whole tail to the next line together). At the
+rail's real width, exactly enough room remained for "144.0" alone but not "144.0" plus
+"KB", so the split happened right where NBSP was supposed to prevent it.
+
+**What to do.** Never assume a non-breaking space stops Rich/Textual `Static` word-wrap
+— it does not, because Rich's own wrap tokenizer uses a plain Unicode-aware `\s` regex
+that does not special-case U+00A0. If a number/unit (or any two-token) pair must never
+split, either remove the space between them entirely (verified stable at every width
+20-29 for this exact case — `_unbreakable_size_text` in `library_screen.py`), or use a
+genuinely non-whitespace-classified character (e.g. U+2060 WORD JOINER, category `Cf`,
+zero-width) if a visible gap must be preserved. Test the actual wrap behavior against
+`rich._wrap.divide_line`/`words` (or a live capture at the real target width) — a
+narrower or wider width than the one actually shipped can hide this exact bug either
+way, which is why two quick manual checks at the wrong widths both looked fine.
+
+---
+
+## `Button.press()` called from an ancestor's own click handler silently breaks message bubbling one hop early (2026-08-07)
+
+**Incident.** Task-2859 item 5: making a rail section header's LABEL (not just its
+`▸`/`▾` toggle chip) clickable, by adding `DestinationRailSectionHeader._on_click`
+that resolves the toggle `Button` and calls `.press()` on it. A live capture showed the
+toggle's own CSS class flip to `-active` (proof `.press()` ran) but the section never
+opened — no `Button.Pressed` handler anywhere fired, in the widget, the screen, or the
+app. Reproduced deterministically in isolation with a minimal `Horizontal` header
+wrapping a `Static` + `Button`: calling `child_button.press()` FROM the container's own
+`_on_click` (itself invoked because the Static's Click bubbled there) breaks
+propagation; calling the exact same `.press()` from the Static's own `_on_click`, or
+from a plain test coroutine, works fine. Root cause, found by monkeypatching
+`Message._bubble_to` to log every hop: `Message.__post_init__` stamps `self._sender =
+active_message_pump.get(None)` — a CONTEXTVAR tracking whichever widget's message
+dispatch is CURRENTLY executing, not the widget whose code literally calls
+`post_message()`. Since `Button.Pressed(self)` is constructed inside `Button.press()`
+while `active_message_pump` still reads as the HEADER (we are executing inside the
+header's own dispatch of the bubbled Click), the new message's `_sender` becomes the
+header. `MessagePump._on_message`'s bubble step has a special case: `if
+message._sender is not None and message._sender == self._parent: message.stop()` —
+"parent is sender, so we stop propagation after parent" (an optimization to avoid a
+widget's own self-directed message re-bubbling past the ancestor that sent it) — and
+this exact shape matches by coincidence, so the Pressed message reaches the header (one
+hop) and then dies, never reaching the screen-level handler every real consumer
+(Console/Home/Library rails) expects it at.
+
+**What to do.** Calling `widget.press()` (or constructing/posting any `Message`) from
+inside ANOTHER widget's own event-handler execution is not equivalent to the target
+widget doing it itself — the message's `_sender` provenance silently changes, and
+Textual's own "parent is sender" bubble-stop can misfire as a result. Fix: reset the
+`active_message_pump` contextvar (`from textual.message_pump import
+active_message_pump`) to the actual sending widget around the call —
+`token = active_message_pump.set(target_widget); try: target_widget.press() finally:
+active_message_pump.reset(token)` (see `DestinationRailSectionHeader._on_click` in
+`tldw_chatbook/Widgets/destination_rail.py`). Proving this class of bug needs watching
+the FULL bubble chain, not just checking that `.press()` "ran" — the visual `-active`
+class flip is a false-positive signal; instrument `Message._bubble_to` (or count how
+far a message travels) when a `Button.Pressed` handler mysteriously never fires despite
+the button visibly reacting to the press.
+
+## Constructing a widget directly in a test is not the same as driving it through real navigation -- and a "real navigation" pytest attempt can itself be a non-deterministic regression gate (2026-08-08)
+
+**TASK-3200.** Fixing the shared `MainNavigationBar`'s mid-word tab-label clip (a
+straddling destination button now gets a CSS "ghost" treatment — colors matched to the
+bar's background — instead of `display: none`, since hiding a button changes the
+strip's virtual size and can cascade). `Tests/UI/test_master_shell_navigation.py`
+already had — and my own new tests added — coverage that constructed
+`MainNavigationBar(active="settings")` directly inside a bare `TestApp`, at 80/100
+columns, both an early and a late active destination, and every one of those tests
+passed cleanly. Live tmux verification at 80 columns then reproduced a DIFFERENT bug
+in the exact same scenario: navigating from Home to Settings via the command palette
+left "Schedules" straddling and fully readable (un-ghosted) while an unrelated,
+already-off-screen "Watchlists" stayed ghosted for no reason. Root cause: `on_resize`
+ghost-checked directly, without first re-scrolling for the CURRENT viewport — a real
+screen-to-screen navigation fires several resize events while content is still
+settling, and whichever resize is the LAST one to land can ghost-check against a
+scroll position computed for an EARLIER, narrower or offset layout. A widget
+constructed directly in a `TestApp` sees exactly one clean mount → one clean resize;
+it structurally cannot reproduce a sequence of several interleaved resizes racing a
+still-settling scroll target.
+
+**Second half of the incident, easy to miss.** Having root-caused it live, I wrote a
+pytest test driving the REAL app (`Tests.UI.app_factory._build_test_app()`) through an
+actual `NavigateToScreen` message, polling for the nav bar to reach a correct state.
+It reliably failed against the buggy code and passed against the fix — until re-run a
+few more times each way: the SAME buggy code sometimes passed within an 8s poll, and
+disabling `MainNavigationBar`'s periodic 0.5s interval (which calls the same
+scroll-then-ghost pair on its own schedule, independent of `on_resize`) via monkeypatch
+made even the FIXED code fail a 20s poll. The honest conclusion: overlapping
+`call_after_refresh` chains from several resize events can interleave such that the
+last ghost-check to physically execute is not guaranteed to be from the freshest
+chain — a genuine, narrow residual race that the fix reduces but does not eliminate,
+and that the ALWAYS-PRESENT interval (this codebase's existing, intentional
+"settle every tick" mechanism) papers over within a variable amount of real time. No
+pytest timeout value reliably distinguished buggy from fixed once the interval was
+back in play, so a test whose pass/fail depended on it was providing FALSE confidence,
+not real regression coverage — it was deleted (along with its exclusive helpers)
+rather than shipped in that state.
+
+**What to do.**
+1. A test that constructs a widget directly and pumps `pilot.pause()` is evidence the
+   widget's OWN logic is internally consistent — it is NOT evidence the widget behaves
+   correctly when driven by the app's real navigation/layout churn, which can fire the
+   same hooks (e.g. `on_resize`) multiple times with different timing than a synthetic
+   single-shot test ever produces. For a defect involving scroll/layout state that must
+   "settle", drive the real navigation path at least once (post the actual message,
+   wait for the actual screen class to change) BEFORE declaring victory on
+   direct-construction tests alone — that is what surfaces this class of bug.
+2. Before trusting a NEW test as a regression gate, re-run it several times against
+   BOTH the buggy and the fixed code, not once each. A single RED + a single GREEN can
+   still be a coin flip if the code involves unmocked real-time async settling
+   (`call_after_refresh` chains, `set_interval` timers) — the fact that it says
+   "5 failed" once and "3 passed" against the identical buggy commit later in the same
+   session is itself the tell, not a fluke to shrug off.
+3. If a bug is fundamentally a timing race between two async mechanisms (here: a
+   settle-chain fix and an always-on periodic interval), a fast deterministic pytest
+   assertion may not exist for it at all. Neither "leave the interval running,
+   generous timeout" nor "disable the interval, even more generous timeout" reliably
+   discriminated buggy from fixed here. Don't force a flaky or falsely-reassuring test
+   into existence to satisfy a coverage checklist — ship the deterministic tests that
+   DO reliably discriminate (the direct-construction geometry/rendered-text ones, in
+   this case) and rely on documented, reproducible LIVE verification (tmux, before vs.
+   after) for the part that genuinely can't be pinned by a fast unit test.
+
+## A mutation test can stay green because a *second* self-healing mechanism rescued the mutated code (2026-08-09)
+
+**Incident (task-3200 round 4 / task-3225).** `MainNavigationBar.on_resize` was
+wired to a focus-aware recenter, with `test_resize_does_not_strand_the_focused_
+button` as its regression guard. Reverting the wiring did not turn the test red.
+The first diagnosis (round 3) was "the scenario never strands" -- true, but only
+half of it. A hand-built scenario that DOES strand *still* passed against the
+reverted code, because two independent backstops healed it faster than any
+wall-clock assertion could look: the widget's own 0.5s settle interval, and --
+the one nobody had accounted for -- a "best-effort nudge"
+(`scroll_to_widget(focused)`) buried inside the ghost pass, which fired off a
+*stale* region that still measured as straddling. Traced: with the fix reverted,
+`scroll_x` went 86 -> 75 (wrong) -> 96 (rescued) inside 40ms.
+
+**The rule.** When a mutation test refuses to go red, "the scenario is wrong" is
+only the first hypothesis. The second is "something else fixed it for me."
+Before trusting any timing-sensitive guard, enumerate every mechanism in the
+system that could reach the same end state -- periodic intervals, deferred
+re-checks, best-effort nudges -- and either suppress them for the duration of
+the assertion (isolating the unit actually under test) or pick a scenario they
+provably cannot reach. Here: suppress the interval via a test-local subclass
+(patching the instance attribute does nothing -- `set_interval` captured a bound
+method at mount), and choose a case that drags the button *fully off-screen*
+rather than into a straddle, since the nudge only rescues straddlers. Result:
+3/3 red on revert, 3/3 green on restore.
+
+**Corollary on assertions.** "not straddling" was also too weak an invariant to
+distinguish the good state from the worst one: a button dragged entirely
+off-screen is not straddling either, and it is strictly worse (invisible, yet
+still focused and Enter-navigable). Assert the property a user would name
+("still fully visible"), not the negation of the specific bug you last fixed.
+
+## An "invisible" CSS class that touches the box model is a layout change -- and a different CSS tier can hide that from your tests (2026-08-09)
+
+**Incident (task-3200 round 4 / task-3225).** The nav bar makes a clipped tab
+invisible with a CSS class instead of `display: none`, specifically so that
+geometry never changes (hiding a tab reflows the strip, breaks `max_scroll_x`,
+and cascades into new clipped tabs). The rule declared
+`border: solid $background !important` -- and Textual's `Button.-style-default`
+default is `border: none` plus `border-top`/`border-bottom: tall`, i.e. **zero
+horizontal border cells**. So "make it invisible" silently made every ghosted
+button **2 cells wider** (measured: 14 -> 16), reflowing every later button and
+pushing an already-corrected, focused tab back into a clipped position one
+layout pass after the correction landed. That was the whole "mysterious ~0.3s
+drift-back": a settle pass's own trailing invisibility pass undoing the settle.
+
+**Two generalisable traps.**
+
+1. Invisibility rules must declare colors only. `border`, `padding`, `width` and
+   `visibility` all move the box. If you want the Textual primitive for
+   "invisible but still occupies space", note that `visibility: hidden` makes
+   `Widget.region` return an EMPTY region (`outer_size` keeps its real value,
+   `region.width` drops to 0) -- so any code that reads `.region` to decide
+   whether to *un*-hide it can never see the widget again. Measured, and the
+   reason that approach was rejected here.
+2. **A widget-level `DEFAULT_CSS` bug can be invisible in the real app and live
+   only in your tests.** This one never bit production: the bundle's
+   `Button { border: none; }` sits in the `CSS_PATH` tier, which outranks widget
+   `DEFAULT_CSS` regardless of `!important`, so the bad declaration was silently
+   discarded in the running app -- and *only* applied in the bare `App()` test
+   harness, which is where the entire deterministic suite for this feature runs.
+   The harness was modelling a different layout regime than production. When a
+   geometry finding comes out of a bare-widget test, re-measure it under a
+   bundled-CSS harness (`CSS_PATH = tldw_cli_modular.tcss`, as
+   `test_mcp_inspector.py`'s `InspectorAppWithBundledCSS` does) before deciding
+   what it means -- in both directions: a bug the harness shows may not exist
+   live, and a bug live may not show in the harness.

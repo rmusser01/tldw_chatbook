@@ -3,10 +3,15 @@
 from types import SimpleNamespace
 
 import pytest
+from textual import events
 from textual.app import App
+from textual.containers import Horizontal
 from textual.widgets import Button
 
-from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
+from tldw_chatbook.UI.Navigation.main_navigation import (
+    MainNavigationBar,
+    _straddles_viewport,
+)
 
 
 def test_compact_navigation_labels_preserve_full_meaning():
@@ -519,3 +524,671 @@ async def test_more_hint_never_scrolls_the_strip_so_it_cannot_overscroll():
 
         assert app.screen_stack[-1].__class__.__name__ == "NavOverflowMenu"
         assert strip.scroll_offset.x == 0
+
+
+# --- task-3200: nav-bar mid-word tab cut at narrow widths -----------------
+#
+# UAT (task-2858 P2 batch, LIB-18) found the destination strip's
+# `overflow-x: auto` scroll clipping a partially-visible trailing button
+# mid-word at 80 columns -- e.g. "Watchlists" rendered as "Watc" right
+# before the "More ›" hint. `_ghost_clipped_buttons` blanks (rather than
+# hides) any button whose CURRENT render straddles either edge of the
+# strip's scroll viewport by coloring every surface to match the bar's
+# background (`.nav-button-clip-ghost` in `DEFAULT_CSS`), so the same
+# geometric straddle that used to leak a partial word now paints nothing
+# readable. These tests pin BOTH the geometry (region no longer straddles
+# in a way that shows any label glyphs -- a ghosted straddle is exempted)
+# AND the actual POST-CLIP rendered text (via the compositor, not the
+# un-clipped `Button.label` source), at two active-tab positions --  an
+# early one (no scrolling needed) and a late one (the strip must scroll,
+# which is what exposes a straddling neighbor) -- since scroll position is
+# what determines which button (if any) lands on the edge.
+
+
+def _readable_nav_text(app: App) -> str:
+    """Every compositor segment's text that is actually READABLE, joined --
+    what a person looking at the terminal would see, as opposed to any
+    widget's un-clipped `.label` source string.
+
+    `render_strips()` (Textual 8.2.7 has no `App.export_text()`, per the
+    same-shaped helper in `test_console_session_tab_strip.py`) returns the
+    POST-CLIP characters, but ghosting (`.nav-button-clip-ghost`) makes a
+    straddling button invisible by setting its foreground color EQUAL to
+    its background, not by removing the characters -- so a segment whose
+    `style.color == style.bgcolor` renders nothing a person can read even
+    though its `.text` still contains the real glyphs. Filtering those out
+    before joining is what makes this an honest "what did the screen show"
+    check instead of a "what characters exist in the buffer" one.
+    """
+    strips = app.screen._compositor.render_strips()
+    lines = []
+    for strip in strips:
+        chars = []
+        for segment in strip:
+            style = segment.style
+            if style is not None and style.color == style.bgcolor:
+                continue  # foreground matches background: invisible
+            chars.append(segment.text)
+        lines.append("".join(chars))
+    return "\n".join(lines)
+
+
+def _straddling_buttons(app: App, strip) -> list[str]:
+    """Nav buttons whose region partially overlaps the strip's visible
+    edge WITHOUT being clip-ghosted -- i.e. buttons that would leak a
+    partial label onto the screen."""
+    offenders = []
+    for button in app.query(".nav-button"):
+        if not button.display or button.has_class("nav-button-clip-ghost"):
+            continue
+        region = button.region
+        if region.width <= 0:
+            continue
+        fully_in = region.x >= strip.region.x and region.right <= strip.region.right
+        fully_out = region.right <= strip.region.x or region.x >= strip.region.right
+        if not fully_in and not fully_out:
+            offenders.append(button.id)
+    return offenders
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "width,active",
+    [
+        (80, "home"),  # early destination: no scrolling needed
+        (80, "settings"),  # late destination: forces a scroll
+        (100, "home"),
+        (100, "watchlists_collections"),
+    ],
+)
+async def test_nav_strip_never_renders_a_partial_destination_label(width, active):
+    class TestApp(App):
+        def compose(self):
+            yield MainNavigationBar(active=active)
+
+    app = TestApp()
+
+    async with app.run_test(size=(width, 24)) as pilot:
+        await pilot.pause(0.6)
+
+        strip = app.query_one("#nav-destination-strip", Horizontal)
+
+        # Geometry: nothing straddles the viewport edge with real content.
+        assert _straddling_buttons(app, strip) == []
+
+        # The active destination is always fully, genuinely visible (never
+        # ghosted) -- the one invariant this fix must not regress.
+        active_button = app.query_one(f"#nav-{active}", Button)
+        assert active_button.display
+        assert not active_button.has_class("nav-button-clip-ghost")
+        assert active_button.region.width > 0
+        assert active_button.region.x >= strip.region.x
+        assert active_button.region.right <= strip.region.right
+
+        # Rendered-text pin: every ghosted button's label contributes NO
+        # READABLE fragment to the actual painted screen (foreground ==
+        # background, not merely absent characters). Compare against the
+        # first several characters (past the hotkey prefix) of each
+        # ghosted button's label -- long enough that a coincidental
+        # substring match elsewhere on screen is not a concern here.
+        painted = _readable_nav_text(app)
+        ghosted = [
+            button
+            for button in app.query(".nav-button")
+            if button.has_class("nav-button-clip-ghost")
+        ]
+        for button in ghosted:
+            label_text = str(button.label).strip()
+            # Strip the "⌃N " / "F7 " hotkey prefix to get the destination
+            # word itself (e.g. "Watchlists"), then check a chunk of it.
+            word = label_text.split(" ", 1)[-1]
+            fragment = word[:4]
+            assert fragment not in painted, (
+                f"{button.id} is ghosted but '{fragment}' still readable"
+            )
+            # Review finding: color alone left a ghosted button fully
+            # interactive (Tab-reachable with no focus ring, clickable
+            # while invisible). `disabled` must accompany the ghost class.
+            assert button.disabled, f"{button.id} is ghosted but not disabled"
+            assert not button.focusable, f"{button.id} is ghosted but still focusable"
+        if width == 100 and active == "home":
+            # Pin the specific finding this task fixed (task-2858 P2 /
+            # LIB-18): at a narrow width with the strip scrolled to its
+            # default position, some destination WILL straddle the "More
+            # ›" hint's edge -- if nothing were ever ghosted here, the
+            # geometry/rendered-text assertions above would be vacuous.
+            assert ghosted, "test premise: expected a straddling destination at 100 cols"
+
+
+@pytest.mark.asyncio
+async def test_tab_cycling_never_focuses_a_ghosted_nav_button():
+    """Review finding: a ghosted (invisible) button was still Tab-reachable
+    with no visible focus ring -- a keyboard user could land on it blind
+    and Enter-navigate to a destination they never saw highlighted.
+    `disabled` (paired with the ghost class in `_ghost_clipped_buttons`)
+    removes it from the focus chain entirely (`Widget.focusable` excludes
+    disabled widgets) -- cycle Tab all the way around the bar and confirm
+    focus never lands on a ghosted button, only on genuinely visible ones.
+
+    The per-press check reads each button's ghost/disabled state AT THE
+    MOMENT it receives focus, not a snapshot taken before the loop starts:
+    `on_descendant_focus` re-scrolls the strip on every Tab landing (to
+    keep the newly-focused button fully visible), which legitimately
+    changes WHICH buttons straddle an edge as the strip's scroll position
+    moves -- a button ghosted at t=0 can be genuinely un-ghosted (fully
+    visible, re-enabled) by the time Tab reaches it several presses later.
+    An earlier version of this test compared against a single pre-loop
+    snapshot and produced a false failure for exactly that reason (caught
+    live: Tab correctly reached `nav-schedules` only after it had been
+    scrolled fully into view and un-ghosted, but the stale snapshot still
+    listed its id as ghosted).
+    """
+
+    class TestApp(App):
+        def compose(self):
+            yield MainNavigationBar(active="settings")
+
+    app = TestApp()
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(0.6)
+
+        assert any(
+            button.has_class("nav-button-clip-ghost")
+            for button in app.query(".nav-button")
+        ), "test premise: expected a straddling destination at 80 cols"
+
+        # More than enough presses to cycle all the way around the bar
+        # (13 destinations + the overflow hint) at least twice.
+        visited_while_ghosted = []
+        for _ in range(30):
+            await pilot.press("tab")
+            focused = app.focused
+            if focused is not None and focused.has_class("nav-button-clip-ghost"):
+                visited_while_ghosted.append(focused.id)
+            if focused is not None and focused.has_class("nav-button"):
+                assert not focused.disabled, (
+                    f"{focused.id} received focus while disabled"
+                )
+
+        assert visited_while_ghosted == []
+
+
+@pytest.mark.asyncio
+async def test_press_on_a_ghosted_nav_button_is_a_no_op():
+    """Review finding: nothing rejected a ghosted button as a `.press()`
+    target -- a mouse click into dead-looking space (or a programmatic
+    `.press()`) would silently navigate. `Button.press()` already no-ops
+    when `self.disabled` is set; `_ghost_clipped_buttons` sets it whenever
+    the ghost class is applied, so calling `.press()` directly on a
+    ghosted button must produce neither a `Button.Pressed` message nor a
+    `NavigateToScreen` navigation, and the active destination must stay
+    unchanged.
+    """
+    events = []
+
+    class TestApp(App):
+        def compose(self):
+            yield MainNavigationBar(active="settings")
+
+        def on_navigate_to_screen(self, message):
+            events.append(message.screen_name)
+
+    app = TestApp()
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(0.6)
+
+        nav = app.query_one(MainNavigationBar)
+        ghosted = [
+            button
+            for button in app.query(".nav-button")
+            if button.has_class("nav-button-clip-ghost")
+        ]
+        assert ghosted, "test premise: expected a straddling destination at 80 cols"
+        target = ghosted[0]
+        assert target.disabled
+
+        target.press()
+        await pilot.pause(0.1)
+
+        assert events == []
+        assert nav.active_destination_id == "settings"
+        assert target.has_class("nav-button-clip-ghost")
+
+
+@pytest.mark.asyncio
+async def test_click_on_ghosted_nav_button_via_border_route_is_a_no_op():
+    """Review finding (round 5): `on_click` routes a click that resolves
+    to the bar/strip itself (not directly to a specific widget) to ANY
+    `NavigationButton` whose `region.contains_point` matches the click,
+    then calls `_activate_navigation_button` directly -- bypassing
+    `Button.press()`'s built-in `disabled` no-op entirely (the guard the
+    sibling `test_press_on_a_ghosted_nav_button_is_a_no_op` above
+    exercises). Ghosting (task-3200/3225) is purely cosmetic and
+    geometry-neutral -- a ghosted button keeps its real screen region and
+    stays part of the widget tree -- so its region still intersects real
+    click coordinates; only its paint is blanked.
+
+    This drives the natural (not mocked) resolution path: at row y=2 --
+    the bar's own `border-bottom` row, height=3 total (rows 0/1 are
+    content, row 2 is the border) -- `get_widget_at` resolves to the
+    `MainNavigationBar` itself rather than to any child button, because
+    those border pixels are drawn as part of the bar's own box, not
+    attributed to a child's compositor region (confirmed directly:
+    `get_widget_at(x, 2)` returns the bar for every x across the ghosted
+    button's width, while rows 0/1 at the same x correctly return the
+    button). That is exactly the "clicked the border, not a widget" case
+    `on_click`'s own guard clause exists to route into the loop below --
+    i.e. this is the real bug path, not a synthetic bypass of it.
+    `active="artifacts"` at 80 cols reliably straddles/ghosts
+    `nav-watchlists_collections` (`Region(x=64, y=0, width=15,
+    height=3)`), the same defect class as the review's own probe
+    (`nav-watchlists_collections`, `x=62-71, y=2`, a different active
+    destination).
+    """
+    events_seen = []
+
+    class TestApp(App):
+        def compose(self):
+            yield MainNavigationBar(active="artifacts")
+
+        def on_navigate_to_screen(self, message):
+            events_seen.append(message.screen_name)
+
+    app = TestApp()
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(0.6)
+
+        nav = app.query_one(MainNavigationBar)
+        ghosted = [
+            button
+            for button in app.query(".nav-button")
+            if button.has_class("nav-button-clip-ghost")
+        ]
+        assert ghosted, "test premise: expected a straddling destination at 80 cols"
+        target = next(
+            (b for b in ghosted if b.id == "nav-watchlists_collections"), ghosted[0]
+        )
+        assert target.disabled
+        region = target.region
+
+        # A cell inside the ghosted button's own region, on the bar's
+        # border-bottom row -- naturally resolves to the bar itself (see
+        # docstring above), not the button, which is the exact case
+        # `on_click`'s border router exists to handle.
+        click_x = region.x
+        click_y = 2
+        assert app.get_widget_at(click_x, click_y)[0] is nav, (
+            "test premise: this coordinate must resolve to the bar itself"
+        )
+
+        click_event = events.Click(
+            nav,
+            click_x,
+            click_y,
+            0,
+            0,
+            1,
+            False,
+            False,
+            False,
+            screen_x=click_x,
+            screen_y=click_y,
+        )
+        nav.on_click(click_event)
+        await pilot.pause(0.1)
+
+        assert events_seen == []
+        assert nav.active_destination_id == "artifacts"
+        assert target.has_class("nav-button-clip-ghost")
+        assert target.disabled
+
+
+@pytest.mark.asyncio
+async def test_periodic_interval_does_not_drag_the_focused_button_out_of_view():
+    """Review round 2 finding: the periodic 0.5s interval
+    (`_update_overflow_hints`, `set_interval` in `on_mount`) called
+    `_scroll_active_destination_into_view` every tick unconditionally
+    targeting the ACTIVE destination, indifferent to keyboard focus. When
+    Tab had focused a DIFFERENT, far-away button (`on_descendant_focus`
+    scrolls to reveal it), the interval's very next tick dragged the strip
+    back toward the active destination -- leaving the FOCUSED button
+    straddling the edge: visibly mid-word-cut, still `app.focused`,
+    un-ghosted, and `disabled=False` (Enter-navigable). A static exemption
+    keyed on "whichever button held focus when `_ghost_clipped_buttons`
+    last ran" could not catch this, because nothing had re-scrolled to
+    reveal that focused button on the interval's own tick -- the exemption
+    only meant "don't hide it," not "keep it visible".
+
+    This is the reviewer's exact deterministic reproduction: `active=
+    "schedules"` (far from the end of the bar), Tab to `nav-settings`
+    (forces a scroll to reveal it, since Settings does not fit in the
+    initial 80-col viewport alongside Schedules), then `pilot.pause(0.9)`
+    -- long enough for at least one 0.5s interval tick to fire after the
+    Tab-driven scroll settled. Before the fix this reliably (3/3 in the
+    reviewer's own repro) left `nav-settings` straddling
+    (`Region(x=66, width=15)` against `strip.region.right == 70`) while
+    still focused, un-ghosted, and enabled.
+    """
+
+    class TestApp(App):
+        def compose(self):
+            yield MainNavigationBar(active="schedules")
+
+    app = TestApp()
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(0.3)
+
+        for _ in range(20):
+            await pilot.press("tab")
+            if getattr(app.focused, "id", None) == "nav-settings":
+                break
+        assert app.focused is not None and app.focused.id == "nav-settings", (
+            "test premise: expected to Tab-focus nav-settings"
+        )
+
+        # One interval tick (0.5s) plus margin -- the exact window the
+        # review finding traced the drag-back to.
+        await pilot.pause(0.9)
+
+        strip = app.query_one("#nav-destination-strip", Horizontal)
+        settings = app.query_one("#nav-settings", Button)
+        assert app.focused is settings, (
+            "nav-settings should still hold focus after the interval tick"
+        )
+        assert not _straddles_viewport(settings.region, strip.region), (
+            f"nav-settings straddles after an interval tick while focused: "
+            f"{settings.region} vs strip {strip.region}"
+        )
+        assert not settings.has_class("nav-button-clip-ghost"), (
+            "the focused button must not be ghosted while it holds focus"
+        )
+        assert not settings.disabled, (
+            "the focused button must not be disabled while it holds focus"
+        )
+
+
+class _IntervalSuppressibleNavBar(MainNavigationBar):
+    """`MainNavigationBar` whose 0.5s settle interval can be switched off
+    mid-test (review round 4, task-3225).
+
+    `set_interval(0.5, self._update_overflow_hints)` captures a BOUND
+    method at mount, so patching the instance attribute afterwards does
+    nothing -- the suppression has to be a branch inside an override.
+
+    Why suppress it at all: the interval is the deliberate *backstop* for
+    every settle trigger, and it is focus-aware since round 2, so it heals
+    an `on_resize` that stranded the focused button within <= 0.5s. That
+    makes it impossible to tell a WORKING `on_resize` from a BROKEN one by
+    looking at the strip a few hundred ms later -- which is exactly how
+    the shipped version of this test came to be vacuous (round 3 takeover
+    finding: reverting `on_resize`'s `_recenter_strip` wiring did not turn
+    it red). Suppressing the backstop for the duration of the resize
+    isolates the property actually under test: `on_resize`'s OWN settle
+    pass must leave the deliberately-focused button fully visible, without
+    waiting on the interval to clean up after it.
+    """
+
+    suppress_interval = False
+
+    def _update_overflow_hints(self) -> None:
+        if self.suppress_interval:
+            return
+        super()._update_overflow_hints()
+
+
+@pytest.mark.asyncio
+async def test_resize_does_not_strand_the_focused_button():
+    """Review round 3 finding: `on_resize` used to route straight through
+    the plain, active-only `_scroll_active_destination_into_view`,
+    indifferent to keyboard focus -- the exact defect class round 2 fixed
+    for the periodic interval, independently reproduced through this
+    OTHER trigger.
+
+    Round 4 rewrite (task-3225). The originally-shipped version of this
+    test (`active="schedules"`, Tab to `nav-settings`, GROW 80 -> 90) was
+    vacuous twice over and is replaced rather than tweaked:
+
+    1. Growing the terminal never produced a genuine straddle in this
+       harness in the first place -- `nav-settings` sat flush at the
+       boundary either way, so the assertion could not fail.
+    2. Even in a scenario that DOES strand, two other mechanisms heal it
+       before any wall-clock assertion can see it: the periodic interval
+       (focus-aware since round 2) and `_ghost_clipped_buttons`'s
+       best-effort `scroll_to_widget(focused)` nudge, which fires whenever
+       the focused button STRADDLES. Directly traced: with `on_resize`
+       reverted, `scroll_x` went 86 -> 75 (dragged toward active) -> 96
+       (nudged back) inside 40ms.
+
+    So this version (a) makes the resize strand the focused button FULLY
+    off-screen rather than straddling -- `active="home"` at the far left,
+    focus on `nav-settings` at the far right -- which is the case the
+    ghost-pass nudge cannot rescue (it only nudges a straddler), and
+    (b) suppresses the interval backstop for the duration of the resize
+    (see `_IntervalSuppressibleNavBar`). What is left is `on_resize`'s own
+    pass, and the assertion is the honest user-facing invariant: the
+    button you Tab-focused is still FULLY visible after the resize, not
+    merely "not straddling" (a button dragged entirely off-screen is not
+    straddling either, and is strictly worse -- invisible, yet still
+    focused and Enter-navigable).
+
+    Mutation-tested both ways: reverting `on_resize` to
+    `_scroll_active_destination_into_view` fails this at every checkpoint;
+    restoring `_recenter_strip` passes it at every checkpoint.
+    """
+
+    class TestApp(App):
+        def compose(self):
+            yield _IntervalSuppressibleNavBar(active="home")
+
+    app = TestApp()
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(0.3)
+
+        for _ in range(20):
+            await pilot.press("tab")
+            if getattr(app.focused, "id", None) == "nav-settings":
+                break
+        assert app.focused is not None and app.focused.id == "nav-settings", (
+            "test premise: expected to Tab-focus nav-settings"
+        )
+
+        nav = app.query_one(_IntervalSuppressibleNavBar)
+        strip = app.query_one("#nav-destination-strip", Horizontal)
+        settings = app.query_one("#nav-settings", Button)
+        assert settings.region.x >= strip.region.x, (
+            "test premise: the focused button starts fully visible"
+        )
+
+        nav.suppress_interval = True
+        await pilot.resize_terminal(90, 24)
+
+        # Several checkpoints, not one: the round-3 takeover's other
+        # finding was that the (then-shipped) fix corrected the geometry
+        # transiently and drifted back ~0.3s later, so a single
+        # post-resize assertion could not have caught it. The drift-back's
+        # root cause (a ghost pass that reflowed the strip) is fixed in
+        # `MainNavigationBar.DEFAULT_CSS`; this sweep is what keeps it
+        # fixed.
+        for step in range(8):
+            await pilot.pause(0.1)
+            assert app.focused is settings, (
+                f"nav-settings should still hold focus after the resize "
+                f"(checkpoint {step})"
+            )
+            assert (
+                settings.region.x >= strip.region.x
+                and settings.region.right <= strip.region.right
+            ), (
+                f"the focused button is not fully visible after a resize "
+                f"(checkpoint {step}): {settings.region} vs strip "
+                f"{strip.region}"
+            )
+            assert not _straddles_viewport(settings.region, strip.region)
+            assert not settings.has_class("nav-button-clip-ghost")
+            assert not settings.disabled
+
+
+@pytest.mark.asyncio
+async def test_ghosting_a_button_never_reflows_the_strip():
+    """Review round 4 (task-3225): ghosting must be geometry-neutral.
+
+    The whole reason task-3200 ghosts a clipped button with CSS instead of
+    `display: none` is that hiding it changes the strip's layout, which
+    cascades into new straddlers and breaks the "More ›" pager's reach.
+    The shipped ghost rule quietly broke that invariant anyway: it
+    declared `border: solid $background !important`, replacing Textual's
+    `Button.-style-default` border (`border-top`/`border-bottom` only --
+    ZERO horizontal cells) with a four-edge border, so a ghosted button
+    measured 2 cells WIDER than the same button un-ghosted and shoved
+    every button after it 2 cells right. That reflow is what produced the
+    "~0.3s drift-back" filed as task-3225: a settle pass would scroll the
+    focused button into view, then its own trailing ghost pass reflowed
+    the strip and put it back into a straddling position, with nothing
+    scheduled to re-check.
+
+    Deterministic geometry assertion, no timing: ghost one button by hand
+    and require every other button's region -- and its own -- to be
+    unchanged. Goes red if any box-model property (border, padding,
+    width, visibility) is ever reintroduced into the ghost rule.
+    """
+
+    class _NoAutoGhostBar(MainNavigationBar):
+        """Ghosting is applied by hand here, so the widget's own settle
+        passes must not race the assertion by re-deciding it."""
+
+        def _ghost_clipped_buttons(self) -> None:
+            return
+
+    class TestApp(App):
+        def compose(self):
+            yield _NoAutoGhostBar(active="home")
+
+    app = TestApp()
+
+    async with app.run_test(size=(200, 24)) as pilot:
+        await pilot.pause(0.4)
+
+        strip = app.query_one("#nav-destination-strip", Horizontal)
+        buttons = list(strip.query(Button))
+        assert len(buttons) > 3, "test premise: several destinations present"
+        before = {button.id: button.region for button in buttons}
+        virtual_before = strip.virtual_size
+
+        victim = app.query_one("#nav-workflows", Button)
+        victim.add_class("nav-button-clip-ghost")
+        victim.disabled = True
+        await pilot.pause(0.3)
+
+        after = {button.id: button.region for button in strip.query(Button)}
+        assert after == before, (
+            "ghosting a nav button reflowed the strip -- the ghost rule is "
+            "not geometry-neutral. Changed: "
+            + repr(
+                {
+                    button_id: (before[button_id], after[button_id])
+                    for button_id in before
+                    if before[button_id] != after.get(button_id)
+                }
+            )
+        )
+        assert strip.virtual_size == virtual_before, (
+            "ghosting a nav button changed the strip's virtual size "
+            f"({virtual_before} -> {strip.virtual_size}), which moves "
+            "max_scroll_x and the 'More ›' pager's reach"
+        )
+
+
+@pytest.mark.asyncio
+async def test_restore_active_does_not_strand_the_focused_button():
+    """Review round 3 finding: `restore_active` used to route straight
+    through the plain, active-only `_scroll_active_destination_into_view`
+    too -- the same defect class, a third independent trigger.
+    Live-reproduced: Tab to `nav-settings` (`active="schedules"`), an
+    optimistic click-activate to `console` (mirroring `_activate_
+    navigation_button`, before its navigation actually completes), then
+    `restore_active("schedules")` left `nav-settings` genuinely
+    straddling, un-ghosted, enabled, and still focused.
+    """
+
+    class TestApp(App):
+        def compose(self):
+            yield MainNavigationBar(active="schedules")
+
+    app = TestApp()
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(0.3)
+
+        for _ in range(20):
+            await pilot.press("tab")
+            if getattr(app.focused, "id", None) == "nav-settings":
+                break
+        assert app.focused is not None and app.focused.id == "nav-settings", (
+            "test premise: expected to Tab-focus nav-settings"
+        )
+
+        nav = app.query_one(MainNavigationBar)
+        console_button = app.query_one("#nav-console", Button)
+        nav._activate_navigation_button(console_button)
+        await pilot.pause(0.2)
+        nav.restore_active("schedules")
+        await pilot.pause(0.3)
+
+        strip = app.query_one("#nav-destination-strip", Horizontal)
+        settings = app.query_one("#nav-settings", Button)
+        assert app.focused is settings, (
+            "nav-settings should still hold focus after restore_active"
+        )
+        assert not _straddles_viewport(settings.region, strip.region), (
+            f"nav-settings straddles after restore_active while focused: "
+            f"{settings.region} vs strip {strip.region}"
+        )
+        assert not settings.has_class("nav-button-clip-ghost")
+        assert not settings.disabled
+
+
+# (rebase note) `test_pager_releases_focus_instead_of_stranding_it`
+# (review round 3's own regression test for a focused nav button left
+# straddling by a "More ›" pager press) was dropped here, not adapted:
+# dev's parallel NV-01/TASK-2154.21 rework (merged independently of the
+# whole task-3200 series) replaced in-strip paging with
+# `handle_overflow_hint` opening a real `NavOverflowMenu` screen listing
+# every destination -- pressing "#nav-overflow-hint" no longer scrolls
+# the strip at all, so there is no more scroll-viewport position for a
+# focused button to be left straddling against. The defect class this
+# test pinned cannot recur under the current design; see
+# `_refresh_overflow_hint_visibility`'s rebase note in
+# `main_navigation.py` for the corresponding production-code note.
+
+
+@pytest.mark.asyncio
+async def test_recenter_strip_and_focused_strip_button_survive_a_detached_bar():
+    """Review round 3 crash-guard: `self.screen` raises `NoScreen` once a
+    widget is no longer attached to an active screen (`_focused_strip_
+    button`'s round-2 fix). Confirm every focus-aware recenter entry point
+    tolerates that -- constructing a `MainNavigationBar`, mounting it,
+    then removing it, and calling the methods a stray deferred
+    `call_after_refresh` callback could still reach afterward must never
+    raise.
+    """
+
+    class TestApp(App):
+        def compose(self):
+            yield MainNavigationBar(active="home")
+
+    app = TestApp()
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        nav = app.query_one(MainNavigationBar)
+        await nav.remove()
+        await pilot.pause(0.1)
+
+        assert nav._focused_strip_button() is None
+        nav._recenter_strip()
+        nav._ghost_clipped_buttons()
+
