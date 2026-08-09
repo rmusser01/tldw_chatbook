@@ -1,22 +1,28 @@
 # Tests/RAG_Eval/test_harness_run.py
-"""Env-gated end-to-end test of the three-mode retrieval eval runner.
+"""Env-gated end-to-end tests: the three-mode runner, and the baseline gate.
 
-One test function, deliberately. The runtime is expensive to stand up (the
-whole fixture corpus is written through the real writers and embedded on a
-real model) and only one may exist per process, so splitting the assertions
-across tests would mean either rebuilding it per test or hanging it off a
-module-scoped fixture — and a module-scoped fixture is set up *before* the
-function-scoped autouse fixture in `conftest.py` that repoints the model
-cache, i.e. it would run against the suite's sandboxed HOME and fail on a
-cache miss. Every assertion below therefore carries its own message: the
-failure output has to say which property broke without a test name to lean
-on.
+Two test functions, each standing up its own runtime, and never a shared
+fixture. The runtime is expensive (the whole fixture corpus written through
+the real writers and embedded on a real model), so the obvious move is a
+module-scoped fixture — and it is wrong here: a module-scoped fixture is set
+up *before* the function-scoped autouse fixture in `conftest.py` that
+repoints the model cache, i.e. it would run against the suite's sandboxed
+HOME and fail on a cache miss. The second-best move, folding both concerns
+into one test, was rejected because a metric regression and a broken seam
+would then fail the same test with the same name; they are different
+findings and need different failure lines.
+
+Within a test, assertions carry their own messages: with several properties
+checked per function the failure output has to say which one broke without a
+test name to lean on.
 
 Skipped unless `RAG_EVAL=1` plus the embeddings extras plus a warm model
-cache — see `harness/environment.py`.
+cache — see `harness/environment.py`. `RAG_EVAL_UPDATE_BASELINES=1` turns
+the gate test into a deliberate re-stamp of the committed baselines.
 """
 from __future__ import annotations
 
+import io
 import json
 from collections import Counter
 
@@ -150,3 +156,79 @@ def test_three_mode_eval_run_over_the_real_fixtures(tmp_path, capsys):
     assert "keyword (plain) vs hybrid" in summary, (
         "the summary must carry the four-seam keyword vs hybrid delta line"
     )
+
+
+def test_the_committed_baselines_still_hold(tmp_path, capsys):
+    """The fail-on-regression gate itself.
+
+    With `RAG_EVAL_UPDATE_BASELINES=1` this re-stamps
+    `Tests/RAG_Eval/baselines/` instead and prints every metric old -> new,
+    so the baseline commit is reviewable rather than a silent overwrite.
+
+    Without it, a genuine retrieval regression fails here — and *only*
+    here: a fingerprint mismatch (different model, different corpus bytes,
+    different platform) is reported as "environment changed" and does not
+    fail, because those numbers were never comparable in the first place.
+    """
+    from Tests.RAG_Eval.harness.baseline_io import (
+        BASELINES_DIR,
+        GateStatus,
+        compare_or_update,
+        update_requested,
+    )
+    from Tests.RAG_Eval.harness.goldenset import load_fixtures
+    from Tests.RAG_Eval.harness.ingest import build_eval_runtime
+    from Tests.RAG_Eval.harness.runner import MODES, run_eval
+
+    corpus, golden = load_fixtures()
+    runtime = build_eval_runtime(corpus, tmp_path)
+    close_error: Exception | None = None
+    try:
+        report = run_eval(runtime, golden, k=K)
+    finally:
+        try:
+            runtime.close()
+        except Exception as exc:  # pragma: no cover - reported, not raised
+            close_error = exc
+
+    update = update_requested()
+    rendered = io.StringIO()
+    outcome = compare_or_update(
+        report, BASELINES_DIR, update=update, stream=rendered
+    )
+
+    with capsys.disabled():
+        print("\n" + report.format_summary())
+        print("\n" + rendered.getvalue())
+    if close_error is not None:
+        print(f"NOTE: runtime.close() failed after the run: {close_error!r}")
+
+    for mode in MODES:
+        assert not report.modes[mode].errors, (
+            f"{mode}: the run erred before the gate could mean anything: "
+            f"{report.modes[mode].errors}"
+        )
+
+    if update:
+        assert outcome.status is GateStatus.BASELINES_WRITTEN, outcome.summary
+        for mode in MODES:
+            assert (BASELINES_DIR / f"{mode}.json").exists(), (
+                f"{mode}: no baseline file was written to {BASELINES_DIR}"
+            )
+        assert outcome.deltas, "an update that recorded no metrics recorded nothing"
+        return
+
+    assert outcome.ok, outcome.format_report()
+    assert outcome.status in (GateStatus.PASSED, GateStatus.ENVIRONMENT_CHANGED), (
+        f"unexpected gate outcome {outcome.status.value}: {outcome.summary}"
+    )
+    if outcome.status is GateStatus.ENVIRONMENT_CHANGED:
+        # Not a failure — but it means nothing was actually checked, which
+        # must not read as a green gate in the log.
+        print(
+            "NOTE: the committed baselines were recorded under a different "
+            f"environment ({', '.join(outcome.diff_keys)}); nothing was gated. "
+            "Re-stamp with RAG_EVAL_UPDATE_BASELINES=1 on this machine."
+        )
+        return
+    assert outcome.deltas, "the gate passed without comparing any metric"

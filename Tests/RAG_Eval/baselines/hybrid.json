@@ -1,0 +1,68 @@
+{
+  "baseline_id": "hybrid",
+  "created_at": "2026-08-09T04:57:27.987460+00:00",
+  "pipeline_config": {
+    "mode": "hybrid",
+    "k": 10,
+    "profile": "hybrid_basic",
+    "source_types": [
+      "media",
+      "notes",
+      "conversations"
+    ]
+  },
+  "metrics": {
+    "overall.precision": 0.11673101673101673,
+    "overall.recall": 1.0,
+    "overall.mrr": 1.0,
+    "overall.ndcg": 1.0,
+    "overall.f1": 0.207998907998908,
+    "category.keyword.precision": 0.13515873015873014,
+    "category.keyword.recall": 1.0,
+    "category.keyword.mrr": 1.0,
+    "category.keyword.ndcg": 1.0,
+    "category.keyword.f1": 0.2364309764309764,
+    "category.paraphrase.precision": 0.10341880341880343,
+    "category.paraphrase.recall": 1.0,
+    "category.paraphrase.mrr": 1.0,
+    "category.paraphrase.ndcg": 1.0,
+    "category.paraphrase.f1": 0.18741258741258743,
+    "category.vocabulary_mismatch.precision": 0.1052469135802469,
+    "category.vocabulary_mismatch.recall": 1.0,
+    "category.vocabulary_mismatch.mrr": 1.0,
+    "category.vocabulary_mismatch.ndcg": 1.0,
+    "category.vocabulary_mismatch.f1": 0.190347923681257
+  },
+  "metadata": {
+    "environment": {
+      "model": "all-MiniLM-L6-v2",
+      "sentence_transformers": "5.4.1",
+      "corpus_sha256": "cbf911c98c8ede1eb0c0bc79d31528eda559d57937afb9b3d7b63ada9e2e3957",
+      "platform": "darwin"
+    },
+    "report_only": {
+      "latency": {
+        "count": 44.0,
+        "mean_ms": 13.2,
+        "p95_ms": 21.5,
+        "max_ms": 56.4,
+        "total_s": 0.6
+      },
+      "mean_docs_at_k": 9.135,
+      "num_queries": 37,
+      "num_golden_queries": 44,
+      "num_negative": 7,
+      "runtime_backends": [
+        "rag-hybrid"
+      ],
+      "errors": [],
+      "negatives": {
+        "count": 7,
+        "returned_any": 7,
+        "mean_docs_at_k": 9.429,
+        "max_top_score": 0.0115,
+        "max_top_vector_score": 0.2387
+      }
+    }
+  }
+}
