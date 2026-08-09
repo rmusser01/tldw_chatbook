@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from functools import partial
+
 import pytest
 
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
@@ -65,6 +67,66 @@ def _collection_state(database: PromptsDatabase, collection_id: int) -> tuple:
         .fetchone()
     )
     return tuple(row)
+
+
+@pytest.mark.parametrize("operation", ["create", "update", "replace"])
+def test_membership_writes_serialize_identity_validation_in_one_transaction(
+    local_prompts, operation
+):
+    database, service, (first_prompt, second_prompt, _third_prompt) = local_prompts
+    service.list_prompt_collections(limit=1)
+    validation_markers = ["SELECT 1 FROM PROMPTS WHERE ID"]
+
+    if operation == "create":
+        action = partial(
+            service.create_prompt_collection,
+            {"name": "Traced Create", "prompt_ids": [first_prompt]},
+        )
+    else:
+        collection_id = _create_collection(service, f"Traced {operation.title()}")
+        if operation == "update":
+            validation_markers.append("SELECT NAME FROM LOCALPROMPTCOLLECTIONS")
+            action = partial(
+                service.update_prompt_collection,
+                collection_id,
+                {"prompt_ids": [second_prompt]},
+            )
+        else:
+            validation_markers.append("SELECT 1 FROM LOCALPROMPTCOLLECTIONS")
+            action = partial(
+                service.replace_prompt_collection_memberships,
+                first_prompt,
+                [collection_id],
+            )
+
+    statements: list[str] = []
+    connection = database.get_connection()
+    connection.set_trace_callback(statements.append)
+    try:
+        action()
+    finally:
+        connection.set_trace_callback(None)
+
+    normalized = [" ".join(statement.upper().split()) for statement in statements]
+    assert normalized.count("BEGIN IMMEDIATE") == 1
+    begin = normalized.index("BEGIN IMMEDIATE")
+    commit = normalized.index("COMMIT", begin)
+    validations = []
+    for marker in validation_markers:
+        validation = next(
+            index for index, statement in enumerate(normalized) if marker in statement
+        )
+        assert begin < validation < commit
+        validations.append(validation)
+    membership_write = next(
+        index
+        for index, statement in enumerate(normalized)
+        if (
+            statement.startswith("INSERT INTO LOCALPROMPTCOLLECTIONITEMS")
+            or statement.startswith("DELETE FROM LOCALPROMPTCOLLECTIONITEMS")
+        )
+    )
+    assert begin < max(validations) < membership_write < commit
 
 
 def test_collection_update_replaces_only_that_collections_members(local_prompts):
@@ -228,6 +290,28 @@ def test_prompt_membership_replace_supports_multiple_collections_and_preserves_o
         _collection_state(database, untouched_collection)
         == before_states[untouched_collection]
     )
+
+
+def test_prompt_membership_list_excludes_deleted_collections_and_sorts_active_ids(
+    local_prompts,
+):
+    database, service, (prompt_id, _second_prompt, _third_prompt) = local_prompts
+    first_active = _create_collection(service, "First Active", [prompt_id])
+    deleted_collection = _create_collection(service, "Deleted", [prompt_id])
+    last_active = _create_collection(service, "Last Active", [prompt_id])
+    database.get_connection().execute(
+        "UPDATE LocalPromptCollections SET deleted = 1 WHERE collection_id = ?",
+        (deleted_collection,),
+    )
+    database.get_connection().commit()
+
+    outcome = service.list_prompt_collection_memberships(prompt_id)
+
+    assert outcome == {
+        "prompt_id": prompt_id,
+        "collection_ids": (first_active, last_active),
+        "changed": False,
+    }
 
 
 def test_prompt_membership_replace_is_idempotent_without_any_mutation(local_prompts):

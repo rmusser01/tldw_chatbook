@@ -1531,6 +1531,26 @@ async def test_prompt_scope_rejects_invalid_memberships_before_policy_or_adapter
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("prompt_id", [True, 0, -1, 1.5, "7", 2**63])
+async def test_prompt_scope_rejects_invalid_membership_list_id_before_policy_or_adapter(
+    prompt_id,
+):
+    policy = FakePolicyEnforcer()
+    local = FakeLocalPromptService()
+    server = FakeServerPromptService()
+    service = PromptScopeService(local, server, policy)
+
+    with pytest.raises(ValueError, match="prompt_id"):
+        await service.list_prompt_collection_memberships(
+            mode="local", prompt_id=prompt_id
+        )
+
+    assert policy.actions == []
+    assert local.calls == []
+    assert server.calls == []
+
+
+@pytest.mark.asyncio
 async def test_prompt_scope_membership_policy_denial_stops_before_local_adapter():
     policy = FakePolicyEnforcer.deny()
     local = FakeLocalPromptService()
@@ -1540,6 +1560,21 @@ async def test_prompt_scope_membership_policy_denial_stops_before_local_adapter(
         await service.list_prompt_collection_memberships(mode="local", prompt_id=7)
 
     assert policy.actions == ["prompts.collections.detail.local"]
+    assert local.calls == []
+
+
+@pytest.mark.asyncio
+async def test_prompt_scope_membership_update_policy_denial_stops_before_local_adapter():
+    policy = FakePolicyEnforcer.deny()
+    local = FakeLocalPromptService()
+    service = PromptScopeService(local, FakeServerPromptService(), policy)
+
+    with pytest.raises(PermissionError):
+        await service.replace_prompt_collection_memberships(
+            mode="local", prompt_id=7, collection_ids=[3]
+        )
+
+    assert policy.actions == ["prompts.collections.update.local"]
     assert local.calls == []
 
 
