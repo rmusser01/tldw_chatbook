@@ -30,13 +30,27 @@ PRIVATE_PATH = "/private/PRIVATE-PATH-SENTINEL.mp4"
 PRIVATE_ERROR = "PRIVATE-ERROR-SENTINEL"
 
 
+class _ObservedPreview(ConsoleVideoPreview):
+    """Preview that records its own non-bubbling worker state messages."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self.worker_states: list[WorkerState] = []
+        self.seen_workers: list[Worker[Any]] = []
+        super().__init__(*args, **kwargs)
+
+    def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        self.worker_states.append(event.state)
+        if event.worker not in self.seen_workers:
+            self.seen_workers.append(event.worker)
+
+
 class _PreviewApp(App[None]):
     """Small mounted host that exposes a second independently clickable action."""
 
     def __init__(
         self,
         *,
-        preview_class: type[ConsoleVideoPreview] = ConsoleVideoPreview,
+        preview_class: type[_ObservedPreview] = _ObservedPreview,
         two_previews: bool = False,
     ) -> None:
         super().__init__()
@@ -48,8 +62,6 @@ class _PreviewApp(App[None]):
         )
         self.action_count = 0
         self.action_seen = Event()
-        self.worker_states: list[WorkerState] = []
-        self.seen_workers: list[Worker[Any]] = []
 
     def compose(self) -> ComposeResult:
         yield self.preview
@@ -61,12 +73,6 @@ class _PreviewApp(App[None]):
         if event.button.id == "other-action":
             self.action_count += 1
             self.action_seen.set()
-
-    def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
-        self.worker_states.append(event.state)
-        if event.worker not in self.seen_workers:
-            self.seen_workers.append(event.worker)
-
 
 class _Source:
     """Minimal decoder seam; individual tests override only their needed phase."""
@@ -112,8 +118,12 @@ async def _wait(event: Event, *, timeout: float = 2.0) -> None:
 async def _finish_workers(app: _PreviewApp, pilot: Any) -> None:
     await app.workers.wait_for_complete()
     await pilot.pause()
-    assert WorkerState.ERROR not in app.worker_states
-    assert all(worker.state is not WorkerState.ERROR for worker in app.seen_workers)
+    assert app.preview.seen_workers
+    assert WorkerState.ERROR not in app.preview.worker_states
+    assert all(
+        worker.state is not WorkerState.ERROR
+        for worker in app.preview.seen_workers
+    )
 
 
 def _responsive_release_watchdog(
@@ -145,7 +155,7 @@ def _assert_sanitized(
     assert matching
     assert any(f"phase={phase}" in record for record in matching)
     assert any(f"error_type={error_type}" in record for record in matching)
-    joined = "\n".join(matching)
+    joined = "\n".join(records)
     assert PRIVATE_ERROR not in joined
     assert PRIVATE_PATH not in joined
     assert "Traceback" not in joined
@@ -375,7 +385,7 @@ async def test_resume_generation_rejects_late_old_frame_eof_and_cleanup(monkeypa
         assert app.preview.state == "paused"
 
 
-class _ControllableRegionPreview(ConsoleVideoPreview):
+class _ControllableRegionPreview(_ObservedPreview):
     force_offscreen = False
 
     @property
@@ -829,7 +839,7 @@ async def test_bridge_refusal_is_attempted_once_without_direct_ui_fallback(monke
     bridge_calls: list[tuple[str, int]] = []
     records: list[str] = []
 
-    class ObservedPreview(ConsoleVideoPreview):
+    class BridgeObservedPreview(_ObservedPreview):
         def _accept_source(self, *args):
             accepted_directly.set()
             return super()._accept_source(*args)
@@ -840,7 +850,7 @@ async def test_bridge_refusal_is_attempted_once_without_direct_ui_fallback(monke
             sources.append(self)
 
     _patch_source(monkeypatch, RefusedSource)
-    app = _PreviewApp(preview_class=ObservedPreview)
+    app = _PreviewApp(preview_class=BridgeObservedPreview)
     sink = logger.add(lambda message: records.append(str(message)))
     try:
         async with app.run_test() as pilot:

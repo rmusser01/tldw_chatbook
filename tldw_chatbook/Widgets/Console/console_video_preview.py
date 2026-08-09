@@ -410,12 +410,6 @@ class ConsoleVideoPreview(Vertical):
         progress = self.query_one(f"#{self.id}-progress", Static)
         progress.update(progress_line(self._position, self._duration))
 
-    def _refresh_progress(self) -> None:
-        try:
-            self._update_progress()
-        except Exception:
-            return
-
     # -- off-screen / lifecycle guards ------------------------------------------
 
     def _pause_if_offscreen(
