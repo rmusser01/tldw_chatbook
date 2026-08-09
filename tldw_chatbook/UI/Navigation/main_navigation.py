@@ -473,6 +473,12 @@ class MainNavigationBar(Container):
         """Re-scroll to the newly-focused button, then ghost-check
         (task-3200 review finding).
 
+        Args:
+            event: Textual's focus notification; ``event.widget`` is the
+                descendant that just received focus. Only
+                ``NavigationButton`` descendants trigger the re-scroll —
+                anything else falls through untouched.
+
         `Widget.focus()` defaults to `scroll_visible=True`: Tab landing
         on an off-screen-but-focusable button auto-scrolls the strip to
         reveal it, same as a resize -- but that happens via Textual's OWN
