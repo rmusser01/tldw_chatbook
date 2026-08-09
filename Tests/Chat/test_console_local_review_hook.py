@@ -170,6 +170,39 @@ def test_compose_local_provider_disabled_flag(monkeypatch, tmp_path):
     assert controller._compose_local_provider() == (None, None)
 
 
+def test_compose_local_provider_coerces_quoted_false_to_disabled(monkeypatch, tmp_path):
+    """task-3240 fix round 1 (Critical 2). `get_cli_setting` returns the
+    RAW TOML value -- a hand-typed quoted "false" is a non-empty string
+    and therefore truthy under a bare `not get_cli_setting(...)` read, so
+    it would COMPOSE the entire local tool group while the MCP-hub gate
+    checkbox (`Agents/builtin_tool_gate.py`'s `all_tool_gates()`) and
+    `mcp_workbench.py`'s own `[console] local_tools_enabled` read both
+    show it OFF -- the exact lie-class task-3240 exists to close, on the
+    very gate it added. Must coerce identically to every other
+    `[tools]`/`[console]` gate read in the codebase.
+    """
+    monkeypatch.setattr(
+        controller_mod, "get_cli_setting", _console_settings(enabled="false")
+    )
+    controller = _bare_controller(SimpleNamespace(unified_mcp_service=_FakeService()))
+    assert controller._compose_local_provider() == (None, None)
+
+
+def test_compose_local_provider_coerces_quoted_true_to_enabled(monkeypatch, tmp_path):
+    """Mirror case: a quoted "true" must still compose the provider."""
+    monkeypatch.setattr(
+        controller_mod,
+        "get_cli_setting",
+        _console_settings(enabled="true", workspace_root=str(tmp_path)),
+    )
+    controller = _bare_controller(
+        SimpleNamespace(unified_mcp_service=_FakeService())
+    )
+    local_provider, hook = controller._compose_local_provider()
+    assert isinstance(local_provider, LocalToolProvider)
+    assert callable(hook)
+
+
 def test_compose_local_provider_no_service(monkeypatch, tmp_path):
     monkeypatch.setattr(controller_mod, "get_cli_setting", _console_settings())
     controller = _bare_controller(SimpleNamespace())  # no unified_mcp_service
