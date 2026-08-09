@@ -20,11 +20,12 @@ Press **Ctrl+3** to open Library, then click **Prompts** in the rail's
 
 ![Prompt editor](../images/library/prompts-editor.svg)
 
-- **Prompts list** — the default view: a "Prompts (N)" header, the
-  "Filter prompts… (Enter)" field, a toolbar ("sort: Newest ▸" /
-  "sort: Name ▸" and "Import…"), and one row per prompt showing its name
-  with the description and age underneath. Empty states: "No prompts
-  yet." / "No prompts match your filter."
+- **Prompts list** — the default view: an exact "Prompts (N)" header, the
+  "Filter prompts… (Enter)" field, a local collection selector, a toolbar
+  ("sort: Newest ▸" / "sort: Name ▸" and "Import…"), and one row per prompt
+  showing its name, artifact/source/lane summary, and description and age when present.
+  Lists longer than one 50-row page have **Previous** and **Next** controls
+  plus an exact "Page … · showing … of …" line.
 - **Import row** — appears inline under the toolbar when you press
   "Import…": a "File or folder path…" field, then "Browse…", "Import",
   and "Cancel", with an outcome line underneath.
@@ -40,10 +41,48 @@ Press **Ctrl+3** to open Library, then click **Prompts** in the rail's
 
 | Control | What it does |
 |---|---|
-| Filter prompts… (Enter) | Type and press **Enter** to filter; matches the name and description |
-| sort: Newest ▸ / sort: Name ▸ | Click to toggle between newest-first and alphabetical |
+| Filter prompts… (Enter) | Filters local prompt names and descriptions after a short pause; **Enter** applies the pending text immediately without sending a second request |
+| collection: All prompts ▸ | Opens the local-only collection manager; choose **All prompts** or one collection |
+| sort: Newest ▸ / sort: Name ▸ | Click to toggle between most recently modified first and name A–Z; changing sort returns to page 1 |
+| Previous / Next | Requests the adjacent exact 50-row page without changing search, collection, or sort |
 | Import… | Opens the inline Import row (below) |
 | A prompt row | Opens that prompt in the editor |
+
+Search, collection, sort, and page form one exact local request. The header and
+page line use the matching total, including results beyond the first page. The
+list shows a loading state while that request runs. If it fails, the bounded
+error line and **Retry** repeat the same request. Empty outcomes remain distinct:
+
+- **No prompts yet. Create or import a prompt to begin.** — the local library is empty.
+- **This collection has no prompts. Choose another collection or add prompts.** —
+  the selected collection is valid but empty.
+- **No prompts match "…". Clear the search or try different words.** — the
+  current search has no matches, whether browsing all prompts or a collection.
+
+### Local Prompt collections
+
+The list selector and the editor's **Manage collections** action open the same
+**Manage Prompt collections** surface. It is explicitly **Local only**: there is
+no source or server selector. Collection rows are ordered by the local catalog's
+stable exact order. Type in **Search collections… (Enter)** and press **Enter**
+to search names. The manager fetches at most 100 rows at a time; **Load more**
+appends the next bounded page and remains available until the complete catalog
+has loaded. A failed initial, search, or later-page request shows **Retry** for
+that exact catalog request.
+
+Use **New collection** to create a name. Focus one concrete collection and use
+**Rename selected** to rename it; **All prompts** is not renameable. Names are
+shown literally, including Unicode and text such as `[bold]`. If two names differ
+only in a way that would otherwise look identical, their rows retain literal
+ID-qualified labels such as `Planning · #17`. A deterministic name collision says
+**Name already exists — choose another.** and does not offer a misleading Retry.
+Other failures use bounded create/rename copy and may be retried without exposing
+service details. The Prompt collection manager deliberately has no **Delete**
+action.
+
+Searching the collection catalog does not silently change the active Prompt
+filter. Choose **All prompts** or a collection row, then **Done**, to change it;
+**Cancel** keeps the prior choice.
 
 ### Importing prompts
 
@@ -75,6 +114,27 @@ folder."
 - **Recipe starter content** — controls whether the current block text is
   included when saving a new Recipe.
 - **Keywords (comma-separated)** and **Author**.
+
+Saved local Prompts also show **Collections** with their current membership
+names. If a referenced collection cannot be found, its honest fallback is
+`Collection #ID`. **Manage collections** opens the shared manager in multi-select
+mode. Check zero, one, or many collections; those checks are staged only. Focusing
+one row also sets the separate, persistent **Rename target: …** line, so renaming
+one collection never changes the staged membership set.
+
+Returning from the manager shows current and staged memberships in the editor.
+Only **Apply memberships** writes the staged set. It is independent of **Save
+Prompt**: applying memberships does not save prompt content or clear its unsaved
+marker, and saving content does not claim that staged memberships were applied.
+An Apply failure keeps the staged set and offers another explicit Apply. If the
+initial membership load fails, the manager cannot open on an unknown empty set;
+use **Retry memberships** to load the exact current memberships first.
+
+Membership controls are disabled for an unsaved Prompt, a non-local/foreign
+identity, or an editor that is no longer current. After a successful Apply, the
+Prompts rail count is refreshed and the hidden exact list is invalidated. **‹ Back
+to list** then reloads the current search/collection/sort/page scope before showing
+it; the membership outcome never says that the Prompt itself was saved.
 
 Nothing autosaves here — use **Save Prompt**, **Save Recipe**, or **Update
 original**. While you have unsaved edits the meta line shows an "Unsaved
@@ -174,12 +234,20 @@ prompt to the Library. See
    artifact, press **Export…**, and pick a location; a notice confirms the export.
    A compatibility artifact or legacy Recipe that fails this check requires
    **Convert and save as a new Prompt** before Copy, Export, or Duplicate.
+6. **Browse one collection** — press **collection: All prompts ▸**, choose a
+   collection, then press **Done**. Search and paging now stay inside that exact
+   collection until you explicitly choose **All prompts** or another collection.
+7. **Change a Prompt's memberships** — open a saved local Prompt, press **Manage
+   collections**, stage the checks you want, press **Done**, then press **Apply
+   memberships**. Save any content edits separately with **Update original**.
 
 ## Keyboard & commands
 
 | Key | Action |
 |---|---|
-| Enter (in the filter field) | Apply the prompts filter |
+| Enter (in the Prompt filter) | Apply the pending debounced Prompt search immediately |
+| Enter (in collection search) | Run the collection-name search from page 1 |
+| Escape (in the collection manager) | Cancel the manager unless a create/rename is still settling |
 
 `/prompt` and `/system` are Console commands, documented in
 [Console: Context & RAG](../console/context-and-rag.md).
@@ -202,6 +270,8 @@ prompt to the Library. See
   name)", never overwritten or auto-renamed.
 - **The filter ignores keywords** — it matches only the name and
   description, so a keywords-based search will come up empty.
+- **Collections here are local-only** — this manager does not browse or mutate
+  server collections, and it does not offer collection deletion.
 - **Size caps**: names up to 300 characters; the system prompt, user
   prompt, and description up to 2,000,000 characters each.
 - **No bulk export yet** — Export… lives in the editor and exports one
@@ -209,6 +279,7 @@ prompt to the Library. See
   item (task-197).
 
 —
-*TASK-202 and TASK-196 behavior in this guide were reverified after final
-review corrections on 2026-08-09. Verification is tied to the branch history
-rather than a self-referential documentation SHA.*
+*TASK-198, TASK-202, and TASK-196 behavior in this guide was reverified against
+the real Textual compositor and focused automated suites on 2026-08-09.
+Verification is tied to branch history rather than a self-referential
+documentation SHA.*
