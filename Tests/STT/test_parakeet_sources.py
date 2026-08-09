@@ -8,6 +8,10 @@ from typing import Any
 
 import pytest
 
+from Tests.Model_Artifacts.test_service import (
+    install_descriptor_payload,
+    single_file_descriptor,
+)
 import tldw_chatbook.STT.parakeet_external as parakeet_external
 from tldw_chatbook.Local_Ingestion.stt_batch_routing import (
     PARAKEET_V2_MODEL,
@@ -24,6 +28,7 @@ from tldw_chatbook.Model_Artifacts.service import (
     ArtifactFormat,
     ArtifactRef,
     ArtifactRole,
+    ModelArtifactService,
     ProvenanceClass,
 )
 from tldw_chatbook.STT.executor import ModelIdentity
@@ -244,6 +249,42 @@ def test_explicit_override_wins_over_preferred_managed(tmp_path: Path) -> None:
         (vad.artifact_id, vad.revision, vad.variant),
     )
     assert calls == []
+    service.close()
+
+
+def test_external_dispatch_uses_the_injected_verified_vad_store(
+    tmp_path: Path,
+) -> None:
+    key = ParakeetSourceKey.V2_INT8
+    root = tmp_path / "override"
+    _materialize(root)
+    managed_service = ModelArtifactService(tmp_path / "custom-store")
+    vad = parakeet_vad_reference()
+    descriptor = single_file_descriptor(
+        vad,
+        ArtifactRole.DEPENDENCY,
+        b"vad",
+    )
+    install_descriptor_payload(managed_service, tmp_path, descriptor, b"vad")
+    config = _Config()
+    service = ParakeetSourceService(
+        verifier=ExternalParakeetVerifier(),
+        read_setting=config.read,
+        write_settings=config.write,
+        descriptor_for=lambda model, precision: _descriptor(
+            ParakeetSourceKey.from_values(model, precision)
+        ),
+        active_managed=lambda _model, _precision: None,
+        managed_service=managed_service,
+    )
+
+    dispatch = service.resolve(key, override=root)
+
+    assert dispatch.managed_store_root == managed_service.artifacts_path.parent
+    assert dispatch.managed_artifact_ref is None
+    assert dispatch.managed_dependency_refs == (
+        (vad.artifact_id, vad.revision, vad.variant),
+    )
     service.close()
 
 

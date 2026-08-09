@@ -376,11 +376,18 @@ class ParakeetSourceService:
             raise ParakeetSourceError(ParakeetSourceErrorCode.MANAGED_UNAVAILABLE)
         return dispatch
 
-    @staticmethod
-    def _external_dispatch(prepared: PreparedExternalSelection) -> ParakeetDispatch:
+    def _external_dispatch(
+        self,
+        prepared: PreparedExternalSelection,
+    ) -> ParakeetDispatch:
         verified = prepared.verified
         key = prepared.key
         vad = parakeet_vad_reference()
+        managed_store_root = (
+            self._managed_service.artifacts_path.parent
+            if self._managed_service is not None
+            else managed_model_artifact_root().absolute()
+        )
         return ParakeetDispatch(
             identity=ModelIdentity(
                 provider_id="parakeet-onnx",
@@ -392,7 +399,7 @@ class ParakeetSourceService:
                 local_snapshot_token=verified.snapshot.token,
             ),
             local_source=verified.snapshot,
-            managed_store_root=managed_model_artifact_root().absolute(),
+            managed_store_root=managed_store_root,
             managed_artifact_ref=None,
             option_updates=MappingProxyType(
                 {"transcription_model_dir": str(verified.directory)}
