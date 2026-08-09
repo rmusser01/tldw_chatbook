@@ -12161,9 +12161,8 @@ class LibraryScreen(BaseAppScreen):
                         )
                         succeeded.append(media_id)
                     except Exception:
-                        logger.opt(exception=True).warning(
-                            f"Failed to delete Library media item {media_id!r} "
-                            "in bulk delete."
+                        logger.warning(
+                            "Failed to delete Library media item in bulk delete."
                         )
                         failed.append(media_id)
             else:

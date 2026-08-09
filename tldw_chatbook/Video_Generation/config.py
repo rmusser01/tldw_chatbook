@@ -140,7 +140,10 @@ def _warn_unknown_top_level_keys(raw: dict) -> None:
             else:
                 logger.warning(f"[video_generation] unknown key '{key}' is ignored")
     except Exception as e:  # never let a malformed section crash config loading
-        logger.debug(f"video_generation unknown-key scan failed: {e}")
+        logger.debug(
+            "video_generation unknown-key scan failed (error_type={})",
+            type(e).__name__,
+        )
 
 
 def _read_video_generation_toml() -> dict:
@@ -154,7 +157,11 @@ def _keyring_get(backend: str):
     try:
         return keyring.get_password("tldw_chatbook_videogen", backend)
     except Exception as e:  # keyring backend may be unavailable
-        logger.debug(f"keyring lookup failed for videogen/{backend}: {e}")
+        logger.debug(
+            "keyring lookup failed for videogen/{} (error_type={})",
+            backend,
+            type(e).__name__,
+        )
         return None
 
 

@@ -179,7 +179,7 @@ class VideoStore:
         path = self._video_path(message_id, slug, extension)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content)
-        logger.debug("VideoStore: saved {} bytes to {}", len(content), path.name)
+        logger.debug("VideoStore: saved {} bytes", len(content))
         return path
 
     def resolve(self, message_id: str, slug: str, *, extension: str = "mp4") -> Path | None:
@@ -283,7 +283,10 @@ class VideoStore:
             evicted.append((video.message_id, video.slug))
             return removed_files + 1, removed_bytes + video.size_bytes
         except OSError as exc:
-            logger.warning("VideoStore: failed to remove {}: {}", video.path, exc)
+            logger.warning(
+                "VideoStore: failed to remove video (error_type={})",
+                type(exc).__name__,
+            )
             return removed_files, removed_bytes
 
     def _prune_empty_dirs(self) -> None:

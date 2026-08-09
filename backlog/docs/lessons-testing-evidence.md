@@ -1916,3 +1916,19 @@ designed to find.
 follow-up. Build remediation inventories from the complete owning population,
 grouped by stable module/function/diagnostic identity; use heuristic matches
 only as candidates or cross-checks, never as the denominator.
+
+## A line-independent diagnostic digest can still be indentation-sensitive (TASK-14651, 2026-08-09)
+
+**Incident.** The persistent-diagnostic inventory described its call digests as
+position-independent. Moving an unchanged multiline Library diagnostic into a
+more deeply nested block still changed its digest because
+`ast.get_source_segment()` retains continuation-line indentation. Later in the
+same reconciliation, range-formatting three already-reviewed logger calls made
+the architecture gate red again even though their AST behavior was unchanged.
+
+**The rule.** Treat this inventory as line-number-independent, not
+whitespace-independent. When reviewing a delta, compare the actual logger-call
+AST/source as well as the digest so a pure indentation change is not mistaken
+for a policy change. Run formatter gates before the final generated-artifact
+refresh, then rerun the inventory checker after formatting. Do not refresh the
+manifest first and assume later formatting is harmless.

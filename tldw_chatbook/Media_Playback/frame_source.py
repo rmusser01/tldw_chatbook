@@ -148,7 +148,10 @@ class AvFrameSource:
             logger.debug("AvFrameSource: iteration abandoned (pause/stop)")
             raise
         except Exception as exc:
-            logger.warning("AvFrameSource: decode stopped early: {}", exc)
+            logger.warning(
+                "AvFrameSource: decode stopped early (error_type={})",
+                type(exc).__name__,
+            )
 
     def close(self) -> None:
         if self._container is not None:

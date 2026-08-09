@@ -97,7 +97,11 @@ class VideoAdapterRegistry:
             self._adapters[name] = adapter
             return adapter
         except Exception as exc:
-            logger.error("Failed to initialize video adapter for '{}': {}", name, exc)
+            logger.error(
+                "Failed to initialize video adapter for '{}' (error_type={})",
+                name,
+                type(exc).__name__,
+            )
             return None
 
     def get_adapter_class(self, name: str) -> type[VideoGenerationAdapter] | None:
@@ -108,7 +112,11 @@ class VideoAdapterRegistry:
         try:
             return self._resolve_adapter_class(spec)
         except Exception as exc:
-            logger.error("Failed to resolve video adapter class for '{}': {}", name, exc)
+            logger.error(
+                "Failed to resolve video adapter class for '{}' (error_type={})",
+                name,
+                type(exc).__name__,
+            )
             return None
 
     @staticmethod

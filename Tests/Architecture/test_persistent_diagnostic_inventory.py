@@ -12,6 +12,71 @@ from scripts import check_persistent_diagnostic_inventory as diagnostic_inventor
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
+    "tldw_chatbook/Media_Playback/frame_source.py": {
+        "decode stopped early": ("type(exc).__name__",),
+    },
+    "tldw_chatbook/RAG_Search/eval/regression.py": {
+        "Saved metric baseline": ("len(metrics)",),
+    },
+    "tldw_chatbook/UI/Screens/chat_screen.py": {
+        "retention sweep failed": (),
+        "Video generation raised": ("type(exc).__name__",),
+        "video play failed": ("type(exc).__name__",),
+        "save-video copy failed": (),
+        "Video regeneration raised": ("type(exc).__name__",),
+        "stream resolution failed": ("type(exc).__name__",),
+    },
+    "tldw_chatbook/UI/Screens/library_screen.py": {
+        "in bulk delete": (),
+    },
+    "tldw_chatbook/UI/Screens/settings_video_gen_defaults.py": {
+        "could not resolve config path": ("type(exc).__name__",),
+        "could not parse video-generation config": ("type(exc).__name__",),
+    },
+    "tldw_chatbook/UI/Screens/video_player_screen.py": {
+        "frame render skipped": ("type(exc).__name__",),
+    },
+    "tldw_chatbook/Video_Generation/adapter_registry.py": {
+        "Failed to initialize video adapter": ("name", "type(exc).__name__"),
+        "Failed to resolve video adapter class": (
+            "name",
+            "type(exc).__name__",
+        ),
+    },
+    "tldw_chatbook/Video_Generation/adapters/minimax_video_adapter.py": {
+        "remote task cancel failed": ("type(exc).__name__",),
+    },
+    "tldw_chatbook/Video_Generation/config.py": {
+        "unknown-key scan failed": ("type(e).__name__",),
+        "keyring lookup failed": ("backend", "type(e).__name__"),
+    },
+    "tldw_chatbook/Video_Generation/video_store.py": {
+        "VideoStore: saved": ("len(content)",),
+        "VideoStore: failed to remove": ("type(exc).__name__",),
+    },
+    "tldw_chatbook/Video_Generation/video_templates.py": {
+        "is not a table": (),
+        "has unknown keys": ("len(unknown)",),
+        "has no prompt_suffix": (),
+    },
+    "tldw_chatbook/Widgets/Console/console_video_preview.py": {
+        "peer pause failed": (),
+        "decode loop ended early": ("type(exc).__name__",),
+        "frame render skipped": ("type(exc).__name__",),
+    },
+    "tldw_chatbook/Widgets/settings_agents_panel.py": {
+        "could not open agent runs database": ("type(exc).__name__",),
+    },
+    "tldw_chatbook/app.py": {
+        "Config load failure warning failed": ("type(e).__name__",),
+    },
+    "tldw_chatbook/config.py": {
+        "Refusing to write CLI config": ("type(exc).__name__",),
+    },
+}
+
+
 def test_production_diagnostic_inventory_and_sink_topology_are_unchanged() -> None:
     result = subprocess.run(
         [sys.executable, "scripts/check_persistent_diagnostic_inventory.py"],
@@ -21,6 +86,55 @@ def test_production_diagnostic_inventory_and_sink_topology_are_unchanged() -> No
         text=True,
     )
     assert result.returncode == 0, result.stderr or result.stdout
+
+
+def test_reviewed_diagnostic_changes_are_metadata_only() -> None:
+    """TASK-14651: reviewed drift cannot persist private values or tracebacks."""
+    failures: list[str] = []
+    for relative, expected_by_label in REVIEWED_METADATA_ONLY_DIAGNOSTICS.items():
+        source = (REPO_ROOT / relative).read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=relative)
+        logger_symbols = diagnostic_inventory._logger_symbols(tree)
+        calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and diagnostic_inventory._is_diagnostic_call(node, logger_symbols)
+            and node.args
+        ]
+        for label, expected_fields in expected_by_label.items():
+            matches = [call for call in calls if label in ast.unparse(call.args[0])]
+            if len(matches) != 1:
+                failures.append(
+                    f"{relative}: expected one diagnostic containing {label!r}, "
+                    f"found {len(matches)}"
+                )
+                continue
+            call = matches[0]
+            fields = [
+                ast.unparse(node.value)
+                for node in ast.walk(call.args[0])
+                if isinstance(node, ast.FormattedValue)
+            ]
+            fields.extend(ast.unparse(argument) for argument in call.args[1:])
+            captures_exception = (
+                isinstance(call.func, ast.Attribute) and call.func.attr == "exception"
+            ) or any(
+                isinstance(node, ast.keyword)
+                and node.arg == "exception"
+                and isinstance(node.value, ast.Constant)
+                and node.value.value is True
+                for node in ast.walk(call.func)
+            )
+            if sorted(fields) != sorted(expected_fields):
+                failures.append(
+                    f"{relative}: {label!r} fields {fields!r}, "
+                    f"expected {list(expected_fields)!r}"
+                )
+            if captures_exception:
+                failures.append(f"{relative}: {label!r} captures exception details")
+
+    assert failures == []
 
 
 def test_persistent_metadata_marker_cannot_be_forged_outside_its_owner() -> None:

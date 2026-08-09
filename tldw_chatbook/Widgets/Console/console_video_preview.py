@@ -186,7 +186,7 @@ class ConsoleVideoPreview(Vertical):
             try:
                 active.pause()
             except Exception:
-                logger.opt(exception=True).debug("video preview peer pause failed")
+                logger.debug("video preview peer pause failed")
             finally:
                 cls._active = None
 
@@ -203,7 +203,10 @@ class ConsoleVideoPreview(Vertical):
                     break
                 self.call_from_thread(self._show_frame, timestamp, image)
         except Exception as exc:
-            logger.warning("video preview decode loop ended early: {}", exc)
+            logger.warning(
+                "video preview decode loop ended early (error_type={})",
+                type(exc).__name__,
+            )
         finally:
             # Natural EOF lands paused-at-end (the last frame stays up);
             # an explicit pause already transitioned state and stopped us.
@@ -219,7 +222,10 @@ class ConsoleVideoPreview(Vertical):
             scaled.thumbnail((PIXELS_MAX_COLS, PIXELS_MAX_LINES * 2))
             self._pixels = Pixels.from_image(scaled)
         except Exception as exc:
-            logger.debug("video preview frame render skipped: {}", exc)
+            logger.debug(
+                "video preview frame render skipped (error_type={})",
+                type(exc).__name__,
+            )
             return
         self._position = timestamp
         self._refresh_frame()
