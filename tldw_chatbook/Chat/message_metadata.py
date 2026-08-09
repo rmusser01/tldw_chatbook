@@ -42,6 +42,10 @@ TRANSCRIPT_STATUSES: frozenset[str] = frozenset(
 )
 
 
+#: Closed vocabulary for the trusted source of a dynamically projected row.
+TEMPLATE_KINDS: frozenset[str] = frozenset({"", "character_greeting"})
+
+
 @dataclass(frozen=True, slots=True)
 class MessageMetadata:
     """Structured provenance/state facts about one transcript row.
@@ -58,6 +62,8 @@ class MessageMetadata:
             barge-in). The visible marker in the content is for the human
             reader; THIS is what machine consumers read.
         transcript_status: One of :data:`TRANSCRIPT_STATUSES`.
+        template_kind: The closed kind of a trusted template source.
+        template_source: The source text used by ``template_kind``.
 
     Raises:
         ValueError: If ``transcript_status`` is outside the closed
@@ -70,6 +76,8 @@ class MessageMetadata:
     model: str = ""
     interrupted: bool = False
     transcript_status: str = ""
+    template_kind: str = ""
+    template_source: str = ""
 
     def __post_init__(self) -> None:
         if self.transcript_status not in TRANSCRIPT_STATUSES:
@@ -77,6 +85,21 @@ class MessageMetadata:
                 "transcript_status must be one of "
                 f"{sorted(TRANSCRIPT_STATUSES)}; got {self.transcript_status!r}"
             )
+        if (
+            not isinstance(self.template_kind, str)
+            or self.template_kind not in TEMPLATE_KINDS
+        ):
+            raise ValueError(
+                "template_kind must be one of "
+                f"{sorted(TEMPLATE_KINDS)}; got {self.template_kind!r}"
+            )
+        if self.template_kind:
+            if not isinstance(self.template_source, str) or not self.template_source.strip():
+                raise ValueError(
+                    "template_source must be a nonblank string when template_kind is set"
+                )
+        elif self.template_source:
+            raise ValueError("template_source requires a recognized template_kind")
 
     @property
     def is_empty(self) -> bool:
@@ -128,6 +151,10 @@ class MessageMetadata:
             model=_as_text(data.get("model")),
             interrupted=_as_bool(data.get("interrupted")),
             transcript_status=_as_transcript_status(data.get("transcript_status")),
+            template_kind=_as_template_kind(data.get("template_kind")),
+            template_source=_as_template_source(
+                data.get("template_kind"), data.get("template_source")
+            ),
         )
 
 
@@ -170,3 +197,13 @@ def _as_bool(value: Any) -> bool:
 def _as_transcript_status(value: Any) -> str:
     status = _as_text(value)
     return status if status in TRANSCRIPT_STATUSES else ""
+
+
+def _as_template_kind(value: Any) -> str:
+    return "character_greeting" if value == "character_greeting" else ""
+
+
+def _as_template_source(kind: Any, value: Any) -> str:
+    if kind != "character_greeting" or not isinstance(value, str) or not value.strip():
+        return ""
+    return value
