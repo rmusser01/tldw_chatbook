@@ -38,10 +38,6 @@ GENERATE_VIDEO_USAGE_TEXT = "Usage: /generate-video [:backend] <prompt>"
 #: Backends billed per generated second (for the cost-confirm gate). Local
 #: backends (comfyui, stable_diffusion_cpp) are free at the margin.
 _PAID_BACKENDS = frozenset({"minimax"})
-_H3_COMFYUI_WORKFLOWS = frozenset({
-    "minimax_h3_t2v.json",
-    "minimax_h3_t2v_spectrum.json",
-})
 
 
 @dataclass(frozen=True)
@@ -98,14 +94,6 @@ def is_paid_backend(backend: str) -> bool:
     return backend.strip().lower() in _PAID_BACKENDS
 
 
-def should_forward_video_style_negative_prompt(backend: str, workflow_name: str | None) -> bool:
-    """Whether a style-generated negative prompt is supported by this workflow."""
-    return not (
-        backend.strip().lower() == "comfyui"
-        and str(workflow_name or "").strip() in _H3_COMFYUI_WORKFLOWS
-    )
-
-
 def estimate_video_cost_text(backend: str, duration_seconds: int | None) -> str:
     """Return the human-readable cost line for the pre-dispatch confirm modal.
 
@@ -128,6 +116,7 @@ def run_video_generation(
     prompt: str,
     message_id: str,
     negative_prompt: str | None = None,
+    style_negative_prompt: bool = False,
     duration_seconds: int | None = None,
     fps: int | None = None,
     width: int | None = None,
@@ -150,6 +139,8 @@ def run_video_generation(
         prompt: Generation prompt.
         message_id: Pre-allocated Console message id owning the file.
         negative_prompt: Optional negative prompt (local backends).
+        style_negative_prompt: Whether ``negative_prompt`` came from a style
+            template and may be suppressed for an incompatible workflow.
         duration_seconds/fps/width/height/ratio/seed/model: Optional params.
         cancel_event: Optional cooperative-cancellation event, threaded to
             adapters that support it (minimax).
@@ -161,6 +152,18 @@ def run_video_generation(
     Raises:
         VideoGenerationError: Propagated from validation/dispatch/adapter.
     """
+    if (
+        style_negative_prompt
+        and negative_prompt
+        and backend.strip().lower() == "comfyui"
+    ):
+        from tldw_chatbook.Video_Generation.adapters.comfyui_video_adapter import (
+            ComfyUIVideoAdapter,
+        )
+
+        if ComfyUIVideoAdapter().selected_workflow_is_h3():
+            negative_prompt = None
+
     from tldw_chatbook.Video_Generation.worker import build_request, run_generation
 
     store = video_store if video_store is not None else VideoStore()
