@@ -731,25 +731,21 @@ def run_agent_loop(
                             # check does not pre-screen: deps.spawn can now
                             # refuse a NAMED spawn for an unknown `agent`
                             # (or its own budget check) after this branch
-                            # was already entered. But deps.spawn was
-                            # already able to fail on its own terms before
-                            # task-5 too -- e.g. a child that ends non-DONE
-                            # (stuck) still returns ok=False -- and that
-                            # pre-existing failure mode must keep counting
-                            # against this redundant loop-level counter
-                            # exactly as it always did, for both the no-
-                            # agent and named-agent paths.
+                            # was already entered. This is a redundant
+                            # secondary bound; the service's own
+                            # sub_agent_spawns counter remains authoritative.
                             #
-                            # So the increment is unconditional EXCEPT for
-                            # the one new case: a NAMED spawn that deps.spawn
-                            # refused outright (unknown agent / its budget
-                            # check) -- that refusal must not consume this
-                            # counter's slot, or a later VALID named spawn
-                            # would be wrongly refused here before ever
-                            # reaching deps.spawn's own (real) budget check.
-                            # `result.ok or not agent_name` keeps the no-
-                            # agent path's accounting byte-identical to
-                            # before task-5.
+                            # Increment accounting differs by path:
+                            # - No-agent path: increment is unconditional,
+                            #   byte-identical to pre-task-5 behavior, including
+                            #   spawns whose child ran and ended non-DONE.
+                            # - Named path: increment only when result.ok.
+                            #   Any named-spawn failure (unknown agent, budget
+                            #   refusal before dispatch, or child ending
+                            #   non-DONE) skips the counter; otherwise a later
+                            #   VALID named spawn would be wrongly refused here
+                            #   before ever reaching deps.spawn's own (real)
+                            #   budget check.
                             if result.ok or not agent_name:
                                 spawned += 1
                 elif call.name == FIND_TOOLS_NAME:
