@@ -2049,14 +2049,17 @@ class ChatScreen(BaseAppScreen):
 
     def _apply_console_settings_result(
         self,
-        result: ConsoleSettingsResult | None,
+        result: ConsoleSettingsResult | ConsoleSessionSettings | None,
         *,
         origin_session_id: str | None = None,
         origin_system_prompt: str | None = None,
     ) -> None:
         """Apply provider settings and the separately owned chat-name override."""
-        if not isinstance(result, ConsoleSettingsResult):
+        if not isinstance(result, (ConsoleSettingsResult, ConsoleSessionSettings)):
             return
+        settings = (
+            result.settings if isinstance(result, ConsoleSettingsResult) else result
+        )
         store = self._ensure_console_chat_store()
         session_id = origin_session_id or store.active_session_id
         if session_id is None:
@@ -2077,25 +2080,26 @@ class ChatScreen(BaseAppScreen):
         store.replace_session_settings(
             session_id,
             replace(
-                result.settings,
+                settings,
                 source="user",
                 system_prompt=current_system_prompt,
             )
         )
-        _session, persisted = store.set_session_user_display_name_override(
-            session_id,
-            result.user_display_name_override,
-            global_default=self._global_chat_display_name(),
-        )
-        self._last_console_roleplay_refresh_key = (
-            session_id,
-            self._global_chat_display_name(),
-        )
-        if not persisted:
-            self.app_instance.notify(
-                "Name changed for this session, but it may not survive reopening.",
-                severity="warning",
+        if isinstance(result, ConsoleSettingsResult):
+            _session, persisted = store.set_session_user_display_name_override(
+                session_id,
+                result.user_display_name_override,
+                global_default=self._global_chat_display_name(),
             )
+            self._last_console_roleplay_refresh_key = (
+                session_id,
+                self._global_chat_display_name(),
+            )
+            if not persisted:
+                self.app_instance.notify(
+                    "Name changed for this session, but it may not survive reopening.",
+                    severity="warning",
+                )
         if store.active_session_id == session_id:
             self._sync_console_identity_surfaces()
             self.run_worker(
