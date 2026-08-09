@@ -302,11 +302,15 @@ class ExternalParakeetVerifier:
                 _fail(ExternalParakeetErrorCode.CORRUPT)
             verified_files.append(verified)
 
+        verified_paths = tuple(path for path, _identity, _ancestors in verified_files)
         try:
-            snapshot = snapshot_local_source(
-                tuple(path for path, _identity, _ancestors in verified_files)
-            )
+            snapshot = snapshot_local_source(verified_paths)
         except (LocalSourceChangedError, OSError):
+            _fail(ExternalParakeetErrorCode.CHANGED)
+        if snapshot.paths != verified_paths or snapshot.identities != tuple(
+            (identity[0], identity[1], identity[3], identity[4])
+            for _path, identity, _ancestors in verified_files
+        ):
             _fail(ExternalParakeetErrorCode.CHANGED)
         for verified in verified_files:
             _require_unchanged_file(root, verified)

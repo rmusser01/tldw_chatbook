@@ -368,6 +368,43 @@ def test_rejects_earlier_file_mutated_after_snapshot_capture(
     assert mutated
 
 
+def test_rejects_snapshot_of_temporary_file_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    files = {
+        "nested/first.onnx": b"original",
+        "second.onnx": b"second",
+    }
+    root = tmp_path / "external-temporary-snapshot"
+    _materialize(root, files)
+    first_path = root / "nested" / "first.onnx"
+    original_parent = root / "original-nested"
+    real_snapshot = parakeet_external.snapshot_local_source
+    substituted = False
+
+    def snapshot_temporary_file(paths: tuple[Path, ...]):
+        nonlocal substituted
+        first_path.parent.rename(original_parent)
+        first_path.parent.mkdir()
+        try:
+            first_path.write_bytes(b"replaced")
+            snapshot = real_snapshot(paths)
+        finally:
+            first_path.unlink(missing_ok=True)
+            first_path.parent.rmdir()
+            original_parent.rename(first_path.parent)
+        substituted = True
+        return snapshot
+
+    monkeypatch.setattr(
+        parakeet_external, "snapshot_local_source", snapshot_temporary_file
+    )
+
+    _assert_error(ExternalParakeetErrorCode.CHANGED, _descriptor(files), root)
+    assert substituted
+
+
 def test_polls_cancellation_within_hash_chunk_loop(tmp_path: Path) -> None:
     payload = b"x" * (HASH_CHUNK_BYTES + 1)
     files = {"model.onnx": payload}
