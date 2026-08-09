@@ -7,7 +7,10 @@ from textual.app import App
 from textual.containers import Horizontal
 from textual.widgets import Button
 
-from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
+from tldw_chatbook.UI.Navigation.main_navigation import (
+    MainNavigationBar,
+    _straddles_viewport,
+)
 
 
 def test_compact_navigation_labels_preserve_full_meaning():
@@ -751,4 +754,69 @@ async def test_press_on_a_ghosted_nav_button_is_a_no_op():
         assert events == []
         assert nav.active_destination_id == "settings"
         assert target.has_class("nav-button-clip-ghost")
+
+
+@pytest.mark.asyncio
+async def test_periodic_interval_does_not_drag_the_focused_button_out_of_view():
+    """Review round 2 finding: the periodic 0.5s interval
+    (`_update_overflow_hints`, `set_interval` in `on_mount`) called
+    `_scroll_active_destination_into_view` every tick unconditionally
+    targeting the ACTIVE destination, indifferent to keyboard focus. When
+    Tab had focused a DIFFERENT, far-away button (`on_descendant_focus`
+    scrolls to reveal it), the interval's very next tick dragged the strip
+    back toward the active destination -- leaving the FOCUSED button
+    straddling the edge: visibly mid-word-cut, still `app.focused`,
+    un-ghosted, and `disabled=False` (Enter-navigable). A static exemption
+    keyed on "whichever button held focus when `_ghost_clipped_buttons`
+    last ran" could not catch this, because nothing had re-scrolled to
+    reveal that focused button on the interval's own tick -- the exemption
+    only meant "don't hide it," not "keep it visible".
+
+    This is the reviewer's exact deterministic reproduction: `active=
+    "schedules"` (far from the end of the bar), Tab to `nav-settings`
+    (forces a scroll to reveal it, since Settings does not fit in the
+    initial 80-col viewport alongside Schedules), then `pilot.pause(0.9)`
+    -- long enough for at least one 0.5s interval tick to fire after the
+    Tab-driven scroll settled. Before the fix this reliably (3/3 in the
+    reviewer's own repro) left `nav-settings` straddling
+    (`Region(x=66, width=15)` against `strip.region.right == 70`) while
+    still focused, un-ghosted, and enabled.
+    """
+
+    class TestApp(App):
+        def compose(self):
+            yield MainNavigationBar(active="schedules")
+
+    app = TestApp()
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(0.3)
+
+        for _ in range(20):
+            await pilot.press("tab")
+            if getattr(app.focused, "id", None) == "nav-settings":
+                break
+        assert app.focused is not None and app.focused.id == "nav-settings", (
+            "test premise: expected to Tab-focus nav-settings"
+        )
+
+        # One interval tick (0.5s) plus margin -- the exact window the
+        # review finding traced the drag-back to.
+        await pilot.pause(0.9)
+
+        strip = app.query_one("#nav-destination-strip", Horizontal)
+        settings = app.query_one("#nav-settings", Button)
+        assert app.focused is settings, (
+            "nav-settings should still hold focus after the interval tick"
+        )
+        assert not _straddles_viewport(settings.region, strip.region), (
+            f"nav-settings straddles after an interval tick while focused: "
+            f"{settings.region} vs strip {strip.region}"
+        )
+        assert not settings.has_class("nav-button-clip-ghost"), (
+            "the focused button must not be ghosted while it holds focus"
+        )
+        assert not settings.disabled, (
+            "the focused button must not be disabled while it holds focus"
+        )
 

@@ -195,10 +195,12 @@ shipping):
   and shipping unverified new bookkeeping to close a sub-second, self-healing,
   cosmetic-only race is not a good trade for a review-fix round.
 - Tests: `test_master_shell_navigation.py` 26/26 x5 runs; `test_destination_visual_
-  parity_correction.py` 133/133 (5 pre-existing schedules/MCP failures unrelated,
-  see task-2560); `test_product_maturity_phase6_focus_visual_sweep.py` 5/5; a
-  13-file broader nav-referencing sweep 324 passed / 5 pre-existing failed / 1
-  pre-existing skipped, unchanged before/after the CSS bundle fix.
+  parity_correction.py` **108 passed, 5 failed** (5 pre-existing schedules/MCP
+  failures unrelated, see task-2560 — CORRECTED in round 2's notes below: this
+  number was originally misreported as "133/133" here and in the task-5 report;
+  108/5 is the twice-verified figure); `test_product_maturity_phase6_focus_visual_
+  sweep.py` 5/5; a 13-file broader nav-referencing sweep 324 passed / 5 pre-existing
+  failed / 1 pre-existing skipped, unchanged before/after the CSS bundle fix.
 
 Additional files this round: `tldw_chatbook/css/components/_navigation.tcss`
 (new override rule), `tldw_chatbook/css/tldw_cli_modular.tcss` (regenerated),
@@ -206,4 +208,66 @@ Additional files this round: `tldw_chatbook/css/components/_navigation.tcss`
 advance), `backlog/tasks/task-2560 - ...md` (delta note),
 `.superpowers/sdd/library-polish-batch/task-5-report.md` (Fix Report round 1 +
 corrections to the base report's Important #2 framing and minors).
+
+### Review round 2 follow-up
+
+A scoped re-review confirmed round 1's findings (F1/F2/minors) ADDRESSED, but found
+the round-1 focused-widget exemption itself reopened a live, deterministic mid-word
+cut: the periodic 0.5s interval unconditionally recentered on the ACTIVE
+destination every tick, indifferent to keyboard focus, dragging the strip back
+whenever a Tab press had focused a DIFFERENT, far-away button -- leaving that
+focused button straddling, un-ghosted (exempt), and `disabled=False` (Enter-
+navigable). Deterministically reproduced with the reviewer's exact probe
+(`active="schedules"`, Tab to `nav-settings`, `pilot.pause(0.9)`): `nav-settings`
+measured genuinely straddling one interval tick later.
+
+**Closed at the source**, not with another exemption: a new `_recenter_periodic`,
+used ONLY by the interval's own trailing call, recenters on the DELIBERATELY-
+focused button instead of active whenever they differ (`_scroll_active_destination_
+into_view` itself stays unconditional, unchanged, for every other caller). "
+Deliberate" specifically excludes Textual's own `AUTO_FOCUS = "*"` landing on the
+first nav button the instant the bar mounts (empirically confirmed to fire strictly
+before this bar's own first settle callback) -- a naive "any focus wins" version was
+tried first and broke the mount-time "active is always visible" guarantee instead
+(`test_master_shell_navigation_keeps_active_destination_visible_on_mount`); a new
+`_mount_settled` flag + `_deliberate_focus_id` (both new instance state) cleanly
+separate the two.
+
+Two further regressions were found and fixed by my own re-verification before
+shipping (neither from the reviewer): (1) a crash -- `_focused_strip_button`
+accessed `self.screen.focused` without the `is_attached` guard every other
+`self.screen` access in this class already uses, so a deferred callback reaching it
+after a real screen swap had unmounted the bar raised `NoScreen` and took the whole
+app down mid-test (every subsequent Tab press then silently did nothing because the
+app had exited) -- fixed with the same guard pattern used everywhere else in the
+file; (2) a synchronous "retry then re-measure" belt-and-braces guard for the
+focused button (an initial attempt at satisfying the review's "drive scroll_to_
+widget(focused) in the same chain" ask) could never see its own retry's effect,
+because a `Region` only updates on the NEXT layout pass, not synchronously within
+the same call -- it therefore sometimes ghosted+disabled the button Tab had JUST
+landed on, reproducing round 1's original "Tab jumps back to the first button" bug
+(caught via `test_tab_order_reaches_visible_primary_action` regressing from a clean
+13-press traversal back to a 2-lap, 23-press one). Reverted to an UNCONDITIONAL
+exemption for the deliberately-focused button, symmetric with active's, backed by
+the two real (properly-deferred) mechanisms that already existed (`on_descendant_
+focus`'s own re-scroll chain, `_recenter_periodic`'s interval-level backstop) rather
+than a same-call re-measurement that cannot work.
+
+Also corrected: the "133 passed" tally above (and in the task-5 report) was wrong,
+carried forward unverified. Re-ran the file myself: **108 passed, 5 failed, 113
+collected** -- twice-verified now, matching the re-reviewer's own count.
+
+New regression test: `test_periodic_interval_does_not_drag_the_focused_button_out_
+of_view` (`Tests/UI/test_master_shell_navigation.py`), the reviewer's exact probe.
+Full suite re-verified: `test_master_shell_navigation.py` 27/27 x5 runs;
+`test_product_maturity_phase6_focus_visual_sweep.py` 5/5 x3 runs (after the crash/
+oscillation fixes); `test_destination_visual_parity_correction.py` 108/5 (corrected
+tally, unchanged 5 pre-existing failures); the 13-file broader sweep re-run clean
+after both fixes.
+
+Files this round: `tldw_chatbook/UI/Navigation/main_navigation.py` (`_recenter_
+periodic`, `_mount_settled`/`_deliberate_focus_id`/`_mark_mount_settled`,
+`_focused_strip_button` crash fix, focused-guard reverted to unconditional
+exemption), `Tests/UI/test_master_shell_navigation.py` (new regression test),
+`.superpowers/sdd/library-polish-batch/task-5-report.md` (Fix Report round 2).
 <!-- SECTION:NOTES:END -->

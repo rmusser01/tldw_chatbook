@@ -323,12 +323,20 @@ async def test_phase6_home_keyboard_focus_reaches_navigation_and_primary_action(
             # land on it either (the corresponding fix). It is not
             # permanently unreachable: the skipped button becomes fully
             # visible (and re-enabled) again once the strip scrolls past
-            # it and a later lap comes back around; live-reproduced needing
-            # up to 17 extra presses to recover a single skip out of this
-            # bar's ~14 stops (a bit over one extra lap). Budget generously
-            # per destination instead of assuming exactly one press always
-            # lands on the immediately-next canonical destination.
-            _DESTINATION_FOCUS_BUDGET = 40
+            # it and a later lap comes back around; live-measured needing
+            # 17-28 extra presses (repeated runs; the exact count is not
+            # deterministic -- it depends on this bar's own settle timing)
+            # to recover a single skip out of this bar's ~14 stops.
+            # Budget generously per destination instead of assuming
+            # exactly one press always lands on the immediately-next
+            # canonical destination; 60 leaves ample margin over the
+            # observed range, and the fallback wait below is generous
+            # too -- this loop runs with no `pilot.pause` between presses,
+            # so under real machine contention (this suite is routinely
+            # run alongside other concurrent test processes) each press's
+            # internal settle can simply take longer, not just need more
+            # of them.
+            _DESTINATION_FOCUS_BUDGET = 60
             observed_focus_ids: list[str] = []
             for expected_focus_id in expected_focus_ids:
                 found = False
@@ -343,14 +351,15 @@ async def test_phase6_home_keyboard_focus_reaches_navigation_and_primary_action(
                 if not found:
                     # Exhausted the budget without a single extra frame of
                     # async settle time -- give the last press's settle
-                    # chain a final, short chance before failing for real.
+                    # chain a final, more generous chance before failing
+                    # for real.
                     await _wait_until(
                         pilot,
                         lambda: (
                             isinstance(app.focused, Button)
                             and app.focused.id == expected_focus_id
                         ),
-                        timeout_seconds=1.0,
+                        timeout_seconds=5.0,
                         context=f"focus:{expected_focus_id}",
                     )
                 focused = app.focused
