@@ -6,12 +6,11 @@ from PIL import Image as PILImage
 
 from tldw_chatbook.Media_Playback.frame_source import AvFrameSource
 
-av = pytest.importorskip("av", reason="PyAV optional dependency not installed")
-
 
 @pytest.fixture
 def clip_path(tmp_path):
     """Write a tiny real mp4 (10 frames, 64x48, 10fps) using PyAV itself."""
+    av = pytest.importorskip("av", reason="PyAV optional dependency not installed")
     path = tmp_path / "fixture.mp4"
     container = av.open(str(path), mode="w")
     stream = container.add_stream("mpeg4", rate=10)
@@ -110,7 +109,8 @@ def test_iter_frames_keeps_generator_exit_as_normal_stop():
     frames = source.iter_frames()
 
     next(frames)
-    frames.close()
+    with pytest.raises(GeneratorExit):
+        frames.throw(GeneratorExit)
 
 
 def test_close_clears_state_before_propagating_native_failure_and_is_idempotent():
