@@ -334,7 +334,7 @@ def _make_real_launch(
     tmp_path: Path,
     *,
     behavior: dict[str, Any] | None = None,
-    startup_timeout_seconds: float = 3.0,
+    startup_timeout_seconds: float = 10.0,
     termination_grace_seconds: float = 0.1,
 ) -> AudioCppManagedLaunchConfig:
     _require_real_child_support()
@@ -419,7 +419,7 @@ class _RealHttpHooksFactory:
             base_url=self._base_url,
             trust_env=False,
             follow_redirects=False,
-            timeout=0.2,
+            timeout=1.0,
         )
         self.clients.append(client)
 

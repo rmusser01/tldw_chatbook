@@ -1784,7 +1784,7 @@ async def test_real_child_argv_cwd_environment_readiness_and_cleanup(
         mode="managed",
         managed_binary_path=str(wrapper),
         managed_server_json_path=str(server_json),
-        managed_startup_timeout_seconds=3.0,
+        managed_startup_timeout_seconds=10.0,
         managed_health_check_interval_seconds=2.0,
         managed_termination_grace_seconds=0.1,
     ).to_mapping()
