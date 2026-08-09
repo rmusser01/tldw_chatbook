@@ -1,11 +1,12 @@
 """Pure display-state contracts for the Library prompts canvas."""
 
-from dataclasses import replace
+from dataclasses import FrozenInstanceError, replace
 import sqlite3
 from datetime import datetime, timezone
 
 import pytest
 
+import tldw_chatbook.Library.library_prompts_state as prompts_state_module
 from tldw_chatbook.DB.Prompts_DB import ConflictError
 from tldw_chatbook.Library.library_prompts_state import (
     PromptArtifactDraft,
@@ -80,6 +81,173 @@ PROMPT_C = {
     "keywords": ["kw1", "kw2"],
     "last_modified": "2026-07-07T11:00:00+00:00",
 }
+
+
+def test_browse_prompt_scope_normalizes_query_sort_and_bounded_page_size():
+    scope = prompts_state_module.PromptBrowseScope(
+        query="  alpha beta \n",
+        collection_id=7,
+        sort_by=" NAME ",
+        sort_order=" ASC ",
+        page=2,
+        page_size=prompts_state_module.MAX_PROMPT_BROWSE_PAGE_SIZE + 500,
+    )
+
+    assert scope.backend == "local"
+    assert scope.query == "alpha beta"
+    assert scope.collection_id == 7
+    assert scope.sort_by == "name"
+    assert scope.sort_order == "asc"
+    assert scope.page == 2
+    assert scope.page_size == prompts_state_module.MAX_PROMPT_BROWSE_PAGE_SIZE
+    assert (
+        scope.fingerprint
+        == prompts_state_module.PromptBrowseScope(
+            query="alpha beta",
+            collection_id=7,
+            sort_by="name",
+            sort_order="asc",
+            page=2,
+            page_size=prompts_state_module.MAX_PROMPT_BROWSE_PAGE_SIZE,
+        ).fingerprint
+    )
+    assert replace(scope, page=3).fingerprint != scope.fingerprint
+    with pytest.raises(FrozenInstanceError):
+        scope.query = "changed"  # type: ignore[misc]
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"backend": "server"}, "local"),
+        ({"collection_id": 0}, "collection_id"),
+        ({"collection_id": True}, "collection_id"),
+        ({"sort_by": "name; DROP TABLE Prompts"}, "sort_by"),
+        ({"sort_order": "sideways"}, "sort_order"),
+        ({"page": 0}, "page"),
+        ({"page": True}, "page"),
+        ({"page_size": 0}, "page_size"),
+        ({"query": None}, "query"),
+    ],
+)
+def test_browse_prompt_scope_rejects_invalid_public_inputs(kwargs, message):
+    with pytest.raises((TypeError, ValueError), match=message):
+        prompts_state_module.PromptBrowseScope(**kwargs)
+
+
+def test_browse_prompt_result_preserves_exact_total_pages_and_clamped_page():
+    scope = prompts_state_module.PromptBrowseScope(page=9, page_size=2)
+
+    result = prompts_state_module.build_prompt_browse_result(
+        scope,
+        {
+            "items": [PROMPT_C],
+            "total_items": 5,
+            "total_pages": 3,
+            "current_page": 3,
+            "per_page": 2,
+        },
+    )
+
+    assert isinstance(result, prompts_state_module.PromptBrowseResult)
+    assert result.scope.page == 3
+    assert result.scope_fingerprint == replace(scope, page=3).fingerprint
+    assert result.items == (PROMPT_C,)
+    assert result.total_items == 5
+    assert result.total_pages == 3
+    assert result.page == 3
+    assert result.status == "ready"
+
+
+@pytest.mark.parametrize(
+    ("scope_kwargs", "expected_status"),
+    [
+        ({}, "empty_library"),
+        ({"collection_id": 4}, "empty_collection"),
+        ({"query": "needle"}, "no_matches"),
+        ({"query": "needle", "collection_id": 4}, "no_matches"),
+    ],
+)
+def test_browse_prompt_result_distinguishes_truthful_empty_states(
+    scope_kwargs, expected_status
+):
+    scope = prompts_state_module.PromptBrowseScope(**scope_kwargs)
+    result = prompts_state_module.build_prompt_browse_result(
+        scope,
+        {
+            "items": [],
+            "total_items": 0,
+            "total_pages": 0,
+            "current_page": 1,
+            "per_page": scope.page_size,
+        },
+    )
+
+    assert result.status == expected_status
+    assert result.total_items == 0
+    assert result.total_pages == 0
+    assert result.page == 1
+
+
+def test_browse_prompt_loading_error_and_stale_fingerprint_are_distinct():
+    current_scope = prompts_state_module.PromptBrowseScope(query="current")
+    loading = prompts_state_module.begin_prompt_browse(current_scope)
+    error = prompts_state_module.build_prompt_browse_error(current_scope)
+    stale = prompts_state_module.build_prompt_browse_result(
+        prompts_state_module.PromptBrowseScope(query="stale"),
+        {
+            "items": [],
+            "total_items": 0,
+            "total_pages": 0,
+            "current_page": 1,
+            "per_page": 50,
+        },
+    )
+
+    assert loading.status == "loading"
+    assert error.status == "error"
+    assert error.error == "Couldn't load prompts. Try again."
+    assert prompts_state_module.apply_prompt_browse_result(loading, stale) is loading
+    assert prompts_state_module.apply_prompt_browse_result(loading, error) is error
+
+
+def test_browse_prompt_result_rejects_late_same_scope_request_token():
+    scope = prompts_state_module.PromptBrowseScope(query="same scope")
+    loading = prompts_state_module.begin_prompt_browse(scope, request_token=2)
+    payload = {
+        "items": [PROMPT_A],
+        "total_items": 1,
+        "total_pages": 1,
+        "current_page": 1,
+        "per_page": scope.page_size,
+    }
+    stale = prompts_state_module.build_prompt_browse_result(
+        scope, payload, request_token=1
+    )
+    fresh = prompts_state_module.build_prompt_browse_result(
+        scope, payload, request_token=2
+    )
+
+    assert prompts_state_module.apply_prompt_browse_result(loading, stale) is loading
+    assert prompts_state_module.apply_prompt_browse_result(loading, fresh) is fresh
+    with pytest.raises(FrozenInstanceError):
+        fresh.status = "error"  # type: ignore[misc]
+
+
+def test_browse_prompt_scope_clamps_to_last_exact_page_or_first_empty_page():
+    scope = prompts_state_module.PromptBrowseScope(page=9)
+
+    assert (
+        prompts_state_module.clamp_prompt_browse_scope(scope, total_pages=3).page == 3
+    )
+    assert (
+        prompts_state_module.clamp_prompt_browse_scope(scope, total_pages=0).page == 1
+    )
+    assert (
+        prompts_state_module.clamp_prompt_browse_scope(scope, total_pages=12) is scope
+    )
+    with pytest.raises(ValueError, match="total_pages"):
+        prompts_state_module.clamp_prompt_browse_scope(scope, total_pages=-1)
 
 
 def test_list_state_newest_sort_orders_by_modified_desc():

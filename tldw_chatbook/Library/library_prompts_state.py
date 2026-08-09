@@ -9,6 +9,7 @@ Consumes record mappings shaped like ``PromptsDatabase.fetch_prompt_details``
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 import json
 from dataclasses import dataclass, replace
@@ -46,6 +47,232 @@ from tldw_chatbook.Workspaces.conversation_browser_state import (
 )
 
 _TIMESTAMP_KEYS = ("last_modified", "created_at")
+
+MAX_PROMPT_BROWSE_PAGE_SIZE = 100
+DEFAULT_PROMPT_BROWSE_PAGE_SIZE = 50
+_PROMPT_BROWSE_SORT_FIELDS = frozenset({"last_modified", "name"})
+_PROMPT_BROWSE_SORT_ORDERS = frozenset({"asc", "desc"})
+
+
+PromptBrowseStatus = Literal[
+    "loading",
+    "ready",
+    "empty_library",
+    "empty_collection",
+    "no_matches",
+    "error",
+]
+
+
+@dataclass(frozen=True)
+class PromptBrowseScope:
+    """One normalized, local-only Library Prompt browse request."""
+
+    backend: Literal["local"] = "local"
+    query: str = ""
+    collection_id: int | None = None
+    sort_by: Literal["last_modified", "name"] = "last_modified"
+    sort_order: Literal["asc", "desc"] = "desc"
+    page: int = 1
+    page_size: int = DEFAULT_PROMPT_BROWSE_PAGE_SIZE
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.backend, str) or self.backend.strip().lower() != "local":
+            raise ValueError("Prompt browsing is local-only.")
+        if not isinstance(self.query, str):
+            raise TypeError("query must be a string.")
+        if self.collection_id is not None and (
+            type(self.collection_id) is not int or self.collection_id <= 0
+        ):
+            raise ValueError("collection_id must be a positive integer or None.")
+        if not isinstance(self.sort_by, str):
+            raise TypeError("sort_by must be a string.")
+        sort_by = self.sort_by.strip().lower()
+        if sort_by not in _PROMPT_BROWSE_SORT_FIELDS:
+            raise ValueError("sort_by must be 'last_modified' or 'name'.")
+        if not isinstance(self.sort_order, str):
+            raise TypeError("sort_order must be a string.")
+        sort_order = self.sort_order.strip().lower()
+        if sort_order not in _PROMPT_BROWSE_SORT_ORDERS:
+            raise ValueError("sort_order must be 'asc' or 'desc'.")
+        if type(self.page) is not int or self.page <= 0:
+            raise ValueError("page must be a positive integer.")
+        if type(self.page_size) is not int or self.page_size <= 0:
+            raise ValueError("page_size must be a positive integer.")
+
+        object.__setattr__(self, "backend", "local")
+        object.__setattr__(self, "query", self.query.strip())
+        object.__setattr__(self, "sort_by", sort_by)
+        object.__setattr__(self, "sort_order", sort_order)
+        object.__setattr__(
+            self, "page_size", min(self.page_size, MAX_PROMPT_BROWSE_PAGE_SIZE)
+        )
+
+    @property
+    def fingerprint(self) -> str:
+        """Return a deterministic fingerprint for every browse-affecting value."""
+        encoded = json.dumps(
+            (
+                self.backend,
+                self.query,
+                self.collection_id,
+                self.sort_by,
+                self.sort_order,
+                self.page,
+                self.page_size,
+            ),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+
+@dataclass(frozen=True)
+class PromptBrowseResult:
+    """Immutable loading, result, or failure state for one browse request."""
+
+    scope: PromptBrowseScope
+    items: tuple[Mapping[str, Any], ...]
+    total_items: int
+    total_pages: int
+    page: int
+    status: PromptBrowseStatus
+    request_fingerprint: str
+    request_token: int
+    error: str = ""
+
+    @property
+    def scope_fingerprint(self) -> str:
+        return self.scope.fingerprint
+
+
+def _prompt_browse_request_token(request_token: int) -> int:
+    if type(request_token) is not int or request_token <= 0:
+        raise ValueError("request_token must be a positive integer.")
+    return request_token
+
+
+def clamp_prompt_browse_scope(
+    scope: PromptBrowseScope, *, total_pages: int
+) -> PromptBrowseScope:
+    """Clamp a requested page to the last exact page, or page one when empty."""
+    if type(total_pages) is not int or total_pages < 0:
+        raise ValueError("total_pages must be a non-negative integer.")
+    last_page = max(1, total_pages)
+    return scope if scope.page <= last_page else replace(scope, page=last_page)
+
+
+def begin_prompt_browse(
+    scope: PromptBrowseScope, *, request_token: int = 1
+) -> PromptBrowseResult:
+    """Build loading state bound to an exact scope fingerprint and token."""
+    token = _prompt_browse_request_token(request_token)
+    return PromptBrowseResult(
+        scope=scope,
+        items=(),
+        total_items=0,
+        total_pages=0,
+        page=scope.page,
+        status="loading",
+        request_fingerprint=scope.fingerprint,
+        request_token=token,
+    )
+
+
+def _prompt_browse_int(record: Mapping[str, Any], key: str, *, minimum: int) -> int:
+    value = record.get(key)
+    if type(value) is not int or value < minimum:
+        raise ValueError(f"{key} must be an integer of at least {minimum}.")
+    return value
+
+
+def build_prompt_browse_result(
+    scope: PromptBrowseScope,
+    record: Mapping[str, Any],
+    *,
+    request_token: int = 1,
+) -> PromptBrowseResult:
+    """Build one truthful result from the normalized exact-browse response."""
+    if not isinstance(record, Mapping):
+        raise TypeError("Prompt browse result must be a mapping.")
+    raw_items = record.get("items")
+    if not isinstance(raw_items, Sequence) or isinstance(raw_items, (str, bytes)):
+        raise TypeError("Prompt browse result items must be a sequence.")
+    if any(not isinstance(item, Mapping) for item in raw_items):
+        raise TypeError("Prompt browse result items must be mappings.")
+    items = tuple(raw_items)
+    total_items = _prompt_browse_int(record, "total_items", minimum=0)
+    total_pages = _prompt_browse_int(record, "total_pages", minimum=0)
+    current_page = _prompt_browse_int(record, "current_page", minimum=1)
+    per_page = _prompt_browse_int(record, "per_page", minimum=1)
+    if per_page != scope.page_size:
+        raise ValueError("per_page must match the requested page_size.")
+    expected_pages = (total_items + per_page - 1) // per_page if total_items else 0
+    if total_pages != expected_pages:
+        raise ValueError("total_pages does not match total_items and per_page.")
+    resolved_scope = clamp_prompt_browse_scope(scope, total_pages=total_pages)
+    if current_page != resolved_scope.page:
+        raise ValueError("current_page does not match the clamped requested page.")
+    if len(items) > per_page or len(items) > total_items:
+        raise ValueError("Prompt browse result item count is invalid.")
+    if bool(items) != bool(total_items):
+        raise ValueError("Prompt browse result items and total_items disagree.")
+
+    if items:
+        status: PromptBrowseStatus = "ready"
+    elif scope.query:
+        status = "no_matches"
+    elif scope.collection_id is not None:
+        status = "empty_collection"
+    else:
+        status = "empty_library"
+
+    return PromptBrowseResult(
+        scope=resolved_scope,
+        items=items,
+        total_items=total_items,
+        total_pages=total_pages,
+        page=current_page,
+        status=status,
+        request_fingerprint=scope.fingerprint,
+        request_token=_prompt_browse_request_token(request_token),
+    )
+
+
+def build_prompt_browse_error(
+    scope: PromptBrowseScope,
+    *,
+    request_token: int = 1,
+    error: str = "Couldn't load prompts. Try again.",
+) -> PromptBrowseResult:
+    """Build failure state without misrepresenting it as an empty result."""
+    if not isinstance(error, str) or not error:
+        raise ValueError("error must be non-empty text.")
+    return PromptBrowseResult(
+        scope=scope,
+        items=(),
+        total_items=0,
+        total_pages=0,
+        page=scope.page,
+        status="error",
+        request_fingerprint=scope.fingerprint,
+        request_token=_prompt_browse_request_token(request_token),
+        error=error,
+    )
+
+
+def apply_prompt_browse_result(
+    state: PromptBrowseResult, result: PromptBrowseResult
+) -> PromptBrowseResult:
+    """Settle only the matching in-flight scope fingerprint and request token."""
+    if (
+        state.status != "loading"
+        or result.status == "loading"
+        or state.request_fingerprint != result.request_fingerprint
+        or state.request_token != result.request_token
+    ):
+        return state
+    return result
 
 
 PromptHistoryPageStatus = Literal["closed", "loading", "loaded", "error"]
