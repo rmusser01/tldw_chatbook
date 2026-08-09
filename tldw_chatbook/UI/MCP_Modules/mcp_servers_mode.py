@@ -10,6 +10,7 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Checkbox, DataTable, Static
@@ -848,8 +849,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         if snapshot is None:
             if not form_visible:
                 self._show_overview_container(True)
-            await self._rebuild_builtin_toggles()
-            await self._rebuild_tool_gate_checkboxes()
+            await self._rebuild_toggle_groups()
             await self._rebuild_detail_toolbar()
             # Task 11: selection restoration -- returning to the overview
             # (breadcrumb, or any other path that clears the selection)
@@ -870,8 +870,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         self.query_one("#mcp-detail-copy-snippet", Button).display = (
             snapshot.source == "builtin"
         )
-        await self._rebuild_builtin_toggles()
-        await self._rebuild_tool_gate_checkboxes()
+        await self._rebuild_toggle_groups()
         await self._rebuild_detail_toolbar()
 
     def _restore_overview_cursor(self) -> None:
@@ -1003,6 +1002,86 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
                 self.call_after_refresh(
                     self.query_one("#mcp-detail-delete-cancel", Button).focus
                 )
+
+    def _focused_toggle_id(self) -> str | None:
+        """Id of this pane's [mcp]/gate Checkbox that currently has focus.
+
+        task-3240 fix round 1 (Critical 1). Mirrors `sources_pane.py`'s
+        `_focused_create_field_id()`: `self.screen.focused` (never
+        `self.app.focused` -- the same `ScreenStackError` risk that
+        precedent documents), guarded so a screen-less or mid-teardown
+        widget never raises out of a resync.
+        """
+        try:
+            focused = self.screen.focused if self.is_mounted else None
+        except Exception:
+            return None
+        if focused is None:
+            return None
+        fid = focused.id or ""
+        if fid not in _BUILTIN_CHECKBOX_KEYS and not fid.startswith(
+            _TOOL_GATE_ID_PREFIX
+        ):
+            return None
+        try:
+            return fid if self in focused.ancestors_with_self else None
+        except Exception:
+            return None
+
+    def _restore_toggle_focus(self, focused_id: str | None) -> None:
+        """Restore focus to `focused_id` after a toggle-group rebuild.
+
+        task-3240 fix round 1 (Critical 1). Falls back to the inert
+        `#mcp-detail-scroll` container -- never to whatever the DOM
+        happens to leave focus on -- when `focused_id` no longer exists
+        post-rebuild (e.g. the detail pane changed source entirely). That
+        fallback matches this code's OWN pre-fix behavior for the plain
+        `[mcp]`-toggles-only case: a Space there landed on the scroll
+        container, which does nothing on a further Space. The bug this
+        fixes is a DIFFERENT, live Checkbox inheriting focus instead of
+        that inert container -- restoring by id (or falling back to the
+        same inert spot) closes that regardless of which group toggled.
+        """
+        if focused_id is None:
+            return
+        try:
+            target = self.query_one(f"#{focused_id}", Checkbox)
+        except NoMatches:
+            target = None
+        if target is not None:
+            target.focus()
+            return
+        try:
+            self.query_one("#mcp-detail-scroll").focus()
+        except NoMatches:
+            pass
+
+    async def _rebuild_toggle_groups(self) -> None:
+        """Rebuild the `[mcp]` toggles AND the `[tools]`/`[console]` gate
+        checkboxes, preserving keyboard focus across the remount.
+
+        task-3240 fix round 1 (Critical 1, reviewer-caught regression).
+        `remove_children()` (in either `_rebuild_builtin_toggles()` or
+        `_rebuild_tool_gate_checkboxes()`) destroys whichever Checkbox
+        currently holds focus; Textual does not itself relocate focus when
+        the focused widget is removed this way (identical mechanism to
+        `sources_pane.py`'s `recompose()`, which documents it at length).
+        Before `#mcp-detail-tool-gates` existed, the nearest surviving
+        focusable was `#mcp-detail-scroll` -- an inert container, so a
+        stray Space there did nothing. Adding that sibling AFTER the
+        `[mcp]` toggles changed the nearest survivor for a gate-checkbox
+        toggle to the LAST `[mcp]` checkbox (`mcp-builtin-expose-prompts`)
+        -- a live, actionable Checkbox. The save+resync this SAME toggle
+        triggers therefore left focus parked there, so the user's very
+        next Space silently wrote an unrelated `[mcp]` key instead of
+        toggling the gate again. Capturing/restoring by id fixes both
+        rebuilds -- including the pre-existing `[mcp]`-only case, which
+        was merely lucky before, not correct.
+        """
+        focused_id = self._focused_toggle_id()
+        await self._rebuild_builtin_toggles()
+        await self._rebuild_tool_gate_checkboxes()
+        self._restore_toggle_focus(focused_id)
 
     def _builtin_toggle_widgets(self) -> list[Widget]:
         """Build the built-in detail's enable/expose Checkbox rows + note.
