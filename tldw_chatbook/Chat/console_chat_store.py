@@ -2011,6 +2011,15 @@ class ConsoleChatStore:
             user_name=context.user_name,
             character_name=(session.character_name or "").strip(),
         )
+        if not source_changed and any(
+            message.role is ConsoleMessageRole.ASSISTANT
+            and message.content == greeting
+            and message.metadata is not None
+            and message.metadata.template_kind == "character_greeting"
+            and message.metadata.template_source == greeting_template
+            for message in self._nodes_by_session.get(session_id, {}).values()
+        ):
+            return None
         return self.append_message(
             session_id,
             role=ConsoleMessageRole.ASSISTANT,

@@ -8,6 +8,9 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from tldw_chatbook.Chat.console_roleplay_identity import (
+    resolve_console_message_presentation,
+)
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
@@ -640,6 +643,7 @@ class FakePersistence:
         message_id=None,
         parent_message_id=None,
         feedback=None,
+        metadata_json=None,
     ):
         kwargs = {
             "conversation_id": conversation_id,
@@ -650,6 +654,7 @@ class FakePersistence:
             "message_id": message_id,
             "parent_message_id": parent_message_id,
             "feedback": feedback,
+            "metadata_json": metadata_json,
         }
         self.created_messages.append(kwargs)
         return f"msg-{len(self.created_messages)}"
@@ -3468,3 +3473,162 @@ def test_first_persist_context_failure_is_observable_but_promotion_rolls_back():
         store.promote_ephemeral_session(temporary.id)
     assert temporary.ephemeral is True
     assert temporary.persisted_conversation_id is None
+
+
+def test_identical_real_seed_does_not_append_a_duplicate_greeting():
+    store, _persistence, session, _greeting = _seeded_roleplay_store()
+    message_count = len(store.messages_for_session(session.id))
+    identity = session.identity_revision
+    payload = store.payload_revision(session.id)
+
+    duplicate = store.seed_character_roleplay(
+        session.id,
+        system_template="Speak with {{user}}.",
+        greeting_template="Hello {{user}}.",
+        global_default="User",
+    )
+
+    assert duplicate is None
+    assert len(store.messages_for_session(session.id)) == message_count
+    assert session.identity_revision == identity
+    assert store.payload_revision(session.id) == payload
+
+
+def test_changed_seed_source_can_append_a_new_greeting():
+    store, _persistence, session, _greeting = _seeded_roleplay_store()
+    message_count = len(store.messages_for_session(session.id))
+
+    greeting = store.seed_character_roleplay(
+        session.id,
+        system_template="Respond warmly to {{user}}.",
+        greeting_template="Welcome {{user}}.",
+        global_default="User",
+    )
+
+    assert greeting is not None
+    assert len(store.messages_for_session(session.id)) == message_count + 1
+
+
+def test_falsy_projection_write_does_not_enqueue_sync():
+    class RefusingPersistence(FakePersistence):
+        def update_message_content(self, **kwargs):
+            super().update_message_content(**kwargs)
+            return False
+
+    store, _unused, session, _greeting = _seeded_roleplay_store()
+    sync = FakeChatSyncProducer()
+    store.persistence = RefusingPersistence()
+    store.sync_v2_chat_producer = sync
+    store.sync_v2_server_profile_id = "profile-1"
+
+    _updated, persisted = store.set_session_user_display_name_override(
+        session.id, "Rowan", global_default="User"
+    )
+
+    assert persisted is False
+    assert sync.enqueued == []
+
+
+def test_durable_clear_replaces_previously_persisted_greeting_provenance():
+    store, persistence, _session, greeting = _seeded_roleplay_store()
+    original = persistence.created_messages[-1]["metadata_json"]
+    assert original == greeting.metadata.to_json()
+
+    store.update_message_content(greeting.id, "Manual greeting.")
+
+    assert persistence.updated_messages[-1]["metadata_json"] == MessageMetadata().to_json()
+
+
+def test_stale_refresh_rematerializes_and_reports_success_once():
+    store, persistence, session, greeting = _seeded_roleplay_store()
+
+    assert store.refresh_session_roleplay_projections(session.id, global_default="Rowan") is True
+    assert store.get_message(greeting.id).content == "Hello Rowan."
+    writes = len(persistence.updated_messages)
+    revision = store.payload_revision(session.id)
+    assert store.refresh_session_roleplay_projections(session.id, global_default="Rowan") is True
+    assert len(persistence.updated_messages) == writes
+    assert store.payload_revision(session.id) == revision
+
+
+def test_stale_refresh_keeps_live_projection_when_durable_write_refuses_or_raises():
+    class RefusingPersistence(FakePersistence):
+        def update_message_content(self, **kwargs):
+            return False
+
+    store, _unused, session, greeting = _seeded_roleplay_store()
+    store.persistence = RefusingPersistence()
+    assert store.refresh_session_roleplay_projections(session.id, global_default="Rowan") is False
+    assert store.get_message(greeting.id).content == "Hello Rowan."
+
+    class RaisingPersistence(FakePersistence):
+        def update_message_content(self, **kwargs):
+            raise RuntimeError("locked")
+
+    store, _unused, session, greeting = _seeded_roleplay_store()
+    store.persistence = RaisingPersistence()
+    assert store.refresh_session_roleplay_projections(session.id, global_default="Rowan") is False
+    assert store.get_message(greeting.id).content == "Hello Rowan."
+
+
+def test_failed_regeneration_restores_greeting_provenance():
+    store, _persistence, _session, greeting = _seeded_roleplay_store()
+
+    store.begin_variant_stream(greeting.id)
+    restored = store.mark_message_failed(greeting.id)
+
+    assert restored.metadata is not None
+    assert restored.metadata.template_kind == "character_greeting"
+
+
+def test_presentation_context_resolves_override_identity_and_roleplay_row():
+    store, _persistence, session, greeting = _seeded_roleplay_store()
+    session.user_display_name_override = "Captain Rowan"
+    session.identity_revision = 9
+
+    context = store.presentation_context(session.id, "Global User")
+    presentation = resolve_console_message_presentation(greeting, context)
+
+    assert context.user_name == "Captain Rowan"
+    assert context.assistant_kind == "character"
+    assert context.character_name == "Alraune"
+    assert context.revision == 9
+    assert presentation.row_class == "console-transcript-message-roleplay-character"
+
+
+def test_promotion_transaction_rolls_back_created_conversation_on_context_failure():
+    class TransactionalRefusingPersistence(FakePersistence):
+        def __init__(self):
+            super().__init__()
+            self.db = self
+
+        def transaction(self):
+            persistence = self
+
+            class _Transaction:
+                def __enter__(self):
+                    self.conversations = list(persistence.created_conversations)
+                    self.messages = list(persistence.created_messages)
+                    return self
+
+                def __exit__(self, exc_type, exc, traceback):
+                    if exc_type is not None:
+                        persistence.created_conversations[:] = self.conversations
+                        persistence.created_messages[:] = self.messages
+                    return False
+
+            return _Transaction()
+
+        def update_conversation_roleplay_context(self, **kwargs):
+            return False
+
+    persistence = TransactionalRefusingPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(ephemeral=True)
+    session.user_display_name_override = "Rowan"
+
+    with pytest.raises(RuntimeError, match="roleplay context"):
+        store.promote_ephemeral_session(session.id)
+
+    assert persistence.created_conversations == []
+    assert session.ephemeral is True
