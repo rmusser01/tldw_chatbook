@@ -24,8 +24,12 @@ def _signature_shape(callable_object: object) -> tuple[tuple[str, object, object
     )
 
 
-def test_public_constructor_remains_zero_argument() -> None:
-    assert _signature_shape(TranscriptionService) == ()
+def test_public_constructor_adds_only_a_keyword_dispatcher() -> None:
+    keyword_only = inspect.Parameter.KEYWORD_ONLY
+
+    assert _signature_shape(TranscriptionService) == (
+        ("local_stt_dispatcher", keyword_only, None),
+    )
 
 
 def test_public_method_signatures_match_the_legacy_contract() -> None:
@@ -214,8 +218,8 @@ def test_facade_preserves_buffer_arguments_and_provider_specific_kwargs(
         16_000,
         2,
         1,
-        "parakeet-onnx",
-        "nemo-parakeet-tdt-0.6b-v2",
+        "faster-whisper",
+        "base.en",
         "en",
         model_dir="/models/parakeet",
     )
@@ -229,12 +233,270 @@ def test_facade_preserves_buffer_arguments_and_provider_specific_kwargs(
                 16_000,
                 2,
                 1,
-                "parakeet-onnx",
-                "nemo-parakeet-tdt-0.6b-v2",
+                "faster-whisper",
+                "base.en",
                 "en",
             ),
             {"model_dir": "/models/parakeet"},
         )
+    ]
+
+
+class _Dispatcher:
+    def __init__(self) -> None:
+        self.buffer_calls: list[dict[str, object]] = []
+        self.dictation_calls: list[dict[str, object]] = []
+        self.buffer_result = {
+            "text": "shared result",
+            "segments": [],
+            "language": "en",
+        }
+        self.handle = object()
+        self.closed = False
+
+    def transcribe_buffer(self, **kwargs: object) -> object:
+        self.buffer_calls.append(kwargs)
+        return self.buffer_result
+
+    def begin_dictation(self, **kwargs: object) -> object:
+        self.dictation_calls.append(kwargs)
+        return self.handle
+
+    def close(self) -> None:
+        self.closed = True
+
+
+@pytest.mark.parametrize(
+    ("provider", "configured"),
+    [
+        pytest.param("parakeet-onnx", "faster-whisper", id="explicit"),
+        pytest.param(None, "parakeet-onnx", id="configured-default"),
+    ],
+)
+def test_parakeet_buffer_uses_the_shared_dispatcher_and_compatibility_result(
+    monkeypatch: pytest.MonkeyPatch,
+    provider: str | None,
+    configured: str,
+) -> None:
+    dispatcher = _Dispatcher()
+    dispatch = object()
+    bridge = _Bridge()
+    bridge.config["default_provider"] = configured
+    monkeypatch.setattr(
+        service_module,
+        "LegacyTranscriptionBridge",
+        lambda _backend_factory: bridge,
+    )
+    monkeypatch.setattr(
+        service_module,
+        "resolve_parakeet_dispatch",
+        lambda **_kwargs: dispatch,
+        raising=False,
+    )
+
+    service = TranscriptionService(local_stt_dispatcher=dispatcher)
+    result = service.transcribe_buffer(
+        b"\x00\x01" * 4,
+        24_000,
+        2,
+        1,
+        provider,
+        None,
+        None,
+    )
+
+    assert result is dispatcher.buffer_result
+    assert bridge.calls == []
+    call = dispatcher.buffer_calls[0]
+    source = call["source"]
+    assert source.audio == b"\x00\x01" * 4
+    assert (source.sample_rate, source.channels, source.sample_width) == (24_000, 2, 1)
+    assert call == {"source": source, "dispatch": dispatch, "language": "en"}
+
+
+@pytest.mark.parametrize(
+    ("configured_precision", "expected"),
+    [(None, "int8"), (" F32 ", "f32")],
+)
+def test_parakeet_buffer_resolves_the_configured_precision_before_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+    configured_precision: str | None,
+    expected: str,
+) -> None:
+    dispatcher = _Dispatcher()
+    captured: dict[str, object] = {}
+    bridge = _Bridge()
+    monkeypatch.setattr(
+        service_module,
+        "LegacyTranscriptionBridge",
+        lambda _backend_factory: bridge,
+    )
+    monkeypatch.setattr(
+        service_module,
+        "get_cli_setting",
+        lambda key, default=None: (
+            configured_precision
+            if key == "transcription.default_precision"
+            else default
+        ),
+    )
+
+    def _resolve(**kwargs: object) -> object:
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(
+        service_module,
+        "resolve_parakeet_dispatch",
+        _resolve,
+        raising=False,
+    )
+
+    TranscriptionService(local_stt_dispatcher=dispatcher).transcribe_buffer(
+        b"\x00\x00",
+        16_000,
+        provider="parakeet-onnx",
+    )
+
+    assert captured == {
+        "model_id": "nemo-parakeet-tdt-0.6b-v2",
+        "precision": expected,
+        "model_dir": None,
+    }
+
+
+def test_invalid_parakeet_precision_fails_before_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dispatcher = _Dispatcher()
+    bridge = _Bridge()
+    resolved: list[str] = []
+    monkeypatch.setattr(
+        service_module,
+        "LegacyTranscriptionBridge",
+        lambda _backend_factory: bridge,
+    )
+    monkeypatch.setattr(
+        service_module,
+        "get_cli_setting",
+        lambda key, default=None: (
+            "fp16" if key == "transcription.default_precision" else default
+        ),
+    )
+
+    def _reject(**kwargs: object) -> object:
+        resolved.append(str(kwargs["precision"]))
+        raise ValueError("unsupported Parakeet precision: fp16")
+
+    monkeypatch.setattr(
+        service_module,
+        "resolve_parakeet_dispatch",
+        _reject,
+        raising=False,
+    )
+
+    with pytest.raises(ValueError, match="unsupported Parakeet precision"):
+        TranscriptionService(local_stt_dispatcher=dispatcher).transcribe_buffer(
+            b"\x00\x00",
+            16_000,
+            provider="parakeet-onnx",
+        )
+
+    assert resolved == ["fp16"]
+    assert dispatcher.buffer_calls == []
+    assert bridge.calls == []
+
+
+def test_parakeet_buffer_requires_the_shared_dispatcher(
+    facade: tuple[TranscriptionService, _Bridge],
+) -> None:
+    service, bridge = facade
+
+    with pytest.raises(
+        TranscriptionError,
+        match="requires the shared local executor",
+    ):
+        service.transcribe_buffer(
+            b"\x00\x00",
+            16_000,
+            provider="parakeet-onnx",
+        )
+
+    assert bridge.calls == []
+
+
+def test_parakeet_streaming_reports_unsupported_without_consulting_the_bridge(
+    facade: tuple[TranscriptionService, _Bridge],
+) -> None:
+    service, bridge = facade
+
+    assert service.create_streaming_transcriber(provider="parakeet-onnx") is None
+    assert bridge.calls == []
+
+
+def test_facade_cleanup_does_not_close_the_app_owned_dispatcher(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dispatcher = _Dispatcher()
+    bridge = _Bridge()
+    monkeypatch.setattr(
+        service_module,
+        "LegacyTranscriptionBridge",
+        lambda _backend_factory: bridge,
+    )
+    service = TranscriptionService(local_stt_dispatcher=dispatcher)
+
+    service.cleanup()
+
+    assert bridge.calls == [("cleanup", (), {})]
+    assert dispatcher.closed is False
+
+
+def test_begin_dictation_capture_forwards_the_resolved_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dispatcher = _Dispatcher()
+    bridge = _Bridge()
+    dispatch = object()
+
+    def callback(_sequence: int, _text: str) -> None:
+        return None
+
+    monkeypatch.setattr(
+        service_module,
+        "LegacyTranscriptionBridge",
+        lambda _backend_factory: bridge,
+    )
+    monkeypatch.setattr(
+        service_module,
+        "resolve_parakeet_dispatch",
+        lambda **_kwargs: dispatch,
+        raising=False,
+    )
+
+    handle = TranscriptionService(
+        local_stt_dispatcher=dispatcher
+    ).begin_dictation_capture(
+        capture_generation=7,
+        model=None,
+        language="en",
+        sample_rate=16_000,
+        channels=1,
+        sample_width=2,
+        on_logical_segment=callback,
+    )
+
+    assert handle is dispatcher.handle
+    assert dispatcher.dictation_calls == [
+        {
+            "capture_generation": 7,
+            "dispatch": dispatch,
+            "sample_rate": 16_000,
+            "channels": 1,
+            "sample_width": 2,
+            "language": "en",
+            "on_logical_segment": callback,
+        }
     ]
 
 
