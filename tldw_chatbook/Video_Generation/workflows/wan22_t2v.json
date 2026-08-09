@@ -27,7 +27,7 @@
   "6": {
     "class_type": "EmptyHunyuanLatentVideo",
     "inputs": {"width": 832, "height": 480, "length": 49, "batch_size": 1},
-    "_meta": {"title": "Frames"}
+    "_meta": {"title": "Width Height Frames"}
   },
   "7": {
     "class_type": "KSampler",

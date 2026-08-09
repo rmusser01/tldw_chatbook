@@ -5,9 +5,12 @@ from __future__ import annotations
 import inspect
 import threading
 from types import SimpleNamespace
+from unittest.mock import Mock, create_autospec
 
+import httpx
 import pytest
 
+from tldw_chatbook.Image_Generation.adapters.image_format_utils import fetch_image_bytes
 from tldw_chatbook.Image_Generation.http_client import fetch_json
 from tldw_chatbook.Video_Generation.adapters import comfyui_video_adapter as cva
 from tldw_chatbook.Video_Generation.adapters.base import ResolvedReferenceAsset
@@ -97,7 +100,18 @@ def test_submits_title_parameterized_workflow_polls_and_downloads(adapter, json_
     calls, routes = json_recorder
     graph = _workflow()
     _install_workflow(adapter, monkeypatch, graph)
-    monkeypatch.setattr(cva, "fetch_image_bytes", lambda url, **kwargs: (b"video", "video/mp4"))
+    def fetch_bytes(
+        url: str,
+        *,
+        timeout: int | float,
+        headers=None,
+        cookies=None,
+        max_bytes=None,
+        trusted_origins=frozenset(),
+    ):
+        return b"video", "video/mp4"
+
+    monkeypatch.setattr(cva, "fetch_image_bytes", fetch_bytes)
     routes[("GET", "/object_info")] = _object_info_for(graph)
     routes[("POST", "/prompt")] = {"prompt_id": "job-1"}
     routes[("GET", "/history/job-1")] = [
@@ -136,10 +150,28 @@ def test_view_download_has_descriptor_query_and_trusted_origin(adapter, json_rec
     _install_workflow(adapter, monkeypatch, graph)
     download_calls = []
 
-    def fake_fetch_bytes(url, **kwargs):
-        download_calls.append((url, kwargs))
+    def fake_fetch_bytes(
+        url: str,
+        *,
+        timeout: int | float,
+        headers=None,
+        cookies=None,
+        max_bytes=None,
+        trusted_origins=frozenset(),
+    ):
+        download_calls.append((url, {
+            "timeout": timeout,
+            "headers": headers,
+            "cookies": cookies,
+            "max_bytes": max_bytes,
+            "trusted_origins": trusted_origins,
+        }))
         return b"animated", "image/webp"
 
+    # Match the shared helper's transport contract, not the call under test.
+    assert tuple(inspect.signature(fake_fetch_bytes).parameters) == tuple(
+        inspect.signature(fetch_image_bytes).parameters
+    )
     monkeypatch.setattr(cva, "fetch_image_bytes", fake_fetch_bytes)
     routes[("GET", "/object_info")] = _object_info_for(graph)
     routes[("POST", "/prompt")] = {"prompt_id": "job-2"}
@@ -152,7 +184,7 @@ def test_view_download_has_descriptor_query_and_trusted_origin(adapter, json_rec
     assert result.content_type == "image/webp"
     assert download_calls == [(
         "http://127.0.0.1:8188/view?filename=clip.webp&subfolder=&type=temp",
-        {"timeout": 30, "max_bytes": 500 * 1024 * 1024, "trusted_origins": frozenset({"127.0.0.1"})},
+        {"timeout": 30, "headers": None, "cookies": None, "max_bytes": 500 * 1024 * 1024, "trusted_origins": frozenset({"127.0.0.1"})},
     )]
 
 
@@ -162,7 +194,18 @@ def test_uploads_image_asset_and_injects_uploaded_filename(adapter, json_recorde
     _install_workflow(adapter, monkeypatch, graph)
     uploads = []
     monkeypatch.setattr(adapter, "_upload_image", lambda asset: uploads.append(asset) or "upload.png")
-    monkeypatch.setattr(cva, "fetch_image_bytes", lambda url, **kwargs: (b"v", "video/mp4"))
+    def fetch_bytes(
+        url: str,
+        *,
+        timeout: int | float,
+        headers=None,
+        cookies=None,
+        max_bytes=None,
+        trusted_origins=frozenset(),
+    ):
+        return b"v", "video/mp4"
+
+    monkeypatch.setattr(cva, "fetch_image_bytes", fetch_bytes)
     routes[("GET", "/object_info")] = _object_info_for(graph)
     routes[("POST", "/prompt")] = {"prompt_id": "job-3"}
     routes[("GET", "/history/job-3")] = {
@@ -178,30 +221,21 @@ def test_uploads_image_asset_and_injects_uploaded_filename(adapter, json_recorde
 
 
 def test_upload_uses_multipart_endpoint_and_trusted_origin(adapter, monkeypatch):
-    requests = []
     egress_checks = []
 
-    class Response:
-        is_redirect = False
+    response = Mock(spec=httpx.Response)
+    response.is_redirect = False
+    response.json.return_value = {"name": "input.png", "subfolder": "upload"}
+    client = create_autospec(httpx.Client, instance=True)
+    client.__enter__.return_value = client
+    client.post.return_value = response
 
-        def raise_for_status(self):
-            return None
+    def fake_create_client(timeout=None, *, follow_redirects=False):
+        assert timeout == 30
+        assert follow_redirects is False
+        return client
 
-        def json(self):
-            return {"name": "input.png", "subfolder": "upload"}
-
-    class Client:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return False
-
-        def post(self, url, **kwargs):
-            requests.append((url, kwargs))
-            return Response()
-
-    monkeypatch.setattr(cva, "create_client", lambda timeout: Client())
+    monkeypatch.setattr(cva, "create_client", fake_create_client)
     monkeypatch.setattr(
         cva,
         "_validate_egress_or_raise",
@@ -212,10 +246,11 @@ def test_upload_uses_multipart_endpoint_and_trusted_origin(adapter, monkeypatch)
     uploaded = adapter._upload_image(asset)
 
     assert uploaded == "upload/input.png"
-    assert requests == [(
+    client.post.assert_called_once_with(
         "http://127.0.0.1:8188/upload/image",
-        {"files": {"image": ("source.png", b"png-bytes", "image/png")}, "data": {"overwrite": "true"}},
-    )]
+        files={"image": ("source.png", b"png-bytes", "image/png")},
+        data={"overwrite": "true"},
+    )
     assert egress_checks == [
         ("http://127.0.0.1:8188/upload/image", frozenset({"127.0.0.1"}))
     ]
@@ -264,6 +299,19 @@ def test_workflow_resolution_prefers_user_dir_and_rejects_unsafe_names(adapter, 
         adapter._load_workflow("../chosen.json")
 
 
+def test_workflow_resolution_rejects_user_workflow_symlink_escape(adapter, monkeypatch, tmp_path):
+    user_dir = tmp_path / "data"
+    workflows = user_dir / "video_workflows"
+    workflows.mkdir(parents=True)
+    outside = tmp_path / "outside.json"
+    outside.write_text('{"outside": {"class_type": "Outside"}}')
+    (workflows / "escape.json").symlink_to(outside)
+    monkeypatch.setattr(cva, "get_user_data_dir", lambda: user_dir)
+
+    with pytest.raises(VideoGenerationError, match="symlink"):
+        adapter._load_workflow("escape.json")
+
+
 def test_unsupported_reference_and_bad_output_are_clear(adapter, json_recorder, monkeypatch):
     graph = _workflow()
     _install_workflow(adapter, monkeypatch, graph)
@@ -272,7 +320,18 @@ def test_unsupported_reference_and_bad_output_are_clear(adapter, json_recorder, 
         adapter.generate(_request(reference_assets=(unsupported,)))
 
     calls, routes = json_recorder
-    monkeypatch.setattr(cva, "fetch_image_bytes", lambda url, **kwargs: (b"v", "video/mp4"))
+    def fetch_bytes(
+        url: str,
+        *,
+        timeout: int | float,
+        headers=None,
+        cookies=None,
+        max_bytes=None,
+        trusted_origins=frozenset(),
+    ):
+        return b"v", "video/mp4"
+
+    monkeypatch.setattr(cva, "fetch_image_bytes", fetch_bytes)
     routes[("GET", "/object_info")] = _object_info_for(graph)
     routes[("POST", "/prompt")] = {"prompt_id": "job-5"}
     routes[("GET", "/history/job-5")] = {"job-5": {"outputs": {"7": {"images": [{"filename": "plain.png", "subfolder": "", "type": "output"}]}}}}
@@ -289,4 +348,17 @@ def test_shipped_workflows_are_api_graphs_with_documented_titles(adapter):
         for node in graph.values()
     }
     assert all(isinstance(node, dict) and node.get("class_type") for graph in (wan, svd) for node in graph.values())
-    assert {"Prompt", "Negative Prompt", "Seed", "Width", "Height", "Frames", "FPS", "Input Image"} <= titles
+    assert {
+        "Prompt", "Negative Prompt", "Seed", "Width Height Frames", "FPS", "Input Image",
+    } <= titles
+
+
+def test_parameterizes_connected_controls_in_each_shipped_workflow(adapter):
+    request = _request(width=1280, height=720, duration_seconds=3, fps=12)
+    wan = adapter._parameterize_workflow(adapter._load_workflow("wan22_t2v.json"), request, None)
+    svd = adapter._parameterize_workflow(adapter._load_workflow("svd_xt_i2v.json"), request, None)
+
+    assert wan["6"]["inputs"] == {"width": 1280, "height": 720, "length": 36, "batch_size": 1}
+    assert svd["3"]["inputs"]["width"] == 1280
+    assert svd["3"]["inputs"]["height"] == 720
+    assert svd["3"]["inputs"]["video_frames"] == 36
