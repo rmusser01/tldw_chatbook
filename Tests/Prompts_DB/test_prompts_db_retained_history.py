@@ -82,9 +82,7 @@ def _seed_v3_database(
             rows,
         )
         if create_wrong_history_index:
-            conn.execute(
-                f"CREATE INDEX {HISTORY_INDEX} ON sync_log(timestamp)"
-            )
+            conn.execute(f"CREATE INDEX {HISTORY_INDEX} ON sync_log(timestamp)")
         conn.commit()
         return rows
     finally:
@@ -218,8 +216,7 @@ def _assert_prompt_history_query_plans_use_index(
     plans: dict[str, list[str]],
 ) -> None:
     assert any(
-        f"USING COVERING INDEX {HISTORY_INDEX}" in detail
-        for detail in plans["count"]
+        f"USING COVERING INDEX {HISTORY_INDEX}" in detail for detail in plans["count"]
     )
     assert any(f"USING INDEX {HISTORY_INDEX}" in detail for detail in plans["rows"])
     assert all(
@@ -227,6 +224,90 @@ def _assert_prompt_history_query_plans_use_index(
         for plan in plans.values()
         for detail in plan
     )
+
+
+def _sync_events_after(
+    database: PromptsDatabase, change_id: int = 0
+) -> list[dict[str, Any]]:
+    rows = database.get_connection().execute(
+        """
+        SELECT change_id, entity, entity_uuid, operation, version, payload
+        FROM sync_log
+        WHERE change_id > ?
+        ORDER BY change_id
+        """,
+        (change_id,),
+    )
+    events = []
+    for row in rows:
+        event = dict(row)
+        event["decoded_payload"] = json.loads(event["payload"])
+        events.append(event)
+    return events
+
+
+def _latest_change_id(database: PromptsDatabase) -> int:
+    row = (
+        database.get_connection()
+        .execute("SELECT COALESCE(MAX(change_id), 0) FROM sync_log")
+        .fetchone()
+    )
+    return int(row[0])
+
+
+def _prompt_storage_state(
+    database: PromptsDatabase,
+) -> dict[str, list[tuple[Any, ...]]]:
+    conn = database.get_connection()
+    queries = {
+        "prompts": "SELECT * FROM Prompts ORDER BY id",
+        "prompt_fts": """
+            SELECT rowid, name, author, details, system_prompt, user_prompt
+            FROM prompts_fts
+            ORDER BY rowid
+        """,
+        "keywords": "SELECT * FROM PromptKeywordsTable ORDER BY id",
+        "keyword_fts": "SELECT rowid, keyword FROM prompt_keywords_fts ORDER BY rowid",
+        "links": """
+            SELECT prompt_id, keyword_id
+            FROM PromptKeywordLinks
+            ORDER BY prompt_id, keyword_id
+        """,
+        "sync_log": "SELECT * FROM sync_log ORDER BY change_id",
+    }
+    return {
+        name: [tuple(row) for row in conn.execute(query)]
+        for name, query in queries.items()
+    }
+
+
+def _install_link_insert_failure(database: PromptsDatabase) -> None:
+    conn = database.get_connection()
+    conn.execute(
+        """
+        CREATE TRIGGER fail_prompt_keyword_link_insert
+        BEFORE INSERT ON PromptKeywordLinks
+        BEGIN
+            SELECT RAISE(ABORT, 'forced PromptKeywordLinks insert failure');
+        END
+        """
+    )
+    conn.commit()
+
+
+def _install_snapshot_finalize_failure(database: PromptsDatabase) -> None:
+    conn = database.get_connection()
+    conn.execute(
+        """
+        CREATE TRIGGER fail_prompt_snapshot_finalize
+        BEFORE UPDATE OF payload ON sync_log
+        WHEN OLD.entity = 'Prompts'
+        BEGIN
+            SELECT RAISE(ABORT, 'forced Prompt snapshot finalize failure');
+        END
+        """
+    )
+    conn.commit()
 
 
 def test_fresh_v4_schema_has_partial_covering_prompt_history_index():
@@ -328,10 +409,13 @@ def test_v3_to_v4_migration_rolls_back_index_when_validation_fails(
     conn = sqlite3.connect(database_path)
     try:
         assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 3
-        assert conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?",
-            (HISTORY_INDEX,),
-        ).fetchone() is None
+        assert (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?",
+                (HISTORY_INDEX,),
+            ).fetchone()
+            is None
+        )
     finally:
         conn.close()
 
@@ -557,5 +641,339 @@ def test_prompt_history_production_queries_use_index_without_scan_or_temp_sort()
         _assert_prompt_history_query_plans_use_index(
             _trace_prompt_history_query_plans(database)
         )
+    finally:
+        database.close_connection()
+
+
+def test_new_prompt_snapshot_captures_canonical_keywords_before_link_events():
+    database = PromptsDatabase(":memory:", client_id="snapshot-create")
+    try:
+        prompt_id, prompt_uuid, _message = database.add_prompt(
+            name="Canonical create",
+            author="Author",
+            details="Created details",
+            system_prompt="System",
+            user_prompt="User",
+            keywords=["  Beta   Tag ", "alpha", "ALPHA", "\t"],
+        )
+
+        assert database.fetch_keywords_for_prompt(prompt_id) == ["alpha", "beta tag"]
+        prompt_row = (
+            database.get_connection()
+            .execute("SELECT name, details FROM Prompts WHERE id = ?", (prompt_id,))
+            .fetchone()
+        )
+        assert tuple(prompt_row) == ("Canonical create", "Created details")
+        fts_row = (
+            database.get_connection()
+            .execute(
+                "SELECT name, details FROM prompts_fts WHERE rowid = ?", (prompt_id,)
+            )
+            .fetchone()
+        )
+        assert tuple(fts_row) == ("Canonical create", "Created details")
+
+        events = _sync_events_after(database)
+        prompt_events = [event for event in events if event["entity"] == "Prompts"]
+        link_events = [
+            event for event in events if event["entity"] == "PromptKeywordLinks"
+        ]
+        assert len(prompt_events) == 1
+        assert prompt_events[0]["operation"] == "create"
+        assert prompt_events[0]["entity_uuid"] == prompt_uuid
+        assert prompt_events[0]["decoded_payload"]["keywords"] == [
+            "alpha",
+            "beta tag",
+        ]
+        assert prompt_events[0]["decoded_payload"]["keywords_captured"] is True
+        assert len(link_events) == 2
+        assert all(
+            prompt_events[0]["change_id"] < event["change_id"] for event in link_events
+        )
+    finally:
+        database.close_connection()
+
+
+def test_new_prompt_snapshot_with_omitted_keywords_captures_empty_membership():
+    database = PromptsDatabase(":memory:", client_id="snapshot-create-empty")
+    try:
+        _prompt_id, prompt_uuid, _message = database.add_prompt(
+            name="No keywords",
+            author=None,
+            details=None,
+        )
+
+        events = _sync_events_after(database)
+        prompt_events = [event for event in events if event["entity"] == "Prompts"]
+        assert len(prompt_events) == 1
+        assert prompt_events[0]["entity_uuid"] == prompt_uuid
+        assert prompt_events[0]["decoded_payload"]["keywords"] == []
+        assert prompt_events[0]["decoded_payload"]["keywords_captured"] is True
+    finally:
+        database.close_connection()
+
+
+def test_add_prompt_overwrite_without_keywords_captures_unchanged_membership():
+    database = PromptsDatabase(":memory:", client_id="snapshot-overwrite")
+    try:
+        prompt_id, prompt_uuid, _message = database.add_prompt(
+            name="Overwrite target",
+            author="Before",
+            details="Before details",
+            keywords=[" Beta ", "alpha"],
+        )
+        before_change_id = _latest_change_id(database)
+
+        updated_id, updated_uuid, _message = database.add_prompt(
+            name="Overwrite target",
+            author="After",
+            details="After details",
+            overwrite=True,
+        )
+
+        assert (updated_id, updated_uuid) == (prompt_id, prompt_uuid)
+        assert database.fetch_keywords_for_prompt(prompt_id) == ["alpha", "beta"]
+        events = _sync_events_after(database, before_change_id)
+        prompt_events = [event for event in events if event["entity"] == "Prompts"]
+        assert len(prompt_events) == 1
+        assert prompt_events[0]["operation"] == "update"
+        assert prompt_events[0]["decoded_payload"]["keywords"] == ["alpha", "beta"]
+        assert prompt_events[0]["decoded_payload"]["keywords_captured"] is True
+        assert not [
+            event for event in events if event["entity"] == "PromptKeywordLinks"
+        ]
+
+        before_change_id = _latest_change_id(database)
+        database.add_prompt(
+            name="Overwrite target",
+            author="Final",
+            details="Final details",
+            keywords=["  Gamma   Tag ", "ALPHA", "alpha"],
+            overwrite=True,
+        )
+
+        assert database.fetch_keywords_for_prompt(prompt_id) == ["alpha", "gamma tag"]
+        events = _sync_events_after(database, before_change_id)
+        prompt_events = [event for event in events if event["entity"] == "Prompts"]
+        link_events = [
+            event for event in events if event["entity"] == "PromptKeywordLinks"
+        ]
+        assert len(prompt_events) == 1
+        assert prompt_events[0]["decoded_payload"]["keywords"] == [
+            "alpha",
+            "gamma tag",
+        ]
+        assert prompt_events[0]["decoded_payload"]["keywords_captured"] is True
+        assert link_events
+        assert all(
+            prompt_events[0]["change_id"] < event["change_id"] for event in link_events
+        )
+    finally:
+        database.close_connection()
+
+
+def test_update_prompt_snapshot_captures_final_keywords_without_rewriting_legacy_row():
+    database = PromptsDatabase(":memory:", client_id="snapshot-update")
+    try:
+        prompt_id, prompt_uuid, _message = database.add_prompt(
+            name="Update target",
+            author="Before",
+            details="Before details",
+            keywords=["legacy", "remove me"],
+        )
+        conn = database.get_connection()
+        legacy_row = conn.execute(
+            """
+            SELECT change_id
+            FROM sync_log
+            WHERE entity = 'Prompts' AND entity_uuid = ?
+            ORDER BY change_id
+            LIMIT 1
+            """,
+            (prompt_uuid,),
+        ).fetchone()
+        legacy_payload = '{"name":"legacy snapshot","version":1}'
+        conn.execute(
+            "UPDATE sync_log SET payload = ? WHERE change_id = ?",
+            (legacy_payload, legacy_row["change_id"]),
+        )
+        conn.commit()
+        before_change_id = _latest_change_id(database)
+
+        updated_uuid, _message = database.update_prompt_by_id(
+            prompt_id,
+            {
+                "name": "Updated target",
+                "details": "Updated details",
+                "keywords": ["  Final   Tag ", "alpha", "ALPHA"],
+            },
+        )
+
+        assert updated_uuid == prompt_uuid
+        assert database.fetch_keywords_for_prompt(prompt_id) == ["alpha", "final tag"]
+        assert (
+            conn.execute(
+                "SELECT payload FROM sync_log WHERE change_id = ?",
+                (legacy_row["change_id"],),
+            ).fetchone()[0]
+            == legacy_payload
+        )
+        assert tuple(
+            conn.execute(
+                "SELECT name, details FROM prompts_fts WHERE rowid = ?", (prompt_id,)
+            ).fetchone()
+        ) == ("Updated target", "Updated details")
+
+        events = _sync_events_after(database, before_change_id)
+        prompt_events = [event for event in events if event["entity"] == "Prompts"]
+        link_events = [
+            event for event in events if event["entity"] == "PromptKeywordLinks"
+        ]
+        assert len(prompt_events) == 1
+        assert prompt_events[0]["operation"] == "update"
+        assert prompt_events[0]["decoded_payload"]["keywords"] == [
+            "alpha",
+            "final tag",
+        ]
+        assert prompt_events[0]["decoded_payload"]["keywords_captured"] is True
+        assert link_events
+        assert all(
+            prompt_events[0]["change_id"] < event["change_id"] for event in link_events
+        )
+    finally:
+        database.close_connection()
+
+
+@pytest.mark.parametrize(
+    "bad_keywords",
+    [["valid", 196], [None], "not-a-list"],
+    ids=["non-string-member", "none-member", "non-list"],
+)
+def test_add_prompt_keyword_validation_raises_input_error_without_partial_state(
+    bad_keywords,
+):
+    database = PromptsDatabase(":memory:", client_id="snapshot-create-validation")
+    try:
+        before = _prompt_storage_state(database)
+
+        with pytest.raises(InputError, match="keyword"):
+            database.add_prompt(
+                name="Invalid create",
+                author=None,
+                details="Must roll back",
+                keywords=bad_keywords,
+            )
+
+        assert _prompt_storage_state(database) == before
+    finally:
+        database.close_connection()
+
+
+def test_update_prompt_keyword_validation_raises_input_error_without_partial_state():
+    database = PromptsDatabase(":memory:", client_id="snapshot-update-validation")
+    try:
+        prompt_id, _prompt_uuid, _message = database.add_prompt(
+            name="Validation target",
+            author=None,
+            details="Original details",
+            keywords=["original"],
+        )
+        before = _prompt_storage_state(database)
+
+        with pytest.raises(InputError, match="keyword"):
+            database.update_prompt_by_id(
+                prompt_id,
+                {
+                    "name": "Mutated name",
+                    "details": "Mutated details",
+                    "keywords": ["valid", object()],
+                },
+            )
+
+        assert _prompt_storage_state(database) == before
+    finally:
+        database.close_connection()
+
+
+@pytest.mark.parametrize("operation", ["create", "update"])
+def test_prompt_and_keyword_state_rolls_back_on_link_persistence_failure(operation):
+    database = PromptsDatabase(":memory:", client_id=f"snapshot-link-{operation}")
+    try:
+        prompt_id = None
+        if operation == "update":
+            prompt_id, _prompt_uuid, _message = database.add_prompt(
+                name="Link failure target",
+                author=None,
+                details="Original details",
+                keywords=["original"],
+            )
+        _install_link_insert_failure(database)
+        before = _prompt_storage_state(database)
+
+        with pytest.raises(DatabaseError, match="Keyword update failed"):
+            if operation == "create":
+                database.add_prompt(
+                    name="Link failure create",
+                    author=None,
+                    details="Must roll back",
+                    keywords=["new keyword"],
+                )
+            else:
+                database.update_prompt_by_id(
+                    prompt_id,
+                    {
+                        "name": "Mutated target",
+                        "details": "Mutated details",
+                        "keywords": ["new keyword"],
+                    },
+                )
+
+        assert _prompt_storage_state(database) == before
+    finally:
+        database.close_connection()
+
+
+@pytest.mark.parametrize("operation", ["create", "overwrite", "update"])
+def test_all_prompt_state_rolls_back_on_snapshot_finalize_failure(operation):
+    database = PromptsDatabase(":memory:", client_id=f"snapshot-finalize-{operation}")
+    try:
+        prompt_id = None
+        if operation != "create":
+            prompt_id, _prompt_uuid, _message = database.add_prompt(
+                name="Finalize failure target",
+                author="Before",
+                details="Original details",
+                keywords=["original"],
+            )
+        _install_snapshot_finalize_failure(database)
+        before = _prompt_storage_state(database)
+
+        with pytest.raises(DatabaseError, match="finalize Prompt sync snapshot"):
+            if operation == "create":
+                database.add_prompt(
+                    name="Finalize failure create",
+                    author=None,
+                    details="Must roll back",
+                    keywords=["new keyword"],
+                )
+            elif operation == "overwrite":
+                database.add_prompt(
+                    name="Finalize failure target",
+                    author="After",
+                    details="Mutated details",
+                    keywords=["new keyword"],
+                    overwrite=True,
+                )
+            else:
+                database.update_prompt_by_id(
+                    prompt_id,
+                    {
+                        "name": "Mutated target",
+                        "details": "Mutated details",
+                        "keywords": ["new keyword"],
+                    },
+                )
+
+        assert _prompt_storage_state(database) == before
     finally:
         database.close_connection()

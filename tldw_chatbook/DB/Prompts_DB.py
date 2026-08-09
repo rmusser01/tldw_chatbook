@@ -805,9 +805,7 @@ class PromptsDatabase:
         )
         try:
             with self.transaction():
-                conn.execute(
-                    f"DROP INDEX IF EXISTS {self._PROMPT_HISTORY_INDEX_NAME}"
-                )
+                conn.execute(f"DROP INDEX IF EXISTS {self._PROMPT_HISTORY_INDEX_NAME}")
                 conn.execute(self._PROMPT_HISTORY_INDEX_SQL)
 
                 index_row = conn.execute(
@@ -943,6 +941,19 @@ class PromptsDatabase:
     def _normalize_keyword(self, keyword: str) -> str:
         return re.sub(r"\s+", " ", keyword.strip().lower())
 
+    def _canonicalize_prompt_keywords(self, keywords_list: Any) -> List[str]:
+        """Validate and canonicalize a Prompt's requested keyword membership."""
+        if not isinstance(keywords_list, list):
+            raise InputError("keywords must be a list of strings.")
+
+        normalized_keywords = set()
+        for keyword in keywords_list:
+            if not isinstance(keyword, str):
+                raise InputError("keyword list members must be strings.")
+            if keyword.strip():
+                normalized_keywords.add(self._normalize_keyword(keyword))
+        return sorted(normalized_keywords)
+
     def _normalize_prompt_format(self, prompt_format: Optional[str]) -> str:
         if prompt_format is None:
             return "legacy"
@@ -1018,6 +1029,17 @@ class PromptsDatabase:
             raise DatabaseError(f"Failed to fetch current version: {e}") from e
         return None
 
+    @staticmethod
+    def _serialize_sync_payload(payload: Optional[Dict]) -> Optional[str]:
+        """Serialize sync payloads consistently, including SQLite datetimes."""
+        if payload and isinstance(payload, dict):
+            serializable_payload = {
+                key: value.isoformat() if isinstance(value, datetime) else value
+                for key, value in payload.items()
+            }
+            return json.dumps(serializable_payload, separators=(",", ":"))
+        return json.dumps(payload, separators=(",", ":")) if payload else None
+
     def _log_sync_event(
         self,
         conn: sqlite3.Connection,
@@ -1026,27 +1048,15 @@ class PromptsDatabase:
         operation: str,
         version: int,
         payload: Optional[Dict] = None,
-    ):
+    ) -> Optional[int]:
         if not entity or not entity_uuid or not operation:
             logging.error("Sync log attempt with missing entity, uuid, or operation.")
             return
         current_time = self._get_current_utc_timestamp_str()
         client_id = self.client_id
-        # Convert datetime objects to strings for JSON serialization
-        if payload and isinstance(payload, dict):
-            serializable_payload = {}
-            for key, value in payload.items():
-                if isinstance(value, datetime):
-                    serializable_payload[key] = value.isoformat()
-                else:
-                    serializable_payload[key] = value
-            payload_json = json.dumps(serializable_payload, separators=(",", ":"))
-        else:
-            payload_json = (
-                json.dumps(payload, separators=(",", ":")) if payload else None
-            )
+        payload_json = self._serialize_sync_payload(payload)
         try:
-            conn.execute(
+            cursor = conn.execute(
                 """
                          INSERT INTO sync_log (entity, entity_uuid, operation, timestamp, client_id, version, payload)
                          VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -1061,14 +1071,64 @@ class PromptsDatabase:
                     payload_json,
                 ),
             )
+            if cursor.lastrowid is None:
+                raise DatabaseError("Failed to get change ID for sync event.")
             logging.debug(
                 f"Logged sync: {entity} {entity_uuid} {operation} v{version} at {current_time}"
             )
+            return int(cursor.lastrowid)
         except sqlite3.Error as e:
             logging.opt(exception=True).error(
                 f"Failed insert sync_log for {entity} {entity_uuid}: {e}"
             )
             raise DatabaseError(f"Failed to log sync event: {e}") from e
+
+    def _finalize_prompt_sync_snapshot(
+        self,
+        conn: sqlite3.Connection,
+        change_id: Optional[int],
+        prompt_id: int,
+        payload: Dict[str, Any],
+    ) -> None:
+        """Finalize one pending Prompt event after keyword membership settles."""
+        if change_id is None:
+            raise DatabaseError(
+                "Failed to finalize Prompt sync snapshot: missing change ID."
+            )
+
+        try:
+            keyword_rows = conn.execute(
+                """
+                SELECT k.keyword
+                FROM PromptKeywordsTable AS k
+                JOIN PromptKeywordLinks AS link ON link.keyword_id = k.id
+                WHERE link.prompt_id = ? AND k.deleted = 0
+                """,
+                (prompt_id,),
+            ).fetchall()
+            snapshot_payload = dict(payload)
+            snapshot_payload["keywords"] = sorted(
+                {row["keyword"] for row in keyword_rows}
+            )
+            snapshot_payload["keywords_captured"] = True
+            serialized_payload = self._serialize_sync_payload(snapshot_payload)
+            cursor = conn.execute(
+                """
+                UPDATE sync_log
+                SET payload = ?
+                WHERE change_id = ? AND entity = 'Prompts'
+                """,
+                (serialized_payload, change_id),
+            )
+            if cursor.rowcount != 1:
+                raise DatabaseError(
+                    "Failed to finalize Prompt sync snapshot: event not found."
+                )
+        except sqlite3.Error as e:
+            logging.opt(exception=True).error(
+                f"Failed to finalize Prompt sync snapshot {change_id}: {e}"
+            )
+            raise DatabaseError(f"Failed to finalize Prompt sync snapshot: {e}") from e
 
     # --- FTS Helper Methods ---
     def _update_fts_prompt(
@@ -1316,6 +1376,11 @@ class PromptsDatabase:
             else None
         )
         normalized_artifact_type = self._normalize_artifact_type(artifact_type)
+        normalized_keywords = (
+            self._canonicalize_prompt_keywords(keywords)
+            if keywords is not None
+            else None
+        )
 
         try:
             with self.transaction(immediate=serialize_create) as conn:
@@ -1333,6 +1398,8 @@ class PromptsDatabase:
 
                 prompt_id: Optional[int] = None
                 prompt_uuid: Optional[str] = None
+                prompt_sync_change_id: Optional[int] = None
+                prompt_snapshot_payload: Optional[Dict[str, Any]] = None
                 action_taken: str = "skipped"
 
                 if existing:
@@ -1454,7 +1521,8 @@ class PromptsDatabase:
                             f"Failed to update prompt '{name}'.", "Prompts", prompt_id
                         )
 
-                    self._log_sync_event(
+                    prompt_snapshot_payload = update_data
+                    prompt_sync_change_id = self._log_sync_event(
                         conn, "Prompts", prompt_uuid, "update", new_version, update_data
                     )
                     self._update_fts_prompt(
@@ -1524,7 +1592,8 @@ class PromptsDatabase:
                     prompt_id = cursor.lastrowid
                     if not prompt_id:
                         raise DatabaseError("Failed to get ID for new prompt.")
-                    self._log_sync_event(
+                    prompt_snapshot_payload = insert_data
+                    prompt_sync_change_id = self._log_sync_event(
                         conn, "Prompts", prompt_uuid, "create", new_version, insert_data
                     )
                     self._update_fts_prompt(
@@ -1538,11 +1607,20 @@ class PromptsDatabase:
                     )
 
                 if (
-                    prompt_id and keywords is not None
+                    prompt_id and normalized_keywords is not None
                 ):  # keywords can be empty list to remove all
                     self.update_keywords_for_prompt(
-                        prompt_id, keywords_list=keywords
+                        prompt_id, keywords_list=normalized_keywords
                     )  # This is an instance method
+
+                if prompt_id is None or prompt_snapshot_payload is None:
+                    raise DatabaseError("Failed to prepare Prompt sync snapshot.")
+                self._finalize_prompt_sync_snapshot(
+                    conn,
+                    prompt_sync_change_id,
+                    prompt_id,
+                    prompt_snapshot_payload,
+                )
 
                 msg = f"Prompt '{name}' {action_taken} successfully."
 
@@ -1612,17 +1690,7 @@ class PromptsDatabase:
                 raise DatabaseError(f"Failed to process prompt '{name}': {e}") from e
 
     def update_keywords_for_prompt(self, prompt_id: int, keywords_list: List[str]):
-        normalized_new_keywords = sorted(
-            list(
-                set(
-                    [
-                        self._normalize_keyword(k)
-                        for k in keywords_list
-                        if k and k.strip()
-                    ]
-                )
-            )
-        )
+        normalized_new_keywords = self._canonicalize_prompt_keywords(keywords_list)
 
         try:
             # This method is called within an existing transaction (e.g. from add_prompt)
@@ -1764,6 +1832,11 @@ class PromptsDatabase:
             not update_data["name"] or not update_data["name"].strip()
         ):
             raise InputError("Prompt name cannot be empty if provided for update.")
+        normalized_keywords = None
+        if "keywords" in update_data:
+            normalized_keywords = self._canonicalize_prompt_keywords(
+                update_data["keywords"]
+            )
         expected_version = self._normalize_expected_version(expected_version)
         normalized_artifact_type = None
         if "artifact_type" in update_data:
@@ -1893,7 +1966,7 @@ class PromptsDatabase:
                 # Fetch the full updated row for payload
                 cursor.execute("SELECT * FROM Prompts WHERE id = ?", (prompt_id,))
                 updated_payload = dict(cursor.fetchone())
-                self._log_sync_event(
+                prompt_sync_change_id = self._log_sync_event(
                     conn,
                     "Prompts",
                     original_uuid,
@@ -1914,12 +1987,17 @@ class PromptsDatabase:
                 )
 
                 # Handle keywords if provided in update_data (assuming 'keywords' is a list of strings)
-                if "keywords" in update_data and isinstance(
-                    update_data["keywords"], list
-                ):
+                if normalized_keywords is not None:
                     self.update_keywords_for_prompt(
-                        prompt_id, update_data["keywords"]
+                        prompt_id, normalized_keywords
                     )  # Call existing method
+
+                self._finalize_prompt_sync_snapshot(
+                    conn,
+                    prompt_sync_change_id,
+                    prompt_id,
+                    updated_payload,
+                )
 
                 # Log success metrics
                 duration = time.time() - start_time
