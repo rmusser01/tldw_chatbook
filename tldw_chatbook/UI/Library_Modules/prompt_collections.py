@@ -703,7 +703,10 @@ class LibraryPromptCollectionsController:
             missing.difference_update(self._label_cache)
             if not catalog.has_more:
                 break
-            offset = catalog.next_offset
+            next_offset = catalog.next_offset
+            if next_offset <= offset:
+                break
+            offset = next_offset
         return self._label_cache
 
     async def load_memberships(self) -> None:

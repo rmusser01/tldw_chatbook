@@ -59,9 +59,15 @@ class PromptCollectionManagerModal(ModalScreen[PromptCollectionManagerResult | N
     }
     #prompt-collection-manager-title,
     #prompt-collection-manager-authority,
-    #prompt-collection-manager-rename-target,
     #prompt-collection-manager-outcome {
         height: auto;
+    }
+    #prompt-collection-manager-rename-target {
+        height: 1;
+        min-height: 1;
+        overflow: hidden;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
     }
     #prompt-collection-manager-rows {
         height: 1fr;
@@ -181,10 +187,6 @@ class PromptCollectionManagerModal(ModalScreen[PromptCollectionManagerResult | N
                             compact=True,
                         )
                         checkbox.collection_id = item.collection_id
-                        checkbox.set_class(
-                            item.collection_id == self._rename_selected_id,
-                            "prompt-collection-manager-rename-target",
-                        )
                         yield checkbox
                     else:
                         button = Button(
@@ -331,11 +333,6 @@ class PromptCollectionManagerModal(ModalScreen[PromptCollectionManagerResult | N
         if collection_id == self._rename_selected_id:
             return
         self._rename_selected_id = collection_id
-        for checkbox in self.query(".prompt-collection-manager-row").results(Checkbox):
-            checkbox.set_class(
-                getattr(checkbox, "collection_id", None) == collection_id,
-                "prompt-collection-manager-rename-target",
-            )
         for target in self.query("#prompt-collection-manager-rename-target").results(
             Static
         ):
