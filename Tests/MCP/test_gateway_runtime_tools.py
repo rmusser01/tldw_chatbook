@@ -17,6 +17,7 @@ gateway = pytest.importorskip(
 GatewayRequestContext = gateway.GatewayRequestContext
 GatewayToolExecutionError = gateway.GatewayToolExecutionError
 
+from jsonschema import Draft7Validator, Draft202012Validator  # noqa: E402
 from tldw_chatbook.MCP.gateway_runtime import ChatbookGatewayRuntime  # noqa: E402
 from tldw_chatbook.Agents.agent_models import ToolResult  # noqa: E402
 from tldw_chatbook.Agents.local_tool_provider import (  # noqa: E402
@@ -589,6 +590,10 @@ async def test_real_provider_schemas_are_published_unchanged(tmp_path) -> None:
         registration.name: copy.deepcopy(registration.parameters)
         for registration in registrations
     }
+    assert all("$schema" not in schema for schema in expected_schemas.values())
+    for schema in expected_schemas.values():
+        Draft7Validator.check_schema(schema)
+        Draft202012Validator.check_schema(schema)
     runtime = _runtime_with_builtins()
     runtime.register_local_tools(registrations)
     runtime.finalize()
@@ -649,6 +654,46 @@ async def test_successful_local_tool_result_content_is_returned_raw() -> None:
             id="malformed-object-schema",
         ),
         pytest.param(
+            [
+                _local_registration(
+                    parameters={
+                        "$schema": "http://json-schema.org/draft-07/schema#",
+                        "type": "object",
+                        "properties": {},
+                    }
+                )
+            ],
+            id="explicit-draft-7",
+        ),
+        pytest.param(
+            [
+                _local_registration(
+                    parameters={
+                        "$schema": "https://json-schema.org/draft/2020-12/schema",
+                        "type": "object",
+                        "properties": {},
+                    }
+                )
+            ],
+            id="explicit-draft-2020-12",
+        ),
+        pytest.param(
+            [
+                _local_registration(
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "values": {
+                                "type": "array",
+                                "items": [{"type": "string"}],
+                            }
+                        },
+                    }
+                )
+            ],
+            id="draft-2020-12-incompatible-schema",
+        ),
+        pytest.param(
             [_local_registration(handler="not callable")],
             id="non-callable-handler",
         ),
@@ -674,6 +719,20 @@ async def test_successful_local_tool_result_content_is_returned_raw() -> None:
             id="mid-list-malformed-object-schema",
         ),
         pytest.param(
+            [
+                _local_registration("valid_first"),
+                _local_registration(
+                    "draft-7-incompatible",
+                    parameters={
+                        "type": "object",
+                        "properties": {},
+                        "additionalItems": 1,
+                    },
+                ),
+            ],
+            id="mid-list-draft-7-incompatible-schema",
+        ),
+        pytest.param(
             [_local_registration(description="")],
             id="invalid-description",
         ),
@@ -685,9 +744,19 @@ async def test_invalid_local_registration_is_atomic(
 ) -> None:
     runtime = _runtime_with_builtins()
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError) as exc_info:
         runtime.register_local_tools(registrations)
 
+    assert str(exc_info.value) in {
+        "local tool description must be a bounded string",
+        "local tool handler must be callable",
+        "local tool name collides with another tool",
+        "local tool parameters must have type object",
+        "local tool parameters must be valid JSON Schema",
+        "local tool parameters must not declare a schema dialect",
+    }
+    assert exc_info.value.__context__ is None
+    assert exc_info.value.__cause__ is None
     assert list(runtime._tool_descriptors) == BUILTIN_TOOL_NAMES
     assert list(runtime._tool_handlers) == BUILTIN_TOOL_NAMES
     runtime.finalize()
