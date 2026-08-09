@@ -16,12 +16,15 @@ a full pilot-driven screen.
 
 import pytest
 import pytest_asyncio
+from textual.app import App, ComposeResult
 from textual.widgets import Static
 
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+from tldw_chatbook.Widgets.Console.console_image_viewer_modal import ClickableAvatarBox
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -762,3 +765,87 @@ def test_expanding_the_character_section_reallows_a_rail_width_avatar():
         "opening the Character section must clear the avatar scope guard, or "
         "the portrait stays at the collapsed 16-column size forever"
     )
+
+
+
+# --- task-3793: explicit sizing regression pins -----------------------------
+#
+# The rail's avatar holder is width/height auto (task-1661); a default-width
+# (100%) Static inside an auto container resolves to 0x0 under Textual 8.x,
+# so the avatar -- and even the no-character placeholder -- mounted but
+# painted nothing. That was the Console's "fully broken" character portrait.
+# The builder now sets explicit width/height from the baked renderable's
+# grid. These mount the builder's REAL output into the production holder
+# shape and assert the painted region is non-zero.
+
+
+class _AvatarHolderApp(App):
+    """Host mirroring the rail's auto/auto avatar holder (task-1661 shape)."""
+
+    def __init__(self, screen: ChatScreen, spec: dict | None):
+        super().__init__()
+        self._avatar_screen = screen
+        self._avatar_spec = spec
+
+    def compose(self) -> ComposeResult:
+        holder = ClickableAvatarBox(id="console-character-avatar")
+        holder.styles.width = "auto"
+        holder.styles.height = "auto"
+        with holder:
+            # Built HERE, inside the active app context: the pixels fallback
+            # reads `self.app.no_color` for its monochrome guard, which needs
+            # a running app (a bare unit call degrades to the placeholder).
+            yield self._avatar_screen._build_character_avatar_widget(
+                self._avatar_spec
+            )
+
+
+@pytest.mark.asyncio
+async def test_pixels_avatar_paints_nonzero_region_in_auto_holder():
+    """task-3793 regression: the pixels avatar must paint a non-zero region.
+
+    Mounts the real builder output in an auto/auto holder replicating
+    ``ClickableAvatarBox`` and asserts the painted region is non-zero with
+    the explicit cell size clamped to the avatar box; before the fix the
+    default-width Static collapsed to 0x0 and painted nothing.
+    """
+    from PIL import Image as PILImage
+
+    from tldw_chatbook.UI.Screens.chat_screen import character_avatar_box
+
+    screen = _bare_console_screen(ConsoleChatStore())
+    spec = {
+        "character_id": 7,
+        "name": "Ada",
+        "mode": "pixels",  # skip the graphics branch, exercise the mosaic
+        "pil": PILImage.new("RGB", (64, 96), (10, 180, 200)),
+        "pixels": None,
+    }
+    app = _AvatarHolderApp(screen, spec)
+    async with app.run_test(size=(60, 30)):
+        widget = app.query_one("#console-character-avatar-image", Static)
+        # Before task-3793 this region was 0x0: mounted, painted nothing.
+        assert widget.region.width > 0
+        assert widget.region.height > 0
+        # Explicit cell size from the mosaic grid, clamped to the avatar box
+        # (the fallback box: no rail section body exists in this host).
+        box_cols, box_lines = character_avatar_box(0)
+        assert 1 <= widget.styles.width.value <= box_cols
+        assert 1 <= widget.styles.height.value <= box_lines
+
+
+@pytest.mark.asyncio
+async def test_avatar_placeholder_paints_nonzero_region_in_auto_holder():
+    """task-3793 regression: the no-character placeholder must stay visible.
+
+    Same auto/auto holder as the pixels case: the placeholder Static needs
+    ``width auto`` so it cannot collapse to 0x0 under Textual 8.
+    """
+    screen = _bare_console_screen(ConsoleChatStore())
+    app = _AvatarHolderApp(screen, None)
+    async with app.run_test(size=(60, 30)):
+        widget = app.query_one("#console-character-avatar-empty", Static)
+        assert str(widget.renderable) == "No character in this chat"
+        # Same 0x0 collapse hit the placeholder; width auto is the guard.
+        assert widget.region.width > 0
+        assert widget.region.height > 0

@@ -96,6 +96,33 @@ def _mean(colors: list[tuple[int, int, int]]) -> tuple[int, int, int]:
     )
 
 
+def explicit_cell_size(renderable: object) -> tuple[int, int] | None:
+    """Return the ``(width_cols, height_lines)`` grid of a baked ``Text``.
+
+    Every surface that mounts a mosaic inside a ``Static`` needs the
+    renderable's OWN grid as an explicit cell size: a ``Static`` keeps its
+    default ``width: 100%``, which resolves to 0x0 inside an auto-sized
+    container (the Console rail's avatar holder, task-1661) and folds inside
+    a narrower one (the Roleplay thumb boxes, whose padding used to eat two
+    columns). An explicit size sidesteps both. Callers fall back to their
+    own box dimensions when this returns ``None`` (e.g. a ``rich_pixels``
+    renderable, which carries no ``.plain``).
+
+    Args:
+        renderable: The baked renderable; only ``rich.text.Text``-shaped
+            objects (string ``.plain``) yield a size.
+
+    Returns:
+        ``(max line length, line count)`` for a ``Text``-shaped renderable,
+        ``None`` otherwise.
+    """
+    plain = getattr(renderable, "plain", None)
+    if not isinstance(plain, str) or not plain:
+        return None
+    lines = plain.split("\n")
+    return max(len(line) for line in lines), len(lines)
+
+
 def mosaic_from_image(
     image: "PILImage.Image",
     box_cols: int,

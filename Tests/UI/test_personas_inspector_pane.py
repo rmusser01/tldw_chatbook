@@ -731,3 +731,76 @@ async def test_state_pushed_before_children_mount_defers_then_replays():
         assert "task-2727-probe" in readiness, (
             f"pre-mount push was dropped; readiness reads: {readiness!r}"
         )
+
+
+
+async def test_avatar_thumbnail_static_matches_mosaic_grid_no_fold():
+    """task-3793: the inspector portrait must not fold into black stripes.
+
+    The thumb box used to add padding 0 1 on top of max-width 24, so the
+    24-column mosaic baked by PersonasScreen._build_avatar_pixels folded at
+    22 content columns -- every folded line painted a black continuation row
+    (the striped portrait the owner reported) and the folded stack clipped
+    at max-height 10. The box is now padding-free and set_avatar_thumbnail
+    sizes the Static explicitly from the renderable grid.
+    """
+    from PIL import Image
+    from textual.containers import Container
+
+    from tldw_chatbook.UI.Screens.personas_screen import (
+        AVATAR_THUMB_COLS,
+        AVATAR_THUMB_LINES,
+    )
+    from tldw_chatbook.Utils.mosaic_render import mosaic_from_image
+
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        mosaic = mosaic_from_image(
+            Image.new("RGB", (820, 1230), (64, 200, 180)),
+            AVATAR_THUMB_COLS,
+            AVATAR_THUMB_LINES,
+            fit="cover",
+        )
+        pane.set_avatar_thumbnail(mosaic)
+        await pilot.pause()
+        thumb_box = pane.query_one("#personas-inspector-avatar-thumb", Container)
+        static = thumb_box.query_one(Static)
+        # Before task-3793 the painted height was ~2x the mosaic rows (fold).
+        assert static.region.height == len(mosaic.plain.split("\n"))
+        assert static.region.width <= thumb_box.content_size.width
+        padding = thumb_box.styles.padding
+        assert (padding.top, padding.right, padding.bottom, padding.left) == (
+            0,
+            0,
+            0,
+            0,
+        )
+
+
+
+async def test_avatar_thumbnail_falls_back_to_box_dims_for_non_text_renderable():
+    """Non-Text renderables get the thumb box dims, not a default-width Static.
+
+    Pins the documented ``explicit_cell_size`` contract (PR #1434 review):
+    when the renderable's grid cannot be read (e.g. a ``rich_pixels``
+    renderable), ``set_avatar_thumbnail`` falls back to the container box
+    (AVATAR_THUMB_COLS x AVATAR_THUMB_LINES), matching the console builder.
+    """
+    from rich.panel import Panel
+    from textual.containers import Container
+
+    from tldw_chatbook.UI.Screens.personas_screen import (
+        AVATAR_THUMB_COLS,
+        AVATAR_THUMB_LINES,
+    )
+
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.set_avatar_thumbnail(Panel("portrait"))
+        await pilot.pause()
+        thumb_box = pane.query_one("#personas-inspector-avatar-thumb", Container)
+        static = thumb_box.query_one(Static)
+        assert static.styles.width.value == AVATAR_THUMB_COLS
+        assert static.styles.height.value == AVATAR_THUMB_LINES

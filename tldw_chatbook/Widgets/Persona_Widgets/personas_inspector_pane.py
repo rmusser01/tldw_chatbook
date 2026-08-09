@@ -44,6 +44,13 @@ _CONSOLE_ACTION_APPLICABLE_KINDS = {"character", "persona"}
 _EXPORT_JSON_APPLICABLE_KINDS = {"character", "persona"}
 _EXPORT_PNG_APPLICABLE_KINDS = {"character"}
 
+# Portrait thumb box in character cells. Must stay in sync with
+# #personas-inspector-avatar-thumb's CSS max-width/max-height below and with
+# AVATAR_THUMB_COLS/AVATAR_THUMB_LINES in personas_screen.py - change one,
+# change all three.
+_THUMB_BOX_COLS = 24
+_THUMB_BOX_LINES = 10
+
 
 class PersonasInspectorPane(Vertical):
     """Identity, validation, conversations, readiness, and actions."""
@@ -56,12 +63,15 @@ class PersonasInspectorPane(Vertical):
     /* Portrait box for the selected character. Sized like the editor's
        thumbnail rather than the 80x40 transcript image box: this is a single
        always-visible preview, and the rail is narrow. `height: auto` keeps the
-       box from reserving space for selections that have no portrait. */
+       box from reserving space for selections that have no portrait. No
+       horizontal padding: the mosaic renderable is baked at exactly
+       AVATAR_THUMB_COLS columns, and padding used to shrink the content box
+       below that, folding every line into a black continuation stripe
+       (task-3793). */
     PersonasInspectorPane #personas-inspector-avatar-thumb {
         height: auto;
         max-width: 24;
         max-height: 10;
-        padding: 0 1;
     }
 
     PersonasInspectorPane #personas-conversations-list {
@@ -601,7 +611,27 @@ class PersonasInspectorPane(Vertical):
             return
         from textual.widget import Widget as _W
 
-        holder.mount(renderable if isinstance(renderable, _W) else Static(renderable))
+        if isinstance(renderable, _W):
+            holder.mount(renderable)
+            return
+        from ...Utils.mosaic_render import explicit_cell_size
+
+        # Explicit cell size from the baked renderable's grid: the Static
+        # default width: 100% folds a full-width mosaic inside any narrower
+        # (or padded) box, painting black continuation stripes (task-3793);
+        # an explicit size degrades a future width mismatch to a crop.
+        thumb = Static(renderable)
+        grid_size = explicit_cell_size(renderable)
+        if grid_size is not None:
+            thumb.styles.width, thumb.styles.height = grid_size
+        else:
+            # Per explicit_cell_size's documented contract, fall back to the
+            # box dimensions when the grid can't be read (e.g. rich_pixels
+            # Pixels, which is baked for the box anyway) - same fallback as
+            # ChatScreen._build_character_avatar_widget.
+            thumb.styles.width = _THUMB_BOX_COLS
+            thumb.styles.height = _THUMB_BOX_LINES
+        holder.mount(thumb)
 
     @on(ListView.Selected, "#personas-conversations-list")
     def _conversation_selected(self, event: ListView.Selected) -> None:

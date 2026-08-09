@@ -50,7 +50,14 @@ def test_output_fits_requested_cell_box():
 
     rendered = _render_text(mosaic_from_image(image, 10, 5))
 
-    lines = [line for line in rendered.splitlines() if line.strip()]
+    # Flat cells are space glyphs (their background colour carries the
+    # image), so a heavy downscale can legitimately bake zero GLYPH lines:
+    # LANCZOS-smoothing this sigma-90 noise into a 20x3 sampling grid drops
+    # every cell below _FLAT_CELL_SPREAD on Pillow 11. Filtering to
+    # non-blank lines therefore conflated the box contract with noise
+    # statistics and flaked across Pillow versions. The contract under test
+    # is the BOX: row and column counts never exceed it.
+    lines = rendered.rstrip("\n").splitlines()
     assert 1 <= len(lines) <= 5
     assert all(len(line.rstrip()) <= 10 for line in lines)
 
@@ -129,7 +136,6 @@ def test_monochrome_mosaic_stays_visible_without_colour():
     In monochrome mode the glyph itself must carry the luminance, so the
     portrait survives with no colour at all.
     """
-    import io
     import re
 
     from rich.console import Console
@@ -141,9 +147,13 @@ def test_monochrome_mosaic_stays_visible_without_colour():
             img.putpixel((x, y), (245, 245, 245))
 
     def emitted(renderable, **console_kw):
-        buf = io.StringIO()
-        Console(file=buf, width=20, force_terminal=True, **console_kw).print(renderable)
-        return buf.getvalue()
+        console = Console(width=20, record=True, force_terminal=True, **console_kw)
+        # record/export, not file=StringIO: Rich 15 no longer emits ANSI
+        # into a plain file object even with force_terminal=True, which
+        # silently stripped every style and failed the colour assertion
+        # below while the renderer itself was correct.
+        console.print(renderable)
+        return console.export_text(styles=True)
 
     # Colour path is unchanged: still carries the image, however it is drawn.
     colour = emitted(mosaic_from_image(img, 16, 8, fit="contain"),
@@ -215,3 +225,31 @@ def test_monochrome_mosaic_is_never_blank_for_a_dark_portrait():
     assert set(light_mono.plain.replace("\n", "")) != glyphs, (
         "light and dark render identically -- the ramp has collapsed"
     )
+
+
+# --- task-3793: explicit_cell_size ------------------------------------------
+#
+# Every surface mounting a mosaic inside a Static needs the renderable's own
+# grid as an explicit cell size: a Static's default width: 100% resolves to
+# 0x0 inside an auto-sized container (the Console rail avatar holder) and
+# folds inside a narrower one (the Roleplay thumb boxes). These pin the
+# helper both branches of the console/roleplay mount code depend on.
+
+
+def test_explicit_cell_size_reads_mosaic_grid():
+    """explicit_cell_size returns (max line length, line count) for a Text mosaic."""
+    from tldw_chatbook.Utils.mosaic_render import explicit_cell_size
+
+    image = PILImage.new("RGB", (820, 1230), (64, 200, 180))
+    mosaic = mosaic_from_image(image, 24, 10, fit="cover")
+    lines = mosaic.plain.split("\n")
+
+    assert explicit_cell_size(mosaic) == (max(len(x) for x in lines), len(lines))
+
+
+def test_explicit_cell_size_none_for_non_text_renderable():
+    """explicit_cell_size returns None for non-Text renderables (caller falls back to box dims)."""
+    from tldw_chatbook.Utils.mosaic_render import explicit_cell_size
+
+    assert explicit_cell_size(object()) is None
+    assert explicit_cell_size(None) is None

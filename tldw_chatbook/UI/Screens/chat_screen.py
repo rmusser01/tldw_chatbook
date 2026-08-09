@@ -8614,7 +8614,13 @@ class ChatScreen(BaseAppScreen):
                 if (spec and spec.get("character_id") is not None)
                 else "No character in this chat"
             )
-            return Static(hint, id="console-character-avatar-empty")
+            # width auto, not the Static default 100%: the holder is
+            # width/height auto (task-1661), and a percentage-width child of
+            # an auto container resolves to 0x0 under Textual 8.x -- the
+            # placeholder would mount but paint nothing (task-3793).
+            placeholder = Static(hint, id="console-character-avatar-empty")
+            placeholder.styles.width = "auto"
+            return placeholder
         if spec.get("mode") == "graphics" and spec.get("pil") is not None:
             try:
                 from textual_image.widget import Image as _GraphicsImage
@@ -8647,6 +8653,8 @@ class ChatScreen(BaseAppScreen):
             box_cols, box_lines = character_avatar_box(
                 self._character_avatar_available_cols()
             )
+            from ...Utils.mosaic_render import explicit_cell_size
+
             pixels = spec.get("pixels")
             if pixels is None and spec.get("pil") is not None:
                 pixels = _character_avatar_fallback_renderable(
@@ -8659,12 +8667,28 @@ class ChatScreen(BaseAppScreen):
                 pixels if pixels is not None else "",
                 id="console-character-avatar-image",
             )
+            # Explicit cell size derived from the baked renderable's own
+            # grid, not just max-width/max-height: the holder is
+            # width/height auto (task-1661), and this Static's default
+            # width: 100% resolves to 0x0 inside it under Textual 8.x --
+            # the avatar mounted but painted nothing at all (task-3793).
+            # Same pattern as ConsoleImageViewerModal._build_full_size_widget;
+            # explicit_cell_size returns None for a rich_pixels renderable,
+            # which is sized for the box anyway.
+            grid_size = explicit_cell_size(pixels)
+            if grid_size is not None:
+                widget.styles.width, widget.styles.height = grid_size
+            else:
+                widget.styles.width = box_cols
+                widget.styles.height = box_lines
             widget.styles.max_width = box_cols
             widget.styles.max_height = box_lines
             return widget
         except Exception:
             logger.opt(exception=True).debug("avatar: pixels build failed")
-            return Static("no avatar", id="console-character-avatar-empty")
+            placeholder = Static("no avatar", id="console-character-avatar-empty")
+            placeholder.styles.width = "auto"
+            return placeholder
 
     def _console_messages_from_conversation_tree(
         self, tree: dict[str, Any]
