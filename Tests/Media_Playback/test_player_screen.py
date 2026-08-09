@@ -620,12 +620,13 @@ async def test_unmount_ignores_late_frame_eof_and_cleanup_is_app_owned(
         ("failure", "_fail_run"),
     ],
 )
-async def test_current_pump_bridge_refusal_cleans_pipeline_once_without_ui_fallback(
+async def test_current_pump_bridge_refusal_returns_without_cleanup_or_ui_fallback(
     monkeypatch,
     callback_phase: str,
     expected_callback: str,
 ):
     pump_entered = Event()
+    pump_done = Event()
     release = Event()
     direct_ui = Event()
 
@@ -644,15 +645,18 @@ async def test_current_pump_bridge_refusal_cleans_pipeline_once_without_ui_fallb
 
     class RefusedPipeline(_Pipeline):
         def iter_frames(self, run: PlayerRun):
-            pump_entered.set()
-            assert release.wait(2.0)
-            if callback_phase == "frame":
-                yield 0.0, bytes((1, 2, 3))
-                return
-            if callback_phase == "eof":
-                run.eof = True
-                return
-            raise RuntimeError(PRIVATE_ERROR)
+            try:
+                pump_entered.set()
+                assert release.wait(2.0)
+                if callback_phase == "frame":
+                    yield 0.0, bytes((1, 2, 3))
+                    return
+                if callback_phase == "eof":
+                    run.eof = True
+                    return
+                raise RuntimeError(PRIVATE_ERROR)
+            finally:
+                pump_done.set()
 
     monkeypatch.setattr(
         "tldw_chatbook.UI.Screens.video_player_screen.PlayerPipeline",
@@ -673,12 +677,12 @@ async def test_current_pump_bridge_refusal_cleans_pipeline_once_without_ui_fallb
 
             monkeypatch.setattr(app, "call_from_thread", refuse)
             release.set()
-            await _wait(RefusedPipeline.instances[0].stopped)
+            await _wait(pump_done)
             await pilot.pause()
 
             assert bridge_calls == [expected_callback]
             assert not direct_ui.is_set()
-            assert RefusedPipeline.instances[0].stop_calls == 1
+            assert RefusedPipeline.instances[0].stop_calls == 0
             assert player._pipeline is RefusedPipeline.instances[0]
             assert player._run is RefusedPipeline.instances[0].runs[0]
     finally:
@@ -743,6 +747,85 @@ async def test_stale_old_run_bridge_refusal_after_seek_does_not_stop_replacement
         assert not replacement.eof
 
         monkeypatch.setattr(app, "call_from_thread", original_bridge)
+        release_replacement.set()
+        await _finish_workers(app, pilot)
+
+
+@pytest.mark.asyncio
+async def test_refused_current_run_cannot_stop_replacement_after_validation_race(
+    monkeypatch,
+):
+    old_entered = Event()
+    release_old = Event()
+    old_done = Event()
+    cleanup_entered = Event()
+    race_observed = Event()
+    release_cleanup = Event()
+    replacement_entered = Event()
+    release_replacement = Event()
+
+    class PausedCleanupPlayer(_ObservedPlayer):
+        def _cleanup_pipeline(self, pipeline: _Pipeline) -> None:
+            cleanup_entered.set()
+            race_observed.set()
+            assert release_cleanup.wait(2.0)
+            super()._cleanup_pipeline(pipeline)
+
+    class ValidationRacePipeline(_Pipeline):
+        def iter_frames(self, run: PlayerRun):
+            if run.generation == 1:
+                try:
+                    old_entered.set()
+                    assert release_old.wait(2.0)
+                    yield 1.0, bytes((255, 0, 0))
+                    return
+                finally:
+                    old_done.set()
+                    race_observed.set()
+            replacement_entered.set()
+            assert release_replacement.wait(2.0)
+            run.eof = True
+            if False:
+                yield 0.0, b""
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.video_player_screen.PlayerPipeline",
+        ValidationRacePipeline,
+    )
+    player = PausedCleanupPlayer(PRIVATE_PATH, render_mode="ascii")
+    app = _PlayerApp(player)
+    bridge_calls: list[str] = []
+    async with app.run_test() as pilot:
+        await _wait(old_entered)
+        original_bridge = app.call_from_thread
+
+        def refuse(callback: Any, *args: Any, **kwargs: Any) -> Any:
+            bridge_calls.append(callback.__name__)
+            raise RuntimeError(PRIVATE_ERROR)
+
+        monkeypatch.setattr(app, "call_from_thread", refuse)
+        release_old.set()
+        await _wait(race_observed)
+
+        monkeypatch.setattr(app, "call_from_thread", original_bridge)
+        player.action_seek_fwd()
+        await _wait(replacement_entered)
+        await pilot.pause()
+        replacement = ValidationRacePipeline.instances[0].runs[1]
+        assert player._run is replacement
+
+        release_cleanup.set()
+        await _wait(old_done)
+        await pilot.pause()
+
+        pipeline = ValidationRacePipeline.instances[0]
+        assert bridge_calls == ["_render_frame"]
+        assert not cleanup_entered.is_set()
+        assert pipeline.stop_calls == 0
+        assert player._pipeline is pipeline
+        assert player._run is replacement
+        assert not replacement.eof
+
         release_replacement.set()
         await _finish_workers(app, pilot)
 
