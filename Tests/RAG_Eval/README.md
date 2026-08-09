@@ -230,8 +230,9 @@ Two columns need context before you read the P/R/MRR/NDCG numbers as
   this harness without first re-measuring that variance — it will fail on
   noise, not on a real slowdown.
 - **Ten of the `plain` cells sit at exactly 0.000** (paraphrase and
-  vocabulary_mismatch, precision and recall both, across the categories
-  where plain-mode has no literal-token overlap to find). A metric already
+  vocabulary_mismatch, all five gated metrics each — precision, recall,
+  MRR, NDCG and F1 — across the categories where plain-mode has no
+  literal-token overlap to find). A metric already
   at its floor cannot register a regression — there is nowhere lower for it
   to go — so those specific cells are structurally inert to the gate today.
   If plain-mode keyword expansion (P2) ever gives those cells a nonzero
