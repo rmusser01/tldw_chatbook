@@ -563,6 +563,21 @@ def test_invalid_definition_rejected_at_db_boundary(db):
         db.create_agent_definition(_defn(name="subagent"))
 
 
+def test_update_after_soft_delete_raises_not_found(db):
+    # A missing/soft-deleted id used to no-op silently (0-row UPDATE), and
+    # the Settings ▸ Agents panel would still report "Saved" -- the caller
+    # must be able to tell the edit never landed.
+    definition_id = db.create_agent_definition(_defn())
+    db.soft_delete_agent_definition(definition_id)
+    with pytest.raises(ValueError, match="not found"):
+        db.update_agent_definition(definition_id, _defn(description="v2"))
+
+
+def test_update_unknown_id_raises_not_found(db):
+    with pytest.raises(ValueError, match="not found"):
+        db.update_agent_definition("does-not-exist", _defn())
+
+
 def test_enabled_only_filter(db):
     db.create_agent_definition(_defn(name="on-agent"))
     db.create_agent_definition(_defn(name="off-agent", enabled=False))

@@ -272,6 +272,11 @@ def validate_agent_definition(defn: AgentDefinition) -> list[str]:
         errors.append(
             f"description exceeds {AGENT_DEFINITION_DESCRIPTION_MAX_CHARS} chars"
         )
+    if "\n" in defn.description:
+        # build_spawn_schema renders description into a "- name — desc"
+        # roster line (Agents/tool_catalog.py); an embedded newline could
+        # forge extra roster lines the supervisor reads as real entries.
+        errors.append("description must be a single line")
     if not defn.instructions.strip():
         errors.append("instructions must not be empty")
     if len(defn.instructions) > AGENT_DEFINITION_INSTRUCTIONS_MAX_CHARS:

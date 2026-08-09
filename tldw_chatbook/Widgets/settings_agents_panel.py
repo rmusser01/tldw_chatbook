@@ -7,8 +7,10 @@ applies at once. Fleet spec §4.
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
+from loguru import logger
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Input, ListItem, ListView, Static, Switch, TextArea
@@ -32,7 +34,11 @@ def _derive_runs_db(app_instance) -> AgentRunsDB | None:
     db_path = getattr(db, "db_path", None) if db is not None else None
     if not db_path or str(db_path) == ":memory:":
         return None
-    return AgentRunsDB(Path(db_path).parent / "agent_runs.db")
+    try:
+        return AgentRunsDB(Path(db_path).parent / "agent_runs.db")
+    except Exception as exc:  # noqa: BLE001 - any failure means "no DB"
+        logger.warning(f"Settings ▸ Agents: could not open agent_runs.db: {exc}")
+        return None
 
 
 class AgentsSettingsPanel(Vertical):
@@ -163,10 +169,16 @@ class AgentsSettingsPanel(Vertical):
         self._set_status("")
 
     def _form_definition(self) -> AgentDefinition:
+        # dict.fromkeys dedupes while preserving first-seen order -- "a, a"
+        # must not produce a tool_allowlist with a repeated entry (it feeds
+        # definition_fingerprint's sorted() list, so a dupe there would be a
+        # silent identity divergence from what was actually typed).
         tools = tuple(
-            name.strip()
-            for name in self.query_one("#agents-tools-input", Input).value.split(",")
-            if name.strip() and name.strip() not in RUNTIME_TOOL_NAMES
+            dict.fromkeys(
+                name.strip()
+                for name in self.query_one("#agents-tools-input", Input).value.split(",")
+                if name.strip() and name.strip() not in RUNTIME_TOOL_NAMES
+            )
         )
         return AgentDefinition(
             name=self.query_one("#agents-name-input", Input).value.strip(),
@@ -188,7 +200,11 @@ class AgentsSettingsPanel(Vertical):
                 self._runs_db.create_agent_definition(defn)
             else:
                 self._runs_db.update_agent_definition(self._selected_id, defn)
-        except ValueError as exc:
+        except (ValueError, sqlite3.Error) as exc:
+            # A locked/corrupt agent_runs.db must surface as a status-line
+            # message, not an uncaught exception that would crash the
+            # Settings screen's compose (compose-exception lesson: a crash
+            # there kills navigation for the whole app).
             self._set_status(str(exc))
             return
         self._set_status(f"Saved '{defn.name}'.")
@@ -198,7 +214,11 @@ class AgentsSettingsPanel(Vertical):
         if self._selected_id is None:
             self._set_status("Select a definition to delete.")
             return
-        self._runs_db.soft_delete_agent_definition(self._selected_id)
+        try:
+            self._runs_db.soft_delete_agent_definition(self._selected_id)
+        except (ValueError, sqlite3.Error) as exc:
+            self._set_status(str(exc))
+            return
         self._clear_form()
         self._set_status("Deleted.")
         await self._reload_list()

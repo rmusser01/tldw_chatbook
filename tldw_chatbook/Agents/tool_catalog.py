@@ -81,7 +81,9 @@ def build_spawn_schema(definitions: Sequence[AgentDefinition]) -> ToolSchema:
     parameters = {
         "type": "object",
         "properties": {
-            "task": SPAWN_TOOL_SCHEMA.parameters["properties"]["task"],
+            # Shallow-copied so no future consumer of the built schema can
+            # mutate the module-global SPAWN_TOOL_SCHEMA through this alias.
+            "task": dict(SPAWN_TOOL_SCHEMA.parameters["properties"]["task"]),
             "agent": {
                 "type": "string",
                 "enum": [d.name for d in definitions],

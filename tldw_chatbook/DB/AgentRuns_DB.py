@@ -548,13 +548,21 @@ class AgentRunsDB(BaseDB):
     def update_agent_definition(
         self, definition_id: str, defn: AgentDefinition
     ) -> None:
-        """Replace a definition's fields (same raises as create)."""
+        """Replace a definition's fields (same raises as create).
+
+        Raises:
+            ValueError: On validation failure, a duplicate live name, or
+                when ``definition_id`` doesn't match any live (non-deleted)
+                row -- without this check a missing/soft-deleted id was a
+                silent no-op and the caller (Settings ▸ Agents) would still
+                report "Saved".
+        """
         errors = validate_agent_definition(defn)
         if errors:
             raise ValueError("; ".join(errors))
         try:
             with self.transaction() as conn:
-                conn.execute(
+                cursor = conn.execute(
                     """UPDATE agent_definitions
                        SET name = ?, description = ?, instructions = ?,
                            tool_allowlist = ?, model = ?, enabled = ?,
@@ -571,6 +579,10 @@ class AgentRunsDB(BaseDB):
                         definition_id,
                     ),
                 )
+                if cursor.rowcount == 0:
+                    raise ValueError(
+                        f"agent definition not found: {definition_id}"
+                    )
         except sqlite3.IntegrityError as exc:
             raise ValueError(
                 f"an agent named '{defn.name}' already exists"
