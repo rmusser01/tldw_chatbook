@@ -66,24 +66,62 @@ _STOPWORDS = {
     "only", "also", "still", "just", "now", "per", "both", "either",
 }
 
-_SUFFIXES = ("iness", "ingly", "edly", "ness", "ing", "ies", "ied", "es", "ed", "ly", "s")
+_SUFFIXES = (
+    "iness", "ingly", "edly", "ness", "ing", "ies", "ied", "es", "ed", "ly", "s", "e",
+)
 
 
 def _stem(word: str) -> str:
-    for suffix in _SUFFIXES:
-        if not word.endswith(suffix):
-            continue
-        base = word[: -len(suffix)]
-        if suffix == "ies":
-            base += "y"
-        if len(base) >= 4:  # never strip down to a fragment ("early" -> "ear")
-            return base
-    return word
+    """Reduce a word to a canonical form by stripping suffixes to a FIXED POINT.
+
+    Stripping only once is not enough, and the difference is not academic: a
+    single pass returns on whichever suffix matches first, so `readings` stops
+    at `reading` while `reading` continues to `read`. Two spellings of one word
+    then carry two stems, the overlap guard sees no collision, and a pair that
+    FTS5's porter tokenizer *would* match sails through as "no overlap" — the
+    exact failure the guard exists to prevent.
+
+    Re-stripping until the word stops changing makes the result a function of
+    the word family rather than of suffix order. The trailing `"e"` entry is
+    what closes `increase`/`increased` (-> `increa`) and `process`/`processes`
+    (-> `proc`); without it the fixed point still splits that family. The
+    4-character floor stops the reduction before words become fragments
+    (`early` must not become `ear`).
+
+    The result is not a real Porter stem and is not meant to be readable. It
+    only has to be canonical and at least as aggressive as the tokenizer it
+    stands in for, so that "no overlap here" is a claim about keyword
+    reachability rather than about spelling.
+    """
+    while True:
+        for suffix in _SUFFIXES:
+            if not word.endswith(suffix):
+                continue
+            base = word[: -len(suffix)]
+            if suffix == "ies":
+                base += "y"
+            if len(base) >= 4:  # never strip down to a fragment ("early" -> "ear")
+                word = base
+                break
+        else:
+            return word
 
 
 def _content_stems(text: str) -> set[str]:
     words = re.findall(r"[a-z0-9]+", text.lower())
     return {_stem(w) for w in words if w not in _STOPWORDS and len(w) > 2}
+
+
+#: Pairs a real stemmer (FTS5's porter, in practice) collapses. The overlap
+#: guard is only an over-approximation of keyword reachability if it collapses
+#: them too — otherwise it passes pairs that keyword matching can reach.
+_MORPHOLOGICAL_PAIRS = [
+    ("readings", "reading"),
+    ("bearings", "bearing"),
+    ("classes", "class"),
+    ("increased", "increase"),
+    ("processes", "process"),
+]
 
 
 def _doc_stems(doc: CorpusDoc) -> set[str]:
@@ -147,6 +185,51 @@ def _write_toml(tmp_path, name: str, body: str):
 # --------------------------------------------------------------------------
 # the real fixtures
 # --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("inflected, root", _MORPHOLOGICAL_PAIRS)
+def test_stem_is_canonical_across_inflections(inflected, root):
+    """The stemmer must be a function of the *word family*, not of which
+    suffix happens to match first.
+
+    A single-pass stripper returns on the first hit and never re-stems, so
+    `readings` -> `reading` while `reading` -> `read`: two spellings of one
+    word get two stems, and an overlap the real tokenizer would see slips
+    through the guard.
+    """
+    assert _stem(inflected) == _stem(root)
+
+
+@pytest.mark.parametrize("inflected, root", _MORPHOLOGICAL_PAIRS)
+def test_overlap_predicate_treats_inflections_as_shared(inflected, root):
+    """The property that actually matters: the guard's predicate, not the
+    helper, must flag an inflected repeat as overlap."""
+    doc = CorpusDoc(
+        "probe",
+        "note",
+        "Probe document",
+        f"The {inflected} were recorded. A second sentence. A third sentence.",
+    )
+    assert _content_stems(f"a question about the {root}") & _doc_stems(doc)
+
+
+def test_guard_catches_an_inflected_reword_of_a_shipped_pair(by_slug):
+    """The two counterexamples that motivated the canonical stemmer, pinned
+    against the real (unmutated) fixtures.
+
+    Both queries below are keyword-reachable — the target literally contains
+    the inflected form — and a single-pass stemmer scored both as "no
+    overlap", which would have let a broken pair ship under a passing guard.
+    """
+    # note-hypertension-followup says "...elevated systolic readings..."
+    hypertension = by_slug["note-hypertension-followup"]
+    assert _content_stems("how dangerous is a high blood pressure reading") & _doc_stems(
+        hypertension
+    )
+
+    # conv-workout-time says "...the evening classes were always full."
+    workout = by_slug["conv-workout-time"]
+    assert _content_stems("moved my exercise class to sunrise") & _doc_stems(workout)
 
 
 def test_real_fixtures_validate_clean(corpus, golden):
