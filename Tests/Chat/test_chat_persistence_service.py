@@ -56,6 +56,24 @@ def db_instance(db_path, client_id):
 
 @pytest.mark.integration
 class TestChatPersistenceService:
+    def test_roleplay_version_readers_reject_boolean_versions(
+        self, db_instance: CharactersRAGDB, monkeypatch: pytest.MonkeyPatch
+    ):
+        service = ChatPersistenceService(db_instance)
+        monkeypatch.setattr(
+            db_instance,
+            "get_message_by_id",
+            lambda _message_id: {"version": True, "deleted": False},
+        )
+        monkeypatch.setattr(
+            db_instance,
+            "get_conversation_by_id",
+            lambda _conversation_id: {"version": False, "deleted": False},
+        )
+
+        assert service.get_message_version("message") is None
+        assert service.get_conversation_version("conversation") is None
+
     def test_create_conversation_documents_public_contract(self):
         method = ChatPersistenceService.create_conversation
         doc = inspect.getdoc(method)

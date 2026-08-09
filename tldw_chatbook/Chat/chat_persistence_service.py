@@ -71,13 +71,17 @@ class ChatPersistenceService:
 
     def get_conversation_version(self, conversation_id: str) -> int | None:
         """Return the current positive version for one active conversation."""
-        if type(conversation_id) is not str or not conversation_id:
+        if not isinstance(conversation_id, str) or not conversation_id:
             return None
         conversation = self.db.get_conversation_by_id(conversation_id)
         if conversation is None or conversation.get("deleted"):
             return None
         version = conversation.get("version")
-        if type(version) is not int or version < 1:
+        if (
+            not isinstance(version, int)
+            or isinstance(version, bool)
+            or version < 1
+        ):
             return None
         return version
 
