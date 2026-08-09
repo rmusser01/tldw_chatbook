@@ -50,6 +50,7 @@ from tldw_chatbook.Video_Generation.exceptions import (
 
 _PROMPT_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _SUPPORTED_REFERENCE_KINDS = frozenset({"first_frame", "reference_image"})
+_SUPPORTED_OUTPUT_CLASSES = frozenset({"SaveVideo", "VHS_VideoCombine", "SaveAnimatedWEBP"})
 _VIDEO_SUFFIX_TYPES = {
     ".mp4": "video/mp4",
     ".webm": "video/webm",
@@ -665,7 +666,7 @@ class ComfyUIVideoAdapter:
         base_url: str,
         prompt_id: str,
         cancel_event: threading.Event | None,
-        _graph: dict[str, Any],
+        graph: dict[str, Any],
     ) -> dict[str, str]:
         """Poll ``/history/{prompt_id}`` until ComfyUI exposes media output."""
         history_url = f"{base_url}/history/{prompt_id}"
@@ -685,7 +686,7 @@ class ComfyUIVideoAdapter:
                 raise VideoGenerationError(f"ComfyUI history polling failed: {exc}") from exc
             except Exception as exc:
                 raise VideoGenerationError(f"ComfyUI history polling failed: {exc}") from exc
-            descriptor = self._find_output_descriptor(history, prompt_id)
+            descriptor = self._find_output_descriptor(history, prompt_id, graph)
             if descriptor is not None:
                 return descriptor
             if cancel_event is not None:
@@ -789,8 +790,21 @@ class ComfyUIVideoAdapter:
         return state in {"success", "succeeded", "completed", "complete"}
 
     @staticmethod
-    def _find_output_descriptor(history: Any, prompt_id: str) -> dict[str, str] | None:
-        """Find the first supported ComfyUI media descriptor in a history payload."""
+    def _output_node_ids(graph: dict[str, Any]) -> tuple[str, ...]:
+        """Return graph node ids whose classes can persist generated media."""
+        return tuple(
+            str(node_id)
+            for node_id, node in graph.items()
+            if node.get("class_type") in _SUPPORTED_OUTPUT_CLASSES
+        )
+
+    @staticmethod
+    def _find_output_descriptor(
+        history: Any,
+        prompt_id: str,
+        graph: dict[str, Any],
+    ) -> dict[str, str] | None:
+        """Find supported media only under output nodes declared by the graph."""
         if not isinstance(history, dict):
             return None
         entry = history.get(prompt_id)
@@ -800,26 +814,35 @@ class ComfyUIVideoAdapter:
         outputs = entry.get("outputs")
         if not isinstance(outputs, dict):
             return None
-        for node_output in outputs.values():
+        for node_id in ComfyUIVideoAdapter._output_node_ids(graph):
+            node_output = outputs.get(node_id)
             if not isinstance(node_output, dict):
                 continue
-            for collection in ("videos", "gifs", "images"):
-                descriptors = node_output.get(collection)
+            for descriptors in node_output.values():
                 if not isinstance(descriptors, list):
                     continue
                 for descriptor in descriptors:
                     if not isinstance(descriptor, dict):
                         continue
                     filename = descriptor.get("filename")
+                    subfolder = descriptor.get("subfolder", "")
+                    output_type = descriptor.get("type", "output")
                     if not isinstance(filename, str) or not filename.strip():
                         continue
+                    if subfolder is None:
+                        subfolder = ""
+                    if output_type is None:
+                        output_type = "output"
+                    if not isinstance(subfolder, str) or not isinstance(output_type, str):
+                        continue
+                    filename = filename.strip()
                     suffix = Path(filename).suffix.lower()
                     if suffix not in _VIDEO_SUFFIX_TYPES:
                         continue
                     return {
                         "filename": filename,
-                        "subfolder": str(descriptor.get("subfolder") or ""),
-                        "type": str(descriptor.get("type") or "output"),
+                        "subfolder": subfolder,
+                        "type": output_type or "output",
                     }
         if outputs or ComfyUIVideoAdapter._is_terminal_success(entry):
             raise VideoGenerationError("ComfyUI history returned no supported video or animated-image output")

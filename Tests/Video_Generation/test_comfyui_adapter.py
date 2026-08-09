@@ -82,7 +82,7 @@ def _custom_workflow():
         "4": {"class_type": "EmptyLatentImage", "inputs": {"width": 320, "height": 240, "batch_size": 1}, "_meta": {"title": "Width"}},
         "5": {"class_type": "EmptyLatentImage", "inputs": {"width": 320, "height": 240}, "_meta": {"title": "Height"}},
         "6": {"class_type": "VideoFrames", "inputs": {"num_frames": 1, "fps": 8}, "_meta": {"title": "Frames"}},
-        "7": {"class_type": "VideoOutput", "inputs": {"images": ["6", 0]}, "_meta": {"title": "Output"}},
+        "7": {"class_type": "VHS_VideoCombine", "inputs": {"images": ["6", 0]}, "_meta": {"title": "Output"}},
         "8": {"class_type": "LoadImage", "inputs": {"image": "old.png"}, "_meta": {"title": "Input Image"}},
         "9": {"class_type": "OtherNode", "inputs": {"text": "unrelated", "seed": 77}, "_meta": {"title": "Ignore me"}},
         "10": {"class_type": "OtherNode", "inputs": {"fps": 8}, "_meta": {"title": "FPS"}},
@@ -292,7 +292,7 @@ def test_missing_required_classes_fail_before_prompt(adapter, json_recorder, mon
     _install_workflow(adapter, monkeypatch, graph)
     routes[("GET", "/object_info")] = {"CLIPTextEncode": {}, "KSampler": {}}
 
-    with pytest.raises(VideoBackendUnavailableError, match="EmptyLatentImage.*LoadImage.*OtherNode.*VideoFrames.*VideoOutput"):
+    with pytest.raises(VideoBackendUnavailableError, match="EmptyLatentImage.*LoadImage.*OtherNode.*VHS_VideoCombine.*VideoFrames"):
         adapter.generate(_request())
     assert not any(call["url"].endswith("/prompt") for call in calls)
 
@@ -390,6 +390,7 @@ def test_unsupported_reference_and_bad_output_are_clear(adapter, json_recorder, 
     ],
 )
 def test_terminal_history_failure_is_not_masked_by_empty_or_partial_output(adapter, outputs):
+    graph = _h3_workflow()
     history = {
         "job-6": {
             "outputs": outputs,
@@ -402,19 +403,115 @@ def test_terminal_history_failure_is_not_masked_by_empty_or_partial_output(adapt
     }
 
     with pytest.raises(VideoGenerationError, match="execution failed: model unavailable"):
-        adapter._find_output_descriptor(history, "job-6")
+        adapter._find_output_descriptor(history, "job-6", graph)
+
+
+def test_output_selection_uses_save_video_node_not_preview(adapter):
+    graph = _h3_workflow()
+    history = {
+        "job": {
+            "outputs": {
+                "preview": {
+                    "images": [
+                        {"filename": "preview.png", "subfolder": "", "type": "temp"}
+                    ]
+                },
+                "save": {
+                    "videos": [
+                        {"filename": "clip.mp4", "subfolder": "video", "type": "output"}
+                    ]
+                },
+            },
+            "status": {"completed": True, "status_str": "success", "messages": []},
+        }
+    }
+
+    assert adapter._find_output_descriptor(history, "job", graph)["filename"] == "clip.mp4"
+
+
+def test_save_video_output_accepts_arbitrary_list_collection(adapter):
+    graph = _h3_workflow()
+    history = {
+        "job": {
+            "outputs": {
+                "save": {
+                    "files": [
+                        {"filename": "clip.mp4", "subfolder": "video", "type": "output"}
+                    ]
+                }
+            }
+        }
+    }
+
+    assert adapter._find_output_descriptor(history, "job", graph) == {
+        "filename": "clip.mp4",
+        "subfolder": "video",
+        "type": "output",
+    }
+
+
+@pytest.mark.parametrize(
+    "descriptor",
+    [
+        None,
+        {},
+        {"filename": ""},
+        {"filename": "clip.mp4", "subfolder": {}},
+        {"filename": "clip.mp4", "type": []},
+        {"filename": "still.png", "subfolder": "", "type": "output"},
+    ],
+)
+def test_save_video_output_skips_malformed_or_unsupported_descriptors(adapter, descriptor):
+    graph = _h3_workflow()
+    history = {"job": {"outputs": {"save": {"files": [descriptor]}}}}
+
+    with pytest.raises(VideoGenerationError, match="no supported video or animated-image output"):
+        adapter._find_output_descriptor(history, "job", graph)
+
+
+@pytest.mark.parametrize(
+    ("class_type", "filename"),
+    [
+        ("VHS_VideoCombine", "clip.webm"),
+        ("SaveAnimatedWEBP", "clip.webp"),
+    ],
+)
+def test_output_selection_preserves_supported_generic_non_mp4_outputs(
+    adapter, class_type, filename
+):
+    graph = {"output": {"class_type": class_type, "inputs": {}}}
+    history = {
+        "job": {
+            "outputs": {
+                "output": {
+                    "arbitrary_collection": [
+                        {"filename": filename, "subfolder": "", "type": "output"}
+                    ]
+                }
+            }
+        }
+    }
+
+    assert adapter._find_output_descriptor(history, "job", graph)["filename"] == filename
 
 
 def test_terminal_success_without_media_fails_without_waiting(adapter):
+    graph = _h3_workflow()
     history = {
         "job-7": {
-            "outputs": {},
+            "outputs": {
+                "preview": {
+                    "images": [
+                        {"filename": "preview.webp", "subfolder": "", "type": "temp"}
+                    ]
+                }
+            },
             "status": {"completed": True, "status_str": "success", "messages": []},
         }
     }
 
     with pytest.raises(VideoGenerationError, match="no supported video or animated-image output"):
-        adapter._find_output_descriptor(history, "job-7")
+        adapter._find_output_descriptor(history, "job-7", graph)
 
 
 def test_h3_preparation_applies_request_and_reports_effective_values(adapter):
