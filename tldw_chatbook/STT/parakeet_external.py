@@ -5,10 +5,12 @@ from __future__ import annotations
 import hashlib
 import os
 import stat
+import threading
+from concurrent.futures import CancelledError, Future, ThreadPoolExecutor, TimeoutError
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path, PurePosixPath
-from typing import Callable
+from typing import Callable, Literal, Mapping
 
 from tldw_chatbook.Model_Artifacts.service import (
     ArtifactDescriptor,
@@ -77,6 +79,8 @@ _FileIdentity = tuple[int, int, int, int, int, int]
 _DirectoryIdentity = tuple[int, int, int]
 _AncestorIdentities = tuple[tuple[Path, _DirectoryIdentity], ...]
 _VerifiedFile = tuple[Path, _FileIdentity, _AncestorIdentities]
+_Owner = tuple[Literal["configured", "scope"], str]
+_CacheKey = tuple[ArtifactRef, str]
 
 
 def _file_identity(metadata: os.stat_result) -> _FileIdentity:
@@ -227,11 +231,33 @@ def _require_unchanged_file(
 class ExternalParakeetVerifier:
     """Verify catalog-declared Parakeet files without parsing or owning them."""
 
+    class _Entry:
+        def __init__(self) -> None:
+            self.stop = threading.Event()
+            self.future: Future[VerifiedExternalParakeet] | None = None
+            self.waiters: dict[
+                object,
+                tuple[Callable[[], bool], Callable[[int, int], None] | None],
+            ] = {}
+            self.owners: set[_Owner] = set()
+            self.result: VerifiedExternalParakeet | None = None
+
+    def __init__(self) -> None:
+        self._executor = ThreadPoolExecutor(
+            max_workers=2,
+            thread_name_prefix="parakeet-verify",
+        )
+        self._lock = threading.Lock()
+        self._entries: dict[_CacheKey, ExternalParakeetVerifier._Entry] = {}
+        self._owner_tokens: dict[_Owner, object] = {}
+        self._closed = False
+
     def verify(
         self,
         descriptor: ArtifactDescriptor,
         directory: Path,
         *,
+        owner: _Owner | None = None,
         cancelled: Callable[[], bool] = lambda: False,
         progress: Callable[[int, int], None] | None = None,
     ) -> VerifiedExternalParakeet:
@@ -240,6 +266,7 @@ class ExternalParakeetVerifier:
         Args:
             descriptor: Trusted catalog descriptor for the requested bundle.
             directory: User-owned directory that supplies the declared bytes.
+            owner: Optional configured-selection or live-scope cache owner.
             cancelled: Callback polled between fixed-size hash chunks.
             progress: Optional determinate ``(bytes_done, bytes_total)`` callback.
 
@@ -253,7 +280,265 @@ class ExternalParakeetVerifier:
 
         if not _is_supported(descriptor):
             _fail(ExternalParakeetErrorCode.UNSUPPORTED)
+        self._validate_owner(owner)
+        if cancelled():
+            _fail(ExternalParakeetErrorCode.CANCELLED)
         root = _validated_root(directory)
+        cache_key = self._cache_key(descriptor, root)
+        if cache_key is None:
+            return self._verify_without_cache(
+                descriptor,
+                root,
+                cancelled=cancelled,
+                progress=progress,
+            )
+
+        waiter = object()
+        with self._lock:
+            if self._closed:
+                _fail(ExternalParakeetErrorCode.CANCELLED)
+            owner_token = (
+                self._owner_tokens.setdefault(owner, object())
+                if owner is not None
+                else None
+            )
+            entry = self._entries.get(cache_key)
+            if entry is not None and entry.result is not None:
+                self._retain_owner(cache_key, entry, owner, owner_token)
+                return entry.result
+            if entry is None:
+                entry = self._Entry()
+                self._entries[cache_key] = entry
+                entry.waiters[waiter] = (cancelled, progress)
+                entry.future = self._executor.submit(
+                    self._verify_uncached,
+                    descriptor,
+                    root,
+                    entry.stop.is_set,
+                    lambda done, total: self._fanout(entry, done, total),
+                )
+            else:
+                entry.waiters[waiter] = (cancelled, progress)
+            future = entry.future
+        assert future is not None
+
+        try:
+            while True:
+                if cancelled():
+                    self._drop_waiter(cache_key, entry, waiter)
+                    _fail(ExternalParakeetErrorCode.CANCELLED)
+                try:
+                    verified = future.result(timeout=0.01)
+                    if cancelled():
+                        self._drop_waiter(cache_key, entry, waiter)
+                        _fail(ExternalParakeetErrorCode.CANCELLED)
+                    break
+                except TimeoutError:
+                    continue
+                except CancelledError:
+                    _fail(ExternalParakeetErrorCode.CANCELLED)
+        except BaseException:
+            self._drop_waiter(cache_key, entry, waiter)
+            raise
+
+        with self._lock:
+            if self._entries.get(cache_key) is entry:
+                entry.waiters.pop(waiter, None)
+                entry.result = verified
+                self._retain_owner(cache_key, entry, owner, owner_token)
+                if not entry.waiters and not entry.owners:
+                    self._entries.pop(cache_key, None)
+        return verified
+
+    @staticmethod
+    def _validate_owner(owner: _Owner | None) -> None:
+        if owner is None:
+            return
+        if (
+            type(owner) is not tuple
+            or len(owner) != 2
+            or owner[0] not in ("configured", "scope")
+            or type(owner[1]) is not str
+            or not owner[1]
+        ):
+            raise ValueError("owner must be a configured or scope identity")
+
+    @staticmethod
+    def _cache_key(
+        descriptor: ArtifactDescriptor,
+        root: Path,
+    ) -> _CacheKey | None:
+        paths = tuple(_declared_path(root, declared) for declared in descriptor.files)
+        try:
+            identities = tuple(
+                (
+                    int(metadata.st_dev),
+                    int(metadata.st_ino),
+                    int(metadata.st_size),
+                    int(metadata.st_mtime_ns),
+                )
+                for path in paths
+                for metadata in (path.lstat(),)
+                if stat.S_ISREG(metadata.st_mode)
+            )
+        except OSError:
+            return None
+        if len(identities) != len(paths):
+            return None
+        digest = hashlib.sha256()
+        for index, identity in enumerate(identities):
+            digest.update(f"{index}:{identity!r};".encode("ascii"))
+        return descriptor.reference, digest.hexdigest()
+
+    def _verify_without_cache(
+        self,
+        descriptor: ArtifactDescriptor,
+        root: Path,
+        *,
+        cancelled: Callable[[], bool],
+        progress: Callable[[int, int], None] | None,
+    ) -> VerifiedExternalParakeet:
+        stop = threading.Event()
+        with self._lock:
+            if self._closed:
+                _fail(ExternalParakeetErrorCode.CANCELLED)
+            future = self._executor.submit(
+                self._verify_uncached,
+                descriptor,
+                root,
+                lambda: stop.is_set() or cancelled(),
+                progress,
+            )
+        while True:
+            if cancelled():
+                stop.set()
+                _fail(ExternalParakeetErrorCode.CANCELLED)
+            try:
+                return future.result(timeout=0.01)
+            except TimeoutError:
+                continue
+            except CancelledError:
+                _fail(ExternalParakeetErrorCode.CANCELLED)
+
+    def _fanout(self, entry: _Entry, done: int, total: int) -> None:
+        with self._lock:
+            waiters = tuple(entry.waiters.items())
+        cancelled_waiters: list[object] = []
+        for waiter, (cancelled, callback) in waiters:
+            _emit_progress(callback, done, total)
+            try:
+                if cancelled():
+                    cancelled_waiters.append(waiter)
+            except Exception:
+                cancelled_waiters.append(waiter)
+        if not cancelled_waiters:
+            return
+        with self._lock:
+            for waiter in cancelled_waiters:
+                entry.waiters.pop(waiter, None)
+            if not entry.waiters and entry.result is None:
+                entry.stop.set()
+
+    def _drop_waiter(
+        self,
+        cache_key: _CacheKey,
+        entry: _Entry,
+        waiter: object,
+    ) -> None:
+        with self._lock:
+            if self._entries.get(cache_key) is not entry:
+                return
+            entry.waiters.pop(waiter, None)
+            if not entry.waiters and entry.result is None:
+                entry.stop.set()
+                self._entries.pop(cache_key, None)
+
+    def _retain_owner(
+        self,
+        cache_key: _CacheKey,
+        entry: _Entry,
+        owner: _Owner | None,
+        owner_token: object | None,
+    ) -> None:
+        if owner is None or self._owner_tokens.get(owner) is not owner_token:
+            return
+        if owner[0] == "configured":
+            for other_key, other in self._entries.items():
+                if other_key != cache_key:
+                    other.owners.discard(owner)
+        entry.owners.add(owner)
+
+    def set_configured_owners(
+        self,
+        owners: Mapping[str, tuple[ArtifactRef, Path]],
+    ) -> None:
+        """Retain cached results matching current persistent selections."""
+
+        desired = {
+            name: (reference, Path(directory).absolute())
+            for name, (reference, directory) in owners.items()
+            if type(name) is str and name
+        }
+        with self._lock:
+            for owner in tuple(self._owner_tokens):
+                if owner[0] == "configured":
+                    self._owner_tokens.pop(owner, None)
+            for entry in self._entries.values():
+                entry.owners = {
+                    owner for owner in entry.owners if owner[0] != "configured"
+                }
+            for entry in self._entries.values():
+                result = entry.result
+                if result is None:
+                    continue
+                for name, (reference, directory) in desired.items():
+                    if (
+                        result.reference == reference
+                        and result.directory == directory
+                    ):
+                        owner: _Owner = ("configured", name)
+                        self._owner_tokens.setdefault(owner, object())
+                        entry.owners.add(owner)
+            self._prune_unowned()
+
+    def release_scope(self, scope_id: str) -> None:
+        """Release all verification retention owned by one live job scope."""
+
+        if type(scope_id) is not str or not scope_id:
+            raise ValueError("scope_id must be a non-empty string")
+        with self._lock:
+            owner: _Owner = ("scope", scope_id)
+            self._owner_tokens.pop(owner, None)
+            for entry in self._entries.values():
+                entry.owners.discard(owner)
+            self._prune_unowned()
+
+    def _prune_unowned(self) -> None:
+        for key, entry in tuple(self._entries.items()):
+            if entry.result is not None and not entry.owners and not entry.waiters:
+                self._entries.pop(key, None)
+
+    def close(self) -> None:
+        """Cancel owned work and release process-lifetime cache state."""
+
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            entries = tuple(self._entries.values())
+            self._entries.clear()
+            self._owner_tokens.clear()
+            for entry in entries:
+                entry.stop.set()
+        self._executor.shutdown(wait=True, cancel_futures=True)
+
+    @staticmethod
+    def _verify_uncached(
+        descriptor: ArtifactDescriptor,
+        root: Path,
+        cancelled: Callable[[], bool],
+        progress: Callable[[int, int], None] | None,
+    ) -> VerifiedExternalParakeet:
         bytes_total = sum(item.size_bytes for item in descriptor.files)
         bytes_done = 0
         verified_files: list[_VerifiedFile] = []

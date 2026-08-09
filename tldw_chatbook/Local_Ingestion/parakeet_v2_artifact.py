@@ -374,6 +374,17 @@ class ParakeetCatalog:
         raise KeyError(ref)
 
 
+class ParakeetVadCatalog:
+    """Catalog exposing only the exact managed Silero VAD dependency."""
+
+    def descriptor(self, ref: ArtifactRef) -> ArtifactDescriptor:
+        """Return only the exact VAD dependency descriptor."""
+
+        if ref != parakeet_vad_reference():
+            raise KeyError(ref)
+        return parakeet_vad_descriptor()
+
+
 class ParakeetV2Catalog:
     """Minimal ``ArtifactCatalog`` exposing only the Parakeet v2 root descriptor.
 
@@ -505,6 +516,80 @@ async def run_parakeet_preflight(
         ParakeetCatalog(),
         sources=parakeet_source_map(),
     )
+
+
+async def run_parakeet_vad_preflight(
+    *,
+    core: ModelArtifactService | None = None,
+    credential_resolver: "CredentialResolver | None" = None,
+    free_bytes_probe: Callable[[Path], int] | None = None,
+    trusted_origins: frozenset[str] = frozenset(),
+) -> "PreflightReport":
+    """Preflight only the exact managed Silero VAD dependency."""
+
+    from tldw_chatbook.Model_Artifacts.acquisition import (
+        ArtifactAcquisitionService,
+        EnvConfigCredentialResolver,
+    )
+
+    service = core if core is not None else parakeet_v2_managed_service()
+    resolver = (
+        credential_resolver
+        if credential_resolver is not None
+        else EnvConfigCredentialResolver()
+    )
+    acquisition = ArtifactAcquisitionService(
+        service,
+        credential_resolver=resolver,
+        free_bytes_probe=free_bytes_probe,
+        trusted_origins=trusted_origins,
+    )
+    reference = parakeet_vad_reference()
+    return await acquisition.preflight(
+        reference,
+        ParakeetVadCatalog(),
+        sources={reference: parakeet_source_map()[reference]},
+    )
+
+
+async def run_parakeet_vad_provision(
+    report: "PreflightReport",
+    *,
+    core: ModelArtifactService | None = None,
+    credential_resolver: "CredentialResolver | None" = None,
+    free_bytes_probe: Callable[[Path], int] | None = None,
+    trusted_origins: frozenset[str] = frozenset(),
+    progress: "Callable[[AcquisitionProgress], None] | None" = None,
+) -> Path:
+    """Provision only the exact VAD dependency without activating a root."""
+
+    from tldw_chatbook.Model_Artifacts.acquisition import (
+        ArtifactAcquisitionService,
+        EnvConfigCredentialResolver,
+    )
+
+    service = core if core is not None else parakeet_v2_managed_service()
+    resolver = (
+        credential_resolver
+        if credential_resolver is not None
+        else EnvConfigCredentialResolver()
+    )
+    acquisition = ArtifactAcquisitionService(
+        service,
+        credential_resolver=resolver,
+        free_bytes_probe=free_bytes_probe,
+        trusted_origins=trusted_origins,
+    )
+    reference = parakeet_vad_reference()
+    installed = await acquisition.provision(
+        reference,
+        report.grant(),
+        ParakeetVadCatalog(),
+        sources={reference: parakeet_source_map()[reference]},
+        progress=progress,
+        activate=False,
+    )
+    return service.artifact_path(installed)
 
 
 async def run_parakeet_provision(

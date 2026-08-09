@@ -3943,6 +3943,10 @@ compute_type = "int8"
 # parakeet-onnx never downloads model files implicitly.
 parakeet_onnx_model_dir = ""
 
+# Exact v2/v3 × INT8/F32 external-source records. External files remain
+# user-owned and are never copied or managed implicitly.
+parakeet_external_sources = {}
+
 # Voice Activity Detection
 use_vad_by_default = false
 

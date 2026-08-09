@@ -514,3 +514,54 @@ async def test_run_parakeet_v2_preflight_and_provision_against_localhost_fixture
     # The active managed resolver -- the same one the console/batch STT
     # paths use -- must now find exactly this directory.
     assert artifact.active_managed_parakeet_v2_dir(service=core) == installed_dir
+
+
+@pytest.mark.asyncio
+async def test_vad_only_preflight_and_provision_never_include_a_parakeet_root(
+    tmp_path: Path, monkeypatch
+) -> None:
+    payload = b"tiny-vad-only"
+    monkeypatch.setattr(
+        artifact,
+        "_VAD_FILES",
+        _tiny_files({"silero_vad.onnx": payload}),
+    )
+
+    with FixtureArtifactServer() as srv:
+        monkeypatch.setattr(
+            artifact,
+            "_source_url",
+            lambda repository, revision, filename: srv.url(f"/{filename}"),
+        )
+        srv.serve("/silero_vad.onnx", payload)
+        core = ModelArtifactService(tmp_path / "managed")
+        report = await artifact.run_parakeet_vad_preflight(
+            core=core,
+            free_bytes_probe=lambda _path: 10**12,
+            trusted_origins=_trusted(srv),
+        )
+
+        assert report.root == artifact.parakeet_vad_reference()
+        assert [entry.ref for entry in report.entries] == [
+            artifact.parakeet_vad_reference()
+        ]
+        installed = await artifact.run_parakeet_vad_provision(
+            report,
+            core=core,
+            free_bytes_probe=lambda _path: 10**12,
+            trusted_origins=_trusted(srv),
+        )
+
+    assert installed == core.artifact_path(artifact.parakeet_vad_reference())
+    assert (installed / "silero_vad.onnx").read_bytes() == payload
+    assert set(srv.requests) == {"/silero_vad.onnx"}
+
+
+def test_vad_catalog_rejects_every_parakeet_root_reference() -> None:
+    catalog = artifact.ParakeetVadCatalog()
+
+    assert catalog.descriptor(
+        artifact.parakeet_vad_reference()
+    ) == artifact.parakeet_vad_descriptor()
+    with pytest.raises(KeyError):
+        catalog.descriptor(artifact.parakeet_v2_reference())
