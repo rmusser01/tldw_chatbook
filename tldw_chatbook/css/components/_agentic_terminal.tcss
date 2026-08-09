@@ -3557,7 +3557,9 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 .console-transcript-message-failed > .console-transcript-speaker-label {
-    color: $error;
+    width: auto;
+    background: $error-darken-3;
+    color: $ds-status-error-readable;
 }
 
 .console-transcript-message-selected {
@@ -3568,6 +3570,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 .console-transcript-message-selected > .console-transcript-speaker-label {
+    background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
 }

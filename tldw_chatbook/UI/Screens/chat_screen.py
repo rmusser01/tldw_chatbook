@@ -2033,6 +2033,8 @@ class ChatScreen(BaseAppScreen):
     def _console_presentation_context(self) -> ConsolePresentationContext:
         """Return the active Console session's live roleplay context."""
         session = self._session._active_native_console_session()
+        if session is None:
+            return ConsolePresentationContext(user_name=self._global_chat_display_name())
         store = self._ensure_console_chat_store()
         return store.presentation_context(
             session.id, self._global_chat_display_name()
@@ -14658,18 +14660,13 @@ class ChatScreen(BaseAppScreen):
     ) -> tuple[Any, ...]:
         """Return a lightweight signature for native transcript refresh skipping."""
         store = self._ensure_console_chat_store()
-        presentation_signature: tuple[object, ...] | None = None
-        if store.active_session_id is not None:
-            presentation_context = store.presentation_context(
-                store.active_session_id,
-                self._global_chat_display_name(),
-            )
-            presentation_signature = (
-                presentation_context.user_name,
-                presentation_context.assistant_kind,
-                presentation_context.character_name,
-                presentation_context.revision,
-            )
+        presentation_context = self._console_presentation_context()
+        presentation_signature = (
+            presentation_context.user_name,
+            presentation_context.assistant_kind,
+            presentation_context.character_name,
+            presentation_context.revision,
+        )
         message_signatures = []
         for message in messages:
             variants = getattr(message, "variants", None)
@@ -14716,20 +14713,7 @@ class ChatScreen(BaseAppScreen):
 
         messages = self._native_console_messages()
         if transcript is not None:
-            store = self._ensure_console_chat_store()
-            set_presentation_context = getattr(
-                transcript, "set_presentation_context", None
-            )
-            if (
-                callable(set_presentation_context)
-                and store.active_session_id is not None
-            ):
-                set_presentation_context(
-                    store.presentation_context(
-                        store.active_session_id,
-                        self._global_chat_display_name(),
-                    )
-                )
+            transcript.set_presentation_context(self._console_presentation_context())
             self._sync_console_citation_count_discovery(messages)
             message_ids = {message.id for message in messages}
             controller = self._console_chat_controller

@@ -84,6 +84,52 @@ def _painted_background(app: App, widget) -> object:
     raise AssertionError(f"no painted segment at ({x}, {y})")
 
 
+def _relative_luminance(color) -> float:
+    """WCAG relative luminance of a compositor-painted Rich color."""
+    triplet = color.get_truecolor()
+
+    def _channel(value: int) -> float:
+        srgb = value / 255
+        return srgb / 12.92 if srgb <= 0.04045 else ((srgb + 0.055) / 1.055) ** 2.4
+
+    return (
+        0.2126 * _channel(triplet.red)
+        + 0.7152 * _channel(triplet.green)
+        + 0.0722 * _channel(triplet.blue)
+    )
+
+
+def _contrast(first, second) -> float:
+    """WCAG contrast ratio between two compositor-painted colors."""
+    lighter, darker = sorted(
+        (_relative_luminance(first), _relative_luminance(second)), reverse=True
+    )
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def _painted_foreground_and_background(app: App, widget) -> tuple[object, object]:
+    """Return the first visible glyph's compositor-painted foreground/background."""
+    strips = app.screen._compositor.render_strips()
+    for y in range(widget.region.y, widget.region.bottom):
+        cursor = 0
+        for segment in strips[y]:
+            next_cursor = cursor + segment.cell_length
+            overlaps = cursor < widget.region.right and next_cursor > widget.region.x
+            if overlaps and segment.text.strip() and segment.style is not None:
+                foreground = segment.style.color
+                background = segment.style.bgcolor
+                if foreground is not None and background is not None:
+                    return foreground, background
+            cursor = next_cursor
+    raise AssertionError(f"no painted glyph colors inside {widget.region!r}")
+
+
+# Speaker labels are ordinary-sized text, so their compositor-painted colors
+# must meet WCAG AA in every supported theme. The literal bold speaker name
+# and explicit "Failed" status also keep failure understandable without color.
+MIN_SPEAKER_CONTRAST = 4.5
+
+
 class TranscriptHarness(App):
     def compose(self) -> ComposeResult:
         transcript = ConsoleTranscript(id="console-native-transcript")
@@ -145,6 +191,26 @@ def test_roleplay_plain_text_uses_literal_names_and_generic_rows_stay_neutral():
         and "console-transcript-message-roleplay-character" not in row.classes
         for row in generic_rows
     )
+
+
+def test_chat_screen_transcript_fingerprint_tracks_presentation_revision():
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    holder = {"context": _roleplay_context(revision=1)}
+    screen = SimpleNamespace(
+        _ensure_console_chat_store=lambda: SimpleNamespace(active_session_id="session-1"),
+        _console_presentation_context=lambda: holder["context"],
+    )
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="same body", id="a1"
+    )
+
+    before = ChatScreen._native_console_transcript_fingerprint(screen, [message])
+    holder["context"] = _roleplay_context(revision=2)
+    after = ChatScreen._native_console_transcript_fingerprint(screen, [message])
+
+    assert before != after
+    assert before[1] == after[1]
 
 
 @pytest.mark.asyncio
@@ -261,6 +327,23 @@ async def test_roleplay_tints_and_selected_precedence_are_compositor_painted(the
         )
         assert _painted_background(app, failed_roleplay_row) != _painted_background(
             app, character_row
+        )
+        failed_label = failed_roleplay_row.query_one(
+            ".console-transcript-speaker-label", Static
+        )
+        foreground, background = _painted_foreground_and_background(app, failed_label)
+        ratio = _contrast(foreground, background)
+        assert ratio >= MIN_SPEAKER_CONTRAST, (
+            f"failed speaker label contrast is {ratio:.2f}:1 under {theme}; "
+            f"expected at least {MIN_SPEAKER_CONTRAST}:1 "
+            f"(foreground={foreground}, background={background})"
+        )
+
+        transcript.select_message("f1")
+        await transcript.refresh_messages()
+        await pilot.pause()
+        assert _painted_background(app, failed_label) == _painted_background(
+            app, failed_roleplay_row
         )
 
         transcript.select_message("u1")
