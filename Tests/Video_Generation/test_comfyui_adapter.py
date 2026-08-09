@@ -362,3 +362,39 @@ def test_parameterizes_connected_controls_in_each_shipped_workflow(adapter):
     assert svd["3"]["inputs"]["width"] == 1280
     assert svd["3"]["inputs"]["height"] == 720
     assert svd["3"]["inputs"]["video_frames"] == 36
+
+
+def test_title_controls_reject_titles_with_unrelated_words(adapter):
+    workflow = {
+        "preview": {
+            "class_type": "Text",
+            "inputs": {"text": "preview"},
+            "_meta": {"title": "Prompt Preview"},
+        },
+        "reference": {
+            "class_type": "Sampler",
+            "inputs": {"seed": 7},
+            "_meta": {"title": "Seed Reference"},
+        },
+        "notes": {
+            "class_type": "Notes",
+            "inputs": {"width": 320},
+            "_meta": {"title": "Output Width Notes"},
+        },
+        "image_preview": {
+            "class_type": "Image",
+            "inputs": {"image": "preview.png"},
+            "_meta": {"title": "Input Image Preview"},
+        },
+    }
+
+    parameterized = adapter._parameterize_workflow(
+        workflow,
+        _request(seed=42, width=1280),
+        "upload.png",
+    )
+
+    assert parameterized["preview"]["inputs"]["text"] == "preview"
+    assert parameterized["reference"]["inputs"]["seed"] == 7
+    assert parameterized["notes"]["inputs"]["width"] == 320
+    assert parameterized["image_preview"]["inputs"]["image"] == "preview.png"

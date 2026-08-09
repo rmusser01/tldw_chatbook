@@ -55,6 +55,17 @@ _VIDEO_SUFFIX_TYPES = {
     ".gif": "image/gif",
     ".webp": "image/webp",
 }
+_TITLE_CONTROLS = {
+    "prompt": frozenset({"prompt"}),
+    "negativeprompt": frozenset({"negative_prompt"}),
+    "seed": frozenset({"seed"}),
+    "width": frozenset({"width"}),
+    "height": frozenset({"height"}),
+    "frames": frozenset({"frames"}),
+    "fps": frozenset({"fps"}),
+    "inputimage": frozenset({"input_image"}),
+    "widthheightframes": frozenset({"width", "height", "frames"}),
+}
 
 
 class ComfyUIVideoAdapter:
@@ -215,21 +226,13 @@ class ComfyUIVideoAdapter:
 
         A connected ComfyUI node can carry several independently mutable
         inputs, such as ``Width Height Frames``. Preserve the conventional
-        multi-word labels while allowing those single-token controls to
-        appear together in one title.
+        multi-word labels while requiring an exact normalized title. Unknown
+        extra words invalidate the title instead of mutating unrelated nodes.
         """
         meta = node.get("_meta")
         raw_title = meta.get("title") if isinstance(meta, dict) else ""
-        words = set(re.findall(r"[a-z0-9]+", str(raw_title).lower()))
         compact = re.sub(r"[^a-z0-9]+", "", str(raw_title).lower())
-        controls = words & {"seed", "width", "height", "frames", "fps"}
-        if "negativeprompt" in compact:
-            controls.add("negative_prompt")
-        elif "prompt" in words:
-            controls.add("prompt")
-        if "inputimage" in compact:
-            controls.add("input_image")
-        return controls
+        return set(_TITLE_CONTROLS.get(compact, frozenset()))
 
     @staticmethod
     def _set_input(inputs: dict[str, Any], fields: tuple[str, ...], value: Any) -> None:
