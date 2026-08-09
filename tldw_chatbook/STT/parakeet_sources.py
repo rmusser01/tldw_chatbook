@@ -156,6 +156,10 @@ _ActiveManaged = Callable[[str, str], Path | None]
 _DispatchResolver = Callable[..., ParakeetDispatch]
 
 
+def _never_cancelled() -> bool:
+    return False
+
+
 class ParakeetSourceService:
     """Own exact source preferences and process-lifetime verification state."""
 
@@ -348,6 +352,8 @@ class ParakeetSourceService:
         self,
         verified: VerifiedExternalParakeet,
         consent: ManagedCopyConsent,
+        *,
+        cancelled: Callable[[], bool] = _never_cancelled,
     ) -> ArtifactRef:
         """Install declared root files without activation or preference changes."""
 
@@ -360,10 +366,17 @@ class ParakeetSourceService:
             raise ParakeetSourceError(ParakeetSourceErrorCode.COPY_CONSENT_MISMATCH)
         _, descriptor = self._validated_external(verified)
         try:
+            if cancelled is _never_cancelled:
+                return self._managed_store_service().install(
+                    descriptor,
+                    verified.directory,
+                    declared_files_only=True,
+                )
             return self._managed_store_service().install(
                 descriptor,
                 verified.directory,
                 declared_files_only=True,
+                cancelled=cancelled,
             )
         except (ArtifactError, OSError):
             raise ParakeetSourceError(ParakeetSourceErrorCode.COPY_FAILED) from None

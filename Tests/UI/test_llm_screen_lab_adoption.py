@@ -1327,16 +1327,7 @@ def test_run_curated_preflight_except_clause_survives_a_malformed_reference(
     assert fake_app.call_from_thread.call_args[0][1] is None
 
 
-@pytest.mark.parametrize(
-    ("error", "expected_severity", "expected_message"),
-    (
-        (None, "information", "Model installed and activated."),
-        ("boom", "error", "boom"),
-    ),
-)
-def test_apply_curated_provision_result_notifies_mirrors_and_resets_state(
-    error, expected_severity, expected_message, monkeypatch
-):
+def test_failed_curated_provision_notifies_mirrors_and_resets_state(monkeypatch):
     """TASK-1803 review round 1 (Important, gap #1): untested until now.
 
     ``_apply_curated_provision_result`` is the sole path that ends a
@@ -1370,7 +1361,6 @@ def test_apply_curated_provision_result_notifies_mirrors_and_resets_state(
         parakeet_reference,
     )
     from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V2_MODEL
-    from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
     from tldw_chatbook.UI.Screens import llm_screen as module
 
     fake_app = MagicMock()
@@ -1391,9 +1381,9 @@ def test_apply_curated_provision_result_notifies_mirrors_and_resets_state(
     screen._model_install_sources = {}
     screen._model_install_pending_report = object()
 
-    module.LLMScreen._apply_curated_provision_result(screen, error)
+    module.LLMScreen._apply_curated_provision_result(screen, "boom")
 
-    screen.notify.assert_called_once_with(expected_message, severity=expected_severity)
+    screen.notify.assert_called_once_with("boom", severity="error")
     assert screen._model_install_worker is None
     assert screen._model_install_pending_report is None
     assert screen._model_install_reference is None
@@ -1406,13 +1396,47 @@ def test_apply_curated_provision_result_notifies_mirrors_and_resets_state(
     assert isinstance(delivered, module.InstallStatusChanged)
     assert delivered.reference == reference
     assert delivered.active is False
-    assert delivered.succeeded == (error is None)
+    assert delivered.succeeded is False
 
     view.finish_install.assert_called_once_with()
-    if error is None:
-        source_service.prefer_managed.assert_called_once_with(ParakeetSourceKey.V2_INT8)
-    else:
-        source_service.prefer_managed.assert_not_called()
+    source_service.prefer_managed.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_successful_curated_install_persists_managed_preference_off_loop():
+    import threading
+
+    from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
+        parakeet_reference,
+    )
+    from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V2_MODEL
+
+    service = _FakeExternalSourceService()
+    app = _app()
+    app._parakeet_source_service = service
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _models_screen(app)
+        assert await _wait_for(
+            lambda: bool(screen.query("#external-models-view")), pilot
+        )
+        screen.notify = MagicMock()
+        screen._deliver_curated = MagicMock()
+        reference = parakeet_reference(PARAKEET_V2_MODEL, "int8")
+        screen._model_install_kind = "curated"
+        screen._model_install_reference = reference
+        screen._model_install_service = MagicMock()
+        screen._model_install_registry = MagicMock()
+        screen._model_install_sources = {}
+        screen._model_install_pending_report = object()
+
+        screen._apply_curated_provision_result(None)
+
+        assert await _wait_for(lambda: bool(service.preferred), pilot)
+        assert service.prefer_threads[0] != threading.get_ident()
+        assert await _wait_for(lambda: screen._model_install_kind is None, pilot)
+        screen.notify.assert_called_once_with(
+            "Model installed and activated.", severity="information"
+        )
 
 
 @pytest.mark.asyncio
@@ -2606,19 +2630,35 @@ async def test_provision_remote_reuses_exact_preflight_values_without_activation
 class _FakeExternalSourceService:
     """Complete fake for the exact production service surface Lab consumes."""
 
-    def __init__(self, *, records=None, block_verification: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        records=None,
+        block_verification: bool = False,
+        block_copy: bool = False,
+    ) -> None:
         import threading
 
         self._records = dict(records or {})
         self.block_verification = block_verification
+        self.block_copy = block_copy
         self.progress_seen = threading.Event()
         self.release_verification = threading.Event()
+        self.copy_started = threading.Event()
+        self.copy_cancelled = threading.Event()
+        self.release_copy = threading.Event()
+        self.copy_continued = threading.Event()
         self.vad_ready = True
         self.prepare_threads: list[int] = []
+        self.commit_threads: list[int] = []
+        self.stop_threads: list[int] = []
+        self.prefer_threads: list[int] = []
         self.prepare_calls = []
         self.commit_attempts = []
         self.committed = []
         self.stopped = []
+        self.preferred = []
+        self.released_scopes = []
         self.copy_plans = []
         self.copied = []
 
@@ -2634,8 +2674,14 @@ class _FakeExternalSourceService:
     def on_root_activated(self, _reference):
         return None
 
-    def prefer_managed(self, _key):
-        return None
+    def prefer_managed(self, key):
+        import threading
+
+        self.prefer_threads.append(threading.get_ident())
+        self.preferred.append(key)
+
+    def release_scope(self, scope_id):
+        self.released_scopes.append(scope_id)
 
     def prepare_external(
         self,
@@ -2669,17 +2715,23 @@ class _FakeExternalSourceService:
         return SimpleNamespace(key=key, verified=verified)
 
     def commit_external(self, prepared):
+        import threading
+
         from tldw_chatbook.STT.parakeet_sources import (
             ParakeetSourceError,
             ParakeetSourceErrorCode,
         )
 
+        self.commit_threads.append(threading.get_ident())
         self.commit_attempts.append(prepared)
         if not self.vad_ready:
             raise ParakeetSourceError(ParakeetSourceErrorCode.VAD_UNAVAILABLE)
         self.committed.append(prepared)
 
     def stop_using_external(self, key):
+        import threading
+
+        self.stop_threads.append(threading.get_ident())
         self.stopped.append(key)
 
     def plan_managed_copy(self, verified):
@@ -2694,7 +2746,15 @@ class _FakeExternalSourceService:
             already_installed=False,
         )
 
-    def copy_into_managed(self, verified, consent):
+    def copy_into_managed(self, verified, consent, *, cancelled=lambda: False):
+        if self.block_copy:
+            self.copy_started.set()
+            while not cancelled() and not self.release_copy.is_set():
+                self.release_copy.wait(0.01)
+            if cancelled():
+                self.copy_cancelled.set()
+                raise RuntimeError("cancelled")
+            self.copy_continued.set()
         self.copied.append((verified, consent))
         return verified.reference
 
@@ -2742,6 +2802,9 @@ async def test_real_picker_verifies_off_loop_reports_bytes_and_commits_after_suc
     from tldw_chatbook.Third_Party.textual_fspicker.parts import DirectoryNavigation
     from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
     from tldw_chatbook.UI.Screens.model_external_view import ExternalModelView
+    from tldw_chatbook.Utils import optional_deps
+
+    monkeypatch.setattr(optional_deps, "parakeet_onnx_deps_installed", lambda: False)
 
     service = _FakeExternalSourceService(block_verification=True)
     app = _app()
@@ -2781,11 +2844,24 @@ async def test_real_picker_verifies_off_loop_reports_bytes_and_commits_after_suc
 
         service.release_verification.set()
         assert await _wait_for(lambda: len(service.committed) == 1, pilot)
+        assert service.commit_threads[0] != threading.get_ident()
+        owner = service.prepare_calls[0][2]
+        assert owner[0] == "scope"
+        assert str(tmp_path) not in owner[1]
+        assert service.released_scopes == [owner[1]]
         status = external.query_one("#external-model-operation-status", Static)
-        assert "External source ready" in str(status.renderable)
+        assert str(status.renderable) == "Runtime required"
         assert all(
             str(tmp_path) not in str(call) for call in screen.notify.call_args_list
         )
+
+        screen.refresh(recompose=True)
+        assert await _wait_for(
+            lambda: bool(screen.query("#external-model-operation-status")), pilot
+        )
+        await pilot.pause()
+        status = screen.query_one("#external-model-operation-status", Static)
+        assert str(status.renderable) == "Runtime required"
 
 
 @pytest.mark.asyncio
@@ -2828,6 +2904,74 @@ async def test_stale_picker_result_and_cancel_leave_the_prior_source_unchanged(
         assert service.prepare_calls == []
         assert service.commit_attempts == []
         assert window.active_view == "curated"
+
+
+@pytest.mark.asyncio
+async def test_replacing_external_verification_releases_its_path_free_scope(
+    tmp_path,
+):
+    from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
+
+    service = _FakeExternalSourceService(block_verification=True)
+    app = _app()
+    app._parakeet_source_service = service
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _models_screen(app)
+        assert await _wait_for(
+            lambda: bool(screen.query("#external-models-view")), pilot
+        )
+        token = screen._next_external_token()
+        screen._external_directory_selected(
+            token,
+            ParakeetSourceKey.V2_INT8,
+            tmp_path,
+        )
+        assert await _wait_for(service.progress_seen.is_set, pilot)
+        owner = service.prepare_calls[0][2]
+
+        screen._next_external_token()
+        service.release_verification.set()
+        await pilot.pause()
+
+        assert owner[0] == "scope"
+        assert str(tmp_path) not in owner[1]
+        assert service.released_scopes == [owner[1]]
+
+
+@pytest.mark.asyncio
+async def test_failed_external_commit_releases_scope_and_preserves_prior_state(
+    tmp_path,
+):
+    from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
+
+    service = _FakeExternalSourceService()
+
+    def fail_commit(prepared):
+        service.commit_attempts.append(prepared)
+        raise RuntimeError("private commit detail")
+
+    service.commit_external = fail_commit
+    app = _app()
+    app._parakeet_source_service = service
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _models_screen(app)
+        screen.notify = MagicMock()
+        assert await _wait_for(
+            lambda: bool(screen.query("#external-models-view")), pilot
+        )
+        token = screen._next_external_token()
+        screen._external_directory_selected(
+            token,
+            ParakeetSourceKey.V2_INT8,
+            tmp_path,
+        )
+        assert await _wait_for(lambda: bool(service.commit_attempts), pilot)
+        assert await _wait_for(lambda: bool(service.released_scopes), pilot)
+
+        owner = service.prepare_calls[0][2]
+        assert service.committed == []
+        assert service.released_scopes == [owner[1]]
+        assert "prior source is unchanged" in screen._external_operation_status
 
 
 @pytest.mark.asyncio
@@ -2886,6 +3030,7 @@ async def test_external_workers_keep_paths_out_of_descriptions_and_logs(
             stale_token = (token[0] - 1, token[1])
             workers = (
                 verify_worker,
+                screen._run_external_commit(stale_token, prepared),
                 screen._run_external_vad_preflight(stale_token, prepared),
                 screen._run_external_vad_provision(
                     stale_token,
@@ -2893,6 +3038,10 @@ async def test_external_workers_keep_paths_out_of_descriptions_and_logs(
                     report,
                 ),
                 screen._run_external_copy(stale_token, prepared, consent),
+                screen._run_external_stop(
+                    stale_token,
+                    ParakeetSourceKey.V2_INT8,
+                ),
             )
             assert await _wait_for(service.progress_seen.is_set, pilot)
             await pilot.pause()
@@ -2900,9 +3049,11 @@ async def test_external_workers_keep_paths_out_of_descriptions_and_logs(
 
             assert [worker.description for worker in workers] == [
                 "Verify external Parakeet source",
+                "Save external Parakeet source",
                 "Check managed VAD dependency",
                 "Install managed VAD dependency",
                 "Copy external Parakeet source",
+                "Stop using external Parakeet source",
             ]
             log_output = "\n".join(messages)
             assert str(selected) not in log_output
@@ -2914,6 +3065,89 @@ async def test_external_workers_keep_paths_out_of_descriptions_and_logs(
         finally:
             service.release_verification.set()
             loguru_logger.remove(sink_id)
+
+
+@pytest.mark.asyncio
+async def test_unmount_cancels_vad_provision_before_it_can_continue(
+    monkeypatch,
+):
+    import asyncio
+    import threading
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Local_Ingestion import parakeet_v2_artifact as artifact
+
+    started = threading.Event()
+    cancelled = threading.Event()
+    release = threading.Event()
+    continued = threading.Event()
+
+    async def fake_provision(_report, **_kwargs):
+        started.set()
+        try:
+            while not release.is_set():
+                await asyncio.sleep(0.005)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        continued.set()
+
+    monkeypatch.setattr(artifact, "run_parakeet_vad_provision", fake_provision)
+    app = _app()
+    app._parakeet_source_service = _FakeExternalSourceService()
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _models_screen(app)
+        assert await _wait_for(
+            lambda: bool(screen.query("#external-models-view")), pilot
+        )
+        token = screen._next_external_token()
+        prepared = SimpleNamespace()
+        report = SimpleNamespace()
+        screen._external_selection_worker = screen._run_external_vad_provision(
+            token,
+            prepared,
+            report,
+        )
+        assert await _wait_for(started.is_set, pilot)
+
+        await app.pop_screen()
+        was_cancelled = await _wait_for(cancelled.is_set, pilot)
+        release.set()
+
+        assert was_cancelled is True
+        assert continued.is_set() is False
+
+
+@pytest.mark.asyncio
+async def test_replacing_external_copy_cooperatively_stops_its_side_effect():
+    from types import SimpleNamespace
+
+    service = _FakeExternalSourceService(block_copy=True)
+    app = _app()
+    app._parakeet_source_service = service
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _models_screen(app)
+        assert await _wait_for(
+            lambda: bool(screen.query("#external-models-view")), pilot
+        )
+        token = screen._next_external_token()
+        prepared = SimpleNamespace(verified=SimpleNamespace())
+        consent = SimpleNamespace()
+        screen._external_selection_worker = screen._run_external_copy(
+            token,
+            prepared,
+            consent,
+        )
+        assert await _wait_for(service.copy_started.is_set, pilot)
+
+        screen._next_external_token()
+
+        was_cancelled = await _wait_for(service.copy_cancelled.is_set, pilot)
+        service.release_copy.set()
+
+        assert was_cancelled is True
+        assert service.copy_continued.is_set() is False
+        assert service.copied == []
 
 
 @pytest.mark.asyncio
@@ -2970,14 +3204,29 @@ async def test_missing_vad_shows_vad_only_consent_and_commits_only_after_provisi
         sufficient_space=True,
         gating_errors=(),
     )
+    import asyncio
+
+    from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
+
     calls = []
+    allow_provision = asyncio.Event()
 
     async def fake_preflight(**_kwargs):
         calls.append("preflight")
         return report
 
-    async def fake_provision(received, **_kwargs):
+    async def fake_provision(received, *, progress, **_kwargs):
         calls.append(("provision", received))
+        progress(
+            AcquisitionProgress(
+                "fetch",
+                parakeet_vad_reference(),
+                "silero_vad.onnx",
+                4,
+                8,
+            )
+        )
+        await allow_provision.wait()
         service.vad_ready = True
         return tmp_path / "managed-vad"
 
@@ -3005,6 +3254,7 @@ async def test_missing_vad_shows_vad_only_consent_and_commits_only_after_provisi
             ),
         )
         bad_token = screen._next_external_token()
+        bad_scope = screen._external_scope_id
         screen._apply_external_vad_preflight_result(
             bad_token,
             SimpleNamespace(),
@@ -3013,6 +3263,7 @@ async def test_missing_vad_shows_vad_only_consent_and_commits_only_after_provisi
         )
         await pilot.pause()
         assert not isinstance(app.screen, ModelInstallModal)
+        assert service.released_scopes == [bad_scope]
 
         screen.post_message(CuratedView.UseFromDiskRequested(reference))
         assert await _wait_for(lambda: isinstance(app.screen, SelectDirectory), pilot)
@@ -3032,6 +3283,8 @@ async def test_missing_vad_shows_vad_only_consent_and_commits_only_after_provisi
         modal.query_one("#model-install-cancel", Button).press()
         await pilot.pause()
         assert service.committed == []
+        first_owner = service.prepare_calls[0][2]
+        assert service.released_scopes == [bad_scope, first_owner[1]]
 
         screen.post_message(CuratedView.UseFromDiskRequested(reference))
         assert await _wait_for(lambda: isinstance(app.screen, SelectDirectory), pilot)
@@ -3040,7 +3293,21 @@ async def test_missing_vad_shows_vad_only_consent_and_commits_only_after_provisi
         picker.query_one("#select", Button).press()
         assert await _wait_for(lambda: isinstance(app.screen, ModelInstallModal), pilot)
         app.screen.query_one("#model-install-confirm", Button).press()
+        assert await _wait_for(
+            lambda: "4 / 8 bytes" in screen._external_operation_status,
+            pilot,
+        )
+        assert screen._external_operation_status.startswith(
+            "Installing managed VAD dependency"
+        )
+        allow_provision.set()
         assert await _wait_for(lambda: len(service.committed) == 1, pilot)
+        second_owner = service.prepare_calls[1][2]
+        assert service.released_scopes == [
+            bad_scope,
+            first_owner[1],
+            second_owner[1],
+        ]
 
     assert calls.count("preflight") == 2
     assert calls[-1] == ("provision", report)
@@ -3092,6 +3359,9 @@ async def test_external_copy_uses_task6_plan_and_stop_uses_the_shared_service(
         assert await _wait_for(lambda: len(service.copied) == 1, pilot)
 
         screen.post_message(ExternalModelView.StopRequested(key))
-        await pilot.pause()
+        assert await _wait_for(lambda: service.stopped == [key], pilot)
         assert service.stopped == [key]
+        import threading
+
+        assert service.stop_threads[0] != threading.get_ident()
         assert all(str(root) not in str(call) for call in screen.notify.call_args_list)

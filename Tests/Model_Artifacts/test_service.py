@@ -1539,6 +1539,45 @@ def test_install_verifies_then_promotes_immutable_directory(tmp_path: Path) -> N
     }
 
 
+def test_install_cancellation_during_copy_is_path_private_and_removes_only_its_stage(
+    tmp_path: Path,
+) -> None:
+    """A cancelled local copy never publishes or damages user-owned bytes."""
+
+    payload = b"model" * 600_000
+    service, item, source = install_inputs(
+        tmp_path,
+        {"models/model.onnx": payload},
+    )
+    abandoned = service.staging_path / "pre-existing" / "part"
+    abandoned.parent.mkdir(parents=True)
+    abandoned.write_bytes(b"keep")
+    private_path = str(source)
+    saw_partial_stage = False
+
+    def cancelled() -> bool:
+        nonlocal saw_partial_stage
+        staged = tuple(service.staging_path.glob("install-*/models/model.onnx"))
+        if not staged:
+            return False
+        copied = staged[0].stat().st_size
+        saw_partial_stage = 0 < copied < len(payload)
+        return saw_partial_stage
+
+    with pytest.raises(
+        service_module.ArtifactStateError,
+        match="^artifact installation cancelled$",
+    ) as caught:
+        service.install(item, source, cancelled=cancelled)
+
+    assert saw_partial_stage is True
+    assert private_path not in str(caught.value)
+    assert (source / "models/model.onnx").read_bytes() == payload
+    assert service.artifact_path(item.reference).exists() is False
+    assert tuple(service.staging_path.iterdir()) == (abandoned.parent,)
+    assert abandoned.read_bytes() == b"keep"
+
+
 # ---------------------------------------------------------------------------
 # TASK-1694: service-owned download-stage seam.
 #

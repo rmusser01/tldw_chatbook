@@ -14,7 +14,7 @@ import stat
 import sys
 import tempfile
 import uuid
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -120,6 +120,18 @@ _READINESS_SCHEMA_VERSION = 1
 _READINESS_KEYS = frozenset(
     {"schema_version", "root", "closure", "closure_fingerprint"}
 )
+_LOCAL_COPY_CHUNK_BYTES = 1024 * 1024
+
+
+def _never_cancelled() -> bool:
+    return False
+
+
+def _raise_if_install_cancelled(cancelled: Callable[[], bool]) -> None:
+    if cancelled():
+        raise ArtifactStateError("artifact installation cancelled")
+
+
 _ACTIVE_SCHEMA_VERSION = 1
 _ACTIVE_KEYS = frozenset({"schema_version", "root"})
 _LIFECYCLE_LEASE_KEY = ArtifactLeaseKey("!lifecycle", "1", "writer")
@@ -3005,6 +3017,7 @@ class ModelArtifactService:
         *,
         consume_source: bool = False,
         declared_files_only: bool = False,
+        cancelled: Callable[[], bool] = _never_cancelled,
     ) -> ArtifactRef:
         """Verify and promote one local source directory immutably.
 
@@ -3017,6 +3030,8 @@ class ModelArtifactService:
                 back to copy+delete. Defaults to False (today's copy semantics).
             declared_files_only: Validate and snapshot only descriptor-declared
                 paths, allowing unrelated user-owned entries to remain ignored.
+            cancelled: Optional caller-thread-safe cancellation probe, polled
+                between fixed-size local-copy chunks and install phases.
 
         Returns:
             The installed artifact's immutable reference.
@@ -3036,6 +3051,9 @@ class ModelArtifactService:
             raise TypeError("source_directory must be a Path")
         if type(declared_files_only) is not bool:
             raise TypeError("declared_files_only must be a bool")
+        if not callable(cancelled):
+            raise TypeError("cancelled must be callable")
+        _raise_if_install_cancelled(cancelled)
         try:
             source_directory = validate_path_simple(
                 source_directory,
@@ -3049,6 +3067,7 @@ class ModelArtifactService:
             descriptor.files,
             declared_files_only=declared_files_only,
         )
+        _raise_if_install_cancelled(cancelled)
 
         staging: Path | None = None
         staging_lease: ArtifactOperationLease | None = None
@@ -3100,10 +3119,31 @@ class ModelArtifactService:
             self._assert_managed_path(staging)
             # Only pass consume_source if True to maintain backward compatibility
             # with tests that monkeypatch _copy_payload
-            if consume_source:
-                self._copy_payload(descriptor, source_directory, staging, consume_source=True)
+            if consume_source and cancelled is not _never_cancelled:
+                self._copy_payload(
+                    descriptor,
+                    source_directory,
+                    staging,
+                    consume_source=True,
+                    cancelled=cancelled,
+                )
+            elif consume_source:
+                self._copy_payload(
+                    descriptor,
+                    source_directory,
+                    staging,
+                    consume_source=True,
+                )
+            elif cancelled is not _never_cancelled:
+                self._copy_payload(
+                    descriptor,
+                    source_directory,
+                    staging,
+                    cancelled=cancelled,
+                )
             else:
                 self._copy_payload(descriptor, source_directory, staging)
+            _raise_if_install_cancelled(cancelled)
             # When consume_source=True, files are intentionally moved from source.
             # Skip the unchanged-tree check in that case; it's expected to change.
             if not consume_source:
@@ -3116,6 +3156,7 @@ class ModelArtifactService:
                     != source_snapshot
                 ):
                     raise ArtifactPathError("source tree changed during artifact copy")
+            _raise_if_install_cancelled(cancelled)
             destination = self.artifact_path(descriptor.reference)
             self._assert_managed_path(self._locks_path)
 
@@ -3139,6 +3180,7 @@ class ModelArtifactService:
                             descriptor,
                         )
                         return descriptor.reference
+                    _raise_if_install_cancelled(cancelled)
                     self._verify_payload(staging, descriptor.files)
                     atomic_write_json(
                         staging / "manifest.json",
@@ -3691,6 +3733,7 @@ class ModelArtifactService:
         staging: Path,
         *,
         consume_source: bool = False,
+        cancelled: Callable[[], bool] = _never_cancelled,
     ) -> None:
         """Copy or move declared payload into install staging.
 
@@ -3702,6 +3745,7 @@ class ModelArtifactService:
                 inside this service's root (both stagings share it). EXDEV
                 (bind-mount inside the root) degrades to copy+delete for that
                 file — correctness over the disk optimization.
+            cancelled: Cancellation probe polled at fixed copy chunks.
 
         Raises:
             ArtifactPathError: consume_source with a source outside the root,
@@ -3719,6 +3763,7 @@ class ModelArtifactService:
                 ) from error
 
         for item in descriptor.files:
+            _raise_if_install_cancelled(cancelled)
             src = source / item.path
             dst = staging / item.path
             dst.parent.mkdir(parents=True, exist_ok=True)
@@ -3729,7 +3774,10 @@ class ModelArtifactService:
                 except OSError as exc:
                     if exc.errno != errno.EXDEV:
                         raise
-            shutil.copyfile(src, dst, follow_symlinks=False)
+            with src.open("rb") as source_file, dst.open("xb") as destination_file:
+                while chunk := source_file.read(_LOCAL_COPY_CHUNK_BYTES):
+                    destination_file.write(chunk)
+                    _raise_if_install_cancelled(cancelled)
             if consume_source:
                 src.unlink()
 

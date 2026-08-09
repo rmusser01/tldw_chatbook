@@ -842,6 +842,51 @@ def test_managed_copy_failure_is_stable_and_hides_external_path(
     service.close()
 
 
+def test_managed_copy_passes_cancellation_to_the_store_and_fails_path_privately(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The source seam preserves cancellation without leaking its root."""
+
+    key = ParakeetSourceKey.V2_INT8
+    root = tmp_path / "private-cancelled-copy"
+    _materialize(root)
+    managed = ModelArtifactService(tmp_path / "managed-store")
+    service = ParakeetSourceService(
+        verifier=ExternalParakeetVerifier(),
+        read_setting=_Config().read,
+        write_settings=lambda _values: True,
+        descriptor_for=lambda model, precision: _descriptor(
+            ParakeetSourceKey.from_values(model, precision)
+        ),
+        active_managed=lambda _model, _precision: None,
+        dispatch_resolver=lambda **_kwargs: _dispatch(key, managed=False),
+        vad_ready=lambda: True,
+        managed_service=managed,
+    )
+    verified = service.prepare_external(key, root).verified
+    consent = service.plan_managed_copy(verified).grant()
+
+    def cancel() -> bool:
+        return True
+
+    captured: list[object] = []
+
+    def cancelled_install(*_args, **kwargs):
+        captured.append(kwargs.get("cancelled"))
+        raise OSError(f"cancelled below {root}")
+
+    monkeypatch.setattr(managed, "install", cancelled_install)
+
+    with pytest.raises(ParakeetSourceError) as caught:
+        service.copy_into_managed(verified, consent, cancelled=cancel)
+
+    assert captured == [cancel]
+    assert caught.value.code is ParakeetSourceErrorCode.COPY_FAILED
+    assert str(root) not in str(caught.value)
+    service.close()
+
+
 def test_managed_copy_rechecks_external_snapshot_after_consent(
     tmp_path: Path,
 ) -> None:

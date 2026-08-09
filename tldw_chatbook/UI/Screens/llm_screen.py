@@ -162,6 +162,7 @@ class LLMScreen(LabScreen):
         self._model_install_succeeded: bool | None = None
         self._external_selection_generation = 0
         self._external_selection_token: tuple[int, int] | None = None
+        self._external_scope_id: str | None = None
         self._external_selection_worker: Worker | None = None
         self._external_operation_status = ""
         self._external_operation_error = False
@@ -486,14 +487,29 @@ class LLMScreen(LabScreen):
     def _next_external_token(self) -> tuple[int, int]:
         """Fence every picker and worker callback to this screen generation."""
 
+        prior = self._external_selection_token
+        if prior is not None:
+            self._release_external_scope(prior)
         worker = self._external_selection_worker
         if worker is not None and not worker.is_finished:
             worker.cancel()
         self._external_selection_generation += 1
         token = (self._external_selection_generation, id(self))
         self._external_selection_token = token
+        self._external_scope_id = f"llm-external-{token[1]}-{token[0]}"
         self._external_selection_worker = None
         return token
+
+    def _release_external_scope(self, token: tuple[int, int]) -> None:
+        """Release one path-free verifier owner exactly once."""
+
+        scope_id = f"llm-external-{token[1]}-{token[0]}"
+        if self._external_scope_id != scope_id:
+            return
+        self._external_scope_id = None
+        service = getattr(self.app, "_parakeet_source_service", None)
+        if service is not None:
+            service.release_scope(scope_id)
 
     def _owns_external_token(self, token: tuple[int, int]) -> bool:
         """Return whether a completion still belongs to this mounted screen."""
@@ -573,10 +589,14 @@ class LLMScreen(LabScreen):
     ) -> None:
         """Start verification only for the current non-cancelled picker."""
 
-        if not self._owns_external_token(token) or selected is None:
+        if not self._owns_external_token(token):
+            return
+        if selected is None:
+            self._release_external_scope(token)
             return
         window = self.llm_window
         if window is None or not window.is_mounted:
+            self._release_external_scope(token)
             return
         window.active_view = "external"
         self._set_external_status("Verifying model files…")
@@ -605,18 +625,51 @@ class LLMScreen(LabScreen):
         event: ExternalModelView.StopRequested,
     ) -> None:
         event.stop()
-        self._next_external_token()
+        token = self._next_external_token()
+        self._set_external_status("Removing external source…")
+        self._external_selection_worker = self._run_external_stop(token, event.key)
+
+    @work(
+        thread=True,
+        group="llm_external_stop",
+        exclusive=True,
+        exit_on_error=False,
+        description="Stop using external Parakeet source",
+    )
+    def _run_external_stop(
+        self,
+        token: tuple[int, int],
+        key: ParakeetSourceKey,
+    ) -> None:
+        """Persist external-source removal outside the Textual event loop."""
+
+        worker = get_current_worker()
+        if worker.is_cancelled or not self._owns_external_token(token):
+            return
         try:
-            self.app._ensure_parakeet_source_service().stop_using_external(event.key)
+            self.app._ensure_parakeet_source_service().stop_using_external(key)
         except Exception as exc:
             logger.warning(
                 "External Parakeet source removal failed; error_type={}",
                 type(exc).__name__,
             )
-            self._set_external_status(
-                "The external source could not be removed. Try again.",
-                error=True,
-            )
+            error = "The external source could not be removed. Try again."
+        else:
+            error = None
+        self.app.call_from_thread(self._apply_external_stop_result, token, error)
+
+    def _apply_external_stop_result(
+        self,
+        token: tuple[int, int],
+        error: str | None,
+    ) -> None:
+        if not self._owns_external_token(token):
+            return
+        self._external_selection_worker = None
+        self._release_external_scope(token)
+        if error is not None:
+            self._set_external_status(error, error=True)
+            self.notify(error, severity="error")
             return
         self._set_external_status("External source removed.")
         self._reload_external_view()
@@ -675,6 +728,7 @@ class LLMScreen(LabScreen):
             prepared = self.app._ensure_parakeet_source_service().prepare_external(
                 key,
                 directory,
+                owner=("scope", f"llm-external-{token[1]}-{token[0]}"),
                 cancelled=lambda: worker.is_cancelled,
                 progress=progress,
             )
@@ -723,6 +777,7 @@ class LLMScreen(LabScreen):
             return
         self._external_selection_worker = None
         if error is not None or prepared is None:
+            self._release_external_scope(token)
             message = error or "The selected model could not be verified."
             self._set_external_status(message, error=True)
             self.notify(message, severity="error")
@@ -737,23 +792,78 @@ class LLMScreen(LabScreen):
         token: tuple[int, int],
         prepared: PreparedExternalSelection,
     ) -> None:
-        service = self.app._ensure_parakeet_source_service()
+        self._set_external_status("Saving external source…")
+        self._external_selection_worker = self._run_external_commit(token, prepared)
+
+    @work(
+        thread=True,
+        group="llm_external_commit",
+        exclusive=True,
+        exit_on_error=False,
+        description="Save external Parakeet source",
+    )
+    def _run_external_commit(
+        self,
+        token: tuple[int, int],
+        prepared: PreparedExternalSelection,
+    ) -> None:
+        """Persist one verified source and probe runtime readiness off-loop."""
+
+        worker = get_current_worker()
+        if worker.is_cancelled or not self._owns_external_token(token):
+            return
         try:
-            service.commit_external(prepared)
+            self.app._ensure_parakeet_source_service().commit_external(prepared)
         except ParakeetSourceError as exc:
             if exc.code is ParakeetSourceErrorCode.VAD_UNAVAILABLE:
-                self._set_external_status("Checking the managed VAD dependency…")
-                self._external_selection_worker = self._run_external_vad_preflight(
-                    token,
-                    prepared,
-                )
-                return
+                outcome = "vad"
+            else:
+                outcome = "error"
+            runtime_ready = False
+        except Exception as exc:
+            logger.warning(
+                "External Parakeet source save failed; error_type={}",
+                type(exc).__name__,
+            )
+            outcome = "error"
+            runtime_ready = False
+        else:
+            from tldw_chatbook.Utils.optional_deps import (
+                parakeet_onnx_deps_installed,
+            )
+
+            outcome = "saved"
+            runtime_ready = parakeet_onnx_deps_installed()
+        self.app.call_from_thread(
+            self._apply_external_commit_result,
+            token,
+            prepared,
+            outcome,
+            runtime_ready,
+        )
+
+    def _apply_external_commit_result(
+        self,
+        token: tuple[int, int],
+        prepared: PreparedExternalSelection,
+        outcome: str,
+        runtime_ready: bool,
+    ) -> None:
+        if not self._owns_external_token(token):
+            return
+        self._external_selection_worker = None
+        if outcome == "vad":
+            self._set_external_status("Checking the managed VAD dependency…")
+            self._external_selection_worker = self._run_external_vad_preflight(
+                token,
+                prepared,
+            )
+            return
+        self._release_external_scope(token)
+        if outcome == "error":
             self._external_commit_failed()
             return
-        except Exception:
-            self._external_commit_failed()
-            return
-        self._finish_external_commit()
+        self._finish_external_commit(runtime_ready=runtime_ready)
 
     def _external_commit_failed(self) -> None:
         message = (
@@ -762,10 +872,11 @@ class LLMScreen(LabScreen):
         self._set_external_status(message, error=True)
         self.notify(message, severity="error")
 
-    def _finish_external_commit(self) -> None:
-        self._set_external_status("External source ready.")
+    def _finish_external_commit(self, *, runtime_ready: bool) -> None:
+        message = "External source ready." if runtime_ready else "Runtime required"
+        self._set_external_status(message)
         self._reload_external_view()
-        self.notify("External source ready.", severity="information")
+        self.notify(message, severity="information")
 
     @work(
         thread=True,
@@ -837,6 +948,7 @@ class LLMScreen(LabScreen):
                 for entry in report.entries
             )
         ):
+            self._release_external_scope(token)
             message = error or "The managed VAD plan changed. Choose the model again."
             self._set_external_status(message, error=True)
             self.notify(message, severity="error")
@@ -861,6 +973,7 @@ class LLMScreen(LabScreen):
         if not self._owns_external_token(token):
             return
         if not confirmed:
+            self._release_external_scope(token)
             self._set_external_status(
                 "VAD install cancelled. The prior source is unchanged."
             )
@@ -873,13 +986,12 @@ class LLMScreen(LabScreen):
         )
 
     @work(
-        thread=True,
         group="llm_external_vad_install",
         exclusive=True,
         exit_on_error=False,
         description="Install managed VAD dependency",
     )
-    def _run_external_vad_provision(
+    async def _run_external_vad_provision(
         self,
         token: tuple[int, int],
         prepared: PreparedExternalSelection,
@@ -892,33 +1004,43 @@ class LLMScreen(LabScreen):
         )
 
         def progress(event: "AcquisitionProgress") -> None:
-            self.app.call_from_thread(
-                self._apply_external_hash_progress,
+            self._apply_external_vad_progress(
                 token,
                 event.bytes_done,
                 event.bytes_total,
             )
 
         try:
-            asyncio.run(run_parakeet_vad_provision(report, progress=progress))
+            await run_parakeet_vad_provision(report, progress=progress)
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
             logger.warning(
                 "Managed VAD installation failed; error_type={}",
                 type(exc).__name__,
             )
-            self.app.call_from_thread(
-                self._apply_external_vad_provision_result,
+            self._apply_external_vad_provision_result(
                 token,
                 prepared,
                 "The managed VAD dependency could not be installed.",
             )
             return
-        self.app.call_from_thread(
-            self._apply_external_vad_provision_result,
+        self._apply_external_vad_provision_result(
             token,
             prepared,
             None,
         )
+
+    def _apply_external_vad_progress(
+        self,
+        token: tuple[int, int],
+        done: int,
+        total: int,
+    ) -> None:
+        if self._owns_external_token(token):
+            self._set_external_status(
+                f"Installing managed VAD dependency · {done:,} / {total:,} bytes"
+            )
 
     def _apply_external_vad_provision_result(
         self,
@@ -930,6 +1052,7 @@ class LLMScreen(LabScreen):
             return
         self._external_selection_worker = None
         if error is not None:
+            self._release_external_scope(token)
             self._set_external_status(error, error=True)
             self.notify(error, severity="error")
             return
@@ -953,6 +1076,7 @@ class LLMScreen(LabScreen):
                 "The managed copy could not be planned. The external source is unchanged.",
                 error=True,
             )
+            self._release_external_scope(token)
             return
         if plan.already_installed:
             self._set_external_status("This model is already in the managed store.")
@@ -960,6 +1084,7 @@ class LLMScreen(LabScreen):
                 "This model is already in the managed store.",
                 severity="information",
             )
+            self._release_external_scope(token)
             return
         try:
             consent = plan.grant()
@@ -968,6 +1093,7 @@ class LLMScreen(LabScreen):
                 "Not enough managed-store space is available for this copy.",
                 error=True,
             )
+            self._release_external_scope(token)
             return
         self.app.push_screen(
             ConfirmationDialog(
@@ -997,6 +1123,7 @@ class LLMScreen(LabScreen):
         if not self._owns_external_token(token):
             return
         if not confirmed:
+            self._release_external_scope(token)
             self._set_external_status(
                 "Managed copy cancelled. External source unchanged."
             )
@@ -1021,10 +1148,14 @@ class LLMScreen(LabScreen):
         prepared: PreparedExternalSelection,
         consent: ManagedCopyConsent,
     ) -> None:
+        worker = get_current_worker()
+        if worker.is_cancelled or not self._owns_external_token(token):
+            return
         try:
             self.app._ensure_parakeet_source_service().copy_into_managed(
                 prepared.verified,
                 consent,
+                cancelled=lambda: worker.is_cancelled,
             )
         except Exception as exc:
             logger.warning(
@@ -1048,6 +1179,7 @@ class LLMScreen(LabScreen):
         if not self._owns_external_token(token):
             return
         self._external_selection_worker = None
+        self._release_external_scope(token)
         if error is not None:
             self._set_external_status(error, error=True)
             self.notify(error, severity="error")
@@ -1309,21 +1441,83 @@ class LLMScreen(LabScreen):
         if error is None and reference is not None:
             key = self._external_key_for_reference(reference)
             if key is not None:
-                try:
-                    self.app._ensure_parakeet_source_service().prefer_managed(key)
-                except Exception as exc:
-                    logger.warning(
-                        "Activated Parakeet source preference update failed; "
-                        "error_type={}",
-                        type(exc).__name__,
-                    )
+                self._model_install_worker = self._run_curated_prefer_managed(
+                    reference,
+                    key,
+                )
+                return
+        self._finish_curated_provision(error, succeeded=error is None)
+
+    @work(
+        thread=True,
+        group="llm_curated_source_preference",
+        exclusive=True,
+        exit_on_error=False,
+        description="Select managed Parakeet source",
+    )
+    def _run_curated_prefer_managed(
+        self,
+        reference: ArtifactRef,
+        key: ParakeetSourceKey,
+    ) -> None:
+        """Persist the post-install managed preference off the UI thread."""
+
+        worker = get_current_worker()
+        if (
+            worker.is_cancelled
+            or not self.is_mounted
+            or self._model_install_kind != "curated"
+            or self._model_install_reference != reference
+        ):
+            return
+        try:
+            self.app._ensure_parakeet_source_service().prefer_managed(key)
+        except Exception as exc:
+            logger.warning(
+                "Activated Parakeet source preference update failed; error_type={}",
+                type(exc).__name__,
+            )
+            error = (
+                "Model installed, but the managed source preference could not be saved."
+            )
+        else:
+            error = None
+        self.app.call_from_thread(
+            self._apply_curated_preference_result,
+            reference,
+            error,
+        )
+
+    def _apply_curated_preference_result(
+        self,
+        reference: ArtifactRef,
+        error: str | None,
+    ) -> None:
+        if (
+            not self.is_mounted
+            or self._model_install_kind != "curated"
+            or self._model_install_reference != reference
+        ):
+            return
+        self._model_install_worker = None
+        self._finish_curated_provision(error, succeeded=True)
+
+    def _finish_curated_provision(
+        self,
+        error: str | None,
+        *,
+        succeeded: bool,
+    ) -> None:
+        """Deliver one terminal curated lifecycle result and clear state."""
+
+        reference = self._model_install_reference
         if error is not None:
             self.notify(error, severity="error")
         else:
             self.notify("Model installed and activated.", severity="information")
         if reference is not None:
             self._deliver_curated(
-                InstallStatusChanged(reference, active=False, succeeded=error is None)
+                InstallStatusChanged(reference, active=False, succeeded=succeeded)
             )
         self._model_install_reference = None
         self._model_install_service = None
@@ -1333,6 +1527,17 @@ class LLMScreen(LabScreen):
         view = self._curated_view()
         if view is not None:
             view.finish_install()
+
+    def on_unmount(self) -> None:
+        """Cancel screen-owned work and release live verifier ownership."""
+
+        worker = self._external_selection_worker
+        if worker is not None and not worker.is_finished:
+            worker.cancel()
+        token = self._external_selection_token
+        if token is not None:
+            self._release_external_scope(token)
+        self._external_selection_token = None
 
     def _clear_curated_install_state(self) -> None:
         """Reset this screen's own bookkeeping after a request that never
