@@ -86,7 +86,7 @@ class ChatbookGatewayRuntime:
         def decorator(handler: _ToolHandler) -> _ToolHandler:
             if self._finalized:
                 raise RuntimeError("runtime is finalized")
-            handler_name = name or getattr(handler, "__name__", None)
+            handler_name = handler.__name__ if name is None else name
             if (
                 not isinstance(handler_name, str)
                 or _TOOL_NAME.fullmatch(handler_name) is None

@@ -101,6 +101,35 @@ def test_runtime_rejects_duplicate_tool_handler_names() -> None:
             return None
 
 
+@pytest.mark.parametrize(
+    "explicit_name",
+    [pytest.param("", id="empty-string"), pytest.param(0, id="zero")],
+)
+def test_runtime_rejects_falsey_explicit_handler_name(explicit_name: object) -> None:
+    runtime = _runtime(_descriptor())
+
+    with pytest.raises(ValueError) as exc_info:
+
+        @runtime.tool(name=explicit_name)  # type: ignore[arg-type]
+        async def echo() -> None:
+            return None
+
+    assert str(exc_info.value) == "tool handler name is invalid"
+    assert len(str(exc_info.value)) <= 512
+
+
+def test_runtime_derives_handler_name_only_when_name_is_none() -> None:
+    runtime = _runtime(_descriptor("derived"))
+
+    @runtime.tool(name=None)
+    async def derived() -> None:
+        return None
+
+    runtime.finalize()
+
+    assert runtime._tool_handlers["derived"] is derived
+
+
 def test_runtime_rejects_handler_without_descriptor() -> None:
     runtime = _runtime(_descriptor())
 
