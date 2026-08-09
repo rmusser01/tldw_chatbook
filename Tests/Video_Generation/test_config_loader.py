@@ -55,7 +55,7 @@ def test_malformed_scalar_backend_section_uses_defaults(monkeypatch, backend):
     """A malformed backend subsection must not crash config construction."""
     from tldw_chatbook.Video_Generation import config as c
 
-    cfg = _load_config_with_section(monkeypatch, {backend: "not-a-table"})
+    cfg = _load_config_with_section(monkeypatch, {backend: 1})
 
     assert cfg.default_backend == c.DEFAULT_BACKEND
     assert cfg.enabled_backends == []
