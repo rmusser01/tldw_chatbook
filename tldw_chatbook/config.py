@@ -1177,6 +1177,7 @@ def load_settings(force_reload: bool = False) -> Dict:
     final_character_defaults_cli = get_toml_section("character_defaults")
     final_notes_settings_cli = get_toml_section("notes")
     final_image_generation_settings_cli = get_toml_section("image_generation")
+    final_video_generation_settings_cli = get_toml_section("video_generation")
     # F-E fix: the first-run wizard's own state (setup_started/setup_completed)
     # lives under [first_run] in the raw TOML and was never projected through
     # here -- every other section the app reads via app_config (chat_defaults,
@@ -1355,6 +1356,7 @@ def load_settings(force_reload: bool = False) -> Dict:
         "console": final_console_settings_cli,  # For Console behavior settings
         "first_run": final_first_run_settings_cli,  # Wizard setup_started/setup_completed flags
         "image_generation": final_image_generation_settings_cli,  # For Image_Generation/config.py loader
+        "video_generation": final_video_generation_settings_cli,  # For Video_Generation/config.py loader
         "mcp": final_mcp_settings_cli,  # For MCP server settings
         # Single User
         "SINGLE_USER_FIXED_ID": single_user_fixed_id,
