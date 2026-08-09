@@ -784,6 +784,18 @@ class RAGService:
         This implementation leverages the existing FTS5 index in the MediaDatabase
         for efficient keyword-based search with proper connection pooling.
         """
+        # TASK-3995: a query with no FTS5-searchable tokens (empty,
+        # whitespace-only, or all punctuation) escapes to "" and can only
+        # ever match nothing. Short-circuit before resolving the media DB
+        # path or acquiring a connection -- no FTS5 call, no DB touch.
+        if not self._escape_fts5_query(query):
+            logger.debug(
+                f"Keyword search query {query!r} has no FTS5-searchable "
+                "tokens after escaping; returning no results without a "
+                "database lookup."
+            )
+            return []
+
         try:
             # Resolve the media DB path -- explicit override wins, otherwise
             # defer to the single authoritative resolver. No guessing across
@@ -1266,39 +1278,67 @@ class RAGService:
 
     def _escape_fts5_query(self, query: str) -> str:
         """
-        Properly escape FTS5 query to prevent SQL injection.
+        Build a safe FTS5 MATCH expression for a raw user query.
 
-        FTS5 special characters that need escaping:
-        - Double quotes (") for phrase queries
-        - Parentheses for grouping
-        - Operators: OR, AND, NOT, NEAR
-        - Wildcards: *
-        - Column filters: :
+        TASK-3995: wrapping the *entire* query in one pair of double quotes
+        (the previous approach) makes FTS5 treat it as a phrase query,
+        which requires every token to appear as one contiguous run in the
+        document. That is strictly stronger than AND-of-terms, not
+        equivalent to it -- a document containing all the query's tokens
+        but not adjacent to each other never matches. Verified directly
+        against a real corpus document (task-3995's description): the
+        phrase form of a multi-token query matched 0 rows against text
+        that plainly contained the relevant terms, just not contiguously.
 
-        For safety, we'll use FTS5 phrase query syntax which treats
-        the entire query as a literal phrase.
+        This implementation quotes each token individually (doubling any
+        embedded quote characters) and joins the quoted tokens with a
+        single space, which FTS5 interprets as an implicit AND: every
+        token must appear somewhere in the document, in any order, at any
+        distance. This keeps the safety property that made whole-query
+        phrase-quoting attractive in the first place -- a bare token FTS5
+        would otherwise parse as column-filter or operator syntax (e.g.
+        the hyphenated-numeric token "Obsidian-3", which raises
+        `OperationalError('no such column: 3')` unquoted) is safe once
+        quoted, because FTS5 treats a quoted token as a literal string
+        with no operator semantics. A single-token query degenerates to
+        the exact same MATCH expression as before (one quoted token), so
+        single-token search behavior is unchanged.
+
+        FTS5's default tokenizer only indexes alphanumeric runs, so a
+        token with no alphanumeric character (pure punctuation, e.g.
+        "!!!") can never match anything; such tokens are dropped rather
+        than emitted as a no-op quoted empty string. If every token in
+        the query is dropped this way, the result is "" -- callers must
+        treat "" as "no results" and skip the FTS5 query entirely rather
+        than run a MATCH expression that can only ever match nothing.
 
         Args:
             query: Raw search query
 
         Returns:
-            Safely escaped query for FTS5
+            A safe, per-token-quoted FTS5 MATCH expression, or "" if the
+            query has no FTS5-searchable tokens (empty, whitespace-only,
+            or all punctuation).
         """
-        # Escape any double quotes within the query by doubling them
-        # This is the proper way to escape quotes in FTS5 phrase queries
-        escaped_query = query.replace('"', '""')
+        if not query:
+            return ""
 
-        # Validate query length to prevent DoS
-        if len(escaped_query) > MAX_QUERY_LENGTH:
+        # Bound total processing length before tokenizing (DoS guard).
+        if len(query) > MAX_QUERY_LENGTH:
             logger.warning(
-                f"Query truncated from {len(escaped_query)} to {MAX_QUERY_LENGTH} characters"
+                f"Query truncated from {len(query)} to {MAX_QUERY_LENGTH} characters"
             )
-            escaped_query = escaped_query[:MAX_QUERY_LENGTH]
+            query = query[:MAX_QUERY_LENGTH]
 
-        # For safety, treat entire query as a phrase by wrapping in quotes
-        # This prevents any FTS5 operators or special syntax from being interpreted
-        # The phrase query syntax is the safest approach for user input
-        return f'"{escaped_query}"'
+        quoted_tokens = []
+        for token in query.split():
+            if not any(ch.isalnum() for ch in token):
+                continue
+            escaped_token = token.replace('"', '""')
+            quoted_tokens.append(f'"{escaped_token}"')
+
+        # FTS5 joins space-separated quoted terms with an implicit AND.
+        return " ".join(quoted_tokens)
 
     def _perform_fts5_search(
         self, pool, query: str, limit: int
