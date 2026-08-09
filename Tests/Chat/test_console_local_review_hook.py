@@ -11,6 +11,7 @@ import pytest
 import tldw_chatbook.Chat.console_chat_controller as controller_mod
 from tldw_chatbook.Agents.agent_models import ToolCall
 from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+from tldw_chatbook.Agents.run_context import use_run_id
 from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
     build_combined_review_hook,
@@ -21,6 +22,24 @@ from tldw_chatbook.MCP.permission_store import EffectiveToolState
 ASK = EffectiveToolState(state="ask", origin="global_default")
 ALLOW = EffectiveToolState(state="allow", origin="tool_override")
 
+#: PR2a Task 5: the hook takes the reviewing run's id and every stamp it
+#: writes is keyed by it. These tests each drive ONE run; the assertions
+#: are unchanged apart from that key.
+RUN = "run-1"
+
+
+@pytest.fixture(autouse=True)
+def _dispatching_run():
+    """Bind ``RUN`` as the dispatching run for every test in this module.
+
+    ``LocalToolProvider.invoke()`` reads the run whose call it is
+    executing from ``run_context`` (bound in production by
+    ``AgentService`` around each invocation), so a test that stamps for
+    ``RUN`` and then invokes must be running as ``RUN``.
+    """
+    with use_run_id(RUN):
+        yield
+
 
 def provider(state, tmp_path):
     return LocalToolProvider(workspace_root=tmp_path, resolve_state=lambda hub: state)
@@ -28,9 +47,9 @@ def provider(state, tmp_path):
 
 def test_hook_clears_stamps_before_gating(tmp_path):
     p = provider(ASK, tmp_path)
-    p.apply_batch_decisions({"fs_list": "approve_once"})
+    p.apply_batch_decisions(RUN, {"fs_list": "approve_once"})
     hook = build_local_review_hook(p, lambda pending: {})
-    hook([])  # a turn with no calls still clears
+    hook([], RUN)  # a turn with no calls still clears
     assert p._stamps == {}
 
 
@@ -39,16 +58,16 @@ def test_hook_gates_ask_calls_in_one_batch(tmp_path):
     seen = []
     hook = build_local_review_hook(p, lambda pending: seen.append(pending) or {"fs_list": "approve_once"})
     verdicts = hook([ToolCall(name="fs_list", args={"path": "."}),
-                     ToolCall(name="fs_list", args={"path": "sub"})])
+                     ToolCall(name="fs_list", args={"path": "sub"})], RUN)
     assert len(seen) == 1 and len(seen[0]) == 2  # ONE round trip for the batch
     assert verdicts == {"fs_list": "proceed"}
-    assert p._stamps == {"fs_list": "approve_once"}
+    assert p._stamps == {(RUN, "fs_list"): "approve_once"}
 
 
 def test_hook_skips_non_ask_calls(tmp_path):
     p = provider(ALLOW, tmp_path)
     hook = build_local_review_hook(p, lambda pending: (_ for _ in ()).throw(AssertionError("must not ask")))
-    assert hook([ToolCall(name="fs_list", args={"path": "."})]) == {}
+    assert hook([ToolCall(name="fs_list", args={"path": "."})], RUN) == {}
 
 
 def test_combined_hook_merges_verdicts(tmp_path):
@@ -58,21 +77,21 @@ def test_combined_hook_merges_verdicts(tmp_path):
         build_local_review_hook(p2, lambda pending: {"fs_list": "deny"}),
     ])
     # each provider only gates what it owns; both see the batch
-    out = hook([ToolCall(name="fs_list", args={"path": "."})])
+    out = hook([ToolCall(name="fs_list", args={"path": "."})], RUN)
     assert out == {"fs_list": "proceed"}
 
 
 def test_combined_hook_empty_list_is_noop():
     hook = build_combined_review_hook([])
-    assert hook([ToolCall(name="fs_list", args={"path": "."})]) == {}
+    assert hook([ToolCall(name="fs_list", args={"path": "."})], RUN) == {}
 
 
 def test_combined_hook_clears_later_providers_when_earlier_hook_raises(tmp_path):
     """I3 across providers: a raising hook must not strand a LATER provider's
     stale prior-turn stamp for the fail-open runtime to hand to invoke()."""
     p1, p2 = provider(ASK, tmp_path), provider(ASK, tmp_path)
-    p1.apply_batch_decisions({"fs_list": "approve_once"})  # stale, prior turn
-    p2.apply_batch_decisions({"fs_list": "approve_once"})  # stale, prior turn
+    p1.apply_batch_decisions(RUN, {"fs_list": "approve_once"})  # stale, prior turn
+    p2.apply_batch_decisions(RUN, {"fs_list": "approve_once"})  # stale, prior turn
 
     def raising_approvals(pending):
         raise RuntimeError("mid-shutdown")
@@ -82,7 +101,7 @@ def test_combined_hook_clears_later_providers_when_earlier_hook_raises(tmp_path)
         build_local_review_hook(p2, raising_approvals),
     ])
     with pytest.raises(RuntimeError):
-        hook([ToolCall(name="fs_list", args={"path": "."})])
+        hook([ToolCall(name="fs_list", args={"path": "."})], RUN)
     # the exception propagates to run_agent_loop's fail-open handling, but
     # BOTH providers' stamps were cleared first -- no stale stamp survives.
     assert p1._stamps == {}
@@ -102,9 +121,9 @@ def test_combined_hook_runs_remaining_hooks_after_a_raise(tmp_path):
         build_local_review_hook(p2, lambda pending: {"fs_list": "deny"}),
     ])
     with pytest.raises(RuntimeError):
-        hook([ToolCall(name="fs_list", args={"path": "."})])
+        hook([ToolCall(name="fs_list", args={"path": "."})], RUN)
     assert p1._stamps == {}  # cleared at entry, round trip raised
-    assert p2._stamps == {"fs_list": "deny"}  # fresh THIS-turn decision
+    assert p2._stamps == {(RUN, "fs_list"): "deny"}  # fresh THIS-turn decision
 
 
 # -- _compose_local_provider -------------------------------------------------
@@ -321,11 +340,11 @@ def test_compose_local_provider_persists_session_and_always_allow(
 
     (tmp_path / "a.txt").write_text("a")
 
-    local_provider.apply_batch_decisions({"fs_list": "approve_session"})
+    local_provider.apply_batch_decisions(RUN, {"fs_list": "approve_session"})
     assert local_provider.invoke("local:fs_list", {"path": "."}).ok
     assert ("local:__local__", "fs_list") in service.session_approvals
 
-    local_provider.apply_batch_decisions({"fs_list": "always_allow"})
+    local_provider.apply_batch_decisions(RUN, {"fs_list": "always_allow"})
     assert local_provider.invoke("local:fs_list", {"path": "."}).ok
     assert service.persisted_states == [("local:__local__", "fs_list", "allow")]
 
@@ -380,7 +399,7 @@ def test_compose_local_provider_records_deny_via_service(monkeypatch, tmp_path):
 def test_compose_local_provider_records_timeout_via_service(monkeypatch, tmp_path):
     service = _FakeService()  # ASK state
     local_provider = _composed(monkeypatch, tmp_path, service)
-    local_provider.apply_batch_decisions({"fs_list": "timeout"})
+    local_provider.apply_batch_decisions(RUN, {"fs_list": "timeout"})
 
     r = local_provider.invoke("local:fs_list", {"path": "."})
 

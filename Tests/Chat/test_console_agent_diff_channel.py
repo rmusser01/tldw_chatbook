@@ -38,7 +38,7 @@ class _ChunkGateway:
 class _AllowAllBuiltinGate:
     """Minimal ``BuiltinToolGate`` double that permits every tool."""
 
-    def check(self, tool):
+    def check(self, tool, run_id=""):
         return None
 
 

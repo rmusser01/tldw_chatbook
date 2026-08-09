@@ -107,7 +107,7 @@ def test_combined_stamp_scope_isolates_both(tmp_path):
             self.log = []
 
         @contextmanager
-        def stamp_scope(self):
+        def stamp_scope(self, run_id):
             saved = self.stamps
             self.stamps = {}
             self.log.append("enter")
@@ -120,7 +120,8 @@ def test_combined_stamp_scope_isolates_both(tmp_path):
     p1, p2 = FakeProvider(), FakeProvider()
     scope = _combine_state_scopes([p1.stamp_scope, p2.stamp_scope])
     assert scope is not None
-    with scope():
+    # PR2a Task 5: each scope takes the run id whose slice it guards.
+    with scope("run-1"):
         assert p1.stamps == {} and p2.stamps == {}
     assert p1.stamps == {"x": "approve_once"} and p2.stamps == {"x": "approve_once"}
     assert p1.log == ["enter", "exit"] and p2.log == ["enter", "exit"]
@@ -142,7 +143,7 @@ def test_provider_without_stamp_scope_is_skipped():
             self.log = []
 
         @contextmanager
-        def stamp_scope(self):
+        def stamp_scope(self, run_id):
             self.log.append("enter")
             try:
                 yield
@@ -166,7 +167,7 @@ def test_provider_without_stamp_scope_is_skipped():
     real = WithScope()
     scope = _combine_state_scopes(_scopes_for(NoScope(), real))
     assert scope is not None
-    with scope():
+    with scope("run-1"):
         pass
     assert real.log == ["enter", "exit"]
 

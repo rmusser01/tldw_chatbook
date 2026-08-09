@@ -189,16 +189,22 @@ def _combine_state_scopes(scopes: list) -> "Any | None":
     """Combine per-turn state scopes into the one ``review_state_scope`` seam.
 
     ``AgentService.review_state_scope`` holds a single
-    ``Callable[[], AbstractContextManager]``, but more than one component
-    can own per-turn stamp state that a nested sub-agent run would clobber
-    (task-628): the MCP provider's ``_stamped_decisions`` and the built-in
-    gate's ``_stamps``. Entering them together keeps the seam's shape while
-    guarding both.
+    ``Callable[[str], AbstractContextManager]``, but more than one
+    component can own per-turn stamp state that a nested sub-agent run
+    would clobber (task-628): the MCP provider's ``_stamped_decisions``,
+    the built-in gate's ``_stamps``, and the local provider's own stamps.
+    Entering them together keeps the seam's shape while guarding all
+    three.
+
+    PR2a Task 5: each scope now takes the run id whose slice it should
+    snapshot and restore (all three key their stamps by ``(run_id,
+    name)``), and the scope is no longer the load-bearing protection --
+    per-run keying is. See ``MCPToolProvider.stamp_scope``.
 
     Args:
-        scopes: Zero or more zero-argument callables, each returning a
-            context manager that snapshots and restores its owner's
-            per-turn state.
+        scopes: Zero or more one-argument callables, each taking a run id
+            and returning a context manager that snapshots and restores
+            that run's slice of its owner's per-turn state.
 
     Returns:
         ``None`` when ``scopes`` is empty (the service then uses a
@@ -213,10 +219,10 @@ def _combine_state_scopes(scopes: list) -> "Any | None":
         return scopes[0]
 
     @contextlib.contextmanager
-    def _combined():
+    def _combined(run_id: str):
         with contextlib.ExitStack() as stack:
             for scope in scopes:
-                stack.enter_context(scope())
+                stack.enter_context(scope(run_id))
             yield
 
     return _combined
@@ -2061,11 +2067,15 @@ class ConsoleAgentBridge:
             _inner_review = review_tool_calls
             _handle = change_handle
 
-            def review_tool_calls(calls):  # type: ignore[no-redef]
+            def review_tool_calls(calls, run_id):  # type: ignore[no-redef]
+                # PR2a Task 5: pass the run id straight through -- this
+                # wrapper only gates on the baseline snapshot; the inner
+                # hook is what needs the run identity to scope its gate
+                # writes.
                 _handle.await_baseline()
                 if _inner_review is None:
                     return {}
-                return _inner_review(calls)
+                return _inner_review(calls, run_id)
         service = AgentService(
             self._db,
             registry,

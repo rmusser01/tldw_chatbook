@@ -11,10 +11,11 @@ import threading
 import pytest
 
 from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate
+from tldw_chatbook.Agents.run_context import use_run_id
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
 from tldw_chatbook.MCP.permission_store import BUILTIN_TOOL_SERVER_KEY
 
-from Tests.Agents.test_builtin_tool_gate import _FakeService
+from Tests.Agents.test_builtin_tool_gate import RUN, _FakeService
 
 
 @pytest.fixture
@@ -70,17 +71,23 @@ def test_a_stamped_permit_lets_a_mutating_tool_run(all_gates_on, tmp_path, monke
     """The approval round trip: a per-turn permit reaches execution."""
     service = _FakeService()
     gate = BuiltinToolGate(service=service)
-    gate.begin_turn()
-    gate.stamp("write_file", "approve_once")
+    gate.begin_turn(RUN)
+    gate.stamp(RUN, "write_file", "approve_once")
     provider = BuiltinToolProvider(gate=gate)
 
     target = tmp_path / "out.txt"
     import tldw_chatbook.Tools.file_operation_tools as fot
 
     monkeypatch.setattr(fot, "_resolve_sandbox_config", lambda: str(tmp_path))
-    result = provider.invoke(
-        "builtin:write_file", {"file_path": "out.txt", "content": "hello"}
-    )
+    # PR2a Task 5: a stamp belongs to a RUN, and `invoke()` reads the
+    # dispatching run from `run_context` (bound in production by
+    # `AgentService` around each invocation). Same assertion as before --
+    # the permit granted for this turn reaches execution -- now stated
+    # against the run that was granted it.
+    with use_run_id(RUN):
+        result = provider.invoke(
+            "builtin:write_file", {"file_path": "out.txt", "content": "hello"}
+        )
 
     assert result.ok is True, result.error
     assert target.read_text(encoding="utf-8") == "hello"
@@ -102,11 +109,14 @@ def test_a_resolved_deny_beats_a_permitting_stamp(all_gates_on):
         }
     }
     gate = BuiltinToolGate(service=_FakeService(payload=payload))
-    gate.begin_turn()
-    gate.stamp("write_file", "approve_once")
+    gate.begin_turn(RUN)
+    gate.stamp(RUN, "write_file", "approve_once")
     provider = BuiltinToolProvider(gate=gate)
 
-    result = provider.invoke("builtin:write_file", {"file_path": "x", "content": "y"})
+    with use_run_id(RUN):
+        result = provider.invoke(
+            "builtin:write_file", {"file_path": "x", "content": "y"}
+        )
     assert result.ok is False
     assert "Off" in result.error
 
@@ -166,14 +176,19 @@ def test_note_tool_executes_on_a_worker_thread(
     monkeypatch.setattr(nmt, "_resolve_user_id", lambda: "alice")
 
     gate = BuiltinToolGate(service=_FakeService())
-    gate.begin_turn()
-    gate.stamp(tool_name, "approve_once")
+    gate.begin_turn(RUN)
+    gate.stamp(RUN, tool_name, "approve_once")
     provider = BuiltinToolProvider(gate=gate)
 
     box = {}
 
     def run():
-        box["result"] = provider.invoke(f"builtin:{tool_name}", args)
+        # The run-id binding is established ON the worker thread, exactly
+        # as `AgentService._make_invoke_tool` does it for the per-call
+        # daemon thread `_call_with_timeout` spawns (a ContextVar set on
+        # the parent thread is not visible in a new one).
+        with use_run_id(RUN):
+            box["result"] = provider.invoke(f"builtin:{tool_name}", args)
 
     worker = threading.Thread(target=run, name="tool-worker")
     worker.start()
@@ -194,23 +209,31 @@ def test_a_parents_approval_survives_a_nested_sub_agent_run(all_gates_on):
     unusable the moment a sub-agent runs. P1/task-628 proved this with a
     synthetic tool; this is the first coverage with a tool a user can
     actually reach.
+
+    PR2a Task 5: the nested turn below deliberately reuses the PARENT's
+    run id, which is what still exercises the scope's own guarantee -- a
+    real child now has its own run id and cannot reach this slice at all
+    (per-run keying, pinned by `test_gate_run_scoping.py`). Same
+    assertions, same failure they detect.
     """
     gate = BuiltinToolGate(service=_FakeService())
-    gate.begin_turn()
-    gate.stamp("write_file", "approve_once")
+    gate.begin_turn(RUN)
+    gate.stamp(RUN, "write_file", "approve_once")
     provider = BuiltinToolProvider(gate=gate)
 
-    with gate.stamp_scope():
+    with gate.stamp_scope(RUN):
         # Stand in for the child run: it clears the turn and records its own
         # verdicts on the SAME gate.
-        gate.begin_turn()
-        gate.stamp("read_file", "deny")
+        gate.begin_turn(RUN)
+        gate.stamp(RUN, "read_file", "deny")
 
     # The parent's approval must be back: the resolved verdict for write_file
     # is checked directly (not inferred from invoke()'s outcome, which can
     # also fail closed on sandbox containment for unrelated reasons).
-    assert gate.check(provider.tool_for("write_file")) is None, (
+    assert gate.check(provider.tool_for("write_file"), RUN) is None, (
         "parent's stamp was clobbered by the nested run"
     )
     # The child's verdict must not leak to the parent's stamp table.
-    assert "read_file" not in gate._stamps, "child's verdict leaked to the parent"
+    assert (RUN, "read_file") not in gate._stamps, (
+        "child's verdict leaked to the parent"
+    )

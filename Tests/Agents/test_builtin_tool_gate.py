@@ -3,6 +3,13 @@ import pytest
 from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate, build_builtin_gate
 from tldw_chatbook.Tools.tool_executor import CalculatorTool, Tool
 
+#: PR2a Task 5: the gate keys every per-turn verdict by ``(run_id,
+#: tool_name)``, so each of these single-run tests names the one run whose
+#: turn it is exercising. The assertions are unchanged -- what a run stamps
+#: is what that same run's ``check()`` sees; cross-run isolation is what
+#: ``Tests/Agents/test_gate_run_scoping.py`` pins.
+RUN = "run-1"
+
 
 class _Mutating(Tool):
     @property
@@ -113,64 +120,64 @@ class _ServiceWithoutStore:
 
 def test_untagged_tool_is_permitted():
     gate = BuiltinToolGate(_FakeService())
-    assert gate.check(CalculatorTool()) is None
+    assert gate.check(CalculatorTool(), RUN) is None
 
 
 def test_mutating_tool_without_approval_fails_closed():
     gate = BuiltinToolGate(_FakeService())
-    reason = gate.check(_Mutating())
+    reason = gate.check(_Mutating(), RUN)
     assert reason is not None and "approval" in reason.lower()
 
 
 def test_kill_switch_blocks_even_untagged_tools():
     gate = BuiltinToolGate(_FakeService(kill=True))
-    reason = gate.check(CalculatorTool())
+    reason = gate.check(CalculatorTool(), RUN)
     assert reason is not None and "kill switch" in reason.lower()
 
 
 def test_stamped_approval_permits_a_mutating_tool():
     gate = BuiltinToolGate(_FakeService())
-    gate.begin_turn()
-    gate.stamp("write_thing", "approve_once")
-    assert gate.check(_Mutating()) is None
+    gate.begin_turn(RUN)
+    gate.stamp(RUN, "write_thing", "approve_once")
+    assert gate.check(_Mutating(), RUN) is None
 
 
 def test_begin_turn_clears_prior_stamps():
     gate = BuiltinToolGate(_FakeService())
-    gate.begin_turn()
-    gate.stamp("write_thing", "approve_once")
-    gate.begin_turn()
-    assert gate.check(_Mutating()) is not None
+    gate.begin_turn(RUN)
+    gate.stamp(RUN, "write_thing", "approve_once")
+    gate.begin_turn(RUN)
+    assert gate.check(_Mutating(), RUN) is not None
 
 
 def test_session_approval_permits_without_a_stamp():
     gate = BuiltinToolGate(_FakeService(session={"write_thing"}))
-    assert gate.check(_Mutating()) is None
+    assert gate.check(_Mutating(), RUN) is None
 
 
 def test_approve_session_records_a_session_approval():
     svc = _FakeService()
     gate = BuiltinToolGate(svc)
-    gate.begin_turn()
-    gate.stamp("write_thing", "approve_session")
-    assert gate.check(_Mutating()) is None
+    gate.begin_turn(RUN)
+    gate.stamp(RUN, "write_thing", "approve_session")
+    assert gate.check(_Mutating(), RUN) is None
     assert svc.session_approved == ["write_thing"]
 
 
 def test_no_service_still_gates_mutating_tools():
     # Constraint 7: a missing service is never allow-everything.
     gate = BuiltinToolGate(None)
-    assert gate.check(CalculatorTool()) is None
-    assert gate.check(_Mutating()) is not None
+    assert gate.check(CalculatorTool(), RUN) is None
+    assert gate.check(_Mutating(), RUN) is not None
 
 
 def test_payload_is_loaded_once_per_turn():
     # Constraint 8: one store load per turn, not per call.
     svc = _FakeService()
     gate = BuiltinToolGate(svc)
-    gate.begin_turn()
+    gate.begin_turn(RUN)
     for _ in range(5):
-        gate.check(CalculatorTool())
+        gate.check(CalculatorTool(), RUN)
     assert svc.loads == 1
 
 
@@ -181,9 +188,9 @@ def test_no_persistent_state_is_ever_written_for_builtins():
     svc = _FakeService()
     svc.set_tool_state = lambda *a, **k: pytest.fail("persistent write")
     gate = BuiltinToolGate(svc)
-    gate.begin_turn()
-    gate.stamp("write_thing", "always_allow")
-    gate.check(_Mutating())          # must not raise via set_tool_state
+    gate.begin_turn(RUN)
+    gate.stamp(RUN, "write_thing", "always_allow")
+    gate.check(_Mutating(), RUN)          # must not raise via set_tool_state
 
 
 def test_deny_state_blocks():
@@ -195,7 +202,7 @@ def test_deny_state_blocks():
         }
     }
     gate = BuiltinToolGate(_FakeService(payload=payload))
-    assert gate.check(CalculatorTool()) is not None
+    assert gate.check(CalculatorTool(), RUN) is not None
 
 
 def test_service_present_but_permission_store_is_none_still_gates():
@@ -205,8 +212,8 @@ def test_service_present_but_permission_store_is_none_still_gates():
     same allow-floor behavior as no service at all, never crash and never
     become allow-everything for tagged tools."""
     gate = BuiltinToolGate(_ServiceWithoutStore())
-    assert gate.check(CalculatorTool()) is None
-    assert gate.check(_Mutating()) is not None
+    assert gate.check(CalculatorTool(), RUN) is None
+    assert gate.check(_Mutating(), RUN) is not None
 
 
 def test_build_builtin_gate_with_no_service_still_gates():
@@ -214,8 +221,8 @@ def test_build_builtin_gate_with_no_service_still_gates():
     gate that still gates -- ``None`` is never "ungated" (Constraint 7)."""
     gate = build_builtin_gate()
     assert isinstance(gate, BuiltinToolGate)
-    assert gate.check(CalculatorTool()) is None
-    assert gate.check(_Mutating()) is not None
+    assert gate.check(CalculatorTool(), RUN) is None
+    assert gate.check(_Mutating(), RUN) is not None
 
 
 def test_build_builtin_gate_uses_the_passed_service():
@@ -223,7 +230,7 @@ def test_build_builtin_gate_uses_the_passed_service():
     given service in -- proven by its kill switch taking effect."""
     svc = _FakeService(kill=True)
     gate = build_builtin_gate(svc)
-    reason = gate.check(CalculatorTool())
+    reason = gate.check(CalculatorTool(), RUN)
     assert reason is not None and "kill switch" in reason.lower()
 
 
@@ -241,9 +248,9 @@ def test_effective_deny_wins_over_stamped_approve_once():
         }
     }
     gate = BuiltinToolGate(_FakeService(payload=payload))
-    gate.begin_turn()
-    gate.stamp("calculator", "approve_once")
-    reason = gate.check(CalculatorTool())
+    gate.begin_turn(RUN)
+    gate.stamp(RUN, "calculator", "approve_once")
+    reason = gate.check(CalculatorTool(), RUN)
     assert reason is not None and "off" in reason.lower()
 
 
@@ -260,7 +267,7 @@ def test_effective_deny_wins_over_live_session_approval():
         }
     }
     gate = BuiltinToolGate(_FakeService(payload=payload, session={"calculator"}))
-    reason = gate.check(CalculatorTool())
+    reason = gate.check(CalculatorTool(), RUN)
     assert reason is not None and "off" in reason.lower()
 
 
@@ -275,48 +282,55 @@ def test_stamp_scope_restores_stamps_after_a_nested_run():
     first act is `begin_turn()`. Without a scope the parent's verdicts for
     this turn are wiped before its own remaining same-batch tool calls are
     dispatched. Mirrors `MCPToolProvider.stamp_scope`.
+
+    PR2a Task 5: the nested `begin_turn` here deliberately uses the SAME
+    run id as the parent. A real child now has its OWN run id and cannot
+    reach this slice at all (that is the new, load-bearing protection --
+    see `test_gate_run_scoping.py`); reusing the id is what still
+    exercises the scope's own guarantee, which is unchanged: whatever
+    happens to this run's slice inside the scope is undone on exit.
     """
     gate = BuiltinToolGate(_FakeService())
-    gate.begin_turn()
-    gate.stamp("write_thing", "approve_once")
+    gate.begin_turn(RUN)
+    gate.stamp(RUN, "write_thing", "approve_once")
 
-    with gate.stamp_scope():
+    with gate.stamp_scope(RUN):
         # Stand in for the child's own turn against the shared gate.
-        gate.begin_turn()
-        gate.stamp("other_tool", "deny")
-        assert gate.check(_Mutating()) is not None  # child wiped it in-scope
+        gate.begin_turn(RUN)
+        gate.stamp(RUN, "other_tool", "deny")
+        assert gate.check(_Mutating(), RUN) is not None  # child wiped it in-scope
 
     # Parent's verdict is back, and the child's is gone (restore, not merge).
-    assert gate.check(_Mutating()) is None
-    assert gate._stamps == {"write_thing": "approve_once"}
+    assert gate.check(_Mutating(), RUN) is None
+    assert gate._stamps == {(RUN, "write_thing"): "approve_once"}
 
 
 def test_stamp_scope_restores_even_when_the_nested_run_raises():
     gate = BuiltinToolGate(_FakeService())
-    gate.begin_turn()
-    gate.stamp("write_thing", "approve_once")
+    gate.begin_turn(RUN)
+    gate.stamp(RUN, "write_thing", "approve_once")
 
     try:
-        with gate.stamp_scope():
-            gate.begin_turn()
+        with gate.stamp_scope(RUN):
+            gate.begin_turn(RUN)
             raise RuntimeError("child blew up")
     except RuntimeError:
         pass
 
-    assert gate.check(_Mutating()) is None
+    assert gate.check(_Mutating(), RUN) is None
 
 
 def test_stamp_scope_is_reentrant_for_nested_scopes():
     gate = BuiltinToolGate(_FakeService())
-    gate.begin_turn()
-    gate.stamp("write_thing", "approve_once")
-    with gate.stamp_scope():
-        gate.begin_turn()
-        gate.stamp("write_thing", "deny")
-        with gate.stamp_scope():
-            gate.begin_turn()
-        assert gate._stamps == {"write_thing": "deny"}
-    assert gate._stamps == {"write_thing": "approve_once"}
+    gate.begin_turn(RUN)
+    gate.stamp(RUN, "write_thing", "approve_once")
+    with gate.stamp_scope(RUN):
+        gate.begin_turn(RUN)
+        gate.stamp(RUN, "write_thing", "deny")
+        with gate.stamp_scope(RUN):
+            gate.begin_turn(RUN)
+        assert gate._stamps == {(RUN, "write_thing"): "deny"}
+    assert gate._stamps == {(RUN, "write_thing"): "approve_once"}
 
 
 # --- task-627 (P2 Task 2): settings-time enumeration -------------------------

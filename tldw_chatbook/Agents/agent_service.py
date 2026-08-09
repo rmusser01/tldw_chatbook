@@ -55,6 +55,7 @@ from .native_tools import (
     provider_supports_native_tools,
     schemas_to_openai_tools,
 )
+from .run_context import use_run_id
 from .run_log import _setting
 from .run_log_eviction import (
     DEFAULT_MIN_RECENT_ROUNDS,
@@ -288,8 +289,9 @@ class AgentService:
         on_step: Callable[[AgentStep, str, str], None] | None = None,
         skill_runner: SkillRunner | None = None,
         skill_file_bindings: SkillFileBindings | None = None,
-        review_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None,
-        review_state_scope: Callable[[], "contextlib.AbstractContextManager"]
+        review_tool_calls: Callable[[list[ToolCall], str], dict[str, str]]
+        | None = None,
+        review_state_scope: Callable[[str], "contextlib.AbstractContextManager"]
         | None = None,
         install_skill_tool: Callable[[str], ToolResult] | None = None,
         run_skill_script_tool: Callable[[str, str, list[str]], ToolResult]
@@ -314,6 +316,14 @@ class AgentService:
         # should_cancel flows through run_turn/_run_one). MCP-specific
         # wiring (Task 6) builds the callable passed here; this service
         # stays agnostic to what it does.
+        #
+        # PR2a Task 5: the hook takes `(calls, run_id)`. `LoopDeps.
+        # review_tool_calls` is unchanged (`(calls) -> verdicts`) -- the
+        # pure runtime has no business knowing about run ids; `_run_one`
+        # binds ITS OWN run id into the callable it puts on LoopDeps. That
+        # is the whole seam: the gates key their per-turn verdicts by run,
+        # and this is where a run's identity reaches the review hook that
+        # writes them.
         self.review_tool_calls = review_tool_calls
         # C1 (probe-verified security regression, pre-merge review of the
         # Phase 5 chat bridge): an optional, generically-shaped seam a
@@ -332,6 +342,14 @@ class AgentService:
         # `contextlib.nullcontext()`. See `MCPToolProvider.stamp_scope` for
         # the concrete MCP-specific context manager wired here by
         # `console_agent_bridge.ConsoleAgentBridge.run_reply`.
+        #
+        # PR2a Task 5: takes the run id to scope, and is NO LONGER the
+        # load-bearing protection -- both gates now key their per-turn
+        # verdicts by `(run_id, tool_name)`, so a child cannot reach the
+        # parent's slice in the first place. Snapshot/restore is sound
+        # only for a strictly nested (LIFO) inline child; per-run keying
+        # is what survives N children on their own threads. Kept because
+        # the seam is public and composes three providers' scopes.
         self.review_state_scope = review_state_scope
         # Agent-callable skill install (5th runtime tool). A ready-built
         # closure (enforce -> classify -> confirm -> install -> wrap) supplied
@@ -492,7 +510,25 @@ class AgentService:
         config: AgentConfig,
         disclosed_names: set,
         should_cancel: Callable[[], bool] = lambda: False,
+        run_id: str = "",
     ):
+        """Build this run's ``LoopDeps.invoke_tool``.
+
+        Args:
+            config: This run's config (allow-list and budgets).
+            disclosed_names: The tool names whose schemas this run has.
+            should_cancel: Cooperative cancellation probe.
+            run_id: THIS run's id, bound via ``run_context.use_run_id``
+                around each invocation so the permission gates can find
+                this run's own approval stamps (PR2a Task 5). Bound
+                INSIDE the callable handed to ``_call_with_timeout``, so
+                it is established on the per-call daemon thread that
+                actually runs the tool -- a ``ContextVar`` set on this
+                thread would not be visible there. ``""`` (the default)
+                binds the no-run key, matching the pre-Task-5 behavior
+                for a service built without a run.
+        """
+
         def invoke_tool(call: ToolCall) -> ToolResult:
             if (
                 call.name not in config.allowed_tools
@@ -502,14 +538,19 @@ class AgentService:
             timeout = self.registry.timeout_for(call.name) or (
                 config.budget.max_tool_call_seconds
             )
+
+            def _invoke() -> ToolResult:
+                with use_run_id(run_id):
+                    return self.registry.invoke_by_name(call.name, call.args)
+
             if timeout and timeout > 0:
                 return _call_with_timeout(
-                    lambda: self.registry.invoke_by_name(call.name, call.args),
+                    _invoke,
                     timeout,
                     call.name,
                     should_cancel,
                 )
-            return self.registry.invoke_by_name(call.name, call.args)
+            return _invoke()
 
         return invoke_tool
 
@@ -806,8 +847,16 @@ class AgentService:
             # decisions) mutated once control returns here. A no-op
             # contextlib.nullcontext() when no scope was wired (every
             # non-MCP run, and every caller before this task).
+            #
+            # PR2a Task 5: scoped to THIS (the PARENT's) run id -- it is
+            # the parent's own already-decided verdicts a nested run must
+            # not disturb, and the child's id does not exist yet here
+            # anyway (`_run_one` mints it). No longer the load-bearing
+            # protection: both gates key verdicts by run, so the child
+            # writes to its own slice and cannot reach this one. Retained
+            # as belt-and-braces for the inline path.
             scope = (
-                self.review_state_scope()
+                self.review_state_scope(run_id)
                 if self.review_state_scope
                 else contextlib.nullcontext()
             )
@@ -847,7 +896,7 @@ class AgentService:
         # sub_agent_spawns counter -- see Finding 2 above), cancellable, and
         # DB-lineage-tracked exactly like a spawn_subagent call.
         builtin_invoke_tool = self._make_invoke_tool(
-            config, disclosed_names, should_cancel
+            config, disclosed_names, should_cancel, run_id
         )
 
         def invoke_tool(call: ToolCall) -> ToolResult:
@@ -1381,7 +1430,16 @@ class AgentService:
                 if self._on_step is not None
                 else (lambda s: None)
             ),
-            review_tool_calls=self.review_tool_calls,
+            # PR2a Task 5: bind THIS run's id into the hook. `LoopDeps`
+            # keeps its `(calls) -> verdicts` shape (the pure runtime stays
+            # ignorant of run ids); the service, which owns the run
+            # identity, is what supplies it -- so the review hook can stamp
+            # its verdicts against the run that will consume them.
+            review_tool_calls=(
+                (lambda calls: self.review_tool_calls(calls, run_id))
+                if self.review_tool_calls is not None
+                else None
+            ),
             # Qodo/PR#814: wired under the SAME predicate as the schema pin
             # above (~:356-360) -- bindings with an EMPTY authorized set
             # must never reach the named-refusal dispatch either; a

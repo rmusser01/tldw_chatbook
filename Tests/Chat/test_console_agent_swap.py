@@ -1306,7 +1306,7 @@ class _SentinelBuiltinGate:
     def __init__(self) -> None:
         self.begin_turn_calls = 0
 
-    def begin_turn(self) -> None:
+    def begin_turn(self, run_id: str) -> None:
         self.begin_turn_calls += 1
 
 
@@ -1340,7 +1340,10 @@ async def test_review_hook_and_run_reply_share_one_builtin_gate(tmp_path, monkey
 
     review_hook = captured[0]["review_tool_calls"]
     assert sentinel.begin_turn_calls == 0
-    review_hook([])  # empty batch: nothing to resolve, only begin_turn() matters
+    # PR2a Task 5: the hook takes the reviewing run's id (unused here --
+    # this test is purely about gate IDENTITY, and an empty batch resolves
+    # nothing either way).
+    review_hook([], "run-1")  # empty batch: only begin_turn() matters
     assert sentinel.begin_turn_calls == 1
 
 

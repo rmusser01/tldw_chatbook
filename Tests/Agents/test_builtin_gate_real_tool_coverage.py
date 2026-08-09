@@ -90,7 +90,8 @@ def test_a_real_reads_tagged_tool_reaches_the_approval_card_not_silence(
         gate, _RealToolProvider(tool), None, request_approvals
     )
     verdicts = hook(
-        [ToolCall(name="read_file", args={"file_path": "notes.md"}, call_id="c1")]
+        [ToolCall(name="read_file", args={"file_path": "notes.md"}, call_id="c1")],
+        "run-1",
     )
 
     assert [row.llm_name for row in rows] == ["read_file"], (

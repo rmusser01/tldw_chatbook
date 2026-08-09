@@ -35,6 +35,12 @@ from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCa
 
 from Tests.UI.app_factory import _build_test_app
 
+#: PR2a Task 5: the review hook takes the id of the run whose batch it is
+#: reviewing (both gates key their per-turn verdicts by run). These
+#: hook-level tests drive ONE run each, so they name it once here; every
+#: assertion below is unchanged.
+RUN = "run-1"
+
 _CSS_ROOT = Path(tldw_chatbook.__file__).parent / "css"
 _AGENTIC_TERMINAL_TCSS = _CSS_ROOT / "components" / "_agentic_terminal.tcss"
 _BUNDLED_STYLESHEET = _CSS_ROOT / "tldw_cli_modular.tcss"
@@ -2266,13 +2272,13 @@ def test_call_id_keyed_decision_still_stamps_the_builtin_gate():
     stamped: list[tuple[str, str]] = []
 
     class _Gate:
-        def begin_turn(self):
+        def begin_turn(self, run_id):
             pass
 
         def resolve(self, tool):
             return SimpleNamespace(state="ask", risk_floored=False)
 
-        def stamp(self, name, decision):
+        def stamp(self, run_id, name, decision):
             stamped.append((name, decision))
 
         def is_session_approved(self, name):
@@ -2293,7 +2299,7 @@ def test_call_id_keyed_decision_still_stamps_the_builtin_gate():
     hook = build_tool_review_hook(
         _Gate(), _Provider(), None, request_approvals, workspace_id=None
     )
-    hook([ToolCall(name="read_file", args={"path": "spec.md"}, call_id="call-1")])
+    hook([ToolCall(name="read_file", args={"path": "spec.md"}, call_id="call-1")], RUN)
 
     assert stamped == [("read_file", "approve_session")], (
         f"the call-id-keyed decision never reached the gate: {stamped}"
@@ -2396,10 +2402,10 @@ def test_refusing_one_call_does_not_get_overwritten_by_approving_another():
     stamped: list[tuple[str, str]] = []
 
     class _Gate:
-        def begin_turn(self): pass
+        def begin_turn(self, run_id): pass
         def resolve(self, tool):
             return SimpleNamespace(state="ask", risk_floored=False)
-        def stamp(self, name, decision): stamped.append((name, decision))
+        def stamp(self, run_id, name, decision): stamped.append((name, decision))
         def is_session_approved(self, name): return False
         def options_for(self, tool):
             return ("approve_once", "approve_session", "deny")
@@ -2424,7 +2430,7 @@ def test_refusing_one_call_does_not_get_overwritten_by_approving_another():
     verdicts = hook([
         ToolCall(name="read_file", args={"path": "secrets.md"}, call_id="call-1"),
         ToolCall(name="read_file", args={"path": "spec.md"}, call_id="call-2"),
-    ])
+    ], RUN)
 
     refusal = verdicts.get("call-1")
     assert refusal and refusal != "proceed", (
@@ -2499,10 +2505,10 @@ def test_a_refusal_never_stamps_the_name_even_when_it_is_decided_last():
     stamped: list[tuple[str, str]] = []
 
     class _Gate:
-        def begin_turn(self): pass
+        def begin_turn(self, run_id): pass
         def resolve(self, tool):
             return SimpleNamespace(state="ask", risk_floored=False)
-        def stamp(self, name, decision): stamped.append((name, decision))
+        def stamp(self, run_id, name, decision): stamped.append((name, decision))
         def is_session_approved(self, name): return False
         def options_for(self, tool):
             return ("approve_once", "approve_session", "deny")
@@ -2525,7 +2531,7 @@ def test_a_refusal_never_stamps_the_name_even_when_it_is_decided_last():
     verdicts = hook([
         ToolCall(name="read_file", args={"path": "spec.md"}, call_id="c-ok"),
         ToolCall(name="read_file", args={"path": "secrets.md"}, call_id="c-no"),
-    ])
+    ], RUN)
 
     assert stamped == [("read_file", "approve_session")], (
         "the refusal was stamped against the tool NAME, which also blocks "
@@ -2558,10 +2564,10 @@ def test_the_broadest_approval_scope_for_a_tool_survives_collapsing():
     stamped: list[tuple[str, str]] = []
 
     class _Gate:
-        def begin_turn(self): pass
+        def begin_turn(self, run_id): pass
         def resolve(self, tool):
             return SimpleNamespace(state="ask", risk_floored=False)
-        def stamp(self, name, decision): stamped.append((name, decision))
+        def stamp(self, run_id, name, decision): stamped.append((name, decision))
         def is_session_approved(self, name): return False
         def options_for(self, tool):
             return ("approve_once", "approve_session", "deny")
@@ -2584,7 +2590,7 @@ def test_the_broadest_approval_scope_for_a_tool_survives_collapsing():
     hook([
         ToolCall(name="read_file", args={"path": "a.md"}, call_id="c1"),
         ToolCall(name="read_file", args={"path": "b.md"}, call_id="c2"),
-    ])
+    ], RUN)
 
     assert stamped == [("read_file", "approve_session")], (
         "the session grant the user chose was downgraded to approve_once, so "

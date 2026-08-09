@@ -357,7 +357,7 @@ def build_mcp_review_hook(
         `AgentService(review_tool_calls=...)`.
     """
 
-    def review_tool_calls(calls: list["ToolCall"]) -> dict[str, str]:
+    def review_tool_calls(calls: list["ToolCall"], run_id: str) -> dict[str, str]:
         # I3: clear THIS turn's stamps FIRST, before pending_gate_for/the
         # approval round trip even run -- subsumes the `if not pending`
         # branch's own clear below (every invocation of this hook clears,
@@ -365,13 +365,15 @@ def build_mcp_review_hook(
         # clear must happen at entry, not only after a successful round
         # trip: a raising `request_mcp_approvals` must never leave a stale
         # prior-turn stamp live for the fail-open runtime to hand straight
-        # to `invoke()`.
-        provider.apply_batch_decisions({})
+        # to `invoke()`. PR2a Task 5: that clear is scoped to `run_id` --
+        # it still wipes THIS run's prior turn, and no longer wipes a
+        # concurrent sibling's live verdicts.
+        provider.apply_batch_decisions(run_id, {})
         pending = _collect_mcp_pending(provider, calls)
         if not pending:
             return {}
         decisions = request_mcp_approvals(pending)
-        provider.apply_batch_decisions(decisions)
+        provider.apply_batch_decisions(run_id, decisions)
         return {call.llm_name: "proceed" for call in pending}
 
     return review_tool_calls
@@ -461,20 +463,29 @@ def build_tool_review_hook(
     was).
 
     Mirrors `build_mcp_review_hook`'s I3 clear-at-entry discipline, extended
-    to the built-in side: `builtin_gate.begin_turn()` runs FIRST,
+    to the built-in side: `builtin_gate.begin_turn(run_id)` runs FIRST,
     unconditionally -- before the MCP stamp clear, before any
     `pending_gate_for`/`resolve` call, before the `request_approvals` round
     trip -- so a raising round trip can never leave a stale built-in stamp
     (or a stale cached permission payload) live for the next turn to
-    consume. `mcp_provider.apply_batch_decisions({})` follows the same
-    reasoning for the MCP side, only when a provider was actually composed
-    this run.
+    consume. `mcp_provider.apply_batch_decisions(run_id, {})` follows the
+    same reasoning for the MCP side, only when a provider was actually
+    composed this run.
+
+    PR2a Task 5: every one of those mutations is scoped to `run_id`, the
+    second argument this hook now receives (`AgentService` binds its own
+    run id into the callable it hands `LoopDeps`). The gate and the MCP
+    provider are shared by a parent run and every sub-agent it spawns, so
+    an unscoped clear here wipes -- and an unscoped stamp overwrites --
+    verdicts another run in the tree has already been granted and has not
+    yet consumed. It still clears THIS run's own previous turn, which is
+    what the I3 discipline above requires.
 
     Exactly ONE `request_approvals` round trip is made per turn, carrying
     BOTH the MCP and built-in pending rows together -- never one call per
     owner. Decisions are then applied back to each owner separately:
-    `mcp_provider.apply_batch_decisions(...)` for MCP rows,
-    `builtin_gate.stamp(name, decision)` for built-in rows. The returned
+    `mcp_provider.apply_batch_decisions(run_id, ...)` for MCP rows,
+    `builtin_gate.stamp(run_id, name, decision)` for built-in rows. The returned
     verdict map carries "proceed" for approved calls and REFUSAL STRINGS
     for per-call denials (TASK-1861) and kill-switch blocks (TASK-631) --
     the runtime enforces those directly, skipping dispatch. Approvals are
@@ -523,8 +534,14 @@ def build_tool_review_hook(
         `AgentService(review_tool_calls=...)`.
     """
 
-    def review_tool_calls(calls: list["ToolCall"]) -> dict[str, str]:
-        builtin_gate.begin_turn()
+    def review_tool_calls(calls: list["ToolCall"], run_id: str) -> dict[str, str]:
+        # PR2a Task 5: every gate mutation below is scoped to `run_id` --
+        # the run whose batch this is, supplied by `AgentService` (which
+        # binds its own run id into the hook it puts on `LoopDeps`). The
+        # gate and provider instances are shared by a parent and every
+        # sub-agent it spawns, so an unscoped clear/stamp here reaches
+        # verdicts a concurrent sibling has not yet consumed.
+        builtin_gate.begin_turn(run_id)
         # TASK-631: the kill switch outranks everything -- no prompting, no
         # stamps, every call refused. Per-call keys where the runtime can
         # address them; an id-less (fence-path) call is refused by NAME,
@@ -541,7 +558,7 @@ def build_tool_review_hook(
                 switch_on = True
             if switch_on:
                 if mcp_provider is not None:
-                    mcp_provider.apply_batch_decisions({})
+                    mcp_provider.apply_batch_decisions(run_id, {})
                 return {
                     (str(getattr(call, "call_id", "") or "") or call.name): (
                         KILL_SWITCH_REFUSAL
@@ -549,7 +566,7 @@ def build_tool_review_hook(
                     for call in calls
                 }
         if mcp_provider is not None:
-            mcp_provider.apply_batch_decisions({})
+            mcp_provider.apply_batch_decisions(run_id, {})
 
         mcp_pending = (
             _collect_mcp_pending(mcp_provider, calls)
@@ -688,12 +705,13 @@ def build_tool_review_hook(
 
         if mcp_provider is not None:
             mcp_provider.apply_batch_decisions(
+                run_id,
                 _stamps_for(
                     [r for r in mcp_pending if r.llm_name in mcp_claimed_names]
-                )
+                ),
             )
         for name, decision in _stamps_for(builtin_pending).items():
-            builtin_gate.stamp(name, decision)
+            builtin_gate.stamp(run_id, name, decision)
 
         # The refusal half, enforced HERE rather than through the stamps.
         # The runtime resolves `call_id` before name and turns any
@@ -748,9 +766,11 @@ def build_local_review_hook(
         `AgentService(review_tool_calls=...)`.
     """
 
-    def review_tool_calls(calls: list["ToolCall"]) -> dict[str, str]:
+    def review_tool_calls(calls: list["ToolCall"], run_id: str) -> dict[str, str]:
         # I3: clear THIS turn's stamps FIRST -- see build_mcp_review_hook.
-        provider.apply_batch_decisions({})
+        # PR2a Task 5: scoped to `run_id`, so the clear cannot reach a
+        # concurrent sibling run's live verdicts.
+        provider.apply_batch_decisions(run_id, {})
         pending: list["MCPPendingCall"] = []
         for call in calls:
             gate = provider.pending_gate_for(call.name, call.args)
@@ -759,7 +779,7 @@ def build_local_review_hook(
         if not pending:
             return {}
         decisions = request_approvals(pending)
-        provider.apply_batch_decisions(decisions)
+        provider.apply_batch_decisions(run_id, decisions)
         return {call.llm_name: "proceed" for call in pending}
 
     return review_tool_calls
@@ -800,12 +820,12 @@ def build_combined_review_hook(
         verdict map into one.
     """
 
-    def review_tool_calls(calls: list["ToolCall"]) -> dict[str, str]:
+    def review_tool_calls(calls: list["ToolCall"], run_id: str) -> dict[str, str]:
         verdicts: dict[str, str] = {}
         first_exc: Exception | None = None
         for hook in hooks:
             try:
-                verdicts.update(hook(calls))
+                verdicts.update(hook(calls, run_id))
             except Exception as exc:  # noqa: BLE001 -- re-raised after ALL hooks ran
                 logger.opt(exception=True).warning(
                     "combined review_tool_calls: a provider hook raised; "

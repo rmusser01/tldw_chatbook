@@ -35,6 +35,7 @@ from .agent_models import (
     ToolResult,
     ToolSchema,
 )
+from .run_context import current_run_id
 from .run_log_search import (
     MAX_CROSS_RUN_RUNS,
     MAX_SLICE_RECORDS,
@@ -679,8 +680,16 @@ class BuiltinToolProvider:
         # reaches invoke() without going through it must still not execute
         # ungated. A gate that raises fails CLOSED -- never into the pure
         # loop, which must not see exceptions from tool invocation.
+        # PR2a Task 5: the gate keys this turn's stamps by run, and only
+        # the DISPATCHING run's own stamp may permit this call. The
+        # `ToolProvider.invoke` Protocol has no run parameter, so the run
+        # id rides `run_context` (bound by `AgentService` around each
+        # invocation -- see that module's docstring for why). Outside any
+        # run this resolves to `""`, which matches no stamp a review hook
+        # ever writes, so such a call falls through to the resolved
+        # permission state exactly as it did before per-run keying.
         try:
-            refusal = self._resolve_gate().check(tool)
+            refusal = self._resolve_gate().check(tool, current_run_id())
         except Exception as exc:  # noqa: BLE001 — fail closed
             return ToolResult(ok=False, error=f"permission check failed: {exc}")
         if refusal is not None:

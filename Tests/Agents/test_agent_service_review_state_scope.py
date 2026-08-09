@@ -21,6 +21,17 @@ wraps every nested `_run_one` call in a caller-supplied context manager.
 snapshot `_stamped_decisions` on enter, restore (not merge) it on exit, so
 the child's mutations to the shared dict are fully undone the instant it
 returns control to the parent.
+
+PR2a Task 5 SUPERSEDED that mechanism without removing it. Snapshot/restore
+is sound only while the child is strictly nested and inline (LIFO); with N
+children on their own threads there is no LIFO, and one child's turn would
+still wipe a sibling's live verdict. Both gates now key their per-turn
+verdicts by `(run_id, name)`, so a run can only ever clear or overwrite its
+OWN slice. Every security assertion in this file is unchanged and still
+passes; the ONE test whose shape changed is the negative control at the
+bottom, which used to assert the clobber happens when the scope is unwired
+and now asserts the parent's approval survives anyway -- see its own
+docstring.
 """
 
 from __future__ import annotations
@@ -609,16 +620,30 @@ def test_child_spawned_mid_turn_resolves_a_mutating_builtin_tool_and_the_parents
     assert not results["write_thing"].result.startswith("ERROR")
 
 
-def test_child_spawned_mid_turn_without_stamp_scope_clobbers_the_parents_approval(
+def test_child_spawned_mid_turn_without_stamp_scope_keeps_the_parents_approval(
     db,
 ):
     """Same interleave as the test above, with ``review_state_scope`` left
-    unwired -- proving the previous test is not passing trivially. Without
-    the scope the child's ``begin_turn()`` clears the WHOLE ``_stamps``
-    dict and is never restored, so the parent's own pre-child
-    ``write_thing`` approval is gone by the time the parent's own dispatch
-    loop reaches it -- it fails closed, even though a human already
-    approved it this very turn."""
+    unwired -- now proving PER-RUN KEYING, not the scope, is what protects
+    the parent.
+
+    **This test's assertion was inverted by PR2a Task 5, deliberately.**
+    It used to assert the clobber: without the scope, the child's
+    ``begin_turn()`` cleared the WHOLE name-keyed ``_stamps`` dict and
+    never restored it, so the parent's own pre-child ``write_thing``
+    approval was gone by the time the parent's dispatch loop reached it
+    and the approved call failed closed. That was a negative control for a
+    mechanism (snapshot/restore) that is sound ONLY for a strictly nested,
+    LIFO, inline child -- which is exactly what PR2a Task 6 stops being
+    true when N children run on their own threads.
+
+    Both gates now key every per-turn verdict by ``(run_id, tool_name)``,
+    so the child's ``begin_turn(child_run_id)`` cannot touch the parent's
+    slice whether or not a scope wraps it. The parent's approved call must
+    therefore still succeed here. Break per-run keying (make
+    ``begin_turn`` clear the whole dict again) and this test fails -- it
+    is the same defect it always detected, asserted from the other side.
+    """
     gate = BuiltinToolGate(service=None)
     registry, builtin_provider = _registry_with_mutating_builtins(
         gate, "write_thing", "write_other_thing"
@@ -669,11 +694,10 @@ def test_child_spawned_mid_turn_without_stamp_scope_clobbers_the_parents_approva
     assert outcome.status == RUN_DONE
     # The child's own call is unaffected either way.
     assert not results["write_other_thing"].result.startswith("ERROR")
-    # This is the clobber: the parent's own pre-child approval was wiped by
-    # the child's begin_turn() and never restored, so its remaining call
-    # fails closed despite having been approved this turn.
-    assert results["write_thing"].result.startswith("ERROR")
-    assert "approval" in results["write_thing"].result.lower()
+    # No clobber any more: the child's begin_turn() only cleared its OWN
+    # run's slice, so the parent's pre-child approval is still there for
+    # its own remaining call -- with no review_state_scope wired at all.
+    assert not results["write_thing"].result.startswith("ERROR")
 
 
 def test_child_run_with_no_approval_route_still_fails_closed_for_a_mutating_builtin_tool(

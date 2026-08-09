@@ -108,12 +108,13 @@ class _FakeMCPProvider:
         return ToolResult(ok=True, content=f"mcp-result:{tool_id}")
 
     @contextlib.contextmanager
-    def stamp_scope(self):
+    def stamp_scope(self, run_id):
         # C1 (probe-verified security regression): stands in for
         # MCPToolProvider.stamp_scope -- a no-op snapshot/restore here since
         # this fake carries no per-turn stamp state of its own, just a call
         # counter so bridge-level wiring tests can assert `run_reply` threads
-        # it through to AgentService(review_state_scope=...).
+        # it through to AgentService(review_state_scope=...). PR2a Task 5:
+        # the scope takes the run id whose slice it guards.
         self.stamp_scope_calls += 1
         yield
 
@@ -287,7 +288,7 @@ class _RefusingBuiltinGate:
     def __init__(self) -> None:
         self.checked: list[str] = []
 
-    def check(self, tool):
+    def check(self, tool, run_id=""):
         self.checked.append(tool.name)
         return f"disabled for test: {tool.name}"
 
@@ -1939,7 +1940,7 @@ class _FakeBuiltinGateForRegistry:
         self.refuse = refuse
         self.checked: list[str] = []
 
-    def check(self, tool):
+    def check(self, tool, run_id=""):
         self.checked.append(tool.name)
         return f"disabled for test: {tool.name}" if self.refuse else None
 
@@ -2524,7 +2525,8 @@ def test_run_reply_forwards_review_tool_calls_hook_to_agent_service(tmp_path):
     bridge, _db, store, session, aid = _bridge(tmp_path, scripts)
     captured_batches = []
 
-    def hook(calls):
+    # PR2a Task 5: an AgentService-wired hook takes `(calls, run_id)`.
+    def hook(calls, run_id):
         captured_batches.append(list(calls))
         return {"calculator": "blocked by test hook"}
 
@@ -3045,7 +3047,7 @@ def test_combine_state_scopes_enters_and_exits_both():
 
     def _make(name):
         @contextlib.contextmanager
-        def _scope():
+        def _scope(run_id):
             events.append(f"enter:{name}")
             try:
                 yield
@@ -3055,7 +3057,8 @@ def test_combine_state_scopes_enters_and_exits_both():
         return _scope
 
     combined = _combine_state_scopes([_make("mcp"), _make("builtin")])
-    with combined():
+    # PR2a Task 5: each scope takes the run id whose slice it guards.
+    with combined("run-1"):
         events.append("child-run")
 
     # Both entered, both exited, unwinding in reverse order.
@@ -3077,7 +3080,7 @@ def test_combine_state_scopes_restores_both_when_the_nested_run_raises():
 
     def _make(name):
         @contextlib.contextmanager
-        def _scope():
+        def _scope(run_id):
             try:
                 yield
             finally:
@@ -3088,7 +3091,7 @@ def test_combine_state_scopes_restores_both_when_the_nested_run_raises():
     combined = _combine_state_scopes([_make("mcp"), _make("builtin")])
     raised = False
     try:
-        with combined():
+        with combined("run-1"):
             raise RuntimeError("child blew up")
     except RuntimeError:
         raised = True

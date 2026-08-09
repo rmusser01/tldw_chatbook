@@ -193,7 +193,7 @@ def test_builtin_provider_refuses_when_gate_denies():
     from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
 
     class DenyGate:
-        def check(self, tool):
+        def check(self, tool, run_id=""):
             return "nope"
 
     out = BuiltinToolProvider(gate=DenyGate()).invoke(
@@ -207,7 +207,7 @@ def test_builtin_provider_runs_when_gate_permits():
     from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
 
     class AllowGate:
-        def check(self, tool):
+        def check(self, tool, run_id=""):
             return None
 
     out = BuiltinToolProvider(gate=AllowGate()).invoke(
@@ -221,7 +221,7 @@ def test_gate_none_is_not_ungated(monkeypatch):
     import tldw_chatbook.Agents.tool_catalog as tc
 
     class DenyGate:
-        def check(self, tool):
+        def check(self, tool, run_id=""):
             return "denied by default gate"
 
     monkeypatch.setattr(tc, "build_builtin_gate", lambda: DenyGate())
@@ -234,7 +234,7 @@ def test_gate_failure_does_not_raise_into_the_loop():
     from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
 
     class BoomGate:
-        def check(self, tool):
+        def check(self, tool, run_id=""):
             raise RuntimeError("gate exploded")
 
     out = BuiltinToolProvider(gate=BoomGate()).invoke(
@@ -247,7 +247,7 @@ class _OpenGate:
     """Approval gate that never refuses -- isolates the ephemeral check
     below from the (separately tested) approval-gate machinery."""
 
-    def check(self, tool):
+    def check(self, tool, run_id=""):
         return None
 
 
