@@ -208,9 +208,10 @@ def test_view_download_has_descriptor_query_and_trusted_origin(adapter, json_rec
         "job-2": {"outputs": {"7": {"gifs": [{"filename": "clip.webp", "subfolder": "", "type": "temp"}]}}}
     }
 
-    result = adapter.generate(_request())
+    result = adapter.generate(_request(width=1280, height=704, duration_seconds=6, fps=24))
 
     assert result.content_type == "image/webp"
+    assert (result.width, result.height, result.duration_seconds, result.fps) == (1280, 704, 6.0, 24.0)
     assert download_calls == [(
         "http://127.0.0.1:8188/view?filename=clip.webp&subfolder=&type=temp",
         {"timeout": 30, "headers": None, "cookies": None, "max_bytes": 500 * 1024 * 1024, "trusted_origins": frozenset({"127.0.0.1"})},
@@ -480,6 +481,7 @@ def test_generic_custom_workflow_keeps_documented_title_controls(adapter):
     assert prepared.graph["6"]["inputs"]["num_frames"] == 144
     assert prepared.graph["10"]["inputs"]["fps"] == 24
     assert prepared.graph["8"]["inputs"]["image"] == "safe-input.png"
+    assert (prepared.width, prepared.height, prepared.duration_seconds, prepared.fps) == (1280, 704, 6.0, 24.0)
 
 
 def test_h3_seed_minus_one_resolves_once_and_rejects_lower_values(adapter, monkeypatch):

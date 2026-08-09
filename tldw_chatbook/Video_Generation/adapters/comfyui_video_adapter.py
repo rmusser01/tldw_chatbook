@@ -521,6 +521,10 @@ class ComfyUIVideoAdapter:
         resolved_seed: int | None,
     ) -> _PreparedWorkflow:
         """Apply the existing custom-workflow title convention without silent no-ops."""
+        effective_width: int | None = None
+        effective_height: int | None = None
+        effective_duration: float | None = None
+        effective_fps: float | None = None
         self._require_injection(
             self._set_control(graph, "prompt", ("text", "prompt"), request.prompt),
             "prompt",
@@ -548,6 +552,10 @@ class ComfyUIVideoAdapter:
                     field,
                     field.title(),
                 )
+                if field == "width":
+                    effective_width = value
+                else:
+                    effective_height = value
         if request.duration_seconds is not None:
             duration_applied = self._set_control(
                 graph, "duration", ("value", "duration_seconds"), request.duration_seconds
@@ -560,12 +568,14 @@ class ComfyUIVideoAdapter:
                     request.duration_seconds * request.fps,
                 )
             self._require_injection(duration_applied, "duration", "Duration or Frames")
+            effective_duration = float(request.duration_seconds)
         if request.fps is not None:
             self._require_injection(
                 self._set_control(graph, "fps", ("fps", "frame_rate"), request.fps),
                 "fps",
                 "FPS",
             )
+            effective_fps = float(request.fps)
         if image_name is not None:
             self._require_injection(
                 self._set_control(graph, "input_image", ("image", "image_name"), image_name),
@@ -581,10 +591,10 @@ class ComfyUIVideoAdapter:
                 )
         return _PreparedWorkflow(
             graph=graph,
-            duration_seconds=None,
-            fps=None,
-            width=None,
-            height=None,
+            duration_seconds=effective_duration,
+            fps=effective_fps,
+            width=effective_width,
+            height=effective_height,
             resolved_seed=resolved_seed,
         )
 
