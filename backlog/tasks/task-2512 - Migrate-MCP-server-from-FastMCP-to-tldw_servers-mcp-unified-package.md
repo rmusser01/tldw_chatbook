@@ -35,7 +35,7 @@ Resolved design (2026-08-09): public `mcp-unified==0.2.1` supplies the required 
 - [ ] #4 The eighteen in-app-only `library_*` tools remain available through their descriptor-backed direct runtime, remain absent from standalone stdio, and retain raw in-app `tools/call` refusal.
 - [ ] #5 Tool values, typed local-tool failures, resource dictionaries, long resource chunks, prompt messages, and prompt arguments map to bounded canonical MCP results with regression coverage.
 - [ ] #6 Both `mcp[cli]` declarations and every live availability/dependency surface are replaced by the exact `mcp-unified==0.2.1` optional dependency, with no production FastMCP or official-SDK import remaining.
-- [ ] #7 Chatbook's hand-written client negotiates `2025-03-26`, follows bounded catalog cursors, preserves resource continuation metadata, and continues to use the existing subprocess configuration command.
+- [ ] #7 Chatbook's hand-written client negotiates `2025-03-26`, the adapter passes real `2025-11-25` and current-profile flows with batching limited to `2025-03-26`, catalog pagination fails closed at malformed or over-bound cursors, resource `_meta` is preserved exactly, and the existing subprocess configuration command remains valid.
 - [ ] #8 Wheel and sdist `[mcp]` installs independently pass a site-packages-isolated standalone protocol smoke, and the relevant MCP, Library, packaging, documentation, static-analysis, and security gates are green or compared against an identical clean-dev baseline.
 - [ ] #9 User and developer documentation explain installation, supported protocol behavior, continuation, the standalone-versus-in-app Library boundary, and the privacy risk of exposing local data to an external MCP client or cloud model.
 <!-- AC:END -->

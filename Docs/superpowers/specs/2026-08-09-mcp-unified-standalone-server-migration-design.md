@@ -208,7 +208,9 @@ copy are removed.
 The runtime invokes local handlers through `asyncio.to_thread`, keeping sync
 filesystem/git/web work off the protocol event loop. Registration remains
 best-effort as a group: an optional local-tool composition failure is logged
-to stderr and never removes the built-in catalog.
+to stderr and never removes the built-in catalog. The diagnostic is one fixed
+message with no exception interpolation or traceback; a path, secret, raw
+argument, or provider exception must never reach stdout or stderr.
 
 ### 5.3 Resources
 
@@ -220,8 +222,10 @@ Each resource decorator registers:
 - its async handler.
 
 Only the five known one-variable custom-scheme templates are supported. The
-matcher rejects path/query/fragment ambiguity, duplicate templates, malformed
-percent encoding, and unknown schemes before invoking a handler.
+base matcher rejects path/fragment ambiguity, duplicate templates, malformed
+percent encoding, and unknown schemes before invoking a handler. Query
+parsing happens first under the exact continuation grammar in section 7; the
+matcher itself receives only the normalized query-free base URI.
 
 The dynamic resource list handler returns existing canonical resource
 descriptors (`uri`, `name`, optional `description`, `mimeType`).
@@ -268,6 +272,19 @@ reason code:
 | Local-tool kill switch is engaged | `local_tools_disabled` |
 | Permission state could not be resolved | `permission_state_unavailable` |
 | Provider invocation failed | `local_tool_failed` |
+
+`ToolResult` does not retain the provider's internal verdict, so the adapter
+uses exact equality against the provider's existing stable refusal constants:
+
+- `EXTERNAL_NO_CALLBACK_REFUSAL` and `LOCAL_TIMEOUT_REFUSAL` map to
+  `operator_approval_required`;
+- `LOCAL_DENY_REFUSAL` maps to `tool_permission_denied`;
+- `LOCAL_KILL_SWITCH_REFUSAL` maps to `local_tools_disabled`;
+- `LOCAL_GATE_ERROR_REFUSAL` maps to `permission_state_unavailable`;
+- every other `ok=False` value maps to `local_tool_failed`.
+
+This is deliberately a narrow adapter mapping. It does not widen the shared
+`ToolResult` contract or classify by substrings.
 
 This produces `isError: true`, bounded text content, and gateway-owned error
 metadata. It must not include stack traces, secrets, raw paths, SQL, or an
@@ -320,8 +337,13 @@ Rules:
 - Chunk boundaries never split a UTF-8 sequence.
 - `startChar`, `endChar`, `totalChars`, `totalBytes`, and `returnedBytes` are
   exact for the materialized resource text.
-- If more text remains, `nextUri` is the same base resource URI with one
-  bounded opaque continuation token in the query.
+- A base read accepts no query parameters and no fragment.
+- If more text remains, `nextUri` is the same base resource URI with exactly
+  one bounded `tldw_continue` query parameter containing the opaque token.
+- A continuation read rejects fragments, duplicate `tldw_continue`
+  parameters, empty tokens, and every unknown query parameter. The adapter
+  removes and validates that parameter first, then matches the normalized
+  query-free base URI to the registered template and handler identifier.
 - The token contains the next character offset and a SHA-256 content
   revision. It exposes no content, path, database identifier beyond the
   already-public resource URI, or secret.
@@ -339,8 +361,11 @@ Rules:
   semantics.
 
 The result-level `_meta` mapping is available in every supported profile. The
-hand-written client preserves it on its returned resource result so callers
-can follow continuation without parsing text.
+wire-level connection exposes it as `getattr(result, "_meta")`, and
+`MCPClient.read_resource` returns it under the exact public `"_meta"` key so
+callers can follow continuation without parsing text. Missing wire metadata
+becomes an empty mapping; it is never renamed or merged into resource
+content.
 
 ## 8. Canonical Prompt Mapping
 
@@ -388,9 +413,12 @@ The server leaves protocol negotiation to `mcp-unified`. Required integration
 coverage includes:
 
 - legacy initialize at `2025-03-26` using Chatbook's own hand-written client;
+- initialize/catalog/call/read/get at `2025-11-25`, including its object-only
+  `structuredContent` behavior;
 - current `2026-07-28` request metadata behavior;
-- a supported unsupported-version error;
-- batch acceptance only for `2025-03-26`;
+- a deterministic unsupported-version error;
+- batch acceptance only for `2025-03-26`, with explicit rejection at
+  `2025-11-25` and `2026-07-28`;
 - notification and cancellation behavior;
 - bounded EOF, output failure, and shutdown behavior inherited from the
   package.
@@ -402,9 +430,14 @@ currently reads only the first page. Add one private bounded aggregation
 helper shared by `list_tools`, `list_resources`, and `list_prompts`:
 
 - request the first page without a cursor;
-- follow each non-empty string `nextCursor`;
+- only an absent or JSON `null` `nextCursor` ends aggregation;
+- follow every valid non-empty string `nextCursor`;
+- reject empty or non-string cursors;
 - reject repeated cursors;
-- stop at 100 pages or 10,000 items;
+- accept at most 100 pages and 10,000 items;
+- if another page would be required after page 100, or another item would
+  exceed 10,000, raise a bounded client error rather than returning a partial
+  catalog;
 - reject malformed page item arrays;
 - preserve original item order.
 
@@ -499,7 +532,11 @@ Implementation follows strict red-green-refactor. Required coverage includes:
 - no `library_*` tool appears in standalone catalog;
 - tool dict/list/string projection through the real gateway;
 - typed local allow/ask/deny/kill-switch/gate-error/execution-error behavior;
+- exact stable-refusal-constant to reason-code mapping, with every other
+  failure classified as `local_tool_failed`;
 - sync local handlers run off the event loop;
+- local-tool registration failure emits one fixed payload-free diagnostic and
+  does not echo a sentinel path, secret, exception, or traceback;
 - all five URI templates route exact valid identifiers and reject malformed,
   ambiguous, unknown, or mismatched URIs;
 - small and multi-chunk resource reads, exact metadata, UTF-8 boundaries,
@@ -523,10 +560,14 @@ Implementation follows strict red-green-refactor. Required coverage includes:
 ### 13.3 Protocol and process tests
 
 - in-memory strict stdio initialization and core method flow for
-  `2025-03-26` and `2026-07-28`;
+  `2025-03-26`, `2025-11-25`, and `2026-07-28`;
+- object-only `structuredContent` at `2025-11-25` and batch rejection there,
+  with batch acceptance only at `2025-03-26`;
 - Chatbook client subprocess launch against `python -m tldw_chatbook.MCP`;
-- catalog cursor aggregation, repeated-cursor rejection, and bounds;
+- catalog cursor aggregation, malformed/repeated-cursor rejection, exact
+  100-page/10,000-item boundaries, and fail-closed over-bound behavior;
 - tool call, resource read/continuation, and prompt get;
+- exact `"_meta"` preservation through both client layers;
 - clean EOF and nonzero fatal return-code propagation;
 - protocol stdout contains JSON only;
 - cancellation emits no late duplicate output.

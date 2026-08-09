@@ -51,11 +51,19 @@ Cancellation suppresses late protocol output but does not claim to undo a
 filesystem, process, or network side effect that already began in a worker
 thread.
 
+The adapter classifies local-tool failures only by exact equality with the
+provider's existing stable refusal constants; every other failed
+`ToolResult` is a generic local execution failure. Optional local-tool
+registration failures emit one fixed payload-free diagnostic without an
+exception or traceback.
+
 The optional dependency is pinned exactly to `mcp-unified==0.2.1`. Chatbook
 keeps its existing `python -m tldw_chatbook.MCP` client configuration and
 hand-written MCP client, including legacy `2025-03-26` negotiation. The client
-will follow bounded catalog cursors so the gateway's standard pagination does
-not silently hide later items.
+will follow bounded catalog cursors and fail rather than return a partial
+catalog when a cursor or page/item bound is invalid. Integration coverage
+also pins `2025-11-25` object-only structured results and rejects batching for
+every profile except `2025-03-26`.
 
 ## Context
 
