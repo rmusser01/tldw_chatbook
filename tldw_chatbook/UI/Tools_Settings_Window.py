@@ -131,7 +131,13 @@ SETTINGS_DATABASES = (
 #: in the SAME [tools] table the GateableTool switches write, so the Tool
 #: Settings view gets it its own row plus explicit save/reset handling
 #: instead of a GateableTool table entry.
-WEB_DEEP_SEARCH_GATE_KEY = "web_deep_search_enabled"
+#:
+#: task-3240: WEB_DEEP_SEARCH_GATE_KEY itself relocated to
+#: Agents/local_tool_provider.py (its actual runtime consumer) and is
+#: imported from there, below -- re-exported under this name so this
+#: (deprecated) window's own code and tests keep working unchanged.
+from ..Agents.local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY  # noqa: E402,F401
+
 WEB_DEEP_SEARCH_TOOL_NAME = "web_deep_search"
 
 #: TASK-2775: the About text's canonical home is Utils/about_text (rendered by

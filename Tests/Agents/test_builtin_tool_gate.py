@@ -391,3 +391,143 @@ def test_network_tag_floors_inherited_allow_to_ask():
 
     assert state.state == "ask"
     assert state.risk_floored is True
+
+
+# --- task-3240: unified [tools]/[console] gate enumerator -------------------
+#
+# Seam namespace note (spec review, Minor 6): `all_tool_gates()` reads
+# `tldw_chatbook.config.get_cli_setting` via a FUNCTION-LOCAL import (like
+# `BuiltinToolProvider.__init__`), so these tests patch that module
+# attribute directly -- patching `mcp_workbench`'s (or any other caller's)
+# own imported name would not reach it.
+
+
+def _no_override_get_cli_setting(section, key=None, default=None):
+    """A `get_cli_setting` fake that always returns the caller's own
+    default -- gives every gate a deterministic, environment-independent
+    `enabled=False` baseline regardless of the real config.toml on disk."""
+    return default
+
+
+def test_all_tool_gates_enumerates_nine_gates_with_sections_and_groups(monkeypatch):
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.builtin_tool_gate import ToolGate, all_tool_gates
+    from tldw_chatbook.Agents.local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
+    from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
+
+    monkeypatch.setattr(config_module, "get_cli_setting", _no_override_get_cli_setting)
+
+    gates = all_tool_gates()
+    assert len(gates) == 9
+    assert all(isinstance(gate, ToolGate) for gate in gates)
+
+    # The 7 _GATEABLE_BUILTINS rows come first, in registration order,
+    # constants-not-literals (a re-typed key here would drift silently the
+    # moment _GATEABLE_BUILTINS gains or reorders an entry).
+    builtin_gates = gates[: len(_GATEABLE_BUILTINS)]
+    assert [g.key for g in builtin_gates] == [e.gate_key for e in _GATEABLE_BUILTINS]
+    assert [g.tool_name for g in builtin_gates] == [e.tool_name for e in _GATEABLE_BUILTINS]
+    assert all(g.section == "tools" and g.group == "builtin" for g in builtin_gates)
+    assert all(g.description for g in builtin_gates)  # real tool descriptions, never blank
+    assert all(g.enabled is False for g in builtin_gates)  # no override -> all off
+
+    # The local group: master switch FIRST, then web_deep_search.
+    local_gates = gates[len(_GATEABLE_BUILTINS):]
+    assert len(local_gates) == 2
+    assert local_gates[0].section == "console"
+    assert local_gates[0].key == "local_tools_enabled"
+    assert local_gates[0].group == "local"
+    assert local_gates[1].section == "tools"
+    assert local_gates[1].key == WEB_DEEP_SEARCH_GATE_KEY
+    assert local_gates[1].group == "local"
+    assert all(g.description for g in local_gates)
+
+
+def test_all_tool_gates_enabled_is_coerced_not_raw_truthy(monkeypatch):
+    """A quoted "false" must read as OFF -- the same class of bug
+    task-3240's tool_catalog.py fix closed at the registration layer;
+    this pins it at the enumerator layer too."""
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.builtin_tool_gate import all_tool_gates
+    from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
+
+    target_key = _GATEABLE_BUILTINS[0].gate_key
+
+    def fake_get_cli_setting(section, key=None, default=None):
+        if key == target_key:
+            return "false"
+        return default
+
+    monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
+    gates = {gate.key: gate for gate in all_tool_gates()}
+    assert gates[target_key].enabled is False
+
+
+def test_all_tool_gates_enabled_coerces_quoted_true(monkeypatch):
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.builtin_tool_gate import all_tool_gates
+    from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
+
+    target_key = _GATEABLE_BUILTINS[0].gate_key
+
+    def fake_get_cli_setting(section, key=None, default=None):
+        if key == target_key:
+            return "true"
+        return default
+
+    monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
+    gates = {gate.key: gate for gate in all_tool_gates()}
+    assert gates[target_key].enabled is True
+
+
+def test_all_tool_gates_enabled_passes_through_real_bools(monkeypatch):
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.builtin_tool_gate import all_tool_gates
+    from tldw_chatbook.Agents.local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
+
+    def fake_get_cli_setting(section, key=None, default=None):
+        if key == "local_tools_enabled":
+            return True
+        if key == WEB_DEEP_SEARCH_GATE_KEY:
+            return False
+        return default
+
+    monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
+    gates = {gate.key: gate for gate in all_tool_gates()}
+    assert gates["local_tools_enabled"].enabled is True
+    assert gates[WEB_DEEP_SEARCH_GATE_KEY].enabled is False
+
+
+def test_web_deep_search_gate_key_is_the_relocated_constant_not_a_literal(monkeypatch):
+    """Spec: 'the two hand-listed entries don't drift from their source
+    constants (assert WEB_DEEP_SEARCH_GATE_KEY equality rather than a
+    re-typed literal)'."""
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.builtin_tool_gate import all_tool_gates
+    from tldw_chatbook.Agents.local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
+
+    monkeypatch.setattr(config_module, "get_cli_setting", _no_override_get_cli_setting)
+    gate = next(g for g in all_tool_gates() if g.tool_name == "web_deep_search")
+    assert gate.key == WEB_DEEP_SEARCH_GATE_KEY
+
+
+def test_tool_gate_breadcrumb_absent_when_all_gates_are_on(monkeypatch):
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.builtin_tool_gate import tool_gate_breadcrumb
+
+    monkeypatch.setattr(
+        config_module, "get_cli_setting", lambda section, key=None, default=None: True
+    )
+    assert tool_gate_breadcrumb() is None
+
+
+def test_tool_gate_breadcrumb_names_the_off_count(monkeypatch):
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.builtin_tool_gate import all_tool_gates, tool_gate_breadcrumb
+
+    monkeypatch.setattr(config_module, "get_cli_setting", _no_override_get_cli_setting)
+    gates = all_tool_gates()  # every gate defaults OFF -> 9 off
+    text = tool_gate_breadcrumb(gates)
+    assert text is not None
+    assert "9" in text
+    assert "Servers mode" in text
