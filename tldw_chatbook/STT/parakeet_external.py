@@ -75,6 +75,8 @@ class VerifiedExternalParakeet:
 
 _FileIdentity = tuple[int, int, int, int, int, int]
 _DirectoryIdentity = tuple[int, int, int]
+_AncestorIdentities = tuple[tuple[Path, _DirectoryIdentity], ...]
+_VerifiedFile = tuple[Path, _FileIdentity, _AncestorIdentities]
 
 
 def _file_identity(metadata: os.stat_result) -> _FileIdentity:
@@ -97,7 +99,7 @@ def _directory_identity(metadata: os.stat_result) -> _DirectoryIdentity:
 
 
 def _fail(code: ExternalParakeetErrorCode) -> None:
-    raise ExternalParakeetVerificationError(code)
+    raise ExternalParakeetVerificationError(code) from None
 
 
 def _emit_progress(
@@ -188,7 +190,7 @@ def _ancestor_identities(
 
 
 def _require_unchanged_ancestors(
-    identities: tuple[tuple[Path, _DirectoryIdentity], ...],
+    identities: _AncestorIdentities,
 ) -> None:
     for path, before in identities:
         try:
@@ -200,6 +202,26 @@ def _require_unchanged_ancestors(
             or _directory_identity(metadata) != before
         ):
             _fail(ExternalParakeetErrorCode.CHANGED)
+
+
+def _require_unchanged_file(
+    root: Path,
+    verified: _VerifiedFile,
+) -> None:
+    path, before, ancestors = verified
+    try:
+        metadata = path.lstat()
+        resolved = path.resolve(strict=True)
+        resolved.relative_to(root)
+    except (OSError, ValueError):
+        _fail(ExternalParakeetErrorCode.CHANGED)
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or resolved != path
+        or _file_identity(metadata) != before
+    ):
+        _fail(ExternalParakeetErrorCode.CHANGED)
+    _require_unchanged_ancestors(ancestors)
 
 
 class ExternalParakeetVerifier:
@@ -234,7 +256,7 @@ class ExternalParakeetVerifier:
         root = _validated_root(directory)
         bytes_total = sum(item.size_bytes for item in descriptor.files)
         bytes_done = 0
-        verified_paths: list[Path] = []
+        verified_files: list[_VerifiedFile] = []
         _emit_progress(progress, bytes_done, bytes_total)
 
         for declared in descriptor.files:
@@ -274,21 +296,18 @@ class ExternalParakeetVerifier:
             except OSError:
                 _fail(ExternalParakeetErrorCode.CHANGED)
 
-            try:
-                after_metadata = path.lstat()
-                resolved = path.resolve(strict=True)
-                resolved.relative_to(root)
-            except (OSError, ValueError):
-                _fail(ExternalParakeetErrorCode.CHANGED)
-            if resolved != path or _file_identity(after_metadata) != before:
-                _fail(ExternalParakeetErrorCode.CHANGED)
-            _require_unchanged_ancestors(ancestors)
+            verified = (path, before, ancestors)
+            _require_unchanged_file(root, verified)
             if digest.hexdigest() != declared.sha256:
                 _fail(ExternalParakeetErrorCode.CORRUPT)
-            verified_paths.append(path)
+            verified_files.append(verified)
 
+        for verified in verified_files:
+            _require_unchanged_file(root, verified)
         try:
-            snapshot = snapshot_local_source(tuple(verified_paths))
+            snapshot = snapshot_local_source(
+                tuple(path for path, _identity, _ancestors in verified_files)
+            )
         except (LocalSourceChangedError, OSError):
             _fail(ExternalParakeetErrorCode.CHANGED)
         return VerifiedExternalParakeet(

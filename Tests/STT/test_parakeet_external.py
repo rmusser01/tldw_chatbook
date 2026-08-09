@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import traceback
 from dataclasses import replace
 from pathlib import Path
 
@@ -185,6 +186,21 @@ def test_rejects_missing_declared_file(tmp_path: Path) -> None:
     _assert_error(ExternalParakeetErrorCode.MISSING, _descriptor(files), root)
 
 
+def test_formatted_missing_file_error_omits_selected_absolute_path(
+    tmp_path: Path,
+) -> None:
+    files = {"missing.onnx": b"expected"}
+    root = tmp_path / "private-external-missing"
+    root.mkdir()
+
+    with pytest.raises(ExternalParakeetVerificationError) as caught:
+        ExternalParakeetVerifier().verify(_descriptor(files), root)
+
+    formatted = "".join(traceback.format_exception(caught.value))
+    assert caught.value.code is ExternalParakeetErrorCode.MISSING
+    assert str(root.absolute()) not in formatted
+
+
 def test_rejects_wrong_size_before_hashing(tmp_path: Path) -> None:
     files = {"model.onnx": b"expected"}
     root = tmp_path / "external-size"
@@ -283,6 +299,38 @@ def test_rejects_file_metadata_mutation_during_hashing(tmp_path: Path) -> None:
         progress=mutate_after_first_chunk,
     )
     assert changed
+
+
+def test_rejects_earlier_file_mutated_while_later_file_hashes(tmp_path: Path) -> None:
+    first_payload = b"original"
+    second_payload = b"x" * (HASH_CHUNK_BYTES + 1)
+    files = {
+        "first.onnx": first_payload,
+        "second.onnx": second_payload,
+    }
+    root = tmp_path / "external-cross-file-change"
+    _materialize(root, files)
+    first_path = root / "first.onnx"
+    mutated = False
+
+    def mutate_first_during_second(bytes_done: int, _bytes_total: int) -> None:
+        nonlocal mutated
+        if bytes_done > len(first_payload) and not mutated:
+            metadata = first_path.stat()
+            first_path.write_bytes(b"tampered")
+            os.utime(
+                first_path,
+                ns=(metadata.st_atime_ns, metadata.st_mtime_ns + 5_000_000_000),
+            )
+            mutated = True
+
+    _assert_error(
+        ExternalParakeetErrorCode.CHANGED,
+        _descriptor(files),
+        root,
+        progress=mutate_first_during_second,
+    )
+    assert mutated
 
 
 def test_polls_cancellation_within_hash_chunk_loop(tmp_path: Path) -> None:
