@@ -1,6 +1,6 @@
 {
   "baseline_id": "plain",
-  "created_at": "2026-08-09T17:31:05.838125+00:00",
+  "created_at": "2026-08-09T20:23:57.412573+00:00",
   "pipeline_config": {
     "mode": "plain",
     "k": 10,
@@ -12,16 +12,16 @@
     ]
   },
   "metrics": {
-    "overall.precision": 0.35135135135135137,
-    "overall.recall": 0.33783783783783783,
-    "overall.mrr": 0.35135135135135137,
-    "overall.ndcg": 0.3408958700747421,
-    "overall.f1": 0.34234234234234234,
-    "category.keyword.precision": 0.8666666666666667,
-    "category.keyword.recall": 0.8333333333333334,
-    "category.keyword.mrr": 0.8666666666666667,
-    "category.keyword.ndcg": 0.8408764795176972,
-    "category.keyword.f1": 0.8444444444444444,
+    "overall.precision": 0.3684210526315789,
+    "overall.recall": 0.35526315789473684,
+    "overall.mrr": 0.3684210526315789,
+    "overall.ndcg": 0.358240715599091,
+    "overall.f1": 0.35964912280701755,
+    "category.keyword.precision": 0.875,
+    "category.keyword.recall": 0.84375,
+    "category.keyword.mrr": 0.875,
+    "category.keyword.ndcg": 0.8508216995478411,
+    "category.keyword.f1": 0.8541666666666666,
     "category.paraphrase.precision": 0.0,
     "category.paraphrase.recall": 0.0,
     "category.paraphrase.mrr": 0.0,
@@ -39,7 +39,7 @@
       "transformers": "5.6.2",
       "torch": "2.11.0",
       "chromadb": "1.5.8",
-      "corpus_sha256": "cbf911c98c8ede1eb0c0bc79d31528eda559d57937afb9b3d7b63ada9e2e3957",
+      "corpus_sha256": "db3937dc3c4dec4ba323e21b7899b789d6f12ea2d53b13bc4a9f074ea1404dcb",
       "platform": "darwin"
     },
     "environment_info": {
@@ -47,15 +47,15 @@
     },
     "report_only": {
       "latency": {
-        "count": 44.0,
-        "mean_ms": 4.9,
-        "p95_ms": 7.6,
-        "max_ms": 20.1,
+        "count": 45.0,
+        "mean_ms": 3.8,
+        "p95_ms": 5.6,
+        "max_ms": 12.2,
         "total_s": 0.2
       },
-      "mean_docs_at_k": 0.351,
-      "num_queries": 37,
-      "num_golden_queries": 44,
+      "mean_docs_at_k": 0.368,
+      "num_queries": 38,
+      "num_golden_queries": 45,
       "num_negative": 7,
       "runtime_backends": [
         "local-fts"

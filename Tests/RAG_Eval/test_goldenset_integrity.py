@@ -238,8 +238,12 @@ def test_real_fixtures_validate_clean(corpus, golden):
 
 def test_corpus_composition_matches_the_planned_design(corpus):
     counts = Counter(doc.source_type for doc in corpus)
-    assert len(corpus) == 48  # 45 short + 3 long multi-chunk targets
-    assert counts["note"] == 14
+    # 45 short + 3 long multi-chunk targets + 1 vector-blind keyword target
+    # (TASK-3994 AC #2: hybrid's *rescue* needed a document the vector leg
+    # alone ranks outside the top-k; nothing in the original 48 qualified,
+    # because semantic recall@10 was 1.000 across the whole golden set).
+    assert len(corpus) == 49
+    assert counts["note"] == 15
     assert counts["media"] == 20
     assert counts["conversation"] == 14
     # The brief's floors, asserted independently of the exact numbers above so
@@ -251,7 +255,7 @@ def test_corpus_composition_matches_the_planned_design(corpus):
 
 def test_golden_set_category_quotas(golden):
     counts = Counter(query.category for query in golden)
-    assert len(golden) == 44
+    assert len(golden) == 45
     assert counts["keyword"] >= 10
     assert counts["paraphrase"] >= 10
     assert counts["vocabulary_mismatch"] >= 8

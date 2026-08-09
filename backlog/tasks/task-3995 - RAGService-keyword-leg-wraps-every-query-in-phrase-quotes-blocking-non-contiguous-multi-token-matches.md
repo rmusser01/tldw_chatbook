@@ -3,10 +3,10 @@ id: TASK-3995
 title: >-
   RAGService keyword leg wraps every query in phrase quotes, blocking
   non-contiguous multi-token matches
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-09 05:16'
-updated_date: '2026-08-09 17:45'
+updated_date: '2026-08-09 20:40'
 labels:
   - rag
   - retrieval
@@ -26,7 +26,7 @@ Found by the P1 eval harness (TASK-3894). RAGService._escape_fts5_query (rag_ser
 - [x] #1 Multi-token keyword queries match documents whose relevant tokens are present but not contiguous (AND-of-terms semantics or better), not only exact phrase matches.
 - [x] #2 A query containing a token FTS5 would otherwise parse as a column filter (for example a bare hyphenated-numeric token) does not raise an FTS5 syntax or column error.
 - [x] #3 Regression tests cover both the non-contiguous-match case and the injection-safety case against real corpus content.
-- [ ] #4 The P1 eval harness baselines are re-stamped in the same PR if hybrid or keyword numbers move, with before and after numbers included in the PR description.
+- [x] #4 The P1 eval harness baselines are re-stamped in the same PR if hybrid or keyword numbers move, with before and after numbers included in the PR description.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -79,4 +79,18 @@ arc's final task in the same PR.
 
 Files: tldw_chatbook/RAG_Search/simplified/rag_service.py
 (_escape_fts5_query, _keyword_search); Tests/RAG_Search/test_fts5_query_escaping.py (new).
+
+**Plan Task 6 closure (re-stamp).** AC #4 ticked. The arc's single deliberate
+re-stamp landed in this PR. This fix's own contribution to it was measured
+separately and was ZERO: the informational gated run taken immediately after
+it moved all 60 gated metrics by +0.000, because the engine keyword leg's rows
+could not yet survive fusion (TASK-3994, not yet landed at that point) and the
+harness's plain mode uses the Library seam's own grammar. The movement in the
+stamped baselines belongs to TASK-3994 and to the corpus addition; the
+progression table in Tests/RAG_Eval/README.md attributes each step.
+
+Live confirmation (2026-08-09, scratch profile over a copy of the real DBs):
+the query "worktree UAT database" returned a note whose three tokens appear
+non-adjacently. Under the previous whole-query phrase form that query matched
+nothing at all.
 <!-- SECTION:NOTES:END -->

@@ -37,8 +37,8 @@ Tests/RAG_Eval/
     runner.py                      the three-mode run + per-category scoring
     baseline_io.py                 fingerprinted baselines + the fail-on-regression gate
   fixtures/
-    corpus.toml                    48 fixture documents (note/media/conversation)
-    golden.toml                    44 golden queries (37 scored, 7 negative)
+    corpus.toml                    49 fixture documents (note/media/conversation)
+    golden.toml                    45 golden queries (38 scored, 7 negative)
   baselines/
     semantic.json, plain.json, hybrid.json   committed, fingerprinted, per-mode baselines
 ```
@@ -61,7 +61,7 @@ pytest Tests/RAG_Eval/ -q
 ```
 
 This runs the metrics/gating/fixture-integrity/canonicalization tests —
-currently 128 passed, 4 skipped (the two env-gated test files, two tests
+currently 138 passed, 4 skipped (the two env-gated test files, two tests
 each). It never touches the embedding model or a real corpus.
 
 **The real harness run (opt-in, slow, needs a real model):**
@@ -71,9 +71,9 @@ RAG_EVAL=1 pytest Tests/RAG_Eval/ -q -p no:randomly
 ```
 
 This runs everything above *plus* `test_harness_smoke.py` and
-`test_harness_run.py`, which stand up a genuine indexed RAG install (the 48
+`test_harness_run.py`, which stand up a genuine indexed RAG install (the 49
 fixture docs, written through the real writer APIs, embedded and indexed
-through the real batch path) and run all 44 golden queries three times —
+through the real batch path) and run all 45 golden queries three times —
 once per `default_search_mode` (`plain`, `semantic`, `hybrid`). Whole run is
 ~10-15s once the model is warm. `-p no:randomly` is not required (the run
 passes in either order — see Task 7) but keeps the two env-gated tests'
@@ -124,15 +124,46 @@ in the second case do you re-stamp, and when you do:
    that does not match the code it was measured against is worse than an
    absent one, because it looks authoritative.
 
-**This will happen for real, soon.** TASK-3994 (hybrid RRF fusion never
-merges its legs) records today's truth: hybrid search is byte-identical to
-semantic search on this corpus (44/44 identical id-lists), because the two
-legs fuse on mismatched id spaces and the FTS leg's contribution never
-survives into the fused top-k. `hybrid.json`'s baseline encodes that defect.
-**Fixing TASK-3994 will change hybrid's numbers and will trip this gate —
-that is correct, expected behavior, not a new bug.** The re-stamp belongs in
-the same PR as that fix, with both the "hybrid ≡ semantic" before-numbers
-and the post-fix after-numbers in the PR description.
+**This happened for real, once: the fusion cluster (TASK-3995 / 3994 /
+3996 + a corpus addition), re-stamped in one commit.** The first baselines
+encoded a defect — hybrid search was byte-identical to semantic search on
+this corpus (44/44 identical id-lists), because the two legs fused on
+mismatched id spaces. The progression, each step measured by a gated run
+against the *then-current* committed baselines, with only the last step
+re-stamped:
+
+| step | hybrid overall P / F1 | hybrid keyword P / R | note |
+|---|---|---|---|
+| P1 baseline (defect) | 0.117 / 0.208 | 0.135 / 1.000 | hybrid ≡ semantic, 0/44 queries differ |
+| + TASK-3995 (per-token FTS quoting) | 0.117 / 0.208 | 0.135 / 1.000 | +0.000 on all 60 gated metrics — the engine's keyword leg was reached but its rows could not yet surface |
+| + TASK-3994 (fuse on document identity) | 0.105 / 0.190 | 0.113 / 1.000 | 22/44 queries now differ from semantic; real merged rows appear |
+| + TASK-3996 (notes/conversations sub-legs) | 0.105 / 0.190 | 0.113 / 1.000 | +0.000 again: every query whose FTS leg fires already had its target at vector rank 1 |
+| + vector-blind fixture (**stamped**) | 0.103 / 0.185 | 0.106 / 0.938 | corpus 48→49 docs, golden 44→45; the new query is the first one hybrid *cannot* answer |
+
+Two things in that table are worth more than the numbers. First, **two of
+the three fixes moved nothing**, and that is a finding rather than a
+disappointment: it says this corpus could not tell coverage from noise,
+because semantic recall@10 was 1.000 everywhere and the FTS leg's finds
+were always documents the vector leg had already ranked first. Second, the
+last row moved the numbers **down**, because the corpus finally contains a
+document the vector leg misses — and hybrid misses it too (TASK-4110).
+
+Two mechanical effects behind the precision drops, so nobody re-derives
+them later:
+
+- **One passage per document.** Before TASK-3994 a document could occupy
+  several top-k slots with several of its own chunks; fusing on document
+  identity collapses those into one row showing the matched chunk. The
+  freed slots fill with further documents, and since `precision@k` divides
+  by `min(k, len(retrieved))` (see the `docs` column below), precision
+  falls while recall/MRR/NDCG stay put. The trade-off is deliberate: one
+  passage per document is the honest unit for an evidence list, and it
+  costs a precision number that was partly counting duplicates.
+- The **new golden query** is a single miss in a 16-query category, worth
+  −0.062 recall on the keyword row for semantic and hybrid alike.
+
+The discipline the table demonstrates: informational gated runs mid-arc,
+**one** deliberate re-stamp at the end, and both sets of numbers in the PR.
 
 ## Fingerprint semantics: "environment changed" is not a regression
 
@@ -172,7 +203,14 @@ Every golden query carries one of four categories:
 
 - **`keyword`** — the query shares literal tokens with its relevant
   document(s). Exercises the FTS/keyword leg (plain's four-seam path, and
-  the RRF-fused leg in hybrid).
+  the RRF-fused leg in hybrid). **Fifteen of the sixteen are also the
+  vector leg's rank-1 answer**, so they measure whether the keyword leg
+  *loses* anything, not whether it *adds* anything. The sixteenth
+  (`kw-plant-maintenance-record` → `note-saltmarsh-hide`) is the one that
+  measures addition: it is deliberately vector-blind, and its
+  authoring rules — including the failed first attempt — are written out
+  in the "VECTOR-BLIND KEYWORD TARGET" sections of both fixture files.
+  Read those before touching either side of that pair.
 - **`paraphrase`** — the query means the same thing as the relevant
   document but shares few or no literal tokens. Built to need semantic
   retrieval; plain-mode recall on this category should stay near zero and
@@ -208,9 +246,9 @@ Every golden query carries one of four categories:
 
 ```
 mode           P@k     R@k     MRR    NDCG      F1   docs    n   mean ms   p95 ms  errors  backend
-semantic     0.117   1.000   1.000   1.000   0.208    9.1   37      ...
-plain        0.351   0.338   0.351   0.341   0.342    0.4   37      ...
-hybrid       0.117   1.000   1.000   1.000   0.208    9.1   37      ...
+semantic     0.114   0.974   0.974   0.974   0.203    9.1   38      ...
+plain        0.368   0.355   0.368   0.358   0.360    0.4   38      ...
+hybrid       0.103   0.974   0.974   0.974   0.185   10.0   38      ...
 ```
 
 Two columns need context before you read the P/R/MRR/NDCG numbers as
@@ -268,13 +306,17 @@ The contract, in short:
   builders (`note`/`notes`, `conversation`/`conversations`/`chat`,
   `media`/`media_chunk`) and are folded to the app's singular ITEM_TYPE_*
   form before lookup.
-- The hybrid FTS leg is a special case: its `source_id` is not a bare
-  source id but `SearchResult.id` (e.g. `media_15`, a *document* id, not a
-  *source* id), because `RAGService._keyword_search` never populates the
-  `source_id` key `_semantic_row` normally reads. A lookup miss is retried
-  once with the leading `f"{source_type}_"` stripped, and the raw id is
-  kept when that retry also misses — so this is a lookup fallback, never a
-  silent rewrite of some other row's identity.
+- The hybrid FTS leg used to be a special case: its `source_id` was not a
+  bare source id but `SearchResult.id` (e.g. `media_15`, a *document* id,
+  not a *source* id), because `RAGService._keyword_search` never populated
+  the `source_id` key `_semantic_row` reads. TASK-3996 made all three
+  sub-legs stamp a bare `source_id` — that vocabulary equality is exactly
+  what lets a keyword row fuse with its vector twin — so the prefixed form
+  should no longer arrive here. The prefix-stripping retry in
+  `canonicalize.py` is kept anyway: it costs nothing, and it is the
+  difference between a future row builder being *measured wrong* and being
+  measured. The raw id is kept when the retry also misses, so this is a
+  lookup fallback, never a silent rewrite of some other row's identity.
 - **A row that resolves to no fixture document is kept, not dropped**, as
   `"unknown:<type>:<id>"`. Dropping it would make precision answer "of the
   documents I recognized, how many were right" — a number that improves
@@ -289,30 +331,56 @@ for that path.
 ## Known, deliberately-recorded defects
 
 The first real harness run surfaced four real defects in the Library/RAG
-retrieval seams — not harness bugs, and not fixed as part of P1, because
-fixing them is P2 scope and each fix needs its own before/after baseline
-re-stamp (see "The P2 discipline" above). They are filed as backlog tasks;
-read the task descriptions for exact mechanisms and source locations before
-attempting a fix:
+retrieval seams — not harness bugs. Three are now fixed (the fusion
+cluster, re-stamped in one commit — see the progression table above);
+closing them surfaced a fifth. Read the task descriptions for exact
+mechanisms and source locations before attempting anything here:
 
-- **TASK-3994** — hybrid RRF fusion never merges its legs (id-space
-  mismatch between the FTS leg's document ids and the vector leg's chunk
-  ids); hybrid is presently byte-identical to semantic on this corpus.
-- **TASK-3995** — the engine's keyword leg wraps every query in FTS5 phrase
-  quotes, so multi-token queries require a contiguous token run rather than
-  AND-of-terms (the quoting itself is load-bearing injection safety and
-  must be kept, just not as a whole-query phrase).
-- **TASK-3996** — the engine's keyword leg only joins `Media`/`media_fts`,
-  so notes and conversations are structurally unreachable through hybrid
-  search's FTS leg regardless of query content.
-- **TASK-3997** — investigation: the four-seam (plain) keyword path
+- **TASK-3995 — FIXED.** The engine's keyword leg wrapped every query in
+  FTS5 phrase quotes, so multi-token queries required a contiguous token
+  run. It now quotes each token individually and joins them with FTS5's
+  implicit AND, which keeps the injection safety that made whole-query
+  quoting attractive while dropping the phrase semantics.
+- **TASK-3994 — FIXED (one AC open).** Fusion matched the two legs on
+  `SearchResult.id` across mismatched id spaces (`media_15` vs
+  `media_15_chunk_0`), so a document found by both legs could never fuse.
+  It now matches on `(source_type, source_id)` document identity, and a
+  merged row displays the vector leg's matched chunk. Hybrid is no longer
+  byte-identical to semantic (22/44 golden queries differed immediately
+  after the fix). The task's second AC — hybrid *rescuing* a document the
+  vector leg misses — is **not** met, see TASK-4110.
+- **TASK-3996 — FIXED.** The keyword leg only joined `Media`/`media_fts`.
+  It is now three read-only sub-legs (media, notes, conversations) merged
+  by rank-position interleaving, so notes and conversations are reachable
+  through hybrid search. Verified live as well as here: with Media
+  deselected, a three-token non-contiguous query returned a note row and a
+  conversation row banded `keyword match`.
+- **TASK-3997 — open.** Investigation: the four-seam (plain) keyword path
   AND-joins every query term group, so one term with no match anywhere in
-  the corpus zeroes the whole query's result set. Filed as an
+  the corpus zeroes the whole query's result set. An
   investigation/product-judgment task, not a defect with an obvious fix.
+- **TASK-4110 — open, found by this harness closing the cluster.** An
+  FTS-only row still cannot enter hybrid's fused top-k. The fused score is
+  `(1-alpha)/(rrf_k+fts_rank) + alpha/(rrf_k+vector_rank)`; with the
+  shipped defaults (alpha 0.7, rrf_k 60) a keyword rank-1 row scores
+  0.00492 and loses to every vector row better than rank ~82, while the
+  vector leg is only ever asked for `2k` results. So whenever the vector
+  leg returns k or more rows, a document only the keyword leg found is
+  structurally unreachable. `kw-plant-maintenance-record` is its
+  before-number: plain rank 1, semantic absent, engine FTS leg rank 1,
+  hybrid absent.
 
 Do not "fix" any of these by editing the harness or the fixtures — the
 harness's job is to keep measuring the real seam accurately; the numbers it
-currently reports for hybrid mode *are* today's truth about that seam.
+reports for hybrid mode *are* today's truth about that seam.
+
+**Two fusion paths, two identity rules.** The engine's `_fuse_hybrid_results`
+now keys on `(source_type, source_id)`, while `pipeline_builder`'s parallel
+hybrid path keys on `(source, id)` — the same `reciprocal_rank_fusion`
+helper, two different notions of "the same document". Only the engine path
+is measured here. Reconciling them is TASK-3501; until then, a hybrid number
+from this harness describes the engine path and does not transfer to the
+pipeline path.
 
 ## Adding a fixture document or golden query
 
@@ -326,6 +394,11 @@ currently reports for hybrid mode *are* today's truth about that seam.
    (duplicate slugs/ids, an unknown category or source_type, a
    `relevant_slugs` entry with no matching document, a category or source
    type with zero members). Fix everything it reports before moving on.
+   Two of those tests pin the exact corpus/golden-set *sizes*
+   (`test_corpus_composition_matches_the_planned_design`,
+   `test_golden_set_category_quotas`), so an addition is never accidental:
+   update them in the same commit, with the reason for the new document in
+   the assertion's comment.
 3. If you touched `corpus.toml` or `golden.toml`, the fixture SHA-256 in
    `current_fingerprint()` changes, which means the *next* gated run will
    report `ENVIRONMENT_CHANGED` against the committed baselines rather than

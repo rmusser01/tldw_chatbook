@@ -243,7 +243,14 @@ Each hit is one block:
     similarity, so a strong hybrid hit reads `| match: strong`, exactly as
     the same hit would in a semantic profile.
   - A hybrid row that only the keyword leg found has no similarity at all
-    and reads `| keyword match`.
+    and reads `| keyword match`. In practice you see these when the vector
+    leg comes back short or empty — for instance when the selected sources
+    have nothing in the vector index yet. When the vector leg fills the
+    result list, its rows currently crowd keyword-only rows out of a hybrid
+    result even if the keyword leg matched a document the vector leg never
+    returned; that limitation is tracked as TASK-4110. A document both legs
+    found is unaffected: it fuses into one row and is ranked on the
+    strength of both.
   - A reranked row reads `| reranked`: reranker scores are on the
     reranking model's own scale, not a 0-1 similarity, so the band is
     withheld rather than guessed.
@@ -454,3 +461,16 @@ only." Every one of those route notes rendered on zero-row outcomes too.*
 > fallback under a hybrid profile now happens only for a scoped query or a
 > Prompts-only selection, the latter disclosed as "No keyword leg for the
 > selected sources — semantic only." The rest of that walkthrough stands.
+
+*Verified against ec1ed811e — 2026-08-09 (hybrid-fusion cluster live check,
+scratch profile holding a copy of the real Library DBs and vector index,
+real provider): with **Media deselected** and Notes + Conversations in
+scope — the case that used to fall back to semantic — RAG Answer on the
+default Hybrid Basic profile returned a **note** row and a **conversation**
+row, both banded `keyword match`, for the query "worktree UAT database".
+Those three tokens appear in the note but never adjacently, so the query
+matched nothing at all before the per-token FTS quoting fix, and neither
+source type was reachable by the engine's keyword leg before it grew its
+notes and conversations sub-legs. The vector index on that profile holds
+media chunks only, which is why the keyword-only rows survived to be shown
+— see the TASK-4110 note under [Evidence rows](#evidence-rows).*

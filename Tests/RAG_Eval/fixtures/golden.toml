@@ -1,4 +1,4 @@
-# RAG eval harness — golden query set (44 queries)
+# RAG eval harness — golden query set (45 queries)
 #
 # Schema (exact — the loader rejects missing/unknown keys):
 #   id              stable query identifier, unique
@@ -25,8 +25,9 @@
 #                        (semantic, hybrid), never by P/R/MRR/NDCG.
 
 # ===========================================================================
-# keyword (15) — rare literal token, FTS advantage
-# (the last three are the multi-chunk targets; see the note above them)
+# keyword (16) — rare literal token, FTS advantage
+# (the multi-chunk targets and the vector-blind target are last; see the
+# notes above each of them)
 # ===========================================================================
 
 [[query]]
@@ -128,6 +129,26 @@ id = "kw-drayton-conveyor"
 query = "Drayton-6 conveyor belt tracking"
 category = "keyword"
 relevant_slugs = ["conv-drayton-conveyor"]
+
+# --- vector-blind keyword target: the one query on this set the vector leg
+# alone cannot answer. All three tokens occur in `note-saltmarsh-hide` and
+# "plant" occurs in no other document, so the engine's FTS leg (AND-of-terms)
+# resolves it uniquely; but the phrase reads as plant-and-equipment upkeep,
+# the shared subject of ~20 maintenance documents, while the target is a
+# bird-hide note whose "plant" is botanical. Measured: plain finds it at rank
+# 1, semantic does not return it at all — and hybrid does not either, because
+# fusion's alpha blend buries an FTS-only row beneath the vector leg
+# (TASK-4110). That makes this the one golden query whose hybrid cell is a
+# real before-number rather than a repeat of semantic's.
+# Read the corpus section of the same name before editing either side: a
+# rare-identifier version of this case was tried first and FAILED (a
+# corpus-unique code is a beacon for the embedder too).
+
+[[query]]
+id = "kw-plant-maintenance-record"
+query = "plant maintenance record"
+category = "keyword"
+relevant_slugs = ["note-saltmarsh-hide"]
 
 # ===========================================================================
 # paraphrase (13) — zero content-word overlap with the target, vector advantage

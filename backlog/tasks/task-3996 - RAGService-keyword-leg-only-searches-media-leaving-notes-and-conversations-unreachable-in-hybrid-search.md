@@ -3,10 +3,10 @@ id: TASK-3996
 title: >-
   RAGService keyword leg only searches media, leaving notes and conversations
   unreachable in hybrid search
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-09 05:17'
-updated_date: '2026-08-09 12:30'
+updated_date: '2026-08-09 20:40'
 labels:
   - rag
   - retrieval
@@ -25,7 +25,7 @@ Found by the P1 eval harness (TASK-3894). RAGService._perform_fts5_search (rag_s
 <!-- AC:BEGIN -->
 - [x] #1 The keyword leg of hybrid search can return notes and conversations, not only media, when the query matches their content.
 - [x] #2 A regression test with a notes-only or conversations-only relevant document confirms it is reachable through hybrid search FTS leg.
-- [ ] #3 The P1 eval harness baselines are re-stamped in the same PR, with before and after numbers included in the PR description.
+- [x] #3 The P1 eval harness baselines are re-stamped in the same PR, with before and after numbers included in the PR description.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -99,4 +99,21 @@ Modified: `tldw_chatbook/RAG_Search/simplified/rag_service.py`,
 `tldw_chatbook/RAG_Search/simplified/config.py`,
 `Tests/RAG_Eval/harness/ingest.py`. Added:
 `Tests/RAG_Search/test_keyword_leg_chacha.py`.
+
+**Plan Task 6 closure (re-stamp + live).** AC #3 ticked. Like TASK-3995, this
+fix's own contribution to the stamped numbers was ZERO on the gated metrics -
+the informational run taken right after it moved nothing, because every golden
+query whose FTS leg fires already had its target at vector rank 1, so reaching
+notes and conversations added coverage the metrics could not see. That is a
+property of the corpus, not evidence the fix is inert, and it is exactly why
+plan Task 6 added a vector-blind fixture (see TASK-3994's AC #2 and TASK-4110).
+
+Live verification (2026-08-09, tmux, scratch profile holding a copy of the real
+Library DBs and vector index): Library > Search/RAG, RAG Answer mode, default
+Hybrid Basic profile, **Media deselected** with Notes and Conversations in
+scope - the case that used to fall back to semantic and now must not. The query
+"worktree UAT database" returned a note row and a conversation row, both banded
+"keyword match". Neither source type was reachable through the engine's keyword
+leg before this change, and the vector index on that profile holds media chunks
+only, so both rows can only have come from the new ChaChaNotes sub-legs.
 <!-- SECTION:NOTES:END -->

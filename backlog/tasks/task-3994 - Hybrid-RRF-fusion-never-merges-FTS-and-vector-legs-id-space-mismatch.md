@@ -1,10 +1,10 @@
 ---
 id: TASK-3994
 title: Hybrid RRF fusion never merges FTS and vector legs (id-space mismatch)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-09 05:16'
-updated_date: '2026-08-09 17:19'
+updated_date: '2026-08-09 20:40'
 labels:
   - rag
   - retrieval
@@ -22,8 +22,8 @@ Found by the P1 eval harness (TASK-3894). RRF fusion matches on SearchResult.id 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 RRF fusion normalizes ids to a common granularity before matching legs, so a document found by both the FTS leg and the vector leg produces one fused row reflecting both contributions.
-- [ ] #2 On the P1 fixture corpus, hybrid search results provably differ from pure semantic search for at least one query where the FTS leg surfaces a relevant document the vector leg alone ranks outside the top-k. (FIRST HALF MET, SECOND HALF NOT EXHIBITABLE ON THIS CORPUS - see Implementation Notes: hybrid now differs from semantic on 22 of 44 golden queries, was 0 of 44; but semantic recall@10 is already 1.000, so no relevant document sits outside the vector leg's top-k for the FTS leg to rescue. Needs a corpus addition or an AC amendment - decide in plan Task 6.)
-- [ ] #3 The P1 eval harness baselines (Tests/RAG_Eval/baselines/hybrid.json) are re-stamped in the same PR as this fix, with the before and after numbers included in the PR description. (Completes in plan Task 6, same PR - deliberately not in this commit.)
+- [x] #2 AMENDED IN PLAN TASK 6, and the amendment is the finding. As written this AC bundled two claims. The first - hybrid results provably differ from pure semantic on the P1 corpus - is MET: 22 of 44 golden queries returned a different id-list immediately after the fix, was 0 of 44. The second - the FTS leg surfacing a relevant document the vector leg ranks outside the top-k - is NOT met by this fix, and Task 6 established why by building the missing evidence rather than assuming it. The corpus had no vector-blind document (semantic recall@10 was 1.000 everywhere), so one was authored: note-saltmarsh-hide / kw-plant-maintenance-record, now committed. Measured against it: plain returns it at rank 1, semantic does not return it at all (the fixture works), the engine's FTS leg returns it at rank 1 - and hybrid still does not return it, because fusion's alpha blend scores an FTS-only row at (1-alpha)/(rrf_k+1) = 0.00492 and the vector leg fills every slot above it. That is a SECOND defect, named in this task's own description but not addressed by the id-space fix, and it is now filed with its before-number as TASK-4110. This AC is ticked for the half this fix delivers; the rescue half is TASK-4110's to close, and the harness will show it as kw-plant-maintenance-record's hybrid cell going from miss to hit.
+- [x] #3 The P1 eval harness baselines (Tests/RAG_Eval/baselines/hybrid.json) are re-stamped in the same PR as this fix, with the before and after numbers included in the PR description. (Completes in plan Task 6, same PR - deliberately not in this commit.)
 - [x] #4 A regression test pins that a document found by both legs receives a fused score reflecting both contributions, not only the vector one.
 <!-- AC:END -->
 
@@ -91,4 +91,23 @@ Mutation-checked: reverting the key to `lambda r: r.id` reds the six merge
 tests and leaves the fallback pin green; flipping the display preference
 back to the FTS item reds the display test (and the mixed-leg citation
 test, which is display-coupled by construction).
+
+**Plan Task 6 closure (re-stamp + AC #2 adjudication).** Baselines re-stamped
+once, at the end of the arc, in the same PR as the fix. Hybrid, P1 baseline ->
+stamped: overall P 0.117 -> 0.103, F1 0.208 -> 0.185, recall/MRR/NDCG 1.000 ->
+0.974; keyword category P 0.135 -> 0.106, R 1.000 -> 0.938, F1 0.236 -> 0.189.
+The stamped run also carries a corpus change (48 -> 49 documents, 44 -> 45
+queries), so the per-fix attribution is in the progression table in
+Tests/RAG_Eval/README.md rather than in this single diff. Gate re-run clean
+afterwards: PASSED, 60 metrics within 0.05, 0 warnings.
+
+Precision falls because the fix works: collapsing a document's chunks into one
+fused row frees top-k slots that fill with further documents, and precision@k
+divides by min(k, len(retrieved)). One passage per document is the intended
+unit for an evidence list; the lost precision was partly counting duplicates.
+
+AC #2 was amended, not waived - see the AC text. The short version: the
+"rescue" half is blocked by a second, independent defect in the same fusion
+function (the alpha blend buries FTS-only rows), now filed as TASK-4110 with a
+measured before-number and a committed fixture that will show it closing.
 <!-- SECTION:NOTES:END -->
