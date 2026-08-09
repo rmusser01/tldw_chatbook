@@ -3467,7 +3467,9 @@ class PromptsDatabase:
             candidate = dict(update_data)
             candidate["keywords"] = desired_keywords
             desired_definition = self._serialize_prompt_definition(
-                candidate["prompt_definition"]
+                validated_snapshot.get(
+                    "durable_prompt_definition", candidate["prompt_definition"]
+                )
             )
             desired_values = {
                 "name": candidate["name"].strip()

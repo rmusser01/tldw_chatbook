@@ -1,5 +1,9 @@
 import pytest
 
+from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
+from tldw_chatbook.Prompt_Management.local_prompt_service import (
+    LocalPromptService as StandaloneLocalPromptService,
+)
 from tldw_chatbook.Prompt_Management.prompt_scope_service import (
     ServerPromptService as ScopedServerPromptService,
     build_prompt_scope_service,
@@ -11,7 +15,7 @@ from tldw_chatbook.Prompt_Management.server_prompt_service import ServerPromptSe
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 
 
-class FakePromptBackend:
+class _BasicPromptBackend:
     def __init__(self, source):
         self.source = source
         self.calls = []
@@ -53,6 +57,10 @@ class FakePromptBackend:
     async def restore_prompt_version(self, prompt_id, version):
         self.calls.append(("restore_prompt_version", prompt_id, version))
         return {"id": prompt_id, "name": "Restored", "version": version}
+
+
+class FakePromptBackend(_BasicPromptBackend):
+    """Add the non-version prompt utility fake surface."""
 
     async def get_prompts_health(self):
         self.calls.append(("get_prompts_health",))
@@ -196,6 +204,41 @@ class FakeChatbookBackend:
     async def remove_import_job(self, job_id):
         self.calls.append(("remove_import_job", job_id))
         return {"job_id": job_id, "removed": True}
+
+
+class RealLocalPromptInterop:
+    """Expose the standalone LocalPromptService's real DB seams."""
+
+    def __init__(self, database):
+        self.database = database
+
+    def fetch_prompt_details(self, prompt_identifier, *, include_deleted=True):
+        return self.database.fetch_prompt_details(
+            prompt_identifier, include_deleted=include_deleted
+        )
+
+    def get_db_instance(self):
+        return self.database
+
+
+class FakeRetainedLocalPromptBackend(FakePromptBackend):
+    """Local-only retained-history contract; server fakes remain legacy-shaped."""
+
+    async def list_prompt_versions(
+        self, prompt_id, *, page_size=25, before_change_id=None
+    ):
+        self.calls.append(
+            ("list_prompt_versions", prompt_id, page_size, before_change_id)
+        )
+        return [{"version": 2, "prompt_uuid": f"{self.source}-prompt-1"}]
+
+    async def restore_prompt_version(
+        self, prompt_id, *, change_id, version, expected_version
+    ):
+        self.calls.append(
+            ("restore_prompt_version", prompt_id, change_id, version, expected_version)
+        )
+        return {"id": prompt_id, "name": "Restored", "version": version}
 
 
 class FakeChatbookCrudBackend(FakeChatbookBackend):
@@ -529,7 +572,7 @@ async def test_prompt_chatbook_scope_service_routes_server_prompt_version_contro
 
 @pytest.mark.asyncio
 async def test_prompt_chatbook_scope_service_routes_local_prompt_version_controls():
-    local_prompts = FakePromptBackend("local")
+    local_prompts = FakeRetainedLocalPromptBackend("local")
     policy = FakePolicyEnforcer()
     scope = PromptChatbookScopeService(
         local_prompt_service=local_prompts,
@@ -543,19 +586,71 @@ async def test_prompt_chatbook_scope_service_routes_local_prompt_version_control
         mode="local", prompt_id="local-prompt-1"
     )
     restored = await scope.restore_prompt_version(
-        mode="local", prompt_id="local-prompt-1", version=2
+        mode="local",
+        prompt_id="local-prompt-1",
+        change_id=42,
+        version=2,
+        expected_version=3,
     )
 
     assert versions[0]["record_id"] == "local:prompt_version:2"
     assert restored["record_id"] == "local:prompt:local-prompt-1"
     assert local_prompts.calls[-2:] == [
-        ("list_prompt_versions", "local-prompt-1"),
-        ("restore_prompt_version", "local-prompt-1", 2),
+        ("list_prompt_versions", "local-prompt-1", 25, None),
+        ("restore_prompt_version", "local-prompt-1", 42, 2, 3),
     ]
     assert policy.calls == [
         "prompts.versions.list.local",
         "prompts.versions.restore.local",
     ]
+
+
+@pytest.mark.asyncio
+async def test_prompt_chatbook_scope_real_standalone_local_versions_use_paging_and_conditional_restore():
+    database = PromptsDatabase(":memory:", client_id="chatbook-local-versions")
+    try:
+        prompt_id, prompt_uuid, _message = database.add_prompt(
+            name="Original",
+            author=None,
+            details="Original details",
+            system_prompt="Original system",
+            user_prompt="Original user",
+        )
+        database.update_prompt_by_id(
+            prompt_id,
+            {"name": "Current", "details": "Current details"},
+            expected_version=1,
+        )
+        scope = PromptChatbookScopeService(
+            local_prompt_service=StandaloneLocalPromptService(
+                RealLocalPromptInterop(database)
+            ),
+            server_prompt_service=FakePromptBackend("server"),
+            local_chatbook_service=FakeChatbookBackend("local"),
+            server_chatbook_service=FakeChatbookBackend("server"),
+        )
+
+        page = await scope.list_prompt_versions(
+            mode="local",
+            prompt_id=prompt_uuid,
+            page_size=10,
+            before_change_id=None,
+        )
+        source = next(item for item in page["items"] if item["version"] == 1)
+        result = await scope.restore_prompt_version(
+            mode="local",
+            prompt_id=prompt_uuid,
+            change_id=source["change_id"],
+            version=1,
+            expected_version=2,
+        )
+
+        assert page["items"][0]["record_type"] == "prompt_version"
+        assert result["outcome"] == "restored"
+        assert result["new_version"] == 3
+        assert database.fetch_prompt_details(prompt_uuid)["name"] == "Original"
+    finally:
+        database.close_connection()
 
 
 @pytest.mark.asyncio

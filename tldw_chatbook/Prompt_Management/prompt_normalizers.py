@@ -587,6 +587,7 @@ def prepare_retained_snapshot_for_restore(
         )
     }
     raw_payload = record.get("payload") if isinstance(record, Mapping) else None
+    durable_prompt_definition = update_data["prompt_definition"]
     if isinstance(raw_payload, Mapping):
         # ``None`` is a distinct durable value from an empty compatibility lane.
         # The history normalizer renders both safely as empty preview text, but
@@ -594,6 +595,8 @@ def prepare_retained_snapshot_for_restore(
         for field in ("system_prompt", "user_prompt"):
             if field in raw_payload:
                 update_data[field] = raw_payload[field]
+        if isinstance(raw_payload.get("prompt_definition"), str):
+            durable_prompt_definition = raw_payload["prompt_definition"]
     if snapshot["prompt_format"] == "structured":
         update_data = validate_console_artifact_payload(update_data, capabilities)
         validate_prompt_request_size(update_data, capabilities)
@@ -601,6 +604,7 @@ def prepare_retained_snapshot_for_restore(
         "update_data": update_data,
         "keywords": snapshot["keywords"],
         "keywords_captured": snapshot["keywords_captured"],
+        "durable_prompt_definition": durable_prompt_definition,
     }
 
 

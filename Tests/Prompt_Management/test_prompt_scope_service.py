@@ -892,6 +892,69 @@ async def test_prompt_scope_app_wired_local_restore_uses_real_retained_history_t
 
 
 @pytest.mark.asyncio
+async def test_prompt_scope_structured_compact_snapshot_no_change_preserves_durable_json():
+    database = PromptsDatabase(":memory:", client_id="scope-compact-no-change")
+    compact_definition = (
+        '{"schema_version":2,"kind":"block_prompt","lanes":['
+        '{"id":"system","blocks":[]},'
+        '{"id":"user","blocks":[{"id":"u","title":"User",'
+        '"syntax":"freeform","content":"Hello"}]}]}'
+    )
+    try:
+        _prompt_id, prompt_uuid, _message = database.add_prompt(
+            name="Compact structured",
+            author=None,
+            details="Details",
+            system_prompt="",
+            user_prompt="Hello",
+            prompt_format="structured",
+            prompt_schema_version=2,
+            prompt_definition=compact_definition,
+            artifact_type="prompt",
+        )
+        service = PromptScopeService(
+            local_service=LocalPromptService(database),
+            server_service=FakeServerPromptService(),
+        )
+        page = await service.list_prompt_versions(
+            mode="local", prompt_identifier=prompt_uuid, page_size=1
+        )
+        source = page["items"][0]
+        before = (
+            database.get_connection()
+            .execute(
+                "SELECT version, prompt_definition FROM Prompts WHERE uuid = ?",
+                (prompt_uuid,),
+            )
+            .fetchone()
+        )
+        before_history_count = database.get_prompt_history_count(prompt_uuid)
+
+        result = await service.restore_prompt_version(
+            mode="local",
+            prompt_identifier=prompt_uuid,
+            change_id=source["change_id"],
+            version=1,
+            expected_version=1,
+        )
+
+        after = (
+            database.get_connection()
+            .execute(
+                "SELECT version, prompt_definition FROM Prompts WHERE uuid = ?",
+                (prompt_uuid,),
+            )
+            .fetchone()
+        )
+        assert result["outcome"] == "no_change"
+        assert result["new_version"] == 1
+        assert tuple(after) == tuple(before)
+        assert database.get_prompt_history_count(prompt_uuid) == before_history_count
+    finally:
+        database.close_connection()
+
+
+@pytest.mark.asyncio
 async def test_prompt_scope_routes_server_prompt_collections_with_policy():
     policy = FakePolicyEnforcer()
     server = FakeServerPromptService()
