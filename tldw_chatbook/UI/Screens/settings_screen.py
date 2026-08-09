@@ -4658,6 +4658,11 @@ class SettingsScreen(BaseAppScreen):
                 "Immediate actions: workspace changes apply as you make them; "
                 "there is no draft to save or revert."
             )
+        if category == SettingsCategoryId.AGENTS:
+            return (
+                "Applies immediately: agent definitions save/delete as you "
+                "act; there is no draft to save or revert."
+            )
         if category == SettingsCategoryId.INTERNAL_PROMPTS:
             return "Use each prompt's Save / Reset buttons in the editor to manage overrides."
         if category == SettingsCategoryId.IMAGE_GENERATION:

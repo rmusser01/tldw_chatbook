@@ -98,19 +98,24 @@ class AgentsSettingsPanel(Vertical):
                 yield Button("Delete", variant="error", id="agents-delete-button")
         yield Static("", id="agents-status", classes="settings-detail-row")
 
-    def on_mount(self) -> None:
-        self._reload_list()
+    async def on_mount(self) -> None:
+        await self._reload_list()
 
     # -- list / selection -------------------------------------------------
-    def _reload_list(self) -> None:
+    async def _reload_list(self) -> None:
         if self._runs_db is None:
             return
         lv = self.query_one("#agents-definition-list", ListView)
-        lv.clear()
+        # Await both the removal and the appends -- ListView.clear()/append()
+        # return AwaitRemove/AwaitMount, not plain None; a fire-and-forget
+        # call leaves a freshly-appended row un-laid-out (Region(0,0,0,0))
+        # for up to a tick, so a click/select right after reload can miss it
+        # (review finding, task-6 fix round 1).
+        await lv.clear()
         self._rows = self._runs_db.list_agent_definitions()
         for row in self._rows:
             marker = "" if row["enabled"] else " (disabled)"
-            lv.append(
+            await lv.append(
                 ListItem(Static(f"{row['name']}{marker}"), name=row["id"])
             )
         enabled_count = sum(1 for r in self._rows if r["enabled"])
@@ -136,13 +141,13 @@ class AgentsSettingsPanel(Vertical):
         self.query_one("#agents-enabled-switch", Switch).value = bool(row["enabled"])
 
     # -- buttons ----------------------------------------------------------
-    def on_button_pressed(self, event: Button.Pressed) -> None:
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "agents-new-button":
             self._clear_form()
         elif event.button.id == "agents-save-button":
-            self._save()
+            await self._save()
         elif event.button.id == "agents-delete-button":
-            self._delete()
+            await self._delete()
 
     def _clear_form(self) -> None:
         self._selected_id = None
@@ -173,7 +178,7 @@ class AgentsSettingsPanel(Vertical):
             enabled=self.query_one("#agents-enabled-switch", Switch).value,
         )
 
-    def _save(self) -> None:
+    async def _save(self) -> None:
         try:
             defn = self._form_definition()
             if self._selected_id is None:
@@ -184,16 +189,16 @@ class AgentsSettingsPanel(Vertical):
             self._set_status(str(exc))
             return
         self._set_status(f"Saved '{defn.name}'.")
-        self._reload_list()
+        await self._reload_list()
 
-    def _delete(self) -> None:
+    async def _delete(self) -> None:
         if self._selected_id is None:
             self._set_status("Select a definition to delete.")
             return
         self._runs_db.soft_delete_agent_definition(self._selected_id)
         self._clear_form()
         self._set_status("Deleted.")
-        self._reload_list()
+        await self._reload_list()
 
     def _set_status(self, text: str) -> None:
         self.query_one("#agents-status", Static).update(text)

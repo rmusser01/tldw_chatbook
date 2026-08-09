@@ -2,7 +2,9 @@
 
 import pytest
 from textual.app import App
+from textual.widgets import ListView
 
+from tldw_chatbook.Agents.agent_models import AgentDefinition
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Widgets.settings_agents_panel import AgentsSettingsPanel
 
@@ -51,6 +53,52 @@ async def test_panel_surfaces_validation_error(runs_db):
         assert status.region.width > 0
         assert "reserved" in _static_text(status)
     assert runs_db.list_agent_definitions() == []
+
+
+@pytest.mark.asyncio
+async def test_panel_selection_round_trip_updates_in_place(runs_db):
+    # Review finding (task-6 fix round 1): the ListView selection round
+    # trip (select -> form populates -> Save updates in place) had zero
+    # coverage, and _reload_list() used to fire ListView.clear()/append()
+    # without awaiting the AwaitRemove/AwaitMount they return -- a freshly
+    # appended row could sit at Region(0,0,0,0) for a tick, so a
+    # select/click right after a reload could miss it. This pins both the
+    # round trip AND (implicitly, by working at all with a single
+    # `pilot.pause()` settle) the await fix.
+    seeded_id = runs_db.create_agent_definition(
+        AgentDefinition(
+            name="researcher",
+            description="Searches sources.",
+            instructions="Cite sources.",
+        )
+    )
+    panel = AgentsSettingsPanel(app_instance=None, runs_db=runs_db)
+    async with PanelHarness(panel).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        list_view = panel.query_one("#agents-definition-list", ListView)
+        list_view.focus()
+        list_view.index = 0
+        list_view.action_select_cursor()
+        await pilot.pause()
+
+        assert panel.query_one("#agents-name-input").value == "researcher"
+        assert (
+            panel.query_one("#agents-description-input").value
+            == "Searches sources."
+        )
+        assert panel.query_one("#agents-instructions-area").text == "Cite sources."
+
+        panel.query_one(
+            "#agents-description-input"
+        ).value = "Now cites primary sources."
+        await pilot.click("#agents-save-button")
+        await pilot.pause()
+
+    rows = runs_db.list_agent_definitions()
+    assert len(rows) == 1
+    assert rows[0]["id"] == seeded_id
+    assert rows[0]["name"] == "researcher"
+    assert rows[0]["description"] == "Now cites primary sources."
 
 
 @pytest.mark.asyncio
