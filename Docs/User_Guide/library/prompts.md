@@ -94,6 +94,39 @@ the conflict explanation and replaces the normal actions with **Save as new**
 and **Reload**. Reload restores the current version; Save as new keeps your
 blocks in a new item.
 
+### Retained history
+
+Saved local Prompts and Recipes include a collapsed **Retained history (…)**
+disclosure. Selecting an item loads only its exact retained count; opening the
+disclosure lazily loads the newest bounded page. Use **Load older versions** to
+request another page. A failed count or page load offers **Retry** without
+changing the editor.
+
+Retained history contains create and update snapshots, not a complete audit
+log. Each row shows its version, timestamp, artifact type, and changed-field
+summary. Selecting a row reveals literal, read-only metadata plus its stored
+System and User lanes. Version 1 is labeled `Created`; when pruning removed the
+immediate predecessor, the summary says `Earlier baseline unavailable` rather
+than guessing what changed.
+
+Some retained rows are preview-only. Malformed, mismatched, unknown, future,
+or unsupported structured records show the exact compatibility reason and
+cannot be restored. You can still inspect history while the current editor is
+dirty or compatibility-only, but **Restore selected version…** remains disabled
+until the working copy is clean and the current editor is compatible.
+
+Restore always asks for confirmation and creates a new current version; it
+does not rewrite the retained row. The confirmation also calls out a
+Prompt↔Recipe type change. If the Prompt changed after history was loaded, use
+the editor's **Reload** conflict action before retrying. Restoring content that
+already matches the current version reports `no_change` and creates no extra
+version.
+
+Newer snapshots restore their captured keywords. Older snapshots that predate
+keyword capture keep the current keywords and disclose that choice. Validation,
+duplicate-name, keyword-persistence, or unexpected failures leave the Prompt
+and selected retained row unchanged so you can correct the issue or retry.
+
 ### The action area
 
 | Control | What it does |
@@ -174,6 +207,6 @@ prompt to the Library. See
   item (task-197).
 
 —
-*TASK-202 behavior and this guide were reverified after the final review
-corrections on 2026-08-08. Verification is tied to the branch history rather
-than a self-referential documentation SHA.*
+*TASK-202 and TASK-196 behavior in this guide were reverified after final
+review corrections on 2026-08-09. Verification is tied to the branch history
+rather than a self-referential documentation SHA.*
