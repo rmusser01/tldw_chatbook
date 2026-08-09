@@ -16,8 +16,9 @@ gateway = pytest.importorskip(
 )
 GatewayRequestContext = gateway.GatewayRequestContext
 GatewayToolExecutionError = gateway.GatewayToolExecutionError
+GatewayProtocolConnection = gateway.GatewayProtocolConnection
+PROTOCOL_PROFILES = gateway.PROTOCOL_PROFILES
 
-from jsonschema import Draft7Validator, Draft202012Validator  # noqa: E402
 from tldw_chatbook.MCP.gateway_runtime import ChatbookGatewayRuntime  # noqa: E402
 from tldw_chatbook.Agents.agent_models import ToolResult  # noqa: E402
 from tldw_chatbook.Agents.local_tool_provider import (  # noqa: E402
@@ -92,6 +93,33 @@ def _runtime_with_builtins() -> ChatbookGatewayRuntime:
     runtime = _runtime(*_describe_local_tools())
     _register_real_builtins(runtime)
     return runtime
+
+
+class _GatewayCoreToolHarness:
+    """Supply unused core methods around the tool-only Chatbook runtime."""
+
+    def __init__(self, runtime: ChatbookGatewayRuntime) -> None:
+        self.name = runtime.name
+        self.version = runtime.version
+        self._runtime = runtime
+
+    async def list_tools(self, context):
+        return await self._runtime.list_tools(context)
+
+    async def call_tool(self, name, arguments, context):
+        return await self._runtime.call_tool(name, arguments, context)
+
+    async def list_resources(self, _context):
+        return []
+
+    async def read_resource(self, _uri, _context):
+        raise AssertionError("resources/read is not part of this tools/list test")
+
+    async def list_prompts(self, _context):
+        return []
+
+    async def get_prompt(self, _name, _arguments, _context):
+        raise AssertionError("prompts/get is not part of this tools/list test")
 
 
 def _local_registration(
@@ -578,8 +606,11 @@ async def test_raised_local_provider_exception_maps_to_fixed_payload_free_error(
     assert all(sentinel not in record for record in log_records)
 
 
+@pytest.mark.parametrize("protocol_version", PROTOCOL_PROFILES)
 @pytest.mark.asyncio
-async def test_real_provider_schemas_are_published_unchanged(tmp_path) -> None:
+async def test_real_provider_schemas_compile_for_every_public_profile(
+    tmp_path, protocol_version: str
+) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     provider = build_server_local_provider(
@@ -590,22 +621,112 @@ async def test_real_provider_schemas_are_published_unchanged(tmp_path) -> None:
         registration.name: copy.deepcopy(registration.parameters)
         for registration in registrations
     }
+    assert len(expected_schemas) == 15
     assert all("$schema" not in schema for schema in expected_schemas.values())
-    for schema in expected_schemas.values():
-        Draft7Validator.check_schema(schema)
-        Draft202012Validator.check_schema(schema)
     runtime = _runtime_with_builtins()
     runtime.register_local_tools(registrations)
     runtime.finalize()
+    responses: list[Any] = []
 
-    published = await runtime.list_tools(_context())
+    async def write_response(response: Any) -> None:
+        responses.append(copy.deepcopy(response))
+
+    connection = GatewayProtocolConnection(
+        _GatewayCoreToolHarness(runtime), write_response
+    )
+    profile = PROTOCOL_PROFILES[protocol_version]
+    try:
+        if profile.requires_initialize:
+            await connection.receive(
+                {
+                    "jsonrpc": "2.0",
+                    "id": "initialize",
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": protocol_version,
+                        "capabilities": {},
+                        "clientInfo": {"name": "schema-test", "version": "1"},
+                    },
+                }
+            )
+            await connection.wait_for_idle()
+            assert responses[-1]["result"]["protocolVersion"] == protocol_version
+            await connection.receive(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "notifications/initialized",
+                    "params": {},
+                }
+            )
+            list_params = {}
+        else:
+            list_params = {
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": protocol_version,
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                    "io.modelcontextprotocol/clientInfo": {
+                        "name": "schema-test",
+                        "version": "1",
+                    },
+                }
+            }
+
+        await connection.receive(
+            {
+                "jsonrpc": "2.0",
+                "id": "tools-list",
+                "method": "tools/list",
+                "params": list_params,
+            }
+        )
+        await connection.wait_for_idle()
+    finally:
+        await connection.shutdown()
+
+    tools_response = next(
+        response for response in responses if response.get("id") == "tools-list"
+    )
+    assert "error" not in tools_response
+    tools = tools_response["result"]["tools"]
+    assert len(tools) == len(BUILTIN_TOOL_NAMES) + len(expected_schemas)
     published_locals = {
         descriptor["name"]: descriptor["inputSchema"]
-        for descriptor in published[len(BUILTIN_TOOL_NAMES) :]
+        for descriptor in tools
+        if descriptor["name"] in expected_schemas
     }
-
     assert published_locals == expected_schemas
     assert "todo_write" not in published_locals
+
+
+@pytest.mark.asyncio
+async def test_local_tool_schema_copies_are_detached() -> None:
+    schema = {
+        "type": "object",
+        "properties": {"value": {"type": "string"}},
+        "required": ["value"],
+    }
+    expected = copy.deepcopy(schema)
+    runtime = _runtime_with_builtins()
+    runtime.register_local_tools([_local_registration(parameters=schema)])
+    schema["properties"]["value"]["type"] = "integer"
+    runtime.finalize()
+
+    first_listing = await runtime.list_tools(_context())
+    first_local = next(
+        descriptor for descriptor in first_listing if descriptor["name"] == "local_echo"
+    )
+    assert first_local["inputSchema"] == expected
+    first_local["description"] = "mutated"
+    first_local["inputSchema"]["properties"]["value"]["type"] = "boolean"
+
+    second_listing = await runtime.list_tools(_context())
+    second_local = next(
+        descriptor
+        for descriptor in second_listing
+        if descriptor["name"] == "local_echo"
+    )
+    assert second_local["description"] == "Local echo tool"
+    assert second_local["inputSchema"] == expected
 
 
 @pytest.mark.asyncio
@@ -652,6 +773,18 @@ async def test_successful_local_tool_result_content_is_returned_raw() -> None:
                 )
             ],
             id="malformed-object-schema",
+        ),
+        pytest.param(
+            [
+                _local_registration(
+                    parameters={
+                        "type": "object",
+                        "properties": {},
+                        "default": object(),
+                    }
+                )
+            ],
+            id="non-json-schema-value",
         ),
         pytest.param(
             [

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import inspect
+import json
 import re
 from collections.abc import Awaitable, Callable, Iterable
 from typing import TYPE_CHECKING, Any, NoReturn
@@ -170,6 +171,15 @@ class ChatbookGatewayRuntime:
                 raise ValueError("local tool description must be a bounded string")
             if not isinstance(parameters, dict) or parameters.get("type") != "object":
                 raise ValueError("local tool parameters must have type object")
+            try:
+                serialized_parameters = json.dumps(parameters, allow_nan=False)
+                roundtripped_parameters = json.loads(serialized_parameters)
+            except (RecursionError, TypeError, ValueError):
+                parameters_are_finite_json = False
+            else:
+                parameters_are_finite_json = roundtripped_parameters == parameters
+            if not parameters_are_finite_json:
+                raise ValueError("local tool parameters must be valid JSON Schema")
             if "$schema" in parameters:
                 raise ValueError(
                     "local tool parameters must not declare a schema dialect"
