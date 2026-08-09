@@ -2752,6 +2752,13 @@ async def test_real_picker_verifies_off_loop_reports_bytes_and_commits_after_suc
         assert await _wait_for(
             lambda: bool(screen.query("#external-models-view")), pilot
         )
+        window = screen.query_one(LLMManagementWindow)
+        curated_row = next(
+            row for row in _rail_rows(screen) if row.lab_view_key == "curated"
+        )
+        curated_row.press()
+        await pilot.pause()
+        assert window.active_view == "curated"
         reference = parakeet_reference(PARAKEET_V2_MODEL, "int8")
         screen.post_message(CuratedView.UseFromDiskRequested(reference))
         assert await _wait_for(lambda: isinstance(app.screen, SelectDirectory), pilot)
@@ -2762,8 +2769,13 @@ async def test_real_picker_verifies_off_loop_reports_bytes_and_commits_after_suc
         assert await _wait_for(service.progress_seen.is_set, pilot)
 
         external = screen.query_one(ExternalModelView)
+        assert window.active_view == "external"
+        assert "-active" in window.query_one("#llm-view-external").classes
+        active_rail = [row for row in _rail_rows(screen) if "is-active" in row.classes]
+        assert [row.lab_view_key for row in active_rail] == ["external"]
         status = external.query_one("#external-model-operation-status", Static)
         assert "4 / 8 bytes" in str(status.renderable)
+        assert status.region.width > 0 and status.region.height > 0
         assert service.prepare_threads == [service.prepare_threads[0]]
         assert service.prepare_threads[0] != threading.get_ident()
 
@@ -2798,6 +2810,9 @@ async def test_stale_picker_result_and_cancel_leave_the_prior_source_unchanged(
         assert await _wait_for(
             lambda: bool(screen.query("#external-models-view")), pilot
         )
+        window = screen.query_one(LLMManagementWindow)
+        window.active_view = "curated"
+        await pilot.pause()
         pushes = MagicMock()
         monkeypatch.setattr(app, "push_screen", pushes)
 
@@ -2812,6 +2827,93 @@ async def test_stale_picker_result_and_cancel_leave_the_prior_source_unchanged(
 
         assert service.prepare_calls == []
         assert service.commit_attempts == []
+        assert window.active_view == "curated"
+
+
+@pytest.mark.asyncio
+async def test_external_workers_keep_paths_out_of_descriptions_and_logs(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+
+    from loguru import logger as loguru_logger
+    from textual.worker import WorkerState
+
+    from tldw_chatbook.Local_Ingestion import parakeet_v2_artifact as artifact
+    from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
+    from tldw_chatbook.UI.Screens.model_external_view import ExternalModelView
+
+    selected = (tmp_path / "worker-description-must-not-leak").absolute()
+    prepared = SimpleNamespace(
+        directory=selected,
+        verified=SimpleNamespace(directory=selected, reference=object()),
+    )
+    report = SimpleNamespace(destination=selected)
+    consent = SimpleNamespace(destination=selected)
+
+    async def fake_preflight(**_kwargs):
+        return report
+
+    async def fake_provision(_report, **_kwargs):
+        return selected
+
+    monkeypatch.setattr(artifact, "run_parakeet_vad_preflight", fake_preflight)
+    monkeypatch.setattr(artifact, "run_parakeet_vad_provision", fake_provision)
+    service = _FakeExternalSourceService(block_verification=True)
+    app = _app()
+    app._parakeet_source_service = service
+    messages: list[str] = []
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _models_screen(app)
+        assert await _wait_for(
+            lambda: bool(screen.query("#external-models-view")), pilot
+        )
+        sink_id = loguru_logger.add(
+            lambda message: messages.append(str(message)),
+            level="DEBUG",
+            format="{message}",
+        )
+        try:
+            token = screen._next_external_token()
+            screen._external_directory_selected(
+                token,
+                ParakeetSourceKey.V2_INT8,
+                selected,
+            )
+            verify_worker = screen._external_selection_worker
+            assert verify_worker is not None
+            stale_token = (token[0] - 1, token[1])
+            workers = (
+                verify_worker,
+                screen._run_external_vad_preflight(stale_token, prepared),
+                screen._run_external_vad_provision(
+                    stale_token,
+                    prepared,
+                    report,
+                ),
+                screen._run_external_copy(stale_token, prepared, consent),
+            )
+            assert await _wait_for(service.progress_seen.is_set, pilot)
+            await pilot.pause()
+            assert verify_worker.state is WorkerState.RUNNING
+
+            assert [worker.description for worker in workers] == [
+                "Verify external Parakeet source",
+                "Check managed VAD dependency",
+                "Install managed VAD dependency",
+                "Copy external Parakeet source",
+            ]
+            log_output = "\n".join(messages)
+            assert str(selected) not in log_output
+            status = screen.query_one(ExternalModelView).query_one(
+                "#external-model-operation-status", Static
+            )
+            assert "Verifying model files" in str(status.renderable)
+            assert status.region.width > 0 and status.region.height > 0
+        finally:
+            service.release_verification.set()
+            loguru_logger.remove(sink_id)
 
 
 @pytest.mark.asyncio

@@ -127,7 +127,12 @@ async def test_external_view_emits_exact_change_stop_and_copy_actions(
 @pytest.mark.asyncio
 async def test_external_view_keeps_actions_and_status_reachable_at_80_columns(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
+    from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
+    from Tests.UI.app_factory import _build_test_app
+
     selected = (tmp_path / ("long-model-directory-" * 4)).absolute()
     service = _SourceService(
         {
@@ -139,22 +144,62 @@ async def test_external_view_keeps_actions_and_status_reachable_at_80_columns(
             )
         }
     )
-    app = _ViewApp(service)
+    service.close = lambda: None
+    service.may_delete = lambda _reference: None
+    service.on_root_activated = lambda _reference: None
+    app = _build_test_app()
+    assert app.CSS_PATH == TldwCli.CSS_PATH
+    app._parakeet_source_service = service
+    monkeypatch.setattr(
+        "tldw_chatbook.app.get_cli_setting",
+        lambda section, key=None, default=None: (
+            False if (section, key) == ("splash_screen", "enabled") else default
+        ),
+    )
 
     async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.pause()
-        app.view.apply_operation_status("Verifying model files · 4 / 8 bytes")
+        screen = LLMScreen(app)
+        await app.push_screen(screen)
+        for _ in range(120):
+            if screen.query("#external-models-view"):
+                break
+            await pilot.pause()
+        external_row = next(
+            row
+            for row in screen.query(".lab-rail-row").results(Button)
+            if row.lab_view_key == "external"
+        )
+        external_row.press()
         await pilot.pause()
 
-        status = app.query_one("#external-model-operation-status", Static)
-        assert "4 / 8 bytes" in str(status.renderable)
-        assert status.region.width > 0 and status.region.height > 0
-        for action in ("change", "stop", "copy"):
-            button = app.query_one(f"#external-model-{action}-v2_int8", Button)
+        parent = screen.query_one("#llm-view-external")
+        actions = [
+            screen.query_one(f"#external-model-{action}-v2_int8", Button)
+            for action in ("change", "stop", "copy")
+        ]
+        assert parent.region.width > 0 and parent.region.height > 0
+        for button in actions:
             assert button.region.width > 0 and button.region.height > 0
-            assert button.region.x + button.region.width <= 80
+            assert parent.region.x <= button.region.x
+            assert button.region.x + button.region.width <= (
+                parent.region.x + parent.region.width
+            )
+            assert parent.region.y <= button.region.y
+            assert button.region.y + button.region.height <= (
+                parent.region.y + parent.region.height
+            )
+        copy = actions[-1]
+        painted_copy = "".join(
+            copy.render_line(y).text for y in range(copy.region.height)
+        )
+        assert "Copy into managed store…" in painted_copy
+        actions[0].focus()
+        await pilot.press("tab")
+        assert app.focused is actions[1]
+        await pilot.press("tab")
+        assert app.focused is copy
         assert str(selected) in str(
-            app.query_one(".external-model-path", Static).renderable
+            screen.query_one(".external-model-path", Static).renderable
         )
 
 

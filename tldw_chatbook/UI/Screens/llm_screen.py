@@ -575,6 +575,10 @@ class LLMScreen(LabScreen):
 
         if not self._owns_external_token(token) or selected is None:
             return
+        window = self.llm_window
+        if window is None or not window.is_mounted:
+            return
+        window.active_view = "external"
         self._set_external_status("Verifying model files…")
         self._external_selection_worker = self._verify_external_source(
             token,
@@ -646,6 +650,7 @@ class LLMScreen(LabScreen):
         group="llm_external_verify",
         exclusive=True,
         exit_on_error=False,
+        description="Verify external Parakeet source",
     )
     def _verify_external_source(
         self,
@@ -767,6 +772,7 @@ class LLMScreen(LabScreen):
         group="llm_external_vad_preflight",
         exclusive=True,
         exit_on_error=False,
+        description="Check managed VAD dependency",
     )
     def _run_external_vad_preflight(
         self,
@@ -871,6 +877,7 @@ class LLMScreen(LabScreen):
         group="llm_external_vad_install",
         exclusive=True,
         exit_on_error=False,
+        description="Install managed VAD dependency",
     )
     def _run_external_vad_provision(
         self,
@@ -1006,6 +1013,7 @@ class LLMScreen(LabScreen):
         group="llm_external_copy",
         exclusive=True,
         exit_on_error=False,
+        description="Copy external Parakeet source",
     )
     def _run_external_copy(
         self,

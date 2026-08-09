@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Vertical, VerticalScroll
 from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Static
@@ -61,13 +61,13 @@ class ExternalModelView(Widget):
     }
 
     ExternalModelView .external-model-actions {
-        height: 3;
+        width: 100%;
+        height: auto;
         margin-top: 1;
     }
 
     ExternalModelView .external-model-actions Button {
-        width: auto;
-        margin-right: 1;
+        width: 100%;
     }
 
     ExternalModelView #external-model-operation-status {
@@ -146,7 +146,7 @@ class ExternalModelView(Widget):
                 markup=False,
             ),
             Static(str(directory), classes="external-model-path", markup=False),
-            Horizontal(*actions, classes="external-model-actions"),
+            Vertical(*actions, classes="external-model-actions"),
             classes="external-model-row",
             id=f"external-model-row-{key.value}",
         )
