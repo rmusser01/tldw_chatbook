@@ -71,7 +71,7 @@ TDD evidence must include a red run against the current raw logs and a green run
 Sweep every Python module under `tldw_chatbook/LLM_Calls/` for logger calls that directly format raw request-payload dictionaries or raw tool definitions, matching acceptance criterion 4. Use an AST/text-assisted inventory, then inspect each candidate in context because names such as `data` also represent response events.
 
 - Any raw request-payload dictionary or tool-definition log is fixed in this task by routing through the existing allowlist helper.
-- Response events, status metadata, bounded parser diagnostics, and individual content-preview diagnostics are not AC 4 matches and are recorded as such in TASK-2118 Implementation Notes. If contextual inspection finds one of those out-of-scope diagnostics is itself an active privacy exposure, file a separate Backlog task and reference it in the notes rather than silently expanding this atomic repair.
+- Response events, status metadata, bounded parser diagnostics, and individual content-preview diagnostics are not AC 4 matches and are recorded as such in TASK-2118 Implementation Notes. The sweep confirmed separate content-preview exposures, so a standalone Backlog task was filed before implementation. TASK-2118 records their exact sites and classification without referencing the later task ID, preserving the repository's no-forward-reference rule and this repair's atomic scope.
 - The sweep is evidence for acceptance criterion 4; a new permanent broad AST test is not required unless the sweep finds a recurring mechanically detectable contract that existing tests do not cover.
 
 ## Verification and scope

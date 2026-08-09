@@ -26,6 +26,7 @@
 - Modify `Tests/Chat/test_sensitive_llm_logging.py`: add two sentinels and one parameterized function-level regression test using the existing `_FakeSession` helper and `_captured_logs` context manager.
 - Modify `tldw_chatbook/LLM_Calls/LLM_API_Calls.py`: route the two HuggingFace ordinary debug lines through the existing allowlist summary.
 - Modify `backlog/tasks/task-2118 - HuggingFace-tools-debug-log-dumps-full-tool-schemas.md`: record the plan, checked acceptance criteria, sweep/mutation/test evidence, ADR decision, and final status.
+- Verify the separately generated Backlog task titled `Remove raw summarization input data from debug logs`: it owns the ten out-of-scope content diagnostics and is committed before execution. Do not copy its later task ID into TASK-2118.
 - Keep `tldw_chatbook/Utils/sensitive_llm_logging.py` unchanged: its existing contract already produces the required output.
 
 ### Task 0: Reconcile the execution branch with current dev
@@ -262,17 +263,29 @@ for path in sorted(root.rglob("*.py")):
 PY
 ```
 
-Expected after the repair: 35 candidates across four modules, all inspected. Eleven request/tool candidates in `LLM_API_Calls.py` route through `safe_llm_request_payload_summary()` (the nine existing provider summaries plus the two corrected HuggingFace summaries). Fourteen are safe metadata-only calls: two HuggingFace model/stream/count/byte calls, one `LLM_API_Calls_Local.py` payload-**keys** call, and eleven `type(data)` calls. The remaining ten calls in `Local_Summarization_Lib.py` and `Summarization_General_Lib.py` log full or 500-character input data. They are confirmed privacy exposures but are individual content diagnostics, not AC 4 raw provider request-payload dictionaries/tool definitions; create a separate atomic Backlog task for them without adding it as a TASK-2118 dependency/reference, then record the classification (not a forward task ID) in TASK-2118 notes. There must be zero raw request-payload dictionary or raw tool-definition logs.
+Expected after the repair: 35 candidates across four modules, all inspected. Eleven request/tool candidates in `LLM_API_Calls.py` route through `safe_llm_request_payload_summary()` (the nine existing provider summaries plus the two corrected HuggingFace summaries). Fourteen are safe metadata-only calls: two HuggingFace model/stream/count/byte calls, one `LLM_API_Calls_Local.py` payload-**keys** call, and eleven `type(data)` calls. The remaining ten calls in `Local_Summarization_Lib.py` and `Summarization_General_Lib.py` log full or 500-character input data. They are confirmed privacy exposures but are individual content diagnostics, not AC 4 raw provider request-payload dictionaries/tool definitions; the separately filed task owns them, while TASK-2118 notes record only the exact sites/classification and no later ID. There must be zero raw request-payload dictionary or raw tool-definition logs.
 
 Corroborate label-based coverage with:
 
 ```bash
-rg -n -i "logger\\.|logging\\." tldw_chatbook/LLM_Calls --glob '*.py' | rg -i "payload|tools?|loaded data|processed data"
+rg -n -U --pcre2 -i '(?s)(?:logger|logging)\.(?:trace|debug|info|warning|error|critical|exception)\(.{0,500}?(?:payload|tools?|loaded data|processed data)' tldw_chatbook/LLM_Calls --glob '*.py'
 ```
 
-Inspect every result in context. Record the classification in TASK-2118 Implementation Notes. If an additional AC 4 match exists, add a failing sentinel test and route it through the helper before continuing. Create the separately scoped Backlog task for the ten confirmed content diagnostics, but do not add its later task ID as a dependency/reference from TASK-2118; record the exact sites and classification here instead.
+Inspect every result in context. Record the classification in TASK-2118 Implementation Notes. If an additional AC 4 match exists, add a failing sentinel test and route it through the helper before continuing.
 
-- [ ] **Step 2: Mutation-check the tool-definition guard**
+- [ ] **Step 2: Verify the separate privacy follow-up is committed before mutation checks**
+
+Run:
+
+```bash
+rg -l '^title: Remove raw summarization input data from debug logs$' backlog/tasks
+git log -1 --oneline --all -- 'backlog/tasks/*Remove-raw-summarization-input-data-from-debug-logs.md'
+git status --short
+```
+
+Expected: the title search returns exactly one generated task file, the log command shows the dedicated planning/follow-up commit, and the working tree is clean. The follow-up's description points backward to TASK-2118; TASK-2118 does not point forward to its later ID.
+
+- [ ] **Step 3: Mutation-check the tool-definition guard**
 
 Temporarily replace only the corrected `HuggingFace Tools` summary with the old line:
 
@@ -288,7 +301,7 @@ Run:
 
 Expected: `1 failed, 1 passed`; inspect the traceback and require the ordinary (`sensitive=False`) case to fail on the planted description/schema or exact names-only assertion. Restore the helper-based implementation with `apply_patch` immediately and rerun the same cache-disabled command for `2 passed`.
 
-- [ ] **Step 3: Mutation-check the Final Payload allowlist**
+- [ ] **Step 4: Mutation-check the Final Payload allowlist**
 
 With the tools fix restored, temporarily replace only the corrected Final Payload summary with the prior denylist expression:
 
@@ -302,7 +315,7 @@ Run the same `python -B ... -vv` targeted command.
 
 Expected: `1 failed, 1 passed`; inspect the traceback and require the ordinary (`sensitive=False`) case to fail because `HUGGINGFACE-USER-CANARY` reappears. Restore the helper-based implementation with `apply_patch` immediately and rerun the same cache-disabled command for `2 passed`.
 
-- [ ] **Step 4: Confirm no temporary mutation remains**
+- [ ] **Step 5: Confirm no temporary mutation remains**
 
 Run:
 
