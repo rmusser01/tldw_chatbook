@@ -14,7 +14,7 @@ from tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle import 
     current_llm_destination,
     terminate_process_bounded,
 )
-from tldw_chatbook.Utils.log_sanitizer import sanitize_string
+from tldw_chatbook.Utils.input_validation import sanitize_string as sanitize_input
 from tldw_chatbook.Utils.log_widget_manager import LogWidgetManager
 
 # For listing local models, you might need to interact with huggingface_hub or scan directories
@@ -185,7 +185,7 @@ def scan_transformers_local_models(models_path: Path) -> list[str]:
             display_name = (
                 models_path.name if model_root == models_path else model_root.name
             )
-        display_name = sanitize_string(display_name).replace("\n", " ").strip()[:256]
+        display_name = " ".join(sanitize_input(display_name, max_length=256).split())
         if display_name and display_name not in seen:
             seen.add(display_name)
             found_models.append(display_name)

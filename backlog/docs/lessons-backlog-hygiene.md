@@ -110,6 +110,21 @@ diff your tree's task filenames against dev's.
 
 ---
 
+## A clean scoped rebase can still invalidate a repository-wide manifest
+
+**TASK-856, 2026-08-08.** Tasks 1–3 and their scoped reviews were clean when the
+branch rebased onto a newer `dev`. None of TASK-856's scoped production or test
+files had changed upstream, yet the cross-cutting diagnostic inventory turned
+red: five new `app.py` diagnostics plus related owner and sink line movement
+made the generated manifest differ from the checked one.
+
+**What to do.** After every rebase, rerun repository-wide generated-manifest and
+architecture gates even when the scoped file diff is unchanged. Review the
+upstream semantic delta and commit it as a separate boundary before claiming
+that the feature branch changes only its intended inventory entry.
+
+---
+
 ## Regenerate the CSS bundle; never hand-merge it
 
 **What happened.** `tldw_cli_modular.tcss` is generated and conflicts on essentially

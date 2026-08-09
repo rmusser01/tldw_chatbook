@@ -42,7 +42,7 @@ from tldw_chatbook.Local_Inference.ollama_model_mgmt import (
     ollama_list_running_models,
     ollama_generate_embeddings,
 )
-from tldw_chatbook.Utils.log_sanitizer import sanitize_dict, sanitize_string
+from tldw_chatbook.Utils import input_validation as input_safety, log_sanitizer
 from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
 from tldw_chatbook.Third_Party.textual_fspicker import Filters
 
@@ -79,7 +79,7 @@ def _format_ollama_success_payload(data: dict[str, Any]) -> str:
     """Render a bounded successful API result with credential fields redacted."""
 
     rendered = json.dumps(
-        sanitize_dict(data),
+        log_sanitizer.sanitize_dict(data),
         ensure_ascii=False,
         indent=2,
         sort_keys=True,
@@ -110,7 +110,7 @@ def _safe_ollama_model_names(models: object) -> list[str] | None:
         name = item.get("name") or item.get("model")
         if not isinstance(name, str):
             return None
-        safe_name = sanitize_string(name).replace("\n", " ").strip()[:256]
+        safe_name = " ".join(input_safety.sanitize_string(name, max_length=256).split())
         if not safe_name:
             return None
         safe_names.append(safe_name)

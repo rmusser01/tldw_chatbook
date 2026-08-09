@@ -5,6 +5,7 @@ import ast
 import io
 import inspect
 import logging
+import os
 from pathlib import Path
 import subprocess
 import textwrap
@@ -641,25 +642,54 @@ def test_ollama_success_payloads_are_bounded_and_redacted() -> None:
         {
             "family": "llama",
             "api_key": "PRIVATE_API_KEY",
-            "details": {"format": "gguf"},
+            "details": {
+                "format": "gguf",
+                "x-api-key": "PRIVATE_NESTED_API_KEY",
+                "authorization": "Bearer PRIVATE_AUTHORIZATION",
+            },
         }
     )
 
     assert '"family": "llama"' in rendered
     assert '"format": "gguf"' in rendered
     assert "PRIVATE_API_KEY" not in rendered
+    assert "PRIVATE_NESTED_API_KEY" not in rendered
+    assert "PRIVATE_AUTHORIZATION" not in rendered
     assert "REDACTED" in rendered
     assert len(rendered) <= ollama_events.MAX_OLLAMA_SUCCESS_OUTPUT_CHARS
 
     names = ollama_events._safe_ollama_model_names(
         [
-            {"name": "org/model:latest"},
-            {"name": "token=PRIVATE_MODEL_TOKEN"},
+            {"name": "claude-opus-4-20250514"},
+            {"name": "org/model\r\n\tinjected"},
         ]
     )
-    assert names is not None
-    assert names[0] == "org/model:latest"
-    assert "PRIVATE_MODEL_TOKEN" not in names[1]
+    assert names == ["claude-opus-4-20250514", "org/model injected"]
+
+
+def test_transformers_model_scan_preserves_claude_ids_as_one_line(
+    tmp_path: Path,
+) -> None:
+    model_root = tmp_path / "models--anthropic--claude-opus-4-20250514"
+    model_root.mkdir()
+    (model_root / "config.json").write_text("{}", encoding="utf-8")
+    (model_root / "model.safetensors").touch()
+
+    assert transformers_events.scan_transformers_local_models(tmp_path) == [
+        "anthropic/claude-opus-4-20250514"
+    ]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows filenames reject CR/LF/tab")
+def test_transformers_model_scan_normalizes_multiline_names(tmp_path: Path) -> None:
+    model_root = tmp_path / "models--org--line\r\n\tname"
+    model_root.mkdir()
+    (model_root / "config.json").write_text("{}", encoding="utf-8")
+    (model_root / "model.safetensors").touch()
+
+    assert transformers_events.scan_transformers_local_models(tmp_path) == [
+        "org/line name"
+    ]
 
 
 def test_transformers_download_has_no_root_worker_completion_owner() -> None:

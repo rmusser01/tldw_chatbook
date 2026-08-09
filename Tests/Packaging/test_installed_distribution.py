@@ -152,6 +152,15 @@ from tldw_chatbook.Constants import TAB_CHAT, TAB_HOME
 from tldw_chatbook.Evals.config_loader import EvalConfigLoader
 from tldw_chatbook.RAG_Search.pipeline_loader import PipelineLoader
 from tldw_chatbook.runtime_policy.server_context import RuntimeServerContextProvider
+from tldw_chatbook.Utils.log_sanitizer import sanitize_dict, sanitize_string
+
+assert sanitize_string("claude-opus-4-20250514") == "claude-opus-4-20250514"
+assert sanitize_dict({"x-api-key": "PRIVATE_INSTALLED_SENTINEL"}) == {
+    "x-api-key": "***REDACTED***"
+}
+assert "PRIVATE_INSTALLED_SENTINEL" not in sanitize_string(
+    'x-api-key="PRIVATE_INSTALLED_SENTINEL"'
+)
 
 
 def deny_server_client_construction(_self):

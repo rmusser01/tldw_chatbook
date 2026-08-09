@@ -8,69 +8,139 @@ sensitive information from log messages.
 import re
 from typing import Any, Dict, List
 
+from tldw_chatbook.Utils.sensitive_config_keys import is_sensitive_config_key
 
-# Patterns for common sensitive data
-SENSITIVE_PATTERNS = [
-    # Specific API key formats first (more specific patterns before general ones)
-    (r"sk-[a-zA-Z0-9]{20,}", "***OPENAI_KEY***"),  # OpenAI keys
-    (r"claude-[a-zA-Z0-9-]+", "***ANTHROPIC_KEY***"),  # Anthropic keys
-    (r"AIza[0-9A-Za-z-_]{35}", "***GOOGLE_KEY***"),  # Google API keys
-    # API Keys and tokens
-    (
-        r'(api[_-]?key|apikey|api_secret|access[_-]?token|auth[_-]?token|bearer)\s*[:=]\s*["\']?([^\s"\']+)',
-        r"\1=***REDACTED***",
-    ),
-    # Bearer tokens in headers
-    (
-        r"(Bearer\s+)(sk-[a-zA-Z0-9]{20,})",
-        r"\1***OPENAI_KEY***",
-    ),  # Specific OpenAI bearer
-    (r"(Bearer\s+)([a-zA-Z0-9\-._~+/]+=*)", r"\1***REDACTED***"),
-    (r"(Authorization:\s*)(Bearer\s+)?([^\s]+)", r"\1\2***REDACTED***"),
-    # Token patterns
-    (r'(token)\s*[:=]\s*["\']?([^\s"\']+)', r"\1=***REDACTED***"),
-    # Password patterns
-    (r'(password|passwd|pwd)\s*[:=]\s*["\']?([^\s"\']+)', r"\1=***REDACTED***"),
-    # URLs with embedded credentials
-    (r"(https?://)([^:]+):([^@]+)@", r"\1***:***@"),
-    # JSON/Dict API keys
-    (
-        r'["\']?(api[_-]?key|apikey|api_secret|password|secret|token)["\']?\s*:\s*["\']([^"\']+)["\']',
-        r'"\1": "***REDACTED***"',
-    ),
-    # Environment variable style
-    (
-        r"(OPENAI_API_KEY|ANTHROPIC_API_KEY|GOOGLE_API_KEY|API_KEY|SECRET_KEY|DATABASE_URL)\s*=\s*([^\s]+)",
-        r"\1=***REDACTED***",
-    ),
-]
 
-# Fields to redact in dictionaries
-SENSITIVE_FIELDS = {
-    "api_key",
-    "apikey",
-    "api-key",
-    "api_secret",
-    "api-secret",
-    "password",
-    "passwd",
-    "pwd",
-    "secret",
-    "token",
-    "auth_token",
-    "access_token",
-    "bearer_token",
-    "client_secret",
-    "private_key",
-    "openai_api_key",
-    "anthropic_api_key",
-    "google_api_key",
-    "aws_access_key_id",
-    "aws_secret_access_key",
-    "database_url",
-    "connection_string",
-    "credentials",
-}
+REDACTION_MARKER = "***REDACTED***"
+_LOG_ONLY_SENSITIVE_FIELDS = frozenset(
+    {
+        "authorization",
+        "proxy_authorization",
+        "cookie",
+        "set_cookie",
+        "credential",
+        "credentials",
+        "database_url",
+        "connection_string",
+        "dsn",
+    }
+)
+
+
+def _is_sensitive_log_key(key: object) -> bool:
+    normalized = str(key).strip().lower().replace("-", "_")
+    return is_sensitive_config_key(key) or normalized in _LOG_ONLY_SENSITIVE_FIELDS
+
+
+_ASSIGNMENT_PREFIX = re.compile(
+    r"""
+    (?<![A-Za-z0-9_.-])
+    (?:
+        (?P<quote>["'])(?P<quoted_key>[A-Za-z0-9_.-]+)(?P=quote)
+        |
+        (?P<plain_key>[A-Za-z0-9_.-]+)
+    )
+    [ \t]*[:=][ \t]*
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+_URL_USERINFO = re.compile(r"(https?://)[^/?#\s\r\n]*@", re.IGNORECASE)
+_BEARER = re.compile(
+    r"(?<![A-Za-z0-9_-])(Bearer\s+)(\S+)",
+    re.IGNORECASE,
+)
+_STANDALONE_CREDENTIALS = (
+    re.compile(r"(?<![A-Za-z0-9_-])sk-proj-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])"),
+    re.compile(r"(?<![A-Za-z0-9_-])sk-ant-api03-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])"),
+    re.compile(r"(?<![A-Za-z0-9_-])sk-[A-Za-z0-9]{20,}(?![A-Za-z0-9_-])"),
+    re.compile(r"(?<![A-Za-z0-9_-])AIza[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])"),
+)
+
+
+def _line_end(text: str, start: int) -> int:
+    """Return the first CR/LF index at or after start, or len(text)."""
+    line_feed = text.find("\n", start)
+    carriage_return = text.find("\r", start)
+    endings = (index for index in (line_feed, carriage_return) if index != -1)
+    return min(endings, default=len(text))
+
+
+def _after_line_break(text: str, index: int) -> int:
+    """Advance over LF, CR, or one CRLF pair; end stays at len(text)."""
+    if index >= len(text):
+        return len(text)
+    if text[index] == "\r" and index + 1 < len(text) and text[index + 1] == "\n":
+        return index + 2
+    if text[index] in "\r\n":
+        return index + 1
+    return index
+
+
+def _find_quoted_end(text: str, value_start: int, quote: str) -> tuple[int, bool]:
+    """Return the closing-quote/line-end index and whether it closed."""
+    index = value_start
+    while index < len(text):
+        character = text[index]
+        if character in "\r\n":
+            return index, False
+        if character == quote:
+            return index, True
+        if (
+            character == "\\"
+            and index + 1 < len(text)
+            and text[index + 1] not in "\r\n"
+        ):
+            index += 2
+            continue
+        index += 1
+    return len(text), False
+
+
+def _apply_replacements(text: str, spans: list[tuple[int, int]]) -> str:
+    """Build one output from sorted non-overlapping spans and REDACTION_MARKER."""
+    if not spans:
+        return text
+
+    parts: list[str] = []
+    cursor = 0
+    for start, end in spans:
+        parts.extend((text[cursor:start], REDACTION_MARKER))
+        cursor = end
+    parts.append(text[cursor:])
+    return "".join(parts)
+
+
+def _redact_assignments(text: str) -> str:
+    """Classify label prefixes first, collect replacement spans, and always advance."""
+    spans: list[tuple[int, int]] = []
+    cursor = 0
+    while match := _ASSIGNMENT_PREFIX.search(text, cursor):
+        key = match.group("quoted_key") or match.group("plain_key")
+        if not _is_sensitive_log_key(key):
+            cursor = match.end()
+            continue
+
+        value_start = match.end()
+        if value_start == len(text):
+            cursor = value_start
+            continue
+        if text[value_start] in "\r\n":
+            cursor = _after_line_break(text, value_start)
+            continue
+
+        if text[value_start] in "\"'":
+            quote = text[value_start]
+            value_end, closed = _find_quoted_end(text, value_start + 1, quote)
+            if value_end > value_start + 1:
+                spans.append((value_start + 1, value_end))
+            cursor = value_end + 1 if closed else _after_line_break(text, value_end)
+            continue
+
+        line_end = _line_end(text, value_start)
+        spans.append((value_start, line_end))
+        cursor = _after_line_break(text, line_end)
+
+    return _apply_replacements(text, spans)
 
 
 def sanitize_string(text: str) -> str:
@@ -86,10 +156,11 @@ def sanitize_string(text: str) -> str:
     if not isinstance(text, str):
         return str(text)
 
-    result = text
-    for pattern, replacement in SENSITIVE_PATTERNS:
-        result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
-
+    result = _redact_assignments(text)
+    result = _URL_USERINFO.sub(r"\1" + REDACTION_MARKER + "@", result)
+    result = _BEARER.sub(r"\1" + REDACTION_MARKER, result)
+    for pattern in _STANDALONE_CREDENTIALS:
+        result = pattern.sub(REDACTION_MARKER, result)
     return result
 
 
@@ -110,8 +181,8 @@ def sanitize_dict(data: Dict[str, Any], deep: bool = True) -> Dict[str, Any]:
     result = {}
     for key, value in data.items():
         # Check if key is sensitive
-        if key.lower() in SENSITIVE_FIELDS:
-            result[key] = "***REDACTED***"
+        if _is_sensitive_log_key(key):
+            result[key] = REDACTION_MARKER
         elif deep and isinstance(value, dict):
             result[key] = sanitize_dict(value, deep=True)
         elif deep and isinstance(value, list):
