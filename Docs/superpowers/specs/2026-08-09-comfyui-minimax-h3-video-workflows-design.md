@@ -1,7 +1,7 @@
 # ComfyUI MiniMax H3 Video Workflows — Design Specification
 
 Date: 2026-08-09
-Status: Proposed specification; awaiting user review
+Status: Approved
 Related task: `TASK-3401.6`
 Related ADR: `backlog/decisions/044-ephemeral-generated-video-storage-playback-and-streaming.md`
 
