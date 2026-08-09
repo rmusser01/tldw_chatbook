@@ -529,3 +529,101 @@ bound and join/cancel the drain tasks. Assert cleanup finishes while the
 descendant is still alive, then let the test finalizer kill only its captured
 fixture PID. Injected launchers remain useful for races, but they cannot prove
 event-loop child-watcher and pipe-transport behavior on the host platform.
+
+---
+
+## `.value = "x"` in a Pilot test cannot see a widget that never paints its own text (TASK-3795.1, 2026-08-09)
+
+**What happened.** Live-verifying the new Settings ▸ Agents CRUD editor (fleet
+PR-1), clicking into the Name field and typing produced no visible change at
+all — not the typed text, not even the field's own placeholder. Tab-cycling
+focus between fields *did* move a visible border, and blindly typing anyway,
+then pressing Save, produced `Saved 'researcher'.` and a correct row in the
+list — so the value was reaching `Input.value` and the DB write was correct.
+The bug was 100% cosmetic and 100% severe: a real user typing into this form
+sees nothing happen, no matter how many characters they type, with no error.
+
+Root cause: `AgentsSettingsPanel`'s four `Input(...)` calls omitted
+`classes="settings-compact-input"` — the one class every other Settings Input
+in this screen carries. `.settings-input-row { height: 1 }` (task-1586's
+one-row control convention) gives the row exactly one line; `.settings-compact
+-input` is what turns off Textual's default 3-row bordered `Input` chrome
+(`border: none; border-left: solid …`) so the single row is spent on text, not
+on a border. Without the class, Textual's default border ate the only
+available row, so the field painted a slice of box-drawing characters (a
+"┌────" top edge when focused, a squashed "▔"-style artifact unfocused) and
+**never painted the placeholder or the value on any state** — not empty, not
+typed, not populated via a ListView selection round-trip.
+
+**Why every existing test passed anyway.** `Tests/UI/test_settings_agents_category.py`'s
+four tests all write `panel.query_one("#agents-name-input").value = "researcher"`
+directly and assert against `.value` afterward — never a real keypress, never
+a render check. That is the only way this class of tests can exercise the
+widget, and it is structurally blind to "does this widget paint what it
+holds" — the exact shape the "geometry assertions, not just display/text"
+entry in `lessons-testing-evidence.md` already names, now with a `Switch`
+widget confirmed as a second instance in the same panel (the Enabled switch's
+render is a narrow fixed-width glyph, not a crushed border, but it is the
+*only* raw `Switch` in the whole Settings screen — every sibling category uses
+a button-as-toggle instead — so it too had zero prior test coverage of "does
+a click on it actually change `.value`").
+
+**What to do.** When a new Settings (or any `.settings-input-row`-family)
+field uses a bare `Input`/`Switch`/similar without copying the class list of a
+working sibling field verbatim, grep the screen for the compact/style class
+every other instance of that widget carries and add it explicitly — do not
+assume default widget styling is safe inside a height-constrained row. And
+before trusting a form's Pilot-test coverage, check whether any of its
+assertions actually simulate a keypress or a real click-and-observe against
+the compositor; a suite built entirely from `.value = "x"` assignments proves
+the data model works and says nothing about whether a human can see or drive
+the same field.
+
+---
+
+## The app's own config-rewrite-on-boot can corrupt its own file into invalid TOML, and the failure mode is a silent profile swap, not an error (TASK-3795.1, 2026-08-09)
+
+**What happened.** Mid live-verification of the same fleet PR-1 task, a
+scratch profile launched via `TLDW_CONFIG_PATH=<scratch>/config.toml` (the
+standard recipe: `[general] users_name = "verify_x"`) started opening real
+`~/.local/share/tldw_cli/default_user/*.db` file handles — the actual live
+user's profile — confirmed via `lsof -p <pid>`. This was caught, the process
+was killed immediately, and a direct check of `default_user`'s tables
+(`agent_definitions`, recent `conversations`, `agent_runs` for today's date)
+confirmed nothing had actually been written there; only benign WAL-mode mtime
+touches occurred. No real damage, but the near-miss is the finding.
+
+Root cause: across two boots of the same scratch config, the app's own
+config-normalization write path appended a *second* `api_key = "…"` line into
+an `[api_settings.openrouter]` table that already had one (each boot rewrites
+the file — see the existing "app rewrites its scratch config on boot" entry
+above) — producing a table with the same key defined twice, which is invalid
+TOML (`tomllib` raises `"Cannot overwrite a value"`). `TLDW_CONFIG_PATH` was
+confirmed correctly set in the process's own environment
+(`ps -wwE -p <pid>`) and the *config file itself* was never touched (its mtime
+never moved) — the corruption was entirely inside the scratch file the app was
+supposed to read from, not a config-path/env-var isolation failure. With the
+file unparseable, every setting inside it — including `users_name` — silently
+had nowhere to come from, and `get_user_folder_name()`'s own fallback
+(`"default_user"`) took over with no error, toast, or log line naming the
+parse failure. The first-run wizard also re-offered itself on that same boot,
+consistent with the loader seeing none of the `[first_run]` flags that were,
+in fact, sitting right there in the (invalid) file.
+
+**What to do.** Never hand-edit a scratch `config.toml` a running app has
+already rewritten without validating it parses (`python3 -c "import tomllib;
+tomllib.load(open(path,'rb'))"`) immediately after the edit AND immediately
+after the next boot — a `printf >> file` append that looked fine in isolation
+combined with the app's own next rewrite pass to produce the duplicate key;
+neither edit alone was the problem. After any multi-boot scratch-profile
+session, confirm isolation held by `lsof`-checking the actual running PID for
+open file handles under the real profile directory (`grep -o
+"default_user\|<scratch_profile_name>"`), not just by trusting the launch
+command's env var — a `ps -wwE` showing the right `TLDW_CONFIG_PATH` is
+necessary but, as this incident shows, not sufficient evidence that the
+*content* of that file is still valid. This is also a real product defect
+independent of the verification recipe: a config loader whose own
+normalization pass can write itself into unparseable TOML, with no visible
+failure and a silent fallback to the default profile, is a data-integrity and
+privacy-boundary risk for real users, not just scratch-profile verification —
+filed as task-3798.
