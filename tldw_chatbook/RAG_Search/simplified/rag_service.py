@@ -10,7 +10,18 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Collection, Dict, List, Literal, Mapping, Optional, Tuple, Union
+from typing import (
+    Any,
+    Collection,
+    Dict,
+    Hashable,
+    List,
+    Literal,
+    Mapping,
+    Optional,
+    Tuple,
+    Union,
+)
 
 from loguru import logger
 
@@ -74,6 +85,46 @@ EMBEDDING_PROGRESS_INTERVAL = _rag_service_config.get("embedding_progress_interv
 DEFAULT_BATCH_SIZE = _rag_service_config.get(
     "batch_size", 32
 )  # This one matches the rag.embedding.batch_size
+
+
+def _fusion_doc_key(result: Any) -> Hashable:
+    """Document-identity fusion key: (source_type, source_id-or-doc_id).
+
+    TASK-3994: the two hybrid legs speak different id spaces -- the FTS leg
+    emits document rows (``media_15``) and the vector leg emits chunk rows
+    (``media_15_chunk_0``) -- so matching on ``SearchResult.id`` could never
+    fuse the same document across legs. Both legs *do* agree on ingestion
+    metadata, which is what this key reads:
+
+    * vector rows carry ``source_id`` (the bare row id, spread from
+      ``ingestion_indexing.media_document`` into every chunk) plus a
+      ``doc_id`` that is the PREFIXED document id (``media_15``);
+    * keyword rows carry only ``doc_id``, and theirs is the bare row id
+      (``15``) -- built from scratch in ``_process_keyword_results_basic``.
+
+    Hence the precedence: ``source_id`` first, ``doc_id`` only as the
+    keyword leg's fallback. Comparing ``doc_id`` to ``doc_id`` would match
+    ``15`` against ``media_15`` and never fuse anything.
+
+    ``source_type`` is compared as the raw string the indexers write (the
+    singular ``ITEM_TYPE_*`` vocabulary: ``media`` / ``note`` /
+    ``conversation``); it keeps note 15 and media 15 apart.
+
+    Args:
+        result: A leg result (``SearchResult`` / ``SearchResultWithCitations``).
+
+    Returns:
+        ``(source_type, source_id)`` when both components are present,
+        otherwise the row id -- preserving the pre-fix no-merge behavior for
+        rows without ingestion metadata (e.g. hand-built rows in tests, or a
+        future producer that stamps neither key).
+    """
+    md = getattr(result, "metadata", None) or {}
+    source_type = md.get("source_type")
+    source_id = md.get("source_id") or md.get("doc_id")
+    if source_type and source_id:
+        return (str(source_type), str(source_id))
+    return result.id
 
 
 class RAGService:
@@ -958,8 +1009,15 @@ class RAGService:
         Rank-based fusion (server parity): each leg's returned ordering is
         the ranking; the fused score replaces the leg scores. Leg provenance
         (per-leg rank and RRF contribution) is stored in
-        ``metadata['hybrid_fusion']``. When a chunk appears in both legs its
-        citations are merged.
+        ``metadata['hybrid_fusion']``.
+
+        Legs are matched on DOCUMENT identity (``_fusion_doc_key``), not on
+        row id: the FTS leg ranks documents and the vector leg ranks chunks,
+        so an id match was impossible (TASK-3994). Consequences worth
+        knowing: several chunks of one document collapse into a single fused
+        row at that document's best vector rank (freeing top-k slots the
+        keyword leg can now reach), a merged row displays the matched CHUNK,
+        and a merged row's citations are the union of both legs'.
 
         Args:
             keyword_results: FTS/keyword leg, best first.
@@ -981,7 +1039,7 @@ class RAGService:
         fused = reciprocal_rank_fusion(
             keyword_results,
             semantic_results,
-            key=lambda r: r.id,
+            key=_fusion_doc_key,
             alpha=alpha,
             rrf_k=DEFAULT_RRF_K,
             max_results=top_k,
@@ -989,14 +1047,26 @@ class RAGService:
 
         results = []
         for entry in fused:
-            result = entry.item
-            # entry.item aliases entry.fts_item (FTS leg wins -- see
-            # FusedResult.item), so the original leg scores must be read
-            # *before* result.score is overwritten below, or the in-place
-            # mutation clobbers the very value we're trying to preserve.
+            # Display preference (TASK-3994): the VECTOR leg's item, i.e. the
+            # matched chunk, not the whole-document FTS row. Deliberately not
+            # `entry.item`, which prefers the FTS leg for server parity and
+            # has its own consumer -- the choice is made here, at the call
+            # site. A merged row now shows the passage that actually matched,
+            # keeps the vector leg's real similarity for score banding, and
+            # carries the chunk metadata (`source_id`, `chunk_id`) that the
+            # downstream row mappers read.
+            result = entry.vector_item if entry.vector_item is not None else entry.fts_item
+            # `result` aliases one of the two leg items, so both legs'
+            # original scores must be read *before* result.score is
+            # overwritten below, or the in-place mutation clobbers the very
+            # value we're trying to preserve (it is now the vector leg's
+            # score that would be lost, previously the FTS leg's).
             fts_score = entry.fts_item.score if entry.fts_item is not None else None
             vector_score = entry.vector_item.score if entry.vector_item is not None else None
-            # Combine citations when the same chunk surfaced in both legs
+            # Combine citations when the same document surfaced in both legs.
+            # Read defensively: only the displayed item is guaranteed to be a
+            # citation-carrying shape, and the two legs can disagree (a
+            # citation-less leg must not raise AttributeError here).
             if (
                 include_citations
                 and entry.fts_item is not None
@@ -1004,7 +1074,10 @@ class RAGService:
                 and hasattr(result, "citations")
             ):
                 result.citations = merge_citations(
-                    [entry.fts_item.citations, entry.vector_item.citations]
+                    [
+                        getattr(entry.fts_item, "citations", None) or [],
+                        getattr(entry.vector_item, "citations", None) or [],
+                    ]
                 )
             result.score = entry.score
             result.metadata = {
