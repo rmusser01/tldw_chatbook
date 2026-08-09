@@ -4354,6 +4354,14 @@ class ConsoleComposerBar(Horizontal):
         chip.styles.min_width = 0
         chip.styles.height = 1
         chip.styles.min_height = 1
+        # Production CSS resolves the 53-cell ceiling to 52 cells here. A
+        # full-width preparing message therefore needs one of the two padding
+        # cells back; keep the leading pad and restore both for every ordinary
+        # state on its next write.
+        if state == STATE_PREPARING and cell_len(body) + 2 >= self.VOICE_CHIP_MAX_WIDTH:
+            chip.styles.padding = (0, 0, 0, 1)
+        else:
+            chip.styles.padding = None
         chip.set_class(state == "error", "console-voice-status-error")
         chip.update(Content(body))
 
