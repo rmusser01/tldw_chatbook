@@ -23,6 +23,7 @@ that a spawned process can run ``run_parse_job``.
 
 from __future__ import annotations
 
+import concurrent.futures
 import os
 import subprocess
 import sys
@@ -2654,6 +2655,55 @@ def test_pool_callbacks_short_circuit_without_marshaling_when_shutdown(
     assert len(marshaled) == 2
 
 
+@pytest.mark.parametrize(
+    ("callback_name", "callback_value"),
+    [
+        ("_ingest_pool_callback", {"ok": True, "payload": {}}),
+        ("_ingest_pool_error_callback", RuntimeError("pool failure")),
+    ],
+)
+def test_pool_callback_ignores_cancelled_marshal_only_during_shutdown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    callback_name: str,
+    callback_value: Any,
+) -> None:
+    """A callback already past the shutdown check may lose its UI future."""
+
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    marshal_entered = threading.Event()
+    release_marshal = threading.Event()
+
+    def cancelled_marshal(*_args: Any, **_kwargs: Any) -> None:
+        marshal_entered.set()
+        assert release_marshal.wait(5.0)
+        raise concurrent.futures.CancelledError
+
+    monkeypatch.setattr(app, "call_from_thread", cancelled_marshal)
+    callback = getattr(app, callback_name)
+    callback_errors: list[BaseException] = []
+
+    def invoke_callback() -> None:
+        try:
+            callback(1, "ingest-job-1", callback_value)
+        except BaseException as exc:  # noqa: BLE001 - assert thread outcome below
+            callback_errors.append(exc)
+
+    callback_thread = threading.Thread(target=invoke_callback, daemon=True)
+    callback_thread.start()
+    assert marshal_entered.wait(1.0)
+    app._ingest_shutdown = True
+    release_marshal.set()
+    callback_thread.join(timeout=5.0)
+
+    assert not callback_thread.is_alive()
+    assert callback_errors == []
+
+    app._ingest_shutdown = False
+    with pytest.raises(concurrent.futures.CancelledError):
+        callback(1, "ingest-job-2", callback_value)
+
+
 def test_shutdown_terminates_pool_off_the_caller_thread(tmp_path: Path) -> None:
     """(Quit-deadlock guard, layer b) `_shutdown_ingest_parse_pool` must
     set the shutdown flag, detach the pool reference, and run
@@ -4376,4 +4426,11 @@ async def test_folder_submission_shares_one_batch_id(tmp_path: Path) -> None:
         assert jobs["solo.txt"].batch_id is None
         assert solo_job.batch_id is None
 
+        for submitted in jobs.values():
+            await _wait_for_job_state(
+                app,
+                pilot,
+                submitted.job_id,
+                IngestJobState.DONE,
+            )
         await _wait_for_runner_idle(app, pilot)

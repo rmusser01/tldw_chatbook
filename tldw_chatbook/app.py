@@ -3357,6 +3357,21 @@ class LibraryIngestQueueMixin:
                 self._handle_broken_ingest_parse_pool(generation, job_id, exc)
                 return
 
+    def _marshal_ingest_pool_call(
+        self,
+        callback: Callable[..., Any],
+        *args: Any,
+    ) -> None:
+        """Marshal a pool callback, tolerating only shutdown cancellation."""
+
+        if self._ingest_shutdown:
+            return
+        try:
+            self.call_from_thread(callback, *args)
+        except concurrent.futures.CancelledError:
+            if not self._ingest_shutdown:
+                raise
+
     def _ingest_pool_callback(
         self, generation: int, job_id: str, result: Dict[str, Any]
     ) -> None:
@@ -3385,9 +3400,7 @@ class LibraryIngestQueueMixin:
                 ``_top_up_ingest_parse_pool``.
             result: ``run_parse_job``'s structured return value.
         """
-        if self._ingest_shutdown:
-            return
-        self.call_from_thread(
+        self._marshal_ingest_pool_call(
             self._on_ingest_parse_complete, generation, job_id, result
         )
 
@@ -3396,9 +3409,7 @@ class LibraryIngestQueueMixin:
     ) -> None:
         """``apply_async`` ``error_callback``: same thread + shutdown
         contract as ``_ingest_pool_callback`` (see its docstring)."""
-        if self._ingest_shutdown:
-            return
-        self.call_from_thread(
+        self._marshal_ingest_pool_call(
             self._handle_broken_ingest_parse_pool, generation, job_id, exc
         )
 
