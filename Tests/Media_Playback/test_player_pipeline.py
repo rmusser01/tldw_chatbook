@@ -90,12 +90,12 @@ class _FakeProc:
 
 
 class _SpawnRecorder:
-    def __init__(self, stdout_factory=None, *, fail_at=None, timeout_once=False):
+    def __init__(self, stdout_factory=None, *, fail_at=None, timeout_at=None):
         self.calls: list[_FakeProc] = []
         self._stdout_factory = stdout_factory
         self._fail_at = fail_at
         self._attempts = 0
-        self._timeout_once = timeout_once
+        self._timeout_at = timeout_at
 
     def __call__(self, cmd, **kwargs):
         self._attempts += 1
@@ -107,7 +107,7 @@ class _SpawnRecorder:
         proc = _FakeProc(
             cmd,
             fake_stdout=stdout,
-            timeout_once=self._timeout_once,
+            timeout_once=self._attempts == self._timeout_at,
             **kwargs,
         )
         self.calls.append(proc)
@@ -492,41 +492,74 @@ def test_sync_and_stat_helpers_use_explicit_originating_run(monkeypatch):
     assert replacement.stats == pp.SyncStats()
 
 
-@pytest.mark.parametrize("ending", ["eof", "stop", "restart", "unadvanced"])
-def test_old_stdout_closes_exactly_once_for_every_ending(ending):
+def test_natural_eof_then_repeated_stop_closes_stdout_exactly_once():
     frame_bytes = 2 * 1 * 3
-    streams: list[_FakeStdout] = []
-
-    def stdout_factory():
-        stream = _FakeStdout(b"x" * frame_bytes, chunk=frame_bytes)
-        streams.append(stream)
-        return stream
-
+    stdout = _FakeStdout(b"x" * frame_bytes, chunk=frame_bytes)
     pipeline = pp.PlayerPipeline(
         "silent.mp4",
         _probe(width=2, height=1, has_audio=False),
-        spawn=_SpawnRecorder(stdout_factory=stdout_factory),
+        spawn=_SpawnRecorder(stdout_factory=lambda: stdout),
     )
     run = pipeline.start()
-    iterator = pipeline.iter_frames(run)
+    list(pipeline.iter_frames(run))
 
-    if ending == "eof":
-        list(iterator)
-    elif ending == "stop":
-        pipeline.stop()
-        pipeline.stop()
-    elif ending == "restart":
-        pipeline.seek(1.0)
-    else:
-        pipeline.seek(1.0)
+    pipeline.stop()
+    pipeline.stop()
 
-    assert streams[0].close_calls == 1
+    assert stdout.close_calls == 1
+
+
+def test_restart_then_active_old_iterator_close_closes_old_stdout_exactly_once():
+    frame_bytes = 2 * 1 * 3
+    streams = iter(
+        [
+            _FakeStdout(b"o" * frame_bytes, chunk=frame_bytes),
+            _FakeStdout(b"n" * frame_bytes, chunk=frame_bytes),
+        ]
+    )
+    pipeline = pp.PlayerPipeline(
+        "silent.mp4",
+        _probe(width=2, height=1, has_audio=False),
+        spawn=_SpawnRecorder(stdout_factory=lambda: next(streams)),
+    )
+    old_run = pipeline.start()
+    old_stdout = old_run.stdout
+    old_iterator = pipeline.iter_frames(old_run)
+    next(old_iterator)
+
+    pipeline.seek(1.0)
+    old_iterator.close()
+
+    assert old_stdout.close_calls == 1
+
+
+def test_restart_then_never_advanced_iterator_close_closes_old_stdout_exactly_once():
+    frame_bytes = 2 * 1 * 3
+    streams = iter(
+        [
+            _FakeStdout(b"o" * frame_bytes, chunk=frame_bytes),
+            _FakeStdout(b"n" * frame_bytes, chunk=frame_bytes),
+        ]
+    )
+    pipeline = pp.PlayerPipeline(
+        "silent.mp4",
+        _probe(width=2, height=1, has_audio=False),
+        spawn=_SpawnRecorder(stdout_factory=lambda: next(streams)),
+    )
+    old_run = pipeline.start()
+    old_stdout = old_run.stdout
+    old_iterator = pipeline.iter_frames(old_run)
+
+    pipeline.seek(1.0)
+    old_iterator.close()
+
+    assert old_stdout.close_calls == 1
 
 
 def test_stop_force_kill_waits_for_process_after_terminate_timeout():
     stdout = _FakeStdout(b"", chunk=1)
     spawn = _SpawnRecorder(
-        stdout_factory=lambda: stdout, timeout_once=True
+        stdout_factory=lambda: stdout, timeout_at=1
     )
     pipeline = pp.PlayerPipeline(
         "silent.mp4", _probe(has_audio=False), spawn=spawn
@@ -542,6 +575,35 @@ def test_stop_force_kill_waits_for_process_after_terminate_timeout():
         ("wait", None),
     ]
     assert stdout.close_calls == 1
+
+
+def test_stop_reaps_ffplay_and_ffmpeg_for_audio_run():
+    spawn = _SpawnRecorder()
+    pipeline = pp.PlayerPipeline("clip.mp4", _probe(), spawn=spawn)
+    pipeline.start()
+
+    pipeline.stop()
+
+    ffmpeg, ffplay = spawn.calls
+    assert ffplay.events == ["terminate", ("wait", 2)]
+    assert ffmpeg.events == ["terminate", ("wait", 2)]
+
+
+def test_ffplay_timeout_force_kills_and_finally_reaps_before_ffmpeg():
+    spawn = _SpawnRecorder(timeout_at=2)
+    pipeline = pp.PlayerPipeline("clip.mp4", _probe(), spawn=spawn)
+    pipeline.start()
+
+    pipeline.stop()
+
+    ffmpeg, ffplay = spawn.calls
+    assert ffplay.events == [
+        "terminate",
+        ("wait", 2),
+        "kill",
+        ("wait", None),
+    ]
+    assert ffmpeg.events == ["terminate", ("wait", 2)]
 
 
 def test_stop_is_idempotent():

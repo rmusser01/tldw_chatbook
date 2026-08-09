@@ -92,9 +92,13 @@ def test_audio_branch_runs_headless(audio_video_clip, monkeypatch):
     pipeline = PlayerPipeline(str(audio_video_clip), probe, target_fps=10.0)
     run = pipeline.start()
     assert pipeline._ffplay is not None
+    ffmpeg = pipeline._ffmpeg
+    ffplay = pipeline._ffplay
+    assert ffmpeg is not None and ffplay is not None
     pts, data = next(pipeline.iter_frames(run))
     assert pts == pytest.approx(0.0, abs=1e-6)
     assert len(data) == 64 * 48 * 3
     pipeline.stop()
     # Both children are really gone.
     assert pipeline._ffmpeg is None and pipeline._ffplay is None
+    assert ffmpeg.poll() is not None and ffplay.poll() is not None
