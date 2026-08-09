@@ -1,5 +1,5 @@
 ---
-id: TASK-3603
+id: TASK-3791
 title: 'Watchlists reader-first re-IA, phase 3: smart feeds, search, refresh-all'
 status: Done
 assignee: []
@@ -10,6 +10,14 @@ labels:
   - ux
 dependencies: []
 ---
+
+## Task Identity Note
+
+This task was renumbered from `TASK-3603` to `TASK-3791` during PR #1448.
+Backlog Guard found that the earlier QwenCloud provider task already owned
+`TASK-3603`; the Watchlists task was filed later and therefore moves while the
+earlier task keeps its identity. The replacement was checked across every
+fetched remote ref and local worktree before this rename.
 
 ## Description
 

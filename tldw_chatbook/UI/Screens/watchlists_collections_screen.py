@@ -301,6 +301,46 @@ def _normalize_items_status_filter(value: Any) -> str:
     return "unread" if text in {"unread", "new"} else "all"
 
 
+def _opml_import_summary_text(result: Mapping[str, Any]) -> str:
+    """The post-import toast, saying the WHOLE of what happened (TASK-3604).
+
+    The pre-round-trip toast counted only created sources, so importing a
+    structured document read identically whether it filed twelve feeds into
+    three watchlists or did nothing at all on a re-import. The summary now
+    names new vs already-present sources, the watchlists created or
+    reused, and the Unassigned remainder.
+
+    Args:
+        result: The scope service's import summary dict.
+
+    Returns:
+        One sentence for the toast.
+    """
+    created = int(result.get("created", 0) or 0)
+    existing = int(result.get("existing", 0) or 0)
+    created_wl = list(result.get("watchlists_created") or [])
+    reused_wl = list(result.get("watchlists_reused") or [])
+    assignments = int(result.get("assignments", 0) or 0)
+    explicit_unassigned = result.get("unassigned")
+    unassigned = (
+        max(created + existing - assignments, 0)
+        if explicit_unassigned is None
+        else int(explicit_unassigned or 0)
+    )
+
+    sources_bit = f"{created} new" if existing == 0 else f"{created} new + {existing} already present"
+    text = f"Imported {sources_bit} source(s) from OPML"
+    if assignments:
+        total_wl = len(created_wl) + len(reused_wl)
+        wl_word = "watchlist" if total_wl == 1 else "watchlists"
+        new_bit = f", {len(created_wl)} new" if created_wl else ""
+        text += f": {assignments} into {total_wl} {wl_word}{new_bit}"
+        if unassigned:
+            text += f", {unassigned} unassigned"
+    text += "."
+    return text
+
+
 @dataclass(frozen=True)
 class _ItemStatusIntent:
     """One desired item-status write, captured at the moment it is dispatched.
@@ -449,10 +489,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # http/https only (the URL is a remote-derived string reaching an OS
         # primitive, so the scheme check lives in the handler, not here).
         ("o", "open_in_browser", "Open in browser"),
-        # TASK-3603 plan task 3: jump to the search box; typing then drives
+        # TASK-3791 plan task 3: jump to the search box; typing then drives
         # the corpus-wide FTS path through the debounced reload below.
         ("/", "focus_items_search", "Search"),
-        # TASK-3603 plan task 5: refresh every active source, one aggregated
+        # TASK-3791 plan task 5: refresh every active source, one aggregated
         # toast + the new-items pill at the end -- never N toasts.
         ("r", "refresh_all", "Refresh all"),
         ("a", "mark_all_read", "Mark all read"),
@@ -1153,7 +1193,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             counts = dict(service.get_watchlist_item_counts())
             starred = service.get_flagged_items_count()
             counts[STARRED_BUCKET] = {"total": starred, "unread": starred}
-            # TASK-3603 plan task 4: the Today badge rides the same mapping
+            # TASK-3791 plan task 4: the Today badge rides the same mapping
             # -- unread items at/after local midnight, so the badge and the
             # node's page answer the same question.
             today = service.get_unread_items_count_since(self._today_floor_iso())
@@ -5050,9 +5090,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 runtime_backend=self.runtime_backend,
                 xml_text=xml_text,
             )
-            created = result.get("created", 0)
             if callable(notify):
-                notify(f"Imported {created} source(s) from OPML.", severity="information")
+                notify(_opml_import_summary_text(result), severity="information")
         except Exception:
             logger.opt(exception=True).warning("Failed to import OPML.")
             if callable(notify):
@@ -8504,7 +8543,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # membership predicate -- just the flag itself.
             return {"is_flagged": True}
         if scope.kind == "unread":
-            # TASK-3603 plan task 4: All Unread. The node forces the unread
+            # TASK-3791 plan task 4: All Unread. The node forces the unread
             # bucket regardless of the pane's filter -- `_load_items` drops
             # any `statuses` kwarg when this scope is active, because the
             # DB raises on status+statuses together.
@@ -8521,7 +8560,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
     @staticmethod
     def _today_floor_iso() -> str:
-        """Local midnight tonight's floor, as a UTC ISO string (TASK-3603).
+        """Local midnight tonight's floor, as a UTC ISO string (TASK-3791).
 
         The Today feed is a LOCAL-day concept (the user's "today"), while
         `subscription_items` dates are UTC ISO -- so the floor is computed
@@ -8599,7 +8638,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     async def _load_items(self) -> None:
         notify = getattr(self.app_instance, "notify", None)
         try:
-            # TASK-3603 plan task 3: a non-blank search term is part of the
+            # TASK-3791 plan task 3: a non-blank search term is part of the
             # query (the corpus-wide FTS path, falling back to LIKE), not a
             # client-side-only filter over the newest 100.
             query = self._items_search_query.strip()
@@ -8609,7 +8648,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 **({"search": query} if query else {}),
             }
             if self.tree_scope.kind == "unread":
-                # TASK-3603 plan task 4: the All Unread node forces the
+                # TASK-3791 plan task 4: the All Unread node forces the
                 # unread bucket (its scope kwarg above), so the filter's
                 # `statuses` must not ride along -- `get_new_items` raises
                 # on status and statuses together, and widening the list to
@@ -9173,7 +9212,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         (`_items_status_kwargs`), so changing it has to re-fetch or the pane is
         left filtering the previous status's page in memory -- which is exactly
         the "the filter can only narrow what was already fetched" defect this
-        fix removes. TASK-3603 extends the same rule to the search box: the
+        fix removes. TASK-3791 extends the same rule to the search box: the
         term is part of the query too (`_load_items` weaves it in), so a
         search reaches the whole corpus rather than the newest-100 page --
         debounced, since this message fires on every keystroke.
@@ -9197,14 +9236,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # the default group cancels unrelated in-flight workers.
             self.run_worker(self._load_items(), exclusive=True, group="wc_items")
         elif query_changed:
-            # TASK-3603 plan task 3: a search edit re-fetches too, now that
+            # TASK-3791 plan task 3: a search edit re-fetches too, now that
             # the term is part of the query (`_load_items` weaves it in) --
             # debounced, because this message fires on every keystroke and a
             # query per character is exactly what the debounce timer shape
             # (`_request_tree_counts_refresh`) already exists to avoid.
             self._request_items_search_reload()
 
-    #: Debounce for the search-driven items reload (TASK-3603): one corpus
+    #: Debounce for the search-driven items reload (TASK-3791): one corpus
     #: query per typing pause, not one per keystroke.
     _ITEMS_SEARCH_DEBOUNCE_SECONDS = 0.3
 
@@ -9956,7 +9995,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """Show a notification with available keyboard shortcuts."""
         # TASK-3072 plan task 10: the reading-loop verbs join the help line.
         # Decision 031: advertise only implemented actions -- every verb
-        # named here is bound above and covered by tests. TASK-3603 adds
+        # named here is bound above and covered by tests. TASK-3791 adds
         # the search and refresh-all verbs.
         self.app_instance.notify(
             "1=Read 2=Sources 3=Runs 4=Rules 5=Notifications 6=Artifacts "
@@ -10279,7 +10318,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._open_item_in_browser(item)
 
     def action_focus_items_search(self) -> None:
-        """`/`: put the caret in the items search box (TASK-3603 plan task 3).
+        """`/`: put the caret in the items search box (TASK-3791 plan task 3).
 
         Gated by `_reader_verb_blocked` like every other Read-tab verb:
         once any Input has focus, `/` is text, not a verb (and off the Read
@@ -10292,12 +10331,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         except NoMatches:
             return
 
-    #: One refresh-all batch at a time (TASK-3603): a second `r` while a
+    #: One refresh-all batch at a time (TASK-3791): a second `r` while a
     #: batch is in flight is a no-op, not a double launch.
     _refresh_all_in_flight = False
 
     def action_refresh_all(self) -> None:
-        """`r`: check every active source, then say so ONCE (TASK-3603 plan
+        """`r`: check every active source, then say so ONCE (TASK-3791 plan
         task 5). Same gating as the other Read-tab verbs."""
         if self._reader_verb_blocked():
             return

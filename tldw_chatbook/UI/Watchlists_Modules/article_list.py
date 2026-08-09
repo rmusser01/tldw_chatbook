@@ -266,7 +266,7 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
                 allow_blank=False,
                 compact=True,
             )
-            # TASK-3603 plan task 5: the "N new items" pill. A Static, not a
+            # TASK-3791 plan task 5: the "N new items" pill. A Static, not a
             # Button: the strip's buttons are VERBS and this is a notice you
             # can act on (click reloads through the same message the Refresh
             # button posts). Hidden whenever there is nothing to say; the
@@ -338,7 +338,7 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
             elif status not in self._READER_STATUSES:
                 continue
             if query:
-                # TASK-3603 plan task 3: the instant pre-filter reads the
+                # TASK-3791 plan task 3: the instant pre-filter reads the
                 # same columns the corpus-wide FTS path indexes
                 # (title/content/author) -- a content-matched search result
                 # must not be filtered OUT of the page it just arrived on.

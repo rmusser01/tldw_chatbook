@@ -1928,13 +1928,13 @@ class SubscriptionsDB(BaseDB):
                 (`False`), or `None` to not filter by the flag at all
                 (TASK-3072 -- the Starred feed's page). Composes with every
                 other predicate, the same as the membership scopes.
-            search: Full-text terms over title/content/author (TASK-3603 --
+            search: Full-text terms over title/content/author (TASK-3791 --
                 the reader's `/`). Whitespace-separated terms are ANDed, each
                 matched literally (FTS5 operator syntax in the input is
                 neutralized by quoting); the FTS table is used when it reads,
                 with a LIKE fallback when it does not. `None` or blank passes
                 no predicate at all.
-            since: Effective-date floor (TASK-3603 -- the Today feed's page):
+            since: Effective-date floor (TASK-3791 -- the Today feed's page):
                 only rows at/after `since` (inclusive). Both sides go through
                 SQLite `datetime()` -- the stored columns are mixed-format
                 (CURRENT_TIMESTAMP's space shape and ingest's ISO `T`+offset)
@@ -2285,7 +2285,7 @@ class SubscriptionsDB(BaseDB):
     def get_unread_items_count_since(self, since: str) -> int:
         """How many unread items fall at/after `since` -- the Today badge.
 
-        TASK-3603. The floor compares the EFFECTIVE date (``published_date``,
+        TASK-3791. The floor compares the EFFECTIVE date (``published_date``,
         falling back to ``created_at``), the same COALESCE `get_new_items`
         orders by and its `since` predicate filters on, so the badge and the
         node's page answer the same question.
@@ -2303,6 +2303,27 @@ class SubscriptionsDB(BaseDB):
                 (since,),
             ).fetchone()
         return int(row[0]) if row else 0
+
+    def get_subscription_id_by_source(self, source: str) -> Optional[int]:
+        """The id of the subscription with exactly this `source` URL, or None.
+
+        TASK-3604. OPML import resolves each feed against the existing
+        roster before creating anything -- `add_subscription` is a plain
+        INSERT with no uniqueness constraint on `source`, so without this
+        lookup a re-import duplicates every feed and the additive-only
+        round-trip (ADR-043 rule 6) is impossible.
+
+        Args:
+            source: The exact source URL/identifier to match.
+
+        Returns:
+            The subscription's id, or `None` when no row carries it.
+        """
+        with self.transaction() as conn:
+            row = conn.execute(
+                "SELECT id FROM subscriptions WHERE source = ?", (source,)
+            ).fetchone()
+        return int(row[0]) if row else None
 
     def insert_briefing(self, watchlist_id: int, status: str = "generating") -> int:
         """Create a new `briefings` row for a watchlist.

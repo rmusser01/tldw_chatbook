@@ -629,7 +629,7 @@ async def test_starred_root_badge_counts_flagged_items():
 
 @pytest.mark.asyncio
 async def test_all_unread_and_today_badges_count_their_own_facts():
-    """TASK-3603 plan task 4: All Unread reuses the All-sources unread count
+    """TASK-3791 plan task 4: All Unread reuses the All-sources unread count
     (one fact, two angles); Today counts unread items at/after local
     midnight only."""
     from datetime import datetime, timedelta, timezone

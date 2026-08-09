@@ -8,32 +8,106 @@ class WatchlistOpmlService:
     """Minimal OPML import/export for watchlist sources."""
 
     def parse(self, xml_text: str) -> list[dict[str, Any]]:
-        """Parse OPML XML into source create payloads."""
+        """Parse OPML XML into source create payloads, preserving folders.
+
+        ADR-043. An outline with NO feed URL whose descendants include feeds
+        is a FOLDER: feeds below it carry its name under `"folder"` (raw --
+        case-insensitive reuse is the assignment layer's job, not the
+        parser's). Nested folders flatten to the innermost name. An outline
+        WITH a feed URL is a feed even when it has children; those children
+        inherit its folder context. Top-level feeds carry `"folder": None`.
+        A structural parser, not a sanitizer: names surface as literal
+        strings (the C1-control test above pins that contract), and
+        malformed XML raises `ET.ParseError` into the caller's handler.
+
+        Args:
+            xml_text: Raw OPML XML text.
+
+        Returns:
+            Source-create payloads carrying ``name``, ``url``,
+            ``source_type``, and the nearest ``folder`` name or ``None``.
+
+        Raises:
+            xml.etree.ElementTree.ParseError: If ``xml_text`` is malformed.
+        """
         root = ET.fromstring(xml_text)
         items: list[dict[str, Any]] = []
-        for outline in root.iter("outline"):
-            url = outline.get("xmlUrl") or outline.get("htmlUrl")
-            if not url:
-                continue
-            source_type = outline.get("type", "rss").lower()
-            if source_type not in {"rss", "site", "forum"}:
-                source_type = "rss"
-            items.append({
-                "name": outline.get("text") or outline.get("title") or "Untitled",
-                "url": url,
-                "source_type": source_type,
-            })
+
+        def walk(element: ET.Element, folder: "str | None") -> None:
+            for child in element:
+                if child.tag != "outline":
+                    # <body> and any other container: invisible to the
+                    # mapping, but its descendants still count.
+                    walk(child, folder)
+                    continue
+                url = child.get("xmlUrl") or child.get("htmlUrl")
+                if url:
+                    source_type = child.get("type", "rss").lower()
+                    if source_type not in {"rss", "site", "forum"}:
+                        source_type = "rss"
+                    items.append({
+                        "name": child.get("text") or child.get("title") or "Untitled",
+                        "url": url,
+                        "source_type": source_type,
+                        "folder": folder,
+                    })
+                    # A feed's children inherit ITS context -- a feed is
+                    # never a folder (ADR-043 rule 3).
+                    walk(child, folder)
+                else:
+                    # Folder candidate: its name becomes the context for its
+                    # descendants (the innermost name wins). A nameless one
+                    # passes the current context through unchanged.
+                    name = child.get("text") or child.get("title")
+                    walk(child, name if name is not None else folder)
+
+        walk(root, None)
         return items
 
-    def export(self, sources: list[dict[str, Any]]) -> str:
-        """Serialize source dicts to OPML 2.0 XML."""
+    def export(
+        self,
+        watchlists: list[dict[str, Any]],
+        unassigned: list[dict[str, Any]],
+    ) -> str:
+        """Serialize watchlist structure to OPML 2.0 XML (ADR-043 rule 5).
+
+        One folder outline per watchlist (ordered case-insensitively by
+        name) with its member feeds nested (same ordering); a source in
+        several watchlists appears under EACH -- membership is many-to-many
+        and the document says so faithfully. Unassigned feeds follow as
+        flat top-level outlines, so a profile with no watchlists exports
+        exactly the flat document the pre-mapping exporter produced.
+        ElementTree escapes every attribute on serialize; parse() surfaces
+        them as literal strings on the way back in.
+
+        Args:
+            watchlists: One dict per watchlist: ``name`` plus ``sources``,
+                a list of feed dicts carrying ``name``/``url``/
+                ``source_type``.
+            unassigned: Feed dicts (same shape) belonging to no watchlist.
+
+        Returns:
+            The OPML document as a string.
+        """
         root = ET.Element("opml", {"version": "2.0"})
         body = ET.SubElement(root, "body")
-        for source in sources:
-            outline = ET.SubElement(body, "outline", {
+
+        def feed(parent: ET.Element, source: dict[str, Any]) -> None:
+            ET.SubElement(parent, "outline", {
                 "text": str(source.get("name") or "Untitled"),
                 "title": str(source.get("name") or "Untitled"),
                 "type": str(source.get("source_type") or "rss"),
                 "xmlUrl": str(source.get("url") or ""),
             })
+
+        def by_name(row: dict[str, Any]) -> str:
+            return str(row.get("name") or "").lower()
+
+        for watchlist in sorted(watchlists, key=by_name):
+            name = str(watchlist.get("name") or "Untitled")
+            folder = ET.SubElement(body, "outline", {"text": name, "title": name})
+            for source in sorted(watchlist.get("sources") or [], key=by_name):
+                feed(folder, source)
+        for source in sorted(unassigned, key=by_name):
+            feed(body, source)
         return ET.tostring(root, encoding="unicode")

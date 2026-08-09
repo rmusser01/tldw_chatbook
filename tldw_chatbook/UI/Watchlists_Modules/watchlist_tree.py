@@ -28,7 +28,7 @@ UNASSIGNED_BUCKET = -1
 # from `get_flagged_items_count()` on every tree-data load, so the badge
 # refreshes through the existing debounced counts path.
 STARRED_BUCKET = -3
-# The Today smart feed (TASK-3603 plan task 4): unread items at/after local
+# The Today smart feed (TASK-3791 plan task 4): unread items at/after local
 # midnight, from `get_unread_items_count_since`. All Unread needs no bucket
 # of its own -- its badge is the same unread count `ALL_SOURCES_BUCKET`
 # already carries (one fact, two angles).
@@ -222,7 +222,7 @@ class WatchlistTree(Vertical):
         )
         yield self._root_node("all", "All sources", ALL_SOURCES_BUCKET)
         yield self._root_node("unassigned", "Unassigned", UNASSIGNED_BUCKET)
-        # TASK-3603 plan task 4: the smart-feed cluster. All Unread reads
+        # TASK-3791 plan task 4: the smart-feed cluster. All Unread reads
         # the same bucket as All sources (its badge IS the global unread
         # count); Today's rides TODAY_BUCKET, which the screen inserts from
         # the local-midnight unread count on every tree-data load.
