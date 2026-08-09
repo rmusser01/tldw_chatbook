@@ -418,7 +418,11 @@ class ExternalParakeetVerifier:
                     stop.set()
                     _fail(ExternalParakeetErrorCode.CANCELLED)
                 try:
-                    return future.result(timeout=0.01)
+                    verified = future.result(timeout=0.01)
+                    if cancelled():
+                        stop.set()
+                        _fail(ExternalParakeetErrorCode.CANCELLED)
+                    return verified
                 except TimeoutError:
                     continue
                 except CancelledError:

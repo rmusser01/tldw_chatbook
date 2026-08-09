@@ -458,13 +458,19 @@ def test_rejects_snapshot_of_temporary_file_identity(
     assert substituted
 
 
+@pytest.mark.parametrize("metadata_probe_fallback", (False, True))
 def test_waiter_cancellation_wins_when_hash_finishes_before_next_poll(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    metadata_probe_fallback: bool,
 ) -> None:
     payload = b"x" * HASH_CHUNK_BYTES
     files = {"model.onnx": payload}
     root = tmp_path / "external-cancelled"
     _materialize(root, files)
+    verifier = ExternalParakeetVerifier()
+    if metadata_probe_fallback:
+        monkeypatch.setattr(verifier, "_cache_key", lambda *_args: None)
     cancel = False
     observed: list[tuple[int, int]] = []
 
@@ -474,13 +480,18 @@ def test_waiter_cancellation_wins_when_hash_finishes_before_next_poll(
         if bytes_done:
             cancel = True
 
-    _assert_error(
-        ExternalParakeetErrorCode.CANCELLED,
-        _descriptor(files),
-        root,
-        cancelled=lambda: cancel,
-        progress=progress,
-    )
+    try:
+        with pytest.raises(ExternalParakeetVerificationError) as caught:
+            verifier.verify(
+                _descriptor(files),
+                root,
+                cancelled=lambda: cancel,
+                progress=progress,
+            )
+    finally:
+        verifier.close()
+
+    assert caught.value.code is ExternalParakeetErrorCode.CANCELLED
     assert observed == [(0, len(payload)), (len(payload), len(payload))]
 
 
