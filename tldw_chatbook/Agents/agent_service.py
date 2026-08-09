@@ -30,6 +30,7 @@ from .agent_models import (
     SPAWN_TOOL_NAME,
     STEP_ERROR,
     AgentConfig,
+    AgentDefinition,
     AgentStep,
     ModelTurn,
     RunOutcome,
@@ -37,6 +38,15 @@ from .agent_models import (
     ToolCall,
     ToolResult,
     clamp_child_budget,
+    definition_from_row,
+    # Aliased: `_run_one` below has its own `definition_fingerprint: str |
+    # None` keyword parameter (the audit value to persist), and that
+    # parameter shadows this module-level function for the rest of
+    # `_run_one`'s body -- including nested closures like `spawn`, which
+    # closes over `_run_one`'s local scope, not the module global. Calling
+    # the FUNCTION under a distinct local name avoids `spawn` accidentally
+    # invoking the parameter's value (None/str) instead.
+    definition_fingerprint as compute_definition_fingerprint,
 )
 from .agent_runtime import LoopDeps, render_tool_protocol, run_agent_loop
 from .native_tools import (
@@ -64,6 +74,7 @@ from .tool_catalog import (
     SKILL_FILE_TOOL_SCHEMA,
     SPAWN_TOOL_SCHEMA,
     ToolCatalogRegistry,
+    build_spawn_schema,
     initial_disclosure,
 )
 
@@ -346,6 +357,13 @@ class AgentService:
         # supplying its own writer also owns that writer's lifecycle.
         self._injected_run_log_writer = run_log_writer
         self.run_log_writer = run_log_writer
+        # Fleet spec §4: the roster of enabled agent definitions for the
+        # turn currently in flight -- loaded once per `run_turn` call (see
+        # its own comment) and read by `_run_one`'s spawn schema and the
+        # `spawn` closure's name resolution. Empty until the first
+        # `run_turn` call; a service that never calls `run_turn` (none in
+        # production) keeps spawn_subagent's identity-path schema.
+        self._turn_definitions: list[AgentDefinition] = []
 
     # -- internals -------------------------------------------------------
 
@@ -517,6 +535,8 @@ class AgentService:
         task: str | None,
         parent_run_id: str | None,
         assistant_message_id: str | None = None,
+        agent_definition: str | None = None,
+        definition_fingerprint: str | None = None,
     ) -> tuple[str, RunOutcome]:
         run_id = self.db.create_run(
             conversation_id=conversation_id,
@@ -525,6 +545,8 @@ class AgentService:
             parent_run_id=parent_run_id,
             budget=dataclasses.asdict(config.budget),
             assistant_message_id=assistant_message_id,
+            agent_definition=agent_definition,
+            definition_fingerprint=definition_fingerprint,
         )
         # Two-phase: the writer was constructed before any run id existed.
         # Only the PRIMARY run binds; a child finds it already bound.
@@ -540,7 +562,7 @@ class AgentService:
         disclosed_names = {schema.name for schema in active}
         runtime_schemas = []
         if config.budget.max_subagents > 0:
-            runtime_schemas.append(SPAWN_TOOL_SCHEMA)
+            runtime_schemas.append(build_spawn_schema(self._turn_definitions))
         if offer_find_load:
             runtime_schemas.extend([FIND_TOOLS_SCHEMA, LOAD_TOOLS_SCHEMA])
         if (
@@ -667,7 +689,10 @@ class AgentService:
         sub_agent_spawns = 0
 
         def spawn(
-            spawn_task: str, *, allowed_tools: tuple[str, ...] | None = None
+            spawn_task: str,
+            *,
+            allowed_tools: tuple[str, ...] | None = None,
+            agent: str | None = None,
         ) -> ToolResult:
             nonlocal sub_agent_spawns
             # Task-12 review Finding 2: this closure is THE single spawn
@@ -682,6 +707,30 @@ class AgentService:
             # ceiling of 1 could permit 2 sub-agent runs.) The loop's own
             # counter stays untouched as a redundant secondary bound that
             # is never reached first.
+            #
+            # Fleet spec §4: the skill path (allowed_tools override) and
+            # the named-definition path are disjoint by construction --
+            # skills never pass `agent`.
+            assert not (agent and allowed_tools is not None)
+            resolved = None
+            if agent:
+                resolved = next(
+                    (d for d in self._turn_definitions if d.name == agent),
+                    None,
+                )
+                if resolved is None:
+                    available = (
+                        ", ".join(d.name for d in self._turn_definitions)
+                        or "none"
+                    )
+                    # Refused BEFORE the budget increment: a typo costs no
+                    # sub-agent slot (mirrors the loop's empty-task refusal).
+                    return ToolResult(
+                        ok=False,
+                        error=(
+                            f"unknown agent '{agent}'; available: {available}"
+                        ),
+                    )
             if sub_agent_spawns >= config.budget.max_subagents:
                 return ToolResult(ok=False, error="sub-agent budget exhausted")
             sub_agent_spawns += 1
@@ -721,9 +770,28 @@ class AgentService:
                     )
                 )
             )
+            child_system_prompt = get_internal_prompt("agents.subagent_system")
+            child_model = config.model
+            if resolved is not None:
+                # IDENTITY CONTRACT: console_agent_bridge._is_subagent
+                # prefix-matches the base prompt -- instructions APPEND,
+                # never prepend (fleet spec §4 composition rule).
+                child_system_prompt = (
+                    child_system_prompt + "\n\n" + resolved.instructions
+                )
+                if resolved.model:
+                    child_model = resolved.model
+                if resolved.tool_allowlist:
+                    # Intersection, never union (spec §3 invariant 1): the
+                    # definition narrows the inherited set; unknown names
+                    # drop out here and can never grant.
+                    wanted = set(resolved.tool_allowlist)
+                    child_allowed_tools = tuple(
+                        n for n in child_allowed_tools if n in wanted
+                    )
             child_config = AgentConfig(
-                model=config.model,
-                system_prompt=get_internal_prompt("agents.subagent_system"),
+                model=child_model,
+                system_prompt=child_system_prompt,
                 allowed_tools=child_allowed_tools,
                 budget=clamp_child_budget(config.budget, remaining),
                 native_tools=config.native_tools,
@@ -750,6 +818,12 @@ class AgentService:
                     agent_kind=AGENT_KIND_SUBAGENT,
                     task=spawn_task,
                     parent_run_id=run_id,
+                    agent_definition=(resolved.name if resolved else None),
+                    definition_fingerprint=(
+                        compute_definition_fingerprint(resolved)
+                        if resolved
+                        else None
+                    ),
                 )
             text = child_outcome.final_text
             cap = config.budget.max_subagent_result_chars
@@ -1440,6 +1514,13 @@ class AgentService:
         # is listed fresh at this point, so skill CRUD since the last run
         # is always picked up with no separate invalidation signal needed.
         self.registry.reset_catalog_cache()
+        # Fleet spec §4: definitions load ONCE per turn — the roster the
+        # model sees in the spawn schema is exactly what resolves at spawn
+        # time; Settings edits affect the NEXT turn, never an in-flight one.
+        self._turn_definitions = [
+            definition_from_row(row)
+            for row in self.db.list_agent_definitions(enabled_only=True)
+        ]
         run_id, outcome = self._run_one(
             conversation_id=conversation_id,
             messages=messages,

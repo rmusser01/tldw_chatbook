@@ -889,3 +889,27 @@ def test_console_budget_bounds_spend_not_only_time():
 
     assert CONSOLE_RUN_BUDGET.max_model_turns == 30
     assert CONSOLE_RUN_BUDGET.max_total_tokens > 0
+
+
+def test_spawn_passes_agent_kwarg_only_when_present():
+    seen = []
+
+    def spawn(task, **kwargs):
+        seen.append((task, kwargs))
+        return ToolResult(ok=True, content="ok")
+
+    out = run(
+        [
+            ModelTurn(text=fence(SPAWN_TOOL_NAME, {"task": "plain"})),
+            ModelTurn(
+                text=fence(
+                    SPAWN_TOOL_NAME, {"task": "named", "agent": "researcher"}
+                )
+            ),
+            ModelTurn(text="done"),
+        ],
+        spawn=spawn,
+    )
+    assert out.status == RUN_DONE
+    assert seen[0] == ("plain", {})
+    assert seen[1] == ("named", {"agent": "researcher"})
