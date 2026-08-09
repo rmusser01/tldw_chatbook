@@ -265,12 +265,6 @@ PY
 
 Expected after the repair: 35 candidates across four modules, all inspected. Eleven request/tool candidates in `LLM_API_Calls.py` route through `safe_llm_request_payload_summary()` (the nine existing provider summaries plus the two corrected HuggingFace summaries). Fourteen are safe metadata-only calls: two HuggingFace model/stream/count/byte calls, one `LLM_API_Calls_Local.py` payload-**keys** call, and eleven `type(data)` calls. The remaining ten calls in `Local_Summarization_Lib.py` and `Summarization_General_Lib.py` log full or 500-character input data. They are confirmed privacy exposures but are individual content diagnostics, not AC 4 raw provider request-payload dictionaries/tool definitions; the separately filed task owns them, while TASK-2118 notes record only the exact sites/classification and no later ID. There must be zero raw request-payload dictionary or raw tool-definition logs.
 
-Corroborate label-based coverage with:
-
-```bash
-rg -n -U --pcre2 -i '(?s)(?:logger|logging)\.(?:trace|debug|info|warning|error|critical|exception)\(.{0,500}?(?:payload|tools?|loaded data|processed data)' tldw_chatbook/LLM_Calls --glob '*.py'
-```
-
 Inspect every result in context. Record the classification in TASK-2118 Implementation Notes. If an additional AC 4 match exists, add a failing sentinel test and route it through the helper before continuing.
 
 - [ ] **Step 2: Verify the separate privacy follow-up is committed before mutation checks**
