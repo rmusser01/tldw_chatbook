@@ -2078,6 +2078,7 @@ class ConsoleChatStore:
         session_id: str,
         *,
         global_default: object,
+        force_persistence: bool = False,
     ) -> ConsoleRoleplayProjectionPersistencePlan | None:
         """Materialize live projections and snapshot their durable writes.
 
@@ -2087,11 +2088,17 @@ class ConsoleChatStore:
         and message objects.
         """
         session = self._session_or_raise(session_id)
-        if not self._roleplay_projection_is_stale(session, global_default):
+        projection_is_stale = self._roleplay_projection_is_stale(
+            session, global_default
+        )
+        if not projection_is_stale and not force_persistence:
             return None
-        self._bump_identity_revision(session_id)
+        if projection_is_stale:
+            self._bump_identity_revision(session_id)
         return self._materialize_roleplay_projections_live(
-            session_id, global_default=global_default
+            session_id,
+            global_default=global_default,
+            force_persistence=force_persistence,
         )
 
     def seed_character_roleplay(
@@ -2326,7 +2333,11 @@ class ConsoleChatStore:
         return result.persisted
 
     def _materialize_roleplay_projections_live(
-        self, session_id: str, *, global_default: object
+        self,
+        session_id: str,
+        *,
+        global_default: object,
+        force_persistence: bool = False,
     ) -> ConsoleRoleplayProjectionPersistencePlan | None:
         """Update owner-thread state and return frozen durable call arguments."""
         session = self._session_or_raise(session_id)
@@ -2350,6 +2361,12 @@ class ConsoleChatStore:
                     projected_system,
                     prior_system_prompt=prior_system_prompt,
                 )
+            elif force_persistence:
+                system_prompt_write = self._snapshot_roleplay_system_prompt_write(
+                    session,
+                    projected_system,
+                    prior_system_prompt=projected_system,
+                )
         for message in self._nodes_by_session.get(session_id, {}).values():
             metadata = message.metadata
             if (
@@ -2363,16 +2380,17 @@ class ConsoleChatStore:
                 user_name=context.user_name,
                 character_name=character_name,
             )
-            if message.content == projected:
+            if message.content == projected and not force_persistence:
                 continue
             prior_content = message.content
-            message.content = projected
-            if message.variants is not None:
-                selected = message.variants.selected_index
-                message.variants.variants[selected] = replace(
-                    message.variants.variants[selected], content=projected
-                )
-            self._bump_message_speech_revision(message.id)
+            if message.content != projected:
+                message.content = projected
+                if message.variants is not None:
+                    selected = message.variants.selected_index
+                    message.variants.variants[selected] = replace(
+                        message.variants.variants[selected], content=projected
+                    )
+                self._bump_message_speech_revision(message.id)
             message_write = self._snapshot_roleplay_message_projection_write(
                 session,
                 message,

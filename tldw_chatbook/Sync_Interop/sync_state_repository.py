@@ -884,17 +884,25 @@ class SyncStateRepository(BaseDB):
                     now,
                 ),
             )
+            row = conn.execute(
+                """
+                SELECT *
+                FROM sync_v2_local_outbox
+                WHERE source_scope_key = ?
+                  AND dataset_id = ?
+                  AND client_envelope_id = ?
+                """,
+                (
+                    source_scope_key,
+                    dataset_id,
+                    parsed.client_envelope_id,
+                ),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("failed to persist Sync v2 outbox envelope")
+            entry = self._outbox_from_row(row)
             conn.commit()
-        entries = self.list_sync_v2_outbox_entries(
-            server_profile_id=server_profile_id,
-            authenticated_principal_id=authenticated_principal_id,
-            workspace_scope=workspace_scope,
-            dataset_id=dataset_id,
-            client_envelope_ids=[parsed.client_envelope_id],
-        )
-        if not entries:
-            raise RuntimeError("failed to persist Sync v2 outbox envelope")
-        return entries[0]
+        return entry
 
     def list_pending_sync_v2_outbox_envelopes(
         self,

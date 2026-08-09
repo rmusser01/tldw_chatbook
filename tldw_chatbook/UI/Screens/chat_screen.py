@@ -225,6 +225,7 @@ from ...Chat.console_chat_store import (
     ConsoleChatSession,
     ConsoleChatStore,
     ConsoleRoleplayProjectionPersistencePlan,
+    ConsoleRoleplayProjectionPersistenceResult,
 )
 from ...Chat.console_provider_gateway import (
     DEFAULT_LLAMACPP_BASE_URL,
@@ -762,6 +763,49 @@ CONSOLE_REALTIME_CONNECT_TIMEOUT_SECONDS = 8.0
 #: callbacks. This is the backstop for any no-ready path that arrives as
 #: NOTHING at all -- see `_tick_console_realtime`.
 CONSOLE_REALTIME_READY_TIMEOUT_SECONDS = 8.0
+
+#: Maximum default wait for the screen-owned roleplay drain during unmount.
+#: The immutable writer may outlive this deadline, but never the screen-bound
+#: coordinator or its store/session presentation state.
+CONSOLE_ROLEPLAY_UNMOUNT_TIMEOUT_SECONDS = 0.25
+
+
+async def _persist_console_roleplay_projection_plan(
+    plan: ConsoleRoleplayProjectionPersistencePlan,
+) -> ConsoleRoleplayProjectionPersistenceResult:
+    """Run one immutable plan without capturing a ChatScreen or live store."""
+    return await asyncio.to_thread(
+        ConsoleChatStore.persist_roleplay_projection_plan, plan
+    )
+
+
+def _consume_console_roleplay_writer_completion(
+    task: asyncio.Task[ConsoleRoleplayProjectionPersistenceResult],
+) -> None:
+    """Consume an abandoned immutable writer result or exception statically."""
+    if task.cancelled():
+        return
+    try:
+        task.result()
+    except Exception:
+        logger.exception("Detached Console roleplay projection writer failed.")
+
+
+def _consume_console_roleplay_repair_for_current_screen(
+    app_instance: Any,
+) -> None:
+    """Ask the app's current Console owner to consume a repair marker."""
+    try:
+        current_screen = app_instance.screen
+    except Exception:  # noqa: BLE001 - lifecycle repair is best-effort
+        return
+    consume = getattr(
+        current_screen,
+        "_consume_pending_console_roleplay_repair",
+        None,
+    )
+    if callable(consume):
+        consume()
 
 #: Longest sanitized provider-failure text this wiring will carry into a
 #: toast. Long enough to name a cause, short enough that an unexpectedly
@@ -1990,15 +2034,24 @@ class ChatScreen(BaseAppScreen):
         if not store.is_roleplay_projection_plan_current(plan):
             return
         persistence_task = asyncio.create_task(
-            asyncio.to_thread(store.persist_roleplay_projection_plan, plan)
+            _persist_console_roleplay_projection_plan(plan)
         )
+        persistence_task.add_done_callback(
+            _consume_console_roleplay_writer_completion
+        )
+        self._console_roleplay_writer_task = persistence_task
         try:
             result = await asyncio.shield(persistence_task)
         except asyncio.CancelledError:
-            # Once an immutable writer has started it cannot be cancelled
-            # safely. Finish and accept it before the drain advances to the
-            # replaceable latest pending plan.
+            # Unmount may abandon the screen-owned drain while the immutable
+            # writer continues. Its static callback consumes completion
+            # without retaining this screen or its live store.
+            if self._console_roleplay_tearing_down:
+                raise
             result = await persistence_task
+        finally:
+            if self._console_roleplay_writer_task is persistence_task:
+                self._console_roleplay_writer_task = None
         accepted = store.accept_roleplay_projection_persistence_result(result)
         if accepted and not result.persisted:
             self.app_instance.notify(
@@ -2058,8 +2111,97 @@ class ChatScreen(BaseAppScreen):
                     "Console roleplay projection persistence task failed: {!r}",
                     error,
                 )
-        if self._console_roleplay_pending_plan is not None and self.is_mounted:
+        if (
+            self._console_roleplay_pending_plan is not None
+            and self.is_mounted
+            and not self._console_roleplay_tearing_down
+        ):
             self._start_console_roleplay_persistence_drain()
+
+    def _console_roleplay_unmount_timeout_seconds(self) -> float:
+        """Return the bounded configurable drain deadline for this screen."""
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        console_config = app_config.get("console", {})
+        raw_timeout = (
+            console_config.get(
+                "roleplay_refresh_teardown_timeout_seconds",
+                CONSOLE_ROLEPLAY_UNMOUNT_TIMEOUT_SECONDS,
+            )
+            if isinstance(console_config, dict)
+            else CONSOLE_ROLEPLAY_UNMOUNT_TIMEOUT_SECONDS
+        )
+        try:
+            timeout = float(raw_timeout)
+        except (TypeError, ValueError):
+            return CONSOLE_ROLEPLAY_UNMOUNT_TIMEOUT_SECONDS
+        if not 0.01 <= timeout <= 5.0:
+            return CONSOLE_ROLEPLAY_UNMOUNT_TIMEOUT_SECONDS
+        return timeout
+
+    def _publish_console_roleplay_repair_marker(self) -> None:
+        """Publish the latest desired identity on the app, not this screen."""
+        generation = int(
+            getattr(self.app_instance, "_console_roleplay_repair_generation", 0)
+            or 0
+        ) + 1
+        self.app_instance._console_roleplay_repair_generation = generation
+        self.app_instance._console_roleplay_repair_global_name = (
+            self._global_chat_display_name()
+        )
+        # Textual resumes the uncovered screen before awaiting this screen's
+        # unmount hook. A marker published only after the teardown deadline
+        # therefore misses that screen's normal ``on_screen_resume`` probe.
+        # The loop callback resolves the app's current screen only after pop
+        # completes and captures neither this retiring screen nor its store.
+        asyncio.get_running_loop().call_later(
+            0.1,
+            _consume_console_roleplay_repair_for_current_screen,
+            self.app,
+        )
+
+    async def _teardown_console_roleplay_persistence(self) -> None:
+        """Bound screen-owned teardown while a static immutable writer lingers."""
+        self._console_roleplay_tearing_down = True
+        task = self._console_roleplay_persistence_task
+        if task is None or task.done():
+            if (
+                self._console_roleplay_pending_plan is not None
+                or self._console_roleplay_active_plan is not None
+                or (
+                    self._console_roleplay_writer_task is not None
+                    and not self._console_roleplay_writer_task.done()
+                )
+            ):
+                self._publish_console_roleplay_repair_marker()
+            self._console_roleplay_persistence_task = None
+            self._console_roleplay_active_plan = None
+            self._console_roleplay_pending_plan = None
+            self._console_roleplay_writer_task = None
+            self._console_roleplay_drain_scheduled = False
+            return
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(task),
+                timeout=self._console_roleplay_unmount_timeout_seconds(),
+            )
+        except TimeoutError:
+            self._publish_console_roleplay_repair_marker()
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        except Exception:
+            self._publish_console_roleplay_repair_marker()
+            logger.exception(
+                "Console roleplay projection drain failed during teardown."
+            )
+        finally:
+            self._console_roleplay_persistence_task = None
+            self._console_roleplay_active_plan = None
+            self._console_roleplay_pending_plan = None
+            self._console_roleplay_writer_task = None
+            self._console_roleplay_drain_scheduled = False
 
     def _start_console_roleplay_persistence_drain(self) -> None:
         """Start the sole retained persistence drain when work is pending."""
@@ -2090,7 +2232,9 @@ class ChatScreen(BaseAppScreen):
             group="console-roleplay-refresh",
         )
 
-    def _dispatch_active_console_roleplay_refresh(self) -> bool:
+    def _dispatch_active_console_roleplay_refresh(
+        self, *, force_persistence: bool = False
+    ) -> bool:
         """Coalesce refresh writes by active session and effective global name."""
         store = self._console_chat_store
         if store is None or store.active_session_id is None:
@@ -2098,13 +2242,17 @@ class ChatScreen(BaseAppScreen):
         self._start_console_roleplay_persistence_drain()
         global_user_display_name = self._global_chat_display_name()
         refresh_key = (store.active_session_id, global_user_display_name)
-        if refresh_key == self._last_console_roleplay_refresh_key:
+        if (
+            not force_persistence
+            and refresh_key == self._last_console_roleplay_refresh_key
+        ):
             return False
         self._last_console_roleplay_refresh_key = refresh_key
         try:
             plan = store.prepare_session_roleplay_projection_refresh(
                 refresh_key[0],
                 global_default=global_user_display_name,
+                force_persistence=force_persistence,
             )
         except KeyError:
             return False
@@ -2135,6 +2283,36 @@ class ChatScreen(BaseAppScreen):
     def _consume_pending_console_identity_refresh(self) -> bool:
         """Consume an identity generation missed while Console was inactive."""
         return self.request_console_identity_refresh()
+
+    def _consume_pending_console_roleplay_repair(self) -> bool:
+        """Force-persist the latest source projection after abandoned teardown."""
+        generation = int(
+            getattr(self.app_instance, "_console_roleplay_repair_generation", 0)
+            or 0
+        )
+        app_consumed = int(
+            getattr(
+                self.app_instance,
+                "_console_roleplay_repair_consumed_generation",
+                0,
+            )
+            or 0
+        )
+        if generation <= max(
+            self._console_roleplay_repair_generation, app_consumed
+        ):
+            return False
+        self._ensure_console_chat_store()
+        self._last_console_roleplay_refresh_key = None
+        dispatched = self._dispatch_active_console_roleplay_refresh(
+            force_persistence=True
+        )
+        if dispatched:
+            self._console_roleplay_repair_generation = generation
+            self.app_instance._console_roleplay_repair_consumed_generation = (
+                generation
+            )
+        return dispatched
 
     async def on_console_settings_open(self, event: Button.Pressed) -> None:
         """Open Console session settings for the active native session."""
@@ -2714,6 +2892,9 @@ class ChatScreen(BaseAppScreen):
         self._console_chat_store: ConsoleChatStore | None = None
         self._last_console_roleplay_refresh_key: tuple[str, str] | None = None
         self._console_roleplay_persistence_task: asyncio.Task[None] | None = None
+        self._console_roleplay_writer_task: (
+            asyncio.Task[ConsoleRoleplayProjectionPersistenceResult] | None
+        ) = None
         self._console_roleplay_active_plan: (
             ConsoleRoleplayProjectionPersistencePlan | None
         ) = None
@@ -2721,6 +2902,8 @@ class ChatScreen(BaseAppScreen):
             ConsoleRoleplayProjectionPersistencePlan | None
         ) = None
         self._console_roleplay_drain_scheduled = False
+        self._console_roleplay_tearing_down = False
+        self._console_roleplay_repair_generation = 0
         self._console_identity_refresh_generation = 0
         # task-9: cache of persisted-conversation RAG retrieval scopes,
         # keyed by conversation id -- populated off-loop at resume time and
@@ -13352,6 +13535,7 @@ class ChatScreen(BaseAppScreen):
         self.set_timer(0.1, self._restore_collapsible_states)
         self.set_timer(0.05, self.sync_task_resume_state)
         self.set_timer(0.15, self._consume_pending_chat_handoff)
+        self.set_timer(0.15, self._consume_pending_console_roleplay_repair)
         # Mirrors the handoff timer above: the native composer is not
         # guaranteed to exist in the DOM yet at this exact point (it can
         # still be settling in immediately after mount, same reason every
@@ -13467,6 +13651,7 @@ class ChatScreen(BaseAppScreen):
         """Release Console-native resources owned by this screen."""
         self._stop_console_transcript_sync_timer()
         self._stop_console_cost_ttl_timer()
+        await self._teardown_console_roleplay_persistence()
         # The pipeline hands-free loop's own two-statement abandon teardown
         # now lives in the decomposed controller (wave-2 console
         # decomposition, task 1); calling it here keeps this method one line
@@ -18665,7 +18850,11 @@ class ChatScreen(BaseAppScreen):
         self.set_timer(0.15, self._consume_pending_console_prompt_insert)
         self.set_timer(0.15, self.consume_pending_console_provider_intent)
         self.call_after_refresh(self._restore_console_workbench_focus)
-        if not self._consume_pending_console_identity_refresh():
+        repair_dispatched = self._consume_pending_console_roleplay_repair()
+        if (
+            not repair_dispatched
+            and not self._consume_pending_console_identity_refresh()
+        ):
             self._dispatch_active_console_roleplay_refresh()
         self.run_worker(self._refresh_console_skill_candidates(), exclusive=False)
         # Note: BaseAppScreen doesn't have on_screen_resume, so no super() call

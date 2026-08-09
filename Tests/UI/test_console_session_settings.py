@@ -1,8 +1,10 @@
 import asyncio
 from dataclasses import replace
+import gc
 from pathlib import Path
 import threading
 from types import SimpleNamespace
+import weakref
 
 import pytest
 from textual import events
@@ -3885,6 +3887,146 @@ async def test_mounted_console_cancel_latest_waiter_keeps_durable_c() -> None:
         assert console._console_roleplay_pending_plan is None
         assert persistence.durable_system == "Speak with Cecelia."
         assert persistence.durable_greeting == "Hello Cecelia."
+
+
+@pytest.mark.asyncio
+async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_resume():
+    class RecordingPersistence:
+        def __init__(self) -> None:
+            self.durable_system = "Speak with Alpha."
+            self.durable_greeting = "Hello Alpha."
+
+        def create_message(self, **kwargs):
+            self.durable_greeting = kwargs["content"]
+            return "msg-base"
+
+        def update_conversation_roleplay_context(self, **_kwargs):
+            return True
+
+        def update_conversation_system_prompt(self, **kwargs):
+            self.durable_system = kwargs["system_prompt"]
+            return True
+
+        def update_message_content(self, **kwargs):
+            self.durable_greeting = kwargs["content"]
+            return True
+
+    class HungPersistence(RecordingPersistence):
+        def __init__(self) -> None:
+            super().__init__()
+            self.started = threading.Event()
+            self.release = threading.Event()
+            self.finished = threading.Event()
+
+        def create_message(self, **kwargs):
+            self.durable_greeting = kwargs["content"]
+            return "msg-hung"
+
+        def update_conversation_system_prompt(self, **kwargs):
+            self.started.set()
+            try:
+                assert self.release.wait(10)
+                return super().update_conversation_system_prompt(**kwargs)
+            finally:
+                self.finished.set()
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"user_display_name": "Alpha"}
+    app.app_config.setdefault("console", {})[
+        "roleplay_refresh_teardown_timeout_seconds"
+    ] = 0.05
+    host = ConsoleHarness(app)
+    repair_persistence = RecordingPersistence()
+    hung_persistence = HungPersistence()
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        resumed = host.screen_stack[-1]
+        await _wait_for_selector(resumed, pilot, "#console-settings-summary")
+        resumed_store = resumed._ensure_console_chat_store()
+        resumed_store.persistence = repair_persistence
+        resumed_session = resumed_store.ensure_session()
+        resumed_session.settings = ConsoleSessionSettings(
+            provider="llama_cpp", system_prompt="Speak with Alpha."
+        )
+        resumed_session.assistant_kind = "character"
+        resumed_session.character_name = "Alraune"
+        resumed_session.persisted_conversation_id = "conv-base"
+        resumed_store.seed_character_roleplay(
+            resumed_session.id,
+            system_template="Speak with {{user}}.",
+            greeting_template="Hello {{user}}.",
+            global_default="Alpha",
+        )
+
+        hung = ChatScreen(app)
+        await host.push_screen(hung)
+        await _wait_for_selector(hung, pilot, "#console-settings-summary")
+        hung_store = hung._ensure_console_chat_store()
+        hung_store.persistence = hung_persistence
+        hung_session = hung_store.ensure_session()
+        hung_session.settings = ConsoleSessionSettings(
+            provider="llama_cpp", system_prompt="Speak with Alpha."
+        )
+        hung_session.assistant_kind = "character"
+        hung_session.character_name = "Alraune"
+        hung_session.persisted_conversation_id = "conv-hung"
+        hung_store.seed_character_roleplay(
+            hung_session.id,
+            system_template="Speak with {{user}}.",
+            greeting_template="Hello {{user}}.",
+            global_default="Alpha",
+        )
+
+        app.app_config["chat_defaults"]["user_display_name"] = "Cecelia"
+        assert hung._dispatch_active_console_roleplay_refresh() is True
+        assert await asyncio.to_thread(hung_persistence.started.wait, 5)
+        old_screen = weakref.ref(hung)
+        event_loop = asyncio.get_running_loop()
+        loop_errors: list[dict[str, object]] = []
+        previous_exception_handler = event_loop.get_exception_handler()
+        event_loop.set_exception_handler(
+            lambda _loop, context: loop_errors.append(context)
+        )
+        try:
+            started_at = asyncio.get_running_loop().time()
+            await host.pop_screen()
+
+            elapsed = asyncio.get_running_loop().time() - started_at
+            assert elapsed < 0.5
+            assert app._console_roleplay_repair_generation == 1
+            assert app._console_roleplay_repair_global_name == "Cecelia"
+            for _ in range(100):
+                if (
+                    getattr(
+                        app,
+                        "_console_roleplay_repair_consumed_generation",
+                        0,
+                    )
+                    == 1
+                    and repair_persistence.durable_system
+                    == "Speak with Cecelia."
+                    and repair_persistence.durable_greeting == "Hello Cecelia."
+                ):
+                    break
+                await pilot.pause(0.01)
+            assert app._console_roleplay_repair_consumed_generation == 1
+            assert host.screen_stack[-1] is resumed
+            assert repair_persistence.durable_system == "Speak with Cecelia."
+            assert repair_persistence.durable_greeting == "Hello Cecelia."
+
+            del hung, hung_store, hung_session
+            for _ in range(50):
+                gc.collect()
+                if old_screen() is None:
+                    break
+                await pilot.pause(0.01)
+            assert old_screen() is None
+        finally:
+            hung_persistence.release.set()
+            assert await asyncio.to_thread(hung_persistence.finished.wait, 5)
+            await pilot.pause(0.05)
+            event_loop.set_exception_handler(previous_exception_handler)
+        assert loop_errors == []
 
 
 @pytest.mark.asyncio

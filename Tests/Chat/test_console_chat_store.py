@@ -3620,6 +3620,34 @@ def test_prepare_roleplay_refresh_materializes_live_before_immutable_persistence
     assert store.accept_roleplay_projection_persistence_result(result) is False
 
 
+def test_forced_roleplay_repair_snapshots_current_sources_without_revision_bumps():
+    store, persistence, session, greeting = _seeded_roleplay_store()
+    identity_revision = session.identity_revision
+    payload_revision = store.payload_revision(session.id)
+    speech_revision = store._message_speech_revisions.get(greeting.id)
+    persistence.updated_system_prompts.clear()
+    persistence.updated_messages.clear()
+
+    plan = store.prepare_session_roleplay_projection_refresh(
+        session.id,
+        global_default="User",
+        force_persistence=True,
+    )
+
+    assert plan is not None
+    assert plan.system_prompt_write is not None
+    assert len(plan.message_writes) == 1
+    assert session.identity_revision == identity_revision
+    assert store.payload_revision(session.id) == payload_revision
+    assert store._message_speech_revisions.get(greeting.id) == speech_revision
+    result = store.persist_roleplay_projection_plan(plan)
+    assert store.accept_roleplay_projection_persistence_result(result) is True
+    assert persistence.updated_system_prompts[-1]["system_prompt"] == (
+        "Speak with User."
+    )
+    assert persistence.updated_messages[-1]["content"] == "Hello User."
+
+
 @pytest.mark.parametrize("execute_b", (True, False), ids=("b-applied", "b-skipped"))
 def test_accepted_roleplay_sync_rebases_c_from_latest_owned_outbox_hash(
     tmp_path, execute_b
