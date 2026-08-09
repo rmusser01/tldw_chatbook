@@ -994,7 +994,7 @@ def test_cancel_releases_a_completed_retry_buffer(coordinator_module: Any) -> No
     assert handle.take_retry_buffer() is None
     with pytest.raises(RuntimeError) as caught:
         handle.wait()
-    assert caught.value.args == (TranscriptionFailureCode.CANCELLED,)
+    assert caught.value.args == (TranscriptionFailureCode.CANCELLED.value,)
 
 
 def test_close_releases_a_completed_untransferred_retry_buffer(

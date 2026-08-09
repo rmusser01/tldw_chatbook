@@ -347,7 +347,25 @@ class ParakeetOnnxRuntime:
         job_id: str | None = None,
         is_cancelled: Callable[[], bool] | None = None,
     ) -> ParakeetBufferResult:
-        """Transcribe validated interleaved 16-bit PCM entirely in memory."""
+        """Transcribe validated interleaved 16-bit PCM entirely in memory.
+
+        Args:
+            source: Bounded PCM bytes and their audio format.
+            segment_end_frames: Increasing logical segment boundaries ending at
+                the final PCM frame, or an empty tuple for one segment.
+            attempt_id: Stable identifier for this inference attempt.
+            language: Requested language code.
+            job_id: Optional Library job identifier.
+            is_cancelled: Optional cancellation probe called before inference.
+
+        Returns:
+            Normalized transcription plus text for each logical segment.
+
+        Raises:
+            ImportError: NumPy is unavailable for the Parakeet ONNX feature.
+            ParakeetOnnxFailure: PCM or artifact capabilities are unsupported.
+            ValueError: Logical segment boundaries are invalid.
+        """
 
         if source.sample_width != 2:
             normalized_language = (language or "en").strip().lower()
@@ -367,7 +385,9 @@ class ParakeetOnnxRuntime:
                 ),
             )
 
-        import numpy as np
+        from tldw_chatbook.Utils.optional_deps import require_dependency
+
+        np = require_dependency("numpy", "transcription_parakeet_onnx")
 
         started = time.monotonic()
         model_load_seconds = self._take_model_load_seconds()

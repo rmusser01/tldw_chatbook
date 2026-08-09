@@ -169,7 +169,12 @@ def _faster_whisper_model_is_local(model: str) -> bool:
     """Resolve a faster-whisper model from local cache without downloading."""
 
     try:
-        utilities = importlib.import_module("faster_whisper.utils")
+        from ..Utils.optional_deps import require_dependency
+
+        utilities = require_dependency(
+            "faster_whisper",
+            "transcription_faster_whisper",
+        )
         utilities.download_model(model, local_files_only=True)
     except Exception:  # noqa: BLE001 - cache misses vary by hub version
         logger.opt(exception=True).debug(

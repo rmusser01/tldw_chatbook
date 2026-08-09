@@ -21,7 +21,6 @@ from pathlib import Path
 from typing import Any
 
 from tldw_chatbook.Utils.fd_protection import protect_file_descriptors
-
 from .contracts import (
     BufferAudioSource,
     DeviceFailureOrigin,

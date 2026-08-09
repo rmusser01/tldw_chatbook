@@ -366,8 +366,16 @@ def test_buffer_pcm_is_little_endian_mono_float32_with_exact_duration_and_no_sta
     expected: tuple[float, ...],
 ) -> None:
     from tldw_chatbook.STT import parakeet_onnx
+    from tldw_chatbook.Utils import optional_deps
 
     runtime, model, _vad, _root, _dependency = _runtime(short_text="ordinary text")
+    dependency_requests: list[tuple[str, str]] = []
+
+    def require_dependency(module_name: str, feature_name: str):
+        dependency_requests.append((module_name, feature_name))
+        return np
+
+    monkeypatch.setattr(optional_deps, "require_dependency", require_dependency)
     source = BufferAudioSource(
         np.asarray(pcm, dtype="<i2").tobytes(),
         sample_rate=8_000,
@@ -416,6 +424,7 @@ def test_buffer_pcm_is_little_endian_mono_float32_with_exact_duration_and_no_sta
     assert result.normalized.provenance.effective_language == "en"
     assert result.normalized.warnings == ()
     assert result.normalized.produced_capabilities.vad is False
+    assert dependency_requests == [("numpy", "transcription_parakeet_onnx")]
 
 
 def test_v3_buffer_preserves_routing_warning_semantics() -> None:

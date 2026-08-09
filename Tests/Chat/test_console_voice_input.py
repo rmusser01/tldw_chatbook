@@ -2561,25 +2561,30 @@ def test_retry_is_not_offered_when_base_model_is_not_cached(monkeypatch):
 
 
 def test_faster_whisper_cache_probe_resolves_without_network(monkeypatch):
+    from tldw_chatbook.Utils import optional_deps
+
     calls = []
+    dependency_requests = []
 
     def _download_model(model, **kwargs):
         calls.append((model, kwargs))
         return "/cached/faster-whisper-base"
 
     monkeypatch.setattr(
-        cvi.importlib,
-        "import_module",
-        lambda name: (
-            SimpleNamespace(download_model=_download_model)
-            if name == "faster_whisper.utils"
-            else None
+        optional_deps,
+        "require_dependency",
+        lambda module_name, feature_name: (
+            dependency_requests.append((module_name, feature_name))
+            or SimpleNamespace(download_model=_download_model)
         ),
     )
     probe = getattr(cvi, "_faster_whisper_model_is_local", None)
 
     assert callable(probe)
     assert probe("base") is True
+    assert dependency_requests == [
+        ("faster_whisper", "transcription_faster_whisper")
+    ]
     assert calls == [("base", {"local_files_only": True})]
 
 

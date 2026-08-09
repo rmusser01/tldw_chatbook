@@ -27,7 +27,19 @@ _RETRY_ACTION = "retry_faster_whisper"
 
 
 def pcm_byte_limit(*, sample_rate: int, channels: int, sample_width: int) -> int:
-    """Return the canonical 60-second PCM byte ceiling."""
+    """Return the canonical 60-second PCM byte ceiling.
+
+    Args:
+        sample_rate: PCM sample rate in frames per second.
+        channels: Number of interleaved PCM channels.
+        sample_width: Bytes per PCM channel sample.
+
+    Returns:
+        Maximum frame-aligned bytes accepted for one dictation capture.
+
+    Raises:
+        ValueError: Any PCM format value is invalid.
+    """
 
     _validate_format(sample_rate, channels, sample_width)
     return int(sample_rate * channels * sample_width * DICTATION_MAX_SECONDS)
@@ -167,7 +179,7 @@ class DictationCaptureHandle:
         if retry is not None:
             raise RetryableDictationFailure(retry)
         if failure is not None:
-            raise RuntimeError(failure)
+            raise RuntimeError(failure.value)
 
     def cancel(self, *, force: bool = False) -> bool:
         """Cancel pending work or the exact active executor attempt."""
@@ -282,7 +294,7 @@ class LocalSTTDispatchCoordinator:
         with self._lock:
             payload = handle._capture.last_payload
         if payload is None:
-            raise RuntimeError(TranscriptionFailureCode.INFERENCE_FAILED)
+            raise RuntimeError(TranscriptionFailureCode.INFERENCE_FAILED.value)
         return payload
 
     def begin_dictation(
