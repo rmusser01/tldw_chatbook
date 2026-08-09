@@ -836,6 +836,142 @@ class TestDatabaseCRUDAndSync:
 
 
 @pytest.mark.integration
+class TestReimportAfterTrash:
+    """task-4022: re-importing a file whose Media row was moved to trash
+    must restore that row, not silently skip the write and leave the item
+    permanently un-importable.
+
+    Reproduced live at dev `4d0232358`: import a file -> Media (Select) ->
+    check it -> Delete selected -> confirm -> re-import the SAME file. The
+    ingest row reads "matched · short.txt / Already in Library -- matched
+    an existing item; nothing new was imported." while ``Media (1)`` and
+    the item is absent from every list -- the trashed row was never
+    excluded from the dedup match, so the write silently skipped
+    (media_id=None) and the row stayed trashed forever. Uses a real
+    file-backed DB (``file_db``), not an in-memory mock, per the task's
+    live-DB requirement.
+    """
+
+    def test_reimport_by_url_restores_trashed_row_instead_of_skipping(self, file_db):
+        # Mirrors the real ingest writer's URL shape for a local file
+        # (``local_file_ingestion.py``: ``f"file://{file_path.absolute()}"``)
+        # and its actual call (no ``overwrite`` kwarg -- defaults to False).
+        url = "file:///Users/example/short.txt"
+        media_id, media_uuid, msg1 = file_db.add_media_with_keywords(
+            title="short.txt",
+            media_type="document",
+            content="hello world",
+            keywords=[],
+            url=url,
+        )
+        assert media_id is not None, f"initial import failed: {msg1!r}"
+        assert file_db.mark_as_trash(media_id) is True
+
+        # Sanity check, not the bug under test: the trashed row is already
+        # excluded from the normal active lookup.
+        assert file_db.get_media_by_url(url) is None
+
+        reimported_id, reimported_uuid, msg2 = file_db.add_media_with_keywords(
+            title="short.txt",
+            media_type="document",
+            content="hello world",
+            keywords=[],
+            url=url,
+        )
+
+        # The observed bug: reimported_id was None and msg2 said "already
+        # exists. Overwrite not enabled." -- nothing new was ever written,
+        # and the row stayed trashed forever with no way to reach it.
+        assert reimported_id == media_id, (
+            f"expected the SAME row to be restored on re-import, got "
+            f"{reimported_id!r} (msg={msg2!r})"
+        )
+        assert reimported_uuid == media_uuid
+        assert "restored" in msg2.lower(), msg2
+
+        row = file_db.get_media_by_id(media_id, include_trash=True)
+        assert row["is_trash"] == 0
+        assert row["trash_date"] is None
+        assert row["deleted"] == 0
+
+        # The item is present exactly once (AC#1/AC#4): the normal active
+        # lookup finds it again, and there is exactly one Media row for
+        # this url -- re-importing never created a second row.
+        found = file_db.get_media_by_url(url)
+        assert found is not None and found["id"] == media_id
+        cursor = file_db.execute_query(
+            "SELECT COUNT(*) FROM Media WHERE url = ?", (url,)
+        )
+        assert cursor.fetchone()[0] == 1
+
+    def test_reimport_by_hash_restores_trashed_row_when_url_differs(self, file_db):
+        """Same bytes at a different path -- falls through to the
+        content_hash fallback match (the second SELECT in
+        ``_add_media_with_keywords_impl``), the other dedup leg named in
+        the task brief (``get_media_by_hash``)."""
+        content = "identical bytes, different path"
+        media_id, media_uuid, _ = file_db.add_media_with_keywords(
+            title="a.txt",
+            media_type="document",
+            content=content,
+            keywords=[],
+            url="file:///a/copy.txt",
+        )
+        assert file_db.mark_as_trash(media_id) is True
+
+        reimported_id, reimported_uuid, msg = file_db.add_media_with_keywords(
+            title="a.txt",
+            media_type="document",
+            content=content,
+            keywords=[],
+            url="file:///b/copy.txt",
+        )
+
+        assert reimported_id == media_id
+        assert reimported_uuid == media_uuid
+        assert "restored" in msg.lower(), msg
+        row = file_db.get_media_by_id(media_id, include_trash=True)
+        assert row["is_trash"] == 0
+        assert row["trash_date"] is None
+        # Identical content takes the metadata-only update path (A.1.a),
+        # which never touches ``url`` -- same as a live (non-trashed) hash
+        # match would (that's pre-existing, orthogonal behavior; only the
+        # full content-update path canonicalizes the url). What matters
+        # here is there's still exactly one row, not two.
+        cursor = file_db.execute_query("SELECT COUNT(*) FROM Media")
+        assert cursor.fetchone()[0] == 1
+
+    def test_reimport_of_active_duplicate_is_still_skipped(self, file_db):
+        """Guard rail: an ACTIVE (non-trashed) duplicate must still be
+        skipped exactly as before -- this fix only changes behavior for a
+        match that is sitting in trash."""
+        url = "file:///still/active.txt"
+        media_id, _, _ = file_db.add_media_with_keywords(
+            title="active.txt",
+            media_type="document",
+            content="hi",
+            keywords=[],
+            url=url,
+        )
+
+        reimported_id, reimported_uuid, msg = file_db.add_media_with_keywords(
+            title="active.txt",
+            media_type="document",
+            content="hi",
+            keywords=[],
+            url=url,
+        )
+
+        assert reimported_id is None
+        assert reimported_uuid is None
+        assert "already exists" in msg.lower()
+        cursor = file_db.execute_query(
+            "SELECT COUNT(*) FROM Media WHERE url = ?", (url,)
+        )
+        assert cursor.fetchone()[0] == 1
+
+
+@pytest.mark.integration
 class TestSyncLogManagement:
     @pytest.fixture(autouse=True)
     def setup_db(self, db_instance):

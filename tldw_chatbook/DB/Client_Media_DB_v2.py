@@ -3503,6 +3503,14 @@ class MediaDatabase:
         (see ``register_media_post_ingest_callback``) are dispatched for any
         operation that returned a media_id -- creates and updates, but not
         duplicate skips. Callback failures are logged and never propagate.
+
+        task-4022: when the URL/hash match is a row currently in trash
+        (``is_trash = 1``), it is always restored and updated (as if
+        ``overwrite=True``) regardless of the ``overwrite`` argument -- a
+        trashed row is not an active duplicate to protect from being
+        clobbered, and the alternative (a silent duplicate-skip) would leave
+        the file permanently un-importable. ``overwrite`` still governs
+        ordinary (non-trashed) matches exactly as before.
         """
         media_id, media_uuid, message = self._add_media_with_keywords_impl(
             url=url,
@@ -3683,10 +3691,16 @@ class MediaDatabase:
             with self.transaction() as conn:
                 cur = conn.cursor()
 
-                # Find existing record by URL or content_hash
+                # Find existing record by URL or content_hash. ``deleted = 0``
+                # excludes hard-tombstoned rows only -- a row the user moved
+                # to trash (``is_trash = 1``) still matches here on purpose
+                # (see ``restoring_from_trash`` below): re-importing a file
+                # whose Media row is trashed must restore it, not silently
+                # skip the write and leave the row permanently un-importable
+                # (task-4022).
                 cur.execute(
                     "SELECT id, uuid, version, url, content_hash, title, type, author, "
-                    "transcription_model, transcription_provenance_json "
+                    "transcription_model, transcription_provenance_json, is_trash "
                     "FROM Media WHERE url = ? AND deleted = 0 LIMIT 1",
                     (url,),
                 )
@@ -3695,7 +3709,7 @@ class MediaDatabase:
                 if not row:
                     cur.execute(
                         "SELECT id, uuid, version, url, content_hash, title, type, author, "
-                        "transcription_model, transcription_provenance_json "
+                        "transcription_model, transcription_provenance_json, is_trash "
                         "FROM Media WHERE content_hash = ? AND deleted = 0 LIMIT 1",
                         (content_hash,),
                     )
@@ -3708,9 +3722,19 @@ class MediaDatabase:
                     current_ver = row["version"]
                     existing_url = row["url"]
                     existing_hash = row["content_hash"]
+                    # task-4022: a matched row that's sitting in trash is not
+                    # an active duplicate to protect -- the user's intent in
+                    # re-importing it is "I want this file in my library
+                    # again". Route it through the full-update path (which
+                    # always writes is_trash=0/trash_date=NULL) regardless of
+                    # the caller's ``overwrite`` flag, instead of the
+                    # duplicate-skip path below that returns media_id=None
+                    # and leaves the row trashed forever.
+                    restoring_from_trash = bool(row["is_trash"])
 
-                    # Case A.1: Overwrite is requested.
-                    if overwrite:
+                    # Case A.1: Overwrite is requested, or the match is a
+                    # trashed row being restored.
+                    if overwrite or restoring_from_trash:
                         # Case A.1.a: Content is identical. Check if metadata needs updating.
                         if content_hash == existing_hash:
                             logging.info(
@@ -3742,10 +3766,14 @@ class MediaDatabase:
                             _persist_chunks(conn, media_id)
 
                             # If metadata changed or chunks were provided, update the Media record
+                            # (task-4022: also force through when restoring a trashed match,
+                            # even if nothing else about the content/metadata changed --
+                            # otherwise the "no-op" branch below would leave is_trash=1).
                             if (
                                 metadata_changed
                                 or transcription_changed
                                 or chunks is not None
+                                or restoring_from_trash
                             ):
                                 logging.info(
                                     f"Updating media metadata/chunks for ID {media_id}."
@@ -3759,6 +3787,12 @@ class MediaDatabase:
                                     "client_id = ?",
                                 ]
                                 update_params = [new_ver, now, client_id]
+
+                                if restoring_from_trash:
+                                    update_fields.extend(
+                                        ["is_trash = ?", "trash_date = ?"]
+                                    )
+                                    update_params.extend([0, None])
 
                                 if metadata_changed:
                                     update_fields.extend(
@@ -3853,7 +3887,9 @@ class MediaDatabase:
                                 return (
                                     media_id,
                                     media_uuid,
-                                    f"Media '{title}' metadata updated.",
+                                    f"Media '{title}' restored from trash."
+                                    if restoring_from_trash
+                                    else f"Media '{title}' metadata updated.",
                                 )
                             else:
                                 # Log metrics for no-op (already up-to-date)
@@ -3940,10 +3976,14 @@ class MediaDatabase:
                         return (
                             media_id,
                             media_uuid,
-                            f"Media '{title}' updated to new version.",
+                            f"Media '{title}' restored from trash."
+                            if restoring_from_trash
+                            else f"Media '{title}' updated to new version.",
                         )
 
-                    # Case A.2: Overwrite is FALSE.
+                    # Case A.2: Overwrite is FALSE, and the match is not
+                    # trashed (a trashed match always takes the branch above
+                    # regardless of ``overwrite`` -- see ``restoring_from_trash``).
                     else:
                         is_canonicalisation = (
                             existing_url.startswith("local://")

@@ -348,6 +348,54 @@ async def test_confirming_bulk_delete_swaps_toolbar_for_confirm_row():
         assert "2" in str(count_static.renderable)
 
 
+def _delete_receipt_state() -> LibraryMediaCanvasState:
+    """Outside select mode (a full-success delete exits it) with a
+    receipt from the just-completed bulk delete."""
+    return dataclasses.replace(
+        _select_mode_canvas_state(), select_mode=False, delete_receipt_count=2
+    )
+
+
+class _MediaCanvasReceiptApp(App):
+    def compose(self):
+        yield LibraryMediaCanvas(
+            canvas=_delete_receipt_state(), id="library-media-canvas"
+        )
+
+
+@pytest.mark.asyncio
+async def test_delete_receipt_renders_count_with_undo_and_dismiss():
+    """task-4022 AC2: a completed bulk delete's receipt renders OUTSIDE
+    select mode (a full success exits it) naming the count, with an Undo
+    affordance right at the point of action -- mirroring the ingest
+    queue's own done-row grammar."""
+    app = _MediaCanvasReceiptApp()
+    async with app.run_test() as pilot:
+        receipt_copy = pilot.app.query_one(
+            "#library-media-bulk-delete-receipt-copy", Static
+        )
+        assert "2" in str(receipt_copy.renderable)
+        assert "deleted" in str(receipt_copy.renderable).lower()
+
+        undo_btn = pilot.app.query_one("#library-media-bulk-delete-undo", Button)
+        dismiss_btn = pilot.app.query_one(
+            "#library-media-bulk-delete-receipt-dismiss", Button
+        )
+        assert undo_btn is not None and dismiss_btn is not None
+
+
+@pytest.mark.asyncio
+async def test_delete_receipt_absent_when_count_zero():
+    """Regression guard: the normal state (no receipt) renders none of
+    the receipt row's widgets."""
+    app = _MediaCanvasApp()  # delete_receipt_count defaults to 0
+    async with app.run_test() as pilot:
+        with pytest.raises(NoMatches):
+            pilot.app.query_one("#library-media-bulk-delete-receipt-copy", Static)
+        with pytest.raises(NoMatches):
+            pilot.app.query_one("#library-media-bulk-delete-undo", Button)
+
+
 def _select_mode_with_preview_state() -> LibraryMediaCanvasState:
     """Select mode active with a stale ``selected_id``/preview left over
     from before Select was entered -- the exact UAT repro shape (LIB-05)."""
@@ -653,6 +701,12 @@ def _bulk_delete_fake(*, db, records, counts, selected_ids):
         # True here too, so the tests below can assert the ``finally``
         # actually clears it on every completion path.
         _library_media_bulk_delete_in_flight=True,
+        # task-4022 AC2: the receipt starts empty (a real
+        # ``handle_library_media_delete_selected`` already cleared any
+        # earlier one when it armed this confirmation) and the Undo
+        # button's own in-flight guard starts False.
+        _library_media_delete_receipt_ids=(),
+        _library_media_bulk_delete_undo_in_flight=False,
         is_mounted=True,
         refresh=lambda **k: refresh_calls.append(k),
         # review round 2: pin that a full-success bulk delete re-arms
@@ -725,6 +779,12 @@ async def test_delete_selection_soft_deletes_via_real_db_and_updates_records_and
     assert fake._library_media_select_mode is False
     assert fake._library_media_confirming_bulk_delete is False
     assert fake._notified == []
+    # task-4022 AC2: a full success leaves a receipt naming exactly the
+    # ids that were actually deleted, ready for Undo.
+    assert fake._library_media_delete_receipt_ids == (
+        str(delete_a_id),
+        str(delete_b_id),
+    )
     # AC3's rail count lives on the SHELL input (built from
     # ``_local_source_counts`` in ``_build_library_shell_input``), which a
     # canvas-scoped sync deliberately skips (see ``_sync_library_canvas``'s
@@ -785,6 +845,10 @@ async def test_delete_selection_partial_failure_keeps_select_mode_and_warns(
     assert fake._library_media_row_selection.ids == frozenset({missing_id})
     assert fake._library_media_select_mode is True
     assert fake._library_media_confirming_bulk_delete is False
+    # task-4022 AC2: even a partial batch leaves a receipt for the subset
+    # that DID succeed -- the user can still undo the real item, and the
+    # missing one is separately reported below.
+    assert fake._library_media_delete_receipt_ids == (str(real_id),)
     assert len(fake._notified) == 1
     message, kwargs = fake._notified[0]
     assert "1" in message
@@ -843,12 +907,222 @@ async def test_delete_selection_service_unavailable_keeps_selection_and_warns():
     assert fake._library_media_select_mode is True
     assert fake._library_media_confirming_bulk_delete is False
     assert fake._library_media_row_selection.ids == frozenset({"1"})
+    # task-4022 AC2: nothing succeeded, so there is no receipt to show.
+    assert fake._library_media_delete_receipt_ids == ()
     assert len(fake._notified) == 1
     assert fake._notified[0][1].get("severity") == "warning"
     # task-3020 AC1/AC3: even a total failure clears the in-flight guard
     # and arms entry focus onto the still-checked (failed) row.
     assert fake._library_media_bulk_delete_in_flight is False
     assert fake._entry_focus_arm_calls == [True]
+
+
+# ---------------------------------------------------------------------------
+# task-4022 AC2: Undo for a bulk-delete receipt, driven against the SAME
+# real (file-backed) MediaDatabase + MediaReadingScopeService seam as the
+# delete tests above (``restore_media_item`` -> ``MediaDatabase.
+# restore_from_trash``, never raw SQL).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_undo_restores_items_via_real_db_and_updates_records_and_counts(
+    tmp_path,
+):
+    """Full success: every id in the receipt is un-trashed in the REAL DB,
+    reinserted into the in-place list/rail-count bookkeeping, and the
+    receipt itself is cleared."""
+    db = MediaDatabase(
+        db_path=str(tmp_path / "media.db"), client_id="task-4022-undo"
+    )
+    keep_id, _, _ = db.add_media_with_keywords(
+        title="Keep", content="keep", media_type="article", keywords=[]
+    )
+    undo_a_id, _, _ = db.add_media_with_keywords(
+        title="Undo A", content="a", media_type="article", keywords=[]
+    )
+    undo_b_id, _, _ = db.add_media_with_keywords(
+        title="Undo B", content="b", media_type="article", keywords=[]
+    )
+    assert db.mark_as_trash(undo_a_id) is True
+    assert db.mark_as_trash(undo_b_id) is True
+
+    fake = _bulk_delete_fake(
+        db=db,
+        records=({"id": str(keep_id), "title": "Keep"},),
+        counts={"media": 1},
+        selected_ids=[],
+    )
+    fake._library_media_delete_receipt_ids = (str(undo_a_id), str(undo_b_id))
+
+    await LibraryScreen._undo_library_media_bulk_delete(
+        fake, (str(undo_a_id), str(undo_b_id))
+    )
+
+    assert not db.get_media_by_id(undo_a_id, include_trash=True)["is_trash"]
+    assert not db.get_media_by_id(undo_b_id, include_trash=True)["is_trash"]
+
+    # ``restore_media_item`` returns the raw DB row, whose "id" is an int
+    # (unlike the manually-seeded "Keep" record above, which used a str) --
+    # ``str()`` here mirrors how ``_source_record_id``/the state builder
+    # normalize both shapes for display and dedup.
+    restored_ids = {str(r["id"]) for r in fake._local_source_records["media"]}
+    assert restored_ids == {str(keep_id), str(undo_a_id), str(undo_b_id)}
+    assert fake._local_source_counts["media"] == 3
+
+    assert fake._library_media_delete_receipt_ids == ()
+    assert fake._notified == []
+    assert fake._refresh_calls == [{"recompose": True}]
+    assert fake._library_media_bulk_delete_undo_in_flight is False
+
+    db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_undo_partial_failure_narrows_receipt_and_warns(tmp_path):
+    """One id in the receipt no longer exists in the real DB (e.g.
+    permanently purged some other way) -- the real id is still restored,
+    the missing one is reported, and the receipt narrows to just the
+    still-failed id so a retry is possible."""
+    db = MediaDatabase(
+        db_path=str(tmp_path / "media.db"), client_id="task-4022-undo-partial"
+    )
+    real_id, _, _ = db.add_media_with_keywords(
+        title="Real", content="r", media_type="article", keywords=[]
+    )
+    assert db.mark_as_trash(real_id) is True
+    missing_id = "999999"
+
+    fake = _bulk_delete_fake(
+        db=db, records=(), counts={"media": 0}, selected_ids=[]
+    )
+    fake._library_media_delete_receipt_ids = (str(real_id), missing_id)
+
+    await LibraryScreen._undo_library_media_bulk_delete(
+        fake, (str(real_id), missing_id)
+    )
+
+    assert not db.get_media_by_id(real_id, include_trash=True)["is_trash"]
+
+    restored_ids = {str(r["id"]) for r in fake._local_source_records["media"]}
+    assert restored_ids == {str(real_id)}
+    assert fake._local_source_counts["media"] == 1
+
+    assert fake._library_media_delete_receipt_ids == (missing_id,)
+    assert len(fake._notified) == 1
+    message, kwargs = fake._notified[0]
+    assert "1" in message
+    assert kwargs.get("severity") == "warning"
+
+    db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_undo_does_not_duplicate_a_record_already_present(tmp_path):
+    """Defensive: if the target id is somehow already back in the cached
+    list (e.g. a background refresh raced ahead of Undo), restoring it
+    again must not insert a second copy."""
+    db = MediaDatabase(
+        db_path=str(tmp_path / "media.db"), client_id="task-4022-undo-dupe-guard"
+    )
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Already back", content="x", media_type="article", keywords=[]
+    )
+    assert db.mark_as_trash(media_id) is True
+    assert db.restore_from_trash(media_id) is True  # e.g. a racing refresh
+
+    fake = _bulk_delete_fake(
+        db=db,
+        records=({"id": str(media_id), "title": "Already back"},),
+        counts={"media": 1},
+        selected_ids=[],
+    )
+    fake._library_media_delete_receipt_ids = (str(media_id),)
+
+    await LibraryScreen._undo_library_media_bulk_delete(fake, (str(media_id),))
+
+    matching = [
+        r for r in fake._local_source_records["media"] if r["id"] == str(media_id)
+    ]
+    assert len(matching) == 1
+    assert fake._local_source_counts["media"] == 1
+
+    db.close_connection()
+
+
+async def _noop_undo(ids):
+    """Stand-in for ``_undo_library_media_bulk_delete`` -- mirrors
+    ``_noop_delete``'s role for the confirm-button tests above."""
+    return None
+
+
+def _undo_fake(*, receipt_ids, undo_in_flight=False):
+    """Handler-level fake for the Undo/Dismiss BUTTON handlers -- mirrors
+    ``_media_fake`` (never touches a real DB; the coroutine itself is
+    covered by the real-DB tests above)."""
+    notified = []
+    fake = SimpleNamespace(
+        _library_media_delete_receipt_ids=receipt_ids,
+        _library_media_bulk_delete_undo_in_flight=undo_in_flight,
+        app_instance=SimpleNamespace(
+            notify=lambda msg, **k: notified.append((msg, k))
+        ),
+        _notified=notified,
+        _undo_library_media_bulk_delete=_noop_undo,
+    )
+    return fake
+
+
+def test_undo_button_kicks_worker_with_receipt_ids():
+    fake = _undo_fake(receipt_ids=("1", "2"))
+    worker_calls = []
+    fake.run_worker = lambda coro, **k: worker_calls.append((coro, k))
+    event = SimpleNamespace(stop=lambda: None)
+
+    LibraryScreen.handle_library_media_bulk_delete_undo(fake, event)
+
+    assert len(worker_calls) == 1
+    coro, kwargs = worker_calls[0]
+    assert kwargs.get("exclusive") is True
+    assert kwargs.get("group") == "library_media_bulk_delete_undo"
+    assert fake._library_media_bulk_delete_undo_in_flight is True
+    coro.close()
+
+
+def test_undo_button_noop_when_receipt_empty():
+    fake = _undo_fake(receipt_ids=())
+    worker_calls = []
+    fake.run_worker = lambda coro, **k: worker_calls.append((coro, k))
+    event = SimpleNamespace(stop=lambda: None)
+
+    LibraryScreen.handle_library_media_bulk_delete_undo(fake, event)
+
+    assert worker_calls == []
+    assert fake._library_media_bulk_delete_undo_in_flight is False
+
+
+def test_undo_button_second_press_while_in_flight_is_noop():
+    fake = _undo_fake(receipt_ids=("1",), undo_in_flight=True)
+    worker_calls = []
+    fake.run_worker = lambda coro, **k: worker_calls.append((coro, k))
+    event = SimpleNamespace(stop=lambda: None)
+
+    LibraryScreen.handle_library_media_bulk_delete_undo(fake, event)
+
+    assert worker_calls == []
+
+
+def test_dismiss_clears_receipt_without_restoring():
+    fake = _undo_fake(receipt_ids=("1", "2"))
+    fake.refresh = lambda **k: setattr(
+        fake, "_refreshed", getattr(fake, "_refreshed", 0) + 1
+    )
+    event = SimpleNamespace(stop=lambda: None)
+
+    LibraryScreen.handle_library_media_bulk_delete_receipt_dismiss(fake, event)
+
+    assert fake._library_media_delete_receipt_ids == ()
+    assert fake._refreshed == 1  # canvas sync fallback (fake has no widgets)
 
 
 @pytest.mark.asyncio

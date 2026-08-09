@@ -62,14 +62,26 @@ above): "‹ Back to list", the title, metadata lines, then the "Content",
 **Media's "Delete selected"** (Media only — Conversations has no delete;
 see its own row below) is a second bulk action next to "Export selected".
 Pressing it swaps the strip for a confirmation naming the count — "Delete N
-selected items? This moves them to trash." — with "Delete" / "Cancel", the
-same in-place armed-button pattern as the media viewer's own single-item
-"Delete" (never a popup modal). Confirming moves every checked item to
-trash (the same reversible soft-delete as the viewer's Delete) and updates
-the list and the rail's "Media N" count immediately; if any item fails, the
-rest of the batch still completes and a notice names how many could not be
-deleted. Row checkboxes are frozen while the confirmation is showing, so
-the count you confirm is always the count that gets deleted.
+selected items? You can undo right away — there's no Trash view to browse
+later." — with "Delete" / "Cancel", the same in-place armed-button pattern
+as the media viewer's own single-item "Delete" (never a popup modal).
+Confirming moves every checked item to trash (the same soft-delete the
+viewer's Delete uses) and updates the list and the rail's "Media N" count
+immediately; if any item fails, the rest of the batch still completes and a
+notice names how many could not be deleted. Row checkboxes are frozen while
+the confirmation is showing, so the count you confirm is always the count
+that gets deleted.
+
+A successful delete leaves a receipt in the same spot — "✓ deleted · N
+items" with "Undo" and "Dismiss" — until you act on it or start another
+bulk delete. "Undo" restores every item the receipt names (or just the
+ones still outstanding, if a prior undo partially failed); "Dismiss" clears
+the receipt without restoring anything. There is no persistent Trash view
+to browse later — restoring an item you've dismissed, or deleted in an
+earlier session, means re-importing the same file from
+[Import & export](import-and-export.md): it now restores the item instead
+of refusing, whereas before it silently reported the file as already in
+your Library with no way back.
 
 ### Media list
 
@@ -121,7 +133,7 @@ of type 'pdf'."
 | "Use in Console" | Stages this item as context for your next Console message. |
 | "Read it later" ↔ "Remove from read-it-later" | Toggles the item on your read-it-later list. |
 | "Open in Library ▸ Media" | Returns to Library's own Media surface (the separate Media screen was retired). |
-| "Delete" | Two-step: shows "Delete this media? This moves it to trash." with "Delete" / "Cancel". Confirming trashes the item, returns to the list, and drops the rail's "Media N" count by one immediately, the same as the list's own "Delete selected". |
+| "Delete" | Two-step: shows "Delete this media? Re-import the same file later to bring it back — there's no Trash view to browse." with "Delete" / "Cancel". Confirming trashes the item, returns to the list, and drops the rail's "Media N" count by one immediately, the same as the list's own "Delete selected". Unlike the list's bulk delete, there's no in-place Undo here — the way back is re-importing the same file. |
 
 ### Conversations
 
@@ -261,3 +273,13 @@ immediately too, matching "Delete selected"; Library-wide Escape/keyboard
 behavior for the bulk-delete confirmation is covered in the
 [Library overview](../library.md#keyboard--commands), not duplicated
 here).*
+
+*Verified against dev @ 8bb6dd730 — 2026-08-09 (task-4022: a re-critique
+found the confirm copy promised a Trash that didn't exist anywhere in the
+product, a deleted file could never be re-imported (the dedup match didn't
+exclude trashed rows), and bulk delete had no receipt or undo. Fixed: a
+trashed match now restores on re-import instead of silently refusing;
+"Delete selected"'s confirm copy and the single-item viewer's "Delete"
+copy both now say what actually happens instead of promising a Trash view;
+"Delete selected" leaves a "✓ deleted · N items" receipt with Undo/Dismiss
+at the point of action).*

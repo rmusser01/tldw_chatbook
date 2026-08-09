@@ -46,9 +46,14 @@ class LibraryMediaCanvasState:
     select_mode: bool = False
     selected_count: int = 0
     # task-2853 AC3: True while the bulk-delete confirmation ("Delete N
-    # selected items? This moves them to trash." + Delete/Cancel) should
-    # render in place of the normal select-mode toolbar row.
+    # selected items? ..." + Delete/Cancel) should render in place of the
+    # normal select-mode toolbar row.
     confirming_bulk_delete: bool = False
+    # task-4022 AC2: count of items from the most recently completed bulk
+    # delete, shown as a "✓ deleted · N items" receipt with Undo/Dismiss
+    # until acted on or replaced by a newer bulk-delete action. 0 means no
+    # receipt to show (the normal state).
+    delete_receipt_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -130,6 +135,7 @@ def build_library_media_state(
     select_mode: bool = False,
     selected_ids: frozenset[str] = frozenset(),
     confirming_bulk_delete: bool = False,
+    delete_receipt_count: int = 0,
 ) -> LibraryMediaCanvasState:
     """Build the Library Browse ▸ Media canvas display state.
 
@@ -256,4 +262,5 @@ def build_library_media_state(
         select_mode=select_mode,
         selected_count=selected_count,
         confirming_bulk_delete=confirming_bulk_delete,
+        delete_receipt_count=max(0, delete_receipt_count),
     )

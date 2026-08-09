@@ -104,10 +104,18 @@ class LibraryMediaCanvas(RecomposeCaptureGuard, Vertical):
                 # confirm copy, the same pattern this mirrors). The short
                 # "N selected" Static below is unaffected -- it is already
                 # proven to render alongside Buttons in this exact row.
+                # task-4022 AC3: honest about what actually happens --
+                # there is no browsable Trash surface anywhere in the
+                # product (not the rail, not the type: filter, not any
+                # canvas), so the copy no longer implies one. What IS true
+                # after this task: Delete's own receipt offers an
+                # immediate Undo, and (independently) re-importing the
+                # same file later restores it instead of refusing.
                 item_word = "item" if self.canvas.selected_count == 1 else "items"
                 yield Static(
                     f"Delete {self.canvas.selected_count} selected {item_word}? "
-                    "This moves them to trash.",
+                    "You can undo right away — there's no Trash view to "
+                    "browse later.",
                     id="library-media-bulk-delete-confirm-copy",
                     markup=False,
                 )
@@ -193,6 +201,45 @@ class LibraryMediaCanvas(RecomposeCaptureGuard, Vertical):
                         else LIBRARY_DELETE_SELECTED_TOOLTIP
                     )
                     yield delete_selected
+
+        # task-4022 AC2: a completed bulk delete's receipt, naming the
+        # count with an Undo affordance right at the point of action --
+        # mirrors the ingest queue's own done-row grammar ("✓ done · file
+        # · 1s" + a jump action) rather than a toast, which this canvas
+        # has none of on the success path today. Rendered OUTSIDE
+        # select_mode: a full-success delete exits select mode, so this is
+        # the only place left to show it. Uses the same
+        # ``library-toolbar-count`` class as "N selected" above -- proven
+        # safe for a short Static sharing a ``ds-toolbar`` Horizontal with
+        # Buttons (see the comment on that Static; an earlier long-
+        # sentence Static in this same row went unbounded and pushed every
+        # Button off-screen).
+        receipt_count = getattr(self.canvas, "delete_receipt_count", 0)
+        if receipt_count:
+            receipt_word = "item" if receipt_count == 1 else "items"
+            receipt_row = Horizontal(
+                classes="ds-toolbar", id="library-media-bulk-delete-receipt"
+            )
+            receipt_row.styles.height = "auto"
+            with receipt_row:
+                yield Static(
+                    f"✓ deleted · {receipt_count} {receipt_word}",
+                    id="library-media-bulk-delete-receipt-copy",
+                    classes="library-toolbar-count",
+                    markup=False,
+                )
+                yield Button(
+                    "Undo",
+                    id="library-media-bulk-delete-undo",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                yield Button(
+                    "Dismiss",
+                    id="library-media-bulk-delete-receipt-dismiss",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
 
         status_text = self.canvas.status_copy or self.canvas.empty_copy
         status = Static(

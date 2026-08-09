@@ -521,3 +521,21 @@ def test_confirming_bulk_delete_defaults_false_and_passes_through():
         records, select_mode=True, confirming_bulk_delete=True
     )
     assert confirming_state.confirming_bulk_delete is True
+
+
+def test_delete_receipt_count_defaults_zero_and_passes_through():
+    """task-4022 AC2: like ``confirming_bulk_delete``, the bulk-delete
+    receipt count is a pure passthrough -- no computation, just carried
+    onto the state so the canvas can render the "✓ deleted · N items"
+    row. Negative input (defensive only -- no real caller passes one)
+    floors to 0 rather than rendering a nonsensical receipt."""
+    records = [{"id": "1", "title": "A", "type": "video"}]
+
+    default_state = build_library_media_state(records)
+    assert default_state.delete_receipt_count == 0
+
+    receipt_state = build_library_media_state(records, delete_receipt_count=3)
+    assert receipt_state.delete_receipt_count == 3
+
+    floored_state = build_library_media_state(records, delete_receipt_count=-1)
+    assert floored_state.delete_receipt_count == 0

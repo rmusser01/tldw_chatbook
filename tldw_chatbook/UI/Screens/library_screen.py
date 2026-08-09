@@ -2400,6 +2400,15 @@ class LibraryScreen(BaseAppScreen):
         # ``_local_source_records``. Checked at the very top of the confirm
         # button handler, before it even reads the selection.
         self._library_media_bulk_delete_in_flight: bool = False
+        # task-4022 AC2: the ids from the most recently completed bulk
+        # delete, rendered as a "✓ deleted · N items" receipt (with
+        # Undo/Dismiss) until acted on or replaced by a newer bulk-delete
+        # action. Empty tuple means no receipt to show. Cleared when a new
+        # bulk-delete confirmation is armed or select mode is freshly
+        # entered, set to the succeeded subset when a delete completes, and
+        # narrowed to only the still-failed ids by a partial Undo.
+        self._library_media_delete_receipt_ids: tuple[str, ...] = ()
+        self._library_media_bulk_delete_undo_in_flight: bool = False
         self._library_media_view: str = "list"
         self._library_media_detail: Mapping[str, Any] | None = None
         self._library_media_editing: bool = False
@@ -7907,6 +7916,7 @@ class LibraryScreen(BaseAppScreen):
             select_mode=self._library_media_select_mode,
             selected_ids=self._library_media_row_selection.ids,
             confirming_bulk_delete=self._library_media_confirming_bulk_delete,
+            delete_receipt_count=len(self._library_media_delete_receipt_ids),
         )
         if self._library_media_select_mode:
             self._library_media_row_selection.reconcile(r.media_id for r in state.rows)
@@ -11885,6 +11895,10 @@ class LibraryScreen(BaseAppScreen):
         else:
             self._library_media_select_mode = True
             self._library_media_row_selection.clear()
+            # task-4022: a fresh Select session starts clean -- a receipt
+            # from a previous, unrelated bulk delete shouldn't linger
+            # underneath a new one.
+            self._library_media_delete_receipt_ids = ()
         _sync_library_canvas(self, "media")
 
     def _exit_library_media_select_mode(self, *, announce_discard: bool) -> None:
@@ -11970,6 +11984,10 @@ class LibraryScreen(BaseAppScreen):
         if not self._library_media_row_selection.count:
             return
         self._library_media_confirming_bulk_delete = True
+        # task-4022: a new confirmation supersedes any receipt still
+        # showing from a previous bulk delete -- this action's own
+        # completion will set a fresh one.
+        self._library_media_delete_receipt_ids = ()
         _sync_library_canvas(self, "media")
         # task-3020 AC2: arming/cancelling the confirmation flips which
         # footer set ``_library_footer_shortcuts_for_current_state``
@@ -12086,6 +12104,14 @@ class LibraryScreen(BaseAppScreen):
         naming the failure count, mirroring
         ``_notify_library_media_delete_warning``'s single-item wording.
 
+        task-4022 AC2: on any success, ``_library_media_delete_receipt_ids``
+        is set to the succeeded subset, which the canvas renders as a
+        "✓ deleted · N items" row with Undo/Dismiss
+        (``handle_library_media_bulk_delete_undo`` /
+        ``_undo_library_media_bulk_delete``) -- the confirm copy's promise
+        that the action is reversible now has an actual affordance behind
+        it, at the point of action, instead of silence.
+
         task-3020 AC1: ``_library_media_bulk_delete_in_flight`` (set
         synchronously by the caller before this coroutine was even
         scheduled) is cleared in a ``finally`` so a legitimate NEXT bulk
@@ -12134,6 +12160,12 @@ class LibraryScreen(BaseAppScreen):
                     self._source_record_id(record) or ""
                     for record in self._local_source_records["media"]
                 )
+
+            # task-4022 AC2: the receipt for THIS action -- already cleared
+            # at arm-time (``handle_library_media_delete_selected``), so
+            # this always reflects only what just happened, never a stale
+            # earlier batch.
+            self._library_media_delete_receipt_ids = tuple(succeeded)
 
             self._library_media_confirming_bulk_delete = False
             if failed:
@@ -12185,6 +12217,130 @@ class LibraryScreen(BaseAppScreen):
                 self._arm_library_list_entry_focus()
         finally:
             self._library_media_bulk_delete_in_flight = False
+
+    @on(Button.Pressed, "#library-media-bulk-delete-undo")
+    def handle_library_media_bulk_delete_undo(self, event: Button.Pressed) -> None:
+        """Restore every item named by the current bulk-delete receipt (task-4022 AC2).
+
+        Reads the receipt's frozen id tuple synchronously (mirroring how
+        the confirm button reads the selection before scheduling
+        ``_delete_library_media_selection``) and hands off to a worker.
+        Guarded by its own in-flight flag -- separate from the delete
+        path's -- since Undo and a fresh bulk delete are different
+        actions that could otherwise race on the same ids.
+
+        Args:
+            event: Button press event emitted by the receipt row's "Undo".
+        """
+        event.stop()
+        if self._library_media_bulk_delete_undo_in_flight:
+            return
+        media_ids = self._library_media_delete_receipt_ids
+        if not media_ids:
+            return
+        self._library_media_bulk_delete_undo_in_flight = True
+        self.run_worker(
+            self._undo_library_media_bulk_delete(media_ids),
+            exclusive=True,
+            group="library_media_bulk_delete_undo",
+        )
+
+    @on(Button.Pressed, "#library-media-bulk-delete-receipt-dismiss")
+    def handle_library_media_bulk_delete_receipt_dismiss(
+        self, event: Button.Pressed
+    ) -> None:
+        """Clear the bulk-delete receipt without restoring anything.
+
+        Args:
+            event: Button press event emitted by the receipt row's "Dismiss".
+        """
+        event.stop()
+        self._library_media_delete_receipt_ids = ()
+        _sync_library_canvas(self, "media")
+
+    async def _undo_library_media_bulk_delete(
+        self, media_ids: tuple[str, ...]
+    ) -> None:
+        """Restore every item named by the bulk-delete receipt (task-4022 AC2).
+
+        Mirrors ``_delete_library_media_selection``'s own per-id
+        try/except loop through ``media_reading_scope_service``, calling
+        ``restore_media_item`` (mode="local") instead of
+        ``delete_media_item``. That service call is the same seam
+        ``MediaDatabase.restore_from_trash`` is reached through everywhere
+        else (never raw SQL), and returns the freshly restored row, which
+        is inserted straight back into ``_local_source_records["media"]``
+        -- no second DB round trip is needed to repopulate the list.
+
+        On any success, ``_local_source_counts["media"]`` is incremented
+        back up by the number actually restored (the rail's "Media N"
+        count stays in step, symmetric with the delete path). A partial
+        failure narrows the receipt down to just the still-failed ids (so
+        Undo can be retried on them) rather than clearing it outright;
+        full success clears it.
+
+        Args:
+            media_ids: The exact ids from the receipt being undone, read
+                by the caller before any recompose could change it.
+        """
+        try:
+            service = getattr(self.app_instance, "media_reading_scope_service", None)
+            restore_media_item = getattr(service, "restore_media_item", None)
+            restored_records: list[Mapping[str, Any]] = []
+            failed: list[str] = []
+            if callable(restore_media_item):
+                for media_id in media_ids:
+                    try:
+                        result = await self._run_library_service_call(
+                            restore_media_item,
+                            mode="local",
+                            media_id=media_id,
+                            isolate_in_worker=True,
+                        )
+                        if isinstance(result, Mapping):
+                            restored_records.append(result)
+                    except Exception:
+                        logger.opt(exception=True).warning(
+                            f"Failed to restore Library media item {media_id!r} "
+                            "in bulk-delete undo."
+                        )
+                        failed.append(media_id)
+            else:
+                failed = list(media_ids)
+
+            if restored_records:
+                existing_ids = {
+                    self._source_record_id(record)
+                    for record in self._local_source_records.get("media", ())
+                }
+                new_records = tuple(
+                    record
+                    for record in restored_records
+                    if self._source_record_id(record) not in existing_ids
+                )
+                self._local_source_records["media"] = self._local_source_records.get(
+                    "media", ()
+                ) + new_records
+                self._local_source_counts["media"] = self._local_source_counts.get(
+                    "media", 0
+                ) + len(new_records)
+
+            self._library_media_delete_receipt_ids = tuple(failed)
+            if failed:
+                item_word = "item" if len(media_ids) == 1 else "items"
+                self._notify_library_media_delete_warning(
+                    f"Could not restore {len(failed)} of {len(media_ids)} "
+                    f"{item_word}."
+                )
+
+            if self.is_mounted:
+                # Full recompose, mirroring ``_delete_library_media_selection``'s
+                # own tail: the rail's "Media N" count just changed too, and
+                # the canvas-scoped ``_sync_library_canvas`` deliberately
+                # skips the rail.
+                self.refresh(recompose=True)
+        finally:
+            self._library_media_bulk_delete_undo_in_flight = False
 
     @on(Button.Pressed, "#library-media-open-viewer")
     def handle_library_media_open_viewer(self, event: Button.Pressed) -> None:
