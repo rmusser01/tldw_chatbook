@@ -19,6 +19,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleCitationPresentation,
     ConsoleMessageRole,
 )
+from tldw_chatbook.Chat.console_roleplay_identity import ConsolePresentationContext
 from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleMarkdownMessage,
     ConsoleTranscript,
@@ -222,3 +223,51 @@ async def test_plain_text_export_unchanged_by_renderer():
         # Export keeps raw markdown text — renderer choice never rewrites it.
         assert "## Title" in exported
         assert "**bold**" in exported
+
+
+@pytest.mark.asyncio
+async def test_roleplay_markdown_row_uses_literal_named_label_and_updates_in_place():
+    app = MarkdownHarness()
+    async with app.run_test() as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_presentation_context(
+            ConsolePresentationContext(
+                user_name="Captain [Rowan]",
+                assistant_kind="character",
+                character_name="Alraune [bold red]",
+                revision=1,
+            )
+        )
+        transcript.set_messages(
+            [
+                _assistant(
+                    "Body [red]stays literal[/red]",
+                    status="complete",
+                    id="a-roleplay",
+                )
+            ]
+        )
+        await transcript.refresh_messages()
+        await pilot.pause()
+
+        row = transcript.query_one("#console-message-a-roleplay")
+        assert isinstance(row, ConsoleMarkdownMessage)
+        label = row.query_one(".console-transcript-speaker-label")
+        assert label.renderable.plain == "Alraune [bold red]"
+        assert "console-transcript-roleplay-character-label" in label.classes
+        assert "console-transcript-message-roleplay-character" in row.classes
+        assert row.query_one(Markdown).source == "Body [red]stays literal[/red]"
+
+        transcript.set_presentation_context(
+            ConsolePresentationContext(
+                user_name="Captain [Rowan]",
+                assistant_kind="character",
+                character_name="Cecelia",
+                revision=2,
+            )
+        )
+        await transcript.refresh_messages()
+        await pilot.pause()
+
+        assert transcript.query_one("#console-message-a-roleplay") is row
+        assert label.renderable.plain == "Cecelia"

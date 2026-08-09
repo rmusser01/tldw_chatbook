@@ -1,3 +1,6 @@
+from pathlib import Path
+from types import SimpleNamespace
+
 import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Markdown, Static
@@ -22,6 +25,7 @@ from tldw_chatbook.Chat.console_message_actions import (
     ConsoleSaveDestination,
 )
 from tldw_chatbook.Chat.console_onboarding_state import ConsoleSetupCardState
+from tldw_chatbook.Chat.console_roleplay_identity import ConsolePresentationContext
 from tldw_chatbook.Widgets.Console.console_save_as_modal import ConsoleSaveAsModal
 from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleMarkdownMessage,
@@ -41,7 +45,43 @@ def _message_row_text(transcript: ConsoleTranscript, message_id: str) -> str:
         parts = [str(static.renderable) for static in row.query(Static)]
         parts.append(row.query_one(Markdown).source)
         return "\n".join(parts)
+    statics = list(row.query(Static))
+    if statics:
+        return "\n".join(str(static.renderable) for static in statics)
     return str(row.renderable)
+
+
+_BUNDLE = (
+    Path(__file__).resolve().parents[2]
+    / "tldw_chatbook"
+    / "css"
+    / "tldw_cli_modular.tcss"
+)
+
+
+def _roleplay_context(
+    *, user_name: str = "Captain [Rowan]", character_name: str = "Alraune", revision: int = 1
+) -> ConsolePresentationContext:
+    return ConsolePresentationContext(
+        user_name=user_name,
+        assistant_kind="character",
+        character_name=character_name,
+        revision=revision,
+    )
+
+
+def _painted_background(app: App, widget) -> object:
+    """Return the compositor-painted background at the row's right padding."""
+    strips = app.screen._compositor.render_strips()
+    y = widget.region.y
+    x = widget.region.x + max(0, widget.region.width - 2)
+    cursor = 0
+    for segment in strips[y]:
+        next_cursor = cursor + segment.cell_length
+        if cursor <= x < next_cursor:
+            return None if segment.style is None else segment.style.bgcolor
+        cursor = next_cursor
+    raise AssertionError(f"no painted segment at ({x}, {y})")
 
 
 class TranscriptHarness(App):
@@ -68,6 +108,176 @@ class EmptyTranscriptHarness(App):
 class MutableTranscriptHarness(App):
     def compose(self) -> ComposeResult:
         yield ConsoleTranscript(id="console-native-transcript")
+
+
+class StyledRoleplayTranscriptHarness(App):
+    CSS_PATH = str(_BUNDLE)
+
+    def compose(self) -> ComposeResult:
+        yield ConsoleTranscript(id="console-native-transcript")
+
+
+def test_roleplay_plain_text_uses_literal_names_and_generic_rows_stay_neutral():
+    transcript = ConsoleTranscript()
+    transcript.set_presentation_context(_roleplay_context())
+    transcript.set_messages(
+        [
+            ConsoleChatMessage(role=ConsoleMessageRole.USER, content="Hi", id="u1"),
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.ASSISTANT, content="Hello", id="a1"
+            ),
+        ]
+    )
+
+    plain = transcript.to_plain_text(width=80)
+    assert "Captain [Rowan]" in plain
+    assert "Alraune" in plain
+    assert "Assistant" not in plain
+
+    transcript.set_presentation_context(
+        ConsolePresentationContext(user_name="Builder", revision=2)
+    )
+    generic_rows = transcript._message_widgets()
+    assert "Builder" in transcript.to_plain_text(width=80)
+    assert "Assistant" in transcript.to_plain_text(width=80)
+    assert all(
+        "console-transcript-message-roleplay-user" not in row.classes
+        and "console-transcript-message-roleplay-character" not in row.classes
+        for row in generic_rows
+    )
+
+
+@pytest.mark.asyncio
+async def test_plain_roleplay_identity_revision_updates_rows_in_place():
+    app = MutableTranscriptHarness()
+    app.app_config = {"chat_defaults": {"assistant_markdown": False}}
+    async with app.run_test(size=(80, 24)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_presentation_context(_roleplay_context())
+        transcript.set_messages(
+            [
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.USER, content="Hi", id="u1"
+                ),
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.ASSISTANT, content="Hello", id="a1"
+                ),
+            ]
+        )
+        await transcript.refresh_messages()
+        await pilot.pause()
+
+        original_user = transcript.query_one("#console-message-u1")
+        original_assistant = transcript.query_one("#console-message-a1")
+        user_label = original_user.query_one(".console-transcript-speaker-label", Static)
+        assistant_label = original_assistant.query_one(
+            ".console-transcript-speaker-label", Static
+        )
+        assert user_label.renderable.plain == "Captain [Rowan]"
+        assert assistant_label.renderable.plain == "Alraune"
+        assert "console-transcript-roleplay-user-label" in user_label.classes
+        assert "console-transcript-roleplay-character-label" in assistant_label.classes
+        assert "console-transcript-message-roleplay-user" in original_user.classes
+        assert "console-transcript-message-roleplay-character" in original_assistant.classes
+
+        transcript.select_message("a1")
+        await transcript.refresh_messages()
+        await pilot.pause()
+        original_follow_state = transcript.is_anchored
+        transcript.set_presentation_context(
+            _roleplay_context(
+                user_name="Captain [bold red]", character_name="Cecelia", revision=2
+            )
+        )
+        await transcript.refresh_messages()
+        await pilot.pause()
+
+        assert transcript.query_one("#console-message-u1") is original_user
+        assert transcript.query_one("#console-message-a1") is original_assistant
+        assert transcript.selected_message_id == "a1"
+        assert transcript.is_anchored is original_follow_state
+        assert (
+            original_user.query_one(
+                ".console-transcript-speaker-label", Static
+            ).renderable.plain
+            == "Captain [bold red]"
+        )
+        assert (
+            original_assistant.query_one(
+                ".console-transcript-speaker-label", Static
+            ).renderable.plain
+            == "Cecelia"
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+async def test_roleplay_tints_and_selected_precedence_are_compositor_painted(theme):
+    app = StyledRoleplayTranscriptHarness()
+    async with app.run_test(size=(90, 28)) as pilot:
+        app.theme = theme
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_presentation_context(_roleplay_context())
+        transcript.set_messages(
+            [
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.USER, content="user body", id="u1"
+                ),
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.ASSISTANT,
+                    content="character body",
+                    id="a1",
+                ),
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.SYSTEM, content="neutral body", id="s1"
+                ),
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.ASSISTANT,
+                    content="failed character body",
+                    status="failed",
+                    id="f1",
+                ),
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.SYSTEM,
+                    content="failed neutral body",
+                    status="failed",
+                    id="fs1",
+                ),
+            ]
+        )
+        await transcript.refresh_messages()
+        await pilot.pause()
+
+        user_row = transcript.query_one("#console-message-u1")
+        character_row = transcript.query_one("#console-message-a1")
+        system_row = transcript.query_one("#console-message-s1")
+        failed_roleplay_row = transcript.query_one("#console-message-f1")
+        failed_neutral_row = transcript.query_one("#console-message-fs1")
+        neutral_background = _painted_background(app, system_row)
+        assert _painted_background(app, user_row) != neutral_background
+        assert _painted_background(app, character_row) != neutral_background
+        assert _painted_background(app, failed_roleplay_row) == _painted_background(
+            app, failed_neutral_row
+        )
+        assert _painted_background(app, failed_roleplay_row) != _painted_background(
+            app, character_row
+        )
+
+        transcript.select_message("u1")
+        await transcript.refresh_messages()
+        await pilot.pause()
+        selected_roleplay_background = _painted_background(app, user_row)
+
+        transcript.select_message("s1")
+        await transcript.refresh_messages()
+        await pilot.pause()
+        assert selected_roleplay_background == _painted_background(app, system_row)
+        painted_text = "\n".join(
+            "".join(segment.text for segment in strip)
+            for strip in app.screen._compositor.render_strips()
+        )
+        assert "Captain [Rowan]" in painted_text
+        assert "Alraune" in painted_text
 
 
 def _generation_message(*, variant_count: int, message_id: str = "gen-1"):
@@ -766,8 +976,10 @@ async def test_console_transcript_click_action_row_background_preserves_selectio
         await pilot.pause()
         assert "Save as..." in _visible_text(app)
 
-        # Click the action-row container background, not a button.
-        await pilot.click("#console-message-actions-m2", offset=(5, 15))
+        # Route a container-background click without stale screen coordinates.
+        action_row = app.query_one("#console-message-actions-m2")
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.on_click(SimpleNamespace(control=action_row, stop=lambda: None))
         await pilot.pause()
 
         assert "Save as..." in _visible_text(app)
@@ -1711,8 +1923,7 @@ async def test_transcript_signature_derivation_is_o_changed_messages():
         transcript.set_messages(messages)
         await transcript.refresh_messages()
         after = transcript.message_signature_compute_counts()
-        rendered = transcript.query_one("#console-message-m4", Static)
-        assert "message body 4 (edited)" in str(rendered.renderable)
+        assert "message body 4 (edited)" in _message_row_text(transcript, "m4")
 
     assert after["m4"] == baseline["m4"] + 1
     for message in messages:
@@ -1737,9 +1948,7 @@ async def test_transcript_signature_cache_miss_on_equal_length_edit():
         message.content = "bbbb"  # same length, same status
         transcript.set_messages([message])
         await transcript.refresh_messages()
-        rendered = transcript.query_one("#console-message-m-edit", Static)
-
-        assert "bbbb" in str(rendered.renderable)
+        assert "bbbb" in _message_row_text(transcript, "m-edit")
         assert transcript.message_signature_compute_counts()["m-edit"] == 2
 
 
@@ -1771,8 +1980,7 @@ async def test_transcript_signature_cache_survives_delete():
         )
         transcript.set_messages(survivors + [replacement])
         await transcript.refresh_messages()
-        rendered = transcript.query_one("#console-message-m2", Static)
-        assert "replacement body" in str(rendered.renderable)
+        assert "replacement body" in _message_row_text(transcript, "m2")
 
 
 @pytest.mark.asyncio

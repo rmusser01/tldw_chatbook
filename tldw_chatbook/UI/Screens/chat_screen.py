@@ -14658,6 +14658,18 @@ class ChatScreen(BaseAppScreen):
     ) -> tuple[Any, ...]:
         """Return a lightweight signature for native transcript refresh skipping."""
         store = self._ensure_console_chat_store()
+        presentation_signature: tuple[object, ...] | None = None
+        if store.active_session_id is not None:
+            presentation_context = store.presentation_context(
+                store.active_session_id,
+                self._global_chat_display_name(),
+            )
+            presentation_signature = (
+                presentation_context.user_name,
+                presentation_context.assistant_kind,
+                presentation_context.character_name,
+                presentation_context.revision,
+            )
         message_signatures = []
         for message in messages:
             variants = getattr(message, "variants", None)
@@ -14689,7 +14701,11 @@ class ChatScreen(BaseAppScreen):
                     getattr(message, "citation_presentation", None),
                 )
             )
-        return (store.active_session_id, tuple(message_signatures))
+        return (
+            store.active_session_id,
+            tuple(message_signatures),
+            presentation_signature,
+        )
 
     async def _sync_native_console_transcript(self) -> None:
         """Render native Console messages in the native transcript."""
