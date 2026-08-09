@@ -16917,14 +16917,32 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             return None
 
+    #: Draft text `_sync_console_command_popup` last ran against, or
+    #: None before the first sync. A CLASS attribute, deliberately: the
+    #: hand-built `ChatScreen.__new__()` test fixtures never run `__init__`,
+    #: and this programme has shipped one fixture AttributeError per wave.
+    _console_popup_synced_draft: str | None = None
+
     def _sync_console_command_popup(self) -> None:
-        """Show/hide the slash-command popup from the current composer draft."""
+        """Show/hide the slash-command popup from the current composer draft.
+
+        Records the draft text it ran against (NOT the composer's
+        `_draft_generation` -- that is an undo-checkpoint counter that
+        `insert_text` never advances; a gate on it no-oped on every
+        keystroke, measured), so
+        `_ensure_console_command_popup_current` can tell a popup that is
+        merely CLOSED (Escape) from one that is STALE (an edit happened but
+        its `DraftChanged` has not been delivered yet). Recorded on every
+        path, including the hide paths -- "synced" means "reflects this
+        draft", not "open".
+        """
         popup = self._console_command_popup_or_none()
         if popup is None:
             return
         composer = self._console_composer_or_none()
         if composer is None:
             return
+        self._console_popup_synced_draft = composer.draft_text()
         if composer.has_paste_segments():
             popup.hide()
             return
@@ -16937,6 +16955,26 @@ class ChatScreen(BaseAppScreen):
             popup.hide()
             return
         popup.show_suggestions(suggestions)
+
+    def _ensure_console_command_popup_current(self) -> None:
+        """Re-sync the popup only if the draft moved since the last sync.
+
+        Closes the same-driver-read window (task-3790): when `/`+Down or
+        `/`+Enter arrive in one read, the second key's routing used to
+        consult a popup whose `DraftChanged` was still queued. Re-deriving
+        here is safe ONLY because it is gated on the synced draft text -- an ungated
+        re-sync would re-open a popup the user just dismissed with Escape
+        (dismissal edits nothing, so the text does not move, so this
+        is a no-op for it). The queued `DraftChanged` still delivers and
+        re-runs the full sync; by then the generation matches and
+        `show_suggestions` is idempotent for identical rows, so the
+        highlight a routed Down moved is not yanked back.
+        """
+        composer = self._console_composer_or_none()
+        if composer is None:
+            return
+        if composer.draft_text() != self._console_popup_synced_draft:
+            self._sync_console_command_popup()
 
     def _dismiss_console_command_popup(self) -> bool:
         """Hide the popup if open. Returns True when it was open."""
@@ -17365,6 +17403,7 @@ class ChatScreen(BaseAppScreen):
             realtime.controller.on_keypress()
         if not self._should_capture_console_input(composer):
             return
+        self._ensure_console_command_popup_current()
         popup = self._console_command_popup_or_none()
         if popup is not None and popup.is_open:
             if event.key == "up":

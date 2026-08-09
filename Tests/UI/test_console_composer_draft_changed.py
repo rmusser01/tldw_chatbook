@@ -179,20 +179,16 @@ async def test_typing_a_slash_opens_the_command_popup():
         assert popup.is_open is True
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "TASK-3749 known, filed ordering gap: `DraftChanged` is delivered "
-        "through the message pump, so a key already queued behind the "
-        "slash is handled before the popup has been opened and is lost. "
-        "Kept as a strict xfail rather than deleted -- it is the exact "
-        "probe for the gap, and it will fail loudly (prompting this "
-        "marker's removal) the day the ordering is restored."
-    ),
-)
 @pytest.mark.asyncio
 async def test_an_arrow_queued_behind_the_slash_still_navigates_the_popup():
     """The popup must be open by the time the NEXT key is handled.
+
+    Was a strict xfail (the TASK-3790 ordering gap); un-xfailed by the
+    generation-gated `_ensure_console_command_popup_current`, which
+    re-derives the popup at the routing point ONLY when the draft moved
+    since the last sync -- so a key queued behind the slash in the same
+    driver read now finds the popup open, while an Escape-dismissed popup
+    (no edit, no generation movement) stays dismissed.
 
     Both keys are posted to the focused composer's queue with no
     event-loop drain between them -- exactly how `App.on_event` routes two
@@ -274,3 +270,70 @@ async def test_a_deletion_key_leaves_the_first_run_guidance_alone(seed, keys):
         await pilot.pause()
 
         assert console._console_guidance_dismissed is False
+
+
+@pytest.mark.asyncio
+async def test_escape_dismissal_survives_a_following_arrow_key():
+    """An Escape-dismissed popup must NOT be re-opened by mere navigation.
+
+    The guard that makes `_ensure_console_command_popup_current` safe: it is
+    generation-gated, and Escape edits nothing. An UNGATED re-sync at the
+    routing point would re-derive suggestions from the still-slash draft and
+    re-open the popup the user just closed -- turning the task-3790 fix into
+    a worse regression than the one it fixes. This is the test that fails if
+    anyone "simplifies" the gate away.
+    """
+    _, host = _ready_host()
+    async with host.run_test(size=APP_SIZE) as pilot:
+        console, composer = await _console(host, pilot)
+        popup = console.query_one("#console-command-popup")
+
+        composer.post_message(events.Key("slash", "/"))
+        await pilot.pause()
+        await pilot.pause()
+        assert popup.is_open is True
+
+        # Escape reaches the popup through the screen's binding action, not
+        # on_key (the popup branch never sees it), so invoke the real dismiss
+        # route the Escape binding calls -- a synthetic Key posted to the
+        # composer does not resolve screen bindings under this harness.
+        console.action_focus_console_composer_home()
+        await pilot.pause()
+        assert popup.is_open is False
+
+        composer.post_message(events.Key("down", None))
+        await pilot.pause()
+        await pilot.pause()
+        assert popup.is_open is False, (
+            "navigation re-opened a popup the user dismissed with Escape"
+        )
+        assert composer.draft_text() == "/"
+
+
+@pytest.mark.asyncio
+async def test_deferred_draft_changed_does_not_yank_the_moved_highlight():
+    """The queued `DraftChanged` must not reset a highlight Down just moved.
+
+    Same-read `/`+Down: the routing-point ensure opens the popup and Down
+    moves the highlight to row 1 -- then the deferred `DraftChanged` finally
+    delivers and re-runs the sync. `show_suggestions` is idempotent for an
+    identical suggestion list precisely so that second run leaves the
+    highlight alone; without it the user's Down would be silently undone a
+    frame later.
+    """
+    _, host = _ready_host()
+    async with host.run_test(size=APP_SIZE) as pilot:
+        console, composer = await _console(host, pilot)
+        popup = console.query_one("#console-command-popup")
+
+        composer.post_message(events.Key("slash", "/"))
+        composer.post_message(events.Key("down", None))
+        # Drain until the deferred DraftChanged has definitely delivered.
+        for _ in range(4):
+            await pilot.pause()
+
+        assert popup.is_open is True
+        second = popup._suggestions[1]
+        assert popup.accept_selected().label == second.label, (
+            "the deferred sync reset the highlight the Down had moved"
+        )
