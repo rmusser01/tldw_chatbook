@@ -43,10 +43,10 @@ No error contract changes. Invalid Settings drafts remain blocked by the existin
 
 ## Verification
 
-- A focused Settings regression must fail when Video Generation is absent from `_category_groups()`, then prove the expanded group count, category search, and panel opening behavior.
+- A focused Settings regression must fail when Video Generation is absent from `_category_groups()`, then prove the expanded group count, category search, and panel opening behavior. Existing focused panel/data-layer coverage must also remain green for the curated ComfyUI controls, ownership guidance, invalid-draft blocking, successful persistence, and save-triggered runtime refresh required by TASK-3401.15 AC #3–#4.
 - A real scratch-TOML regression must fail when `load_settings()` omits `video_generation`, then prove the global and nested values survive initial load and forced reload into `get_video_generation_config()` and registry resolution.
 - Run only tests related to modified production and test files, plus targeted Ruff, `py_compile`, and diff/privacy checks.
-- After automated verification, resume TASK-3401.14 in an isolated profile and execute Base and Spectrum through the actual Console command against the configured trusted server.
+- After TASK-3401.15/.16 implementation and automated verification are complete, resume TASK-3401.14 as follow-up UAT—not additional implementation scope for either defect—and execute Base and Spectrum through the actual Console command against the configured trusted server.
 
 ## Scope boundaries
 
