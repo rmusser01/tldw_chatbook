@@ -23,14 +23,14 @@ TASK-3401.14 tests the packaged Base and Spectrum H3 workflows through the real 
 | Base stored bytes | Pass | MP4-family container; H.264 864×480 at 24 FPS; 124 frames; 5.167 seconds; AAC audio; observed MIME `video/mp4`. |
 | Spectrum stored bytes | Pass | MP4-family container; H.264 864×480 at 24 FPS; 124 frames; 5.167 seconds; AAC audio; observed MIME `video/mp4`. |
 | Cancellation | Pass | Stop cleared the running queue, rendered an explicit user-cancelled terminal message, left no pending card, and retained no partial file. |
-| Full player and save copy | Blocked | Video identity/retention failed across Console lifecycle transitions (TASK-3401.17), and inline-preview activation terminated the app with an unhandled `AttributeError` (TASK-3401.18). |
+| Full player and save copy | Blocked | Persisted video identity diverged from its storage key (TASK-3401.17), inline-preview activation terminated the app with an unhandled `AttributeError` (TASK-3401.18), and session cleanup reran on Console remount (TASK-3401.19). |
 
 ## Defect evidence
 
 - The generated-video directory key did not match the persisted video-message ID. The card was initially ready from the live in-memory state but could not resolve the same bytes after restart even under TTL retention.
 - A Console lifecycle transition under session retention reapplied the startup sweep and removed a current-run generated video. Session retention must describe the app session, not each screen instance.
 - Explicit inline-preview activation was followed by an app-level unhandled `AttributeError` and shutdown in the isolated persistent log. The log contained no prompt or media bytes.
-- These issues are tracked in TASK-3401.17 and TASK-3401.18. No production fix was made inside this UAT task.
+- These issues are tracked atomically in TASK-3401.17, TASK-3401.18, and TASK-3401.19. No production fix was made inside this UAT task.
 
 ## Cleanup
 
