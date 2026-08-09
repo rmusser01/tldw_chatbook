@@ -317,3 +317,54 @@ def test_builtin_provider_ephemeral_does_not_block_read_only_tools():
     )
     assert out.ok is True
     assert "42" in out.content
+
+
+# --- task-3240 Critical prerequisite: coerced registration read -------------
+#
+# `BuiltinToolProvider.__init__` reads each `_GATEABLE_BUILTINS` gate via a
+# function-local `from ..config import get_cli_setting` -- patching
+# `tldw_chatbook.Agents.tool_catalog.get_cli_setting` has nothing to attach
+# to (no such module attribute exists); the seam these tests must control is
+# `tldw_chatbook.config.get_cli_setting` itself, the module the function-local
+# import re-resolves from on every call.
+
+
+def test_registration_read_coerces_quoted_false_to_not_registered(monkeypatch):
+    """A quoted `"false"` in `[tools]` must NOT register the tool.
+
+    Before the fix, `get_cli_setting(...)` returned the raw string `"false"`
+    and `not "false"` is `False` (any non-empty string is truthy) -- so a
+    mis-typed TOML value silently ENABLED the gate while a coerced UI would
+    have shown it OFF. This is the exact class of bug task-3240's design doc
+    calls the arc's fifth `bool("false")` site.
+    """
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS, BuiltinToolProvider
+
+    target = _GATEABLE_BUILTINS[0]
+
+    def fake_get_cli_setting(section, key=None, default=None):
+        if section == "tools" and key == target.gate_key:
+            return "false"
+        return default
+
+    monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
+    provider = BuiltinToolProvider()
+    assert target.tool_name not in provider._tools
+
+
+def test_registration_read_coerces_quoted_true_to_registered(monkeypatch):
+    """The mirror case: a quoted `"true"` MUST register the tool."""
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS, BuiltinToolProvider
+
+    target = _GATEABLE_BUILTINS[0]
+
+    def fake_get_cli_setting(section, key=None, default=None):
+        if section == "tools" and key == target.gate_key:
+            return "true"
+        return default
+
+    monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
+    provider = BuiltinToolProvider()
+    assert target.tool_name in provider._tools

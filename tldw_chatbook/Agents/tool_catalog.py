@@ -499,9 +499,20 @@ class BuiltinToolProvider:
         # the mutating tools on the same terms.
         for entry in _GATEABLE_BUILTINS:
             try:
-                from ..config import get_cli_setting
+                from ..config import coerce_bool_setting, get_cli_setting
 
-                if not get_cli_setting("tools", entry.gate_key, False):
+                # task-3240 Critical prerequisite: get_cli_setting returns the
+                # RAW TOML value, and a mis-typed quoted "false" is truthy --
+                # raw truthiness would have REGISTERED the tool while a
+                # coerced UI (the MCP-hub gate affordance) showed it OFF.
+                # coerce_bool_setting applies load_settings' own bool rules
+                # ("false"/unrecognized -> False), matching every other
+                # reader of a [tools]/[console] gate (see
+                # Agents/local_tool_provider.py's web_deep_search gate and
+                # Agents/builtin_tool_gate.py's all_tool_gates()).
+                if not coerce_bool_setting(
+                    get_cli_setting("tools", entry.gate_key, False), False
+                ):
                     continue
                 tool = build_gateable_tool(entry)
             except Exception as exc:  # noqa: BLE001 — an unavailable tool is just absent
