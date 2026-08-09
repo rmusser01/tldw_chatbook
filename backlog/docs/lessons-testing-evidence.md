@@ -1714,3 +1714,26 @@ drift-back": a settle pass's own trailing invisibility pass undoing the settle.
    `test_mcp_inspector.py`'s `InspectorAppWithBundledCSS` does) before deciding
    what it means -- in both directions: a bug the harness shows may not exist
    live, and a bug live may not show in the harness.
+
+## A static symlink fixture does not prove a scanner is no-follow (TASK-13200, 2026-08-09)
+
+**What happened.** The guided audio.cpp package scanner correctly skipped a
+nested symlink that existed before scanning, so its original path-escape test
+passed. A mutation fixture then replaced an already-queued directory with a
+symlink. The next `scandir(path)` followed the new target and produced an exact
+candidate outside the selected tree. A pre-open `lstat` alone still left a
+smaller replacement window while the iterator was being opened.
+
+**What to do.** Test no-follow traversal at three boundaries: a link present at
+discovery, a queued directory replaced before traversal, and replacement while
+the directory iterator opens. Fence the queued identity both immediately before
+and immediately after opening the iterator; close without iterating if either
+observation differs or becomes a symlink/reparse point. For files, combine a
+no-follow open with `fstat` identity/type comparison before reading metadata.
+Static fixtures prove policy for stable trees, not race safety.
+
+PR #1463 review exposed a second portability trap: treating a missing
+`O_NOFOLLOW` as flag value zero silently removed the primary file-open fence
+while leaving the post-open identity check looking reassuring. Add an explicit
+missing-capability mutation test. If the platform cannot guarantee no-follow,
+fail closed before `open()` instead of opening first and rejecting afterward.

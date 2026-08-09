@@ -3,6 +3,10 @@
 Status: Accepted
 Date: 2026-07-23
 Amended: 2026-08-02
+Partially superseded: 2026-08-09 by
+[ADR-050](050-audio-cpp-generated-model-setup-ownership.md), only for the new
+guided generated-configuration source and Windows target; the External and
+user-provided-`server.json` contracts remain in force
 Related Tasks: TASK-561, TASK-560, TASK-569, TASK-710, TASK-763
 Supersedes: N/A
 

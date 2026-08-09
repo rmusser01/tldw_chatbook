@@ -45,6 +45,8 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-043](043-console-rail-compact-collapse-yields-to-explicit-toggle.md) | Accepted | Console rail compact-collapse rules are the responsive default rendering, not a hard block: explicit rail toggles are honored at any width with the main-column min-width waived, so manual toggles never silently no-op. |
 | [ADR-045](045-qwencloud-dual-api-provider-boundary.md) | Accepted | Treat QwenCloud Responses and Chat Completions as two wire modes of one first-class provider while reusing the shared Console, native-tool, readiness, and model-catalog boundaries. |
 | [ADR-049](049-local-prompt-retained-version-history.md) | Accepted | Expose local Prompt and Recipe sync snapshots as bounded retained history with indexed paging, atomic keyword capture, and conditional restore as a new current version. |
+| [ADR-050](050-audio-cpp-generated-model-setup-ownership.md) | Accepted | Generate immutable audio.cpp launch artifacts from structured global settings and a built-in exact-package recipe registry while retaining the manual server.json path. |
+| [ADR-051](051-private-tts-clone-reference-assets.md) | Accepted | Store canonical TTS clone references as private profile-owned assets with typed admission and separate explicit portability. |
 
 ## Historical Decision Material
 
