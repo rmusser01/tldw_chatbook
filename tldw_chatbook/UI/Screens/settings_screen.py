@@ -17329,6 +17329,31 @@ class SettingsScreen(BaseAppScreen):
         self.app_instance.app_config = {}
         return self.app_instance.app_config
 
+    def _signal_console_identity_refresh(self) -> None:
+        """Publish a successful global-name save to live Console screens."""
+        generation = (
+            int(
+                getattr(
+                    self.app_instance,
+                    "_console_identity_refresh_generation",
+                    0,
+                )
+                or 0
+            )
+            + 1
+        )
+        self.app_instance._console_identity_refresh_generation = generation
+        signalled: set[int] = set()
+        for app in (self.app, self.app_instance):
+            for screen in tuple(getattr(app, "screen_stack", ()) or ()):
+                screen_key = id(screen)
+                if screen_key in signalled:
+                    continue
+                signalled.add(screen_key)
+                refresh = getattr(screen, "request_console_identity_refresh", None)
+                if callable(refresh):
+                    refresh(generation)
+
     def _apply_appearance_save_result(
         self,
         saved: bool,
@@ -17676,6 +17701,8 @@ class SettingsScreen(BaseAppScreen):
                 }
             self._console_settings().update(normalized_console_values)
             self._chat_defaults().update(chat_default_values)
+            if "user_display_name" in chat_default_values:
+                self._signal_console_identity_refresh()
             self._settings_drafts.pop(SettingsCategoryId.CONSOLE_BEHAVIOR, None)
             rail_result = (
                 f"Rail labels: {self._console_rail_label_style_name(loaded=True)}. "

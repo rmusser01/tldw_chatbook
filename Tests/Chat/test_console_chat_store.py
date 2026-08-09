@@ -1,3 +1,5 @@
+from dataclasses import FrozenInstanceError
+
 import pytest
 from datetime import datetime
 
@@ -3583,6 +3585,34 @@ def test_stale_refresh_rematerializes_and_reports_success_once():
     assert store.refresh_session_roleplay_projections(session.id, global_default="Rowan") is True
     assert len(persistence.updated_messages) == writes
     assert store.payload_revision(session.id) == revision
+
+
+def test_prepare_roleplay_refresh_materializes_live_before_immutable_persistence():
+    store, persistence, session, greeting = _seeded_roleplay_store()
+    persistence.updated_messages.clear()
+    persistence.updated_system_prompts.clear()
+
+    plan = store.prepare_session_roleplay_projection_refresh(
+        session.id, global_default="Captain Rowan"
+    )
+
+    assert plan is not None
+    assert session.settings.system_prompt == "Speak with Captain Rowan."
+    assert store.get_message(greeting.id).content == "Hello Captain Rowan."
+    assert persistence.updated_system_prompts == []
+    assert persistence.updated_messages == []
+    with pytest.raises(FrozenInstanceError):
+        plan.generation = -1
+
+    store.close_session(session.id)
+    result = ConsoleChatStore.persist_roleplay_projection_plan(plan)
+
+    assert result.persisted is True
+    assert persistence.updated_system_prompts[-1]["system_prompt"] == (
+        "Speak with Captain Rowan."
+    )
+    assert persistence.updated_messages[-1]["content"] == "Hello Captain Rowan."
+    assert store.accept_roleplay_projection_persistence_result(result) is False
 
 
 def test_stale_refresh_keeps_live_projection_when_durable_write_refuses_or_raises():

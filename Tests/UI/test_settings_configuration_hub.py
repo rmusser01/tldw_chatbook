@@ -4641,6 +4641,13 @@ async def test_settings_console_behavior_saves_display_name_exactly(monkeypatch)
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
+        refresh_signals = []
+        monkeypatch.setattr(
+            screen,
+            "request_console_identity_refresh",
+            lambda generation: refresh_signals.append(generation),
+            raising=False,
+        )
         field = screen.query_one(
             "#settings-console-default-user-display-name", Input
         )
@@ -4656,6 +4663,8 @@ async def test_settings_console_behavior_saves_display_name_exactly(monkeypatch)
     assert app.app_config["chat_defaults"] == {
         "user_display_name": "Captain Rowan"
     }
+    assert app._console_identity_refresh_generation == 1
+    assert refresh_signals == [1]
 
 
 @pytest.mark.asyncio

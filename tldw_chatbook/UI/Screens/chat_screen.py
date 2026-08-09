@@ -224,6 +224,7 @@ from ...Chat.console_chat_store import (
     MAX_PENDING_ATTACHMENTS,
     ConsoleChatSession,
     ConsoleChatStore,
+    ConsoleRoleplayProjectionPersistencePlan,
 )
 from ...Chat.console_provider_gateway import (
     DEFAULT_LLAMACPP_BASE_URL,
@@ -1870,6 +1871,7 @@ class ChatScreen(BaseAppScreen):
         if session_id is None:
             return
         session = store.switch_session(session_id)
+        origin_system_prompt = settings.system_prompt
         modal = ConsoleSettingsModal(
             settings=settings,
             user_display_name_override=session.user_display_name_override,
@@ -1884,7 +1886,14 @@ class ChatScreen(BaseAppScreen):
             focus_model=focus_model,
         )
 
-        self.app.push_screen(modal, callback=self._apply_console_settings_result)
+        def apply_origin_result(result: ConsoleSettingsResult | None) -> None:
+            self._apply_console_settings_result(
+                result,
+                origin_session_id=session_id,
+                origin_system_prompt=origin_system_prompt,
+            )
+
+        self.app.push_screen(modal, callback=apply_origin_result)
 
     def _global_chat_display_name(self) -> str:
         """Return the live in-memory global chat label without touching disk."""
@@ -1915,20 +1924,34 @@ class ChatScreen(BaseAppScreen):
         self._sync_console_control_bar()
 
     def _apply_console_settings_result(
-        self, result: ConsoleSettingsResult | None
+        self,
+        result: ConsoleSettingsResult | None,
+        *,
+        origin_session_id: str | None = None,
+        origin_system_prompt: str | None = None,
     ) -> None:
         """Apply provider settings and the separately owned chat-name override."""
         if not isinstance(result, ConsoleSettingsResult):
             return
         store = self._ensure_console_chat_store()
-        session_id = store.active_session_id
+        session_id = origin_session_id or store.active_session_id
         if session_id is None:
             return
-        current_settings = self._session._active_console_session_settings()
+        try:
+            current_settings = store.session_settings(session_id)
+        except KeyError:
+            return
         current_system_prompt = (
-            current_settings.system_prompt if current_settings is not None else None
+            origin_system_prompt
+            if origin_session_id is not None
+            else (
+                current_settings.system_prompt
+                if current_settings is not None
+                else None
+            )
         )
-        self._session._replace_active_console_session_settings(
+        store.replace_session_settings(
+            session_id,
             replace(
                 result.settings,
                 source="user",
@@ -1949,34 +1972,46 @@ class ChatScreen(BaseAppScreen):
                 "Name changed for this session, but it may not survive reopening.",
                 severity="warning",
             )
-        self._sync_console_identity_surfaces()
-        self.run_worker(
-            self._sync_native_console_chat_ui(),
-            exclusive=True,
-            group="console-sync",
-        )
+        if store.active_session_id == session_id:
+            self._sync_console_identity_surfaces()
+            self.run_worker(
+                self._sync_native_console_chat_ui(),
+                exclusive=True,
+                group="console-sync",
+            )
         self.app_instance.notify("Console settings saved.", severity="success")
 
     async def _refresh_console_roleplay_projections(
         self,
-        session_id: str,
-        global_user_display_name: str,
+        plan: ConsoleRoleplayProjectionPersistencePlan,
     ) -> None:
-        """Materialize trusted name projections off the Textual UI loop."""
+        """Serialize immutable durable writes without off-thread store access."""
         store = self._ensure_console_chat_store()
-        persisted = await asyncio.to_thread(
-            store.refresh_session_roleplay_projections,
-            session_id,
-            global_default=global_user_display_name,
-        )
-        if not persisted:
+        lock = self._console_roleplay_persistence_lock
+        if lock is None:
+            lock = asyncio.Lock()
+            self._console_roleplay_persistence_lock = lock
+        cancelled = False
+        async with lock:
+            persistence_task = asyncio.create_task(
+                asyncio.to_thread(store.persist_roleplay_projection_plan, plan)
+            )
+            try:
+                result = await asyncio.shield(persistence_task)
+            except asyncio.CancelledError:
+                cancelled = True
+                result = await persistence_task
+            accepted = store.accept_roleplay_projection_persistence_result(result)
+        if accepted and not result.persisted:
             self.app_instance.notify(
                 "Your chat name is active, but updated character templates may not "
                 "survive reopening.",
                 severity="warning",
             )
-        if store.active_session_id == session_id:
+        if accepted and store.active_session_id == plan.session_id:
             self._sync_console_identity_surfaces()
+        if cancelled:
+            return
 
     def _dispatch_active_console_roleplay_refresh(self) -> bool:
         """Coalesce refresh writes by active session and effective global name."""
@@ -1988,15 +2023,43 @@ class ChatScreen(BaseAppScreen):
         if refresh_key == self._last_console_roleplay_refresh_key:
             return False
         self._last_console_roleplay_refresh_key = refresh_key
+        try:
+            plan = store.prepare_session_roleplay_projection_refresh(
+                refresh_key[0],
+                global_default=global_user_display_name,
+            )
+        except KeyError:
+            return False
         self._sync_console_identity_surfaces()
-        self.run_worker(
-            self._refresh_console_roleplay_projections(
-                refresh_key[0], global_user_display_name
-            ),
-            exclusive=False,
-            group="console-roleplay-refresh",
-        )
+        if plan is not None:
+            self.run_worker(
+                self._refresh_console_roleplay_projections(plan),
+                exclusive=False,
+                group="console-roleplay-refresh",
+            )
         return True
+
+    def request_console_identity_refresh(self, generation: int | None = None) -> bool:
+        """Consume a global display-name save without waiting for the sync tick."""
+        observed = self._console_identity_refresh_generation
+        if generation is None:
+            generation = int(
+                getattr(
+                    self.app_instance,
+                    "_console_identity_refresh_generation",
+                    0,
+                )
+                or 0
+            )
+        if generation <= observed:
+            return False
+        self._console_identity_refresh_generation = generation
+        self._last_console_roleplay_refresh_key = None
+        return self._dispatch_active_console_roleplay_refresh()
+
+    def _consume_pending_console_identity_refresh(self) -> bool:
+        """Consume an identity generation missed while Console was inactive."""
+        return self.request_console_identity_refresh()
 
     async def on_console_settings_open(self, event: Button.Pressed) -> None:
         """Open Console session settings for the active native session."""
@@ -2575,6 +2638,8 @@ class ChatScreen(BaseAppScreen):
         )
         self._console_chat_store: ConsoleChatStore | None = None
         self._last_console_roleplay_refresh_key: tuple[str, str] | None = None
+        self._console_roleplay_persistence_lock: asyncio.Lock | None = None
+        self._console_identity_refresh_generation = 0
         # task-9: cache of persisted-conversation RAG retrieval scopes,
         # keyed by conversation id -- populated off-loop at resume time and
         # by the scope picker's modal-open/after-save reads (never during
@@ -18518,7 +18583,8 @@ class ChatScreen(BaseAppScreen):
         self.set_timer(0.15, self._consume_pending_console_prompt_insert)
         self.set_timer(0.15, self.consume_pending_console_provider_intent)
         self.call_after_refresh(self._restore_console_workbench_focus)
-        self._dispatch_active_console_roleplay_refresh()
+        if not self._consume_pending_console_identity_refresh():
+            self._dispatch_active_console_roleplay_refresh()
         self.run_worker(self._refresh_console_skill_candidates(), exclusive=False)
         # Note: BaseAppScreen doesn't have on_screen_resume, so no super() call
 
