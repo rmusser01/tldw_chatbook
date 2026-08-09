@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 from loguru import logger
 
+import tldw_chatbook.STT.parakeet_external as parakeet_external
 from tldw_chatbook.Model_Artifacts.service import (
     ArtifactDescriptor,
     ArtifactFile,
@@ -330,6 +331,40 @@ def test_rejects_earlier_file_mutated_while_later_file_hashes(tmp_path: Path) ->
         root,
         progress=mutate_first_during_second,
     )
+    assert mutated
+
+
+def test_rejects_earlier_file_mutated_after_snapshot_capture(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    files = {
+        "first.onnx": b"original",
+        "second.onnx": b"second",
+    }
+    root = tmp_path / "external-post-snapshot-change"
+    _materialize(root, files)
+    first_path = root / "first.onnx"
+    real_snapshot = parakeet_external.snapshot_local_source
+    mutated = False
+
+    def snapshot_then_mutate(paths: tuple[Path, ...]):
+        nonlocal mutated
+        snapshot = real_snapshot(paths)
+        metadata = first_path.stat()
+        first_path.write_bytes(b"tampered")
+        os.utime(
+            first_path,
+            ns=(metadata.st_atime_ns, metadata.st_mtime_ns + 5_000_000_000),
+        )
+        mutated = True
+        return snapshot
+
+    monkeypatch.setattr(
+        parakeet_external, "snapshot_local_source", snapshot_then_mutate
+    )
+
+    _assert_error(ExternalParakeetErrorCode.CHANGED, _descriptor(files), root)
     assert mutated
 
 
