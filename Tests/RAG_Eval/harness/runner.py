@@ -158,12 +158,13 @@ class ModeReport:
     runtime_backends: tuple[str, ...]
     errors: tuple[tuple[str, str], ...]
     #: Mean distinct documents returned per scored query. Reported next to
-    #: precision because the ported `precision_at_k` divides by the number
-    #: of results actually returned, not by `k` (Task 2 pinned that
-    #: convention against the server module): a mode that returns one
-    #: correct document scores P@10 = 1.0, and a mode that returns ten with
-    #: one correct scores 0.1. Without this column the precision row reads
-    #: as a quality ranking when it is partly a verbosity ranking.
+    #: precision because the ported `precision_at_k` divides by
+    #: ``min(k, len(retrieved))`` — literally ``len(retrieved_ids[:k])`` —
+    #: and not by `k` (Task 2 pinned that convention against the server
+    #: module): a mode that returns one correct document scores P@10 = 1.0,
+    #: and a mode that returns ten with one correct scores 0.1. Without this
+    #: column the precision row reads as a quality ranking when it is partly
+    #: a verbosity ranking.
     mean_docs_at_k: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
@@ -514,8 +515,14 @@ def _format_summary(report: EvalReport) -> str:
             f"  {','.join(mode_report.runtime_backends) or '-'}"
         )
     lines.append(
-        "'docs' = mean distinct documents returned per scored query; P@k "
-        "divides by that, not by k (see ModeReport.mean_docs_at_k)."
+        "'docs' = mean distinct documents returned per scored query. P@k "
+        "divides by min(k, len(retrieved)), NOT by k, so a mode that returns "
+        "little scores high precision for returning little."
+    )
+    lines.append(
+        "plain-mode MRR/NDCG do not measure ranking: its rows carry no score "
+        "and arrive in a fixed seam order (notes, media, conversations, "
+        "prompts), so for that mode those two columns track recall."
     )
 
     categories = sorted(
