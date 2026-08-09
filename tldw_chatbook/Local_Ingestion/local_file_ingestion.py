@@ -383,7 +383,9 @@ _TEXT_CHUNK_TYPES = frozenset({"plaintext", "html", "document", "article"})
 _TEXT_ANALYSIS_TYPES = frozenset({"plaintext", "html", "article"})
 
 
-def _decode_ingest_text(raw: bytes, encoding: Optional[str]) -> str:
+def _decode_ingest_text(
+    raw: bytes, encoding: Optional[str]
+) -> tuple[str, list[str]]:
     """Decode raw text-file bytes per the ingest form's Encoding selection.
 
     (task-3301) The Encoding select (auto / utf-8 / utf-16 / latin-1 /
@@ -400,15 +402,30 @@ def _decode_ingest_text(raw: bytes, encoding: Optional[str]) -> str:
             last resort. Any other value is used directly, with
             ``errors="replace"`` so an explicit wrong choice degrades to
             visible replacement characters rather than failing the job.
+            (task-3301 xhigh review round 2, F13) That degrade-not-fail
+            contract also covers an encoding NAME the codec registry does
+            not know (a persisted/typed value like ``utf8-bom``): the
+            explicit path used to let ``LookupError`` escape and fail the
+            job while the auto path caught the same class.
 
     Returns:
-        The decoded text.
+        ``(text, warnings)`` -- the decoded text, plus warning lines for
+        anything that had to be degraded (currently: the unknown-encoding
+        fallback). Empty warnings on every clean decode.
     """
     choice = str(encoding or "auto").strip().lower()
     if choice and choice != "auto":
-        return raw.decode(choice, errors="replace")
+        try:
+            return raw.decode(choice, errors="replace"), []
+        except (LookupError, ValueError):
+            # (F13) Unknown codec name: same fallback the auto path ends
+            # on, surfaced as a warning instead of failing the job.
+            return raw.decode("utf-8", errors="replace"), [
+                f"Unknown text encoding '{choice}'; decoded as UTF-8 "
+                "with replacement characters."
+            ]
     try:
-        return raw.decode("utf-8")
+        return raw.decode("utf-8"), []
     except UnicodeDecodeError:
         pass
     try:  # optional dependency -- degrade quietly when absent
@@ -417,12 +434,12 @@ def _decode_ingest_text(raw: bytes, encoding: Optional[str]) -> str:
         detected = (chardet.detect(raw) or {}).get("encoding")
         if detected:
             try:
-                return raw.decode(detected, errors="replace")
+                return raw.decode(detected, errors="replace"), []
             except (LookupError, ValueError):
                 pass
     except ImportError:
         pass
-    return raw.decode("utf-8", errors="replace")
+    return raw.decode("utf-8", errors="replace"), []
 
 
 def _chunk_text_for_ingest(
@@ -483,6 +500,20 @@ def _chunk_text_for_ingest(
 _DEFAULT_ANALYSIS_PROMPT = (
     "Please provide a comprehensive summary of this document."
 )
+
+#: (task-3301 xhigh review round 2, F7) Sentinel distinguishing "caller never
+#: passed chunk_options" from an explicit ``None``. When task-3301 made
+#: ``chunk_options is None`` mean "do not chunk" at the parse seam (the
+#: Library queue's Chunk-content OFF state), the public wrappers
+#: (``ingest_local_file``/``batch_ingest_files``/``quick_ingest``) silently
+#: inherited it through their ``None`` defaults -- out-of-tree callers that
+#: previously got default chunking stopped chunking with no signal. The
+#: wrappers now default to this sentinel, normalized to ``{}`` ("chunk with
+#: defaults"); an EXPLICIT ``None`` still disables chunking. A sentinel
+#: object (not a ``{}`` default) because ``process_pdf`` and friends
+#: ``setdefault`` into the dict they receive -- a shared mutable default
+#: would accrete state across calls.
+_CHUNK_WITH_DEFAULTS: Any = object()
 
 
 def _analysis_failure_reason(analysis: Any) -> Optional[str]:
@@ -1098,7 +1129,9 @@ def parse_local_file_for_ingest(
             # and analysis are produced in the shared text-type tail below --
             # the old "chunking will be handled by the database" comment
             # described a placeholder that never chunked anything.
-            content = _decode_ingest_text(file_path.read_bytes(), encoding)
+            content, decode_warnings = _decode_ingest_text(
+                file_path.read_bytes(), encoding
+            )
 
             # Simple result structure for plaintext
             result = {
@@ -1108,6 +1141,7 @@ def parse_local_file_for_ingest(
                 "keywords": keywords,
                 "chunks": [],
                 "analysis": "",
+                "warnings": decode_warnings,
             }
 
         elif file_type == "html":
@@ -1116,7 +1150,9 @@ def parse_local_file_for_ingest(
 
             # (task-3301) Decoded per the form's Encoding selection -- the
             # old strict-utf-8 open failed the whole job on latin-1 bytes.
-            html_content = _decode_ingest_text(file_path.read_bytes(), encoding)
+            html_content, decode_warnings = _decode_ingest_text(
+                file_path.read_bytes(), encoding
+            )
 
             # Parse HTML and extract text
             soup = BeautifulSoup(html_content, "html.parser")
@@ -1136,6 +1172,7 @@ def parse_local_file_for_ingest(
                 "keywords": keywords,
                 "chunks": [],  # produced by the shared text-type tail below
                 "analysis": "",
+                "warnings": decode_warnings,
             }
 
         elif file_type == "article":
@@ -1431,7 +1468,7 @@ def ingest_local_file(
     perform_analysis: bool = False,
     api_name: Optional[str] = None,
     api_key: Optional[str] = None,
-    chunk_options: Optional[Dict[str, Any]] = None,
+    chunk_options: Optional[Dict[str, Any]] = _CHUNK_WITH_DEFAULTS,
     metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
@@ -1457,11 +1494,13 @@ def ingest_local_file(
         perform_analysis: Whether to perform analysis (summarization)
         api_name: API provider name for analysis (if enabled)
         api_key: API key for analysis provider (if needed)
-        chunk_options: Dictionary with chunking options. (task-3301)
-            ``None`` disables chunking for EVERY type -- the processors
-            used to be called with a hardcoded ``perform_chunking=True``
-            regardless. Pass ``{}`` (or any dict) to chunk with defaults.
-            Keys:
+        chunk_options: Dictionary with chunking options. (task-3301,
+            amended by the xhigh round-2 review / F7) OMITTING this
+            argument means "chunk with defaults" (``{}``) -- the public
+            wrappers' historical behavior. An EXPLICIT ``None`` disables
+            chunking for EVERY type (the Library queue's Chunk-content
+            OFF contract at the parse seam). Pass ``{}`` or a populated
+            dict to chunk with defaults/overrides. Keys:
             - method: 'semantic', 'tokens', 'paragraphs', 'sentences', 'words', 'ebook_chapters'
             - size / max_size: chunk size (default varies by method)
             - overlap: chunk overlap (default varies by method)
@@ -1486,6 +1525,11 @@ def ingest_local_file(
         FileNotFoundError: If file doesn't exist
     """
     file_path = Path(file_path)
+    if chunk_options is _CHUNK_WITH_DEFAULTS:
+        # (F7) Omitted argument == the wrappers' historical default
+        # chunking; a fresh dict per call because processors setdefault
+        # into it.
+        chunk_options = {}
     options = {
         "title": title,
         "author": author,
@@ -1522,7 +1566,7 @@ def batch_ingest_files(
     perform_analysis: bool = False,
     api_name: Optional[str] = None,
     api_key: Optional[str] = None,
-    chunk_options: Optional[Dict[str, Any]] = None,
+    chunk_options: Optional[Dict[str, Any]] = _CHUNK_WITH_DEFAULTS,
     stop_on_error: bool = False,
 ) -> List[Dict[str, Any]]:
     """
@@ -1535,7 +1579,9 @@ def batch_ingest_files(
         perform_analysis: Whether to perform analysis on all files
         api_name: API provider for analysis
         api_key: API key for analysis
-        chunk_options: Chunking options for all files
+        chunk_options: Chunking options for all files. Omitted means
+            "chunk with defaults"; an explicit ``None`` disables chunking
+            (F7 -- see ``ingest_local_file``).
         stop_on_error: Whether to stop on first error or continue
 
     Returns:

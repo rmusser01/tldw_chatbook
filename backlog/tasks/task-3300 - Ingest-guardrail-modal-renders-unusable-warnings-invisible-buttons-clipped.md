@@ -98,4 +98,21 @@ Files: `tldw_chatbook/UI/Screens/library_screen.py`,
 
 Final counts: `Tests/integration/test_library_ingest_flow.py` +
 `Tests/UI/test_library_ingest_guardrail_modal.py` → 23 passed.
+
+**xhigh review round 2 addendum (F3, 2026-08-08).** The round-1 fix made
+each warning row render, but the modal container itself was still a plain
+Vertical: with 5+ warnings it grew past `max-height: 90%` and the
+Cancel/"Start import anyway" row rendered off-screen (measured: buttons at
+y=40 on a 24-row screen), unreachable by mouse. The warning list now lives
+in a `VerticalScroll` (`#ingest-guardrail-warnings`) between the pinned
+title and the pinned action row. One trap worth recording: `max-height:
+1fr` on the scroll resolves against the modal's FULL inner height without
+subtracting the pinned siblings (measured: the scroll took all 17 inner
+rows and still pushed the actions off), so the row budget is computed in
+`on_mount` (90% of screen minus the 9 chrome rows: border 2 + padding 2 +
+title 1 + actions 3 + margin 1). Tests: a 7-warning/24-row reachability
+test (both action buttons' regions fully inside the screen) and an
+overflow test (`max_scroll_y > 0`, title above/actions below the scroll).
+Mutation check: neutralizing the on_mount cap (budget=1000) sends both
+RED; restored, the modal file is 19 passed.
 <!-- SECTION:NOTES:END -->

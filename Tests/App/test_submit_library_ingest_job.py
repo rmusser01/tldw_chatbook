@@ -367,10 +367,17 @@ class TestIngestJobOptions:
 
         assert options["chunk_options"]["method"] == "sentences"
 
-    def test_ebook_untouched_method_leaves_processor_default(self) -> None:
-        """No selection -> no forced method: ``process_ebook`` defaults to
-        chapters on its own (verified against Book_Ingestion_Lib's
-        ``setdefault("method", "ebook_chapters")``)."""
+    def test_ebook_legacy_snapshot_without_chunk_method_keeps_sentences(
+        self,
+    ) -> None:
+        """(task-3303 xhigh review round 2, F11) A persisted job whose
+        snapshot predates the ebook ``chunk_method`` field must keep the
+        pre-branch chunking scheme on retry/requeue: the old builder forced
+        ``method='sentences'`` for every group, so falling through to
+        ``process_epub``'s chapters default silently switched a legacy
+        job's scheme. Post-branch snapshots always carry the field (the
+        submit-time snapshot seeds the schema default), so absence IS the
+        legacy marker."""
         app = _minimal_app()
         job = _make_job(
             source_path="/tmp/book.epub",
@@ -379,7 +386,25 @@ class TestIngestJobOptions:
         options = app._ingest_job_options(job)
 
         assert options["chunk_options"] is not None
-        assert "method" not in options["chunk_options"]
+        assert options["chunk_options"]["method"] == "sentences"
+
+    def test_fresh_untouched_form_snapshot_maps_to_ebook_chapters(self) -> None:
+        """(F11) A FRESH untouched submission still chunks e-books by
+        chapter: the submit-time snapshot carries the schema default
+        ("chapters"), which the builder maps to the chunker's real
+        ``ebook_chapters`` -- distinguishing it from a legacy snapshot
+        where the field is absent."""
+        screen = object.__new__(LibraryScreen)
+        screen._library_ingest_form = LibraryIngestFormState()
+        snapshot = screen._build_ingest_options_snapshot()
+
+        assert snapshot["ebook"]["chunk_method"] == "chapters"
+
+        app = _minimal_app()
+        job = _make_job(source_path="/tmp/book.epub", ingest_options=snapshot)
+        options = app._ingest_job_options(job)
+
+        assert options["chunk_options"]["method"] == "ebook_chapters"
 
     def test_ebook_method_ignored_when_chunking_off(self) -> None:
         app = _minimal_app()
@@ -457,6 +482,53 @@ class TestIngestJobOptions:
         options = app._ingest_job_options(job)
 
         assert options["translation_target_language"] == "en"
+
+    def test_stale_translate_under_transcribe_cpp_is_ignored_not_fatal(
+        self,
+    ) -> None:
+        """(task-3303 xhigh review round 2, F9) The translate checkbox is
+        gated in the FORM to the default/faster-whisper providers
+        (``enabled_when_values``), but a value checked under one provider
+        and left stale after switching to transcribe-cpp used to be
+        forwarded anyway -- ``resolve_batch_stt_route`` then raised
+        ``BatchSTTRoutingError`` and every audio/video job in the batch
+        FAILED at dispatch. The builder must consult the same schema gate
+        the form does."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp3",
+            ingest_options={
+                "audio_video": {
+                    "transcription_provider": "transcribe-cpp",
+                    "translate_to_english": True,
+                },
+            },
+        )
+
+        options = app._ingest_job_options(job)  # must not raise
+
+        assert options["transcription_provider"] == "transcribe-cpp"
+        assert options["translation_target_language"] is None
+
+    def test_stale_translate_under_parakeet_is_ignored_not_fatal(self) -> None:
+        """(F9) Same stale-checkbox hazard under parakeet-onnx, which
+        rejects translation outright in ``_parakeet_route``."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp3",
+            ingest_options={
+                "audio_video": {
+                    "transcription_provider": "parakeet-onnx",
+                    "language": "en",
+                    "translate_to_english": True,
+                },
+            },
+        )
+
+        options = app._ingest_job_options(job)  # must not raise
+
+        assert options["transcription_provider"] == "parakeet-onnx"
+        assert options["translation_target_language"] is None
 
     def test_vad_filter_travels(self) -> None:
         """(task-3303 AC4) The VAD toggle reaches the transcription options."""
@@ -645,6 +717,92 @@ class TestIngestJobOptions:
 
         assert options["extraction_method"] == "markdown"
         assert options["include_toc"] is True
+
+    def test_pdf_chunk_options_carry_explicit_words_method(self) -> None:
+        """(task-3301/3303 xhigh review round 2, F12) The generic chunk-size
+        hint promises WORDS ('words · 100–5000'), but ``process_pdf``
+        setdefaults ``method='sentences'`` when none travels -- a ~10-30x
+        unit lie (500 SENTENCES is roughly one chunk per document). The
+        builder now makes the hint true by always sending the words
+        method for the pdf group."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.pdf",
+            ingest_options={"generic": {"chunk": True, "chunk_size": 500}},
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["chunk_options"]["method"] == "words"
+
+    def test_audio_video_chunk_options_carry_explicit_words_method(self) -> None:
+        """(F12) Same unit contract for the audio/video branch, whose
+        processor defaults to sentences as well."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp3",
+            ingest_options={"generic": {"chunk": True, "chunk_size": 500}},
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["chunk_options"]["method"] == "words"
+
+    def test_pdf_chunk_size_governs_word_budget_through_processor_tail(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """(F12) GOVERNANCE, not kwargs-arrival: the builder's pdf
+        chunk_options drive ``process_pdf``'s REAL chunking tail (its own
+        sentences-setdefault seam plus the real chunking service), and a
+        size of 120 must mean ~120 WORDS per chunk. Only the
+        pymupdf-backed extraction/metadata seams are stubbed (pymupdf is
+        absent in this venv); the chunker is never stubbed
+        (kwargs-arrival-vs-governance lesson). With the method injection
+        dropped, the processor's sentences default makes this word-soup
+        content ONE chunk and the test goes RED."""
+        from tldw_chatbook.Local_Ingestion import PDF_Processing_Lib
+
+        content = " ".join(f"word{i}" for i in range(600))
+        monkeypatch.setattr(
+            PDF_Processing_Lib,
+            "pymupdf4llm_parse_pdf",
+            lambda *args, **kwargs: content,
+        )
+
+        class _FakePyMuPDF:
+            class FileDataError(Exception):
+                pass
+
+            class EmptyFileError(Exception):
+                pass
+
+            @staticmethod
+            def open(*args, **kwargs):
+                raise RuntimeError("pymupdf absent in this test venv")
+
+        monkeypatch.setattr(PDF_Processing_Lib, "pymupdf", _FakePyMuPDF)
+
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/budget.pdf",
+            ingest_options={
+                "generic": {"chunk": True, "chunk_size": 120, "chunk_overlap": 0}
+            },
+        )
+        options = app._ingest_job_options(job)
+
+        result = PDF_Processing_Lib.process_pdf(
+            file_input=b"%PDF-1.4 fake bytes",
+            filename="budget.pdf",
+            perform_chunking=True,
+            chunk_options=options["chunk_options"],
+        )
+
+        chunks = result["chunks"]
+        assert chunks and len(chunks) >= 4, (
+            f"size 120 produced {len(chunks or [])} chunk(s) from 600 words "
+            "-- the size unit is not words"
+        )
+        for chunk in chunks:
+            assert len(chunk["text"].split()) <= 120
 
     def test_type_specific_overrides_generic(self) -> None:
         app = _minimal_app()

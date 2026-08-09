@@ -301,3 +301,17 @@ provider spellings like "MistralAI"/"KoboldCpp" resolve to dispatchable
 names or the pre-Start hint says "provider 'X' is not supported for ingest
 analysis"; an in-band "Error: …" result is never stored as an analysis —
 done rows read "Imported name — analysis failed: <reason>" instead)*
+
+*Verified against feat/media-ingest-ux-parity — 2026-08-08 (xhigh review
+round 2: e-book chunking now actually executes — the "Chunking method"
+select (chapters/sentences/words/paragraphs) governs real chunk output
+instead of silently degrading to one full-text chunk; the chunk size/
+overlap "words" unit is now true for PDF and audio/video too (the
+pipeline sends an explicit word method where the processors used to
+default to sentences); the "Some files may fail to import:" dialog
+scrolls its warning list so Cancel / "Start import anyway" stay reachable
+at any warning count; a stale "Translate to English" tick left over from
+a translating provider no longer fails transcribe-cpp/parakeet batches
+at dispatch; and an unknown explicit Encoding value degrades to
+replacement characters plus a visible warning instead of failing the
+import)*

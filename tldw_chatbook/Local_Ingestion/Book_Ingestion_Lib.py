@@ -1019,8 +1019,17 @@ def process_epub(
                 f"Chunking ebook content with options: {effective_chunk_options}"
             )
             try:
-                # Lazy import to avoid circular dependency
-                from ..RAG_Search.chunking_service import improved_chunking_process
+                # Lazy import to avoid circular dependency.
+                # (task-3301 xhigh review round 2, F2) This call was always
+                # written for Chunk_Lib's variant -- the one that takes
+                # ``chunk_options_dict`` and dispatches ``ebook_chapters`` --
+                # but the import pointed at RAG_Search.chunking_service,
+                # whose ``(text, options)`` signature made EVERY call a
+                # TypeError that the broad except below degraded to one
+                # full-text chunk (and whose method allowlist rejects
+                # ``ebook_chapters`` outright, so fixing only the kwarg
+                # would have left the panel's default choice dead).
+                from ..Chunking.Chunk_Lib import improved_chunking_process
 
                 # Use improved_chunking_process, which handles Chunker instantiation and metadata enrichment.
                 # It will use the 'method' from effective_chunk_options to dispatch correctly.
@@ -2261,15 +2270,22 @@ def process_mobi(
             processed_chunks = None
             if perform_chunking:
                 effective_chunk_options = chunk_options or {}
-                effective_chunk_options.setdefault(
-                    "method", "recursive"
-                )  # Default for MOBI
-                effective_chunk_options.setdefault("max_size", 1500)
+                # (task-3301 xhigh review round 2, F2) "recursive" is a
+                # method NO chunker in this repo dispatches -- it always
+                # raised and degraded to one full-text chunk. "sentences"
+                # is the pre-branch Library default for every group; 500
+                # mirrors process_pdf's sentences default (the old 1500
+                # exceeds the sentence chunker's 1000-unit cap).
+                effective_chunk_options.setdefault("method", "sentences")
+                effective_chunk_options.setdefault("max_size", 500)
                 effective_chunk_options.setdefault("overlap", 200)
 
                 try:
-                    # Lazy import to avoid circular dependency
-                    from ..RAG_Search.chunking_service import improved_chunking_process
+                    # Lazy import to avoid circular dependency.
+                    # (F2) Chunk_Lib's variant -- the one this call's
+                    # ``chunk_options_dict`` kwarg belongs to; see the
+                    # matching comment in process_epub.
+                    from ..Chunking.Chunk_Lib import improved_chunking_process
 
                     processed_chunks = improved_chunking_process(
                         text=extracted_text, chunk_options_dict=effective_chunk_options
@@ -2452,13 +2468,20 @@ def process_fb2(
         processed_chunks = None
         if perform_chunking:
             effective_chunk_options = chunk_options or {}
-            effective_chunk_options.setdefault("method", "recursive")
-            effective_chunk_options.setdefault("max_size", 1500)
+            # (task-3301 xhigh review round 2, F2) "recursive" is dispatched
+            # by no chunker in this repo; "sentences" is the pre-branch
+            # Library default, 500 the in-cap size -- see the matching
+            # comment in process_mobi.
+            effective_chunk_options.setdefault("method", "sentences")
+            effective_chunk_options.setdefault("max_size", 500)
             effective_chunk_options.setdefault("overlap", 200)
 
             try:
-                # Lazy import to avoid circular dependency
-                from ..RAG_Search.chunking_service import improved_chunking_process
+                # Lazy import to avoid circular dependency.
+                # (F2) Chunk_Lib's variant -- the one this call's
+                # ``chunk_options_dict`` kwarg belongs to; see the matching
+                # comment in process_epub.
+                from ..Chunking.Chunk_Lib import improved_chunking_process
 
                 processed_chunks = improved_chunking_process(
                     text=extracted_text, chunk_options_dict=effective_chunk_options

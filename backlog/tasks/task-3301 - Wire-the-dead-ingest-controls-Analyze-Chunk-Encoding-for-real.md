@@ -278,3 +278,54 @@ dispatch test stubs at the `chat_api_call` boundary, signature-checked,
 with `analyze()` set to explode — it can never pass via the summarizer
 path), `Tests/Library/test_ingest_analysis.py`,
 `Tests/App/test_submit_library_ingest_job.py`.
+
+**xhigh review round 2 addendum (F2/F7/F13 + F12's governance leg,
+2026-08-08).**
+
+- **F2 — e-book chunking never executed.** The three e-book processors
+  (`process_epub`/`process_mobi`/`process_fb2`) called
+  `improved_chunking_process(text=..., chunk_options_dict=...)` while
+  importing it from `RAG_Search.chunking_service`, whose signature is
+  `(text, options)` — a TypeError on EVERY call, degraded by the broad
+  except to one full-text chunk. The call was written for
+  `Chunking.Chunk_Lib.improved_chunking_process` (the variant that takes
+  `chunk_options_dict` AND dispatches `ebook_chapters`); merely renaming
+  the kwarg would have left the panel's default "chapters" choice dead,
+  because chunking_service rejects `ebook_chapters` outright. Fix: the
+  three imports now point at Chunk_Lib. Two more dead layers found under
+  it by the governance tests: mobi/fb2 defaulted `method: "recursive"`
+  (dispatched by NO chunker in this repo) → now "sentences", and their
+  `max_size: 1500` default exceeds the sentence chunker's 1000-unit cap →
+  now 500 (process_pdf's own sentences default). New suite
+  `Tests/Local_Ingestion/test_book_ingestion_chunking.py` runs the REAL
+  chunker end-to-end (fb2 fully real via stdlib XML; epub with only the
+  ebooklib extraction seam stubbed). Mutation: reverting the fb2 import →
+  2 RED.
+- **F7 — public wrappers silently stopped chunking.** When this task made
+  `chunk_options is None` mean chunk-OFF at the parse seam, the exported
+  wrappers (`ingest_local_file`/`batch_ingest_files`/`quick_ingest`)
+  inherited it through their `None` defaults — a silent regression for
+  out-of-tree callers. They now default to a `_CHUNK_WITH_DEFAULTS`
+  sentinel normalized to `{}` ("chunk with defaults"); an EXPLICIT `None`
+  still disables chunking; the Library queue path is unchanged. A
+  sentinel, not a `{}` default: processors `setdefault` into the dict
+  they receive, so a shared mutable default would accrete state. Both
+  in-repo callers (`local_media_reading_service`) pass explicit dicts —
+  unaffected. Tests: wrapper-default→chunks-stored (DB rows read back),
+  explicit-None→none, batch + quick_ingest variants.
+- **F13 — explicit unknown encoding failed the job.** `_decode_ingest_text`'s
+  explicit path let `LookupError` escape (e.g. `utf8-bom`; the real codec
+  is `utf-8-sig`) while the auto path caught the same class — contradicting
+  the degrade-not-fail docstring. It now returns `(text, warnings)`;
+  unknown names decode utf-8-with-replace plus a payload warning naming
+  the bad value. Tests: plaintext + html with `encoding='utf8-bom'`.
+- **F12 (unit truth, shared with task-3303).** The "words · 100–5000"
+  hint is now TRUE for pdf/audio/video: the job-option builder always
+  sends `method: "words"` for those groups (see task-3303's addendum for
+  the builder half). Governance test drives `process_pdf`'s REAL chunk
+  tail (only the pymupdf extraction/metadata seams stubbed): size 120 on
+  600 punctuation-free words → 5 chunks ≤120 words; with the injection
+  dropped, the processor's sentences default makes ONE chunk (RED).
+
+Final counts (full arc battery after all seven round-2 fixes): 580
+passed, 1 skipped (known pymupdf-absent skip).

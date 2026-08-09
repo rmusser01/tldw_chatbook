@@ -245,6 +245,75 @@ async def test_guardrail_modal_action_buttons_single_line_aligned(
 
 
 @pytest.mark.asyncio
+async def test_guardrail_modal_actions_reachable_with_many_warnings_on_short_screen():
+    """(task-3300 xhigh review round 2, F3) With 7 warnings on a 24-row
+    screen, the Cancel / "Start import anyway" row must remain fully
+    on-screen and clickable: the warning list scrolls; the title and the
+    action row stay pinned. Before the fix the plain Vertical grew past
+    max-height 90% and the action row was clipped off the bottom --
+    unreachable by mouse at any warning count >= 5."""
+    warnings = [
+        _warning(f"feat_{i}", f"Feature {i}", command=f"pip install feat-{i}")
+        for i in range(7)
+    ]
+    counts = {f"feat_{i}": 1 for i in range(7)}
+
+    app = GuardrailApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        modal = await _mount_modal(app, pilot, warnings, counts)
+
+        container = modal.query_one("#ingest-guardrail-modal")
+        assert (
+            container.region.y + container.region.height <= app.size.height
+        ), "modal container itself overflows the screen"
+
+        for button_id in ("#ingest-guardrail-cancel", "#ingest-guardrail-confirm"):
+            button = modal.query_one(button_id, Button)
+            assert button.region.height >= 1, (
+                f"{button_id} rendered with zero height (region="
+                f"{button.region}) -- clipped out of the modal"
+            )
+            assert button.region.y >= 0
+            assert (
+                button.region.y + button.region.height <= app.size.height
+            ), (
+                f"{button_id} extends past the bottom of the screen "
+                f"(region={button.region}, screen height {app.size.height})"
+            )
+
+
+@pytest.mark.asyncio
+async def test_guardrail_modal_warning_overflow_scrolls_not_clips():
+    """(F3) The warnings region is a scroll container: with 7 warnings its
+    content overflows internally (scrollable), while the title stays pinned
+    above it and every action button below it."""
+    from textual.containers import VerticalScroll
+
+    warnings = [
+        _warning(f"feat_{i}", f"Feature {i}", command=f"pip install feat-{i}")
+        for i in range(7)
+    ]
+    counts = {f"feat_{i}": 1 for i in range(7)}
+
+    app = GuardrailApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        modal = await _mount_modal(app, pilot, warnings, counts)
+
+        scroll = modal.query_one("#ingest-guardrail-warnings", VerticalScroll)
+        assert scroll.max_scroll_y > 0, (
+            "7 warnings fit without scrolling on a 24-row screen -- the "
+            "overflow either clips or the screen is not exercising it"
+        )
+
+        title = modal.query_one("#ingest-guardrail-modal > Static", Static)
+        cancel = modal.query_one("#ingest-guardrail-cancel", Button)
+        assert title.region.y < scroll.region.y, "title not pinned above the list"
+        assert (
+            cancel.region.y >= scroll.region.y + scroll.region.height
+        ), "actions not pinned below the scrolling list"
+
+
+@pytest.mark.asyncio
 async def test_guardrail_modal_pluralizes_file_counts():
     """"1 file" for a single affected file, "2 files" for many (not
     "(1 files)")."""

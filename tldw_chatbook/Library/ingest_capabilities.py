@@ -1018,6 +1018,53 @@ def field_disabled_state(
     return True, f"needs {gate_label} on"
 
 
+def field_gate_open(group: str, name: str, values: dict[str, Any]) -> bool:
+    """Whether ``name``'s within-form ``enabled_when`` gate is open.
+
+    (task-3303 xhigh review round 2, F9) The job-option builder must consult
+    the SAME sibling-field gate the form renders with before forwarding a
+    gated value: a checkbox ticked while its gate was open goes stale when
+    the gate field changes (the form disables the control but keeps the
+    value), and forwarding the stale value can change behavior downstream --
+    the concrete incident being ``translate_to_english`` checked under
+    provider=default, provider then switched to transcribe-cpp, and the
+    stale ``True`` becoming ``translation_target_language='en'`` ->
+    ``BatchSTTRoutingError`` -> every audio/video job in the batch FAILED at
+    dispatch.
+
+    Only the within-form gate is consulted -- deliberately NOT
+    ``depends_on`` (the packaging gate): a value for a field whose optional
+    package is missing is handled by the pipeline's own failure/ignore
+    paths, and suppressing it here would make a job's options depend on
+    which machine resolved them.
+
+    Args:
+        group: Type group identifier (e.g. ``audio_video``).
+        name: The gated field's machine name.
+        values: Current option values for the group (the builder's merged
+            ``flat_opts``); a missing gate value falls back to the gate
+            field's schema default, mirroring :func:`field_disabled_state`.
+
+    Returns:
+        True when the field's gate is open (or it has no gate, or the
+        group/field is unknown -- unknown never suppresses a value).
+    """
+    try:
+        cap = get_capabilities(group)
+    except KeyError:
+        return True
+    field = next((f for f in cap.fields if f.name == name), None)
+    if field is None or field.enabled_when is None:
+        return True
+    gate = next((f for f in cap.fields if f.name == field.enabled_when), None)
+    gate_value = values.get(
+        field.enabled_when, gate.default if gate is not None else False
+    )
+    if field.enabled_when_values:
+        return gate_value in field.enabled_when_values
+    return bool(gate_value)
+
+
 def get_capabilities(group: str) -> TypeGroupCapabilities:
     """Return capabilities metadata for a type group.
 

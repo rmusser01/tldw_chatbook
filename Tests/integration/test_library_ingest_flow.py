@@ -178,6 +178,12 @@ def test_options_persist_to_config(monkeypatch):
                 "chunk": True,
                 "chunk_size": 1024,
             },
+            # (task-3303 xhigh review round 2, F11) Every NEW snapshot
+            # carries the ebook chunk-method explicitly (scheme identity):
+            # the job-option builder reads an ABSENT value as "legacy
+            # snapshot, keep the pre-branch sentences scheme", so the seed
+            # persists too.
+            "library.ingest_options.ebook": {"chunk_method": "chapters"},
         }
     ]
 

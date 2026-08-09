@@ -181,6 +181,37 @@ class TestEncodingSelection:
         assert "caf" in payload["content"]
         assert "café" not in payload["content"]
 
+    def test_plaintext_unknown_encoding_degrades_with_warning(self, tmp_path: Path):
+        """(task-3301 xhigh review round 2, F13) An explicit encoding name
+        Python's codec registry doesn't know (``utf8-bom`` is not a codec;
+        the real name is ``utf-8-sig``) must degrade to utf-8-with-replace
+        plus a visible warning -- the documented degrade-not-fail contract.
+        Before the fix, the explicit path let ``LookupError`` escape and the
+        whole job failed while the auto path caught the same error class.
+        """
+        source = tmp_path / "bom.txt"
+        source.write_text("perfectly fine utf-8 text", encoding="utf-8")
+
+        payload = parse_local_file_for_ingest(str(source), {"encoding": "utf8-bom"})
+
+        assert payload["content"] == "perfectly fine utf-8 text"
+        encoding_warnings = [
+            w for w in payload["warnings"] if "utf8-bom" in w
+        ]
+        assert encoding_warnings, (
+            f"no warning names the unknown encoding: {payload['warnings']}"
+        )
+
+    def test_html_unknown_encoding_degrades_with_warning(self, tmp_path: Path):
+        """(F13) Same contract on the HTML branch."""
+        source = tmp_path / "bom.html"
+        source.write_bytes(b"<html><body><p>body text here</p></body></html>")
+
+        payload = parse_local_file_for_ingest(str(source), {"encoding": "utf8-bom"})
+
+        assert "body text here" in payload["content"]
+        assert any("utf8-bom" in w for w in payload["warnings"])
+
 
 # ---------------------------------------------------------------------------
 # Chunk toggle: OFF must reach the pdf/ebook/audio/video processors (AC #2)
@@ -1420,3 +1451,92 @@ class TestAVTranslationAndVadWiring:
         parse_local_file_for_ingest(str(source), {})
 
         assert calls[0]["vad_use"] is False
+
+
+# ---------------------------------------------------------------------------
+# (task-3301 xhigh review round 2, F7) Public wrapper chunk defaults.
+#
+# When task-3301 made ``chunk_options is None`` mean "do not chunk" at the
+# parse seam (the Library queue's Chunk-content OFF), the public wrappers
+# (``ingest_local_file``/``batch_ingest_files``/``quick_ingest``, exported
+# via ``Local_Ingestion.__init__``) silently inherited that: their
+# ``chunk_options=None`` DEFAULT now meant no chunking for every
+# out-of-tree caller that previously got default chunking. The wrappers'
+# omitted argument now means "chunk with defaults" ({}); an EXPLICIT
+# ``None`` still means "do not chunk".
+# ---------------------------------------------------------------------------
+
+#: >500 words so the text tail's default word budget (500) must split it.
+_MANY_WORDS = " ".join(
+    f"word{i} filler body text keeps flowing steadily" for i in range(200)
+)
+
+
+class TestPublicWrapperChunkDefaults:
+    def test_ingest_local_file_default_chunks_and_stores(
+        self, tmp_path: Path, media_db: MediaDatabase
+    ):
+        from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
+            ingest_local_file,
+        )
+
+        source = tmp_path / "wordy.txt"
+        source.write_text(_MANY_WORDS, encoding="utf-8")
+
+        result = ingest_local_file(source, media_db)
+
+        assert result["chunks_created"] > 1, (
+            "omitting chunk_options must mean 'chunk with defaults', not "
+            "'never chunk'"
+        )
+        assert len(_chunk_rows(media_db, result["media_id"])) == (
+            result["chunks_created"]
+        )
+
+    def test_ingest_local_file_explicit_none_stores_no_chunks(
+        self, tmp_path: Path, media_db: MediaDatabase
+    ):
+        from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
+            ingest_local_file,
+        )
+
+        source = tmp_path / "wordy_none.txt"
+        source.write_text(_MANY_WORDS, encoding="utf-8")
+
+        result = ingest_local_file(source, media_db, chunk_options=None)
+
+        assert result["chunks_created"] == 0
+        assert _chunk_rows(media_db, result["media_id"]) == []
+
+    def test_batch_ingest_files_default_chunks(
+        self, tmp_path: Path, media_db: MediaDatabase
+    ):
+        from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
+            batch_ingest_files,
+        )
+
+        sources = []
+        for i in range(2):
+            source = tmp_path / f"batch{i}.txt"
+            source.write_text(_MANY_WORDS, encoding="utf-8")
+            sources.append(source)
+
+        results = batch_ingest_files(sources, media_db)
+
+        assert len(results) == 2
+        for result in results:
+            assert result["chunks_created"] > 1
+
+    def test_quick_ingest_default_chunks(self, tmp_path: Path, monkeypatch):
+        from tldw_chatbook.Local_Ingestion.local_file_ingestion import quick_ingest
+
+        monkeypatch.setattr(
+            "tldw_chatbook.config.get_media_db_path",
+            lambda: tmp_path / "quick.db",
+        )
+        source = tmp_path / "quick.txt"
+        source.write_text(_MANY_WORDS, encoding="utf-8")
+
+        result = quick_ingest(source)
+
+        assert result["chunks_created"] > 1

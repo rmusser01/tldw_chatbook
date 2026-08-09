@@ -190,6 +190,7 @@ from tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService
 from tldw_chatbook.Library import LocalLibraryCollectionsService
 from tldw_chatbook.Library.ingest_analysis import resolve_ingest_analysis_provider
 from tldw_chatbook.Library.ingest_capabilities import (
+    field_gate_open,
     generic_option_default,
     get_type_group,
 )
@@ -2385,9 +2386,17 @@ class LibraryIngestQueueMixin:
           option maps) and the ``max_size`` spelling
           (``improved_chunking_process``); the overlap fallback is the
           generic schema default -- the value the UI displays -- not a
-          hardcoded constant. No ``method`` is forced: each consumer
-          applies its own default (pdf: sentences, ebook: chapters, text
-          tail: words).
+          hardcoded constant. (task-3301/3303 xhigh review round 2,
+          F11+F12) An explicit ``method`` ALWAYS travels: pdf and
+          audio/video get ``words`` so the generic size/overlap hint
+          ("words · 100-5000") is true everywhere the processors would
+          otherwise setdefault sentences (a ~10-30x unit lie); the ebook
+          group maps its panel choice ("chapters" -> the chunker's
+          ``ebook_chapters``, other names verbatim) and falls back to the
+          pre-branch ``sentences`` when the snapshot predates the field
+          (fresh snapshots always carry the schema default -- absence IS
+          the legacy marker, so a requeued old job keeps its original
+          scheme). The text tail's own default is already words.
         * When analysis is requested, the configured analysis provider
           (``[analysis_defaults] provider``) is resolved through the shared
           readiness seam, then constrained to a chat-dispatchable name
@@ -2478,6 +2487,12 @@ class LibraryIngestQueueMixin:
                 options["analysis_skipped_reason"] = resolution.short_reason
 
         if group == "pdf":
+            if options["chunk_options"] is not None:
+                # (F12) ``process_pdf`` setdefaults method='sentences',
+                # under which the form's "words · 100-5000" size hint is a
+                # ~10-30x unit lie (500 SENTENCES ~= one chunk per
+                # document). Words is what the hint promises.
+                options["chunk_options"]["method"] = "words"
             options["pdf_engine"] = flat_opts.get("engine") or flat_opts.get(
                 "pdf_engine"
             )
@@ -2505,13 +2520,32 @@ class LibraryIngestQueueMixin:
             )
             options["ocr_language"] = flat_opts.get("ocr_language") or "en"
         elif group == "audio_video":
+            if options["chunk_options"] is not None:
+                # (F12) The audio/video branch defaults chunk_method to
+                # sentences too -- same unit-lie fix as the pdf branch.
+                options["chunk_options"]["method"] = "words"
             provider = flat_opts.get("transcription_provider")
             if provider is None:
                 provider = "default"
             target_language = flat_opts.get("translation_target_language")
             if target_language is None:
                 target_language = flat_opts.get("target_language")
-            if target_language is None and flat_opts.get("translate_to_english"):
+            if (
+                target_language is None
+                and flat_opts.get("translate_to_english")
+                # (task-3303 xhigh review round 2, F9) Honor the checkbox's
+                # own schema gate: its value survives in the snapshot after
+                # the provider select moves to one that rejects translation
+                # (transcribe-cpp/parakeet raise BatchSTTRoutingError, which
+                # failed the WHOLE batch at dispatch). The normalized
+                # provider is passed so the gate sees the same value the
+                # route resolution below will use.
+                and field_gate_open(
+                    "audio_video",
+                    "translate_to_english",
+                    {**flat_opts, "transcription_provider": provider},
+                )
+            ):
                 # (task-3303) The panel's translate toggle. An explicit
                 # target (retry overrides, older snapshots) stays
                 # authoritative; the checkbox only fills the gap.
@@ -2583,15 +2617,24 @@ class LibraryIngestQueueMixin:
             # (task-3303) The panel's chunk-method choice: the human
             # "chapters" maps to the chunker's real ``ebook_chapters``
             # method; the other names travel verbatim. Only meaningful when
-            # chunking is on, and never forced when untouched --
-            # ``process_ebook`` applies its own chapters default then.
+            # chunking is on.
             ebook_chunk_method = str(flat_opts.get("chunk_method") or "").strip()
-            if ebook_chunk_method and options["chunk_options"] is not None:
-                options["chunk_options"]["method"] = (
-                    "ebook_chapters"
-                    if ebook_chunk_method == "chapters"
-                    else ebook_chunk_method
-                )
+            if options["chunk_options"] is not None:
+                if ebook_chunk_method:
+                    options["chunk_options"]["method"] = (
+                        "ebook_chapters"
+                        if ebook_chunk_method == "chapters"
+                        else ebook_chunk_method
+                    )
+                else:
+                    # (task-3303 xhigh review round 2, F11) No chunk_method
+                    # in the snapshot means the job PREDATES the field --
+                    # fresh submissions always seed the schema default (see
+                    # ``_build_ingest_options_snapshot``). The old builder
+                    # forced sentences for every group, so a requeued
+                    # legacy job must keep that scheme rather than silently
+                    # switching to the processor's chapters default.
+                    options["chunk_options"]["method"] = "sentences"
 
         return options
 

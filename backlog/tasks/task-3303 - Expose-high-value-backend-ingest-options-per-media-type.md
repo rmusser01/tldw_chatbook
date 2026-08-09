@@ -197,3 +197,51 @@ labels, web scope note), `Docs/User_Guide/library/import-and-export.md`
 `test_ingest_option_wiring.py` (+10), `test_library_ingest_canvas.py`
 (+7), `test_library_screen.py` (+1 round-trip, helper repaired),
 `test_server_ingest_request.py` (+1).
+
+**xhigh review round 2 addendum (F9/F11/F12, 2026-08-08).**
+
+- **F9 — stale gated translate value failed whole batches.**
+  `_ingest_job_options` forwarded `translate_to_english` without
+  consulting its `enabled_when` gate (provider must be
+  default/faster-whisper): a value ticked under a translating provider,
+  then left stale after switching to transcribe-cpp/parakeet-onnx,
+  became `translation_target_language='en'` → `BatchSTTRoutingError` →
+  every audio/video job in the batch FAILED at dispatch. The builder now
+  consults the schema gate via the new
+  `ingest_capabilities.field_gate_open(group, field, values)` (within-form
+  `enabled_when` only — deliberately not the `depends_on` packaging gate),
+  passing the normalized provider so gate and route agree. **Stale-value
+  audit of the other gated fields:** `transcription_model_dir` — already
+  guarded in the builder; `transcription_model`/`transcription_precision` —
+  only consumed when their gate provider is the one requested (route
+  model wins otherwise; precision read only in `_parakeet_route`);
+  pdf `ocr`/`ocr_language`/`ocr_backend` and document `ocr` — processors
+  consume them only under OCR-capable engines (`ocr_supported`); web
+  `max_pages`/`max_depth` — already gated at the consumer
+  (`web_clip_request` forwards them only for multi-page scrape methods);
+  generic `chunk_size`/`chunk_overlap` — gated by the chunk toggle in the
+  builder itself. Translate was the only live behavior-changing hazard.
+  Mutation: dropping the gate consult → 2 RED.
+- **F11 — requeued legacy ebook jobs silently switched chunking scheme.**
+  The old builder forced `method='sentences'` for every group; the
+  round-1 builder set a method only when the ebook `chunk_method` option
+  was present, so a LEGACY persisted snapshot (predating the field) fell
+  through to `process_epub`'s chapters default on retry/requeue. Now:
+  absent `chunk_method` + chunk ON → builder sets `sentences` (pre-branch
+  parity), and `_build_ingest_options_snapshot` seeds the schema default
+  ("chapters") into every NEW snapshot so absence unambiguously means
+  legacy — a fresh untouched submission still chunks by chapter
+  (`ebook_chapters`). The seed also persists to the config echo
+  (`library.ingest_options.ebook.chunk_method`), which is the schema
+  default anyway.
+- **F12 — chunk-size hint claimed words; pdf/audio chunked in sentences.**
+  Verified both consumers support a words method (chunking_service's
+  in-process words leg for pdf; `ChunkingService.chunk_text` via
+  `AudioProcessor._chunk_text` for audio/video), then made the builder
+  ALWAYS set an explicit method: pdf + audio/video → `words` (the unit
+  the generic hint promises; the processors' sentences setdefaults were a
+  ~10-30x unit lie), ebook → its mapped option or the F11 sentences
+  fallback, text tail already words. No hint copy change needed — the
+  copy is now true; `Docs/User_Guide/library/import-and-export.md` got a
+  round-2 "Verified against" stamp. Governance evidence lives in
+  task-3301's addendum (real `process_pdf` chunk tail, mutation-checked).

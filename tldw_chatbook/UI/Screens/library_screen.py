@@ -1221,6 +1221,21 @@ class IngestGuardrailModal(ModalScreen[bool]):
         padding: 1 2;
     }
 
+    /* task-3300 xhigh review round 2 (F3): the warning list is the ONLY
+       part of the modal allowed to give way -- it hugs its content while
+       everything fits, and scrolls once it doesn't, so Cancel / "Start
+       import anyway" stay reachable at any warning count. Before this,
+       5+ warnings grew the plain Vertical past the screen and clipped
+       the action row off the bottom. The row budget (screen cap minus
+       the pinned title/action chrome) is computed in ``on_mount``:
+       ``max-height: 1fr`` here resolves against the modal's FULL inner
+       height without subtracting the pinned siblings (measured -- a
+       7-warning list took all 17 inner rows and pushed the actions off
+       a 24-row screen). */
+    #ingest-guardrail-warnings {
+        height: auto;
+    }
+
     /* task-3300: a bare ``Vertical()`` defaults to ``height: 1fr``, which
        inside this ``height: auto`` modal starved every warning Static to
        zero rendered height (the DESIGN.md section 7 "bare Container starving
@@ -1258,17 +1273,23 @@ class IngestGuardrailModal(ModalScreen[bool]):
     def compose(self) -> ComposeResult:
         with Vertical(id="ingest-guardrail-modal"):
             yield Static("Some files may fail to import:")
-            for i, w in enumerate(self.warnings):
-                count = self.affected_counts.get(w["feature"], 0)
-                files_word = "file" if count == 1 else "files"
-                with Vertical(classes="ingest-guardrail-warning"):
-                    yield Static(f"- {w['label']} ({count} {files_word}): {w['hint']}")
-                    if w.get("command"):
-                        yield Button(
-                            "Copy install command",
-                            id=f"ingest-guardrail-copy-command-{i}",
-                            classes="copy-command",
+            # (F3) Warnings scroll; the title above and the action row
+            # below stay pinned, so the actions are reachable at any
+            # warning count.
+            with VerticalScroll(id="ingest-guardrail-warnings"):
+                for i, w in enumerate(self.warnings):
+                    count = self.affected_counts.get(w["feature"], 0)
+                    files_word = "file" if count == 1 else "files"
+                    with Vertical(classes="ingest-guardrail-warning"):
+                        yield Static(
+                            f"- {w['label']} ({count} {files_word}): {w['hint']}"
                         )
+                        if w.get("command"):
+                            yield Button(
+                                "Copy install command",
+                                id=f"ingest-guardrail-copy-command-{i}",
+                                classes="copy-command",
+                            )
             with Horizontal(id="ingest-guardrail-actions"):
                 # Cancel is the safe action -- repo convention keeps it
                 # ``default``; the confirm carries the emphasis (task-3300).
@@ -1278,6 +1299,23 @@ class IngestGuardrailModal(ModalScreen[bool]):
                     id="ingest-guardrail-confirm",
                     variant="primary",
                 )
+
+    def on_mount(self) -> None:
+        """Cap the warning list to the rows left after the pinned chrome.
+
+        (F3) The scroll region's budget is 90% of the screen (the modal
+        container's own ``max-height``) minus the fixed rows around it:
+        border 2 + padding 2 + title 1 + action row 3 + action margin 1.
+        Computed here because no CSS scalar expresses "remaining height
+        after my siblings" inside a ``height: auto`` container --
+        ``max-height: 1fr`` resolves against the container's full inner
+        height and pushes the action row off-screen (measured on a
+        24-row screen with 7 warnings). ``max-height`` only ever caps:
+        short lists still hug their content exactly as before.
+        """
+        chrome_rows = 9
+        budget = max(3, int(self.app.size.height * 0.9) - chrome_rows)
+        self.query_one("#ingest-guardrail-warnings").styles.max_height = budget
 
     @on(Button.Pressed, "#ingest-guardrail-confirm")
     def _confirm(self) -> None:
@@ -18627,6 +18665,23 @@ class LibraryScreen(BaseAppScreen):
                 )
             except (TypeError, ValueError):
                 generic.pop("chunk_overlap")  # fall back to the schema default
+        # (task-3303 xhigh review round 2, F11) The ebook chunk-method is
+        # scheme IDENTITY, so every NEW snapshot must carry it explicitly
+        # even when untouched: the job-option builder treats an ABSENT
+        # value as "this snapshot predates the field" and falls back to
+        # the pre-branch sentences scheme for requeue parity. Without this
+        # seed a fresh untouched submission would be indistinguishable
+        # from a legacy job and lose the chapters default.
+        ebook = snapshot.setdefault("ebook", {})
+        if not str(ebook.get("chunk_method") or "").strip():
+            ebook["chunk_method"] = next(
+                (
+                    field.default
+                    for field in get_capabilities("ebook").fields
+                    if field.name == "chunk_method"
+                ),
+                "chapters",
+            )
         return snapshot
 
     @staticmethod
