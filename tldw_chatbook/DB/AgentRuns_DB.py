@@ -20,6 +20,10 @@ from typing import Sequence, Iterator, Union
 
 from loguru import logger
 
+from tldw_chatbook.Agents.agent_models import (
+    AgentDefinition,
+    validate_agent_definition,
+)
 from .base_db import BaseDB
 
 
@@ -30,7 +34,7 @@ def _now_iso() -> str:
 class AgentRunsDB(BaseDB):
     """Run records for the agent runtime (vertical-slice spec data model)."""
 
-    _CURRENT_SCHEMA_VERSION = 3
+    _CURRENT_SCHEMA_VERSION = 5
     _swept_paths: set[str] = set()  # DB files already reconciled this process
 
     #: Liveness-ping gate (mirrors ChaChaNotes/WorkspaceDB, task-261/3011):
@@ -214,6 +218,28 @@ class AgentRunsDB(BaseDB):
                 );
                 CREATE INDEX IF NOT EXISTS idx_change_snapshots_run
                     ON change_snapshots(run_id);
+
+                -- v5 (fleet spec §4, PR 1): user-authored agent
+                -- definitions. DURABILITY NOTE: from v5 on this DB holds
+                -- durable USER-AUTHORED CONTENT, not just run telemetry --
+                -- any future "clear run history" feature must NOT treat
+                -- the file as disposable.
+                CREATE TABLE IF NOT EXISTS agent_definitions (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    description TEXT NOT NULL DEFAULT '',
+                    instructions TEXT NOT NULL DEFAULT '',
+                    tool_allowlist TEXT NOT NULL DEFAULT '[]',
+                    model TEXT NOT NULL DEFAULT '',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    deleted INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                -- Partial unique index: a live name is unique, but a
+                -- soft-deleted row releases its name for re-creation.
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_definitions_name
+                    ON agent_definitions(name) WHERE deleted = 0;
                 """
             )
             # v1->v2: this DB has no migration framework -- _initialize_schema
@@ -253,6 +279,9 @@ class AgentRunsDB(BaseDB):
             # when older version rows exist).
             conn.execute(
                 "INSERT OR IGNORE INTO schema_version (version) VALUES (4)"
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_version (version) VALUES (5)"
             )
 
     def record_change_snapshot(
@@ -458,6 +487,105 @@ class AgentRunsDB(BaseDB):
                 ),
             )
         return run_id
+
+    def create_agent_definition(self, defn: AgentDefinition) -> str:
+        """Insert a definition; returns its id.
+
+        Raises:
+            ValueError: On validation failure, or a duplicate live name.
+        """
+        errors = validate_agent_definition(defn)
+        if errors:
+            raise ValueError("; ".join(errors))
+        definition_id = uuid.uuid4().hex
+        now = _now_iso()
+        try:
+            with self.transaction() as conn:
+                conn.execute(
+                    """INSERT INTO agent_definitions
+                       (id, name, description, instructions, tool_allowlist,
+                        model, enabled, deleted, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)""",
+                    (
+                        definition_id,
+                        defn.name,
+                        defn.description,
+                        defn.instructions,
+                        json.dumps(list(defn.tool_allowlist)),
+                        defn.model,
+                        1 if defn.enabled else 0,
+                        now,
+                        now,
+                    ),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError(
+                f"an agent named '{defn.name}' already exists"
+            ) from exc
+        return definition_id
+
+    def update_agent_definition(
+        self, definition_id: str, defn: AgentDefinition
+    ) -> None:
+        """Replace a definition's fields (same raises as create)."""
+        errors = validate_agent_definition(defn)
+        if errors:
+            raise ValueError("; ".join(errors))
+        try:
+            with self.transaction() as conn:
+                conn.execute(
+                    """UPDATE agent_definitions
+                       SET name = ?, description = ?, instructions = ?,
+                           tool_allowlist = ?, model = ?, enabled = ?,
+                           updated_at = ?
+                       WHERE id = ? AND deleted = 0""",
+                    (
+                        defn.name,
+                        defn.description,
+                        defn.instructions,
+                        json.dumps(list(defn.tool_allowlist)),
+                        defn.model,
+                        1 if defn.enabled else 0,
+                        _now_iso(),
+                        definition_id,
+                    ),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError(
+                f"an agent named '{defn.name}' already exists"
+            ) from exc
+
+    def soft_delete_agent_definition(self, definition_id: str) -> None:
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE agent_definitions SET deleted = 1, updated_at = ? "
+                "WHERE id = ?",
+                (_now_iso(), definition_id),
+            )
+
+    def _definition_row_to_dict(self, row: sqlite3.Row) -> dict:
+        data = {key: row[key] for key in row.keys()}
+        data["tool_allowlist"] = json.loads(data["tool_allowlist"] or "[]")
+        data.pop("deleted", None)
+        return data
+
+    def list_agent_definitions(self, enabled_only: bool = False) -> list[dict]:
+        """Live (non-deleted) definitions ordered by name."""
+        query = "SELECT * FROM agent_definitions WHERE deleted = 0"
+        if enabled_only:
+            query += " AND enabled = 1"
+        query += " ORDER BY name"
+        with self.connection() as conn:
+            rows = conn.execute(query).fetchall()
+        return [self._definition_row_to_dict(row) for row in rows]
+
+    def get_agent_definition(self, definition_id: str) -> dict | None:
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM agent_definitions WHERE id = ? AND deleted = 0",
+                (definition_id,),
+            ).fetchone()
+        return self._definition_row_to_dict(row) if row else None
 
     def append_steps(self, run_id: str, steps: list[dict]) -> None:
         """Append step records to a run's step log.

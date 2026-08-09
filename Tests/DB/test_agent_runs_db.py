@@ -522,3 +522,68 @@ def test_count_runs_does_not_materialize_rows_beyond_a_single_count(db, monkeypa
     select_calls = [c for c in calls if c.strip().upper().startswith("SELECT")]
     assert len(select_calls) == 1
     assert "COUNT(*)" in select_calls[0].upper()
+
+
+# --- agent_definitions CRUD tests (Task 2: fleet spec §4) ---
+
+
+from tldw_chatbook.Agents.agent_models import AgentDefinition
+
+
+def _defn(**overrides):
+    base = dict(
+        name="researcher",
+        description="Searches sources.",
+        instructions="Research thoroughly.",
+        tool_allowlist=("web_search",),
+    )
+    base.update(overrides)
+    return AgentDefinition(**base)
+
+
+def test_definition_crud_round_trip(db):
+    definition_id = db.create_agent_definition(_defn())
+    rows = db.list_agent_definitions()
+    assert [r["name"] for r in rows] == ["researcher"]
+    assert rows[0]["tool_allowlist"] == ["web_search"]
+    db.update_agent_definition(definition_id, _defn(description="v2"))
+    assert db.get_agent_definition(definition_id)["description"] == "v2"
+    db.soft_delete_agent_definition(definition_id)
+    assert db.list_agent_definitions() == []
+
+
+def test_duplicate_name_raises_and_frees_after_soft_delete(db):
+    definition_id = db.create_agent_definition(_defn())
+    with pytest.raises(ValueError, match="already exists"):
+        db.create_agent_definition(_defn())
+    db.soft_delete_agent_definition(definition_id)
+    db.create_agent_definition(_defn())  # name reusable after soft delete
+
+
+def test_invalid_definition_rejected_at_db_boundary(db):
+    with pytest.raises(ValueError, match="reserved"):
+        db.create_agent_definition(_defn(name="subagent"))
+
+
+def test_enabled_only_filter(db):
+    db.create_agent_definition(_defn(name="on-agent"))
+    db.create_agent_definition(_defn(name="off-agent", enabled=False))
+    assert [r["name"] for r in db.list_agent_definitions(enabled_only=True)] == [
+        "on-agent"
+    ]
+    assert len(db.list_agent_definitions()) == 2
+
+
+def test_definitions_survive_reopen_and_migration_is_idempotent(tmp_path):
+    path = tmp_path / "agent_runs.db"
+    first = AgentRunsDB(path, client_id="test")
+    first.create_agent_definition(_defn())
+    first.close()
+    second = AgentRunsDB(path, client_id="test")  # re-runs _initialize_schema
+    assert [r["name"] for r in second.list_agent_definitions()] == ["researcher"]
+    with second.connection() as conn:
+        versions = {
+            row[0]
+            for row in conn.execute("SELECT version FROM schema_version").fetchall()
+        }
+    assert 5 in versions
