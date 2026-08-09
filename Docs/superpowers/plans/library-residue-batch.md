@@ -4,7 +4,7 @@ Branch `fix/library-residue-batch` (worktree `.worktrees/library-residue`), cut 
 
 ## Global Constraints
 
-- **Python/tests**: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python` for everything; pytest is the ONLY entry point that may import app modules. Targeted tests + `--collect-only -q` over the touched trees. "no tests ran" = failed gate. Foreground Bash only — NEVER end your turn waiting on background work.
+- **Python/tests**: `.venv/bin/python` (repo root) for everything; pytest is the ONLY entry point that may import app modules. Targeted tests + `--collect-only -q` over the touched trees. "no tests ran" = failed gate. Foreground Bash only — NEVER end your turn waiting on background work.
 - **TDD** where behavior changes; for test-repair items the evidence is before/after failure counts + red-on-revert where a new guard is added. Rendered-geometry assertions for layout claims.
 - **CSS**: never edit the generated bundle; source tcss → regenerate via build_css.py (+check_bundle_sync). Widget DEFAULT_CSS needs no bundle step.
 - **Live verification** where a task touches visible UI (socket `resT<N>lib$RANDOM`, scratch /tmp/resT<N>, users_name sdd_rest<N>; the standard recipe: cold start ~12s, palette nav, char-index clicks, capture -e for styling proof, cleanup).

@@ -259,8 +259,9 @@ async def test_revert_without_changes_keeps_the_nothing_to_revert_path():
 
 @pytest.mark.asyncio
 async def test_narrow_footer_collapses_but_f1_help_stays_truthful():
-    """The screen's own hints outrank the global cluster (task-2860/LIB-18):
-    the ladder compacts the globals first and keeps the Storage category's
+    """The screen's own hints outrank the global cluster (task-2860/LIB-18).
+
+    The ladder compacts the globals first and keeps the Storage category's
     ``s``/``r``/``t`` hints intact all the way down to 84 cols -- confirmed
     directly against the widget's own responsive steps in
     ``AppFooterStatus._apply_responsive_footer``. Only below that does the
