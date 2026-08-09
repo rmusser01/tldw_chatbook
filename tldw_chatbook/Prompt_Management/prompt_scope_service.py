@@ -45,6 +45,19 @@ class PromptBackend(str, Enum):
     SERVER = "server"
 
 
+def _normalize_collection_catalog_args(
+    *, query: str, limit: int, offset: int
+) -> tuple[str, int, int]:
+    """Validate collection catalog inputs without consulting policy or storage."""
+    if not isinstance(query, str):
+        raise TypeError("query must be a string.")
+    if type(limit) is not int or limit <= 0:
+        raise ValueError("limit must be a positive integer.")
+    if type(offset) is not int or offset < 0:
+        raise ValueError("offset must be a non-negative integer.")
+    return query.strip(), limit, offset
+
+
 def _payload_from_fields(
     *,
     name: Optional[str] = None,
@@ -237,6 +250,12 @@ class LocalPromptService:
 
     def _ensure_collection_schema(self) -> None:
         conn = self.prompt_db.get_connection()
+        conn.create_function(
+            "PY_CASEFOLD",
+            1,
+            lambda value: str(value).casefold(),
+            deterministic=True,
+        )
         conn.executescript(
             """
             PRAGMA foreign_keys = ON;
@@ -265,6 +284,56 @@ class LocalPromptService:
             """
         )
         conn.commit()
+
+    @staticmethod
+    def _collection_display_name(
+        *, name: str, collection_id: int, collision_count: int
+    ) -> str:
+        if collision_count > 1:
+            return f"{name} · #{collection_id}"
+        return name
+
+    @classmethod
+    def _collection_mapping(cls, row: Any, *, prompt_ids: list[int]) -> dict[str, Any]:
+        collection_id = int(row["collection_id"])
+        name = str(row["name"])
+        return {
+            "collection_id": collection_id,
+            "name": name,
+            "display_name": cls._collection_display_name(
+                name=name,
+                collection_id=collection_id,
+                collision_count=int(row["collision_count"]),
+            ),
+            "description": row["description"],
+            "prompt_ids": prompt_ids,
+        }
+
+    @staticmethod
+    def _reject_active_name_collision(
+        conn: sqlite3.Connection,
+        *,
+        name: str,
+        exclude_collection_id: int | None = None,
+    ) -> None:
+        params: list[Any] = [name.casefold()]
+        exclude_sql = ""
+        if exclude_collection_id is not None:
+            exclude_sql = " AND collection_id != ?"
+            params.append(exclude_collection_id)
+        collision = conn.execute(
+            f"""
+            SELECT 1
+            FROM LocalPromptCollections
+            WHERE deleted = 0
+              AND PY_CASEFOLD(name) = ?
+              {exclude_sql}
+            LIMIT 1
+            """,
+            params,
+        ).fetchone()
+        if collision is not None:
+            raise ValueError("An active prompt collection already uses this name.")
 
     @staticmethod
     def _collection_id(collection_id: int | str) -> int:
@@ -316,9 +385,17 @@ class LocalPromptService:
         conn = db.get_connection()
         row = conn.execute(
             """
-            SELECT collection_id, name, description
-            FROM LocalPromptCollections
-            WHERE collection_id = ? AND deleted = 0
+            SELECT collection.collection_id,
+                   collection.name,
+                   collection.description,
+                   (
+                       SELECT COUNT(*)
+                       FROM LocalPromptCollections AS active
+                       WHERE active.deleted = 0
+                         AND PY_CASEFOLD(active.name) = PY_CASEFOLD(collection.name)
+                   ) AS collision_count
+            FROM LocalPromptCollections AS collection
+            WHERE collection.collection_id = ? AND collection.deleted = 0
             """,
             (collection_id,),
         ).fetchone()
@@ -333,12 +410,10 @@ class LocalPromptService:
             """,
             (collection_id,),
         ).fetchall()
-        return {
-            "collection_id": int(row["collection_id"]),
-            "name": row["name"],
-            "description": row["description"],
-            "prompt_ids": [int(prompt_row["prompt_id"]) for prompt_row in prompt_rows],
-        }
+        return self._collection_mapping(
+            row,
+            prompt_ids=[int(prompt_row["prompt_id"]) for prompt_row in prompt_rows],
+        )
 
     def list_prompts(
         self,
@@ -596,15 +671,27 @@ class LocalPromptService:
             raise
 
     def create_prompt_collection(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Create one local collection under a serialized case-fold name guard.
+
+        Args:
+            payload: Collection name, optional description, and optional Prompt IDs.
+
+        Returns:
+            A mapping containing the new positive ``collection_id``.
+
+        Raises:
+            ValueError: If the name or Prompt references are invalid, or an active
+                collection already has the same case-folded name.
+        """
         db = self._require_collection_db()
         name = str(payload.get("name") or "").strip()
         if not name:
             raise ValueError("Prompt collection name is required.")
         description = payload.get("description")
         prompt_ids = self._prompt_ids(payload.get("prompt_ids"))
-        conn = db.get_connection()
         try:
-            with conn:
+            with db.transaction(immediate=True) as conn:
+                self._reject_active_name_collision(conn, name=name)
                 cursor = conn.execute(
                     """
                     INSERT INTO LocalPromptCollections (name, description)
@@ -616,45 +703,138 @@ class LocalPromptService:
                 self._set_collection_prompt_ids(conn, collection_id, prompt_ids)
         except sqlite3.IntegrityError as exc:
             raise ValueError(
-                f"Prompt collection '{name}' already exists or references missing prompts."
+                "Prompt collection creation failed because a name or Prompt reference is invalid."
             ) from exc
         return {"collection_id": collection_id}
 
     def list_prompt_collections(
-        self, *, limit: int = 200, offset: int = 0
+        self, *, query: str = "", limit: int = 200, offset: int = 0
     ) -> dict[str, Any]:
-        db = self._require_collection_db()
-        conn = db.get_connection()
-        total = int(
-            conn.execute(
-                "SELECT COUNT(*) FROM LocalPromptCollections WHERE deleted = 0"
-            ).fetchone()[0]
+        """Return one exact, deterministically ordered local collection page.
+
+        Args:
+            query: Literal collection-name substring matched with Python case-fold
+                semantics after trimming.
+            limit: Positive requested page size, capped at 100.
+            offset: Non-negative row offset within the filtered catalog.
+
+        Returns:
+            A mapping containing normalized ``limit``/``offset``, exact filtered
+            ``total``, and collection records with stable IDs and display names.
+
+        Raises:
+            TypeError: If ``query`` is not a string.
+            ValueError: If ``limit`` or ``offset`` is outside its accepted bounds,
+                or the local collection backend is unavailable.
+        """
+        query, limit, offset = _normalize_collection_catalog_args(
+            query=query, limit=limit, offset=offset
         )
-        rows = conn.execute(
-            """
-            SELECT collection_id
-            FROM LocalPromptCollections
-            WHERE deleted = 0
-            ORDER BY name COLLATE NOCASE ASC, collection_id ASC
-            LIMIT ? OFFSET ?
-            """,
-            (max(1, int(limit)), max(0, int(offset))),
-        ).fetchall()
+        limit = min(limit, 100)
+        db = self._require_collection_db()
+        folded_query = query.casefold()
+        with db.transaction() as conn:
+            total = int(
+                conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM LocalPromptCollections
+                    WHERE deleted = 0
+                      AND instr(PY_CASEFOLD(name), ?) > 0
+                    """,
+                    (folded_query,),
+                ).fetchone()[0]
+            )
+            rows = conn.execute(
+                """
+                WITH active AS (
+                    SELECT collection_id,
+                           name,
+                           description,
+                           PY_CASEFOLD(name) AS folded_name
+                    FROM LocalPromptCollections
+                    WHERE deleted = 0
+                ),
+                collision_counts AS (
+                    SELECT folded_name, COUNT(*) AS collision_count
+                    FROM active
+                    GROUP BY folded_name
+                )
+                SELECT active.collection_id,
+                       active.name,
+                       active.description,
+                       collision_counts.collision_count
+                FROM active
+                JOIN collision_counts USING (folded_name)
+                WHERE instr(active.folded_name, ?) > 0
+                ORDER BY active.folded_name ASC, active.collection_id ASC
+                LIMIT ? OFFSET ?
+                """,
+                (folded_query, limit, offset),
+            ).fetchall()
+            collection_ids = [int(row["collection_id"]) for row in rows]
+            prompt_ids_by_collection: dict[int, list[int]] = {
+                collection_id: [] for collection_id in collection_ids
+            }
+            if collection_ids:
+                placeholders = ", ".join("?" for _ in collection_ids)
+                prompt_rows = conn.execute(
+                    f"""
+                    SELECT collection_id, prompt_id
+                    FROM LocalPromptCollectionItems
+                    WHERE collection_id IN ({placeholders})
+                    ORDER BY collection_id ASC, position ASC, prompt_id ASC
+                    """,
+                    collection_ids,
+                ).fetchall()
+                for prompt_row in prompt_rows:
+                    prompt_ids_by_collection[int(prompt_row["collection_id"])].append(
+                        int(prompt_row["prompt_id"])
+                    )
+        collections = [
+            self._collection_mapping(
+                row,
+                prompt_ids=prompt_ids_by_collection[int(row["collection_id"])],
+            )
+            for row in rows
+        ]
         return {
-            "collections": [
-                self._collection_record(int(row["collection_id"])) for row in rows
-            ],
-            "limit": int(limit),
-            "offset": int(offset),
+            "collections": collections,
+            "limit": limit,
+            "offset": offset,
             "total": total,
         }
 
     def get_prompt_collection(self, collection_id: int) -> dict[str, Any]:
+        """Return one active local collection selected strictly by ID.
+
+        Args:
+            collection_id: Positive local collection identifier.
+
+        Returns:
+            The collection record with its Prompt IDs and collision-aware label.
+
+        Raises:
+            ValueError: If the identifier is invalid or the collection is inactive.
+        """
         return self._collection_record(self._collection_id(collection_id))
 
     def update_prompt_collection(
         self, collection_id: int, payload: dict[str, Any]
     ) -> dict[str, Any]:
+        """Update one local collection selected strictly by ID.
+
+        Args:
+            collection_id: Positive local collection identifier.
+            payload: Name, description, and/or replacement Prompt IDs.
+
+        Returns:
+            The updated collection record.
+
+        Raises:
+            ValueError: If the collection, name, or Prompt references are invalid,
+                or another active collection has the same case-folded name.
+        """
         db = self._require_collection_db()
         resolved_collection_id = self._collection_id(collection_id)
         updates = {
@@ -669,9 +849,14 @@ class LocalPromptService:
             if "prompt_ids" in payload
             else None
         )
-        conn = db.get_connection()
         try:
-            with conn:
+            with db.transaction(immediate=True) as conn:
+                if "name" in updates:
+                    self._reject_active_name_collision(
+                        conn,
+                        name=updates["name"],
+                        exclude_collection_id=resolved_collection_id,
+                    )
                 if updates:
                     set_clause = ", ".join(f"{key} = ?" for key in updates)
                     params = list(updates.values()) + [resolved_collection_id]
@@ -1259,15 +1444,41 @@ class PromptScopeService:
         self,
         *,
         mode: PromptBackend | str | None = None,
+        query: str = "",
         limit: int = 200,
         offset: int = 0,
     ) -> dict[str, Any]:
+        """List one validated collection page from the selected backend.
+
+        Args:
+            mode: Local or server Prompt backend.
+            query: Literal local collection-name search. Server collection search
+                is unsupported; an empty value preserves the existing server API.
+            limit: Positive requested page size. Local pages are capped at 100.
+            offset: Non-negative row offset.
+
+        Returns:
+            A normalized collection page with stable source-qualified IDs.
+
+        Raises:
+            TypeError: If ``query`` is not a string.
+            ValueError: If a bound is invalid or server search is requested.
+            PolicyDeniedError: If runtime policy denies the validated action.
+        """
         normalized_mode = self._normalize_mode(mode)
+        query, limit, offset = _normalize_collection_catalog_args(
+            query=query, limit=limit, offset=offset
+        )
+        if normalized_mode == PromptBackend.SERVER and query:
+            raise ValueError("Server prompt collection search is not supported.")
+        if normalized_mode == PromptBackend.LOCAL:
+            limit = min(limit, 100)
         self._enforce_policy(self._collection_action_id(normalized_mode, "list"))
         service = self._service_for_mode(normalized_mode)
-        response = await self._maybe_await(
-            service.list_prompt_collections(limit=limit, offset=offset)
-        )
+        kwargs: dict[str, Any] = {"limit": limit, "offset": offset}
+        if normalized_mode == PromptBackend.LOCAL:
+            kwargs["query"] = query
+        response = await self._maybe_await(service.list_prompt_collections(**kwargs))
         return normalize_prompt_collection_list(
             response,
             backend=normalized_mode.value,

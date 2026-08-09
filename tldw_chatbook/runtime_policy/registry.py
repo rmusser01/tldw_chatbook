@@ -515,7 +515,7 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource(
                 "prompts.collections",
                 actions=(LIST, DETAIL, CREATE, UPDATE),
-                sources=(SERVER_SOURCE,),
+                sources=SEPARATED_SOURCES,
                 domain_id="prompts",
             ),
             _resource(

@@ -242,8 +242,8 @@ class FakeLocalPromptService:
         self.calls.append(("create_prompt_collection", payload))
         return {"collection_id": 3}
 
-    def list_prompt_collections(self, *, limit=200, offset=0):
-        self.calls.append(("list_prompt_collections", limit, offset))
+    def list_prompt_collections(self, *, query="", limit=200, offset=0):
+        self.calls.append(("list_prompt_collections", query, limit, offset))
         return {
             "collections": [
                 {
@@ -1375,7 +1375,9 @@ async def test_prompt_scope_routes_local_prompt_collections_with_policy():
         description="Offline prompts",
         prompt_ids=[7],
     )
-    listed = await service.list_prompt_collections(mode="local", limit=50, offset=5)
+    listed = await service.list_prompt_collections(
+        mode="local", query="  Collection  ", limit=50, offset=5
+    )
     fetched = await service.get_prompt_collection(mode="local", collection_id=3)
     updated = await service.update_prompt_collection(
         mode="local",
@@ -1402,7 +1404,7 @@ async def test_prompt_scope_routes_local_prompt_collections_with_policy():
                 "prompt_ids": [7],
             },
         ),
-        ("list_prompt_collections", 50, 5),
+        ("list_prompt_collections", "Collection", 50, 5),
         ("get_prompt_collection", 3),
         (
             "update_prompt_collection",
@@ -1416,6 +1418,52 @@ async def test_prompt_scope_routes_local_prompt_collections_with_policy():
         "prompts.collections.detail.local",
         "prompts.collections.update.local",
     ]
+
+
+@pytest.mark.asyncio
+async def test_prompt_scope_rejects_server_collection_query_before_policy_or_adapter():
+    policy = FakePolicyEnforcer()
+    server = FakeServerPromptService()
+    service = PromptScopeService(
+        local_service=FakeLocalPromptService(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    with pytest.raises(ValueError, match="Server prompt collection search"):
+        await service.list_prompt_collections(mode="server", query="sales")
+
+    assert policy.actions == []
+    assert server.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"query": None},
+        {"limit": True},
+        {"limit": 0},
+        {"offset": False},
+        {"offset": -1},
+    ],
+)
+async def test_prompt_scope_validates_collection_catalog_before_policy_or_adapter(
+    kwargs,
+):
+    policy = FakePolicyEnforcer()
+    local = FakeLocalPromptService()
+    service = PromptScopeService(
+        local_service=local,
+        server_service=FakeServerPromptService(),
+        policy_enforcer=policy,
+    )
+
+    with pytest.raises((TypeError, ValueError)):
+        await service.list_prompt_collections(mode="local", **kwargs)
+
+    assert policy.actions == []
+    assert local.calls == []
 
 
 def test_local_prompt_service_persists_prompt_collections(tmp_path):

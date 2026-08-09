@@ -740,11 +740,13 @@ def normalize_prompt_collection_record(record: Any, *, backend: str) -> dict[str
     if collection_id in (None, ""):
         raise ValueError("Prompt collection record must include collection_id.")
     backend_value = str(backend)
+    name = data.get("name")
     return {
         "id": f"{backend_value}:prompt_collection:{collection_id}",
         "backend": backend_value,
         "collection_id": int(collection_id),
-        "name": data.get("name"),
+        "name": name,
+        "display_name": data.get("display_name") or name,
         "description": data.get("description"),
         "prompt_ids": list(data.get("prompt_ids") or []),
     }

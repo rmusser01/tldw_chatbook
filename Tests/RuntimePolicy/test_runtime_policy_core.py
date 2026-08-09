@@ -1179,9 +1179,13 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         prompts.create.server
         prompts.bulk.delete.server
         prompts.bulk.update.server
+        prompts.collections.create.local
         prompts.collections.create.server
+        prompts.collections.detail.local
         prompts.collections.detail.server
+        prompts.collections.list.local
         prompts.collections.list.server
+        prompts.collections.update.local
         prompts.collections.update.server
         prompts.delete.local
         prompts.delete.server
