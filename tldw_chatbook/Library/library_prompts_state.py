@@ -53,6 +53,16 @@ MAX_PROMPT_BROWSE_PAGE_SIZE = 100
 DEFAULT_PROMPT_BROWSE_PAGE_SIZE = 50
 _PROMPT_BROWSE_SORT_FIELDS = frozenset({"last_modified", "name"})
 _PROMPT_BROWSE_SORT_ORDERS = frozenset({"asc", "desc"})
+_PROMPT_BROWSE_STATUSES = frozenset(
+    {
+        "loading",
+        "ready",
+        "empty_library",
+        "empty_collection",
+        "no_matches",
+        "error",
+    }
+)
 
 
 PromptBrowseStatus = Literal[
@@ -134,6 +144,12 @@ def _prompt_browse_request_token(request_token: int) -> int:
     return request_token
 
 
+def _prompt_browse_integer(value: Any, *, field: str, minimum: int) -> int:
+    if type(value) is not int or value < minimum:
+        raise ValueError(f"{field} must be an integer of at least {minimum}.")
+    return value
+
+
 def _freeze_prompt_browse_value(value: Any) -> Any:
     """Return an immutable detached copy of one JSON-like browse value."""
     if value is None or type(value) in {str, bool, int, float}:
@@ -149,6 +165,18 @@ def _freeze_prompt_browse_value(value: Any) -> Any:
     raise TypeError("Prompt browse values must be JSON-like immutable data.")
 
 
+def _prompt_browse_settled_status(
+    scope: PromptBrowseScope, *, has_items: bool
+) -> PromptBrowseStatus:
+    if has_items:
+        return "ready"
+    if scope.query:
+        return "no_matches"
+    if scope.collection_id is not None:
+        return "empty_collection"
+    return "empty_library"
+
+
 @dataclass(frozen=True)
 class PromptBrowseResult:
     """Immutable loading, result, or failure state for one browse request."""
@@ -162,21 +190,92 @@ class PromptBrowseResult:
     request_fingerprint: str
     request_token: int
     error: str = ""
+    requested_page: int | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.scope, PromptBrowseScope):
+            raise TypeError("scope must be a PromptBrowseScope.")
+        _prompt_browse_integer(self.total_items, field="total_items", minimum=0)
+        _prompt_browse_integer(self.total_pages, field="total_pages", minimum=0)
+        _prompt_browse_integer(self.page, field="page", minimum=1)
         _prompt_browse_request_token(self.request_token)
+        if self.status not in _PROMPT_BROWSE_STATUSES:
+            raise ValueError("status is not a supported Prompt browse status.")
+
+        requested_page = (
+            self.scope.page
+            if self.requested_page is None
+            else _prompt_browse_integer(
+                self.requested_page, field="requested_page", minimum=1
+            )
+        )
+        expected_request_scope = replace(self.scope, page=requested_page)
+        if (
+            not isinstance(self.request_fingerprint, str)
+            or self.request_fingerprint != expected_request_scope.fingerprint
+        ):
+            raise ValueError("request_fingerprint does not match the request scope.")
+        if not isinstance(self.error, str):
+            raise TypeError("error must be a string.")
+        normalized_error = self.error.strip()
+
         if not isinstance(self.items, Sequence) or isinstance(self.items, (str, bytes)):
             raise TypeError("Prompt browse result items must be a sequence.")
         if any(not isinstance(item, Mapping) for item in self.items):
             raise TypeError("Prompt browse result items must be mappings.")
-        object.__setattr__(
-            self,
-            "items",
-            tuple(
-                cast(Mapping[str, Any], _freeze_prompt_browse_value(item))
-                for item in self.items
+        frozen_items = tuple(
+            cast(Mapping[str, Any], _freeze_prompt_browse_value(item))
+            for item in self.items
+        )
+        object.__setattr__(self, "items", frozen_items)
+        object.__setattr__(self, "error", normalized_error)
+        object.__setattr__(self, "requested_page", requested_page)
+
+        if self.page != self.scope.page:
+            raise ValueError("page must match scope.page.")
+        if self.status in {"loading", "error"}:
+            if requested_page != self.scope.page:
+                raise ValueError("loading/error requested_page must match scope.page.")
+            if frozen_items or self.total_items or self.total_pages:
+                raise ValueError("loading/error status cannot include result items.")
+            if self.status == "error" and not normalized_error:
+                raise ValueError("error status requires non-empty error text.")
+            if self.status == "loading" and normalized_error:
+                raise ValueError("loading status cannot include error text.")
+            return
+
+        if normalized_error:
+            raise ValueError("Settled result status cannot include error text.")
+        expected_pages = (
+            (self.total_items + self.scope.page_size - 1) // self.scope.page_size
+            if self.total_items
+            else 0
+        )
+        if self.total_pages != expected_pages:
+            raise ValueError("total_pages does not match total_items and page_size.")
+        if (
+            clamp_prompt_browse_scope(
+                expected_request_scope, total_pages=self.total_pages
+            )
+            != self.scope
+        ):
+            raise ValueError("page does not match the clamped requested page.")
+        expected_items = min(
+            self.scope.page_size,
+            max(
+                0,
+                self.total_items - (self.page - 1) * self.scope.page_size,
             ),
         )
+        if len(frozen_items) != expected_items:
+            raise ValueError(
+                "Prompt browse result item count is invalid for this page."
+            )
+        expected_status = _prompt_browse_settled_status(
+            self.scope, has_items=bool(frozen_items)
+        )
+        if self.status != expected_status:
+            raise ValueError("status does not match result items and scope.")
 
     @property
     def scope_fingerprint(self) -> str:
@@ -210,10 +309,7 @@ def begin_prompt_browse(
 
 
 def _prompt_browse_int(record: Mapping[str, Any], key: str, *, minimum: int) -> int:
-    value = record.get(key)
-    if type(value) is not int or value < minimum:
-        raise ValueError(f"{key} must be an integer of at least {minimum}.")
-    return value
+    return _prompt_browse_integer(record.get(key), field=key, minimum=minimum)
 
 
 def build_prompt_browse_result(
@@ -235,24 +331,8 @@ def build_prompt_browse_result(
     per_page = _prompt_browse_int(record, "per_page", minimum=1)
     if per_page != scope.page_size:
         raise ValueError("per_page must match the requested page_size.")
-    expected_pages = (total_items + per_page - 1) // per_page if total_items else 0
-    if total_pages != expected_pages:
-        raise ValueError("total_pages does not match total_items and per_page.")
-    resolved_scope = clamp_prompt_browse_scope(scope, total_pages=total_pages)
-    if current_page != resolved_scope.page:
-        raise ValueError("current_page does not match the clamped requested page.")
-    expected_items = min(per_page, max(0, total_items - (current_page - 1) * per_page))
-    if len(items) != expected_items:
-        raise ValueError("Prompt browse result item count is invalid for this page.")
-
-    if items:
-        status: PromptBrowseStatus = "ready"
-    elif scope.query:
-        status = "no_matches"
-    elif scope.collection_id is not None:
-        status = "empty_collection"
-    else:
-        status = "empty_library"
+    resolved_scope = replace(scope, page=current_page)
+    status = _prompt_browse_settled_status(resolved_scope, has_items=bool(items))
 
     return PromptBrowseResult(
         scope=resolved_scope,
@@ -263,6 +343,7 @@ def build_prompt_browse_result(
         status=status,
         request_fingerprint=scope.fingerprint,
         request_token=request_token,
+        requested_page=scope.page,
     )
 
 
@@ -273,9 +354,6 @@ def build_prompt_browse_error(
     error: str = "Couldn't load prompts. Try again.",
 ) -> PromptBrowseResult:
     """Build failure state without misrepresenting it as an empty result."""
-    normalized_error = error.strip() if isinstance(error, str) else ""
-    if not normalized_error:
-        raise ValueError("error must be non-empty text.")
     return PromptBrowseResult(
         scope=scope,
         items=(),
@@ -285,7 +363,7 @@ def build_prompt_browse_error(
         status="error",
         request_fingerprint=scope.fingerprint,
         request_token=request_token,
-        error=normalized_error,
+        error=error,
     )
 
 
@@ -298,6 +376,13 @@ def apply_prompt_browse_result(
         or result.status == "loading"
         or state.request_fingerprint != result.request_fingerprint
         or state.request_token != result.request_token
+        or state.scope.backend != result.scope.backend
+        or state.scope.query != result.scope.query
+        or state.scope.collection_id != result.scope.collection_id
+        or state.scope.sort_by != result.scope.sort_by
+        or state.scope.sort_order != result.scope.sort_order
+        or state.scope.page_size != result.scope.page_size
+        or state.scope.page != result.requested_page
     ):
         return state
     return result

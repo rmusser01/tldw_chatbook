@@ -311,18 +311,24 @@ def test_browse_prompt_result_deeply_freezes_detached_mapping_rows():
         row["keywords"][0] = "Direct change"  # type: ignore[index]
 
 
-def _direct_prompt_browse_result(items):
-    scope = prompts_state_module.PromptBrowseScope()
-    return prompts_state_module.PromptBrowseResult(
-        scope=scope,
-        items=items,
-        total_items=1,
-        total_pages=1,
-        page=1,
-        status="ready",
-        request_fingerprint=scope.fingerprint,
-        request_token=1,
-    )
+def _direct_prompt_browse_result(items=None, **overrides):
+    scope = overrides.pop("scope", prompts_state_module.PromptBrowseScope())
+    values = {
+        "scope": scope,
+        "items": [{"id": 8}] if items is None else items,
+        "total_items": 1,
+        "total_pages": 1,
+        "page": 1,
+        "status": "ready",
+        "request_fingerprint": (
+            scope.fingerprint
+            if isinstance(scope, prompts_state_module.PromptBrowseScope)
+            else "invalid"
+        ),
+        "request_token": 1,
+    }
+    values.update(overrides)
+    return prompts_state_module.PromptBrowseResult(**values)
 
 
 def test_browse_prompt_result_constructor_deeply_freezes_and_detaches_items():
@@ -355,6 +361,136 @@ def test_browse_prompt_result_constructor_rejects_non_mapping_items():
 def test_browse_prompt_result_rejects_unsupported_nested_leaves(unsupported):
     with pytest.raises(TypeError, match="JSON-like"):
         _direct_prompt_browse_result([{"id": 8, "unsupported": unsupported}])
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"scope": "local"}, "scope"),
+        ({"total_items": True}, "total_items"),
+        ({"total_items": -1}, "total_items"),
+        ({"total_pages": True}, "total_pages"),
+        ({"total_pages": -1}, "total_pages"),
+        ({"page": True}, "page"),
+        ({"page": 0}, "page"),
+        ({"status": "settled"}, "status"),
+        ({"request_fingerprint": None}, "request_fingerprint"),
+        ({"request_fingerprint": "0" * 64}, "request_fingerprint"),
+        ({"error": object()}, "error"),
+    ],
+)
+def test_browse_prompt_result_constructor_rejects_invalid_public_fields(
+    overrides, message
+):
+    with pytest.raises((TypeError, ValueError), match=message):
+        _direct_prompt_browse_result(**overrides)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"status": "ready", "error": "unexpected"},
+        {
+            "items": [],
+            "total_items": 0,
+            "total_pages": 0,
+            "status": "error",
+            "error": "",
+        },
+        {
+            "items": [],
+            "total_items": 0,
+            "total_pages": 0,
+            "status": "loading",
+            "error": "unexpected",
+        },
+        {"status": "empty_library"},
+        {
+            "items": [],
+            "total_items": 0,
+            "total_pages": 0,
+            "status": "ready",
+        },
+    ],
+)
+def test_browse_prompt_result_constructor_enforces_status_error_consistency(
+    overrides,
+):
+    values = dict(overrides)
+    items = values.pop("items", None)
+    with pytest.raises(ValueError, match="status|error|items"):
+        _direct_prompt_browse_result(items, **values)
+
+
+@pytest.mark.parametrize(
+    ("items", "overrides", "message"),
+    [
+        ([{"id": 8}], {"total_items": 2}, "item count"),
+        ([{"id": 8}], {"total_pages": 2}, "total_pages"),
+        ([{"id": 8}], {"page": 2}, "page"),
+    ],
+)
+def test_browse_prompt_result_constructor_enforces_page_totals_and_cardinality(
+    items, overrides, message
+):
+    with pytest.raises(ValueError, match=message):
+        _direct_prompt_browse_result(items, **overrides)
+
+
+def test_browse_prompt_result_constructor_accepts_valid_state_shapes():
+    ready = _direct_prompt_browse_result()
+    loading = _direct_prompt_browse_result(
+        [], total_items=0, total_pages=0, status="loading"
+    )
+    error = _direct_prompt_browse_result(
+        [], total_items=0, total_pages=0, status="error", error=" Retry. "
+    )
+    empty = _direct_prompt_browse_result(
+        [], total_items=0, total_pages=0, status="empty_library"
+    )
+
+    assert ready.status == "ready"
+    assert loading.status == "loading"
+    assert error.error == "Retry."
+    assert empty.status == "empty_library"
+
+
+def test_browse_prompt_result_constructor_rejects_forged_stale_scope_guard():
+    current = prompts_state_module.begin_prompt_browse(
+        prompts_state_module.PromptBrowseScope(query="current"), request_token=7
+    )
+    stale_scope = prompts_state_module.PromptBrowseScope(query="stale")
+
+    with pytest.raises(ValueError, match="request_fingerprint"):
+        _direct_prompt_browse_result(
+            [],
+            scope=stale_scope,
+            total_items=0,
+            total_pages=0,
+            status="no_matches",
+            request_fingerprint=current.request_fingerprint,
+            request_token=current.request_token,
+        )
+
+
+def test_browse_prompt_reducer_rejects_forged_stale_scope_with_copied_guards():
+    current = prompts_state_module.begin_prompt_browse(
+        prompts_state_module.PromptBrowseScope(query="current"), request_token=7
+    )
+    stale = prompts_state_module.build_prompt_browse_result(
+        prompts_state_module.PromptBrowseScope(query="stale"),
+        {
+            "items": [],
+            "total_items": 0,
+            "total_pages": 0,
+            "current_page": 1,
+            "per_page": 50,
+        },
+        request_token=current.request_token,
+    )
+    object.__setattr__(stale, "request_fingerprint", current.request_fingerprint)
+
+    assert prompts_state_module.apply_prompt_browse_result(current, stale) is current
 
 
 @pytest.mark.parametrize(
