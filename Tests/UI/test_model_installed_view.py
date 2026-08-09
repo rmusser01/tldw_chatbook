@@ -34,6 +34,60 @@ async def test_installed_view_performs_no_io_at_compose_time(tmp_path: Path) -> 
     service_factory.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_models_host_lazily_wires_parakeet_activation_and_deletion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The production Models host delegates ownership policy to its app service."""
+    from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
+    from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+    from tldw_chatbook.config import get_cli_setting as real_get_cli_setting
+    from Tests.UI.app_factory import _build_test_app
+
+    root = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
+    vad = ArtifactRef("silero-vad", "immutable-revision", "f32")
+    source = MagicMock()
+    source.may_delete.return_value = "Managed dependency is in use."
+    ensure_source = MagicMock(return_value=source)
+
+    class _Core:
+        def activate(self, reference: ArtifactRef) -> ArtifactRef:
+            return reference
+
+    def no_splash(section, key=None, default=None):
+        if section == "splash_screen" and key == "enabled":
+            return False
+        return real_get_cli_setting(section, key, default)
+
+    monkeypatch.setattr("tldw_chatbook.app.get_cli_setting", no_splash)
+    app = _build_test_app()
+    monkeypatch.setattr(app, "_ensure_parakeet_source_service", ensure_source)
+    async with app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        screen = LLMScreen(app)
+        await app.push_screen(screen)
+        for _ in range(6):
+            await pilot.pause()
+
+        screen.query_one(LLMManagementWindow)
+        view = screen.query_one(InstalledView)
+        assert ensure_source.call_count == 0
+
+        view._service_factory = _Core
+        view._legacy_dir = tmp_path
+        view._apply_lifecycle_result = MagicMock()
+        await view._activate_model(root).wait()
+        view._apply_lifecycle_result.assert_called_once_with("activate", None)
+        source.on_root_activated.assert_called_once_with(root)
+        assert ensure_source.call_count == 1
+
+        assert view._may_delete(vad) == "Managed dependency is in use."
+        source.may_delete.assert_called_once_with(vad)
+        assert ensure_source.call_count == 2
+
+
 def test_unmanaged_scan_is_bounded_and_labels_supported_model_files(
     tmp_path: Path,
 ) -> None:

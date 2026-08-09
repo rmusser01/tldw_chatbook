@@ -757,6 +757,46 @@ def test_managed_copy_is_noop_when_installed_and_failure_preserves_external(
     service.close()
 
 
+def test_managed_copy_is_noop_if_install_completes_after_consent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A concurrent install makes stale copy consent irrelevant."""
+    key = ParakeetSourceKey.V2_INT8
+    root = tmp_path / "external"
+    _materialize(root)
+    config = _Config()
+    managed = ModelArtifactService(tmp_path / "managed-store")
+    service = ParakeetSourceService(
+        verifier=ExternalParakeetVerifier(),
+        read_setting=config.read,
+        write_settings=config.write,
+        descriptor_for=lambda model, precision: _descriptor(
+            ParakeetSourceKey.from_values(model, precision)
+        ),
+        active_managed=lambda _model, _precision: None,
+        dispatch_resolver=lambda **_kwargs: _dispatch(key, managed=False),
+        vad_ready=lambda: True,
+        managed_service=managed,
+    )
+    prepared = service.prepare_external(key, root)
+    service.commit_external(prepared)
+    consent = service.plan_managed_copy(prepared.verified).grant()
+    descriptor = _descriptor(key)
+    managed.install(descriptor, root, declared_files_only=True)
+    monkeypatch.setattr(
+        managed,
+        "install",
+        lambda *_args, **_kwargs: pytest.fail("concurrent install must be a no-op"),
+    )
+
+    assert service.copy_into_managed(prepared.verified, consent) == descriptor.reference
+    assert service.records()[key].preferred_source is ParakeetSourcePreference.EXTERNAL
+    assert len(config.writes) == 1
+    assert (root / "model.onnx").read_bytes() == b"model"
+    service.close()
+
+
 def test_managed_copy_rechecks_external_snapshot_after_consent(
     tmp_path: Path,
 ) -> None:

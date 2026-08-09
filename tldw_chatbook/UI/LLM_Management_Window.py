@@ -606,7 +606,20 @@ class LLMManagementWindow(Container):
 
         await curated.mount(CuratedView(id="curated-models-view"))
         await installed.mount(
-            InstalledView(legacy_dir=legacy_dir, id="installed-models-view")
+            InstalledView(
+                legacy_dir=legacy_dir,
+                on_root_activated=lambda reference: (
+                    self.app_instance._ensure_parakeet_source_service().on_root_activated(
+                        reference
+                    )
+                ),
+                may_delete=lambda reference: (
+                    self.app_instance._ensure_parakeet_source_service().may_delete(
+                        reference
+                    )
+                ),
+                id="installed-models-view",
+            )
         )
         # Remote is explicitly idle until Search is submitted.
         await remote.mount(RemoteView(id="remote-models-view"))

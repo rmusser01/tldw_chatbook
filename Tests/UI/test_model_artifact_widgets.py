@@ -479,3 +479,42 @@ async def test_unready_root_activation_is_keyboard_reachable() -> None:
         await pilot.pause()
 
     assert app.requested == [reference]
+
+
+@pytest.mark.asyncio
+async def test_default_unready_controls_keep_activation_visible_but_disabled() -> None:
+    """Legacy callers retain corrupt-model recovery controls without activation."""
+    from tldw_chatbook.Widgets.ModelArtifacts.activation_controls import (
+        ActivationRequested,
+        ModelActivationControls,
+    )
+
+    reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
+
+    class _RecoveryApp(App):
+        def __init__(self) -> None:
+            self.requested: list[ArtifactRef] = []
+            super().__init__()
+
+        def compose(self) -> ComposeResult:
+            yield ModelActivationControls(reference, active=False, ready=False)
+
+        def on_activation_requested(self, event: ActivationRequested) -> None:
+            self.requested.append(event.reference)
+
+    app = _RecoveryApp()
+    async with app.run_test() as pilot:
+        controls = app.query_one(ModelActivationControls)
+        activate = app.query_one(".model-activate", Button)
+        assert activate.disabled is True
+
+        controls.set_pending(True)
+        controls.set_pending(False)
+        await pilot.pause()
+        assert activate.disabled is True
+
+        activate.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+    assert app.requested == []

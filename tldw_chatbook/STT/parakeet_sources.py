@@ -353,10 +353,10 @@ class ParakeetSourceService:
         if type(consent) is not ManagedCopyConsent:
             raise TypeError("consent must be a ManagedCopyConsent")
         plan = self.plan_managed_copy(verified)
-        if consent != plan.grant():
-            raise ParakeetSourceError(ParakeetSourceErrorCode.COPY_CONSENT_MISMATCH)
         if plan.already_installed:
             return plan.reference
+        if consent != plan.grant():
+            raise ParakeetSourceError(ParakeetSourceErrorCode.COPY_CONSENT_MISMATCH)
         _, descriptor = self._validated_external(verified)
         return self._managed_store_service().install(
             descriptor,
