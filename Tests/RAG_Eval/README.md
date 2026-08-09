@@ -136,11 +136,18 @@ and the post-fix after-numbers in the PR description.
 
 ## Fingerprint semantics: "environment changed" is not a regression
 
-Every baseline carries an environment fingerprint: the embedding model
-string, the installed `sentence-transformers` version, a SHA-256 over both
-fixture files (length-delimited, so moving a byte between them cannot
-produce the same digest), and `sys.platform`. A `pipeline_config` block
-(`k`, profile name, `source_types`) is compared alongside it, prefixed
+Every baseline carries an environment fingerprint over the load-bearing
+embedding stack (TASK-3998): the embedding model string, the installed
+`transformers`, `torch` and `chromadb` versions — the packages the
+harness's real embedding/retrieval path (`Embeddings_Lib._HFEmbedder` ->
+`transformers.AutoModel` + `torch`, with `chromadb` doing ANN retrieval)
+actually loads — a SHA-256 over both fixture files (length-delimited, so
+moving a byte between them cannot produce the same digest), and
+`sys.platform`. `sentence-transformers` is recorded too, but only in
+non-compared informational metadata: it is not on this harness's load
+path, so a version bump there must not force a re-baseline the numbers
+never asked for. A `pipeline_config` block (`k`, profile name,
+`source_types`) is compared alongside the fingerprint, prefixed
 `pipeline_config.` in any diff, so a `k` change reads distinctly from an
 embedding-environment change.
 
@@ -148,12 +155,12 @@ When the current run's fingerprint (or pipeline config) does not match the
 committed baseline's, the gate reports `ENVIRONMENT_CHANGED` and **does not
 score the run at all** — it is not a pass because retrieval held up, it is a
 pass because the numbers were never comparable in the first place. This
-matters concretely: these baselines were stamped on `darwin` with
-`sentence-transformers 5.4.1`. On a different platform or a different
-`sentence-transformers` version, the gate will go green having checked
-*nothing* — it prints a `NOTE:` naming the differing keys and asking you to
-re-stamp on that machine. Read that note; do not read the green exit code
-alone as "retrieval is fine here."
+matters concretely: these baselines were stamped on `darwin`. On a
+different platform or with different transformers/torch/chromadb versions,
+the gate will go green having checked *nothing* — it prints a `NOTE:`
+naming the differing keys and asking you to re-stamp on that machine. Read
+that note; do not read the green exit code alone as "retrieval is fine
+here."
 
 A missing baseline is treated as a **failure**, not a pass — the same
 reasoning as pytest's own "no tests ran": a green gate that checked nothing

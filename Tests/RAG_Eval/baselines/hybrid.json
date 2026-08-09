@@ -1,6 +1,6 @@
 {
   "baseline_id": "hybrid",
-  "created_at": "2026-08-09T04:57:27.987460+00:00",
+  "created_at": "2026-08-09T17:31:05.838820+00:00",
   "pipeline_config": {
     "mode": "hybrid",
     "k": 10,
@@ -36,17 +36,22 @@
   "metadata": {
     "environment": {
       "model": "all-MiniLM-L6-v2",
-      "sentence_transformers": "5.4.1",
+      "transformers": "5.6.2",
+      "torch": "2.11.0",
+      "chromadb": "1.5.8",
       "corpus_sha256": "cbf911c98c8ede1eb0c0bc79d31528eda559d57937afb9b3d7b63ada9e2e3957",
       "platform": "darwin"
+    },
+    "environment_info": {
+      "sentence_transformers": "5.4.1"
     },
     "report_only": {
       "latency": {
         "count": 44.0,
-        "mean_ms": 13.2,
-        "p95_ms": 21.5,
-        "max_ms": 56.4,
-        "total_s": 0.6
+        "mean_ms": 18.4,
+        "p95_ms": 36.8,
+        "max_ms": 38.3,
+        "total_s": 0.8
       },
       "mean_docs_at_k": 9.135,
       "num_queries": 37,

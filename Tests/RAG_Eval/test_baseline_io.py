@@ -147,14 +147,21 @@ def test_fingerprint_is_stable_across_two_calls(tmp_path):
     assert first == second
 
 
-def test_fingerprint_carries_exactly_the_four_documented_keys(tmp_path):
+def test_fingerprint_carries_exactly_the_six_documented_keys(tmp_path):
+    """TASK-3998: the compared keys are the load-bearing stack (model,
+    transformers, torch, chromadb, corpus_sha256, platform) —
+    sentence_transformers is deliberately not one of them (it moved to
+    informational, non-compared metadata; see
+    test_sentence_transformers_is_recorded_but_never_compared)."""
     corpus_path, golden_path = _fixture_files(tmp_path)
 
     fingerprint = current_fingerprint(corpus_path, golden_path)
 
     assert set(fingerprint) == {
         "model",
-        "sentence_transformers",
+        "transformers",
+        "torch",
+        "chromadb",
         "corpus_sha256",
         "platform",
     }
@@ -164,6 +171,23 @@ def test_fingerprint_carries_exactly_the_four_documented_keys(tmp_path):
     assert fingerprint["model"] == PROFILE_EMBEDDING_MODEL
     assert fingerprint["platform"] == sys.platform
     assert len(fingerprint["corpus_sha256"]) == 64
+
+
+def test_fingerprint_records_non_empty_versions_for_the_load_bearing_stack(tmp_path):
+    """TASK-3998 AC #1: transformers/torch/chromadb versions must actually be
+    recorded, not blank placeholders — this worktree has all three installed,
+    so "absent" here would mean the lookup is broken, not that the package is
+    missing."""
+    corpus_path, golden_path = _fixture_files(tmp_path)
+
+    fingerprint = current_fingerprint(corpus_path, golden_path)
+
+    for key in ("transformers", "torch", "chromadb"):
+        assert fingerprint[key], f"{key} must not be empty: {fingerprint}"
+        assert fingerprint[key] != "absent", (
+            f"{key} is installed in this environment — 'absent' means the "
+            f"version lookup is broken, not that the package is missing"
+        )
 
 
 def test_fingerprint_changes_when_the_corpus_bytes_change(tmp_path):
@@ -225,6 +249,28 @@ def test_update_records_the_fingerprint_and_the_gated_metrics(tmp_path):
     assert payload["metrics"]["category.keyword.precision"] == pytest.approx(0.9)
     assert "num_queries" not in payload["metrics"], (
         "counts are not quality metrics and must not be gated as though they were"
+    )
+
+
+def test_sentence_transformers_is_recorded_but_never_compared(tmp_path):
+    """TASK-3998 AC #2: sentence-transformers is not on the harness's real
+    load path (transformers/torch/chromadb are), so its version must still
+    be recorded for debugging but must never sit in the compared
+    `environment` block. This exercises real `current_fingerprint()`
+    (no fingerprint= override) so it proves the production split, not just
+    a test fixture's shape."""
+    baselines_dir = tmp_path / "baselines"
+    compare_or_update(_report(), baselines_dir, update=True, stream=io.StringIO())
+
+    payload = json.loads((baselines_dir / "plain.json").read_text())
+
+    assert "sentence_transformers" not in payload["metadata"]["environment"], (
+        "sentence_transformers is not on the load path and must not be "
+        f"compared: {payload['metadata']['environment']}"
+    )
+    assert payload["metadata"]["environment_info"]["sentence_transformers"], (
+        "sentence_transformers must still be recorded for debugging, just "
+        "not compared"
     )
 
 
@@ -495,6 +541,47 @@ def test_fingerprint_mismatch_never_reports_a_regression(tmp_path):
     assert outcome.diff_keys == ("sentence_transformers",)
     assert outcome.details == ()
     assert "re-baseline" in outcome.summary.lower()
+
+
+def test_a_pre_3998_baseline_reads_as_an_environment_change_listing_the_new_keys(
+    tmp_path,
+):
+    """TASK-3998 AC #3 groundwork: a baseline stamped before this change
+    recorded only the old four keys — it has no opinion at all about
+    transformers/torch/chromadb. Comparing it against a current run (real
+    `current_fingerprint()`, no override — the point is to exercise the
+    production default, not two independently hand-built dicts) must name
+    those keys as differing, not silently treat "absent from the old
+    baseline" as a match: that old baseline's numbers may have been
+    produced under different transformers/torch/chromadb versions with
+    nothing on record to say so."""
+    baselines_dir = tmp_path / "baselines"
+    real = current_fingerprint()
+    pre_3998_shape = {
+        "model": real["model"],
+        "sentence_transformers": "5.4.1",
+        "corpus_sha256": real["corpus_sha256"],
+        "platform": real["platform"],
+    }
+    _stamp(baselines_dir, _report(), pre_3998_shape)
+
+    outcome = compare_or_update(
+        _report(), baselines_dir, update=False, stream=io.StringIO()
+    )
+
+    assert outcome.status is GateStatus.ENVIRONMENT_CHANGED
+    assert outcome.ok, "an environment change is not a code regression"
+    assert set(outcome.diff_keys) == {
+        "sentence_transformers",
+        "transformers",
+        "torch",
+        "chromadb",
+    }, (
+        "the new load-bearing keys (absent from the old baseline) and the "
+        "retired sentence_transformers key (absent from the current "
+        f"fingerprint) must both be named: {outcome.diff_keys}"
+    )
+    assert outcome.details == ()
 
 
 def test_a_changed_k_reads_as_an_environment_change_not_a_regression(tmp_path):
