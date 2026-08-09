@@ -17352,7 +17352,15 @@ class SettingsScreen(BaseAppScreen):
                 signalled.add(screen_key)
                 refresh = getattr(screen, "request_console_identity_refresh", None)
                 if callable(refresh):
-                    refresh(generation)
+                    try:
+                        refresh(generation)
+                    except Exception:
+                        logger.exception(
+                            "Console identity refresh hook failed after settings save "
+                            "(screen_type=%s, generation=%s)",
+                            type(screen).__name__,
+                            generation,
+                        )
 
     def _apply_appearance_save_result(
         self,

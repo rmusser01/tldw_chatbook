@@ -27,6 +27,11 @@ from tldw_chatbook.Chat.citation_trace_repository import (
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, MessageAttachment
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_roleplay_metadata import (
+    ConsoleRoleplayContext,
+    merge_console_roleplay_context,
+)
+from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
@@ -1609,6 +1614,91 @@ class TestChatPersistenceService:
                 conversation_id="missing-conversation",
                 system_prompt="Anything",
             )
+
+    def test_roleplay_system_projection_guard_refuses_revoked_prompt_ownership(
+        self, db_instance: CharactersRAGDB
+    ):
+        service = ChatPersistenceService(db_instance)
+        conversation_id = service.create_conversation(
+            assistant_kind="generic",
+            assistant_id="console",
+            system_prompt="Speak with Alpha.",
+        )
+        context = ConsoleRoleplayContext(
+            user_name_override=None,
+            character_system_template="Speak with {{user}}.",
+        )
+        record = db_instance.get_conversation_by_id(conversation_id)
+        db_instance.update_conversation(
+            conversation_id,
+            {"metadata": merge_console_roleplay_context(record["metadata"], context)},
+            expected_version=record["version"],
+        )
+
+        # A manual prompt edit revokes the trusted template before the stale
+        # projection reaches the real persistence adapter.
+        record = db_instance.get_conversation_by_id(conversation_id)
+        db_instance.update_conversation(
+            conversation_id,
+            {
+                "system_prompt": "User-authored prompt.",
+                "metadata": merge_console_roleplay_context(
+                    record["metadata"], ConsoleRoleplayContext()
+                ),
+            },
+            expected_version=record["version"],
+        )
+
+        assert service.update_conversation_system_prompt(
+            conversation_id=conversation_id,
+            system_prompt="Speak with Bravo.",
+            expected_roleplay_context=context,
+            expected_system_prompts=("Speak with Alpha.",),
+        ) is False
+        durable = db_instance.get_conversation_by_id(conversation_id)
+        assert durable["system_prompt"] == "User-authored prompt."
+        assert "console_roleplay_context" not in json.loads(durable["metadata"])
+
+    def test_roleplay_greeting_projection_guard_refuses_revoked_provenance(
+        self, db_instance: CharactersRAGDB
+    ):
+        service = ChatPersistenceService(db_instance)
+        conversation_id = service.create_conversation(
+            assistant_kind="generic", assistant_id="console"
+        )
+        source = "Hello {{user}}."
+        message_id = service.create_message(
+            conversation_id=conversation_id,
+            sender="assistant",
+            content="Hello Alpha.",
+            metadata_json=MessageMetadata(
+                template_kind="character_greeting", template_source=source
+            ).to_json(),
+        )
+        current = db_instance.get_message_by_id(message_id)
+        db_instance.update_message(
+            message_id,
+            {
+                "content": "User-edited greeting.",
+                "metadata_json": MessageMetadata().to_json(),
+            },
+            expected_version=current["version"],
+        )
+
+        assert service.update_message_content(
+            message_id=message_id,
+            content="Hello Bravo.",
+            image_data=None,
+            image_mime_type=None,
+            metadata_json=MessageMetadata(
+                template_kind="character_greeting", template_source=source
+            ).to_json(),
+            expected_roleplay_template_source=source,
+            expected_message_contents=("Hello Alpha.",),
+        ) is False
+        durable = db_instance.get_message_by_id(message_id)
+        assert durable["content"] == "User-edited greeting."
+        assert MessageMetadata.from_json(durable["metadata_json"]).template_kind == ""
 
     def test_workspace_conversation_requires_existing_workspace(
         self,

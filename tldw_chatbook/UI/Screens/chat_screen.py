@@ -1991,16 +1991,13 @@ class ChatScreen(BaseAppScreen):
         if lock is None:
             lock = asyncio.Lock()
             self._console_roleplay_persistence_lock = lock
-        cancelled = False
         async with lock:
-            persistence_task = asyncio.create_task(
-                asyncio.to_thread(store.persist_roleplay_projection_plan, plan)
+            if not store.is_roleplay_projection_plan_current(plan):
+                return
+            plan = store.rebase_roleplay_projection_plan_sync(plan)
+            result = await asyncio.to_thread(
+                store.persist_roleplay_projection_plan, plan
             )
-            try:
-                result = await asyncio.shield(persistence_task)
-            except asyncio.CancelledError:
-                cancelled = True
-                result = await persistence_task
             accepted = store.accept_roleplay_projection_persistence_result(result)
         if accepted and not result.persisted:
             self.app_instance.notify(
@@ -2010,8 +2007,29 @@ class ChatScreen(BaseAppScreen):
             )
         if accepted and store.active_session_id == plan.session_id:
             self._sync_console_identity_surfaces()
-        if cancelled:
+
+    async def _await_console_roleplay_persistence_task(
+        self, task: asyncio.Task[None]
+    ) -> None:
+        """Let Textual cancel its waiter without cancelling the durable queue."""
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
             return
+
+    def _forget_console_roleplay_persistence_task(
+        self, task: asyncio.Task[None]
+    ) -> None:
+        """Release a drained task and consume any unexpected exception."""
+        self._console_roleplay_persistence_tasks.discard(task)
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            logger.error(
+                "Console roleplay projection persistence task failed: {!r}",
+                error,
+            )
 
     def _dispatch_active_console_roleplay_refresh(self) -> bool:
         """Coalesce refresh writes by active session and effective global name."""
@@ -2032,8 +2050,30 @@ class ChatScreen(BaseAppScreen):
             return False
         self._sync_console_identity_surfaces()
         if plan is not None:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            if loop is None:
+                # Synchronous legacy callers have no running event loop.
+                self.run_worker(
+                    self._refresh_console_roleplay_projections(plan),
+                    exclusive=False,
+                    group="console-roleplay-refresh",
+                )
+                return True
+            persistence_task = loop.create_task(
+                self._refresh_console_roleplay_projections(plan)
+            )
+            self._console_roleplay_persistence_tasks.add(persistence_task)
+            persistence_task.add_done_callback(
+                self._forget_console_roleplay_persistence_task
+            )
             self.run_worker(
-                self._refresh_console_roleplay_projections(plan),
+                partial(
+                    self._await_console_roleplay_persistence_task,
+                    persistence_task,
+                ),
                 exclusive=False,
                 group="console-roleplay-refresh",
             )
@@ -2639,6 +2679,7 @@ class ChatScreen(BaseAppScreen):
         self._console_chat_store: ConsoleChatStore | None = None
         self._last_console_roleplay_refresh_key: tuple[str, str] | None = None
         self._console_roleplay_persistence_lock: asyncio.Lock | None = None
+        self._console_roleplay_persistence_tasks: set[asyncio.Task[None]] = set()
         self._console_identity_refresh_generation = 0
         # task-9: cache of persisted-conversation RAG retrieval scopes,
         # keyed by conversation id -- populated off-loop at resume time and

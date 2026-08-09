@@ -14,6 +14,11 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
     resolve_console_message_presentation,
 )
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
+from tldw_chatbook.Sync_Interop.chat_outbox_producer import ChatSyncV2OutboxProducer
+from tldw_chatbook.Sync_Interop.crypto import generate_dataset_key
+from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
+from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
+from tldw_chatbook.tldw_api import SyncV2Envelope
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem, read_conversation_scope
@@ -3613,6 +3618,103 @@ def test_prepare_roleplay_refresh_materializes_live_before_immutable_persistence
     )
     assert persistence.updated_messages[-1]["content"] == "Hello Captain Rowan."
     assert store.accept_roleplay_projection_persistence_result(result) is False
+
+
+@pytest.mark.parametrize("execute_b", (True, False), ids=("b-applied", "b-skipped"))
+def test_serialized_roleplay_sync_rebases_c_from_completed_b_outbox_hash(
+    tmp_path, execute_b
+):
+    class ChatTarget:
+        def __init__(self) -> None:
+            self.hashes: dict[str, str] = {}
+            self.messages: dict[str, dict] = {}
+            self.conflicts: list[dict] = []
+
+        def get_chat_message_hash(self, stable_key: str) -> str | None:
+            return self.hashes.get(stable_key)
+
+        def append_chat_message(
+            self, stable_key: str, payload: dict, payload_hash: str
+        ) -> None:
+            self.hashes[stable_key] = payload_hash
+            self.messages[stable_key] = payload
+
+        def record_conflict(self, conflict: dict) -> None:
+            self.conflicts.append(conflict)
+
+    store, _persistence, session, greeting = _seeded_roleplay_store()
+    dataset_key = generate_dataset_key()
+    repository = SyncStateRepository(tmp_path / "roleplay-sync-state.db")
+    repository.set_sync_v2_profile_state(
+        server_profile_id="profile-1",
+        authenticated_principal_id=None,
+        workspace_scope=None,
+        profile_mode="local_first",
+        device_id="device-1",
+        dataset_id="dataset-1",
+    )
+    producer = ChatSyncV2OutboxProducer(
+        state_repository=repository,
+        dataset_keys={"dataset-1": dataset_key},
+    )
+    store.sync_v2_chat_producer = producer
+    store.sync_v2_server_profile_id = "profile-1"
+    stable_key = (
+        f"{session.persisted_conversation_id}:{greeting.persisted_message_id}"
+    )
+    baseline = producer.enqueue_chat_message(
+        server_profile_id="profile-1",
+        conversation_id=session.persisted_conversation_id,
+        message_id=greeting.persisted_message_id,
+        role="assistant",
+        content="Hello User.",
+    )
+    baseline_envelope = baseline["outbox_entry"]["envelope"]
+    store._sync_v2_message_versions[stable_key] = baseline_envelope["payload_hash"]
+
+    plan_b = store.prepare_session_roleplay_projection_refresh(
+        session.id, global_default="Bravo"
+    )
+    assert plan_b is not None
+    result_b = (
+        store.persist_roleplay_projection_plan(
+            store.rebase_roleplay_projection_plan_sync(plan_b)
+        )
+        if execute_b
+        else None
+    )
+    plan_c = store.prepare_session_roleplay_projection_refresh(
+        session.id, global_default="Commander Cecelia"
+    )
+    assert plan_c is not None
+    if result_b is not None:
+        assert store.accept_roleplay_projection_persistence_result(result_b) is False
+    else:
+        assert store.is_roleplay_projection_plan_current(plan_b) is False
+    result_c = store.persist_roleplay_projection_plan(
+        store.rebase_roleplay_projection_plan_sync(plan_c)
+    )
+    assert store.accept_roleplay_projection_persistence_result(result_c) is True
+
+    entries = repository.list_pending_sync_v2_outbox_envelopes(
+        server_profile_id="profile-1",
+        authenticated_principal_id=None,
+        workspace_scope=None,
+        dataset_id="dataset-1",
+    )
+    envelopes = [entry["envelope"] for entry in entries]
+    assert len(envelopes) == (3 if execute_b else 2)
+    for previous, current in zip(envelopes, envelopes[1:]):
+        assert current["base_version"] == previous["payload_hash"]
+
+    target = ChatTarget()
+    applier = SyncEnvelopeApplier(dataset_key=dataset_key, local_store=target)
+    assert [
+        applier.apply(SyncV2Envelope.model_validate(envelope))["status"]
+        for envelope in envelopes
+    ] == ["applied"] * len(envelopes)
+    assert target.messages[stable_key]["content"] == "Hello Commander Cecelia."
+    assert target.conflicts == []
 
 
 def test_stale_refresh_keeps_live_projection_when_durable_write_refuses_or_raises():

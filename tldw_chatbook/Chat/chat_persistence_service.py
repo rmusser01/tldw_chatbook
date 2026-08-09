@@ -8,7 +8,9 @@ from tldw_chatbook.Chat.console_prefill import PINNED_PREFILL_METADATA_KEY
 from tldw_chatbook.Chat.console_roleplay_metadata import (
     ConsoleRoleplayContext,
     merge_console_roleplay_context,
+    parse_console_roleplay_context,
 )
+from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.Chat.citation_trace_models import SealedCitationWrite
 from tldw_chatbook.Chat.citation_trace_repository import (
     CitationPersistenceUnavailable,
@@ -287,6 +289,8 @@ class ChatPersistenceService:
         *,
         conversation_id: str,
         system_prompt: Optional[str],
+        expected_roleplay_context: ConsoleRoleplayContext | None = None,
+        expected_system_prompts: tuple[str | None, ...] | None = None,
     ) -> bool:
         """Update the persisted system prompt for an existing conversation.
 
@@ -303,6 +307,18 @@ class ChatPersistenceService:
         current_conversation = self.db.get_conversation_by_id(conversation_id)
         if not current_conversation:
             raise ValueError(f"Conversation {conversation_id} not found")
+        if (
+            expected_roleplay_context is not None
+            and parse_console_roleplay_context(current_conversation.get("metadata"))
+            != expected_roleplay_context
+        ):
+            return False
+        if (
+            expected_system_prompts is not None
+            and current_conversation.get("system_prompt")
+            not in expected_system_prompts
+        ):
+            return False
 
         return bool(
             self.db.update_conversation(
@@ -430,6 +446,8 @@ class ChatPersistenceService:
         attachments: Optional[Sequence[Mapping[str, Any]]] = None,
         usage_json: Optional[str] = None,
         metadata_json: Optional[str] = None,
+        expected_roleplay_template_source: str | None = None,
+        expected_message_contents: tuple[str, ...] | None = None,
     ) -> bool:
         """Update a message's content, optionally its parent/feedback, and its images.
 
@@ -501,6 +519,22 @@ class ChatPersistenceService:
         current_message = self.db.get_message_by_id(message_id)
         if not current_message:
             raise ValueError(f"Message {message_id} not found")
+        if expected_roleplay_template_source is not None:
+            current_metadata = MessageMetadata.from_json(
+                current_message.get("metadata_json")
+            )
+            if (
+                current_metadata is None
+                or current_metadata.template_kind != "character_greeting"
+                or current_metadata.template_source
+                != expected_roleplay_template_source
+            ):
+                return False
+        if (
+            expected_message_contents is not None
+            and current_message.get("content") not in expected_message_contents
+        ):
+            return False
 
         update_data: Dict[str, Any] = {"content": content}
         # Only include the image columns when new image bytes are supplied.

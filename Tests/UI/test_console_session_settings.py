@@ -3645,11 +3645,11 @@ async def test_console_roleplay_refresh_serializes_blocked_b_then_c_without_stal
     provider_system = controller._provider_messages_for_session(session.id)[0]["content"]
     assert provider_system.startswith("Speak with Bravo.")
     assert provider_system.endswith("Hello Bravo.")
-    task_b = asyncio.create_task(queued.pop(0))
+    task_b = asyncio.create_task(queued.pop(0)())
     assert await asyncio.to_thread(persistence.system_started.wait, 5)
     task_b.cancel()
     await asyncio.sleep(0)
-    assert task_b.done() is False
+    assert task_b.done() is True
 
     app.app_config["chat_defaults"]["user_display_name"] = "Commander Cecelia"
     assert console._dispatch_active_console_roleplay_refresh() is True
@@ -3661,18 +3661,155 @@ async def test_console_roleplay_refresh_serializes_blocked_b_then_c_without_stal
     provider_system = controller._provider_messages_for_session(session.id)[0]["content"]
     assert provider_system.startswith("Speak with Commander Cecelia.")
     assert provider_system.endswith("Hello Commander Cecelia.")
-    task_c = asyncio.create_task(queued.pop(0))
+    task_c = asyncio.create_task(queued.pop(0)())
     await asyncio.sleep(0)
     assert persistence.durable_system == "Speak with User."
+    task_c.cancel()
+    await asyncio.sleep(0)
+    assert task_c.done() is True
 
     persistence.release_system.set()
     await asyncio.gather(task_b, task_c)
+    for _ in range(100):
+        if not console._console_roleplay_persistence_tasks:
+            break
+        await asyncio.sleep(0.01)
 
+    assert console._console_roleplay_persistence_tasks == set()
     assert persistence.durable_system == "Speak with Commander Cecelia."
     assert persistence.durable_greeting == "Hello Commander Cecelia."
     assert prepare_threads == [owner_thread, owner_thread]
     assert persistence.writer_threads
     assert all(thread_id != owner_thread for thread_id in persistence.writer_threads)
+
+
+@pytest.mark.asyncio
+async def test_console_roleplay_refresh_skips_plan_stale_before_writer() -> None:
+    class RecordingPersistence:
+        def __init__(self) -> None:
+            self.system_writes: list[str | None] = []
+            self.message_writes: list[str] = []
+
+        def create_message(self, **_kwargs):
+            return "msg-1"
+
+        def update_conversation_roleplay_context(self, **_kwargs):
+            return True
+
+        def update_conversation_system_prompt(self, **kwargs):
+            self.system_writes.append(kwargs["system_prompt"])
+            return True
+
+        def update_message_content(self, **kwargs):
+            self.message_writes.append(kwargs["content"])
+            return True
+
+    app = _build_test_app()
+    console = ChatScreen(app)
+    store = console._ensure_console_chat_store()
+    persistence = RecordingPersistence()
+    store.persistence = persistence
+    session = store.create_session(
+        settings=ConsoleSessionSettings(
+            provider="llama_cpp", model="model-a", system_prompt="Speak with Alpha."
+        ),
+        assistant_kind="character",
+        character_name="Alraune",
+    )
+    session.persisted_conversation_id = "conv-1"
+    greeting = store.seed_character_roleplay(
+        session.id,
+        system_template="Speak with {{user}}.",
+        greeting_template="Hello {{user}}.",
+        global_default="Alpha",
+    )
+    assert greeting is not None
+    persistence.system_writes.clear()
+    persistence.message_writes.clear()
+    plan_b = store.prepare_session_roleplay_projection_refresh(
+        session.id, global_default="Bravo"
+    )
+    plan_c = store.prepare_session_roleplay_projection_refresh(
+        session.id, global_default="Cecelia"
+    )
+    assert plan_b is not None and plan_c is not None
+    console._sync_console_identity_surfaces = lambda: None
+
+    await console._refresh_console_roleplay_projections(plan_b)
+    assert persistence.system_writes == []
+    assert persistence.message_writes == []
+
+    await console._refresh_console_roleplay_projections(plan_c)
+    assert persistence.system_writes == ["Speak with Cecelia."]
+    assert persistence.message_writes == ["Hello Cecelia."]
+
+
+@pytest.mark.asyncio
+async def test_mounted_console_cancel_latest_waiter_keeps_durable_c() -> None:
+    class BlockingPersistence:
+        def __init__(self) -> None:
+            self.started = threading.Event()
+            self.release = threading.Event()
+            self.durable_system = "Speak with Alpha."
+            self.durable_greeting = "Hello Alpha."
+
+        def create_message(self, **kwargs):
+            self.durable_greeting = kwargs["content"]
+            return "msg-1"
+
+        def update_conversation_roleplay_context(self, **_kwargs):
+            return True
+
+        def update_conversation_system_prompt(self, **kwargs):
+            value = kwargs["system_prompt"]
+            if value == "Speak with Bravo.":
+                self.started.set()
+                assert self.release.wait(5)
+            self.durable_system = value
+            return True
+
+        def update_message_content(self, **kwargs):
+            self.durable_greeting = kwargs["content"]
+            return True
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"user_display_name": "Alpha"}
+    host = ConsoleHarness(app)
+    persistence = BlockingPersistence()
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.persistence = persistence
+        session.assistant_kind = "character"
+        session.character_name = "Alraune"
+        session.persisted_conversation_id = "conv-1"
+        greeting = store.seed_character_roleplay(
+            session.id,
+            system_template="Speak with {{user}}.",
+            greeting_template="Hello {{user}}.",
+            global_default="Alpha",
+        )
+        assert greeting is not None
+
+        app.app_config["chat_defaults"]["user_display_name"] = "Bravo"
+        assert console._dispatch_active_console_roleplay_refresh() is True
+        assert await asyncio.to_thread(persistence.started.wait, 5)
+        app.app_config["chat_defaults"]["user_display_name"] = "Cecelia"
+        assert console._dispatch_active_console_roleplay_refresh() is True
+        console.workers.cancel_group(console, "console-roleplay-refresh")
+        await pilot.pause(0.05)
+        persistence.release.set()
+        for _ in range(100):
+            if not console._console_roleplay_persistence_tasks:
+                break
+            await pilot.pause(0.02)
+
+        assert console._console_roleplay_persistence_tasks == set()
+        assert persistence.durable_system == "Speak with Cecelia."
+        assert persistence.durable_greeting == "Hello Cecelia."
 
 
 @pytest.mark.asyncio
@@ -3765,7 +3902,7 @@ async def test_console_global_name_refresh_failure_notifies_once(monkeypatch) ->
     assert estimate_result.used_tokens == 17
     assert estimate_calls[-1][0][-1]["content"] == "Hello Captain Rowan."
     assert estimate_calls[-1][3] == "Protect Captain Rowan."
-    await queued.pop(0)
+    await queued.pop(0)()
 
     expected = (
         "Your chat name is active, but updated character templates may not survive "

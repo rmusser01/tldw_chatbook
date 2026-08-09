@@ -4642,10 +4642,15 @@ async def test_settings_console_behavior_saves_display_name_exactly(monkeypatch)
         await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
         refresh_signals = []
+
+        def broken_refresh(generation):
+            refresh_signals.append(generation)
+            raise RuntimeError("broken Console refresh hook")
+
         monkeypatch.setattr(
             screen,
             "request_console_identity_refresh",
-            lambda generation: refresh_signals.append(generation),
+            broken_refresh,
             raising=False,
         )
         field = screen.query_one(
