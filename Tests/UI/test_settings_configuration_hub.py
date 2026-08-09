@@ -863,6 +863,84 @@ def test_settings_domain_category_ids_are_derived_from_contract_mapping():
     )
 
 
+@pytest.mark.asyncio
+async def test_video_generation_category_is_final_domain_default_and_count_matches_rail():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _settle_settings_mount_storm(pilot)
+
+        domain_categories = dict(screen._category_groups())["Domain Defaults"]
+        assert domain_categories[-1] is SettingsCategoryId.VIDEO_GENERATION
+
+        toggle = screen.query_one("#settings-category-group-domain-defaults", Button)
+        assert str(len(domain_categories)) in str(toggle.label)
+        toggle.press()
+        await pilot.pause()
+
+        rendered_categories = {
+            SettingsCategoryId(str(button.id).removeprefix("settings-category-"))
+            for button in screen.query(".settings-category-button")
+            if button.display
+            and str(button.id).removeprefix("settings-category-")
+            in {category.value for category in domain_categories}
+        }
+        assert rendered_categories == set(domain_categories)
+
+
+@pytest.mark.asyncio
+async def test_video_gen_filter_exposes_category_and_enter_opens_existing_panel():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _settle_settings_mount_storm(pilot)
+
+        await pilot.press("/")
+        await _wait_for_settings_search_focus(screen, pilot)
+        await pilot.press(*"Video Gen")
+        await pilot.pause()
+
+        category_button = screen.query_one(
+            "#settings-category-video_generation", Button
+        )
+        assert category_button.display
+
+        await pilot.press("enter")
+        await _wait_for_selector(screen, pilot, "#settings-videogen-panel")
+
+        text = _visible_text(screen)
+        assert "ComfyUI (local server)" in text
+        assert "Base URL" in text
+        assert "Default workflow" in text
+        assert "Timeout (seconds)" in text
+        assert "Console owns this; Settings only shows it" in str(
+            screen.query_one("#settings-boundary-note", Static).renderable
+        )
+
+
+@pytest.mark.asyncio
+async def test_invalid_video_gen_draft_never_invokes_save_worker():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        screen._select_category(SettingsCategoryId.VIDEO_GENERATION.value)
+        await _wait_for_selector(screen, pilot, "#settings-videogen-panel")
+        draft = SettingsDraft(category=SettingsCategoryId.VIDEO_GENERATION)
+        draft.set_value("retention_ttl_hours", None, 0)
+        screen._settings_drafts[SettingsCategoryId.VIDEO_GENERATION] = draft
+
+        with patch.object(screen, "_settings_save_video_gen_worker") as worker:
+            screen._handle_video_gen_save()
+
+        worker.assert_not_called()
+
+
 def test_settings_domain_contract_mapping_rejects_duplicate_categories():
     contract = settings_screen_module.SETTINGS_DOMAIN_CATEGORY_CONTRACTS[0]
 
