@@ -6,6 +6,11 @@ from collections.abc import Mapping
 from typing import Any
 
 from .prompt_artifact_codec import decode_prompt_artifact, deserialize_definition
+from .prompt_source_capabilities import (
+    PromptSourceCapabilities,
+    validate_console_artifact_payload,
+    validate_prompt_request_size,
+)
 
 
 _HISTORY_COMPATIBILITY_REASONS = {
@@ -538,6 +543,64 @@ def normalize_prompt_history_page(payload: Any, *, backend: str) -> dict[str, An
         "total_count": total_count,
         "has_more": has_more,
         "next_before_change_id": cursor,
+    }
+
+
+def prepare_retained_snapshot_for_restore(
+    record: Any, *, capabilities: PromptSourceCapabilities
+) -> dict[str, Any]:
+    """Validate one re-resolved retained row and produce ordinary update fields.
+
+    This deliberately starts from the fail-closed retained-history normalizer,
+    so preview-only rows cannot reach a local write path.  The caller invokes it
+    only after acquiring the database restore transaction's immediate lock.
+    """
+    page = normalize_prompt_history_page(
+        {
+            "items": [record],
+            "predecessor": None,
+            "total_count": 1,
+            "has_more": False,
+            "next_before_change_id": None,
+        },
+        backend=capabilities.backend,
+    )
+    snapshot = page["items"][0]
+    if not snapshot["restore_eligible"]:
+        raise ValueError(
+            snapshot["compatibility_reason"]
+            or "Retained snapshot is preview-only and cannot be restored."
+        )
+
+    update_data = {
+        field: snapshot[field]
+        for field in (
+            "name",
+            "author",
+            "details",
+            "system_prompt",
+            "user_prompt",
+            "prompt_format",
+            "prompt_schema_version",
+            "prompt_definition",
+            "artifact_type",
+        )
+    }
+    raw_payload = record.get("payload") if isinstance(record, Mapping) else None
+    if isinstance(raw_payload, Mapping):
+        # ``None`` is a distinct durable value from an empty compatibility lane.
+        # The history normalizer renders both safely as empty preview text, but
+        # restore must preserve the exact stored lane values for no-change.
+        for field in ("system_prompt", "user_prompt"):
+            if field in raw_payload:
+                update_data[field] = raw_payload[field]
+    if snapshot["prompt_format"] == "structured":
+        update_data = validate_console_artifact_payload(update_data, capabilities)
+        validate_prompt_request_size(update_data, capabilities)
+    return {
+        "update_data": update_data,
+        "keywords": snapshot["keywords"],
+        "keywords_captured": snapshot["keywords_captured"],
     }
 
 

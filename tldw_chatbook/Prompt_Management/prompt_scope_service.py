@@ -20,10 +20,12 @@ from .prompt_artifact_codec import deserialize_definition
 from .prompt_normalizers import (
     normalize_prompt_collection_list,
     normalize_prompt_collection_record,
+    normalize_prompt_history_page,
     normalize_prompt_list,
     normalize_prompt_record,
     normalize_prompt_search,
     normalize_prompt_version_list,
+    prepare_retained_snapshot_for_restore,
 )
 from .prompt_source_capabilities import (
     PromptCapabilityError,
@@ -491,6 +493,50 @@ class LocalPromptService:
         if hasattr(self.prompt_db, "record_prompt_usage"):
             return self.prompt_db.record_prompt_usage(prompt_identifier)
         return self.get_prompt(prompt_identifier, include_deleted=True)
+
+    def list_prompt_versions(
+        self,
+        prompt_identifier: str | int,
+        *,
+        page_size: int = 25,
+        before_change_id: int | None = None,
+    ) -> dict[str, Any]:
+        prompt = self.get_prompt(prompt_identifier, include_deleted=True)
+        if not prompt:
+            raise ValueError(f"Prompt '{prompt_identifier}' not found.")
+        prompt_uuid = prompt.get("uuid")
+        if not prompt_uuid:
+            raise ValueError(f"Prompt '{prompt_identifier}' has no UUID.")
+        return self.prompt_db.get_prompt_history_entries(
+            prompt_uuid,
+            page_size=page_size,
+            before_change_id=before_change_id,
+        )
+
+    def restore_prompt_version(
+        self,
+        prompt_identifier: str | int,
+        *,
+        change_id: int,
+        version: int,
+        expected_version: int,
+    ) -> dict[str, Any]:
+        prompt = self.get_prompt(prompt_identifier, include_deleted=True)
+        if not prompt:
+            raise ValueError(f"Prompt '{prompt_identifier}' not found.")
+        prompt_uuid = prompt.get("uuid")
+        if not prompt_uuid:
+            raise ValueError(f"Prompt '{prompt_identifier}' has no UUID.")
+        return self.prompt_db.restore_prompt_history_entry(
+            prompt_uuid,
+            change_id=change_id,
+            version=version,
+            expected_version=expected_version,
+            snapshot_validator=lambda snapshot: prepare_retained_snapshot_for_restore(
+                snapshot,
+                capabilities=local_prompt_capabilities(),
+            ),
+        )
 
     def create_prompt_collection(self, payload: dict[str, Any]) -> dict[str, Any]:
         db = self._require_collection_db()
@@ -971,12 +1017,21 @@ class PromptScopeService:
         *,
         mode: PromptBackend | str | None = None,
         prompt_identifier: str | int,
-    ) -> list[dict[str, Any]]:
+        page_size: int = 25,
+        before_change_id: int | None = None,
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._action_id(normalized_mode, "versions"))
-        if normalized_mode == PromptBackend.LOCAL:
-            raise ValueError("Local prompt version history is unavailable.")
+        self._enforce_policy(f"prompts.versions.list.{normalized_mode.value}")
         service = self._service_for_mode(normalized_mode)
+        if normalized_mode == PromptBackend.LOCAL:
+            response = await self._maybe_await(
+                service.list_prompt_versions(
+                    prompt_identifier,
+                    page_size=page_size,
+                    before_change_id=before_change_id,
+                )
+            )
+            return normalize_prompt_history_page(response, backend="local")
         response = await self._maybe_await(
             service.list_prompt_versions(prompt_identifier)
         )
@@ -988,12 +1043,25 @@ class PromptScopeService:
         mode: PromptBackend | str | None = None,
         prompt_identifier: str | int,
         version: int,
+        change_id: int | None = None,
+        expected_version: int | None = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._action_id(normalized_mode, "restore_version"))
-        if normalized_mode == PromptBackend.LOCAL:
-            raise ValueError("Local prompt version restore is unavailable.")
+        self._enforce_policy(f"prompts.versions.restore.{normalized_mode.value}")
         service = self._service_for_mode(normalized_mode)
+        if normalized_mode == PromptBackend.LOCAL:
+            if change_id is None or expected_version is None:
+                raise ValueError(
+                    "Local retained restore requires change_id and expected_version."
+                )
+            return await self._maybe_await(
+                service.restore_prompt_version(
+                    prompt_identifier,
+                    change_id=change_id,
+                    version=version,
+                    expected_version=expected_version,
+                )
+            )
         response = await self._maybe_await(
             service.restore_prompt_version(prompt_identifier, version)
         )

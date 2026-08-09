@@ -179,6 +179,56 @@ class FakeLocalPromptService:
         self.calls.append(("delete_prompt", prompt_identifier))
         return True
 
+    def list_prompt_versions(
+        self, prompt_identifier, *, page_size=25, before_change_id=None
+    ):
+        self.calls.append(
+            ("list_prompt_versions", prompt_identifier, page_size, before_change_id)
+        )
+        return {
+            "items": [
+                {
+                    "change_id": 42,
+                    "entity": "Prompts",
+                    "entity_uuid": "local-uuid-7",
+                    "operation": "update",
+                    "timestamp": "2026-08-08T00:00:00.000Z",
+                    "version": 3,
+                    "payload": {
+                        "name": "Local Prompt",
+                        "system_prompt": "Local system",
+                        "user_prompt": "Local user",
+                    },
+                }
+            ],
+            "predecessor": None,
+            "total_count": 1,
+            "has_more": False,
+            "next_before_change_id": None,
+        }
+
+    def restore_prompt_version(
+        self, prompt_identifier, *, change_id, version, expected_version
+    ):
+        self.calls.append(
+            (
+                "restore_prompt_version",
+                prompt_identifier,
+                change_id,
+                version,
+                expected_version,
+            )
+        )
+        return {
+            "outcome": "restored",
+            "snapshot_unavailable": False,
+            "no_change": False,
+            "source_version": version,
+            "current_version": expected_version,
+            "new_version": expected_version + 1,
+            "retained_current_keywords": False,
+        }
+
     def create_prompt_collection(self, payload):
         self.calls.append(("create_prompt_collection", payload))
         return {"collection_id": 3}
@@ -709,8 +759,8 @@ async def test_prompt_scope_routes_server_usage_versions_and_restore():
     ]
     assert policy.actions[-3:] == [
         "prompts.use.server",
-        "prompts.versions.server",
-        "prompts.restore_version.server",
+        "prompts.versions.list.server",
+        "prompts.versions.restore.server",
     ]
 
 
@@ -754,23 +804,91 @@ async def test_prompt_scope_refuses_to_record_unknown_artifact_usage():
 
 
 @pytest.mark.asyncio
-async def test_prompt_scope_rejects_local_version_history_until_supported():
+async def test_prompt_scope_routes_local_retained_history_and_restore_through_live_adapter():
+    policy = FakePolicyEnforcer()
+    local = FakeLocalPromptService()
     service = PromptScopeService(
-        local_service=FakeLocalPromptService(),
+        local_service=local,
         server_service=FakeServerPromptService(),
+        policy_enforcer=policy,
     )
 
-    with pytest.raises(ValueError, match="Local prompt version history is unavailable"):
-        await service.list_prompt_versions(
-            mode="local", prompt_identifier="local-uuid-7"
+    page = await service.list_prompt_versions(
+        mode="local", prompt_identifier="local-uuid-7", page_size=7, before_change_id=50
+    )
+    restored = await service.restore_prompt_version(
+        mode="local",
+        prompt_identifier="local-uuid-7",
+        change_id=42,
+        version=3,
+        expected_version=3,
+    )
+
+    assert page["items"][0]["backend"] == "local"
+    assert restored["new_version"] == 4
+    assert local.calls[-2:] == [
+        ("list_prompt_versions", "local-uuid-7", 7, 50),
+        ("restore_prompt_version", "local-uuid-7", 42, 3, 3),
+    ]
+    assert policy.actions[-2:] == [
+        "prompts.versions.list.local",
+        "prompts.versions.restore.local",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_prompt_scope_app_wired_local_restore_uses_real_retained_history_transaction():
+    database = PromptsDatabase(":memory:", client_id="scope-retained-history")
+    try:
+        prompt_id, prompt_uuid, _message = database.add_prompt(
+            name="Original",
+            author="Author",
+            details="Original details",
+            system_prompt="Original system",
+            user_prompt="Original user",
+            keywords=["original"],
+        )
+        database.update_prompt_by_id(
+            prompt_id,
+            {
+                "name": "Current",
+                "details": "Current details",
+                "keywords": ["current"],
+            },
+            expected_version=1,
+        )
+        service = PromptScopeService(
+            local_service=LocalPromptService(database),
+            server_service=FakeServerPromptService(),
         )
 
-    with pytest.raises(ValueError, match="Local prompt version restore is unavailable"):
-        await service.restore_prompt_version(
-            mode="local",
-            prompt_identifier="local-uuid-7",
-            version=1,
+        page = await service.list_prompt_versions(
+            mode="local", prompt_identifier=prompt_uuid, page_size=10
         )
+        source = next(item for item in page["items"] if item["version"] == 1)
+        result = await service.restore_prompt_version(
+            mode="local",
+            prompt_identifier=prompt_uuid,
+            change_id=source["change_id"],
+            version=source["version"],
+            expected_version=2,
+        )
+
+        restored = database.fetch_prompt_details(prompt_uuid)
+        assert result == {
+            "outcome": "restored",
+            "snapshot_unavailable": False,
+            "no_change": False,
+            "source_version": 1,
+            "current_version": 2,
+            "new_version": 3,
+            "retained_current_keywords": False,
+        }
+        assert restored["name"] == "Original"
+        assert restored["keywords"] == ["original"]
+        assert restored["version"] == 3
+    finally:
+        database.close_connection()
 
 
 @pytest.mark.asyncio

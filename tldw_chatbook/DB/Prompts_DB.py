@@ -38,7 +38,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from math import ceil
 from pathlib import Path
-from typing import List, Tuple, Dict, Any, Iterator, Optional, Union
+from typing import Callable, List, Tuple, Dict, Any, Iterator, Optional, Union
 
 #
 # Third-Party Libraries
@@ -3249,6 +3249,9 @@ class PromptsDatabase:
     @staticmethod
     def _decode_prompt_history_row(row: sqlite3.Row) -> Dict[str, Any]:
         row_dict = dict(row)
+        timestamp = row_dict.get("timestamp")
+        if isinstance(timestamp, datetime):
+            row_dict["timestamp"] = timestamp.isoformat()
         raw_payload = row_dict.get("payload")
         row_dict["payload_error"] = None
         row_dict["raw_payload"] = None
@@ -3334,6 +3337,186 @@ class PromptsDatabase:
             "has_more": has_more,
             "next_before_change_id": next_before_change_id,
         }
+
+    def restore_prompt_history_entry(
+        self,
+        entity_uuid: str,
+        *,
+        change_id: int,
+        version: int,
+        expected_version: int,
+        snapshot_validator: Callable[[Dict[str, Any]], Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Restore one retained Prompt snapshot through the ordinary update path.
+
+        The retained row and current Prompt are deliberately re-resolved after
+        acquiring SQLite's write lock.  ``snapshot_validator`` is supplied by
+        the source-service boundary so compatibility/capability validation runs
+        *inside* that same transaction without teaching the DB layer about UI
+        artifact policy.
+        """
+        validated_uuid = self._validate_prompt_history_entity_uuid(entity_uuid)
+        validated_change_id = self._validate_prompt_history_positive_int(
+            change_id,
+            name="change_id",
+            maximum=self._SQLITE_SIGNED_INTEGER_MAX,
+        )
+        validated_version = self._validate_prompt_history_positive_int(
+            version,
+            name="version",
+            maximum=self._SQLITE_SIGNED_INTEGER_MAX,
+        )
+        validated_expected_version = self._normalize_expected_version(expected_version)
+        if validated_expected_version is None:
+            raise InputError("expected_version is required for retained restore.")
+        if not callable(snapshot_validator):
+            raise InputError("snapshot_validator must be callable.")
+
+        unavailable = {
+            "outcome": "snapshot_unavailable",
+            "snapshot_unavailable": True,
+            "no_change": False,
+            "source_version": validated_version,
+            "current_version": None,
+            "new_version": None,
+            "retained_current_keywords": False,
+        }
+        with self.transaction(immediate=True) as conn:
+            snapshot_row = conn.execute(
+                """
+                SELECT *
+                FROM sync_log
+                WHERE entity = 'Prompts'
+                  AND entity_uuid = ?
+                  AND operation IN ('create', 'update')
+                  AND change_id = ?
+                  AND version = ?
+                """,
+                (validated_uuid, validated_change_id, validated_version),
+            ).fetchone()
+            if snapshot_row is None:
+                return unavailable
+
+            current_row = conn.execute(
+                "SELECT * FROM Prompts WHERE uuid = ?", (validated_uuid,)
+            ).fetchone()
+            if current_row is None or current_row["deleted"]:
+                return {
+                    **unavailable,
+                    "outcome": "current_unavailable",
+                    "snapshot_unavailable": False,
+                    "current_version": (
+                        int(current_row["version"]) if current_row is not None else None
+                    ),
+                }
+            current_version = int(current_row["version"])
+            if current_version != validated_expected_version:
+                raise ConflictError(
+                    "Prompt changed after it was opened.",
+                    "Prompts",
+                    int(current_row["id"]),
+                )
+
+            validated_snapshot = snapshot_validator(
+                self._decode_prompt_history_row(snapshot_row)
+            )
+            if not isinstance(validated_snapshot, dict):
+                raise InputError("snapshot_validator must return a mapping.")
+            update_data = validated_snapshot.get("update_data")
+            keywords_captured = validated_snapshot.get("keywords_captured")
+            if not isinstance(update_data, dict) or type(keywords_captured) is not bool:
+                raise InputError(
+                    "snapshot_validator must return update_data and keywords_captured."
+                )
+            required_fields = (
+                "name",
+                "author",
+                "details",
+                "system_prompt",
+                "user_prompt",
+                "prompt_format",
+                "prompt_schema_version",
+                "prompt_definition",
+                "artifact_type",
+            )
+            if any(field not in update_data for field in required_fields):
+                raise InputError(
+                    "Retained snapshot is missing restorable Prompt fields."
+                )
+
+            current_keywords = sorted(
+                row["keyword"]
+                for row in conn.execute(
+                    """
+                    SELECT keyword
+                    FROM PromptKeywordsTable AS keyword_table
+                    JOIN PromptKeywordLinks AS link
+                      ON link.keyword_id = keyword_table.id
+                    WHERE link.prompt_id = ? AND keyword_table.deleted = 0
+                    """,
+                    (int(current_row["id"]),),
+                ).fetchall()
+            )
+            if keywords_captured:
+                desired_keywords = self._canonicalize_prompt_keywords(
+                    validated_snapshot.get("keywords")
+                )
+            else:
+                desired_keywords = current_keywords
+
+            candidate = dict(update_data)
+            candidate["keywords"] = desired_keywords
+            desired_definition = self._serialize_prompt_definition(
+                candidate["prompt_definition"]
+            )
+            desired_values = {
+                "name": candidate["name"].strip()
+                if isinstance(candidate["name"], str)
+                else candidate["name"],
+                "author": candidate["author"],
+                "details": candidate["details"],
+                "system_prompt": candidate["system_prompt"],
+                "user_prompt": candidate["user_prompt"],
+                "prompt_format": self._normalize_prompt_format(
+                    candidate["prompt_format"]
+                ),
+                "prompt_schema_version": candidate["prompt_schema_version"],
+                "prompt_definition": desired_definition,
+                "artifact_type": self._normalize_artifact_type(
+                    candidate["artifact_type"]
+                ),
+            }
+            if (
+                all(
+                    current_row[field] == desired_value
+                    for field, desired_value in desired_values.items()
+                )
+                and current_keywords == desired_keywords
+            ):
+                return {
+                    "outcome": "no_change",
+                    "snapshot_unavailable": False,
+                    "no_change": True,
+                    "source_version": validated_version,
+                    "current_version": current_version,
+                    "new_version": current_version,
+                    "retained_current_keywords": not keywords_captured,
+                }
+
+            self.update_prompt_by_id(
+                int(current_row["id"]),
+                candidate,
+                expected_version=current_version,
+            )
+            return {
+                "outcome": "restored",
+                "snapshot_unavailable": False,
+                "no_change": False,
+                "source_version": validated_version,
+                "current_version": current_version,
+                "new_version": current_version + 1,
+                "retained_current_keywords": not keywords_captured,
+            }
 
     def get_sync_log_entries(
         self, since_change_id: int = 0, limit: Optional[int] = None

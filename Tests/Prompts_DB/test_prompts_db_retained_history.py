@@ -10,7 +10,12 @@ from typing import Any
 import pytest
 
 import tldw_chatbook.DB.Prompts_DB as prompts_db_module
-from tldw_chatbook.DB.Prompts_DB import DatabaseError, InputError, PromptsDatabase
+from tldw_chatbook.DB.Prompts_DB import (
+    ConflictError,
+    DatabaseError,
+    InputError,
+    PromptsDatabase,
+)
 
 
 HISTORY_INDEX = "idx_sync_log_prompt_history"
@@ -840,6 +845,316 @@ def test_update_prompt_snapshot_captures_final_keywords_without_rewriting_legacy
         assert all(
             prompt_events[0]["change_id"] < event["change_id"] for event in link_events
         )
+    finally:
+        database.close_connection()
+
+
+def test_retained_restore_re_resolves_snapshot_and_uses_conditional_update():
+    database = PromptsDatabase(":memory:", client_id="retained-restore")
+    try:
+        prompt_id, prompt_uuid, _message = database.add_prompt(
+            name="Original",
+            author="Author",
+            details="Original details",
+            system_prompt="Original system",
+            user_prompt="Original user",
+            keywords=["original"],
+        )
+        database.update_prompt_by_id(
+            prompt_id,
+            {
+                "name": "Current",
+                "author": "Current author",
+                "details": "Current details",
+                "system_prompt": "Current system",
+                "user_prompt": "Current user",
+                "keywords": ["current"],
+            },
+            expected_version=1,
+        )
+        history = database.get_prompt_history_entries(prompt_uuid, page_size=10)
+        source = next(item for item in history["items"] if item["version"] == 1)
+
+        def validate_snapshot(snapshot):
+            payload = snapshot["payload"]
+            return {
+                "update_data": {
+                    field: payload[field]
+                    for field in (
+                        "name",
+                        "author",
+                        "details",
+                        "system_prompt",
+                        "user_prompt",
+                        "prompt_format",
+                        "prompt_schema_version",
+                        "prompt_definition",
+                        "artifact_type",
+                    )
+                },
+                "keywords": payload["keywords"],
+                "keywords_captured": True,
+            }
+
+        result = database.restore_prompt_history_entry(
+            prompt_uuid,
+            change_id=source["change_id"],
+            version=1,
+            expected_version=2,
+            snapshot_validator=validate_snapshot,
+        )
+
+        restored = database.fetch_prompt_details(prompt_uuid)
+        assert result == {
+            "outcome": "restored",
+            "snapshot_unavailable": False,
+            "no_change": False,
+            "source_version": 1,
+            "current_version": 2,
+            "new_version": 3,
+            "retained_current_keywords": False,
+        }
+        assert restored["name"] == "Original"
+        assert restored["version"] == 3
+        assert restored["keywords"] == ["original"]
+        assert database.get_prompt_history_count(prompt_uuid) == 3
+    finally:
+        database.close_connection()
+
+
+def test_retained_restore_returns_snapshot_unavailable_without_writing():
+    database = PromptsDatabase(":memory:", client_id="retained-pruned")
+    try:
+        _prompt_id, prompt_uuid, _message = database.add_prompt(
+            name="Current", author=None, details="Current"
+        )
+        selected = database.get_prompt_history_entries(prompt_uuid, page_size=1)[
+            "items"
+        ][0]
+        database.get_connection().execute(
+            "DELETE FROM sync_log WHERE change_id = ?", (selected["change_id"],)
+        )
+        database.get_connection().commit()
+        before = _prompt_storage_state(database)
+
+        result = database.restore_prompt_history_entry(
+            prompt_uuid,
+            change_id=selected["change_id"],
+            version=1,
+            expected_version=1,
+            snapshot_validator=lambda _snapshot: pytest.fail("must not validate"),
+        )
+
+        assert result == {
+            "outcome": "snapshot_unavailable",
+            "snapshot_unavailable": True,
+            "no_change": False,
+            "source_version": 1,
+            "current_version": None,
+            "new_version": None,
+            "retained_current_keywords": False,
+        }
+        assert _prompt_storage_state(database) == before
+    finally:
+        database.close_connection()
+
+
+def test_retained_restore_stale_expected_version_keeps_conflict_error_path():
+    database = PromptsDatabase(":memory:", client_id="retained-stale")
+    try:
+        _prompt_id, prompt_uuid, _message = database.add_prompt(
+            name="Current", author=None, details="Current"
+        )
+        source = database.get_prompt_history_entries(prompt_uuid, page_size=1)["items"][
+            0
+        ]
+        before = _prompt_storage_state(database)
+
+        with pytest.raises(ConflictError, match="Prompt changed after it was opened"):
+            database.restore_prompt_history_entry(
+                prompt_uuid,
+                change_id=source["change_id"],
+                version=1,
+                expected_version=99,
+                snapshot_validator=lambda _snapshot: pytest.fail("must not validate"),
+            )
+
+        assert _prompt_storage_state(database) == before
+    finally:
+        database.close_connection()
+
+
+def test_retained_restore_refuses_deleted_current_prompt_without_writing():
+    database = PromptsDatabase(":memory:", client_id="retained-deleted")
+    try:
+        prompt_id, prompt_uuid, _message = database.add_prompt(
+            name="Deleted", author=None, details="Original"
+        )
+        source = database.get_prompt_history_entries(prompt_uuid, page_size=1)["items"][
+            0
+        ]
+        assert database.soft_delete_prompt(prompt_id) is True
+        before = _prompt_storage_state(database)
+
+        result = database.restore_prompt_history_entry(
+            prompt_uuid,
+            change_id=source["change_id"],
+            version=1,
+            expected_version=2,
+            snapshot_validator=lambda _snapshot: pytest.fail("must not validate"),
+        )
+
+        assert result["outcome"] == "current_unavailable"
+        assert result["snapshot_unavailable"] is False
+        assert _prompt_storage_state(database) == before
+    finally:
+        database.close_connection()
+
+
+def test_retained_restore_no_change_does_not_append_sync_history():
+    database = PromptsDatabase(":memory:", client_id="retained-no-change")
+    try:
+        _prompt_id, prompt_uuid, _message = database.add_prompt(
+            name="Unchanged",
+            author="Author",
+            details="Details",
+            system_prompt="System",
+            user_prompt="User",
+            keywords=["same"],
+        )
+        source = database.get_prompt_history_entries(prompt_uuid, page_size=1)["items"][
+            0
+        ]
+        before = _prompt_storage_state(database)
+
+        result = database.restore_prompt_history_entry(
+            prompt_uuid,
+            change_id=source["change_id"],
+            version=1,
+            expected_version=1,
+            snapshot_validator=lambda snapshot: {
+                "update_data": {
+                    field: snapshot["payload"][field]
+                    for field in (
+                        "name",
+                        "author",
+                        "details",
+                        "system_prompt",
+                        "user_prompt",
+                        "prompt_format",
+                        "prompt_schema_version",
+                        "prompt_definition",
+                        "artifact_type",
+                    )
+                },
+                "keywords": snapshot["payload"]["keywords"],
+                "keywords_captured": True,
+            },
+        )
+
+        assert result["outcome"] == "no_change"
+        assert result["no_change"] is True
+        assert _prompt_storage_state(database) == before
+    finally:
+        database.close_connection()
+
+
+def test_retained_restore_duplicate_name_rolls_back_prompt_and_history():
+    database = PromptsDatabase(":memory:", client_id="retained-duplicate")
+    try:
+        prompt_id, prompt_uuid, _message = database.add_prompt(
+            name="Restore me", author=None, details="Original"
+        )
+        database.update_prompt_by_id(prompt_id, {"name": "Current"}, expected_version=1)
+        database.add_prompt(name="Restore me", author=None, details="Other")
+        source = next(
+            item
+            for item in database.get_prompt_history_entries(prompt_uuid, page_size=10)[
+                "items"
+            ]
+            if item["version"] == 1
+        )
+        before = _prompt_storage_state(database)
+
+        with pytest.raises(ConflictError, match="already exists"):
+            database.restore_prompt_history_entry(
+                prompt_uuid,
+                change_id=source["change_id"],
+                version=1,
+                expected_version=2,
+                snapshot_validator=lambda snapshot: {
+                    "update_data": {
+                        field: snapshot["payload"][field]
+                        for field in (
+                            "name",
+                            "author",
+                            "details",
+                            "system_prompt",
+                            "user_prompt",
+                            "prompt_format",
+                            "prompt_schema_version",
+                            "prompt_definition",
+                            "artifact_type",
+                        )
+                    },
+                    "keywords": snapshot["payload"]["keywords"],
+                    "keywords_captured": True,
+                },
+            )
+
+        assert _prompt_storage_state(database) == before
+    finally:
+        database.close_connection()
+
+
+def test_retained_restore_keyword_failure_rolls_back_prompt_links_and_history():
+    database = PromptsDatabase(":memory:", client_id="retained-keyword-failure")
+    try:
+        prompt_id, prompt_uuid, _message = database.add_prompt(
+            name="Restore keywords", author=None, details="Original", keywords=["old"]
+        )
+        database.update_prompt_by_id(
+            prompt_id,
+            {"details": "Current", "keywords": ["current"]},
+            expected_version=1,
+        )
+        source = next(
+            item
+            for item in database.get_prompt_history_entries(prompt_uuid, page_size=10)[
+                "items"
+            ]
+            if item["version"] == 1
+        )
+        _install_link_insert_failure(database)
+        before = _prompt_storage_state(database)
+
+        with pytest.raises(DatabaseError, match="Keyword update failed"):
+            database.restore_prompt_history_entry(
+                prompt_uuid,
+                change_id=source["change_id"],
+                version=1,
+                expected_version=2,
+                snapshot_validator=lambda snapshot: {
+                    "update_data": {
+                        field: snapshot["payload"][field]
+                        for field in (
+                            "name",
+                            "author",
+                            "details",
+                            "system_prompt",
+                            "user_prompt",
+                            "prompt_format",
+                            "prompt_schema_version",
+                            "prompt_definition",
+                            "artifact_type",
+                        )
+                    },
+                    "keywords": snapshot["payload"]["keywords"],
+                    "keywords_captured": True,
+                },
+            )
+
+        assert _prompt_storage_state(database) == before
     finally:
         database.close_connection()
 
