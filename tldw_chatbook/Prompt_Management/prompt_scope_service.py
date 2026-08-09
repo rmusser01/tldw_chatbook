@@ -1056,7 +1056,11 @@ class PromptScopeService:
                     before_change_id=before_change_id,
                 )
             )
-            return normalize_prompt_history_page(response, backend="local")
+            return normalize_prompt_history_page(
+                response,
+                backend="local",
+                capabilities=local_prompt_capabilities(),
+            )
         response = await self._maybe_await(
             service.list_prompt_versions(prompt_identifier)
         )

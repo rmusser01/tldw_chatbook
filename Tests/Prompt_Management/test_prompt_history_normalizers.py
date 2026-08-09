@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
+from dataclasses import replace
 from typing import Any
 
 import pytest
 
 from tldw_chatbook.Prompt_Management import prompt_normalizers
+from tldw_chatbook.Prompt_Management.prompt_source_capabilities import (
+    PromptSourceCapabilities,
+    local_prompt_capabilities,
+)
 
 
 PROMPT_UUID = "00000000-0000-4000-8000-000000000196"
@@ -141,8 +146,14 @@ def _page(
     }
 
 
-def _normalize(payload: Any) -> dict[str, Any]:
-    return prompt_normalizers.normalize_prompt_history_page(payload, backend="local")
+def _normalize(
+    payload: Any, *, capabilities: PromptSourceCapabilities | None = None
+) -> dict[str, Any]:
+    return prompt_normalizers.normalize_prompt_history_page(
+        payload,
+        backend="local",
+        capabilities=capabilities,
+    )
 
 
 def test_history_page_preserves_envelope_and_uses_authoritative_sync_metadata() -> None:
@@ -187,6 +198,81 @@ def test_history_page_preserves_envelope_and_uses_authoritative_sync_metadata() 
     assert item["compatibility_state"] == "compatible"
     assert item["compatibility_reason"] is None
     assert item["restore_eligible"] is True
+
+
+@pytest.mark.parametrize(
+    ("artifact_type", "eligible", "state", "reason"),
+    [
+        (
+            "recipe",
+            False,
+            "legacy_recipe",
+            "Legacy Recipe snapshots are preview-only.",
+        ),
+        (None, True, "compatible", None),
+    ],
+    ids=["explicit-recipe", "missing-type-defaults-to-prompt"],
+)
+def test_legacy_history_restore_eligibility_preserves_prompt_only_rule(
+    artifact_type: str | None,
+    eligible: bool,
+    state: str,
+    reason: str | None,
+) -> None:
+    payload = _legacy_payload(version=1)
+    if artifact_type is None:
+        del payload["artifact_type"]
+    else:
+        payload["artifact_type"] = artifact_type
+
+    item = _normalize(
+        _page([_row(change_id=1, version=1, payload=payload)], total_count=1),
+        capabilities=local_prompt_capabilities(),
+    )["items"][0]
+
+    assert item["artifact_type"] == (artifact_type or "prompt")
+    assert item["definition_state"] == "legacy"
+    assert item["compatibility_state"] == state
+    assert item["compatibility_reason"] == reason
+    assert item["restore_eligible"] is eligible
+
+
+@pytest.mark.parametrize(
+    ("capability_overrides", "artifact_type"),
+    [
+        ({"structured_kinds": frozenset()}, "prompt"),
+        ({"artifact_types": frozenset({"prompt"})}, "recipe"),
+        ({"compiled_lane_limit": 4}, "prompt"),
+        ({"definition_limit": 8}, "prompt"),
+        ({"request_limit": 8}, "prompt"),
+    ],
+    ids=[
+        "structured-kind",
+        "artifact-type",
+        "compiled-lane-limit",
+        "definition-limit",
+        "request-limit",
+    ],
+)
+def test_structured_history_uses_current_source_capabilities_before_restore(
+    capability_overrides: dict[str, Any], artifact_type: str
+) -> None:
+    capabilities = replace(local_prompt_capabilities(), **capability_overrides)
+    payload = _structured_payload(artifact_type=artifact_type)
+
+    item = _normalize(
+        _page([_row(change_id=1, version=1, payload=payload)], total_count=1),
+        capabilities=capabilities,
+    )["items"][0]
+
+    assert item["system_prompt"] == "system-v2"
+    assert item["user_prompt"] == "user-v2"
+    assert item["definition_state"] == "supported_v2"
+    assert item["compatibility_state"] == "current_capability_unsupported"
+    assert item["compatibility_reason"] == (
+        "This retained version is not supported by current local Prompt capabilities."
+    )
+    assert item["restore_eligible"] is False
 
 
 @pytest.mark.parametrize(

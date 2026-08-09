@@ -67,9 +67,15 @@ from tldw_chatbook.Prompt_Management.prompt_restore_errors import (
     PromptRestoreError,
     PromptRestoreErrorCode,
 )
+from tldw_chatbook.Prompt_Management import (
+    prompt_scope_service as prompt_scope_service_module,
+)
 from tldw_chatbook.Prompt_Management.prompt_scope_service import (
     LocalPromptService as ScopeLocalPromptService,
     PromptScopeService,
+)
+from tldw_chatbook.Prompt_Management.prompt_source_capabilities import (
+    local_prompt_capabilities,
 )
 from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
@@ -1668,6 +1674,163 @@ async def test_library_prompt_history_count_is_index_only_and_first_page_is_lazy
             )
             == "Save or discard unsaved changes before restoring retained history."
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("snapshot_kind", "reason", "system_preview", "user_preview"),
+    [
+        (
+            "legacy-recipe",
+            "Legacy Recipe snapshots are preview-only.",
+            "[bold]literal legacy system[/bold]",
+            "literal legacy user",
+        ),
+        (
+            "over-limit-structured",
+            "This retained version is not supported by current local Prompt "
+            "capabilities.",
+            "",
+            "literal structured user",
+        ),
+    ],
+)
+async def test_library_prompt_history_previews_nonrestorable_local_snapshots_without_mutation(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    snapshot_kind: str,
+    reason: str,
+    system_preview: str,
+    user_preview: str,
+) -> None:
+    capabilities = replace(local_prompt_capabilities(), compiled_lane_limit=4)
+    monkeypatch.setattr(
+        prompt_scope_service_module,
+        "local_prompt_capabilities",
+        lambda: capabilities,
+    )
+    db, service = _real_prompt_scope_service(tmp_path)
+    if snapshot_kind == "legacy-recipe":
+        prompt_id, prompt_uuid, _message = db.add_prompt(
+            name="History compatibility",
+            author="A",
+            details="legacy recipe",
+            system_prompt=system_preview,
+            user_prompt=user_preview,
+            prompt_format="legacy",
+            artifact_type="recipe",
+        )
+    else:
+        definition = {
+            "schema_version": 2,
+            "kind": "block_prompt",
+            "lanes": [
+                {"id": "system", "blocks": []},
+                {
+                    "id": "user",
+                    "blocks": [
+                        {
+                            "id": "user-1",
+                            "title": "User",
+                            "syntax": "freeform",
+                            "content": user_preview,
+                        }
+                    ],
+                },
+            ],
+        }
+        prompt_id, prompt_uuid, _message = db.add_prompt(
+            name="History compatibility",
+            author="A",
+            details="structured over limit",
+            system_prompt=system_preview,
+            user_prompt=user_preview,
+            prompt_format="structured",
+            prompt_schema_version=2,
+            prompt_definition=definition,
+            artifact_type="prompt",
+        )
+    db.update_prompt_by_id(
+        prompt_id,
+        {
+            "details": "current Prompt",
+            "system_prompt": "current system",
+            "user_prompt": "current user",
+            "prompt_format": "legacy",
+            "prompt_schema_version": None,
+            "prompt_definition": None,
+            "artifact_type": "prompt",
+        },
+        expected_version=1,
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        disclosure = await _wait_for_selector(
+            screen, pilot, "#library-prompt-history-collapsible"
+        )
+        disclosure.collapsed = False
+        for _ in range(150):
+            rows = list(screen.query(".library-prompt-history-row"))
+            if len(rows) == 2:
+                break
+            await pilot.pause(0.02)
+        source = next(row for row in rows if row.source_version == 1)
+        source.press()
+        for _ in range(150):
+            if screen.query("#library-prompt-history-compatibility"):
+                break
+            await pilot.pause(0.02)
+
+        assert screen.query_one("#library-prompt-history-system", TextArea).text == (
+            system_preview
+        )
+        assert screen.query_one("#library-prompt-history-user", TextArea).text == (
+            user_preview
+        )
+        assert (
+            str(
+                screen.query_one(
+                    "#library-prompt-history-compatibility", Static
+                ).renderable
+            )
+            == reason
+        )
+        assert screen.query_one("#library-prompt-history-restore", Button).disabled
+        assert (
+            str(
+                screen.query_one(
+                    "#library-prompt-history-restore-reason", Static
+                ).renderable
+            )
+            == reason
+        )
+
+        before_detail = db.fetch_prompt_details(prompt_uuid)
+        before_count = db.get_prompt_history_count(prompt_uuid)
+        history_source = next(
+            row
+            for row in screen._library_prompt_history_controller.state.rows
+            if row.version == 1
+        )
+        with pytest.raises(PromptRestoreError) as exc_info:
+            await service.restore_prompt_version(
+                mode="local",
+                prompt_identifier=prompt_uuid,
+                change_id=history_source.change_id,
+                version=history_source.version,
+                expected_version=before_detail["version"],
+            )
+
+        assert exc_info.value.code is PromptRestoreErrorCode.VALIDATION
+        assert db.fetch_prompt_details(prompt_uuid) == before_detail
+        assert db.get_prompt_history_count(prompt_uuid) == before_count
 
 
 @pytest.mark.asyncio

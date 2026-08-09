@@ -1,5 +1,5 @@
 import inspect
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from unittest.mock import Mock
 
 import pytest
@@ -14,10 +14,15 @@ from tldw_chatbook.Prompt_Management.prompt_scope_service import (
     build_prompt_scope_service,
 )
 from tldw_chatbook.Prompt_Management.prompt_normalizers import normalize_prompt_record
+from tldw_chatbook.Prompt_Management.prompt_restore_errors import (
+    PromptRestoreError,
+    PromptRestoreErrorCode,
+)
 from tldw_chatbook.Prompt_Management.prompt_source_capabilities import (
     CANONICAL_JSON_UTF8_V1,
     PromptCapabilityError,
     canonical_json_utf8_size,
+    local_prompt_capabilities,
 )
 from tldw_chatbook.tldw_api.prompt_chatbook_schemas import (
     PaginatedPromptsResponse,
@@ -995,6 +1000,82 @@ async def test_prompt_scope_app_wired_local_restore_uses_real_retained_history_t
         assert restored["name"] == "Original"
         assert restored["keywords"] == ["original"]
         assert restored["version"] == 3
+    finally:
+        database.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_local_history_page_and_restore_enforce_current_capabilities_and_legacy_recipe_rule(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = PromptsDatabase(":memory:", client_id="scope-history-capabilities")
+    capabilities = replace(local_prompt_capabilities(), compiled_lane_limit=4)
+    monkeypatch.setattr(
+        prompt_scope_module, "local_prompt_capabilities", lambda: capabilities
+    )
+    try:
+        _legacy_id, legacy_uuid, _message = database.add_prompt(
+            name="Legacy Recipe",
+            author=None,
+            details="literal legacy details",
+            system_prompt="[bold]literal legacy system[/bold]",
+            user_prompt="literal legacy user",
+            prompt_format="legacy",
+            artifact_type="recipe",
+        )
+        definition = block_definition(content="hello")
+        _large_id, large_uuid, _message = database.add_prompt(
+            name="Large structured Prompt",
+            author=None,
+            details="literal structured details",
+            system_prompt="",
+            user_prompt="hello",
+            prompt_format="structured",
+            prompt_schema_version=2,
+            prompt_definition=definition,
+            artifact_type="prompt",
+        )
+        service = PromptScopeService(
+            local_service=LocalPromptService(database),
+            server_service=FakeServerPromptService(),
+        )
+
+        cases = (
+            (
+                legacy_uuid,
+                "legacy_recipe",
+                "Legacy Recipe snapshots are preview-only.",
+            ),
+            (
+                large_uuid,
+                "current_capability_unsupported",
+                "This retained version is not supported by current local Prompt "
+                "capabilities.",
+            ),
+        )
+        for prompt_uuid, expected_state, expected_reason in cases:
+            page = await service.list_prompt_versions(
+                mode="local", prompt_identifier=prompt_uuid, page_size=10
+            )
+            source = page["items"][0]
+            assert source["compatibility_state"] == expected_state
+            assert source["compatibility_reason"] == expected_reason
+            assert source["restore_eligible"] is False
+
+            before_detail = database.fetch_prompt_details(prompt_uuid)
+            before_count = database.get_prompt_history_count(prompt_uuid)
+            with pytest.raises(PromptRestoreError) as exc_info:
+                await service.restore_prompt_version(
+                    mode="local",
+                    prompt_identifier=prompt_uuid,
+                    change_id=source["change_id"],
+                    version=source["version"],
+                    expected_version=before_detail["version"],
+                )
+
+            assert exc_info.value.code is PromptRestoreErrorCode.VALIDATION
+            assert database.fetch_prompt_details(prompt_uuid) == before_detail
+            assert database.get_prompt_history_count(prompt_uuid) == before_count
     finally:
         database.close_connection()
 

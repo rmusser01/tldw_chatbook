@@ -8,6 +8,7 @@ from typing import Any
 from .prompt_artifact_codec import decode_prompt_artifact, deserialize_definition
 from .prompt_restore_errors import PromptRestoreError, PromptRestoreErrorCode
 from .prompt_source_capabilities import (
+    PromptCapabilityError,
     PromptSourceCapabilities,
     validate_console_artifact_payload,
     validate_prompt_request_size,
@@ -34,6 +35,10 @@ _HISTORY_COMPATIBILITY_REASONS = {
     "unsupported_artifact_type": "Artifact type is unsupported.",
     "foreign_v1": "Structured-v1 artifacts are preview-only.",
     "unsupported_definition_kind": "Structured definition kind is unsupported.",
+    "legacy_recipe": "Legacy Recipe snapshots are preview-only.",
+    "current_capability_unsupported": (
+        "This retained version is not supported by current local Prompt capabilities."
+    ),
 }
 
 _HISTORY_CHANGED_FIELDS = (
@@ -127,6 +132,46 @@ def _set_history_compatibility(
     normalized["restore_eligible"] = state == "compatible"
 
 
+def _history_restore_fields(snapshot: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        field: snapshot[field]
+        for field in (
+            "name",
+            "author",
+            "details",
+            "system_prompt",
+            "user_prompt",
+            "prompt_format",
+            "prompt_schema_version",
+            "prompt_definition",
+            "artifact_type",
+        )
+    }
+
+
+def _apply_history_capabilities(
+    normalized: dict[str, Any], capabilities: PromptSourceCapabilities | None
+) -> None:
+    """Fail closed with bounded copy when a valid v2 snapshot exceeds its source."""
+    if (
+        capabilities is None
+        or not normalized["restore_eligible"]
+        or normalized["prompt_format"] != "structured"
+    ):
+        return
+    try:
+        update_data = validate_console_artifact_payload(
+            _history_restore_fields(normalized), capabilities
+        )
+        validate_prompt_request_size(update_data, capabilities)
+    except (PromptCapabilityError, ValueError):
+        _set_history_compatibility(
+            normalized,
+            state="current_capability_unsupported",
+            definition_state=normalized["definition_state"],
+        )
+
+
 def _classify_history_artifact(
     payload: Mapping[str, Any], normalized: dict[str, Any]
 ) -> None:
@@ -147,6 +192,11 @@ def _classify_history_artifact(
         prompt_format = "legacy"
     normalized["prompt_format"] = prompt_format
     if prompt_format == "legacy":
+        if artifact_type == "recipe":
+            _set_history_compatibility(
+                normalized, state="legacy_recipe", definition_state="legacy"
+            )
+            return
         _set_history_compatibility(
             normalized, state="compatible", definition_state="legacy"
         )
@@ -221,7 +271,12 @@ def _classify_history_artifact(
         )
 
 
-def _normalize_prompt_history_row(record: Any, *, backend: str) -> dict[str, Any]:
+def _normalize_prompt_history_row(
+    record: Any,
+    *,
+    backend: str,
+    capabilities: PromptSourceCapabilities | None = None,
+) -> dict[str, Any]:
     if not isinstance(record, Mapping):
         raise TypeError("Invalid retained history row: expected an object.")
     data = dict(record)
@@ -341,6 +396,7 @@ def _normalize_prompt_history_row(record: Any, *, backend: str) -> dict[str, Any
         _set_history_compatibility(
             normalized, state="malformed_keywords", definition_state="malformed"
         )
+    _apply_history_capabilities(normalized, capabilities)
     return normalized
 
 
@@ -471,7 +527,12 @@ def normalize_prompt_list(
     }
 
 
-def normalize_prompt_history_page(payload: Any, *, backend: str) -> dict[str, Any]:
+def normalize_prompt_history_page(
+    payload: Any,
+    *,
+    backend: str,
+    capabilities: PromptSourceCapabilities | None = None,
+) -> dict[str, Any]:
     """Normalize one bounded retained-history page without exposing its predecessor."""
     if not isinstance(payload, Mapping):
         raise TypeError("Invalid retained history page: expected an object.")
@@ -507,7 +568,10 @@ def normalize_prompt_history_page(payload: Any, *, backend: str) -> dict[str, An
             "Invalid retained history page: final pages cannot carry a predecessor or cursor."
         )
 
-    items = [_normalize_prompt_history_row(item, backend=backend) for item in raw_items]
+    items = [
+        _normalize_prompt_history_row(item, backend=backend, capabilities=capabilities)
+        for item in raw_items
+    ]
     change_ids = [item["change_id"] for item in items]
     if any(newer <= older for newer, older in zip(change_ids, change_ids[1:])):
         raise ValueError(
@@ -519,7 +583,9 @@ def normalize_prompt_history_page(payload: Any, *, backend: str) -> dict[str, An
         )
 
     predecessor = (
-        _normalize_prompt_history_row(raw_predecessor, backend=backend)
+        _normalize_prompt_history_row(
+            raw_predecessor, backend=backend, capabilities=capabilities
+        )
         if raw_predecessor is not None
         else None
     )
@@ -565,6 +631,7 @@ def _prepare_retained_snapshot_for_restore(
             "next_before_change_id": None,
         },
         backend=capabilities.backend,
+        capabilities=capabilities,
     )
     snapshot = page["items"][0]
     if not snapshot["restore_eligible"]:
@@ -573,20 +640,7 @@ def _prepare_retained_snapshot_for_restore(
             or "Retained snapshot is preview-only and cannot be restored."
         )
 
-    update_data = {
-        field: snapshot[field]
-        for field in (
-            "name",
-            "author",
-            "details",
-            "system_prompt",
-            "user_prompt",
-            "prompt_format",
-            "prompt_schema_version",
-            "prompt_definition",
-            "artifact_type",
-        )
-    }
+    update_data = _history_restore_fields(snapshot)
     raw_payload = record.get("payload") if isinstance(record, Mapping) else None
     durable_prompt_definition = update_data["prompt_definition"]
     if isinstance(raw_payload, Mapping):
