@@ -18,6 +18,7 @@ Modify only these production files:
 - `tldw_chatbook/Media_Playback/player_pipeline.py` — transactional subprocess startup/teardown and per-generation run state.
 - `tldw_chatbook/Widgets/Console/console_video_preview.py` — worker-owned inline activation/decode/cleanup and generation-gated UI callbacks.
 - `tldw_chatbook/UI/Screens/video_player_screen.py` — worker-owned modal activation/seek/teardown and pipeline/run-gated UI callbacks.
+- `tldw_chatbook/UI/Console_Modules/agent.py` — closeout-only removal of the pre-existing controller bridge wrapper exposed by the required repo-wide guard.
 
 Extend only these directly related tests:
 
@@ -26,7 +27,7 @@ Extend only these directly related tests:
 - `Tests/Media_Playback/test_player_integration.py`
 - `Tests/Widgets/test_console_video_preview.py`
 - `Tests/Media_Playback/test_player_screen.py`
-- `Tests/test_call_from_thread_guard.py` is verification-only; do not modify it unless the production API genuinely invalidates its existing contract.
+- `Tests/test_call_from_thread_guard.py` is verification-only; do not modify it. Verify the controller through its canonical owning-App bridge and the affected run-log rail regression instead of weakening the guard.
 
 Update these task artifacts only at closeout:
 
@@ -51,7 +52,7 @@ Do not change storage, generation adapters, workflow JSON, Console message ident
 - Modify: `tldw_chatbook/Media_Playback/frame_source.py:121-161`
 - Test: `Tests/Media_Playback/test_frame_source.py`
 
-- [ ] **Step 1: Add RED tests for real iterator and close failures**
+- [x] **Step 1: Add RED tests for real iterator and close failures**
 
 Add small fake container/stream objects around an `AvFrameSource` instance so the production `iter_frames()` and `close()` methods run without constructing a fake source API:
 
@@ -94,7 +95,7 @@ def test_close_clears_references_before_propagating_native_failure():
 
 Install a temporary Loguru sink around each test and assert the sentinel never appears. Keep the existing real-clip tests unchanged.
 
-- [ ] **Step 2: Run the focused RED command**
+- [x] **Step 2: Run the focused RED command**
 
 Run:
 
@@ -104,7 +105,7 @@ Run:
 
 Expected: the new decode-propagation and close-propagation tests fail because both exceptions are currently swallowed.
 
-- [ ] **Step 3: Implement the minimal source-boundary correction**
+- [x] **Step 3: Implement the minimal source-boundary correction**
 
 Keep `GeneratorExit` normal and re-raise it, but remove the broad decode catch/log entirely. Detach state before native close:
 
@@ -120,11 +121,11 @@ def close(self) -> None:
 
 No new logger helper belongs in this file: the worker owner has the component/phase context and owns sanitized diagnostics.
 
-- [ ] **Step 4: Run GREEN and mutation proof**
+- [x] **Step 4: Run GREEN and mutation proof**
 
 Run the same focused command and expect all tests in `test_frame_source.py` to pass. Temporarily restore the old broad catches one at a time; each corresponding test must fail for the intended reason. Restore the implementation and rerun GREEN.
 
-- [ ] **Step 5: Commit Task 1**
+- [x] **Step 5: Commit Task 1**
 
 ```bash
 git add tldw_chatbook/Media_Playback/frame_source.py Tests/Media_Playback/test_frame_source.py
@@ -140,7 +141,7 @@ git commit -m "fix: surface video frame source failures"
 - Test: `Tests/Media_Playback/test_player_pipeline.py`
 - Test: `Tests/Media_Playback/test_player_integration.py`
 
-- [ ] **Step 1: Add RED tests for startup/teardown resource ownership**
+- [x] **Step 1: Add RED tests for startup/teardown resource ownership**
 
 Extend `_FakeProc` and fake stdout with terminate/wait/kill/close counters. Use real `os.pipe()` descriptors for first-spawn and second-spawn failure tests, and assert closure with `os.fstat(fd)` raising `OSError`.
 
@@ -156,7 +157,7 @@ def test_stop_is_idempotent_and_stdout_closes_once(...): ...
 
 The forced-timeout fake must record `terminate -> wait(timeout=2) -> kill -> wait()` in order.
 
-- [ ] **Step 2: Add RED tests for lazy-generator and stale-run isolation**
+- [x] **Step 2: Add RED tests for lazy-generator and stale-run isolation**
 
 Pin the public shape the screen will use:
 
@@ -174,7 +175,7 @@ Use separate identifiable stdout objects and barriers to prove:
 - `frame_due`, `frames_behind`, `note_rendered`, and `note_dropped` receive the originating run and never mutate the current run implicitly;
 - natural EOF, successful stop, restart, and a captured-but-never-advanced iterator close the old stdout exactly once.
 
-- [ ] **Step 3: Run the focused pipeline RED command**
+- [x] **Step 3: Run the focused pipeline RED command**
 
 Run:
 
@@ -184,7 +185,7 @@ Run:
 
 Expected: new tests fail because startup is not exception-safe, silent playback always allocates a pipe, process kill is not reaped, and state is pipeline-global.
 
-- [ ] **Step 4: Add one private per-generation run object**
+- [x] **Step 4: Add one private per-generation run object**
 
 Keep it in `player_pipeline.py`; do not create a new abstraction module:
 
@@ -230,7 +231,7 @@ def note_dropped(self, run: PlayerRun, pts: float) -> None: ...
 
 `iter_frames(run)` captures `stdout = run.stdout` and uses only fields on `run`; its `finally` calls `run.close_stdout_once()`. It never reads the pipeline's current run after generator creation. Keep a read-only `current_run` property and a compatibility `stats` property returning current run stats for unchanged consumers.
 
-- [ ] **Step 5: Make startup and process teardown transactional**
+- [x] **Step 5: Make startup and process teardown transactional**
 
 Use local process/fd variables until both children start. Allocate `os.pipe()` only when `probe.has_audio`. In one `try/finally`, close every parent fd still owned by the parent. On failure, terminate/reap any local child and close the private run's stdout before re-raising; publish `_ffmpeg`, `_ffplay`, and `_run` only after success.
 
@@ -252,11 +253,11 @@ def _stop_process(proc: subprocess.Popen | None) -> None:
 
 `stop()` detaches the process fields, marks the captured run EOF, stops/reaps both children, and calls `run.close_stdout_once()` in `finally`. It must not mutate a replacement run installed later.
 
-- [ ] **Step 6: Update existing pipeline/integration callers**
+- [x] **Step 6: Update existing pipeline/integration callers**
 
 Change existing tests and `test_player_integration.py` to retain the returned run and call `iter_frames(run)`. Preserve the observable PTS, A/V, reconnect, pause/resume, seek, and tool-guidance behavior.
 
-- [ ] **Step 7: Run GREEN and the required race mutations**
+- [x] **Step 7: Run GREEN and the required race mutations**
 
 Run the Task 2 focused command. Then separately mutate:
 
@@ -273,7 +274,7 @@ Each load-bearing new test must fail specifically. Restore, rerun GREEN, and run
 
 The integration file may skip only for its existing missing-tool condition.
 
-- [ ] **Step 8: Commit Task 2**
+- [x] **Step 8: Commit Task 2**
 
 ```bash
 git add tldw_chatbook/Media_Playback/player_pipeline.py Tests/Media_Playback/test_player_pipeline.py Tests/Media_Playback/test_player_integration.py
@@ -289,7 +290,7 @@ git commit -m "fix: isolate generated video playback runs"
 - Test: `Tests/Widgets/test_console_video_preview.py`
 - Verify: `Tests/test_call_from_thread_guard.py`
 
-- [ ] **Step 1: Replace vacuous worker stubs with mounted RED regressions**
+- [x] **Step 1: Replace vacuous worker stubs with mounted RED regressions**
 
 Keep pure progress/card tests. Add a tiny `App` harness that composes a `ConsoleVideoPreview` plus a second control/state marker. Do not monkeypatch `run_worker` or the GREEN-path `App.call_from_thread`.
 
@@ -306,7 +307,7 @@ Use a fake source factory with `threading.Event` barriers and record thread ids.
 
 Use `await app.workers.wait_for_complete()` only after releasing every barrier. Assert no worker has `WorkerState.ERROR`.
 
-- [ ] **Step 2: Run the focused inline RED command**
+- [x] **Step 2: Run the focused inline RED command**
 
 Run:
 
@@ -316,7 +317,7 @@ Run:
 
 Expected: mounted activation fails on `self.call_from_thread`, blocked probe freezes the old path, and stale/cleanup/privacy tests fail.
 
-- [ ] **Step 3: Add one private preview-run identity**
+- [x] **Step 3: Add one private preview-run identity**
 
 Keep it in the widget module:
 
@@ -329,7 +330,7 @@ class _PreviewRun:
 
 Store `self._run: _PreviewRun | None` and increment a generation for every Play. `play()` performs only UI state changes, one-active ownership, and worker dispatch via `partial`; it does not instantiate or probe `AvFrameSource`.
 
-- [ ] **Step 4: Implement worker-owned activation/decode/close**
+- [x] **Step 4: Implement worker-owned activation/decode/close**
 
 The worker creates and probes its private source, then calls:
 
@@ -349,17 +350,17 @@ Pause/unmount must:
 
 The worker closes its own source in `finally`. An unexpected close error is logged as `component=inline_preview phase=cleanup error_type=<type>` without exception text.
 
-- [ ] **Step 5: Contain UI/render and bridge failures**
+- [x] **Step 5: Contain UI/render and bridge failures**
 
 Add one local sanitized logger helper and one bridge helper. The bridge helper attempts `app.call_from_thread` once and returns false on refusal; it never retries or calls the UI callback directly. `_show_frame` catches conversion/update errors, transitions the matching run to unavailable guidance, signals cancellation, and emits `phase=render` without raw exception text.
 
 Keep activation/decode workers at Textual's default `exit_on_error=True`; the outer worker boundary must catch every expected failure so the mounted regression proves no exception escapes rather than relying on worker suppression.
 
-- [ ] **Step 6: Run GREEN and mutation proofs**
+- [x] **Step 6: Run GREEN and mutation proofs**
 
 Run the Task 3 focused command. Then remove each of these in turn: `.app` from the bridge, the run/source identity check, timer-before-decode ordering, and worker-owned source close. The named mounted test must fail for each mutation. Restore and rerun GREEN.
 
-- [ ] **Step 7: Commit Task 3**
+- [x] **Step 7: Commit Task 3**
 
 ```bash
 git add tldw_chatbook/Widgets/Console/console_video_preview.py Tests/Widgets/test_console_video_preview.py
@@ -375,7 +376,7 @@ git commit -m "fix: contain inline video preview workers"
 - Test: `Tests/Media_Playback/test_player_screen.py`
 - Verify: `Tests/test_call_from_thread_guard.py`
 
-- [ ] **Step 1: Add mounted modal RED tests**
+- [x] **Step 1: Add mounted modal RED tests**
 
 Mount `VideoPlayerScreen` in a small real Textual app. Patch `playback_tools_available`, `probe_file`, and `PlayerPipeline` only. Use a deterministic fake pipeline exposing the Task 2 `PlayerRun` API and barriers.
 
@@ -390,7 +391,7 @@ Add tests for:
 - partial start and mid-pump failures stop/reap, notify generically, and dismiss;
 - render/dispatch/cleanup failures contain sensitive sentinels and do not escape.
 
-- [ ] **Step 2: Run the focused modal RED command**
+- [x] **Step 2: Run the focused modal RED command**
 
 Run:
 
@@ -400,7 +401,7 @@ Run:
 
 Expected: activation/seek/stop block the UI, worker callbacks use the nonexistent screen bridge, and stale/replacement/error tests fail.
 
-- [ ] **Step 3: Split modal work into activation, pump, and lifecycle workers**
+- [x] **Step 3: Split modal work into activation, pump, and lifecycle workers**
 
 Use only screen fields—no new coordinator:
 
@@ -415,23 +416,23 @@ self._seek_in_flight = False
 
 The pump receives `(token, pipeline, run)` explicitly. It iterates only `pipeline.iter_frames(run)`, calls only run-aware timing/stat methods, and queues frame/EOF/failure callbacks through `self.app.call_from_thread`. UI callbacks require the same token, pipeline identity, and run identity.
 
-- [ ] **Step 4: Make seek and unmount non-blocking**
+- [x] **Step 4: Make seek and unmount non-blocking**
 
 Seek immediately rejects repeats while `_seek_in_flight`, invalidates/detaches the old UI callback identity, and starts one lifecycle worker. That worker calls `pipeline.seek(target)` and publishes the returned run only if its token is current. Acceptance starts a new pump before clearing the single-flight flag. A stale completion stops the pipeline.
 
 Unmount invalidates/detaches state and asks the owning `App` to run a best-effort thread cleanup (`exit_on_error=False`) so screen removal cannot cancel process reaping. The cleanup body catches/logs its own failure. UI callbacks and dismissal/notification cleanup must be independently guarded.
 
-- [ ] **Step 5: Contain current-run pump/render failures**
+- [x] **Step 5: Contain current-run pump/render failures**
 
 Wrap the whole pump, including iterator, clock, stats, dispatch, and EOF, in one boundary. A current-run failure crosses the app bridge to a UI handler that invalidates playback, schedules stop/reap, shows generic recovery guidance, and dismisses. A stale failure only emits a sanitized record and returns. Render conversion/widget-update failures follow the same current-run handler with `phase=render`.
 
 The bridge refusal path logs once and returns—no worker-thread fallback. Keep activation and pump workers at `exit_on_error=True`; correctness comes from containment, not suppression.
 
-- [ ] **Step 6: Run GREEN and mutation proofs**
+- [x] **Step 6: Run GREEN and mutation proofs**
 
 Run the Task 4 focused command. Mutate away the app bridge, UI-side identity check, replacement-pump launch, single-flight guard, and app-owned unmount cleanup one at a time. Each dedicated test must fail. Restore and rerun GREEN.
 
-- [ ] **Step 7: Commit Task 4**
+- [x] **Step 7: Commit Task 4**
 
 ```bash
 git add tldw_chatbook/UI/Screens/video_player_screen.py Tests/Media_Playback/test_player_screen.py
@@ -446,7 +447,7 @@ git commit -m "fix: contain modal video player workers"
 - Modify: `backlog/tasks/task-3401.18 - Prevent-generated-video-preview-from-crashing-Console.md`
 - Modify: `Docs/superpowers/plans/2026-08-09-task-3401-18-video-preview-crash.md`
 
-- [ ] **Step 1: Run the complete touched-file test gate only**
+- [x] **Step 1: Run the complete touched-file test gate only**
 
 Run exactly:
 
@@ -458,14 +459,15 @@ Run exactly:
   Tests/Widgets/test_console_video_preview.py \
   Tests/Media_Playback/test_player_screen.py \
   Tests/test_call_from_thread_guard.py \
+  Tests/UI/test_console_agent_rail.py::test_view_full_log_loads_off_thread_then_opens_the_modal \
   -q
 ```
 
 Do not add `Tests/`, `Tests/UI`, `Tests/Media_Playback`, RuntimePolicy, or the full repository suite.
 
-- [ ] **Step 2: Run static checks only on touched Python files**
+- [x] **Step 2: Run static checks only on touched Python files**
 
-Run Ruff on the four production files and five modified test files:
+Run Ruff on the five production files and five modified test files:
 
 ```bash
 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff check \
@@ -473,6 +475,7 @@ Run Ruff on the four production files and five modified test files:
   tldw_chatbook/Media_Playback/player_pipeline.py \
   tldw_chatbook/Widgets/Console/console_video_preview.py \
   tldw_chatbook/UI/Screens/video_player_screen.py \
+  tldw_chatbook/UI/Console_Modules/agent.py \
   Tests/Media_Playback/test_frame_source.py \
   Tests/Media_Playback/test_player_pipeline.py \
   Tests/Media_Playback/test_player_integration.py \
@@ -480,9 +483,9 @@ Run Ruff on the four production files and five modified test files:
   Tests/Media_Playback/test_player_screen.py
 ```
 
-Run `py_compile` for the four production files to a `TemporaryDirectory`/explicit `cfile` outputs so no repository `__pycache__` is created. Run `git diff --check` and inspect `git status --short`.
+Run `ruff format --check` over the same ten files. Run `py_compile` for the five production files to a `TemporaryDirectory`/explicit `cfile` outputs so no repository `__pycache__` is created. Run `git diff --check` and inspect `git status --short`.
 
-- [ ] **Step 3: Perform the final privacy/resource self-review**
+- [x] **Step 3: Perform the final privacy/resource self-review**
 
 Confirm from the diff:
 
@@ -493,9 +496,9 @@ Confirm from the diff:
 - every stale callback checks generation plus source/pipeline/run identity;
 - no production/test file outside this plan changed.
 
-- [ ] **Step 4: Update task notes before Done**
+- [x] **Step 4: Update task notes before Done**
 
-Use the Backlog CLI to check ACs #1-#6 and set final notes, then inspect the resulting diff because `--notes` replaces the notes block. Record:
+Use the Backlog CLI to check ACs #1-#7 and set final notes, then inspect the resulting diff because `--notes` replaces the notes block. Record:
 
 - approach and per-generation ownership;
 - exact focused test count/command and any optional integration skips;
@@ -505,9 +508,11 @@ Use the Backlog CLI to check ACs #1-#6 and set final notes, then inspect the res
 - live H3 generation was not repeated and no media was retained;
 - any deviation from this plan.
 
+The closeout-only deviation was the canonical Console agent bridge cleanup required to make the existing repo-wide guard honest after its safe-but-noncanonical controller wrapper was exposed. It changed no playback or agent behavior and was verified by the guard plus the single affected run-log rail regression.
+
 Only then set TASK-3401.18 to Done via CLI.
 
-- [ ] **Step 5: Commit closeout artifacts**
+- [x] **Step 5: Commit closeout artifacts**
 
 ```bash
 git add "backlog/tasks/task-3401.18 - Prevent-generated-video-preview-from-crashing-Console.md" Docs/superpowers/plans/2026-08-09-task-3401-18-video-preview-crash.md
@@ -515,6 +520,6 @@ git diff --cached --check
 git commit -m "docs: close generated-video playback crash task"
 ```
 
-- [ ] **Step 6: Final branch review and PR update**
+- [x] **Step 6: Final branch review and PR update**
 
 Dispatch one final whole-change spec/correctness review over the TASK-3401.18 commit range. Fix and re-review every Critical/Important/Minor finding with the same touched-file-only gates. Then push the current branch and update draft PR #1460; do not mark it ready or merge without the user-requested final review checkpoint.
