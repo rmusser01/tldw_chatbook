@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-03 16:35'
-updated_date: '2026-08-09 14:10'
+updated_date: '2026-08-09 14:34'
 labels:
   - llm-calls
   - observability
@@ -47,3 +47,19 @@ explicitly enumerated safe field, so an unrecognized field is dropped by constru
 - [ ] #3 A sentinel test proves a distinctive string planted in a tool description and in a parameter schema appears nowhere in log output, on BOTH the sensitive and non-sensitive paths
 - [ ] #4 `tldw_chatbook/LLM_Calls/` swept for any remaining log site that formats raw tool definitions or raw payload dicts; each hit fixed or justified in the notes
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add a parameterized real-function Loguru sentinel test covering ordinary and sensitive HuggingFace tool logging; prove the current ordinary path is red.
+2. Route the ordinary Final Payload and Tools diagnostics through safe_llm_request_payload_summary without changing the sensitive branch or helper contract; run focused green and static gates.
+3. Sweep every LLM_Calls logger for raw request-payload dictionaries and raw tool definitions, classify all candidates, and repair any additional AC 4 match.
+4. Mutation-test the tool-definition and Final Payload guards independently, restoring the corrected implementation after each red proof.
+5. Run affected-module, repository-wide, lint, edited-range format, compilation, and diff gates; reproduce any full-suite failure on clean origin/dev before classifying it.
+6. Record exact sweep/mutation/test evidence, check all acceptance criteria, and mark TASK-2118 Done only after every gate passes.
+
+ADR required: no new ADR
+ADR path: backlog/decisions/029-local-private-data-boundary.md
+Reason: ADR-029 already excludes provider payloads and tool definitions from persistent logs while permitting bounded metadata such as tool names. This task applies that accepted contract.
+Detailed plan: Docs/superpowers/plans/2026-08-09-task-2118-huggingface-tool-log-privacy.md
+<!-- SECTION:PLAN:END -->
