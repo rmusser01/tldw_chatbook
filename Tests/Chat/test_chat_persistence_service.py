@@ -1,4 +1,5 @@
 import inspect
+import json
 
 import pytest
 
@@ -26,7 +27,7 @@ from tldw_chatbook.Chat.citation_trace_repository import (
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, MessageAttachment
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
 
@@ -2302,3 +2303,68 @@ class TestChatPersistenceService:
         assert [entry["position"] for entry in extra] == [1]
         assert extra[0]["data"] == b"img-1"
         assert extra[0]["display_name"] == "b.jpg"
+
+
+class _RoleplayConflictDB:
+    """Small optimistic-lock seam whose first write preserves a sibling."""
+
+    def __init__(self, *, conflicts: int) -> None:
+        self.row = {
+            "version": 1,
+            "metadata": json.dumps({"existing": {"kept": True}}),
+        }
+        self.conflicts_remaining = conflicts
+        self.update_attempts = 0
+
+    def get_conversation_by_id(self, conversation_id: str):
+        assert conversation_id == "conv-1"
+        return dict(self.row)
+
+    def update_conversation(self, conversation_id, payload, *, expected_version):
+        assert conversation_id == "conv-1"
+        assert expected_version == self.row["version"]
+        self.update_attempts += 1
+        if self.conflicts_remaining:
+            self.conflicts_remaining -= 1
+            metadata = json.loads(self.row["metadata"])
+            metadata["concurrent_sibling"] = {"kept": True}
+            self.row = {
+                "version": self.row["version"] + 1,
+                "metadata": json.dumps(metadata),
+            }
+            raise ConflictError("concurrent write")
+        self.row = {
+            "version": self.row["version"] + 1,
+            "metadata": payload["metadata"],
+        }
+        return True
+
+
+def test_update_roleplay_context_retries_once_and_preserves_concurrent_sibling():
+    db = _RoleplayConflictDB(conflicts=1)
+    service = ChatPersistenceService(db)
+
+    assert service.update_conversation_roleplay_context(
+        conversation_id="conv-1",
+        user_name_override="Rowan",
+        character_system_template="Speak to {{user}}.",
+    ) is True
+
+    assert db.update_attempts == 2
+    saved = json.loads(db.row["metadata"])
+    assert saved["concurrent_sibling"] == {"kept": True}
+    assert saved["console_roleplay_context"]["user_name_override"] == "Rowan"
+
+
+def test_update_roleplay_context_propagates_second_conflict():
+    db = _RoleplayConflictDB(conflicts=2)
+    service = ChatPersistenceService(db)
+
+    with pytest.raises(ConflictError, match="concurrent write"):
+        service.update_conversation_roleplay_context(
+            conversation_id="conv-1",
+            user_name_override="Rowan",
+            character_system_template="Speak to {{user}}.",
+        )
+
+    assert db.update_attempts == 2

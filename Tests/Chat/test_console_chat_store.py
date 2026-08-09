@@ -8,6 +8,7 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem, read_conversation_scope
@@ -594,6 +595,7 @@ class FakePersistence:
         self.updated_messages = []
         self.updated_system_prompts = []
         self.updated_pinned_prefills = []
+        self.roleplay_updates = []
         self.last_create_kwargs = None
 
     def create_conversation(self, **kwargs):
@@ -609,6 +611,22 @@ class FakePersistence:
 
     def update_conversation_pinned_prefill(self, *, conversation_id, pinned_prefill):
         self.updated_pinned_prefills.append((conversation_id, pinned_prefill))
+        return True
+
+    def update_conversation_roleplay_context(
+        self,
+        *,
+        conversation_id,
+        user_name_override,
+        character_system_template,
+    ):
+        self.roleplay_updates.append(
+            {
+                "conversation_id": conversation_id,
+                "user_name_override": user_name_override,
+                "character_system_template": character_system_template,
+            }
+        )
         return True
 
     def create_message(
@@ -3212,3 +3230,126 @@ def test_set_message_metadata_flushes_locally_and_leaves_the_version_alone():
         )
     finally:
         db.close_connection()
+
+
+def _seeded_roleplay_store():
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(
+        title="Chat with Alraune",
+        settings=ConsoleSessionSettings(provider="llama_cpp"),
+        assistant_kind="character",
+        assistant_id="7",
+        character_id=7,
+        character_name="Alraune",
+    )
+    greeting = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Hello User.",
+        persist=True,
+        metadata=MessageMetadata(
+            template_kind="character_greeting",
+            template_source="Hello {{user}}.",
+        ),
+    )
+    session.character_system_template = "Speak with {{user}}."
+    session.settings = ConsoleSessionSettings(
+        provider="llama_cpp", system_prompt="Speak with User."
+    )
+    return store, persistence, session, greeting
+
+
+def test_session_override_is_not_console_session_settings():
+    session = ConsoleChatSession(user_display_name_override="Rowan")
+
+    assert session.user_display_name_override == "Rowan"
+    assert not hasattr(ConsoleSessionSettings(provider="llama_cpp"), "user_display_name_override")
+
+
+def test_first_persist_flushes_roleplay_context_after_conversation_exists():
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp"),
+        assistant_kind="character",
+        assistant_id="7",
+        character_id=7,
+        character_name="Alraune",
+    )
+    session.user_display_name_override = "Rowan"
+    session.character_system_template = "Speak with {{user}}."
+
+    conversation_id = store.persist_session_if_needed(session.id)
+
+    assert persistence.roleplay_updates == [
+        {
+            "conversation_id": conversation_id,
+            "user_name_override": "Rowan",
+            "character_system_template": "Speak with {{user}}.",
+        }
+    ]
+
+
+def test_temporary_session_keeps_override_without_durable_write():
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(ephemeral=True)
+
+    updated, persisted = store.set_session_user_display_name_override(
+        session.id, "Rowan", global_default="User"
+    )
+
+    assert updated.user_display_name_override == "Rowan"
+    assert persisted is True
+    assert persistence.roleplay_updates == []
+
+
+def test_rename_rematerializes_system_and_seeded_greeting():
+    store, persistence, session, greeting = _seeded_roleplay_store()
+
+    _updated, persisted = store.set_session_user_display_name_override(
+        session.id, "Captain Rowan", global_default="User"
+    )
+
+    assert persisted is True
+    assert session.settings.system_prompt == "Speak with Captain Rowan."
+    assert store.get_message(greeting.id).content == "Hello Captain Rowan."
+    assert persistence.updated_messages[-1]["content"] == "Hello Captain Rowan."
+
+
+def test_editing_derived_greeting_clears_template_provenance():
+    store, _persistence, _session, greeting = _seeded_roleplay_store()
+
+    edited = store.update_message_content(greeting.id, "Hello there.")
+
+    assert edited.metadata is not None
+    assert edited.metadata.template_kind == ""
+    assert edited.metadata.template_source == ""
+
+
+def test_editing_system_prompt_clears_character_template_source():
+    store, persistence, session, _greeting = _seeded_roleplay_store()
+
+    updated, persisted = store.set_session_system_prompt(session.id, "Be concise.")
+
+    assert persisted is True
+    assert updated.character_system_template is None
+    assert persistence.roleplay_updates[-1]["character_system_template"] is None
+
+
+def test_refresh_roleplay_projections_is_idempotent_when_values_are_current():
+    store, persistence, session, _greeting = _seeded_roleplay_store()
+    store.set_session_user_display_name_override(
+        session.id, "Rowan", global_default="User"
+    )
+    revision = store.payload_revision(session.id)
+    update_count = len(persistence.updated_messages)
+
+    persisted = store.refresh_session_roleplay_projections(
+        session.id, global_default="User"
+    )
+
+    assert persisted is True
+    assert store.payload_revision(session.id) == revision
+    assert len(persistence.updated_messages) == update_count

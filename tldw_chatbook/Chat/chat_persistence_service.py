@@ -5,12 +5,16 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, cast
 from loguru import logger as _logger
 
 from tldw_chatbook.Chat.console_prefill import PINNED_PREFILL_METADATA_KEY
+from tldw_chatbook.Chat.console_roleplay_metadata import (
+    ConsoleRoleplayContext,
+    merge_console_roleplay_context,
+)
 from tldw_chatbook.Chat.citation_trace_models import SealedCitationWrite
 from tldw_chatbook.Chat.citation_trace_repository import (
     CitationPersistenceUnavailable,
     CitationTraceRepository,
 )
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 
 logger = _logger.bind(module="ChatPersistenceService")
 _ASSISTANT_AUTHORITY_UNSET = cast(Optional[str], object())
@@ -307,6 +311,43 @@ class ChatPersistenceService:
                 expected_version=current_conversation["version"],
             )
         )
+
+    def update_conversation_roleplay_context(
+        self,
+        *,
+        conversation_id: str,
+        user_name_override: str | None,
+        character_system_template: str | None,
+    ) -> bool:
+        """Merge Console-owned roleplay identity context with one retry.
+
+        Re-reading the conversation before each bounded optimistic attempt is
+        essential: a concurrent metadata writer can add unrelated sibling
+        keys after our first read. Merging only the fresh record preserves
+        those keys while this method changes its owned context.
+        """
+        for attempt in range(2):
+            record = self.db.get_conversation_by_id(str(conversation_id))
+            if record is None:
+                return False
+            metadata = merge_console_roleplay_context(
+                record.get("metadata"),
+                ConsoleRoleplayContext(
+                    user_name_override=user_name_override,
+                    character_system_template=character_system_template,
+                ),
+            )
+            try:
+                self.db.update_conversation(
+                    str(conversation_id),
+                    {"metadata": metadata},
+                    expected_version=record["version"],
+                )
+                return True
+            except ConflictError:
+                if attempt == 1:
+                    raise
+        return False
 
     def update_conversation_pinned_prefill(
         self,
