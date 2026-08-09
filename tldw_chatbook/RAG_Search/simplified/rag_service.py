@@ -122,12 +122,17 @@ def _fusion_doc_key(result: Any) -> Hashable:
     * vector rows carry ``source_id`` (the bare row id, spread from
       ``ingestion_indexing.media_document`` into every chunk) plus a
       ``doc_id`` that is the PREFIXED document id (``media_15``);
-    * keyword rows carry only ``doc_id``, and theirs is the bare row id
-      (``15``) -- built from scratch in ``_process_keyword_results_basic``.
+    * keyword rows carry ``doc_id`` AND ``source_id``, both the bare row id
+      (``15``) -- built from scratch in ``_keyword_row_metadata``. When this
+      key was written the keyword leg stamped only ``doc_id``; TASK-3996
+      added ``source_id`` so its note/conversation rows speak the vector
+      leg's id space (media rows got it too, for one id space rather than
+      two).
 
-    Hence the precedence: ``source_id`` first, ``doc_id`` only as the
-    keyword leg's fallback. Comparing ``doc_id`` to ``doc_id`` would match
-    ``15`` against ``media_15`` and never fuse anything.
+    The precedence -- ``source_id`` first, ``doc_id`` as a fallback --
+    therefore still matters for any producer that stamps only one of them:
+    comparing ``doc_id`` to ``doc_id`` across the legs would match ``15``
+    against ``media_15`` and never fuse anything.
 
     ``source_type`` is compared as the raw string the indexers write (the
     singular ``ITEM_TYPE_*`` vocabulary: ``media`` / ``note`` /
@@ -1151,18 +1156,13 @@ class RAGService:
             )
             return None
 
-        # The media sub-leg defers symlink authority to the private SQLite
-        # owner (MediaDatabase -> connect_private_sqlite performs a no-follow
-        # open). This leg opens SQLite directly, so it makes that same call
-        # explicitly rather than inheriting a weaker guarantee: a symlinked
-        # DB path is refused instead of followed.
-        if db_path.is_symlink():
-            logger.warning(
-                f"ChaChaNotes database path {db_path} is a symlink; the notes "
-                "and conversation keyword sub-legs return no results."
-            )
-            return None
-
+        # Existence only. Every other filesystem question -- symlinked
+        # components, untrusted parent directories, a no-follow open of the
+        # file itself -- belongs to the private SQLite seam this leg opens
+        # through (see `_connect_chacha_readonly`), exactly as the media
+        # sub-leg defers those to `MediaDatabase -> connect_private_sqlite`.
+        # This check exists only so the common "no chacha DB yet" case is
+        # reported as such instead of as an open failure.
         if not db_path.exists() or not db_path.is_file():
             logger.warning(
                 f"ChaChaNotes database not found at {db_path}; the notes and "
@@ -1176,29 +1176,45 @@ class RAGService:
     def _connect_chacha_readonly(self, db_path: Union[str, Path]) -> sqlite3.Connection:
         """Open the ChaChaNotes database read-only, without the ORM.
 
-        Two properties, both deliberate (TASK-3996):
+        Three properties, all deliberate (TASK-3996):
 
-        * ``mode=ro`` makes the connection structurally incapable of
-          writing -- any write raises ``sqlite3.OperationalError`` rather
-          than relying on this code never issuing one;
-        * it is a raw ``sqlite3`` connection, not ``CharactersRAGDB``, whose
-          constructor runs schema creation/migration checks and client
-          registration on open. The engine's search path must never do that
-          to the user's main database.
+        * **Read-only by construction.** The seam builds a ``mode=ro`` URI,
+          so any write raises ``sqlite3.OperationalError`` rather than this
+          code being trusted never to issue one.
+        * **Not the ORM.** ``CharactersRAGDB``'s constructor runs schema
+          creation/migration checks and client registration on open; the
+          engine's search path must never do that to the user's main
+          database.
+        * **The same path guarantees the media sub-leg gets.** This goes
+          through ``connect_private_sqlite`` (owner
+          ``rag.chachanotes_keyword_leg``, read-only-URI target kind), whose
+          ``verify_trusted_directory`` walks EVERY path component with
+          ``O_NOFOLLOW`` and opens the file itself no-follow. A hand-rolled
+          ``Path.is_symlink()`` check tested only the FINAL component and
+          was strictly weaker: review reproduced a symlinked PARENT
+          directory being followed here while the media sub-leg refused it.
+          The owner preserves the source file's mode, so a read never
+          reasserts permissions on a file ``db.chachanotes.primary`` owns.
 
         Args:
-            db_path: An absolute, already-validated database path.
+            db_path: An absolute database path (existence already checked).
 
         Returns:
             A read-only connection with ``sqlite3.Row`` rows. The caller
             owns closing it.
-        """
-        from tldw_chatbook.Utils.private_paths import lexical_path
 
-        # `as_uri()` requires an absolute path and percent-encodes anything
-        # SQLite's URI parser would otherwise read as a parameter separator.
-        uri = f"{lexical_path(db_path).as_uri()}?mode=ro"
-        conn = sqlite3.connect(uri, uri=True)
+        Raises:
+            PrivatePathError / sqlite3.Error / OSError / ValueError: when
+            the path or the file fails the seam's checks. Callers degrade
+            (warn + no rows); they never let it reach the search.
+        """
+        from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+
+        conn = connect_private_sqlite(
+            "rag.chachanotes_keyword_leg",
+            Path(db_path),
+            read_only=True,
+        )
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -1233,6 +1249,9 @@ class RAGService:
         try:
             conn = self._connect_chacha_readonly(db_path)
         except (sqlite3.Error, ValueError, OSError) as e:
+            # `PrivatePathError` is an `OSError`, so a path the seam refuses
+            # (symlinked component, untrusted parent) lands here alongside a
+            # genuinely unopenable file -- both degrade this sub-leg only.
             logger.warning(
                 f"Could not open the ChaChaNotes database at {db_path} "
                 f"read-only: {e}; the notes and conversation keyword "

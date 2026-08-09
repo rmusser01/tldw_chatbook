@@ -572,9 +572,11 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # validation's brief read-write reopen of its own disposable snapshot
         # to run the in-place schema upgrade before immutable revalidation.
         # C39 is the lease orchestration's read-only schema-version peek used
-        # to route a needed upgrade to the exclusive-lease path first.
+        # to route a needed upgrade to the exclusive-lease path first. C40 is
+        # the RAG hybrid keyword leg's read-only read of the live ChaChaNotes
+        # database for its notes/conversation sub-legs (TASK-3996).
         f"C{number:02d}"
-        for number in range(1, 40)
+        for number in range(1, 41)
     ]
     assert [row["id"] for row in backup_rows] == [
         f"B{number:02d}" for number in range(1, 17)

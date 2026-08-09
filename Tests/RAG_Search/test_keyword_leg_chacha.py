@@ -300,6 +300,109 @@ def test_chacha_connection_is_read_only(tmp_path):
         conn.close()
 
 
+def test_chacha_connection_reads_a_live_wal_database(tmp_path):
+    """The read-only leg must work against the DB the app is holding open.
+
+    ChaChaNotes runs in WAL mode, and the realistic production shape is
+    "app has it open read-write, engine reads it read-only". A read-only
+    SQLite connection cannot create the `-shm` file itself, so this is the
+    case where a read-only design could fail in production while every
+    closed-database test stayed green.
+    """
+    db = _chacha_db(tmp_path)
+    note_id = db.add_note("Wallaby Note", "Wallaby sightings in the scrub.")
+    assert db.execute_query("PRAGMA journal_mode").fetchone()[0] == "wal"
+    assert (tmp_path / "chacha.db-wal").exists(), "no WAL sidecar to read across"
+    try:
+        # deliberately NOT closed: the writer still holds the database
+        service = _make_service(chachanotes_db_path=tmp_path / "chacha.db")
+        results = asyncio.run(service._keyword_search("wallaby", top_k=5))
+        assert [r.metadata["source_id"] for r in results] == [str(note_id)]
+    finally:
+        db.close_connection()
+
+
+def test_traversal_shaped_chacha_path_is_rejected_before_any_db_open(
+    tmp_path, warnings_captured
+):
+    """`chachanotes_db_path` gets `media_db_path`'s path_validation treatment.
+
+    The traversal string below resolves, at the OS level, to a REAL chacha
+    database with a matching row, so a naive `.exists()` gate would happily
+    open it -- the rejection has to come from the shared validator, before
+    any connection is attempted.
+    """
+    real_subdir = tmp_path / "a" / "b"
+    real_subdir.mkdir(parents=True)
+    db = _chacha_db(tmp_path)
+    db.add_note("Traversal Bait", "Numbat notes reachable only via traversal.")
+    db.close_connection()
+
+    malicious_path = str(real_subdir / ".." / ".." / "chacha.db")
+    assert "../.." in malicious_path, "test setup must produce a traversal string"
+
+    service = _make_service(chachanotes_db_path=malicious_path)
+    results = asyncio.run(service._keyword_search("numbat", top_k=5))
+
+    assert results == []
+    assert any("chachanotes_db_path" in m for m in warnings_captured), (
+        f"rejection was silent; warnings: {warnings_captured}"
+    )
+
+
+@pytest.mark.parametrize("link_kind", ["file", "parent_dir"])
+def test_symlinked_chacha_path_yields_empty_and_no_db_read(
+    tmp_path, link_kind, warnings_captured
+):
+    """Neither a symlinked DB file nor a symlinked PARENT may be followed.
+
+    Review finding: a final-component-only `is_symlink()` check is strictly
+    weaker than what the media sub-leg gets. `MediaDatabase` ->
+    `connect_private_sqlite` walks EVERY path component with `O_NOFOLLOW`
+    (`verify_trusted_directory`), so a symlinked parent directory is refused
+    there while the hand-rolled check followed it and returned the planted
+    row. Both shapes are pinned here; the fix is to route this leg through
+    the same seam rather than to grow a second walker.
+    """
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    db = CharactersRAGDB(outside_dir / "real_chacha.db", "test_chacha_symlink")
+    db.add_note("Symlink Bait", "Bandicoot notes that must stay unreachable.")
+    db.close_connection()
+
+    if link_kind == "file":
+        link = tmp_path / "chacha_via_symlink.db"
+        link.symlink_to(outside_dir / "real_chacha.db")
+        configured = link
+    else:
+        link_dir = tmp_path / "dir_via_symlink"
+        link_dir.symlink_to(outside_dir, target_is_directory=True)
+        configured = link_dir / "real_chacha.db"
+
+    service = _make_service(chachanotes_db_path=configured)
+    results = asyncio.run(service._keyword_search("bandicoot", top_k=5))
+
+    assert results == [], f"a symlinked {link_kind} was followed to real data"
+    assert warnings_captured, "a refused chacha path must be disclosed, not silent"
+
+
+def test_unopenable_chacha_file_degrades_with_a_warning(tmp_path, warnings_captured):
+    """A file that exists but is not a database costs only its sub-legs."""
+    media_path = _seed_media(
+        tmp_path, [("Bilby Media", "Media coverage of bilby burrows.")]
+    )
+    junk = tmp_path / "chacha.db"
+    junk.write_bytes(b"this is not a SQLite database")
+
+    service = _make_service(media_db_path=media_path, chachanotes_db_path=junk)
+    results = asyncio.run(service._keyword_search("bilby", top_k=5))
+
+    assert {r.metadata.get("source_type") for r in results} == {"media"}, (
+        "an unopenable chacha DB must not take the media sub-leg down with it"
+    )
+    assert warnings_captured, "an unusable chacha DB must be disclosed"
+
+
 def _vector_row(document, chunk_index, score):
     """A vector-leg row exactly as an indexed chunk of `document` comes back.
 

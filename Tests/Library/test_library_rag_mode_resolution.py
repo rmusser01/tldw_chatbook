@@ -42,7 +42,9 @@ from Tests.Library.test_library_local_rag_search_service import (
 # define.
 _ROUTE_NOTES_KEY = "retrieval_route_notes"
 _NOTE_HYBRID_SCOPED = "scope active — semantic only until scope-aware hybrid lands"
-_NOTE_HYBRID_MEDIA_EXCLUDED = "media excluded — semantic only"
+_NOTE_HYBRID_NO_KEYWORD_SOURCES = (
+    "selected sources have no keyword index — semantic only"
+)
 _NOTE_SEMANTIC_LEG_EMPTY = "semantic leg empty — keyword-only results"
 
 
@@ -135,6 +137,19 @@ def _note_result(source_id: str = "note-1", score: float = 0.9):
             "title": "Note doc",
             "source_id": source_id,
             "source_type": "note",
+        },
+    }
+
+
+def _conversation_result(source_id: str = "conv-1", score: float = 0.85):
+    return {
+        "id": f"{source_id}-chunk",
+        "score": score,
+        "document": "Conversation evidence.",
+        "metadata": {
+            "title": "Conversation doc",
+            "source_id": source_id,
+            "source_type": "conversation",
         },
     }
 
@@ -234,18 +249,53 @@ async def test_hybrid_profile_with_active_scope_stays_semantic_and_discloses():
 
 
 @pytest.mark.asyncio
-async def test_hybrid_profile_with_media_deselected_stays_semantic_and_discloses():
-    """The engine's FTS leg is media-only in P0: with media deselected it
-    could only contribute rows the Library post-filter drops, so hybrid is
-    skipped -- disclosed, not silent."""
+@pytest.mark.parametrize(
+    "source_types, result_row, expected_source_id",
+    [
+        (("notes",), _note_result(), "note-1"),
+        (("conversations",), _conversation_result(), "conv-1"),
+        (("notes", "conversations"), _note_result(), "note-1"),
+    ],
+)
+async def test_hybrid_runs_for_any_fts_servable_source_without_media(
+    source_types, result_row, expected_source_id
+):
+    """Media deselected must no longer disable the FTS leg (TASK-3996).
+
+    The old gate skipped hybrid whenever `media` was absent, justified by
+    "the FTS leg is media-only, so its rows would all be dropped by the
+    source-type post-filter". That premise died with this task's
+    notes/conversation sub-legs: the leg now serves media, notes AND
+    conversations, so a user who turns Media off and keeps Notes on was
+    getting semantic-only search precisely in the case the fix was for.
+    """
+    rag = _ProfileRagService(mode="hybrid", results=[result_row])
+    service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=rag))
+
+    result = await service.search("credential", source_types, "rag", top_k=5)
+
+    assert [call["search_type"] for call in rag.calls] == ["hybrid"]
+    assert result["runtime_backend"] == "rag-hybrid"
+    assert [row["source_id"] for row in result["results"]] == [expected_source_id]
+    assert _NOTE_HYBRID_NO_KEYWORD_SOURCES not in _route_notes(result)
+
+
+@pytest.mark.asyncio
+async def test_hybrid_profile_with_only_unservable_sources_stays_semantic():
+    """`prompts` has no FTS leg in the engine at all -- not media-only.
+
+    A prompts-only selection is the one remaining case where the keyword
+    leg could contribute nothing, so hybrid is still skipped, and the
+    disclosure has to say what is actually true now.
+    """
     rag = _ProfileRagService(mode="hybrid", results=[_note_result()])
     service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=rag))
 
-    result = await service.search("credential", ("notes",), "rag", top_k=5)
+    result = await service.search("credential", ("prompts",), "rag", top_k=5)
 
     assert [call["search_type"] for call in rag.calls] == ["semantic"]
     assert result["runtime_backend"] == "rag-semantic"
-    assert _NOTE_HYBRID_MEDIA_EXCLUDED in _route_notes(result)
+    assert _NOTE_HYBRID_NO_KEYWORD_SOURCES in _route_notes(result)
 
 
 @pytest.mark.asyncio
