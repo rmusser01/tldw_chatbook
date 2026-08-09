@@ -260,6 +260,13 @@ class LocalSTTDispatchCoordinator:
 
         if type(source) is not BufferAudioSource:
             raise TypeError("source must be a BufferAudioSource")
+        limit = pcm_byte_limit(
+            sample_rate=source.sample_rate,
+            channels=source.channels,
+            sample_width=source.sample_width,
+        )
+        if len(source.audio) > limit:
+            raise ValueError("source audio exceeds the 60-second PCM limit")
         handle = self.begin_dictation(
             capture_generation=uuid.uuid4().int,
             dispatch=dispatch,

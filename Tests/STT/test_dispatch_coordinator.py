@@ -1195,3 +1195,51 @@ def test_blocking_one_shot_returns_exact_executor_payload(coordinator_module: An
     caller.join(1.0)
 
     assert returned == [expected]
+
+
+def test_blocking_one_shot_accepts_exact_pcm_limit(coordinator_module: Any) -> None:
+    executor = FakeExecutor()
+    coordinator = coordinator_module.LocalSTTDispatchCoordinator(executor)
+    exact = b"\x01\x00" * 120
+    expected = {"text": "exact", "logical_segments": ("exact",)}
+    returned: list[dict[str, Any]] = []
+    completed = threading.Event()
+
+    def call() -> None:
+        returned.append(
+            coordinator.transcribe_buffer(
+                source=BufferAudioSource(exact, 2),
+                dispatch=_dispatch(),
+                language="en",
+            )
+        )
+        completed.set()
+
+    caller = threading.Thread(target=call, name="exact-limit-one-shot-caller")
+    caller.start()
+    assert executor.wait_for_submissions(1)
+    assert executor.submissions[0]["source"].audio == exact
+    executor.succeed(expected)
+    _wait_for(completed)
+    caller.join(1.0)
+
+    assert returned == [expected]
+
+
+def test_blocking_one_shot_rejects_pcm_over_limit_before_submit(
+    coordinator_module: Any,
+) -> None:
+    executor = FakeExecutor()
+    coordinator = coordinator_module.LocalSTTDispatchCoordinator(executor)
+
+    def unexpected_submit(**_kwargs: Any) -> int:
+        raise AssertionError("oversized one-shot reached the executor")
+
+    executor.submit = unexpected_submit
+
+    with pytest.raises(ValueError, match="exceeds the 60-second PCM limit"):
+        coordinator.transcribe_buffer(
+            source=BufferAudioSource(b"\x01\x00" * 121, 2),
+            dispatch=_dispatch(),
+            language="en",
+        )
