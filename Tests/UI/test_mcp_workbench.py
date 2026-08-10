@@ -8893,6 +8893,67 @@ async def test_tools_mode_rejects_non_directory_workspace_root(
 
 
 @pytest.mark.asyncio
+async def test_tools_mode_workspace_root_uses_shared_path_validator(
+    monkeypatch, tmp_path
+):
+    validated_root = tmp_path / "validated-workspace"
+    validated_root.mkdir()
+    validation_calls: list[tuple[Path, Path, bool, bool]] = []
+    save_calls: list[tuple[str, str, Any]] = []
+
+    def fake_validate_path(
+        user_path,
+        base_directory,
+        *,
+        redact_paths=False,
+        allow_hidden=False,
+    ):
+        validation_calls.append(
+            (
+                Path(user_path),
+                Path(base_directory),
+                redact_paths,
+                allow_hidden,
+            )
+        )
+        return validated_root.resolve()
+
+    monkeypatch.setattr(mcp_workbench_module, "validate_path", fake_validate_path)
+    monkeypatch.setattr(
+        mcp_workbench_module,
+        "save_setting_to_cli_config",
+        lambda section, key, value: save_calls.append((section, key, value)) or True,
+    )
+
+    app = WorkbenchApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        workbench = app.query_one(MCPWorkbench)
+        await workbench._mount_deferred_canvases()
+        await workbench._sync_children()
+
+        root_input = app.query_one("#mcp-tools-workspace-root", Input)
+        root_input.value = "relative-workspace"
+        app.query_one("#mcp-tools-workspace-save", Button).press()
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert len(validation_calls) == 1
+        candidate, validation_root, redact_paths, allow_hidden = validation_calls[0]
+        assert candidate == Path.cwd() / "relative-workspace"
+        assert validation_root == candidate.parent
+        assert redact_paths is True
+        assert allow_hidden is True
+        assert (
+            "console",
+            "workspace_root",
+            str(validated_root.resolve()),
+        ) in save_calls
+
+
+@pytest.mark.asyncio
 async def test_local_agent_catalog_failure_degrades_to_no_local_group(monkeypatch):
     _enable_local_tools(monkeypatch)
 

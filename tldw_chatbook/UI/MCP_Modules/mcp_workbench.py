@@ -81,7 +81,7 @@ from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCPRail
 from tldw_chatbook.UI.MCP_Modules.mcp_server_mutations import MCPServerMutationsPanel
 from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
 from tldw_chatbook.UI.MCP_Modules.mcp_tools_mode import MCPToolsMode
-from tldw_chatbook.Utils.path_validation import is_safe_path
+from tldw_chatbook.Utils.path_validation import is_safe_path, validate_path
 
 # Sentinel distinguishing "key absent from a restore blob" from "key present
 # with value None" -- see `_apply_view_state()`'s scope_ref handling.
@@ -3060,7 +3060,15 @@ class MCPWorkbench(Container):
         display = "the app folder"
         if requested:
             try:
-                resolved = Path(requested).expanduser().resolve()
+                candidate = Path(requested).expanduser()
+                if not candidate.is_absolute():
+                    candidate = Path.cwd() / candidate
+                resolved = validate_path(
+                    candidate,
+                    candidate.parent,
+                    redact_paths=True,
+                    allow_hidden=True,
+                )
                 if not resolved.is_dir():
                     raise ValueError("path is not an existing directory")
             except (OSError, RuntimeError, ValueError) as exc:

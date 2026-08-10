@@ -32,7 +32,7 @@ def _fence(name: str, arguments: dict) -> str:
     ) + "\n```"
 
 
-class _ScriptedConsoleGateway:
+class ScriptedConsoleGateway:
     """Deterministic model turns over the real Console streaming adapter."""
 
     def __init__(self, scripts: list[list[str]]) -> None:
@@ -46,7 +46,7 @@ class _ScriptedConsoleGateway:
             yield chunk
 
 
-class _ScratchPermissionService:
+class ScratchPermissionService:
     """Controller-facing service backed by a real scratch permission store."""
 
     def __init__(self, path: Path) -> None:
@@ -80,7 +80,7 @@ class _ScratchPermissionService:
         self.decisions.append((server_key, tool_name, decision))
 
 
-def _controller_with(service: _ScratchPermissionService) -> ConsoleChatController:
+def _controller_with(service: ScratchPermissionService) -> ConsoleChatController:
     controller = object.__new__(ConsoleChatController)
     controller.app = SimpleNamespace(unified_mcp_service=service)
     controller._pending_approval_event = None
@@ -115,7 +115,7 @@ def test_console_agent_reads_then_updates_configured_workspace_note(
     assert settings["console"]["workspace_root"] == str(workspace)
 
     permission_path = tmp_path / "profile" / "mcp_permissions.json"
-    service = _ScratchPermissionService(permission_path)
+    service = ScratchPermissionService(permission_path)
     controller = _controller_with(service)
     local_provider, review_hook = controller._compose_local_provider()
     assert local_provider is not None
@@ -131,7 +131,7 @@ def test_console_agent_reads_then_updates_configured_workspace_note(
             definition_hash=definition_hash(hub.description, hub.input_schema),
         )
 
-    gateway = _ScriptedConsoleGateway(
+    gateway = ScriptedConsoleGateway(
         [
             [_fence("find_tools", {"query": "read and edit a workspace note"})],
             [_fence("load_tools", {"ids": ["local:fs_read", "local:fs_edit"]})],

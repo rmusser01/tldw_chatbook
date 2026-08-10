@@ -309,7 +309,14 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
         workspace_root: str,
         visible: bool,
     ) -> None:
-        """Refresh local-tool controls from persisted configuration truth."""
+        """Refresh local-tool controls from persisted configuration truth.
+
+        Args:
+            enabled: Persisted state of the local/web provider master switch.
+            workspace_root: Persisted workspace confinement root, or an empty
+                string when the app launch directory is the root.
+            visible: Whether the local-source configuration panel is visible.
+        """
         panel = self.query_one("#mcp-tools-local-config", Vertical)
         panel.display = visible
         checkbox = self.query_one("#mcp-tools-local-enabled", Checkbox)
@@ -324,7 +331,12 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
         )
 
     def set_local_config_status(self, message: str, *, error: bool) -> None:
-        """Render persistence or validation feedback beside the controls."""
+        """Render persistence or validation feedback beside the controls.
+
+        Args:
+            message: User-facing status text.
+            error: Whether to apply the error-state presentation.
+        """
         status = self.query_one("#mcp-tools-local-config-status", Static)
         status.update(message)
         status.set_class(error, "is-error")
