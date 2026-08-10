@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from rich.cells import cell_len
 from rich.markup import escape as _escape_markup
@@ -488,11 +488,23 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         state: ConsoleWorkspaceContextState,
         *,
         show_heading: bool = True,
+        content: Literal["all", "session", "workspace", "conversations"] = "all",
         **kwargs: Any,
     ) -> None:
+        """Initialize a scoped Console workspace-context projection.
+
+        Args:
+            state: Shared workspace context snapshot rendered by the tray.
+            show_heading: Whether the tray should render its own heading.
+            content: Portion of the shared snapshot to render. ``all`` keeps
+                the legacy combined layout; the other values render one peer
+                rail section.
+            **kwargs: Additional arguments forwarded to Textual's ``Vertical``.
+        """
         super().__init__(**kwargs)
         self.state = state
         self.show_heading = show_heading
+        self.content = content
         self._row_content_width = _FALLBACK_ROW_CONTENT_WIDTH
         # False until the first real content-width measurement is adopted.
         # The first measurement always relabels (to replace the pre-measure
@@ -965,6 +977,25 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 classes="destination-section",
             )
 
+        if self.content in {"all", "workspace"}:
+            yield from self._compose_workspace_context()
+
+        if self.content in {"all", "session"}:
+            yield from self._compose_session_context(
+                show_selected_summary=self.content == "session"
+            )
+
+        browser = self.state.conversation_browser
+        if self.content in {"all", "conversations"} and browser is not None:
+            yield from self._compose_conversation_browser(
+                browser,
+                show_heading=self.content == "all",
+                show_selected_summary=self.content == "all",
+            )
+
+    def _compose_workspace_context(self) -> ComposeResult:
+        """Render active workspace identity and workspace-scoped actions."""
+
         workspace_value = self.state.workspace_name or self._workspace_selector_label()
         yield ConsoleWorkspaceStatusPair(
             "Workspace",
@@ -1048,27 +1079,6 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 classes="console-workspace-recovery",
             )
 
-        # RAG-45: this pair renders the active CONVERSATION's identity, not a
-        # RAG retrieval scope -- labeled "Conversation" (not "Scope") so it
-        # reads distinctly from both the "RAG Scope" button above and the
-        # Inspector's item-scope row ("Scope: everything" / "Scope: N
-        # items"). A fresh session with no active conversation has nothing
-        # to show here, so the value falls back to an explicit placeholder
-        # rather than rendering a bare label with an empty body.
-        scope_value = self.state.scope_label or "—"
-        scope_pair = ConsoleWorkspaceStatusPair(
-            "Conversation",
-            scope_value,
-            label_id="console-active-scope-label",
-            value_id="console-active-scope-value",
-            id="console-active-scope",
-        )
-        # TASK-373 AC#2: keep the raw conversation identifier available on hover
-        # rather than in the primary row.
-        if self.state.scope_detail:
-            scope_pair.tooltip = f"Conversation id: {self.state.scope_detail}"
-        yield scope_pair
-
         if self.state.recovery_copy:
             yield self._static(
                 self.state.recovery_copy,
@@ -1076,47 +1086,68 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 classes="console-workspace-recovery",
             )
 
-        # TASK-1190: the transitional legacy conversation-list compose path
-        # (taken only when ``conversation_browser is None``) was retired.
-        # Reachability sweep (grep every constructor/caller that could
-        # produce a state reaching this widget): the SOLE production
-        # builder, ``ChatScreen._build_console_workspace_context_state``,
-        # always finishes by calling ``_with_console_conversation_browser_
-        # state``, which unconditionally attaches a real
-        # ``ConsoleConversationBrowserState`` via ``build_console_
-        # conversation_browser_state`` (that builder has exactly one
-        # ``return`` and it is never ``None``). No other production call
-        # site constructs a ``ConsoleWorkspaceContextState`` or calls this
-        # tray's ``sync_state`` with ``conversation_browser=None`` -- only
-        # test fixtures did, to pin the now-removed legacy render path. The
-        # ``browser is not None`` guard below stays as defense in depth
-        # (render nothing rather than crash) rather than an assertion.
-        browser = self.state.conversation_browser
-        if browser is not None:
-            yield from self._compose_conversation_browser(browser)
+    def _compose_session_context(
+        self,
+        *,
+        show_selected_summary: bool,
+    ) -> ComposeResult:
+        """Render the active session identity without workspace controls."""
+
+        # RAG-45: this pair renders the active CONVERSATION's identity, not a
+        # RAG retrieval scope. The raw durable id remains available on hover.
+        scope_value = self.state.scope_label or "None"
+        scope_pair = ConsoleWorkspaceStatusPair(
+            "Conversation",
+            scope_value,
+            label_id="console-active-scope-label",
+            value_id="console-active-scope-value",
+            id="console-active-scope",
+        )
+        if self.state.scope_detail:
+            scope_pair.tooltip = f"Conversation id: {self.state.scope_detail}"
+        yield scope_pair
+
+        if show_selected_summary:
+            browser = self.state.conversation_browser
+            selected_summary = (
+                browser.selected_summary if browser is not None else ""
+            )
+            yield self._static(
+                selected_summary or "No active session.",
+                id="console-workspace-selected-conversation",
+                classes=(
+                    "console-workspace-selected-conversation "
+                    "console-session-selected-conversation"
+                ),
+            )
 
     def _compose_conversation_browser(
         self,
         browser: ConsoleConversationBrowserState,
+        *,
+        show_heading: bool = True,
+        show_selected_summary: bool = True,
     ) -> ComposeResult:
         """Render the grouped all-workspaces conversation browser."""
 
-        with Horizontal(
-            id="console-workspace-conversations-header",
-            classes="console-rail-header console-workspace-conversations-header",
-        ):
-            title = self._static(
-                "Conversations",
-                id="console-workspace-conversations-title",
-                classes="console-rail-section-title",
+        if show_heading:
+            with Horizontal(
+                id="console-workspace-conversations-header",
+                classes="console-rail-header console-workspace-conversations-header",
+            ):
+                title = self._static(
+                    "Conversations",
+                    id="console-workspace-conversations-title",
+                    classes="console-rail-section-title",
+                )
+                title.styles.width = "1fr"
+                yield title
+        if show_selected_summary:
+            yield self._static(
+                browser.selected_summary or "No active conversation.",
+                id="console-workspace-selected-conversation",
+                classes="console-workspace-selected-conversation",
             )
-            title.styles.width = "1fr"
-            yield title
-        yield self._static(
-            browser.selected_summary or "No active conversation.",
-            id="console-workspace-selected-conversation",
-            classes="console-workspace-selected-conversation",
-        )
         with Horizontal(
             id="console-workspace-conversation-search-row",
             classes="console-workspace-conversation-search-row",

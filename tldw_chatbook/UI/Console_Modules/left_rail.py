@@ -1,11 +1,11 @@
-"""Console shell left rail — session/model/agent/details/character region.
+"""Console shell left rail — persistent Console context sections.
 
 Extracted verbatim out of ``ChatScreen.compose_content`` (wave-1 console
 decomposition, task 3): the subtree that used to live inside
 ``with self._frame_console_region(left_rail):`` — the rail header, the
-pinned fleet-summary line, and the five scrollable sections (Session,
-Model, Agent, Details, Character). Ids and nesting inside this subtree are
-preserved exactly.
+pinned fleet-summary line, and the scrollable context sections. The former
+mixed Session section is now three peer sections (Sessions, Workspaces, and
+Conversations), followed by Model, Agent, Details, and Character.
 
 Deliberately NOT included: ``left_handle`` (``ConsoleRailHandle``, id
 ``console-context-rail-handle``), the collapsed 13-column form shown when
@@ -70,7 +70,7 @@ from .frame import frame_console_region
 
 
 class ConsoleLeftRail(Vertical):
-    """The Console shell's left rail: Session/Model/Agent/Details/Character.
+    """The Console shell's left rail and its persistent context sections.
 
     All display data is supplied at construction, computed by the screen
     exactly as it was computed inline before this extraction (session
@@ -128,8 +128,8 @@ class ConsoleLeftRail(Vertical):
         Args:
             rail_state: Effective Console rail state (open flags, labels).
             workspace_context_state: Shared workspace/conversation display
-                state, reused for both the Session tray and the Details tray
-                exactly as the pre-extraction inline compose did.
+                state, projected into the Sessions, Workspaces, Conversations,
+                and Details trays.
             settings_summary_state: Console session settings summary, parsed
                 here into the Model section's provider/model/temperature/
                 max-tokens/readiness rows (pure formatting, moved verbatim
@@ -191,13 +191,42 @@ class ConsoleLeftRail(Vertical):
         self._character_avatar_widget_builder = character_avatar_widget_builder
         self._character_avatar_name = character_avatar_name
 
+    def sync_workspace_context(self, state: ConsoleWorkspaceContextState) -> None:
+        """Push one context snapshot into every scoped rail projection.
+
+        Args:
+            state: Shared Console workspace snapshot to project into the
+                Sessions, Workspaces, Conversations, and Details trays.
+
+        Returns:
+            None.
+        """
+        for selector in (
+            "#console-session-context",
+            "#console-workspaces-context",
+            "#console-workspace-context",
+        ):
+            try:
+                tray = self.query_one(selector, ConsoleWorkspaceContextTray)
+            except (NoMatches, QueryError):
+                continue
+            tray.sync_state(state)
+            tray._console_workspace_context_synced = True
+        try:
+            details_tray = self.query_one(
+                "#console-workspace-details", ConsoleWorkspaceDetailsTray
+            )
+        except (NoMatches, QueryError):
+            return
+        details_tray.sync_state(state)
+
     def compose(self) -> ComposeResult:
-        """Compose the rail header, pinned fleet line, and the five sections.
+        """Compose the rail header, pinned fleet line, and context sections.
 
         Returns:
             The rail-header row, the pinned fleet-summary line, and the
-            scrollable Session/Model/Agent/Details/Character section widgets,
-            in mount order.
+            scrollable Sessions/Workspaces/Conversations/Model/Agent/Details/
+            Character section widgets, in mount order.
         """
         rail_state = self._rail_state
         workspace_context_state = self._workspace_context_state
@@ -252,9 +281,11 @@ class ConsoleLeftRail(Vertical):
             id="console-left-rail-body",
             classes="console-left-rail-body",
         ):
-            # Section 1: Session (workspace + conversations).
+            # TASK-14810: the former Session body mixed three distinct jobs.
+            # Keep the live session first, then expose workspace context and
+            # durable conversation browsing as peer disclosure sections.
             yield DestinationRailSectionHeader(
-                "Session",
+                "Sessions",
                 section_id="session",
                 open=rail_state.session_open,
                 id="console-rail-section-header-session",
@@ -267,21 +298,74 @@ class ConsoleLeftRail(Vertical):
             if not rail_state.session_open:
                 session_body.styles.display = "none"
             with session_body:
+                session_context_tray = ConsoleWorkspaceContextTray(
+                    workspace_context_state,
+                    show_heading=False,
+                    content="session",
+                    id="console-session-context",
+                    classes="console-left-rail-section",
+                )
+                session_context_tray.styles.width = "100%"
+                session_context_tray.styles.min_width = 0
+                yield frame_console_region(session_context_tray, variant="quiet")
+
+            yield DestinationRailSectionHeader(
+                "Workspaces",
+                section_id="workspace",
+                open=rail_state.workspace_open,
+                id="console-rail-section-header-workspace",
+            )
+            workspace_body = Vertical(
+                id="console-rail-section-body-workspace",
+                classes="console-rail-section-body",
+            )
+            workspace_body.styles.height = "auto"
+            if not rail_state.workspace_open:
+                workspace_body.styles.display = "none"
+            with workspace_body:
                 workspace_context_tray = ConsoleWorkspaceContextTray(
                     workspace_context_state,
                     show_heading=False,
-                    id="console-workspace-context",
+                    content="workspace",
+                    id="console-workspaces-context",
                     classes="console-left-rail-section",
                 )
                 workspace_context_tray.styles.width = "100%"
                 workspace_context_tray.styles.min_width = 0
-                # Always "quiet": mirrors
-                # `ChatScreen._workspace_context_frame_variant`, which keeps
-                # this tray visually nested inside the rail's own frame
-                # rather than drawing a second border.
                 yield frame_console_region(workspace_context_tray, variant="quiet")
 
-            # Section 2: Model (provider/model readout lines plus a
+            yield DestinationRailSectionHeader(
+                "Conversations",
+                section_id="conversations",
+                open=rail_state.conversations_open,
+                id="console-rail-section-header-conversations",
+            )
+            conversations_body = Vertical(
+                id="console-rail-section-body-conversations",
+                classes="console-rail-section-body",
+            )
+            conversations_body.styles.height = "auto"
+            if not rail_state.conversations_open:
+                conversations_body.styles.display = "none"
+            with conversations_body:
+                conversation_context_tray = ConsoleWorkspaceContextTray(
+                    workspace_context_state,
+                    show_heading=False,
+                    content="conversations",
+                    # Keep the long-standing id on the conversation browser:
+                    # search/resume tests and screen helpers use it as the
+                    # grouped browser's stable synchronization seam.
+                    id="console-workspace-context",
+                    classes="console-left-rail-section",
+                )
+                conversation_context_tray.styles.width = "100%"
+                conversation_context_tray.styles.min_width = 0
+                yield frame_console_region(
+                    conversation_context_tray,
+                    variant="quiet",
+                )
+
+            # Model (provider/model readout lines plus a
             # Configure shortcut into the Console session settings).
             yield DestinationRailSectionHeader(
                 "Model",
@@ -404,7 +488,7 @@ class ConsoleLeftRail(Vertical):
                 configure.tooltip = "Configure Console session settings"
                 yield configure
 
-            # Section 3: Agent (run inspector -- the watch-and-drill surface
+            # Agent (run inspector -- the watch-and-drill surface
             # for the live/most-recent agent run and its historical
             # sub-agent runs).
             yield DestinationRailSectionHeader(
@@ -469,7 +553,7 @@ class ConsoleLeftRail(Vertical):
                     full_log_button.styles.display = "none"
                 yield full_log_button
 
-            # Section 4: Details (storage, sync, handoff plumbing).
+            # Details (storage, sync, handoff plumbing).
             yield DestinationRailSectionHeader(
                 "Details",
                 section_id="details",
@@ -493,7 +577,7 @@ class ConsoleLeftRail(Vertical):
                 details_tray.styles.min_width = 0
                 yield details_tray
 
-            # Section 5: Character (avatar of the active character).
+            # Character (avatar of the active character).
             if self._show_character_section:
                 yield DestinationRailSectionHeader(
                     "Character",

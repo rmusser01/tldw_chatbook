@@ -436,10 +436,12 @@ async def test_console_workspace_context_tray_not_recomposed_when_state_unchange
 
 @pytest.mark.asyncio
 async def test_console_workspace_context_fresh_tray_still_synced_mid_run():
-    """TASK-344/349 (PR #745 Qodo #3): a fresh tray from ANY mid-run
-    full-screen recompose must still get its healing sync_state push even
-    under the unchanged-state run skip — the skip only applies to an
-    already-synced instance whose DOM is known-consistent."""
+    """Fresh peer context trays still heal after a mid-run recompose.
+
+    TASK-344/349 (PR #745 Qodo #3) introduced the one-time healing push;
+    TASK-14810 projects that state into Sessions, Workspaces, and
+    Conversations, so all three fresh tray instances must move together.
+    """
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -473,7 +475,7 @@ async def test_console_workspace_context_fresh_tray_still_synced_mid_run():
 
             console._sync_console_workspace_context()
             await pilot.pause()
-            assert len(recompose_calls) == before + 1, (
-                "a fresh (post-recompose) tray must still get one healing "
-                "sync_state push during a run"
+            assert len(recompose_calls) == before + 3, (
+                "a fresh (post-recompose) context projection must heal the "
+                "Sessions, Workspaces, and Conversations trays together"
             )

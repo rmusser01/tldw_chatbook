@@ -143,6 +143,83 @@ async def test_clicking_session_toggle_closes_then_reopens():
 
 
 @pytest.mark.asyncio
+async def test_context_sections_are_peer_sections_in_requested_order():
+    """Sessions, Workspaces, and Conversations lead the rail as peers."""
+
+    async with make_console_pilot() as pilot:
+        headers = list(
+            pilot.app.screen.query(
+                "#console-left-rail-body > .console-rail-section-header"
+            )
+        )
+        assert [header.section_id for header in headers[:3]] == [
+            "session",
+            "workspace",
+            "conversations",
+        ]
+        assert [header.title for header in headers[:3]] == [
+            "Sessions",
+            "Workspaces",
+            "Conversations",
+        ]
+
+
+@pytest.mark.asyncio
+async def test_context_section_bodies_do_not_mix_their_controls():
+    """Each disclosure body owns one concept instead of nesting all three."""
+
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        session_body = screen.query_one("#console-rail-section-body-session")
+        workspace_body = screen.query_one("#console-rail-section-body-workspace")
+        conversations_body = screen.query_one(
+            "#console-rail-section-body-conversations"
+        )
+
+        assert list(session_body.query("#console-active-scope"))
+        assert not list(session_body.query("#console-active-workspace"))
+        assert not list(session_body.query("#console-workspace-conversation-search"))
+
+        assert list(workspace_body.query("#console-active-workspace"))
+        assert list(workspace_body.query("#console-change-workspace"))
+        assert not list(workspace_body.query("#console-active-scope"))
+        assert not list(
+            workspace_body.query("#console-workspace-conversation-search")
+        )
+
+        assert list(
+            conversations_body.query("#console-workspace-conversation-search")
+        )
+        assert list(conversations_body.query("#console-workspace-conversations"))
+        assert not list(conversations_body.query("#console-active-workspace"))
+        assert not list(conversations_body.query("#console-active-scope"))
+
+
+@pytest.mark.asyncio
+async def test_workspace_and_conversation_disclosures_toggle_independently():
+    """Closing either new section leaves its peer visible and interactive."""
+
+    async with make_console_pilot() as pilot:
+        assert _section_body_visible(pilot, "workspace") is True
+        assert _section_body_visible(pilot, "conversations") is True
+
+        await _click_rail_toggle(pilot, "workspace")
+        await pilot.pause(0.2)
+        assert _section_body_visible(pilot, "workspace") is False
+        assert _section_body_visible(pilot, "conversations") is True
+
+        await _click_rail_toggle(pilot, "conversations")
+        await pilot.pause(0.2)
+        assert _section_body_visible(pilot, "workspace") is False
+        assert _section_body_visible(pilot, "conversations") is False
+
+        await _click_rail_toggle(pilot, "workspace")
+        await pilot.pause(0.2)
+        assert _section_body_visible(pilot, "workspace") is True
+        assert _section_body_visible(pilot, "conversations") is False
+
+
+@pytest.mark.asyncio
 async def test_clicking_a_rail_section_toggle_moves_focus_to_the_toggle_button():
     """Pin today's focus behaviour when a rail section header is pressed.
 

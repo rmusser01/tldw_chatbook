@@ -13,7 +13,15 @@ CONSOLE_RAIL_LEFT_DEFAULT_OPEN = True
 CONSOLE_RAIL_RIGHT_DEFAULT_OPEN = False
 # Task-400: the "context" (staged sources) section moved from the left rail
 # into the Inspector rail, so it is no longer a collapsible left-rail section.
-CONSOLE_RAIL_SECTION_IDS = ("session", "model", "details", "agent", "character")
+CONSOLE_RAIL_SECTION_IDS = (
+    "session",
+    "workspace",
+    "conversations",
+    "model",
+    "details",
+    "agent",
+    "character",
+)
 CONSOLE_RAIL_RIGHT_COMPACT_COLLAPSE_COLUMNS = 150
 # TASK-2154.1 (LY-08): below 100 columns the left rail's min-width contract
 # (rail 24 + main 56 + handles) can no longer be honored, so the rail is
@@ -96,6 +104,8 @@ class ConsoleRailPreferences:
     left_open: bool = CONSOLE_RAIL_LEFT_DEFAULT_OPEN
     right_open: bool = CONSOLE_RAIL_RIGHT_DEFAULT_OPEN
     session_open: bool = True
+    workspace_open: bool = True
+    conversations_open: bool = True
     model_open: bool = True
     details_open: bool = False
     agent_open: bool = False
@@ -138,6 +148,8 @@ class ConsoleRailState:
     left_compact_override: bool = False
     compact_override: bool = False
     session_open: bool = True
+    workspace_open: bool = True
+    conversations_open: bool = True
     model_open: bool = True
     details_open: bool = False
     agent_open: bool = False
@@ -288,10 +300,17 @@ def coerce_console_rail_preferences(raw: Any) -> ConsoleRailPreferences:
     if not isinstance(raw, Mapping):
         return defaults
 
+    session_open = _coerce_bool(raw.get("session_open"), defaults.session_open)
     return ConsoleRailPreferences(
         left_open=_coerce_bool(raw.get("left_open"), defaults.left_open),
         right_open=_coerce_bool(raw.get("right_open"), defaults.right_open),
-        session_open=_coerce_bool(raw.get("session_open"), defaults.session_open),
+        session_open=session_open,
+        workspace_open=_coerce_bool(
+            raw.get("workspace_open"), session_open
+        ),
+        conversations_open=_coerce_bool(
+            raw.get("conversations_open"), session_open
+        ),
         model_open=_coerce_bool(raw.get("model_open"), defaults.model_open),
         details_open=_coerce_bool(raw.get("details_open"), defaults.details_open),
         agent_open=_coerce_bool(raw.get("agent_open"), defaults.agent_open),
@@ -308,14 +327,17 @@ def serialize_console_rail_preferences(
         preferences: Rail preferences to serialize.
 
     Returns:
-        Persistence dict with the left/right rail flags and the five
-        left-rail section flags (task-400 dropped ``context_open``; P3c
-        added ``character_open``).
+        Persistence dict with the left/right rail flags and the seven
+        left-rail section flags. TASK-14810 split the former mixed Session
+        body into Sessions, Workspaces, and Conversations while preserving
+        the existing section-persistence model.
     """
     return {
         "left_open": bool(preferences.left_open),
         "right_open": bool(preferences.right_open),
         "session_open": bool(preferences.session_open),
+        "workspace_open": bool(preferences.workspace_open),
+        "conversations_open": bool(preferences.conversations_open),
         "model_open": bool(preferences.model_open),
         "details_open": bool(preferences.details_open),
         "agent_open": bool(preferences.agent_open),
@@ -647,6 +669,8 @@ def build_console_rail_state(
         left_compact_override=left_compact_override,
         compact_override=right_compact_override or left_compact_override,
         session_open=preferences.session_open,
+        workspace_open=preferences.workspace_open,
+        conversations_open=preferences.conversations_open,
         model_open=preferences.model_open,
         details_open=preferences.details_open,
         agent_open=preferences.agent_open,

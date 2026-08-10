@@ -1554,7 +1554,7 @@ def test_console_workspace_context_grouped_browser_styles_are_declared() -> None
         Path("tldw_chatbook/css/components/_agentic_terminal.tcss"),
         Path("tldw_chatbook/css/tldw_cli_modular.tcss"),
     ):
-        css = css_path.read_text()
+        css = css_path.read_text(encoding="utf-8")
 
         assert ".console-conversation-browser-section-header {" in css
         assert ".console-conversation-browser-section-title {" in css
@@ -1696,6 +1696,11 @@ async def test_console_workspace_many_conversations_keep_lower_status_reachable(
         new_conversation = console.query_one(
             "#console-new-workspace-conversation", Button
         )
+        # TASK-14810 adds two peer disclosure headers above Conversations.
+        # At 34 rows the action can start just below the viewport, so drive
+        # the real rail scroll affordance before checking its hit target.
+        new_conversation.scroll_visible(animate=False)
+        await pilot.pause(0.1)
         server_readiness = console.query_one(
             "#console-workspace-server-readiness-label"
         )
@@ -2399,17 +2404,22 @@ async def test_console_left_rail_splits_staged_context_from_workspace_context() 
 
         left_rail = console.query_one("#console-left-rail")
         staged_context = console.query_one("#console-staged-context-tray")
-        workspace_context = console.query_one("#console-workspace-context")
-        # Task-400: staged sources (Context) split out of the left rail
-        # entirely -- the tray renders in the Inspector rail body while the
-        # workspace context keeps the left rail's Session section.
-        assert workspace_context.parent.id == "console-rail-section-body-session"
+        session_context = console.query_one("#console-session-context")
+        workspaces_context = console.query_one("#console-workspaces-context")
+        conversations_context = console.query_one("#console-workspace-context")
+        # Task-400 keeps staged sources in the Inspector. TASK-14810 splits
+        # the former mixed Session tray into three peer context sections.
+        assert session_context.parent.id == "console-rail-section-body-session"
+        assert (
+            workspaces_context.parent.id == "console-rail-section-body-workspace"
+        )
+        assert (
+            conversations_context.parent.id
+            == "console-rail-section-body-conversations"
+        )
         assert staged_context.parent.id == "console-inspector-rail-body"
         assert not list(left_rail.query("#console-staged-context-tray"))
-        conversations_title = console.query_one(
-            "#console-workspace-conversations-title"
-        )
-        assert conversations_title.region.y > workspace_context.region.y
+        assert not list(console.query("#console-workspace-conversations-title"))
         assert len(console.query("#console-workspace-recovery")) == 0
         switch_button = console.query_one("#console-change-workspace", Button)
         assert switch_button.disabled is True
@@ -2528,8 +2538,8 @@ async def test_session_tray_shows_workspace_scope_and_new_button() -> None:
 @pytest.mark.asyncio
 async def test_conversation_row_shows_placeholder_when_no_active_conversation() -> None:
     """RAG-45: a fresh session with no active conversation must not render a
-    bare "Conversation" label with an empty value body -- the value falls
-    back to an explicit "—" placeholder."""
+    bare "Conversation" label with an empty value body. The Sessions section
+    names the empty state explicitly."""
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -2552,7 +2562,7 @@ async def test_conversation_row_shows_placeholder_when_no_active_conversation() 
             label_selector="#console-active-scope-label",
             value_selector="#console-active-scope-value",
             label="Conversation",
-            value_contains="—",
+            value_contains="None",
         )
 
 
@@ -3052,13 +3062,15 @@ async def test_console_change_workspace_switches_active_context_and_conversation
 
 
 def test_console_workspace_conversation_subsection_styles_are_declared() -> None:
-    css = Path("tldw_chatbook/css/components/_agentic_terminal.tcss").read_text()
+    css = Path("tldw_chatbook/css/components/_agentic_terminal.tcss").read_text(
+        encoding="utf-8"
+    )
 
     assert "#console-workspace-conversations-header {" in css
     assert ".console-workspace-action.console-workspace-conversations-toggle {" in css
     assert "#console-workspace-selected-conversation {" in css
     assert "#console-workspace-conversation-search-row {" in css
-    context_selector = "#console-workspace-context {"
+    context_selector = "#console-workspace-context"
     assert context_selector in css
     context_blocks = [
         block.split("}", 1)[0] for block in css.split(context_selector)[1:]
