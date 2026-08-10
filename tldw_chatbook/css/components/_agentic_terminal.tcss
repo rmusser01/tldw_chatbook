@@ -652,6 +652,17 @@ PromptVariablesDialog {
     color: $ds-text-primary;
 }
 
+#prompt-variables-system-state {
+    width: 5;
+    min-width: 5;
+    max-width: 5;
+    height: 3;
+    min-height: 3;
+    content-align: center middle;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
 #prompt-variables-system-copy {
     width: 1fr;
     min-width: 0;

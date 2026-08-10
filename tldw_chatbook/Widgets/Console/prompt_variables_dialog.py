@@ -24,6 +24,8 @@ from tldw_chatbook.Prompt_Management.prompt_variables import (
 MODAL_ID = "prompt-variables-dialog"
 DESTINATION_COPY_ID = "prompt-variables-destination"
 SYSTEM_CHECKBOX_ID = "prompt-variables-apply-system"
+SYSTEM_STATE_ID = "prompt-variables-system-state"
+SYSTEM_COPY_ID = "prompt-variables-system-copy"
 VARIABLES_SCROLL_ID = "prompt-variables-scroll"
 STATUS_ID = "prompt-variables-status"
 APPLY_BUTTON_ID = "prompt-variables-apply"
@@ -92,9 +94,10 @@ class PromptVariablesDialog(ModalScreen[PromptVariableApplication | None]):
                         value=False,
                         id=SYSTEM_CHECKBOX_ID,
                     )
+                    yield Static("Off", id=SYSTEM_STATE_ID, markup=False)
                     yield Static(
                         SYSTEM_CHECKBOX_COPY,
-                        id="prompt-variables-system-copy",
+                        id=SYSTEM_COPY_ID,
                         markup=False,
                     )
             with VerticalScroll(id=VARIABLES_SCROLL_ID, can_focus=False):
@@ -105,7 +108,7 @@ class PromptVariablesDialog(ModalScreen[PromptVariableApplication | None]):
                 yield Button(
                     "Use original placeholders",
                     id=ORIGINAL_BUTTON_ID,
-                    disabled=not self._can_apply,
+                    disabled=not self._can_use_original,
                 )
                 yield Button(
                     "Apply",
@@ -129,11 +132,17 @@ class PromptVariablesDialog(ModalScreen[PromptVariableApplication | None]):
         return self._has_active_lane and self._plan.is_valid
 
     @property
+    def _can_use_original(self) -> bool:
+        return self._has_active_lane
+
+    @property
     def _status_copy(self) -> str:
         if not self._has_active_lane:
             return "Select a lane to apply"
         if not self._plan.is_valid:
-            return "Prompt variables exceed the supported limit (64)."
+            if self._plan.issues[0].code == "name_too_long":
+                return "A Prompt variable name exceeds 64 characters."
+            return "This Prompt has more than 64 variables."
         return ""
 
     def action_cancel(self) -> None:
@@ -211,9 +220,10 @@ class PromptVariablesDialog(ModalScreen[PromptVariableApplication | None]):
                 return
 
     def _sync_action_state(self) -> None:
-        disabled = not self._can_apply
-        self.query_one(f"#{APPLY_BUTTON_ID}", Button).disabled = disabled
-        self.query_one(f"#{ORIGINAL_BUTTON_ID}", Button).disabled = disabled
+        self.query_one(f"#{APPLY_BUTTON_ID}", Button).disabled = not self._can_apply
+        self.query_one(
+            f"#{ORIGINAL_BUTTON_ID}", Button
+        ).disabled = not self._can_use_original
         self.query_one(f"#{STATUS_ID}", Static).update(self._status_copy)
 
     def _application(self, *, render: bool) -> PromptVariableApplication:
@@ -260,6 +270,9 @@ class PromptVariablesDialog(ModalScreen[PromptVariableApplication | None]):
         focus_name = self._focused_variable_name()
         self._capture_visible_values()
         self._system_selected = event.value
+        self.query_one(f"#{SYSTEM_STATE_ID}", Static).update(
+            "On" if event.value else "Off"
+        )
         self._plan = self._compile_active_plan()
         scroll = self.query_one(f"#{VARIABLES_SCROLL_ID}", VerticalScroll)
         await scroll.remove_children()

@@ -24,6 +24,8 @@ from tldw_chatbook.Widgets.Console.prompt_variables_dialog import (
     ORIGINAL_BUTTON_ID,
     STATUS_ID,
     SYSTEM_CHECKBOX_ID,
+    SYSTEM_COPY_ID,
+    SYSTEM_STATE_ID,
     VARIABLE_INPUT_CLASS,
     VARIABLE_ROW_CLASS,
     VARIABLES_SCROLL_ID,
@@ -96,6 +98,18 @@ def _input_for(dialog: PromptVariablesDialog, name: str) -> Input:
         for row_name, _label, value_input in _row_state(dialog)
         if row_name == name
     )
+
+
+def _painted_region_text(widget: Static) -> str:
+    lines = [
+        "".join(segment.text for segment in strip)
+        for strip in widget.screen._compositor.render_strips()
+    ]
+    region = widget.region
+    return " ".join(
+        lines[y][region.x : region.right].strip()
+        for y in range(region.y, region.bottom)
+    ).strip()
 
 
 def test_request_is_frozen_validated_and_repr_safe() -> None:
@@ -324,25 +338,61 @@ async def test_system_only_defaults_to_no_active_lane_until_explicitly_selected(
 
 
 @pytest.mark.asyncio
-async def test_limit_error_is_bounded_literal_and_disables_application_actions() -> (
-    None
-):
-    variables = " ".join(f"{{v{index}}}" for index in range(65))
+async def test_system_authorization_remains_keyboard_accessible() -> None:
+    app = DialogHarness()
+    async with app.run_test(size=(64, 24)) as pilot:
+        app.show(_request(system_text="System {tone}"))
+        await pilot.pause()
+        checkbox = app.screen.query_one(f"#{SYSTEM_CHECKBOX_ID}", Checkbox)
+        checkbox.focus()
+
+        await pilot.press("space")
+        await pilot.pause()
+
+        assert checkbox.value is True
+        assert (
+            str(app.screen.query_one(f"#{SYSTEM_STATE_ID}", Static).renderable) == "On"
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("source", "expected_status"),
+    [
+        (
+            "{" + "A" * 65 + "}",
+            "A Prompt variable name exceeds 64 characters.",
+        ),
+        (
+            " ".join(f"{{v{index}}}" for index in range(65)),
+            "This Prompt has more than 64 variables.",
+        ),
+    ],
+)
+async def test_limit_error_blocks_rendering_but_keeps_original_source_available(
+    source: str,
+    expected_status: str,
+) -> None:
     app = DialogHarness()
     async with app.run_test(size=(120, 40)) as pilot:
-        app.show(_request(user_text=variables))
+        app.show(_request(user_text=source))
         await pilot.pause()
         dialog = app.screen
 
         status = dialog.query_one(f"#{STATUS_ID}", Static)
-        assert (
-            str(status.renderable)
-            == "Prompt variables exceed the supported limit (64)."
-        )
+        assert str(status.renderable) == expected_status
         assert dialog.query_one(f"#{APPLY_BUTTON_ID}", Button).disabled is True
-        assert dialog.query_one(f"#{ORIGINAL_BUTTON_ID}", Button).disabled is True
+        assert dialog.query_one(f"#{ORIGINAL_BUTTON_ID}", Button).disabled is False
         assert dialog.query_one(f"#{CANCEL_BUTTON_ID}", Button).disabled is False
         assert len(str(status.renderable)) < 80
+
+        await pilot.click(f"#{ORIGINAL_BUTTON_ID}")
+        await pilot.pause()
+
+    result = app.results[0]
+    assert isinstance(result, PromptVariableApplication)
+    assert result.user_text == source
+    assert source not in expected_status
 
 
 @pytest.mark.asyncio
@@ -457,17 +507,23 @@ async def test_real_bundle_keeps_one_scroll_owner_and_fixed_actions_reachable(
         )
         normalized_paint = " ".join(painted.split())
         assert "Replace the current Console draft" in normalized_paint
-        if size[0] >= 120:
-            assert (
-                "Replace the current session System prompt with this System lane"
-                in normalized_paint
-            )
-        else:
-            assert "Replace the current session System prompt with" in normalized_paint
-            assert "this System lane" in normalized_paint
+        system_copy = dialog.query_one(f"#{SYSTEM_COPY_ID}", Static)
+        assert _painted_region_text(system_copy) == (
+            "Replace the current session System prompt with this System lane"
+        )
         assert "Use original placeholders" in normalized_paint
         assert "Cancel" in normalized_paint
         assert "Apply" in normalized_paint
+        state = dialog.query_one(f"#{SYSTEM_STATE_ID}", Static)
+        assert str(state.renderable) == "Off"
+        assert _painted_region_text(state) == "Off"
+
+        await pilot.click(f"#{SYSTEM_CHECKBOX_ID}")
+        await pilot.pause()
+        state = dialog.query_one(f"#{SYSTEM_STATE_ID}", Static)
+        assert str(state.renderable) == "On"
+        assert _painted_region_text(state) == "On"
+        assert dialog.query_one(f"#{ORIGINAL_BUTTON_ID}", Button).disabled is False
 
         scroll.scroll_to(y=scroll.max_scroll_y, animate=False)
         await pilot.pause()
