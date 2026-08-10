@@ -943,8 +943,8 @@ def _active_library_sync_scope(app_instance: Any) -> dict[str, str | None]:
 # treats every row_id identically regardless of target_kind, so nothing
 # about being a handoff row stops it from being a valid nav-context landing
 # spot. ``flashcards``/``quizzes`` stay out: nothing emits those modes yet
-# (Escape always returns to the shared "Study decks" row -- see
-# ``StudyScreen.action_study_back_to_library``), so adding them now would be
+# (a Library-origin Escape always returns to the shared "Study decks" row --
+# see ``StudyScreen.action_study_back``), so adding them now would be
 # speculative, same posture as the other forward-compat-only entries below.
 # Any other mode value, including the retired ``sources``/``workspaces``/
 # ``import-export`` values, degrades quietly, unchanged from before this

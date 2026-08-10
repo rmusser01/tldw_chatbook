@@ -20,10 +20,11 @@ you touch them; some are read-only and point you elsewhere.
   Settings is the last of thirteen destinations: the first ten get
   **Ctrl+1 … Ctrl+0**, and the remaining three get function keys — the nav
   bar labels say so ("F7 Lab", "F8 Logs", "F9 Settings").
-- **Click "F9 Settings" in the nav bar.** On a narrow window the bar becomes
-  a pager: a "More ›" button appears at the right edge (widening to
-  "F7 Lab · F8 Logs · F9 Settings · More ›" when there is room) and pages the
-  strip; when everything fits, no button shows.
+- **Click "F9 Settings" in the nav bar.** On a narrow window a "More ▾"
+  button appears at the right edge and opens a menu listing every
+  destination — pick "F9 Settings" there; when everything fits, no button
+  shows. Once Settings opens, the strip scrolls so the highlighted
+  "F9 Settings" tab stays visible (task-4024).
 - **Ctrl+P** → "Tab Navigation: Switch to Settings", or "Settings &
   Preferences: Open Settings Tab". Typing **stats** also surfaces the Settings
   entry, because "stats" is one of this screen's legacy route names — but the
@@ -551,4 +552,9 @@ added against dev @ 3dd3e7431 — 2026-08-09 (fleet PR-1: driven live —
 created, selected, edited, and disabled a real definition in a scratch
 profile, fixing a rendering defect on the Name/Description/Model
 override/Tools fields found along the way; the rest of this page's content
+unchanged from the prior stamp).*
+*Verified against dev @ 642567627 — 2026-08-10 (task-4024: driven live at
+80 and 120 cols — opening Settings from the nav bar's "More ▾" overflow
+menu now leaves the strip scrolled so "F9 Settings" is visible and
+highlighted, and it stays that way; the rest of this page's content
 unchanged from the prior stamp).*

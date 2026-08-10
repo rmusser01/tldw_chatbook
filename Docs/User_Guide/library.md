@@ -180,7 +180,9 @@ Once you're on the Study screen, its header reads "Library ▸ Study" with
 an "Esc: back to Library" hint — the nav bar shows no highlighted tab
 there (Study renders none of Library's chrome, so boxing "Library" would
 be misleading), and pressing **Escape** returns you to the Study decks
-staging canvas above.
+staging canvas above. (Reached from Home's **Review flashcards** instead,
+the same screen reads "Home ▸ Study" and Escape returns to Home —
+task-4011.)
 
 ## Common tasks
 
@@ -308,6 +310,10 @@ glosses/counts follow one rule across visits (LIB-15); the search box
 selects a stale query on click too, not just on a second "/" (LIB-17);
 Conversations/Flashcards/Collections fall back to a short label instead
 of a mid-word ellipsis at narrow widths (LIB-18)).*
+*Verified against dev @ 642567627 — 2026-08-10 (task-4011: the Study
+screen's breadcrumb/Escape now name the actual origin — the Library-origin
+round trip described above re-driven live and unchanged; the Home-origin
+variant reads "Home ▸ Study" and Escapes to Home).*
 *Verified against dev @ 023a04a48 — 2026-08-07 (task-2860: the "F6 next
 pane" footer hint above was previously true in description only — a
 `AppFooterStatus` filter silently dropped the landing's own F6 hint and

@@ -16,6 +16,7 @@ from ...Chat.console_live_work import ConsoleLiveWorkLaunch
 from ...Chat.provider_readiness import provider_config_key
 from ..Screens.study_scope_models import (
     STUDY_INITIAL_SECTIONS,
+    STUDY_ORIGINS,
     StudyScopeContext,
 )
 
@@ -50,6 +51,7 @@ class HandoffChannel(StrEnum):
     CONSOLE_PROVIDER = "console_provider"
     STUDY_SCOPE = "study_scope"
     STUDY_INITIAL_SECTION = "study_initial_section"
+    STUDY_ORIGIN = "study_origin"
     ARTIFACT_CHATBOOK_TARGET = "artifact_chatbook_target"
     ACP_SESSION_TARGET = "acp_session_target"
 
@@ -211,6 +213,13 @@ class PendingHandoffStore:
             normalized = value.strip()
             if normalized not in STUDY_INITIAL_SECTIONS:
                 raise ValueError("invalid Study section")
+            return normalized
+        if channel is HandoffChannel.STUDY_ORIGIN:
+            if not isinstance(value, str):
+                raise TypeError("Study origin must be text")
+            normalized = value.strip()
+            if normalized not in STUDY_ORIGINS:
+                raise ValueError("invalid Study origin")
             return normalized
         if channel is HandoffChannel.ARTIFACT_CHATBOOK_TARGET:
             return PendingHandoffStore._canonical_target(
