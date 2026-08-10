@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import ast
+import copy
 import hashlib
 import importlib
 import json
+import sys
 from collections import Counter
 from pathlib import Path
 from types import ModuleType
@@ -99,6 +101,26 @@ def _call_from_record(site: dict[str, object], record_name: str):
         expressions=tuple(record["expressions"]),
         captures_exception=record["captures_exception"],
     )
+
+
+def _assert_ledger_lifecycle(sites: list[dict[str, object]]) -> None:
+    for site in sites:
+        classification = site["starting_classification"]
+        outcome = site["outcome"]
+        if classification == "reviewed_safe":
+            assert outcome == "frozen", (
+                f"reviewed_safe diagnostic must remain frozen: {site['site_id']}"
+            )
+        elif classification == "private":
+            assert outcome in {"pending", "metadata", "deleted"}, (
+                "private diagnostic has unapproved lifecycle outcome: "
+                f"{site['site_id']}={outcome}"
+            )
+        else:
+            raise AssertionError(
+                "unknown starting diagnostic classification: "
+                f"{site['site_id']}={classification}"
+            )
 
 
 def test_guard_finds_stdlib_loguru_nested_and_bound_calls() -> None:
@@ -368,8 +390,7 @@ def test_ledger_retains_all_523_starting_sites() -> None:
 
 def test_ledger_current_state_matches_sources() -> None:
     sites = _ledger_sites()
-    outcomes = {"pending", "frozen", "metadata", "deleted"}
-    assert {site["outcome"] for site in sites} <= outcomes
+    _assert_ledger_lifecycle(sites)
 
     discovered = []
     for module in MODULE_COUNTS:
@@ -406,3 +427,73 @@ def test_ledger_current_state_matches_sources() -> None:
             f"current diagnostic record changed: {site['site_id']}"
         )
         _guard().assert_review_outcome(starting, actual, outcome=site["outcome"])
+
+
+def test_ledger_rejects_reviewed_safe_outcome_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sites = copy.deepcopy(_ledger_sites())
+    reviewed_safe = next(
+        site
+        for site in sites
+        if site["starting_classification"] == "reviewed_safe"
+        and site["starting"]["message_shape"].startswith("Constant(value=")
+    )
+    reviewed_safe["outcome"] = "metadata"
+    monkeypatch.setattr(sys.modules[__name__], "_ledger_sites", lambda: sites)
+
+    with pytest.raises(
+        AssertionError, match="reviewed_safe diagnostic must remain frozen"
+    ):
+        test_ledger_current_state_matches_sources()
+
+
+def test_ledger_rejects_private_outcome_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sites = copy.deepcopy(_ledger_sites())
+    private = next(
+        site
+        for site in sites
+        if site["starting_classification"] == "private"
+        and not site["starting"]["captures_exception"]
+    )
+    private["outcome"] = "frozen"
+    monkeypatch.setattr(sys.modules[__name__], "_ledger_sites", lambda: sites)
+
+    with pytest.raises(
+        AssertionError,
+        match="private diagnostic has unapproved lifecycle outcome",
+    ):
+        test_ledger_current_state_matches_sources()
+
+
+def test_ledger_lifecycle_uses_exact_approved_outcomes() -> None:
+    approved = {
+        "reviewed_safe": {"frozen"},
+        "private": {"pending", "metadata", "deleted"},
+    }
+    all_outcomes = {"pending", "frozen", "metadata", "deleted"}
+
+    for classification, allowed in approved.items():
+        for outcome in allowed:
+            _assert_ledger_lifecycle(
+                [
+                    {
+                        "site_id": "synthetic-lifecycle-site",
+                        "starting_classification": classification,
+                        "outcome": outcome,
+                    }
+                ]
+            )
+        for outcome in all_outcomes - allowed:
+            with pytest.raises(AssertionError):
+                _assert_ledger_lifecycle(
+                    [
+                        {
+                            "site_id": "synthetic-lifecycle-site",
+                            "starting_classification": classification,
+                            "outcome": outcome,
+                        }
+                    ]
+                )
