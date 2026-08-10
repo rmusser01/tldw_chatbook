@@ -58,6 +58,8 @@ names, not text that merely resembles a placeholder after escape decoding.
 | `{1name}` | none | `{1name}` | The first character is invalid. |
 | `{first-name}` | none | `{first-name}` | Hyphens are invalid in names. |
 | `{ name }` | none | `{ name }` | Whitespace is invalid in names. |
+| `{"key": "value"}` | none | unchanged | Ordinary unescaped JSON object braces are invalid variable delimiters and remain literal. |
+| `{"key": "{name}"}` | `name` | `{"key": "X"}` | Ordinary JSON structure remains literal while its explicit valid placeholder is active. |
 | `{{"key": "{name}"}}` | `name` | `{"key": "X"}` | JSON structure uses escaped literal braces while its explicit placeholder remains active. |
 | `<customer>{name}</customer>` | `name` | `<customer>X</customer>` | XML syntax is otherwise literal. |
 | `{outer {name}}` | `name` | `{outer X}` | The invalid outer `{` is literal; scanning continues and finds the explicit inner placeholder. |
@@ -82,10 +84,16 @@ remains enabled. The ordinary Apply action renders active lanes. The secondary
 action applies the selected source lanes without interpolation so an existing
 literal `{name}` remains expressible.
 
-The dialog describes its destination truthfully:
+The dialog describes its destination truthfully. For replacement flows, the
+complete segment-aware composer snapshot is captured at `/prompt` dispatch or
+picker opening, before any asynchronous resolution or user selection. That
+exact snapshot and its one-way fingerprint are threaded through the flow; the
+application may replace all of its draft segments only if the live snapshot
+still compares equal. Pending attachments, which are not composer draft
+segments, remain outside this transaction.
 
 - exact `/prompt` and picker flows replace the entire Console composer snapshot
-  captured before the dialog opens;
+  captured when the flow opened;
 - picker use over ordinary text says `Replace the current Console draft`, not
   that the text is a slash command;
 - Library use says `Append to the current Console draft` and captures the
@@ -98,16 +106,37 @@ or original lane text, lane flags, destination (`replace_snapshot` or
 fingerprints, and monotonic creation and expiry data. It contains no raw value
 map, separately retained values, or additional copy of the source Prompt body
 beyond the final lane payload selected for application. Sensitive lane text is
-excluded from representations, serialization, diagnostics, and logs.
+excluded from representations, feature-owned serialization or persistence
+APIs, diagnostics, and logs. The final selected original-or-rendered lane text
+is the application payload itself; no separate raw/source copy is retained.
 
 Applications expire when monotonic elapsed time is greater than or equal to
 120 seconds. The pending handoff is detached, latest-wins, one-shot, and
-owner-thread-only. Expiry is checked when claiming and immediately before
-mutation. A wrong type, expired request, wrong session, stale captured composer,
-or stale authorized System fingerprint is acknowledged and discarded without
-mutation and with bounded recovery copy. A transient missing composer may
-release the claim only while the same request remains valid; releasing an
-older claim cannot overwrite a newer revision.
+owner-thread-only. `PendingHandoffStore.claim()` returns a claim with the
+bounded status `ready` or `expired`. For `CONSOLE_PROMPT_INSERT`, the store
+computes that status with its injected monotonic clock while moving the exact
+revision in flight. An expired claim still reaches the consumer so it can
+acknowledge it and show a bounded warning; it is never returned to pending
+state. Release always settles the exact in-flight claim. It requeues the
+retained payload only when the claim is ready, still unexpired, and its revision
+is still the channel's current revision; otherwise it discards that old claim
+while preserving any newer pending revision. Apply-time expiry is acknowledged
+and warned, not released. A wrong type, wrong session,
+stale captured composer, or stale authorized System fingerprint is likewise
+acknowledged and discarded without mutation and with a bounded warning.
+
+Library obtains its authorization target only through an owner-thread,
+app-owned `ConsolePromptTargetProjection`. The projection contains the target
+session ID and a one-way System fingerprint—never System or composer text.
+Immediately before navigation away from Console, the app asks the live Console
+owner for this sanitized projection and publishes it in `ScreenStateStore`
+under the current runtime identity. Restoring a compatible projection returns
+a detached value. A runtime/source identity change, Console snapshot discard,
+or explicit Console reset invalidates it together with the corresponding
+screen snapshot. Library never reads serialized Console sessions directly. If
+no prior Console target exists, Library refuses before opening the dialog or
+staging content and shows `Open Console once, then retry Use in Console.`; it
+does not guess or create a hidden destination session.
 
 The Console applies composer and authorized System changes as one coordinated,
 reversible in-memory operation. A subsequent durable conversation/System write
@@ -155,15 +184,22 @@ with the destination Console rather than the Library or modal.
 - Composer and System fingerprints are computed from exact current state with
   a one-way digest; no body text is embedded in the fingerprint.
 - Slash and picker replacement compare the entire captured composer snapshot,
-  not only the command text or cursor-local segment.
+  not only the command text or cursor-local segment; capture occurs before the
+  first awaited resolution or selection step.
+- Library reads only an app-owned, sanitized target projection. Publication,
+  runtime-compatible restoration, and invalidation remain owner-thread-only and
+  follow the corresponding Console screen snapshot lifecycle.
 - Library append captures the active composer snapshot at consumption, not at
   Library authorization time.
 - System application is opt-in, defaults off, and compares the authorization-
   time System fingerprint immediately before mutation.
 - Claim-time and apply-time expiry use an injectable monotonic clock and the
   exact `elapsed >= 120` boundary.
-- Missing-composer retry never resurrects an expired, stale, acknowledged, or
-  superseded request.
+- Claim-time expiry returns an explicit `expired` claim status so the consumer
+  can acknowledge once and warn; release never resurrects an expired claim.
+- Release always clears the exact in-flight claim. Missing-composer retry
+  requeues only a ready, unexpired, still-current revision and never overwrites
+  newer pending work or resurrects an expired, stale, or acknowledged request.
 - In-memory rollback and durable persistence reporting remain distinct.
 - Prompt insertion never turns a Recipe into an executable artifact.
 
@@ -177,6 +213,8 @@ with the destination Console rather than the Library or modal.
 | Persist variable definitions or recent values with Prompt records | TASK-199 only needs insertion-time values; persistence adds a sensitive-data lifecycle and changes the Prompt artifact schema without a user requirement. |
 | Pass a bare rendered string through the handoff | Cannot express lane authorization, destination, expiry, target session, or stale-state guards. |
 | Let Library or the dialog mutate the Console composer | Violates destination ownership and races navigation, session changes, and composer remounts. |
+| Let Library inspect serialized Console session state | Couples one screen to another screen's private snapshot and exposes more session data than authorization needs. |
+| Guess or create a destination when no Console target was ever published | System authorization would be bound to an undisclosed session; the honest recovery is to initialize Console once and retry. |
 | Enable System replacement by default | A Prompt could silently change session behavior while the user intended only to insert User text. |
 | Make composer and durable System persistence one advertised atomic transaction | The current durable write is a separate failure domain and cannot truthfully roll back all external effects. |
 | Execute Recipe lanes directly | Violates ADR-040's artifact boundary and bypasses the explicit unsaved Prompt-copy step. |

@@ -34,6 +34,7 @@ from tldw_chatbook.Prompt_Management.prompt_variables import (
         ("{ name }", {}, (), "{ name }"),
         ('{{"key": "{name}"}}', {"name": "X"}, ("name",), '{"key": "X"}'),
         ('{"key": "value"}', {}, (), '{"key": "value"}'),
+        ('{"key": "{name}"}', {"name": "X"}, ("name",), '{"key": "X"}'),
         (
             "<customer>{name}</customer>",
             {"name": "X"},
