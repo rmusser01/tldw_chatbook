@@ -122,13 +122,22 @@ def make_fleet_service(
     revoke_approvals=None,
     review_tool_calls=None,
     run_skill_script_tool=None,
+    allow_unconsumed=False,
 ):
-    """An AgentService wired for the fleet (explicit coordinator = opt in)."""
+    """An AgentService wired for the fleet (explicit coordinator = opt in).
+
+    `allow_unconsumed` forwards to `FleetChat`: set it in a test that
+    deliberately strands scripted turns (a cancelled, wedged, or exploding
+    child), so the teardown consumption sweep does not flag them. Mis-keyed
+    scripts stay fatal either way.
+    """
     registry = ToolCatalogRegistry()
     registry.register_provider(BuiltinToolProvider())
     for provider in providers:
         registry.register_provider(provider)
-    chat = FleetChat(parent_replies, child_replies)
+    chat = FleetChat(
+        parent_replies, child_replies, allow_unconsumed=allow_unconsumed
+    )
     coordinator = FleetCoordinator(max_live=max_live, clock=time.monotonic)
     service = AgentService(
         db=db,
@@ -1040,6 +1049,9 @@ def test_wait_agents_cancellation_stops_children_and_ends_the_run(db):
                 fence("calculator", {"expression": f"1+{n}"}) for n in range(60)
             ]
         },
+        # The child is CANCELLED mid-flight: its remaining scripted turns
+        # are meant to go unused -- that is the point of the test.
+        allow_unconsumed=True,
     )
     _run_id, outcome = service.run_turn(
         conversation_id="c",
@@ -1158,6 +1170,9 @@ def test_wait_agents_is_bounded_by_the_runs_remaining_wall_clock(
             "gave up",
         ],
         {"wedged": [wedged_child]},
+        # The run is cut short by its 1s wall clock, so the parent's last
+        # scripted turn ("gave up") is deliberately never reached.
+        allow_unconsumed=True,
     )
     try:
         started_at = time.monotonic()
@@ -1197,7 +1212,10 @@ def test_child_thread_exception_finishes_the_handle_as_error(db):
             fence(WAIT_AGENTS_TOOL_NAME, {}),
             "handled",
         ],
+        # "never reached" is literal: _run_one is monkeypatched to raise
+        # before the child ever asks for a reply.
         {"boom": ["never reached"]},
+        allow_unconsumed=True,
     )
     real_run_one = service._run_one
 

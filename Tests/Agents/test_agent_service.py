@@ -136,9 +136,55 @@ class FleetChat:
     instead); ``parent_calls`` records the primary agent's own calls and
     ``child_calls`` each child's, each in that agent's own order, which IS
     stable because one agent's turns are strictly sequential.
+
+    FAILING LOUDLY (PR2a Task 6.5 review). A scripting mistake here used to
+    vanish: a bare ``assert`` raised on a CHILD's thread is swallowed by
+    ``AgentService``'s ``run_child`` (which catches BaseException by design,
+    so a buggy child cannot strand the parent's join) and becomes
+    ``status=error``, so any test not asserting the child's RESULT still
+    passed -- vacuously. Demonstrated: mis-keying ``test_child_cannot_spawn``'s
+    child script to a task text no child ever asks for left it green. Since
+    this harness is now load-bearing for nine suites, and a future task-text
+    rename is exactly the kind of change that would re-introduce it, every
+    scripting fault is recorded in ``harness_errors``, re-raised on the
+    parent's next call, and swept at teardown by the autouse
+    ``_fleet_chat_scripts_fully_consumed`` fixture in ``Tests/conftest.py``
+    -- which also fails a test that left any scripted turn UNUSED.
     """
 
-    def __init__(self, parent_replies, child_replies=None, *, reply=provider_reply):
+    #: Every instance built during the current test, for the autouse sweep.
+    _live_instances: list["FleetChat"] = []
+
+    def __init__(
+        self,
+        parent_replies,
+        child_replies=None,
+        *,
+        reply=provider_reply,
+        allow_unconsumed=False,
+    ):
+        """
+        Args:
+            parent_replies: ordered script for the primary agent.
+            child_replies: {task_text: ordered script} per child.
+            reply: item -> provider response. `verbatim` for suites whose
+                scripts already hold full response envelopes.
+            allow_unconsumed: opt OUT of the "every scripted turn was
+                used" teardown check -- and ONLY that check. Set it when a
+                test deliberately strands turns: a child cancelled
+                mid-flight, one wedged past the wall clock, one that
+                raises instead of answering.
+
+                KNOWN RESIDUAL, measured: for such a test a mis-keyed
+                child script can still pass silently, because the child
+                may be cancelled (or may explode) before it ever asks for
+                a reply -- so neither signal exists to fire. There is no
+                signal to recover here; the mitigation is that this flag
+                is rare and deliberate (three tests in the fleet suite,
+                each commented). A child that DOES get to ask still
+                records a `harness_errors` entry, which is fatal
+                regardless of this flag.
+        """
         self.parent_replies = list(parent_replies)
         self.child_replies = {
             task: list(script) for task, script in (child_replies or {}).items()
@@ -146,28 +192,63 @@ class FleetChat:
         self.calls: list[dict] = []
         self.parent_calls: list[dict] = []
         self.child_calls: dict[str, list[dict]] = {}
+        self.harness_errors: list[str] = []
+        self.allow_unconsumed = allow_unconsumed
         self._reply = reply
         self._lock = threading.Lock()
+        FleetChat._live_instances.append(self)
+
+    def _fault(self, message):
+        """Record a scripting fault and raise it on the calling thread."""
+        self.harness_errors.append(message)
+        raise AssertionError(f"FleetChat scripting fault: {message}")
 
     def __call__(self, **kwargs):
         payload = kwargs["messages_payload"]
         task = child_task_of(payload)
         with self._lock:
             self.calls.append(kwargs)
+            # Surface a fault raised earlier on a CHILD's thread, where the
+            # runtime swallowed it, the first time the parent calls again.
+            if self.harness_errors:
+                raise AssertionError(
+                    "FleetChat scripting fault on another agent's thread: "
+                    + "; ".join(self.harness_errors)
+                )
             if task is None:
                 self.parent_calls.append(kwargs)
-                assert self.parent_replies, "parent script exhausted"
+                if not self.parent_replies:
+                    self._fault("parent script exhausted")
                 item = self.parent_replies.pop(0)
             else:
                 self.child_calls.setdefault(task, []).append(kwargs)
                 script = self.child_replies.get(task)
-                assert script, f"no scripted reply left for child task {task!r}"
+                if not script:
+                    self._fault(
+                        f"no scripted reply left for child task {task!r}; "
+                        f"scripted tasks are {sorted(self.child_replies)}"
+                    )
                 item = script.pop(0)
         # Called OUTSIDE the lock: a gated reply blocks here, and holding
         # the lock would serialize the very concurrency under test.
         if callable(item):
             item = item()
         return self._reply(item)
+
+    def unconsumed(self):
+        """Scripted turns nobody ever asked for, as readable strings."""
+        if self.allow_unconsumed:
+            return []
+        leftovers = []
+        if self.parent_replies:
+            leftovers.append(f"parent has {len(self.parent_replies)} unused turn(s)")
+        for task, script in self.child_replies.items():
+            if script:
+                leftovers.append(
+                    f"child {task!r} has {len(script)} unused turn(s) "
+                    f"(asked for {len(self.child_calls.get(task, []))})"
+                )
+        return leftovers
 
 
 @pytest.fixture()
@@ -473,16 +554,55 @@ def test_run_turn_records_assistant_message_id_on_primary_only(db):
     assert child["assistant_message_id"] is None
 
 
-def test_subagent_result_is_capped(db):
+def test_subagent_result_is_capped(db, inline_spawns):
     """A child's oversized answer reaches the parent capped, not whole.
 
-    PR2a Task 6.5 -- SAME GUARANTEE, NEW CARRIER, NOT A WEAKENING. This
-    used to read the SPAWN call's own tool_result, because an inline spawn
-    returned the child's text itself. Under the fleet spawn returns a
-    handle and the child's text arrives through `wait_agents`, so the cap
-    is asserted on the `wait_agents` result instead. The property is
-    unchanged and still the one that matters: a 10,000-char child answer
-    must not enter the supervisor's context at full length.
+    THE INLINE CARRIER, verbatim. This is the original test, re-pinned on
+    `max_live_subagents = 1` -- the shipped kill switch, and the path whose
+    own cap (`agent_service`'s `spawn`, inline branch) is the code under
+    test here.
+
+    PR2a Task 6.5 review caught me moving this assertion to `wait_agents`
+    and calling it "the same guarantee, new carrier". It was not: the
+    fleet's own cap was ALREADY covered by
+    `test_fleet_runtime.test_wait_agents_splits_the_history_budget_across_children`,
+    so the move landed on held ground and left the inline cap with no
+    coverage at all -- deleting those three lines kept Tests/Agents and
+    Tests/Chat fully green. Both carriers are now pinned: this test for the
+    inline branch, `test_subagent_result_is_capped_under_the_fleet` below
+    for the threaded one.
+    """
+    long_answer = "x" * 10000
+    service, _ = make_service(
+        db, [fence(SPAWN_TOOL_NAME, {"task": "t"}), long_answer, "done"]
+    )
+    tight = AgentConfig(
+        model="m",
+        system_prompt="s",
+        allowed_tools=(SPAWN_TOOL_NAME,),
+        budget=RunBudget(max_subagent_result_chars=100),
+    )
+    _, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "q"}],
+        config=tight,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    run = db.list_runs("c", include_superseded=False)
+    parent = next(r for r in run if r["agent_kind"] == "primary")
+    capped = [s for s in parent["steps"] if s["kind"] == "tool_result"][0]
+    assert "[truncated]" in capped["result"]
+    assert len(capped["result"]) < 300
+
+
+def test_subagent_result_is_capped_under_the_fleet(db):
+    """The same cap, on the threaded carrier: `wait_agents`.
+
+    Companion to the inline test above (PR2a Task 6.5). With the fleet on,
+    `spawn` returns a handle and the child's text reaches the supervisor
+    through `wait_agents`, so that is where the cap must be observable.
+    Both branches cap, and both are now pinned.
     """
     long_answer = "x" * 10000
     chat = FleetChat(

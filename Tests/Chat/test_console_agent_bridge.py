@@ -2995,15 +2995,12 @@ def _discovery_heavy_shout_scripts():
     -> load_tools({"ids": ["skill:shout"]}) -> shout({"args": "hello"})
     -> the sub-agent's own turn -> the primary's final wrap-up reply.
 
-    Two things changed when the fleet went ON by default. The child now
-    runs on its OWN thread, so the five turns are no longer one ordered
-    queue -- they are the primary's four and the child's one. And a skill
-    call, which goes through the very same `spawn` closure as
-    `spawn_subagent`, now returns a HANDLE instead of the skill's output,
-    so the primary has to `wait_agents` to collect it: that is the extra
-    round in the parent script below, and it makes this test's own subject
-    (does the bridge's budget leave headroom to reach the wrap-up reply?)
-    strictly harder than it was.
+    The ROUND COUNT is unchanged from before the fleet: a skill call runs
+    its child INLINE and returns the skill's output, so there is no
+    collection round (see `AgentService`'s `invoke_tool` skill branch).
+    Only the SHAPE changed -- the five turns are addressed per agent (the
+    primary's four, the child's one) rather than popped off one queue,
+    which is how they should always have been written.
 
     Returns:
         (parent_script, child_script) for `_FleetChunkGateway`.
@@ -3012,7 +3009,6 @@ def _discovery_heavy_shout_scripts():
         [_fence("find_tools", {"query": "shout"})],
         [_fence("load_tools", {"ids": ["skill:shout"]})],
         [_fence("shout", {"args": "hello"})],
-        [_fence("wait_agents", {})],  # collect the skill child's result
         ["Shouted: HELLO"],  # primary final answer
     ]
     child = [["HELLO"]]  # sub-agent turn (never streamed to the store)

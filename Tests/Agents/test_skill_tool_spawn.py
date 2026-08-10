@@ -19,6 +19,7 @@ from tldw_chatbook.Agents.tool_catalog import (
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
+from Tests.Agents.conftest import pin_max_live_subagents
 from Tests.Agents.test_agent_service import FleetChat, verbatim
 
 
@@ -450,3 +451,70 @@ def test_native_spawn_child_cannot_call_a_skill_tool(tmp_path):
     ]
     assert any("Tool not permitted: code-review" in r for r in tool_results)
     assert not any("sub-agent budget exhausted" in r for r in tool_results)
+
+
+# --- PR2a Task 6.5: a SKILL call keeps its contract under a live fleet ---
+
+
+def test_skill_call_runs_inline_and_returns_the_output_not_a_handle(
+    tmp_path, monkeypatch
+):
+    """With the fleet ON, a skill call still returns the skill's OUTPUT.
+
+    `spawn_subagent` and a skill tool share one `spawn` closure, so turning
+    the fleet on would have made a skill call return `started <id>: ...`
+    and require `wait_agents` to collect. That silently breaks the skill
+    contract: nothing tells the model a skill is asynchronous, so it
+    answers from the literal handle string while `_settle_fleet` discards
+    the real work -- a wrong answer, not an error. The service therefore
+    hands `skill_runner.run` a spawn pre-bound to the inline path.
+
+    Pinned end-to-end through a REAL fleet (max_live_subagents = 3, no
+    injected coordinator), because "the fleet is on" is the precondition
+    that makes this regressable at all.
+    """
+    pin_max_live_subagents(monkeypatch, 3)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    reg = _registry_with_code_review_skill()
+    chat = FleetChat(
+        [
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": _fence("code-review", {"args": "the diff"})
+                        }
+                    }
+                ]
+            },
+            {"choices": [{"message": {"content": "Done reviewing."}}]},
+        ],
+        {"RENDERED[the diff]": [{"choices": [{"message": {"content": "child answer"}}]}]},
+        reply=verbatim,
+    )
+    runner = _FakeSkillRunner()
+    service = AgentService(db, reg, chat_call=chat, skill_runner=runner)
+    run_id, outcome = service.run_turn(
+        conversation_id="c1",
+        messages=[{"role": "user", "content": "review"}],
+        config=AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("calculator", "code-review", SPAWN_TOOL_NAME),
+            budget=RunBudget(),
+        ),
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    # A fleet really was built for this turn ...
+    assert service._fleet is not None
+    # ... and the skill call still came back with the child's own answer,
+    # in the SKILL's own tool_result -- no handle, no wait_agents needed.
+    results = [
+        s["result"]
+        for s in db.get_run(run_id)["steps"]
+        if s["kind"] == "tool_result" and s["tool_name"] == "code-review"
+    ]
+    assert results == ["child answer"]
+    assert not any("started " in r for r in results)
+    assert db.count_subagent_runs("c1") == 1

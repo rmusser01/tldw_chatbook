@@ -218,7 +218,7 @@ def _registry_with_mcp(provider: MCPToolProvider) -> ToolCatalogRegistry:
 
 
 def test_parent_deny_is_not_overridden_by_a_same_turn_spawned_childs_approval(
-    db, running_loop
+    db, running_loop, inline_spawns
 ):
     """Parent batch = [spawn_subagent, mcp_X]. Parent denies mcp_X. The
     spawned child (dispatched INLINE, mid-parent-dispatch) approves its OWN
@@ -309,7 +309,7 @@ def test_parent_deny_is_not_overridden_by_a_same_turn_spawned_childs_approval(
 
 
 def test_child_run_does_not_wipe_a_parent_approval_via_its_own_empty_apply(
-    db, running_loop
+    db, running_loop, inline_spawns
 ):
     """The child spawned this turn calls a NON-MCP tool (calculator) -- its
     OWN review-hook invocation resolves `pending=[]` and (routinely, every
@@ -389,7 +389,7 @@ def test_child_run_does_not_wipe_a_parent_approval_via_its_own_empty_apply(
 # ---------------------------------------------------------------------------
 
 
-def test_review_state_scope_defaults_to_none_and_spawn_still_works(db):
+def test_review_state_scope_defaults_to_none_and_spawn_still_works(db, inline_spawns):
     """Omitting `review_state_scope` (every caller before this task, and
     every non-MCP run today) must not change existing spawn behavior --
     `spawn` falls back to a no-op `contextlib.nullcontext()`."""
@@ -518,7 +518,7 @@ def _registry_with_mutating_builtins(
 
 
 def test_child_spawned_mid_turn_resolves_a_mutating_builtin_tool_and_the_parents_own_stamp_survives(
-    db,
+    db, inline_spawns
 ):
     """AC#2 (task-628): a parent batch = [spawn_subagent, write_thing]. The
     parent's own review round trip approves ``write_thing`` for this turn.
@@ -621,7 +621,7 @@ def test_child_spawned_mid_turn_resolves_a_mutating_builtin_tool_and_the_parents
 
 
 def test_child_spawned_mid_turn_without_stamp_scope_keeps_the_parents_approval(
-    db,
+    db, inline_spawns
 ):
     """Same interleave as the test above, with ``review_state_scope`` left
     unwired -- now proving PER-RUN KEYING, not the scope, is what protects
@@ -701,7 +701,7 @@ def test_child_spawned_mid_turn_without_stamp_scope_keeps_the_parents_approval(
 
 
 def test_child_run_with_no_approval_route_still_fails_closed_for_a_mutating_builtin_tool(
-    db,
+    db, inline_spawns
 ):
     """AC#4 (task-628): this task fixes ROUTING for a run that has an
     approval path; it must not weaken ``BuiltinToolGate``'s own fail-closed
@@ -756,3 +756,61 @@ def test_child_run_with_no_approval_route_still_fails_closed_for_a_mutating_buil
     assert "write_thing" in results
     assert results["write_thing"].result.startswith("ERROR")
     assert "approval" in results["write_thing"].result.lower()
+
+
+# ---------------------------------------------------------------------------
+# PR2a Task 6.5: the inline scope's own contract, now that an inline child
+# can run WHILE fleet siblings do
+# ---------------------------------------------------------------------------
+
+
+def test_stamp_scope_restore_touches_only_its_own_runs_slice(running_loop):
+    """`stamp_scope(parent)` must not disturb any OTHER run's verdicts.
+
+    Why this test exists, and why it is a direct one rather than an
+    end-to-end one: the six tests above are pinned INLINE so they exercise
+    the interleave their docstrings describe, but none of them can kill the
+    scope -- delete `review_state_scope` from the inline branch entirely
+    and they all still pass, because PR2a Task 5's per-run keying is what
+    actually protects the parent there (`MCPToolProvider.stamp_scope`'s own
+    docstring says as much: "belt-and-braces for that inline path").
+    Asserting the scope end-to-end would therefore be vacuous.
+
+    What is NOT vacuous, and is newly load-bearing since Task 6.5 made
+    SKILL calls run inline while the fleet is live, is the scope's
+    isolation: an inline child now enters `stamp_scope(parent_run_id)` at a
+    moment when threaded siblings are running and stamping. If the restore
+    rewrote anything outside the parent's own slice, it would silently wipe
+    a live sibling's verdict -- the exact failure Task 6 removed the scope
+    from the threaded path to avoid. This pins the property the inline
+    branch's comment relies on: the restore rewrites ONLY `key[0] ==
+    run_id`.
+    """
+    service = FakeMCPService()
+    provider = MCPToolProvider(service=service, main_loop=running_loop)
+    asyncio.run(provider.compose_catalog())
+    tool_id = provider.list_catalog()[0].id
+
+    provider.apply_batch_decisions("parent-run", {tool_id: "approve_once"})
+    provider.apply_batch_decisions("sibling-run", {tool_id: "deny"})
+
+    with provider.stamp_scope("parent-run"):
+        # This provider SNAPSHOTS on entry without clearing (unlike
+        # `LocalToolProvider.stamp_scope`, which clears its own slice
+        # deliberately -- see its docstring). Either way the entry touches
+        # nobody else's slice.
+        assert provider.stamped_decision("parent-run", tool_id) == "approve_once"
+        assert provider.stamped_decision("sibling-run", tool_id) == "deny"
+        # A sibling stamping DURING the window is what a live fleet child
+        # does; it must survive the restore below.
+        provider.apply_batch_decisions("late-sibling-run", {tool_id: "approve_once"})
+        # The parent's own slice IS rolled back to the snapshot on exit,
+        # which is why holding this scope around CONCURRENT children (where
+        # the parent keeps stamping) would lose verdicts -- Task 6 removed
+        # it from the threaded path for exactly that reason.
+        provider.apply_batch_decisions("parent-run", {tool_id: "deny"})
+
+    # Restored for the parent, and neither sibling was rolled back.
+    assert provider.stamped_decision("parent-run", tool_id) == "approve_once"
+    assert provider.stamped_decision("sibling-run", tool_id) == "deny"
+    assert provider.stamped_decision("late-sibling-run", tool_id) == "approve_once"

@@ -16,6 +16,7 @@ import os
 import threading
 import time
 from collections import deque
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -91,6 +92,16 @@ _KNOWN_SUBAGENT_PREFIXES: set[str] = {SUBAGENT_SYSTEM_PROMPT}
 #: should return instantly -- it exists so a wedged straggler leaks a loop
 #: instead of hanging the Console.
 _LOOP_THREAD_JOIN_SECONDS = 5.0
+
+#: Ceiling on ONE submitted provider turn (`_StreamingModelAdapter.
+#: chat_call`). Deliberately generous -- this is not a request timeout (the
+#: gateway and the run's own `max_wall_seconds` own that) but a deadlock
+#: backstop for an abandoned fleet child still waiting on a loop that
+#: `run_reply` has already stopped. Set to TWICE
+#: `CONSOLE_RUN_BUDGET.max_wall_seconds` (1800) so it can never pre-empt a
+#: legitimately slow turn -- by the time it could fire, the run's own wall
+#: budget has long since ended the run.
+_CHAT_CALL_TIMEOUT_SECONDS = 3600.0
 
 # Skills Phase-2 gate finding 1 (Task-14 report, scenario 5: "Find a skill
 # that can shout, load it, and use it on: hello"): a discovery-heavy run --
@@ -895,7 +906,26 @@ class _StreamingModelAdapter:
         # `run_until_complete` did, including re-raising the coroutine's
         # exception) while the loop, on its own thread, interleaves this
         # turn with whatever other agents of this run have in flight.
-        asyncio.run_coroutine_threadsafe(_consume(), self._loop).result()
+        #
+        # The wait is BOUNDED. A bare `.result()` deadlocks forever in one
+        # real case: a child ABANDONED by `_settle_fleet` (which gives a
+        # wedged child `FLEET_JOIN_TIMEOUT_SECONDS` and then walks away)
+        # can still be sitting here when `run_reply`'s finally stops the
+        # loop -- after which its coroutine is never scheduled again and
+        # nothing will ever complete this future. The child's thread is a
+        # daemon, so the process still exits, but it would hold its
+        # provider connection and any locks it owns for the life of the
+        # session. Timing out turns that into an ordinary turn failure the
+        # run loop already knows how to report.
+        future = asyncio.run_coroutine_threadsafe(_consume(), self._loop)
+        try:
+            future.result(timeout=_CHAT_CALL_TIMEOUT_SECONDS)
+        except FuturesTimeoutError:
+            future.cancel()
+            raise TimeoutError(
+                "provider turn did not complete within "
+                f"{_CHAT_CALL_TIMEOUT_SECONDS}s"
+            ) from None
         if any_streamed and not is_subagent:
             # Finding A: this turn leaked prose to the store before it was
             # known to be a tool call (a well-behaved fence-first tool call
@@ -2180,11 +2210,15 @@ class ConsoleAgentBridge:
                         "content": f"{content}\n\n{turn_bundle_block}",
                     }
                     break
-        # The run's loop starts driving HERE, immediately inside the
-        # try/finally that stops, joins and closes it -- see its
-        # construction above for why not sooner.
-        loop_thread.start()
         try:
+            # FIRST statement in the block that owns this thread's
+            # shutdown -- see its construction above. Not merely *before*
+            # the try: one inserted line there would silently re-open the
+            # leak. If start() itself raises (thread exhaustion), the
+            # finally still runs and still closes the loop; `is_alive()`
+            # is False for a never-started thread, so the close branch is
+            # the one taken and no fd leaks.
+            loop_thread.start()
             run_id, outcome = service.run_turn(
                 conversation_id=conversation_id,
                 messages=run_messages,
@@ -2227,8 +2261,15 @@ class ConsoleAgentBridge:
             # bounded anyway so an abandoned straggler can never wedge the
             # Console. The thread is a daemon, so even a wedged one dies
             # with the process rather than holding it open.
-            run_loop.call_soon_threadsafe(run_loop.stop)
-            loop_thread.join(timeout=_LOOP_THREAD_JOIN_SECONDS)
+            #
+            # `ident` is None only if `start()` itself never succeeded
+            # (thread exhaustion): `join()` on a never-started thread
+            # raises RuntimeError, which would escape this finally and
+            # skip the close below -- leaking the loop's fd. Nothing was
+            # ever scheduled in that case, so close it directly.
+            if loop_thread.ident is not None:
+                run_loop.call_soon_threadsafe(run_loop.stop)
+                loop_thread.join(timeout=_LOOP_THREAD_JOIN_SECONDS)
             if loop_thread.is_alive():
                 # Leave it (and its loop) rather than closing a loop its
                 # own thread is still inside -- a leaked loop is survivable,

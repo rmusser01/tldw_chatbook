@@ -62,7 +62,7 @@ def test_on_step_receives_primary_steps_in_order(tmp_path):
     assert all(who == AGENT_KIND_PRIMARY for (who, _k) in seen)
 
 
-def test_on_step_distinguishes_subagent_steps(tmp_path):
+def test_on_step_distinguishes_subagent_steps(tmp_path, inline_spawns):
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     reg = _registry()
     # Primary spawns a sub-agent; sub-agent answers directly.
@@ -136,7 +136,7 @@ def test_on_step_default_is_noop(tmp_path):
     assert outcome.status == "done"  # no on_step wired → no crash
 
 
-def test_on_step_receives_run_id_for_primary_and_child(tmp_path):
+def test_on_step_receives_run_id_for_primary_and_child(tmp_path, inline_spawns):
     """Task 3 (fleet PR 2a): on_step's third argument is the run_id of the
     run that produced the step -- the PRIMARY run's own id for primary
     steps, and the CHILD run's own (distinct) id for a spawned sub-agent's

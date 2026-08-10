@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import functools
 import sys
 import threading
 import time
@@ -213,6 +214,12 @@ class SkillRunner(Protocol):
             spawn: This run's own spawn closure -- ``spawn(task, *,
                 allowed_tools=None)`` -- so the rendered skill prompt runs
                 as a normal budget-counted sub-agent of THIS run.
+
+                PR2a Task 6.5: what the service actually hands over is
+                that closure PRE-BOUND to the inline path, so a skill call
+                returns the skill's output rather than a fleet handle. A
+                runner neither chooses nor needs to know: call it exactly
+                as before.
 
         Returns:
             The sub-agent's result, wrapped as a ``ToolResult`` exactly the
@@ -1157,6 +1164,7 @@ class AgentService:
             *,
             allowed_tools: tuple[str, ...] | None = None,
             agent: str | None = None,
+            inline: bool = False,
         ) -> ToolResult:
             nonlocal sub_agent_spawns
             # Task-12 review Finding 2: this closure is THE single spawn
@@ -1305,11 +1313,32 @@ class AgentService:
                     compute_definition_fingerprint(resolved) if resolved else None
                 ),
             )
-            if fleet is None:
+            if fleet is None or inline:
                 # -- INLINE path: byte-identical to every release before
                 # PR2a. Kept, not merely tolerated: with no fleet there is
                 # no wait_agents, so a handle id would be unredeemable and
                 # the child's work simply lost.
+                #
+                # `inline` takes this branch even WITH a live fleet, and is
+                # how a SKILL call keeps its contract (PR2a Task 6.5). See
+                # `invoke_tool`'s skill branch for why the caller, not the
+                # runner, decides.
+                #
+                # Why `review_state_scope(run_id)` is still sound here even
+                # when fleet siblings are running RIGHT NOW: the scope
+                # snapshots and restores only THIS parent's slice -- the
+                # restore rewrites exactly the keys where `key[0] ==
+                # run_id`, under the provider's own `_decisions_lock` (see
+                # `MCPToolProvider.stamp_scope`). A concurrent sibling
+                # stamps under its OWN run id, so it is never in the
+                # snapshot and never in the rewritten set; and the parent
+                # itself is BLOCKED inside this call for the whole window,
+                # so it cannot stamp anything the restore would roll back.
+                # This is precisely the reasoning that does NOT hold on the
+                # threaded path -- there the scope would be entered around
+                # a child while the parent keeps running and stamping, so
+                # Task 6 dropped it there. Writing it down because the two
+                # branches now differ deliberately, not accidentally.
                 scope = (
                     self.review_state_scope(run_id)
                     if self.review_state_scope
@@ -1631,8 +1660,32 @@ class AgentService:
                 # render/trust round-trip once the shared budget is spent.
                 if sub_agent_spawns >= config.budget.max_subagents:
                     return ToolResult(ok=False, error="sub-agent budget exhausted")
+                # PR2a Task 6.5: a SKILL call runs its child INLINE even
+                # when the fleet is on, so it still returns the skill's
+                # OUTPUT rather than a handle. `spawn_subagent` is a
+                # request to delegate and the model knows to collect it;
+                # a skill call is "run this and give me the result", and
+                # nothing tells the model otherwise -- a handle would make
+                # it either answer from the literal "started <id>: ..."
+                # string (a silently wrong answer, since `_settle_fleet`
+                # then discards the real work) or burn an extra provider
+                # round on exactly the shape the Console already had to
+                # raise its step budget for.
+                #
+                # The decision is made HERE, by the caller that already
+                # knows this is a skill, and handed over pre-bound. It is
+                # deliberately NOT inferred from the `allowed_tools`
+                # override the runner happens to pass: that works only by
+                # luck today (`intersect_skill_tools` never returns None)
+                # and the `SkillRunner` Protocol explicitly advertises
+                # `allowed_tools=None`, so a conforming runner would
+                # silently get the fleet. A runner cannot get this wrong
+                # because it never chooses -- it just calls what it was
+                # given.
                 return self.skill_runner.run(
-                    call.name, str(call.args.get("args", "")), spawn
+                    call.name,
+                    str(call.args.get("args", "")),
+                    functools.partial(spawn, inline=True),
                 )
             return builtin_invoke_tool(call)
 
