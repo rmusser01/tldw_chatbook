@@ -721,6 +721,37 @@ def test_artifact_root_cleanup_never_exposes_or_replaces_cleanup_failure(
         real_rmtree(root, ignore_errors=True)
 
 
+def test_cleanup_failure_note_is_idempotent_across_nested_layers(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fail_cleanup() -> None:
+        raise _cleanup_failure()
+
+    error: BaseException | None = None
+    try:
+        try:
+            raise ValueError("primary nested cleanup failure")
+        finally:
+            _cleanup_preserving_primary(fail_cleanup)
+            _cleanup_preserving_primary(fail_cleanup)
+    except BaseException as caught:
+        error = caught
+
+    if not isinstance(error, ValueError) or str(error) != (
+        "primary nested cleanup failure"
+    ):
+        raise AssertionError("nested cleanup replaced the primary failure") from None
+    if getattr(error, "__notes__", None) != [CLEANUP_FAILURE_MESSAGE]:
+        raise AssertionError(
+            "nested cleanup duplicated the fixed failure note"
+        ) from None
+    _assert_private_exception_surface(
+        error,
+        capsys,
+        ("sk-task2512", "API_KEY", "/private/cleanup-sentinel"),
+    )
+
+
 WIRE_INVENTORIES = {
     "tools": BUILTIN_TOOL_NAMES | LOCAL_TOOL_NAMES,
     "resource_templates": RESOURCE_TEMPLATES,
@@ -1000,7 +1031,8 @@ def _cleanup_preserving_primary(*cleanups: Callable[[], None]) -> None:
     if not cleanup_failed:
         return
     if primary is not None:
-        primary.add_note(CLEANUP_FAILURE_MESSAGE)
+        if CLEANUP_FAILURE_MESSAGE not in getattr(primary, "__notes__", ()):
+            primary.add_note(CLEANUP_FAILURE_MESSAGE)
         return
     raise AssertionError(CLEANUP_FAILURE_MESSAGE) from None
 
