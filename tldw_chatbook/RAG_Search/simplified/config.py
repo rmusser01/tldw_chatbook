@@ -20,8 +20,9 @@ from tldw_chatbook.config import (
 )
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 
-# Server-parity hybrid fusion default (alpha weights the vector leg)
-from ..fusion import DEFAULT_HYBRID_ALPHA
+# Server-parity hybrid fusion defaults (alpha weights the vector leg; k is
+# the RRF constant)
+from ..fusion import DEFAULT_HYBRID_ALPHA, DEFAULT_RRF_K
 
 
 # Canonical vector store type values used by the selection logic below.
@@ -313,6 +314,26 @@ class SearchConfig:
     # tldw_server. Authoritative TOML knob:
     # [AppRAGSearchConfig.rag.retriever] hybrid_alpha
     hybrid_alpha: float = DEFAULT_HYBRID_ALPHA
+    # Hybrid fusion RRF constant k: the rank-fusion denominator
+    # (1 / (k + rank)). Default 60 matches tldw_server. Not range-checked
+    # here (this dataclass has no active load-time validation -- see
+    # `hybrid_alpha` above); resolved at USE time via
+    # `fusion.resolve_rrf_k`, exactly like `hybrid_alpha` is resolved via
+    # `resolve_hybrid_alpha` at its call site -- an invalid/negative value
+    # falls back to the default with a warning rather than distorting or
+    # crashing the fusion math.
+    rrf_k: int = DEFAULT_RRF_K
+    # Hybrid leg over-fetch multiplier: `_hybrid_search` asks each of its
+    # two legs (semantic, keyword) for `top_k * hybrid_pool_multiplier`
+    # candidates before RRF narrows back down to `top_k` -- a wider pool
+    # gives fusion more overlap between the legs to find. Scoped to the
+    # HYBRID legs only: `_semantic_search`'s own internal over-fetch
+    # multiplier (used on both the hybrid and the direct semantic-search
+    # path) is the separate module-level `SEARCH_RESULT_MULTIPLIER`
+    # constant and is untouched by this field. Floored to 1 at use time
+    # (each leg must fetch at least `top_k`); default 2 matches the prior
+    # shared `SEARCH_RESULT_MULTIPLIER` behavior byte-for-byte.
+    hybrid_pool_multiplier: int = 2
     # Re-ranking
     enable_reranking: bool = False
     reranker_model: Optional[str] = None

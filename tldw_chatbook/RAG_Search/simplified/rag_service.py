@@ -54,6 +54,7 @@ from .collection_fingerprint import fingerprinted_collection_name, collection_pr
 from ..fusion import (
     reciprocal_rank_fusion,
     resolve_hybrid_alpha,
+    resolve_rrf_k,
     interleave_rankings,
     DEFAULT_RRF_K,
 )
@@ -179,6 +180,36 @@ async def _no_keyword_rows() -> List[Any]:
     while an unselected sub-leg never touches a database.
     """
     return []
+
+
+def _resolve_hybrid_pool_multiplier(value: Any) -> int:
+    """Resolve ``config.search.hybrid_pool_multiplier`` for ``_hybrid_search``.
+
+    Use-time validation, matching ``resolve_hybrid_alpha``/``resolve_rrf_k``'s
+    pattern: an invalid (non-numeric) config value falls back to the default
+    (2, matching the prior shared ``SEARCH_RESULT_MULTIPLIER`` behavior) and
+    any value below 1 is floored to 1 -- each hybrid leg must fetch at least
+    ``top_k`` candidates for fusion to have anything to work with. Never
+    raises: a misconfigured pipeline must not abort search at merge time.
+
+    Args:
+        value: Caller/config-supplied multiplier, if any.
+
+    Returns:
+        An int >= 1.
+    """
+    try:
+        multiplier = int(value)
+    except (TypeError, ValueError):
+        logger.warning(
+            f"Invalid hybrid_pool_multiplier {value!r}; falling back to "
+            f"{SEARCH_RESULT_MULTIPLIER}"
+        )
+        return SEARCH_RESULT_MULTIPLIER
+    if multiplier < 1:
+        logger.warning(f"hybrid_pool_multiplier {multiplier} < 1; flooring to 1")
+        return 1
+    return multiplier
 
 
 def _fusion_doc_key(result: Any) -> Hashable:
@@ -1631,10 +1662,13 @@ class RAGService:
         Perform hybrid search combining semantic (vector) and keyword (FTS5) legs.
 
         The legs run in parallel and are fused with Reciprocal Rank Fusion
-        (k=60) plus an alpha-weighted blend of the per-leg RRF scores,
-        matching the tldw_server reference design. Alpha comes from
-        ``config.search.hybrid_alpha`` (0 = FTS only, 1 = vector only).
-        Citations are combined when the same chunk appears in both legs.
+        (default k=60) plus an alpha-weighted blend of the per-leg RRF
+        scores, matching the tldw_server reference design. Alpha comes from
+        ``config.search.hybrid_alpha`` (0 = FTS only, 1 = vector only) and k
+        from ``config.search.rrf_k``. Each leg over-fetches
+        ``top_k * config.search.hybrid_pool_multiplier`` candidates before
+        fusion narrows back down to ``top_k``. Citations are combined when
+        the same chunk appears in both legs.
 
         ``keyword_source_types`` (TASK-14751) narrows the FTS leg to the
         types the caller will keep, so its budget is not spent on rows a
@@ -1642,17 +1676,24 @@ class RAGService:
         exactly as it was. It does not scope the semantic leg -- that is
         ``metadata_allowlist``'s job, and it is semantic-only.
         """
-        # Get results from both search types
+        # Get results from both search types. The pool multiplier widens
+        # ONLY these two leg fetches -- `_semantic_search`'s own internal
+        # over-fetch (its raw vector-store call) still uses the module
+        # SEARCH_RESULT_MULTIPLIER, on this path and on the direct
+        # semantic-search path alike.
+        pool_multiplier = _resolve_hybrid_pool_multiplier(
+            self.config.search.hybrid_pool_multiplier
+        )
         semantic_task = self._semantic_search(
             query,
-            top_k * SEARCH_RESULT_MULTIPLIER,
+            top_k * pool_multiplier,
             filter_metadata,
             include_citations,
             score_threshold,
         )
         keyword_task = self._keyword_search(
             query,
-            top_k * SEARCH_RESULT_MULTIPLIER,
+            top_k * pool_multiplier,
             filter_metadata,
             include_citations,
             keyword_source_types=keyword_source_types,
@@ -1668,6 +1709,7 @@ class RAGService:
             semantic_results=semantic_results,
             top_k=top_k,
             alpha=self.config.search.hybrid_alpha,
+            rrf_k=self.config.search.rrf_k,
             include_citations=include_citations,
         )
 
@@ -1677,6 +1719,7 @@ class RAGService:
         semantic_results: Union[List[SearchResult], List[SearchResultWithCitations]],
         top_k: int,
         alpha: float,
+        rrf_k: int = DEFAULT_RRF_K,
         include_citations: bool = True,
     ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
         """Fuse the FTS (keyword) and vector (semantic) legs via RRF + alpha.
@@ -1702,21 +1745,34 @@ class RAGService:
                 Validated via resolve_hybrid_alpha: out-of-range/invalid
                 config values fall back to the 0.7 default, matching the
                 pipeline path.
+            rrf_k: RRF constant (typically 60). Validated via
+                fusion.resolve_rrf_k, the same use-time pattern as `alpha`:
+                out-of-range/invalid config values fall back to
+                DEFAULT_RRF_K with a warning rather than distorting or
+                crashing the fusion math. Defaults to DEFAULT_RRF_K for
+                every caller that predates this parameter.
             include_citations: Whether results carry citations to merge.
 
         Returns:
-            Fused results sorted by fused score descending.
+            Fused results sorted by fused score descending. The recorded
+            `metadata['hybrid_fusion']['rrf_k']` is always this resolved
+            value (never a literal) -- `local_citation_capture._reliable_rrf`
+            re-derives the fused score from it to certify the row as RRF, so
+            a metadata block that ever drifted from the value actually used
+            in the math would silently degrade every hybrid row to LEGACY.
         """
         # config.search.hybrid_alpha is not range-checked at load time
         # (RAGConfig.validate() has no callers); resolve here so this path
-        # gets the same fallback semantics as the pipeline merge.
+        # gets the same fallback semantics as the pipeline merge. Same for
+        # rrf_k via resolve_rrf_k.
         alpha = resolve_hybrid_alpha(alpha)
+        rrf_k = resolve_rrf_k(rrf_k)
         fused = reciprocal_rank_fusion(
             keyword_results,
             semantic_results,
             key=_fusion_doc_key,
             alpha=alpha,
-            rrf_k=DEFAULT_RRF_K,
+            rrf_k=rrf_k,
             max_results=top_k,
         )
 
@@ -1762,7 +1818,7 @@ class RAGService:
                     "fts_score": fts_score,
                     "vector_score": vector_score,
                     "alpha": alpha,
-                    "rrf_k": DEFAULT_RRF_K,
+                    "rrf_k": rrf_k,
                 },
             }
             results.append(result)
