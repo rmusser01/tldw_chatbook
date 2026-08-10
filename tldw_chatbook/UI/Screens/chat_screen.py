@@ -16956,6 +16956,7 @@ class ChatScreen(BaseAppScreen):
                 return None
             target = Path(selected).expanduser()
             confirmed_identity = None
+            reconfirmation_required = False
 
             while self._owns_pending_console_video(artifact):
                 try:
@@ -16979,7 +16980,26 @@ class ChatScreen(BaseAppScreen):
                     )
                     return False
 
-                if identity is not None and identity != confirmed_identity:
+                if identity is None and reconfirmation_required:
+                    confirmed = await self._wait_for_console_screen_result(
+                        ConfirmationDialog(
+                            title="Destination changed",
+                            message=(
+                                "The file previously confirmed at "
+                                f"{escape_markup(str(target))} no longer exists. "
+                                "Save the generated video to this path?"
+                            ),
+                            confirm_label="Save",
+                            cancel_label="Choose another",
+                        )
+                    )
+                    if not self._owns_pending_console_video(artifact):
+                        return None
+                    if not confirmed:
+                        break
+                    reconfirmation_required = False
+                    confirmed_identity = None
+                elif identity is not None and identity != confirmed_identity:
                     confirmed = await self._wait_for_console_screen_result(
                         ConfirmationDialog(
                             title="Replace existing file?",
@@ -16996,6 +17016,7 @@ class ChatScreen(BaseAppScreen):
                     if not confirmed:
                         break
                     confirmed_identity = identity
+                    reconfirmation_required = False
                 elif identity is None:
                     confirmed_identity = None
 
@@ -17027,6 +17048,7 @@ class ChatScreen(BaseAppScreen):
                     return None
                 if result == "saved":
                     return target
+                reconfirmation_required = confirmed_identity is not None
                 confirmed_identity = None
             # Replacement declined: return to the picker with the stage live.
         return None

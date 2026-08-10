@@ -422,6 +422,7 @@ async def test_initial_dispatch_resolves_pending_discard_and_clears_bookkeeping(
             return object()
 
     async def fake_to_thread(_function, **_kwargs):
+        artifact.message_id = _kwargs["message_id"]
         return artifact
 
     monkeypatch.setattr(
@@ -439,7 +440,11 @@ async def test_initial_dispatch_resolves_pending_discard_and_clears_bookkeeping(
     )
 
     assert harness.appended == []
+    assert len(harness.waited_screens) == 1
+    assert isinstance(harness.waited_screens[0], ConsoleVideoCapacityModal)
+    assert harness._pending_console_video_artifacts() == {}
     assert artifact.stream.closed
+    assert cast(_TrackingStream, artifact.stream).close_calls == 1
     assert inflight == set()
     assert cancels == {}
 
@@ -884,6 +889,55 @@ async def test_concurrent_external_creator_is_confirmed_and_never_overwritten(
     assert harness.appended == []
     assert harness.opened == []
     assert len(harness.waited_screens) == 4
+
+
+@pytest.mark.asyncio
+async def test_confirmed_target_disappearing_requires_fresh_confirmation_before_save(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifact = _artifact(b"ours")
+    target = tmp_path / "disappears.mp4"
+    target.write_bytes(b"original")
+    harness = _OutcomeHarness(
+        actions=["save_external", target, True, False, None],
+        video_store=object(),
+    )
+    original_wait = harness._wait_for_console_screen_result
+    real_identity = ChatScreen._external_video_target_identity
+    identity_calls = 0
+
+    def disappear_during_pre_replace(path: Path):
+        nonlocal identity_calls
+        identity_calls += 1
+        if identity_calls == 1:
+            path.unlink()
+            raise FileNotFoundError(path)
+        return real_identity(path)
+
+    async def checking_wait(self, screen):
+        result = await original_wait(screen)
+        if len(self.waited_screens) == 4:
+            artifact.rewind()
+            assert artifact.stream.read() == b"ours"
+        return result
+
+    monkeypatch.setattr(
+        ChatScreen,
+        "_external_video_target_identity",
+        staticmethod(disappear_during_pre_replace),
+    )
+    harness._wait_for_console_screen_result = MethodType(checking_wait, harness)
+
+    await harness._resolve_generated_video_outcome(
+        artifact, session_id="session", message_id=artifact.message_id
+    )
+
+    assert identity_calls == 1
+    assert len(harness.waited_screens) == 5
+    assert harness.appended == []
+    assert harness.opened == []
+    assert not target.exists()
+    assert artifact.stream.closed
 
 
 @pytest.mark.asyncio
