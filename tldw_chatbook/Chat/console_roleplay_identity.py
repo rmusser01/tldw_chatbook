@@ -23,7 +23,20 @@ class ChatDisplayNameError(ValueError):
 
 
 def normalize_chat_display_name(value: object, *, blank_means_none: bool) -> str | None:
-    """Validate and normalize a human-facing Console chat display name."""
+    """Validate and normalize a human-facing Console chat display name.
+
+    Args:
+        value: Candidate display name. Only text or ``None`` is accepted.
+        blank_means_none: Return ``None`` for an empty value when true;
+            otherwise return the neutral ``"User"`` fallback.
+
+    Returns:
+        The stripped, validated display name, ``None``, or ``"User"``.
+
+    Raises:
+        ChatDisplayNameError: If the value is not text, contains unsafe control
+            characters, or exceeds the terminal-cell limit.
+    """
     if value is None:
         text = ""
     elif not isinstance(value, str):

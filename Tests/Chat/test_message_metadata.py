@@ -126,6 +126,24 @@ def test_from_json_returns_none_for_missing_or_corrupt_payloads():
     assert MessageMetadata.from_json("[1, 2, 3]") is None
 
 
+@pytest.mark.parametrize("template_source", [None, "", "   "])
+def test_from_json_drops_incomplete_character_greeting_provenance(
+    template_source,
+):
+    """A damaged provenance pair must not prevent conversation resume."""
+    restored = MessageMetadata.from_json(
+        json.dumps(
+            {
+                "engine": "pipeline",
+                "template_kind": "character_greeting",
+                "template_source": template_source,
+            }
+        )
+    )
+
+    assert restored == MessageMetadata(engine="pipeline")
+
+
 def test_from_json_drops_unknown_keys_and_unknown_statuses():
     """A row written by a newer build (or hand-edited) must not crash a
     resume, and an unrecognised status is reported as "unknown", not

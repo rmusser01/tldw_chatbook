@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -102,6 +104,12 @@ class SyncStateRepository(BaseDB):
         if self._memory_conn is not None:
             self._memory_conn.close()
             self._memory_conn = None
+
+    @contextmanager
+    def transaction(self) -> Iterator[sqlite3.Connection]:
+        """Yield an atomic repository connection with commit/rollback handling."""
+        with self._get_connection() as conn:
+            yield conn
 
     def _initialize_schema(self) -> None:
         with self._get_connection() as conn:
@@ -842,7 +850,7 @@ class SyncStateRepository(BaseDB):
             workspace_scope=workspace_scope,
         )
         now = _utc_now()
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO sync_v2_local_outbox (
@@ -917,7 +925,6 @@ class SyncStateRepository(BaseDB):
             if row is None:
                 raise RuntimeError("failed to persist Sync v2 outbox envelope")
             entry = self._outbox_from_row(row)
-            conn.commit()
         return entry
 
     def list_pending_sync_v2_outbox_envelopes(

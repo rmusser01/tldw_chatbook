@@ -5371,7 +5371,16 @@ def get_chat_defaults_streaming(default: bool = True) -> bool:
 
 
 def get_chat_defaults_user_display_name(default: str = "User") -> str:
-    """Return the validated global human-facing Console chat name."""
+    """Return the validated global human-facing Console chat name.
+
+    Args:
+        default: Fallback used when ``chat_defaults.user_display_name`` is
+            absent.
+
+    Returns:
+        The configured validated name, or the neutral ``"User"`` fallback
+        when the configured/default value is invalid.
+    """
     # Import lazily because ``tldw_chatbook.Chat.__init__`` reaches runtime
     # policy modules that import this configuration module during startup.
     from tldw_chatbook.Chat.console_roleplay_identity import (

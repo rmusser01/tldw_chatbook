@@ -819,7 +819,11 @@ def _run_console_roleplay_projection_writer(
         # blocked in persistence. Nothing live remains to accept a result.
         if error is not None:
             logger.opt(exception=error).error(
-                "Detached Console roleplay projection writer failed after loop close."
+                "Detached Console roleplay projection writer failed after loop "
+                "close (session_id={}, generation={}, thread_name={}).",
+                plan.session_id,
+                plan.generation,
+                threading.current_thread().name,
             )
 
 
@@ -843,6 +847,9 @@ def _start_console_roleplay_projection_writer(
 
 def _consume_console_roleplay_writer_completion(
     task: asyncio.Future[ConsoleRoleplayProjectionPersistenceResult],
+    *,
+    session_id: str,
+    generation: int,
 ) -> None:
     """Consume an abandoned immutable writer result or exception statically."""
     if task.cancelled():
@@ -850,7 +857,12 @@ def _consume_console_roleplay_writer_completion(
     try:
         task.result()
     except Exception:
-        logger.exception("Detached Console roleplay projection writer failed.")
+        logger.exception(
+            "Detached Console roleplay projection writer failed "
+            "(session_id={}, generation={}).",
+            session_id,
+            generation,
+        )
 
 
 def _consume_console_roleplay_repair_for_current_screen(
@@ -2123,7 +2135,11 @@ class ChatScreen(BaseAppScreen):
         writer = _start_console_roleplay_projection_writer(plan)
         persistence_task = writer.future
         persistence_task.add_done_callback(
-            _consume_console_roleplay_writer_completion
+            partial(
+                _consume_console_roleplay_writer_completion,
+                session_id=plan.session_id,
+                generation=plan.generation,
+            )
         )
         self._console_roleplay_writer_task = persistence_task
         self._console_roleplay_writer_thread = writer.thread
@@ -2212,8 +2228,16 @@ class ChatScreen(BaseAppScreen):
         else:
             error = task.exception()
             if error is not None:
+                failed_plan = (
+                    self._console_roleplay_active_plan
+                    or self._console_roleplay_pending_plan
+                )
                 logger.error(
-                    "Console roleplay projection persistence task failed: {!r}",
+                    "Console roleplay projection persistence task failed "
+                    "(session_id={}, generation={}, task_name={}): {!r}",
+                    failed_plan.session_id if failed_plan is not None else "unknown",
+                    failed_plan.generation if failed_plan is not None else 0,
+                    task.get_name(),
                     error,
                 )
         if (
@@ -2299,8 +2323,16 @@ class ChatScreen(BaseAppScreen):
                 pass
         except Exception:
             self._publish_console_roleplay_repair_marker()
+            failed_plan = (
+                self._console_roleplay_active_plan
+                or self._console_roleplay_pending_plan
+            )
             logger.exception(
-                "Console roleplay projection drain failed during teardown."
+                "Console roleplay projection drain failed during teardown "
+                "(session_id={}, generation={}, task_name={}).",
+                failed_plan.session_id if failed_plan is not None else "unknown",
+                failed_plan.generation if failed_plan is not None else 0,
+                task.get_name(),
             )
         finally:
             self._console_roleplay_persistence_task = None
