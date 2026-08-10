@@ -32,7 +32,10 @@ the current `2026-07-28` profile. Batch requests are accepted only with
 
 ### Standalone inventory
 
-- **Built-in tools (10):** `chat_with_llm`, `chat_with_character`, `search_rag`, `search_conversations`, `create_note`, `search_notes`, `list_characters`, `get_conversation_history`, `export_conversation`, `ingest_media`
+The retired `ingest_media` placeholder is absent. Use Library Import for
+persistent URL or file ingestion.
+
+- **Built-in tools (9):** `chat_with_llm`, `chat_with_character`, `search_rag`, `search_conversations`, `create_note`, `search_notes`, `list_characters`, `get_conversation_history`, `export_conversation`
 - **Resource templates (5):** `conversation://{conversation_id}`, `note://{note_id}`, `character://{character_id}`, `media://{media_id}`, `rag-chunk://{chunk_uuid}`
 - **Prompts (5):** `summarize_conversation`, `generate_document`, `analyze_media`, `search_and_synthesize`, `character_writing`
 - **Library tools excluded from standalone (18):** `library_list_media`, `library_get_media`, `library_search_media`, `library_list_notes`, `library_get_note`, `library_search_notes`, `library_list_prompts`, `library_get_prompt`, `library_search_prompts`, `library_list_skills`, `library_get_skill`, `library_search_skills`, `library_list_conversations`, `library_get_conversation`, `library_search_conversations`, `library_list_collections`, `library_get_collection`, `library_search_collections`
@@ -121,9 +124,9 @@ do not add media to Library. There is no interactive-browser tool named
 `web_browse`.
 
 For persistent URL ingestion, use **Library → Import…**, paste the URL, review
-the web-page options, and press **Start import**. The old MCP `ingest_media`
-entry was an unimplemented placeholder that returned a fabricated `queued`
-response without submitting any work; it is no longer advertised.
+the web-page options, and press **Start import**. The retired `ingest_media`
+placeholder returned a fabricated `queued` response without submitting work;
+it is absent from the standalone inventory. Use Library Import instead.
 
 ## Testing a tool (Tools mode)
 

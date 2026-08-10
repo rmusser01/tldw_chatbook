@@ -46,7 +46,6 @@ BUILTIN_TOOL_NAMES = {
     "list_characters",
     "get_conversation_history",
     "export_conversation",
-    "ingest_media",
 }
 LOCAL_TOOL_NAMES = {
     "fs_list",

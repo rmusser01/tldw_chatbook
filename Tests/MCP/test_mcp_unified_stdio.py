@@ -62,7 +62,6 @@ BUILTIN_TOOL_NAMES = [
     "list_characters",
     "get_conversation_history",
     "export_conversation",
-    "ingest_media",
 ]
 RESOURCE_TEMPLATES = [
     "conversation://{conversation_id}",
@@ -99,6 +98,9 @@ class _FakeTools:
 
     async def get_conversation_history(self, **_arguments: Any) -> str:
         return "plain-result"
+
+    async def export_conversation(self, **_arguments: Any) -> dict[str, Any]:
+        return {"format": "markdown", "content": "# Fixture"}
 
 
 class _FakeResources:
@@ -491,13 +493,9 @@ async def test_real_protocol_core_flow_and_revision_projection(
         tool_cases = [
             (
                 "dict",
-                "ingest_media",
-                {"url": "https://example.invalid/item"},
-                {
-                    "status": "queued",
-                    "media_id": "placeholder_id",
-                    "message": "Media ingestion queued",
-                },
+                "export_conversation",
+                {"conversation_id": 1},
+                {"format": "markdown", "content": "# Fixture"},
             ),
             ("list", "list_characters", {}, [{"id": 7, "name": "Ada"}]),
             (
@@ -1161,8 +1159,8 @@ def test_real_module_subprocess_is_protocol_clean_and_exits_on_eof(
                 "call",
                 "tools/call",
                 {
-                    "name": "ingest_media",
-                    "arguments": {"url": payload_sentinel},
+                    "name": "search_notes",
+                    "arguments": {"query": payload_sentinel},
                 },
             ),
             _request(

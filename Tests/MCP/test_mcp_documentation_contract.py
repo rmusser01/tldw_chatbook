@@ -21,6 +21,9 @@ TASK_2511 = (
     / "task-2511 - Smoke-test-FastMCP-local-tool-binding-with-the-mcp-extra.md"
 )
 DESIGN_DOCUMENT = DOCUMENTS[0]
+LOCAL_LIBRARY_TOOLS_DOCUMENT = (
+    REPO_ROOT / "Docs" / "Development" / "Agent-Tools" / "local-library-tools.md"
+)
 BUILTIN_TOOLS = (
     "chat_with_llm",
     "chat_with_character",
@@ -31,7 +34,6 @@ BUILTIN_TOOLS = (
     "list_characters",
     "get_conversation_history",
     "export_conversation",
-    "ingest_media",
 )
 RESOURCE_TEMPLATES = (
     "conversation://{conversation_id}",
@@ -170,6 +172,25 @@ def test_documents_list_the_exact_standalone_and_private_inventories(
 ) -> None:
     path, text = document
     _assert_inventory_contract(path, text)
+
+
+def test_documents_explain_retired_ingest_media_replacement(
+    document: tuple[Path, str],
+) -> None:
+    path, text = document
+    normalized = " ".join(text.split())
+    assert "retired `ingest_media`" in normalized, path
+    assert "Library Import" in normalized, path
+
+
+def test_local_library_tools_documentation_uses_current_standalone_inventory() -> None:
+    text = LOCAL_LIBRARY_TOOLS_DOCUMENT.read_text(encoding="utf-8")
+    normalized = " ".join(text.split())
+    assert (
+        "The standalone server exposes exactly nine implemented legacy tools; "
+        "retired `ingest_media` is absent, and persistent URL/file ingestion "
+        "uses Library Import."
+    ) in normalized
 
 
 @pytest.mark.parametrize("path", DOCUMENTS, ids=lambda path: path.name)

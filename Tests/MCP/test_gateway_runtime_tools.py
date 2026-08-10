@@ -55,7 +55,6 @@ BUILTIN_TOOL_NAMES = [
     "list_characters",
     "get_conversation_history",
     "export_conversation",
-    "ingest_media",
 ]
 
 
@@ -283,7 +282,7 @@ def test_runtime_rejects_descriptor_without_handler() -> None:
 
 
 @pytest.mark.asyncio
-async def test_all_ten_builtin_handlers_register_with_exact_names() -> None:
+async def test_all_nine_builtin_handlers_register_with_exact_names() -> None:
     runtime = _runtime(*_describe_local_tools())
     _register_real_builtins(runtime)
     runtime.finalize()
@@ -291,16 +290,18 @@ async def test_all_ten_builtin_handlers_register_with_exact_names() -> None:
     descriptors = await runtime.list_tools(_context())
 
     assert [descriptor["name"] for descriptor in descriptors] == BUILTIN_TOOL_NAMES
+    assert "ingest_media" not in runtime._tool_handlers
     assert list(runtime._tool_handlers) == BUILTIN_TOOL_NAMES
     assert [handler.__name__ for handler in runtime._tool_handlers.values()] == (
         BUILTIN_TOOL_NAMES
     )
 
 
-def test_all_ten_builtin_schemas_reject_additional_properties() -> None:
+def test_all_nine_builtin_schemas_reject_additional_properties() -> None:
     descriptors = _describe_local_tools()
 
     assert [descriptor["name"] for descriptor in descriptors] == BUILTIN_TOOL_NAMES
+    assert "ingest_media" not in {descriptor["name"] for descriptor in descriptors}
     assert all(
         descriptor["inputSchema"]["type"] == "object"
         and descriptor["inputSchema"]["additionalProperties"] is False

@@ -136,7 +136,10 @@ profile. Batch requests are accepted only with `2025-03-26`; `2025-11-25` and
 
 ### Standalone inventory
 
-- **Built-in tools (10):** `chat_with_llm`, `chat_with_character`, `search_rag`, `search_conversations`, `create_note`, `search_notes`, `list_characters`, `get_conversation_history`, `export_conversation`, `ingest_media`
+The retired `ingest_media` placeholder is absent. Use Library Import for
+persistent URL or file ingestion.
+
+- **Built-in tools (9):** `chat_with_llm`, `chat_with_character`, `search_rag`, `search_conversations`, `create_note`, `search_notes`, `list_characters`, `get_conversation_history`, `export_conversation`
 - **Resource templates (5):** `conversation://{conversation_id}`, `note://{note_id}`, `character://{character_id}`, `media://{media_id}`, `rag-chunk://{chunk_uuid}`
 - **Prompts (5):** `summarize_conversation`, `generate_document`, `analyze_media`, `search_and_synthesize`, `character_writing`
 - **Library tools excluded from standalone (18):** `library_list_media`, `library_get_media`, `library_search_media`, `library_list_notes`, `library_get_note`, `library_search_notes`, `library_list_prompts`, `library_get_prompt`, `library_search_prompts`, `library_list_skills`, `library_get_skill`, `library_search_skills`, `library_list_conversations`, `library_get_conversation`, `library_search_conversations`, `library_list_collections`, `library_get_collection`, `library_search_collections`
@@ -242,16 +245,6 @@ Export conversations in various formats.
   - `conversation_id`: ID of the conversation
   - `format`: Export format (markdown, json, text)
 - **Returns**: Formatted conversation content
-
-#### `ingest_media`
-Ingest media from URLs or files (placeholder).
-- **Parameters**:
-  - `url`: Optional URL to ingest
-  - `file_path`: Optional local file path
-  - `media_type`: Type of media
-  - `title`: Optional title
-  - `tags`: Optional tags
-- **Returns**: Ingestion status and media ID
 
 ### Library Tools (read-only, descriptor-backed)
 

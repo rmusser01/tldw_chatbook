@@ -3584,10 +3584,9 @@ def test_is_permission_refusal_bare_permission_error_from_tool_body_is_not_a_ref
     reach the tool; the tool itself is what failed. Before this item, ANY
     `PermissionError` (the bare base class) classified as a refusal, which
     would have misrendered a genuine per-tool failure as `Blocked · not
-    run`, falsely claiming the call never reached the tool. Latent today
-    only because the one file-shaped built-in (`ingest_media`) is
-    currently a stub that never raises from its own body -- a latent lie
-    is still a lie."""
+    run`, falsely claiming the call never reached the tool. This contract
+    remains necessary even though the retired `ingest_media` placeholder
+    is absent from the standalone inventory."""
     assert (
         mcp_workbench_module._is_permission_refusal(
             PermissionError("EACCES: permission denied")

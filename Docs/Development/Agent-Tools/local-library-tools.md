@@ -146,8 +146,10 @@ repository; see the spec's implementation-deviation note):
   that bypasses policy.
 - MCP access is **independent of the Console toggle**: turning
   `direct_library_tools` off changes Console agent behavior only.
-- The ten legacy MCP tools (`chat_with_llm`, `search_notes`, …) keep their
-  existing names and result shapes; the `library_*` namespace is additive.
+- The standalone server exposes exactly nine implemented legacy tools;
+  retired `ingest_media` is absent, and persistent URL/file ingestion uses
+  Library Import. The `library_*` namespace is additive only to the in-process
+  local surface.
 
 ## Testing
 
