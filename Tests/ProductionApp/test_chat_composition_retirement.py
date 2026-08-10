@@ -391,6 +391,72 @@ async def test_registered_chat_route_uses_only_native_console_and_restores_snaps
         await _close_production_app(app)
 
 
+@pytest.mark.parametrize("save_failure", ["non_callable", "non_mapping", "raises"])
+@pytest.mark.asyncio
+async def test_failed_console_snapshot_save_discards_stale_projection_only(
+    monkeypatch: pytest.MonkeyPatch,
+    save_failure: str,
+) -> None:
+    app = _production_app(monkeypatch)
+
+    try:
+        async with app.run_test(size=(140, 48)) as pilot:
+            chat = await _wait_for_screen(
+                app,
+                pilot,
+                ChatScreen,
+                selector="#console-session-surface",
+            )
+            store = chat._ensure_console_chat_store()
+            session_id = store.active_session_id
+            assert session_id is not None
+            store.set_session_system_prompt(session_id, "old projection system")
+
+            app.post_message(NavigateToScreen("settings"))
+            await _wait_for_screen(app, pilot, SettingsScreen)
+            assert app.console_prompt_target_projection() is not None
+            app.post_message(NavigateToScreen("chat"))
+            chat = await _wait_for_screen(
+                app,
+                pilot,
+                ChatScreen,
+                selector="#console-session-surface",
+            )
+
+            runtime_identity = app._current_runtime_identity()
+            app.screen_state_store.save(
+                "library",
+                {"selected": "preserve unrelated route"},
+                runtime_identity,
+            )
+
+            if save_failure == "non_callable":
+                failed_save = None
+            elif save_failure == "non_mapping":
+
+                def non_mapping_save():
+                    return None
+
+                failed_save = non_mapping_save
+            else:
+
+                def raising_save():
+                    raise RuntimeError("private snapshot failure")
+
+                failed_save = raising_save
+            monkeypatch.setattr(chat, "save_state", failed_save)
+            app.post_message(NavigateToScreen("settings"))
+            await _wait_for_screen(app, pilot, SettingsScreen)
+
+            assert app.console_prompt_target_projection() is None
+            assert app.screen_state_store.restore(TAB_CHAT, runtime_identity) is None
+            assert app.screen_state_store.restore("library", runtime_identity) == {
+                "selected": "preserve unrelated route"
+            }
+    finally:
+        await _close_production_app(app)
+
+
 @pytest.mark.asyncio
 async def test_native_console_chat_handoff_settles_exact_claim_and_keeps_replacement(
     monkeypatch: pytest.MonkeyPatch,

@@ -24,6 +24,8 @@ fixtures from `test_console_dictation.py`/`test_console_dictation_streaming.py`.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 from textual.widgets import Input, Static
 
@@ -40,7 +42,10 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 from tldw_chatbook.Chat.console_chat_controller import ConsoleSubmitResult
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
-from tldw_chatbook.Widgets.Console.console_composer_bar import _DraftHistorySnapshot
+from tldw_chatbook.Widgets.Console.console_composer_bar import (
+    ComposerTransactionValidationError,
+    _DraftHistorySnapshot,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +271,69 @@ def test_composer_export_and_restore_undo_history_round_trips():
     # The export is a real copy, not aliased to the live stacks.
     composer.insert_text("c")
     assert composer.export_undo_history() != exported
+
+
+def test_composer_transaction_checkpoint_restores_all_user_undo_state():
+    composer = ConsoleComposerBar()
+    composer.insert_text("private undo origin")
+    composer.insert_file_segment("private file body", label="notes.txt")
+    prompt_undo = composer.capture_draft_snapshot()
+    composer.replace_snapshot_as_paste(prompt_undo, "active draft")
+
+    history_source = ConsoleComposerBar()
+    history_source.insert_text("first")
+    history_source.insert_pasted_text(" second")
+    assert history_source.undo() is True
+    composer.restore_undo_history(history_source.export_undo_history())
+    composer.select_all_draft()
+
+    before = composer.capture_draft_snapshot()
+    history_before = composer.export_undo_history()
+    checkpoint = composer.capture_transaction_checkpoint()
+    assert "private" not in repr(checkpoint)
+
+    composer.insert_text_as_paste("failed append")
+    composer.invalidate_improvement_undo()
+    composer.restore_undo_history(None)
+    composer.rollback_transaction(checkpoint)
+
+    after = composer.capture_draft_snapshot()
+    assert after.segments == before.segments
+    assert after.cursor_index == before.cursor_index
+    assert after.selection == before.selection
+    assert after.edit_serial == before.edit_serial
+    assert composer.export_undo_history() == history_before
+    assert composer.improvement_undo_available is True
+    assert composer.undo_improvement() is True
+    restored = composer.capture_draft_snapshot()
+    assert restored.segments == prompt_undo.segments
+    assert restored.cursor_index == prompt_undo.cursor_index
+    assert restored.selection == prompt_undo.selection
+
+
+@pytest.mark.parametrize(
+    "forged_fields",
+    [
+        {"undo_stack": ("not history",)},
+        {"redo_stack": []},
+        {"coalescing_active": 1},
+    ],
+)
+def test_composer_transaction_checkpoint_rejects_forged_internal_shapes(
+    forged_fields,
+):
+    composer = ConsoleComposerBar()
+    composer.insert_text("unchanged")
+    before = composer.capture_draft_snapshot()
+    checkpoint = replace(
+        composer.capture_transaction_checkpoint(),
+        **forged_fields,
+    )
+
+    with pytest.raises(ComposerTransactionValidationError):
+        composer.rollback_transaction(checkpoint)
+
+    assert composer.capture_draft_snapshot() == before
 
 
 def test_composer_restore_undo_history_none_gives_empty_stacks():

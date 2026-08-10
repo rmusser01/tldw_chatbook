@@ -168,20 +168,56 @@ class PendingHandoffStore:
 
     def release(self, claim: HandoffClaim[Any]) -> bool:
         """Release an exact claim without overwriting a newer revision."""
+        released, _prompt_status = self._release_claim(claim)
+        return released
+
+    def release_prompt_claim(
+        self,
+        claim: HandoffClaim[PromptVariableApplication],
+    ) -> HandoffClaimStatus | None:
+        """Atomically retry or expire one exact Prompt claim.
+
+        Args:
+            claim: The Prompt claim being released after a transient failure.
+
+        Returns:
+            ``"ready"`` when the exact claim was requeued, ``"expired"``
+            when it was terminally settled by the injected clock, or ``None``
+            when the claim was not exact or a newer revision superseded it.
+
+        Raises:
+            RuntimeError: If called outside the owning thread.
+            TypeError: If ``claim`` is not a :class:`HandoffClaim`.
+            ValueError: If ``claim`` does not belong to the Prompt channel.
+        """
+        self._assert_owner_thread()
+        self._slot_for_claim(claim)
+        if claim.channel is not HandoffChannel.CONSOLE_PROMPT_INSERT:
+            raise ValueError("release_prompt_claim requires a Prompt claim")
+        _released, prompt_status = self._release_claim(claim)
+        return prompt_status
+
+    def _release_claim(
+        self,
+        claim: HandoffClaim[Any],
+    ) -> tuple[bool, HandoffClaimStatus | None]:
+        """Settle one exact claim and report a Prompt retry outcome."""
         self._assert_owner_thread()
         slot = self._slot_for_claim(claim)
         current = slot.in_flight
         if current is None or current.claim is not claim:
-            return False
+            return False, None
         slot.in_flight = None
         should_requeue = slot.revision == claim.revision
+        prompt_status: HandoffClaimStatus | None = None
         if should_requeue and claim.channel is HandoffChannel.CONSOLE_PROMPT_INSERT:
             should_requeue = claim.status == "ready" and self._prompt_is_unexpired(
                 current.retained_value
             )
+            prompt_status = "ready" if should_requeue else "expired"
         if should_requeue:
             slot.pending = (claim.revision, current.retained_value)
-        return True
+        return True, prompt_status
 
     def _prompt_is_unexpired(self, value: PromptVariableApplication) -> bool:
         try:

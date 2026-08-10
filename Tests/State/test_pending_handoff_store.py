@@ -357,9 +357,28 @@ def test_prompt_expiring_between_claim_and_release_is_not_requeued() -> None:
 
     now[0] = 130.0
 
-    assert store.release(claim) is True
+    assert store.release_prompt_claim(claim) == "expired"
     assert store.has_pending(HandoffChannel.CONSOLE_PROMPT_INSERT) is False
     assert store.claim(HandoffChannel.CONSOLE_PROMPT_INSERT) is None
+
+
+def test_ready_prompt_release_reports_ready_and_requeues_exact_claim() -> None:
+    store = PendingHandoffStore(monotonic_clock=lambda: 129.9)
+    store.stage(HandoffChannel.CONSOLE_PROMPT_INSERT, _prompt_application())
+    claim = store.claim(HandoffChannel.CONSOLE_PROMPT_INSERT)
+
+    assert claim is not None
+    assert store.release_prompt_claim(claim) == "ready"
+    retry = store.claim(HandoffChannel.CONSOLE_PROMPT_INSERT)
+    assert retry is not None
+    assert retry.status == "ready"
+
+
+def test_prompt_release_rejects_non_claim_before_dereferencing() -> None:
+    store = PendingHandoffStore()
+
+    with pytest.raises(TypeError, match="HandoffClaim"):
+        store.release_prompt_claim(object())  # type: ignore[arg-type]
 
 
 def test_expired_prompt_claim_is_visible_once_and_never_requeued() -> None:
@@ -586,6 +605,9 @@ def test_all_mutations_reject_off_owner_thread() -> None:
     store.stage(HandoffChannel.CHAT, _chat_payload())
     claim = store.claim(HandoffChannel.CHAT)
     assert claim is not None
+    store.stage(HandoffChannel.CONSOLE_PROMPT_INSERT, _prompt_application())
+    prompt_claim = store.claim(HandoffChannel.CONSOLE_PROMPT_INSERT)
+    assert prompt_claim is not None
 
     operations = (
         lambda: store.stage(HandoffChannel.CHAT, _chat_payload("worker")),
@@ -594,6 +616,7 @@ def test_all_mutations_reject_off_owner_thread() -> None:
         lambda: store.has_pending(HandoffChannel.CHAT),
         lambda: store.acknowledge(claim),
         lambda: store.release(claim),
+        lambda: store.release_prompt_claim(prompt_claim),
     )
 
     with ThreadPoolExecutor(max_workers=1) as executor:

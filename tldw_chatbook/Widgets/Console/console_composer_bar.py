@@ -25,7 +25,7 @@ user's paste-collapse preference (review W-2).
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import hashlib
 import hmac
 import json
@@ -265,6 +265,17 @@ class _DraftHistorySnapshot:
 ConsoleComposerUndoHistory = tuple[
     list[_DraftHistorySnapshot], list[_DraftHistorySnapshot]
 ]
+
+
+@dataclass(frozen=True)
+class ComposerTransactionCheckpoint:
+    """Opaque rollback state for one coordinated composer mutation."""
+
+    draft: ComposerDraftSnapshot = field(repr=False)
+    undo_stack: tuple[_DraftHistorySnapshot, ...] = field(repr=False)
+    redo_stack: tuple[_DraftHistorySnapshot, ...] = field(repr=False)
+    improvement_undo: ComposerDraftSnapshot | None = field(repr=False)
+    coalescing_active: bool = field(repr=False)
 
 
 @dataclass(frozen=True)
@@ -824,6 +835,61 @@ class ConsoleComposerBar(Horizontal):
             generation=self._draft_generation,
             fingerprint=fingerprint,
         )
+
+    def capture_transaction_checkpoint(self) -> ComposerTransactionCheckpoint:
+        """Capture draft and undo state for coordinated rollback.
+
+        Returns:
+            An opaque, repr-safe checkpoint accepted by
+            :meth:`rollback_transaction`.
+        """
+        return ComposerTransactionCheckpoint(
+            draft=self.capture_draft_snapshot(),
+            undo_stack=tuple(self._undo_stack),
+            redo_stack=tuple(self._redo_stack),
+            improvement_undo=self._improvement_undo,
+            coalescing_active=self._coalescing_active,
+        )
+
+    def rollback_transaction(
+        self,
+        checkpoint: ComposerTransactionCheckpoint,
+    ) -> None:
+        """Restore a checkpoint without exposing composer-owned histories.
+
+        Args:
+            checkpoint: A prior :meth:`capture_transaction_checkpoint` result.
+
+        Raises:
+            ComposerTransactionValidationError: If the checkpoint is not a
+                supported composer transaction checkpoint.
+        """
+        if not isinstance(checkpoint, ComposerTransactionCheckpoint):
+            raise ComposerTransactionValidationError(
+                "Composer transaction checkpoint has an unsupported shape."
+            )
+        self._validate_snapshot_shape(checkpoint.draft)
+        if checkpoint.improvement_undo is not None:
+            self._validate_snapshot_shape(checkpoint.improvement_undo)
+        if (
+            type(checkpoint.undo_stack) is not tuple
+            or type(checkpoint.redo_stack) is not tuple
+            or type(checkpoint.coalescing_active) is not bool
+            or any(
+                not isinstance(entry, _DraftHistorySnapshot)
+                for entry in (*checkpoint.undo_stack, *checkpoint.redo_stack)
+            )
+        ):
+            raise ComposerTransactionValidationError(
+                "Composer transaction checkpoint history is invalid."
+            )
+
+        self.restore_snapshot(checkpoint.draft)
+        self._undo_stack = list(checkpoint.undo_stack)
+        self._redo_stack = list(checkpoint.redo_stack)
+        self._improvement_undo = checkpoint.improvement_undo
+        self._coalescing_active = checkpoint.coalescing_active
+        self._sync_current_action_state()
 
     @staticmethod
     def _validate_request_nonce(request_nonce: str) -> None:

@@ -8073,6 +8073,9 @@ class TldwCli(
                 if outgoing_screen_class is not None:
                     outgoing_key = resolved_outgoing_key
 
+        if outgoing_key == TAB_CHAT:
+            self.screen_state_store.discard(outgoing_key)
+
         save_state = getattr(current_screen, "save_state", None)
         if outgoing_key and callable(save_state):
             try:

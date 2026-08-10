@@ -1,6 +1,7 @@
 """Composer command interception + unknown-command Enter-again (Task 10);
 `/prompt` resolution + insertion + Library-insert consumption (Task 12)."""
 
+import asyncio
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -29,7 +30,10 @@ from tldw_chatbook.Prompt_Management.prompt_variables import (
     PromptVariableApplication,
     fingerprint_system_text,
 )
-from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+from tldw_chatbook.UI.Navigation.pending_handoff_store import (
+    HandoffChannel,
+    PendingHandoffStore,
+)
 from tldw_chatbook.UI.Console_Modules.prompts import ConsolePromptsController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleCommandPopup, ConsoleComposerBar
@@ -1587,6 +1591,92 @@ async def test_console_library_append_missing_composer_releases_for_retry():
         assert composer.draft_text() == "retry me"
 
 
+@pytest.mark.parametrize("transient", ["sync", "composer"])
+@pytest.mark.asyncio
+async def test_console_library_append_expiry_during_transient_release_warns_once(
+    transient,
+):
+    now = [129.9]
+    app = _build_test_app()
+    app.pending_handoffs = PendingHandoffStore(monotonic_clock=lambda: now[0])
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        app.pending_handoffs.stage(
+            HandoffChannel.CONSOLE_PROMPT_INSERT,
+            _library_prompt_application(
+                console,
+                "expires during retry",
+                created_monotonic=10.0,
+            ),
+        )
+
+        if transient == "sync":
+
+            def expire_during_sync():
+                now[0] = 130.0
+                raise RuntimeError("private transient")
+
+            console._prompts._sync_console_session_draft_fn = expire_during_sync
+        else:
+
+            def expire_before_missing_composer():
+                now[0] = 130.0
+                return None
+
+            console._prompts._composer_accessor = expire_before_missing_composer
+
+        app.notify = Mock()
+        await console._consume_pending_console_prompt_insert()
+        await console._consume_pending_console_prompt_insert()
+
+        app.notify.assert_called_once_with(
+            "This Prompt insertion expired. Open the Prompt and retry.",
+            severity="warning",
+        )
+        assert app.pending_handoffs.claim(HandoffChannel.CONSOLE_PROMPT_INSERT) is None
+
+
+@pytest.mark.asyncio
+async def test_console_library_append_expiry_during_cancelled_sync_warns_once():
+    now = [129.9]
+    app = _build_test_app()
+    app.pending_handoffs = PendingHandoffStore(monotonic_clock=lambda: now[0])
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        app.pending_handoffs.stage(
+            HandoffChannel.CONSOLE_PROMPT_INSERT,
+            _library_prompt_application(
+                console,
+                "expires during cancellation",
+                created_monotonic=10.0,
+            ),
+        )
+
+        def cancel_after_expiry():
+            now[0] = 130.0
+            raise asyncio.CancelledError
+
+        console._prompts._sync_console_session_draft_fn = cancel_after_expiry
+        app.notify = Mock()
+
+        with pytest.raises(asyncio.CancelledError):
+            await console._consume_pending_console_prompt_insert()
+
+        app.notify.assert_called_once_with(
+            "This Prompt insertion expired. Open the Prompt and retry.",
+            severity="warning",
+        )
+        assert app.pending_handoffs.claim(HandoffChannel.CONSOLE_PROMPT_INSERT) is None
+
+
 @pytest.mark.asyncio
 async def test_console_library_system_only_leaves_draft_and_warns_on_persistence_failure(
     monkeypatch,
@@ -1646,12 +1736,24 @@ async def test_console_library_append_rolls_back_draft_when_system_mutation_rais
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
-        composer.insert_text("literal")
+        composer.insert_text("undo origin")
         composer.insert_file_segment("file body", "file.txt")
-        before = composer.capture_draft_snapshot()
-        store = console._ensure_console_chat_store()
+        prompt_undo = composer.capture_draft_snapshot()
+        composer.replace_snapshot_as_paste(prompt_undo, "active draft")
 
-        def fail_system_mutation(_session_id, _system_text):
+        history_source = ConsoleComposerBar()
+        history_source.insert_text("first")
+        history_source.insert_text_as_paste(" second")
+        assert history_source.undo() is True
+        composer.restore_undo_history(history_source.export_undo_history())
+        composer.select_all_draft()
+        before = composer.capture_draft_snapshot()
+        history_before = composer.export_undo_history()
+        store = console._ensure_console_chat_store()
+        real_set_system = store.set_session_system_prompt
+
+        def fail_system_mutation(session_id, system_text):
+            real_set_system(session_id, system_text)
             raise RuntimeError("private failure")
 
         monkeypatch.setattr(store, "set_session_system_prompt", fail_system_mutation)
@@ -1671,12 +1773,21 @@ async def test_console_library_append_rolls_back_draft_when_system_mutation_rais
         after = composer.capture_draft_snapshot()
         assert after.segments == before.segments
         assert after.cursor_index == before.cursor_index
+        assert after.selection == before.selection
+        assert after.edit_serial == before.edit_serial
+        assert composer.export_undo_history() == history_before
+        assert composer.improvement_undo_available is True
         assert store.session_draft(store.active_session_id) == composer.draft_text()
         assert store.session_settings(store.active_session_id).system_prompt is None
         app.notify.assert_called_once_with(
             "The Prompt could not be applied. The Console draft was restored.",
             severity="warning",
         )
+        assert composer.undo_improvement() is True
+        restored = composer.capture_draft_snapshot()
+        assert restored.segments == prompt_undo.segments
+        assert restored.cursor_index == prompt_undo.cursor_index
+        assert restored.selection == prompt_undo.selection
 
 
 @pytest.mark.asyncio

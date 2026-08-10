@@ -1279,89 +1279,121 @@ class ConsolePromptsController:
         *,
         captured_snapshot: ComposerDraftSnapshot | None,
     ) -> bool:
-        """Apply one guarded Prompt request through the current Console owner.
-
-        Replacement is coordinated in memory: every guard is checked before
-        either lane changes, and an unexpected System mutation error restores
-        the exact captured composer state and its stored draft. Durable System
-        persistence and post-commit display refresh remain separately
-        reported outcomes.
-        """
-        if not isinstance(application, PromptVariableApplication):
+        """Apply one guarded replacement request through the shared transaction."""
+        if (
+            not isinstance(application, PromptVariableApplication)
+            or application.destination != "replace_snapshot"
+        ):
             self._warn_prompt_application(self._PROMPT_APPLICATION_STALE_COPY)
+            return False
+        return self._apply_guarded_prompt_application(
+            application,
+            captured_snapshot=captured_snapshot,
+        )
+
+    def _apply_guarded_prompt_application(
+        self,
+        application: PromptVariableApplication,
+        *,
+        captured_snapshot: ComposerDraftSnapshot | None,
+    ) -> bool:
+        """Guard, mutate, roll back, and report either Prompt destination."""
+        destination = application.destination
+        stale_copy = (
+            self._PROMPT_APPEND_STALE_COPY
+            if destination == "append_active"
+            else self._PROMPT_APPLICATION_STALE_COPY
+        )
+        if destination not in ("replace_snapshot", "append_active"):
+            self._warn_prompt_application(stale_copy)
             return False
         if application.is_expired():
             self._warn_prompt_application(self._PROMPT_APPLICATION_EXPIRED_COPY)
-            return False
-        if application.destination != "replace_snapshot":
-            self._warn_prompt_application(self._PROMPT_APPLICATION_STALE_COPY)
             return False
 
         store = self._ensure_console_chat_store()
         session_id = store.active_session_id
         composer = self._console_composer_or_none()
-        if (
-            session_id != application.target_session_id
-            or composer is None
-            or captured_snapshot is None
-            or captured_snapshot.fingerprint != application.composer_fingerprint
-        ):
-            self._warn_prompt_application(self._PROMPT_APPLICATION_STALE_COPY)
+        if session_id != application.target_session_id or composer is None:
+            self._warn_prompt_application(stale_copy)
             return False
         settings = store.session_settings(session_id)
         if settings is None:
-            self._warn_prompt_application(self._PROMPT_APPLICATION_STALE_COPY)
+            self._warn_prompt_application(stale_copy)
             return False
         if application.apply_system and (
             fingerprint_system_text(str(settings.system_prompt or ""))
             != application.system_fingerprint
         ):
-            self._warn_prompt_application(self._PROMPT_APPLICATION_STALE_COPY)
+            self._warn_prompt_application(stale_copy)
             return False
 
-        live_before = composer.capture_draft_snapshot()
-        if live_before != captured_snapshot:
-            self._warn_prompt_application(self._PROMPT_APPLICATION_STALE_COPY)
-            return False
-        replacement_text = (
-            application.user_text
-            if application.apply_user and application.user_text is not None
-            else ""
-        )
+        if destination == "replace_snapshot":
+            if (
+                not isinstance(captured_snapshot, ComposerDraftSnapshot)
+                or captured_snapshot.fingerprint != application.composer_fingerprint
+                or composer.capture_draft_snapshot() != captured_snapshot
+            ):
+                self._warn_prompt_application(stale_copy)
+                return False
 
-        replaced_snapshot: ComposerDraftSnapshot | None = None
+        checkpoint = composer.capture_transaction_checkpoint()
+        composer_changed = False
+        persisted = True
         try:
-            replaced_snapshot = composer.replace_snapshot_as_paste(
-                captured_snapshot,
-                replacement_text,
-            )
+            if destination == "replace_snapshot":
+                replacement_text = (
+                    application.user_text
+                    if application.apply_user and application.user_text is not None
+                    else ""
+                )
+                composer_changed = (
+                    composer.replace_snapshot_as_paste(
+                        captured_snapshot,
+                        replacement_text,
+                    )
+                    is not None
+                )
+            elif application.apply_user and application.user_text:
+                if composer.draft_text():
+                    composer.move_cursor_end()
+                    composer.insert_text_as_paste(f"\n{application.user_text}")
+                else:
+                    composer.insert_text_as_paste(application.user_text)
+                composer_changed = True
+
             store.set_session_draft(session_id, composer.draft_text())
-            persisted = True
             if application.apply_system:
                 _session, persisted = store.set_session_system_prompt(
                     session_id,
                     application.system_text,
                 )
-                if replaced_snapshot is None:
-                    composer.invalidate_improvement_undo()
-        except ComposerTransactionValidationError:
-            self._warn_prompt_application(self._PROMPT_APPLICATION_STALE_COPY)
-            return False
-        except Exception:
-            if replaced_snapshot is not None:
-                try:
-                    composer.restore_snapshot(captured_snapshot)
-                    store.set_session_draft(session_id, composer.draft_text())
-                    self._sync_console_command_popup()
-                except Exception:
-                    pass
+            if not composer_changed:
+                composer.invalidate_improvement_undo()
+        except Exception as exc:
+            try:
+                composer.rollback_transaction(checkpoint)
+            except Exception:
+                pass
+            try:
+                store.set_session_draft(session_id, composer.draft_text())
+            except Exception:
+                pass
             if application.apply_system:
                 try:
                     store.replace_session_settings(session_id, settings)
                     self._sync_console_system_prompt_surfaces()
                 except Exception:
                     pass
-            self._warn_prompt_application(self._PROMPT_APPLICATION_FAILED_COPY)
+            try:
+                self._sync_console_command_popup()
+            except Exception:
+                pass
+            self._warn_prompt_application(
+                stale_copy
+                if isinstance(exc, ComposerTransactionValidationError)
+                else self._PROMPT_APPLICATION_FAILED_COPY
+            )
             return False
 
         display_sync_failed = False
@@ -1540,97 +1572,29 @@ class ConsolePromptsController:
                 severity="warning",
             )
             return
+
+        def release_for_retry() -> None:
+            if handoffs.release_prompt_claim(claim) == "expired":
+                self._warn_prompt_application(self._PROMPT_APPLICATION_EXPIRED_COPY)
+
         try:
             self._sync_console_session_draft()
         except asyncio.CancelledError:
-            handoffs.release(claim)
+            release_for_retry()
             raise
         except Exception:
-            handoffs.release(claim)
+            release_for_retry()
             return
 
         composer = self._console_composer_or_none()
         if composer is None:
-            handoffs.release(claim)
+            release_for_retry()
             return
-        console_store = self._ensure_console_chat_store()
-        session_id = console_store.active_session_id
-        settings = (
-            console_store.session_settings(session_id)
-            if session_id is not None
-            else None
+        self._apply_guarded_prompt_application(
+            application,
+            captured_snapshot=None,
         )
-        expired = application.is_expired()
-        if (
-            expired
-            or session_id != application.target_session_id
-            or settings is None
-            or (
-                application.apply_system
-                and fingerprint_system_text(str(settings.system_prompt or ""))
-                != application.system_fingerprint
-            )
-        ):
-            handoffs.acknowledge(claim)
-            copy = (
-                self._PROMPT_APPLICATION_EXPIRED_COPY
-                if expired
-                else self._PROMPT_APPEND_STALE_COPY
-            )
-            self._warn_prompt_application(copy)
-            return
-
-        captured_snapshot = composer.capture_draft_snapshot()
-        composer_mutated = False
-        try:
-            if application.apply_user and application.user_text:
-                composer_mutated = True
-                if composer.draft_text():
-                    composer.move_cursor_end()
-                    composer.insert_text_as_paste(f"\n{application.user_text}")
-                else:
-                    composer.insert_text_as_paste(application.user_text)
-            console_store.set_session_draft(session_id, composer.draft_text())
-            persisted = True
-            if application.apply_system:
-                _session, persisted = console_store.set_session_system_prompt(
-                    session_id,
-                    application.system_text,
-                )
-                if not composer_mutated:
-                    composer.invalidate_improvement_undo()
-        except Exception:
-            try:
-                if composer_mutated:
-                    composer.restore_snapshot(captured_snapshot)
-                    console_store.set_session_draft(session_id, composer.draft_text())
-                if application.apply_system:
-                    console_store.replace_session_settings(session_id, settings)
-                    self._sync_console_system_prompt_surfaces()
-                self._sync_console_command_popup()
-            except Exception:
-                pass
-            handoffs.acknowledge(claim)
-            self._warn_prompt_application(self._PROMPT_APPLICATION_FAILED_COPY)
-            return
-
         handoffs.acknowledge(claim)
-        display_sync_failed = False
-        if application.apply_system:
-            try:
-                self._sync_console_system_prompt_surfaces()
-            except Exception:
-                display_sync_failed = True
-        try:
-            self._sync_console_command_popup()
-        except Exception:
-            display_sync_failed = True
-        if display_sync_failed:
-            self._warn_prompt_application(self._PROMPT_DISPLAY_SYNC_FAILED_COPY)
-        if not persisted:
-            self._warn_prompt_application(self._PROMPT_SYSTEM_PERSISTENCE_FAILED_COPY)
-        if not display_sync_failed and persisted:
-            self._focus_console_composer_if_needed(force=True)
 
     def console_prompt_target_projection(
         self,
