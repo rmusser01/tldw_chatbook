@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from types import SimpleNamespace
 
 import pytest
 from textual.css.query import NoMatches
@@ -20,6 +21,31 @@ from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapt
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_session_surface import ConsoleSessionSurface
+
+
+def _video_retention_config(**overrides) -> SimpleNamespace:
+    values = {
+        "retention": "session",
+        "retention_ttl_hours": 24,
+        "max_store_mb": 2048,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+@pytest.fixture(autouse=True)
+def isolated_video_store(monkeypatch: pytest.MonkeyPatch, tmp_path):
+    data_root = tmp_path / "user-data"
+    config = _video_retention_config()
+    monkeypatch.setattr(
+        "tldw_chatbook.Video_Generation.video_store.get_user_data_dir",
+        lambda: data_root,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Video_Generation.video_store.get_video_generation_config",
+        lambda: config,
+    )
+    return data_root / "generated_videos", config
 
 
 def _disable_splash(monkeypatch: pytest.MonkeyPatch) -> None:
