@@ -34,6 +34,7 @@ from tldw_chatbook.config import CLI_APP_CLIENT_ID  # noqa: E402
 from tldw_chatbook.Library.library_tool_contract import (  # noqa: E402
     LIBRARY_TOOL_DESCRIPTORS,
 )
+from tldw_chatbook.MCP import client as client_module  # noqa: E402
 from tldw_chatbook.MCP import server as server_module  # noqa: E402
 from tldw_chatbook.MCP.gateway_runtime import (  # noqa: E402
     ChatbookGatewayRuntime,
@@ -1216,11 +1217,69 @@ def test_real_module_subprocess_is_protocol_clean_and_exits_on_eof(
 
 
 @pytest.mark.asyncio
+async def test_legacy_client_spawn_uses_gateway_output_line_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+    process = object()
+
+    async def fake_create_subprocess_exec(command: str, *args: str, **kwargs: Any):
+        captured.update(command=command, args=list(args), kwargs=kwargs)
+        return process
+
+    async def no_op(*_args: Any) -> None:
+        return None
+
+    connection = SimpleNamespace(
+        process=process,
+        server_info={},
+        server_capabilities={},
+        protocol_version="2025-03-26",
+        initialize=no_op,
+        close=no_op,
+    )
+
+    def fake_connection(
+        created_process: object, *, client_name: str
+    ) -> SimpleNamespace:
+        assert created_process is process
+        assert client_name == "line-limit-client"
+        return connection
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(client_module, "_StdioJSONRPCConnection", fake_connection)
+
+    client = client_module.MCPClient(name="line-limit-client")
+    monkeypatch.setattr(client, "_discover_server_capabilities", no_op)
+    try:
+        assert await client.connect_to_server(
+            "standalone",
+            "python",
+            args=["-m", "tldw_chatbook.MCP"],
+            env={"PROFILE": "isolated"},
+        )
+    finally:
+        await client.disconnect_all()
+
+    assert captured["command"] == "python"
+    assert captured["args"] == ["-m", "tldw_chatbook.MCP"]
+    assert captured["kwargs"]["env"] == {"PROFILE": "isolated"}
+    assert (
+        captured["kwargs"]["limit"]
+        == GatewayLimits().max_output_line_bytes
+        == 1_048_576
+    )
+
+
+@pytest.mark.asyncio
 async def test_real_legacy_client_command_discovers_calls_continues_and_stops_child(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     assert SHARED_VENV_PYTHON.is_absolute()
     assert SHARED_VENV_PYTHON.is_file()
+    monkeypatch.chdir(REPO_ROOT)
+    assert Path.cwd() == REPO_ROOT
     profile = tmp_path / "client-profile"
     environment = _isolated_subprocess_environment(profile)
     database_path = (
@@ -1262,6 +1321,8 @@ async def test_real_legacy_client_command_discovers_calls_continues_and_stops_ch
         assert connected is True
         session = client.sessions["standalone"]
         process = session.process
+        assert session.protocol_version == "2025-03-26"
+        assert client.servers["standalone"]["protocol_version"] == "2025-03-26"
         assert client.servers["standalone"]["command"] == str(SHARED_VENV_PYTHON)
         assert client.servers["standalone"]["args"] == [
             "-m",

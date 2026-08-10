@@ -122,6 +122,7 @@ class _StdioJSONRPCConnection:
         self.request_timeout_seconds = request_timeout_seconds
         self.server_info: Dict[str, Any] = {}
         self.server_capabilities: Dict[str, Any] = {}
+        self.protocol_version = ""
 
         self._request_ids = count(1)
         self._pending_requests: Dict[int, asyncio.Future[Dict[str, Any]]] = {}
@@ -146,6 +147,10 @@ class _StdioJSONRPCConnection:
                 },
             },
         )
+        protocol_version = result.get("protocolVersion")
+        if protocol_version != _MCP_PROTOCOL_VERSION:
+            raise MCPClientError("Unexpected MCP protocol version")
+        self.protocol_version = protocol_version
         self.server_capabilities = dict(result.get("capabilities") or {})
         self.server_info = dict(result.get("serverInfo") or {})
         await self.notify("notifications/initialized")
@@ -581,6 +586,7 @@ class MCPClient:
                 "tools": [],
                 "resources": [],
                 "prompts": [],
+                "protocol_version": session.protocol_version,
                 "server_info": dict(session.server_info),
                 "server_capabilities": dict(session.server_capabilities),
             }

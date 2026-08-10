@@ -59,6 +59,41 @@ def _assert_client_error(error: BaseException, expected_message: str) -> None:
 
 
 @pytest.mark.parametrize(
+    "protocol_version",
+    [
+        pytest.param(None, id="missing"),
+        pytest.param("", id="empty"),
+        pytest.param(7, id="non-string"),
+        pytest.param("2025-11-25", id="mismatch"),
+        pytest.param("private-version" * 100, id="oversized"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_initialize_rejects_unexpected_protocol_version_without_payload_leakage(
+    protocol_version: object,
+) -> None:
+    connection = client_module._StdioJSONRPCConnection.__new__(
+        client_module._StdioJSONRPCConnection
+    )
+    connection.client_name = "test-client"
+
+    async def request(_method: str, _params: dict[str, Any]) -> dict[str, Any]:
+        return {"protocolVersion": protocol_version}
+
+    async def notify(_method: str) -> None:
+        pytest.fail("initialized notification must not follow invalid negotiation")
+
+    connection.request = request  # type: ignore[method-assign]
+    connection.notify = notify  # type: ignore[method-assign]
+
+    with pytest.raises(Exception) as exc_info:
+        await connection.initialize()
+
+    _assert_client_error(exc_info.value, "Unexpected MCP protocol version")
+    assert "private-version" not in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
     ("list_method", "item_key", "request_method", "value_field"),
     CATALOG_RESPONSES,
 )
