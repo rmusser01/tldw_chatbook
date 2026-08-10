@@ -157,7 +157,9 @@ def _local_settings(*, llama_endpoint: str = "http://llama.invalid") -> dict[str
 
 
 def _local_adapter_settings(
-    *, oobabooga_endpoint: str = "http://oobabooga.invalid/v1/chat/completions"
+    *,
+    oobabooga_endpoint: str = "http://oobabooga.invalid/v1/chat/completions",
+    tabby_key: str | None = "fixed-tabby-key",
 ) -> dict[str, Any]:
     return {
         "ooba_api": {
@@ -167,7 +169,7 @@ def _local_adapter_settings(
             "api_retries": 0,
             "api_retry_delay": 0,
         },
-        "api_keys": {"tabby": "fixed-tabby-key"},
+        "api_keys": {"tabby": tabby_key},
         "local_api_ip": {"tabby": "http://tabby.invalid/v1/chat/completions"},
         "models": {"tabby": "fixed-tabby-model"},
         "tabby_api": {"api_retries": 0, "api_retry_delay": 0},
@@ -2067,7 +2069,7 @@ def test_tabby_malformed_stream_contract_hides_input_credential_and_lines(
     assert TABBY_INPUT_CANARY not in captured.text
     assert TABBY_CREDENTIAL_CANARY not in captured.text
     assert TABBY_STREAM_CANARY not in captured.text
-    assert "TabbyAPI: Credential configured" in captured.text
+    assert "TabbyAPI: Credential state resolved" in captured.text
     assert "TabbyAPI: Input received" in captured.text
     assert "TabbyAPI: Failed to parse streamed JSON; exception_type=" in (captured.text)
     assert "TabbyAPI: Ignored non-data stream line; line_length=" in captured.text
@@ -2106,8 +2108,7 @@ def test_tabby_request_exception_contract_hides_message(
 def test_tabby_missing_credential_error_contract_is_unchanged(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    settings = _local_adapter_settings()
-    settings["api_keys"]["tabby"] = None
+    settings = _local_adapter_settings(tabby_key=None)
     monkeypatch.setattr(local_summarization, "load_settings", lambda: settings)
 
     def transport_must_not_run() -> object:
@@ -2130,3 +2131,44 @@ def test_tabby_missing_credential_error_contract_is_unchanged(
         "TabbyAPI: Unexpected error in summarization process: "
         "'NoneType' object is not subscriptable",
     )
+
+
+def test_tabby_empty_configured_credential_reports_resolved_state_truthfully(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    response = _FakeResponse(
+        json_data={
+            "id": "fixed-id",
+            "choices": [{"message": {"content": "fixed tabby summary"}}],
+            "created": 1,
+            "model": "fixed-tabby-model",
+            "object": "chat.completion",
+            "usage": {},
+        }
+    )
+    monkeypatch.setattr(
+        local_summarization,
+        "load_settings",
+        lambda: _local_adapter_settings(tabby_key=""),
+    )
+    calls = _install_signature_bound_session_post(monkeypatch, response)
+
+    generator = local_summarization.summarize_with_tabbyapi(
+        "fixed input",
+        "fixed prompt",
+    )
+    assert calls == []
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = _consume_generator(generator)
+
+    assert result == ([], "fixed tabby summary")
+    assert len(calls) == 1
+    args, kwargs = calls[0]
+    assert args == ("http://tabby.invalid/v1/chat/completions",)
+    assert kwargs["headers"] == {"Content-Type": "application/json"}
+    assert "Authorization" not in kwargs["headers"]
+    assert "TabbyAPI: No API key found in config file" in captured.text
+    assert "TabbyAPI: Credential state resolved" in captured.text
+    assert "TabbyAPI: Credential configured" not in captured.text

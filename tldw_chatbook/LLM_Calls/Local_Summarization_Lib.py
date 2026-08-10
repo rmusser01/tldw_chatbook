@@ -856,7 +856,7 @@ def summarize_with_tabbyapi(
 
         if tabby_api_key is None:
             raise TypeError("'NoneType' object is not subscriptable")
-        logging.debug("TabbyAPI: Credential configured")
+        logging.debug("TabbyAPI: Credential state resolved")
 
         # Process input data
         logging.debug("TabbyAPI: Using provided data for summarization")
