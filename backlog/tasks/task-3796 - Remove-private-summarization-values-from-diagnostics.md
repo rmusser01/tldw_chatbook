@@ -17,7 +17,7 @@ priority: high
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-TASK-2118's final review found that its identifier-filtered candidate list had been incorrectly promoted into a complete summarization follow-up. A fresh review of every logger call in `Local_Summarization_Lib.py` and `Summarization_General_Lib.py` verified a broader boundary: raw/processed/extracted input, custom/system/combined prompts, response and generated-output content, credential fragments, private endpoint or local-path values, and exception/error details are written to diagnostics. These sites are not raw provider request-payload dictionaries or tool definitions, so they remain outside TASK-2118 acceptance criterion 4, but they violate ADR-029's metadata-only persistent-log boundary and need one atomic containment repair.
+TASK-2118's final review found that its identifier-filtered candidate list had been incorrectly promoted into a complete summarization follow-up. A fresh review of every logger call in `Local_Summarization_Lib.py` and `Summarization_General_Lib.py` verified a broader boundary: raw/processed/extracted input, custom/system/combined prompts, response and generated-output content, credential fragments, private endpoint or local-path values, and exception/error details are written to diagnostics. These sites are not raw provider request-payload dictionaries or tool definitions, so they remain outside TASK-2118 acceptance criterion 4. The current persistent sink rejects these ordinary records, but their private values are still formatted and submitted to logging, remain observable by non-persistent handlers, and could be admitted by a later sink change. Applying ADR-029's metadata-only allowlist at these call sites requires one atomic containment repair.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Design Reference
@@ -158,3 +158,20 @@ Category totals: 8 raw/processed/extracted input, 9 prompt content, 13 credentia
 - [ ] #3 A fresh all-call sweep of both summarization modules finds no equivalent direct private diagnostic outside an explicit metadata-only helper
 - [ ] #4 The production diagnostic inventory is reconciled without changing unrelated owners, reasons, counts, or sink topology
 <!-- AC:END -->
+
+## Implementation Plan
+
+ADR required: no
+
+ADR path: `backlog/decisions/029-local-private-data-boundary.md`
+
+Reason: ADR-029 already owns the metadata-only persistent-log boundary; this task applies a narrower call-site containment rule without changing sink admission or another system contract.
+
+Detailed plan: [TASK-3796 implementation plan](../../Docs/superpowers/plans/2026-08-10-task-3796-summarization-diagnostic-privacy.md)
+
+1. Rebase onto current `origin/dev`, recheck in-flight ownership, and reproduce the focused behavioral, inventory, lint, and formatter baselines.
+2. Add a test-only stable-identity ledger covering all 523 starting calls: 199 private sites pending repair and 324 exact reviewed-safe calls.
+3. Repair the 100 Local-module sites in four test-first provider batches, with direct-function canaries and per-batch reconciliation.
+4. Repair the 99 General-module sites in four test-first provider batches, with direct-function canaries and per-batch reconciliation.
+5. Run independent category/module mutations, prove restoration, and reconcile the exhaustive all-call boundary.
+6. Regenerate only the two owned diagnostic-inventory entries, run touched-functionality verification, complete self-review, and close TASK-3796.

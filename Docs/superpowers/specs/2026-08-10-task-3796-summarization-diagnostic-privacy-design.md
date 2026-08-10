@@ -1,7 +1,7 @@
 # TASK-3796 — Summarization diagnostic privacy design
 
 - Date: 2026-08-10
-- Status: draft for review
+- Status: approved
 - Backlog: [TASK-3796](../../../backlog/tasks/task-3796%20-%20Remove-private-summarization-values-from-diagnostics.md)
 - Existing decision: [ADR-029: Local Private Data Boundary](../../../backlog/decisions/029-local-private-data-boundary.md)
 - ADR required: no
