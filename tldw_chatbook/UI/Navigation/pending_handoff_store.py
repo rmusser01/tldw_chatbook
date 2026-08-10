@@ -193,17 +193,18 @@ class PendingHandoffStore:
     def _monotonic_now(self) -> float:
         try:
             value = self._monotonic_clock()
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise TypeError
+            normalized = float(value)
+            if not math.isfinite(normalized):
+                raise ValueError
         except MemoryError:
             raise
         except Exception:
-            raise HandoffValueError("handoff clock could not be read") from None
-        if (
-            isinstance(value, bool)
-            or not isinstance(value, (int, float))
-            or not math.isfinite(float(value))
-        ):
-            raise HandoffValueError("handoff clock must return a finite number")
-        return float(value)
+            raise HandoffValueError(
+                "handoff clock must return a finite number"
+            ) from None
+        return normalized
 
     def _assert_owner_thread(self) -> None:
         if threading.get_ident() != self._owner_thread_id:

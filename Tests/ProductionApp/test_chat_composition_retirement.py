@@ -20,6 +20,9 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.config import load_settings
 from tldw_chatbook.Constants import TAB_CHAT
+from tldw_chatbook.Prompt_Management.prompt_variables import (
+    PromptVariableApplication,
+)
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
@@ -259,6 +262,19 @@ def test_video_retention_startup_failure_is_bounded(
     assert retention_calls == [app.generated_video_store]
 
 
+def _prompt_application(user_text: str) -> PromptVariableApplication:
+    return PromptVariableApplication(
+        system_text=None,
+        user_text=user_text,
+        apply_system=False,
+        apply_user=True,
+        destination="append_active",
+        target_session_id="session-1",
+        composer_fingerprint=None,
+        system_fingerprint=None,
+    )
+
+
 @pytest.mark.asyncio
 async def test_registered_chat_route_uses_only_native_console_and_restores_snapshot(
     monkeypatch: pytest.MonkeyPatch,
@@ -484,7 +500,7 @@ async def test_native_console_prompt_handoff_releases_transient_and_acknowledges
             )
             app.pending_handoffs.stage(
                 HandoffChannel.CONSOLE_PROMPT_INSERT,
-                "terminal prompt",
+                _prompt_application("terminal prompt"),
             )
             await chat._consume_pending_console_prompt_insert()
             assert not app.pending_handoffs.has_pending(
@@ -502,7 +518,7 @@ async def test_native_console_prompt_handoff_releases_transient_and_acknowledges
             )
             app.pending_handoffs.stage(
                 HandoffChannel.CONSOLE_PROMPT_INSERT,
-                "retry prompt",
+                _prompt_application("retry prompt"),
             )
             await chat._consume_pending_console_prompt_insert()
             assert app.pending_handoffs.has_pending(

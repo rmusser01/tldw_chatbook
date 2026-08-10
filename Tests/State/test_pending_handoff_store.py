@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import fields, replace
+import logging
 from typing import Any
 
 import pytest
@@ -474,6 +475,37 @@ def test_clock_failure_does_not_expose_exception_or_prompt_values() -> None:
 
     assert secret not in str(caught.value)
     assert secret not in repr(caught.value)
+
+
+def test_clock_numeric_coercion_failure_is_bounded_and_keeps_pending(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    secret = "PRIVATE-CLOCK-COERCION-SENTINEL"
+
+    class SecretFloat(float):
+        def __float__(self) -> float:
+            raise ValueError(secret)
+
+        def __repr__(self) -> str:
+            return secret
+
+        def __str__(self) -> str:
+            return secret
+
+    caplog.set_level(logging.DEBUG)
+    store = PendingHandoffStore(monotonic_clock=lambda: SecretFloat(20.0))
+    store.stage(
+        HandoffChannel.CONSOLE_PROMPT_INSERT,
+        _prompt_application(secret),
+    )
+
+    with pytest.raises(HandoffValueError) as caught:
+        store.claim(HandoffChannel.CONSOLE_PROMPT_INSERT)
+
+    assert store.has_pending(HandoffChannel.CONSOLE_PROMPT_INSERT) is True
+    assert secret not in str(caught.value)
+    assert secret not in repr(caught.value)
+    assert secret not in caplog.text
 
 
 @pytest.mark.parametrize(
