@@ -437,6 +437,7 @@ def test_all_tool_gates_enumerates_nine_gates_with_sections_and_groups(monkeypat
     assert local_gates[0].section == "console"
     assert local_gates[0].key == "local_tools_enabled"
     assert local_gates[0].group == "local"
+    assert local_gates[0].enabled is True  # missing key -> available by default
     assert local_gates[1].section == "tools"
     assert local_gates[1].key == WEB_DEEP_SEARCH_GATE_KEY
     assert local_gates[1].group == "local"
@@ -526,13 +527,12 @@ def test_tool_gate_breadcrumb_names_the_off_count(monkeypatch):
     from tldw_chatbook.Agents.builtin_tool_gate import all_tool_gates, tool_gate_breadcrumb
 
     monkeypatch.setattr(config_module, "get_cli_setting", _no_override_get_cli_setting)
-    gates = all_tool_gates()  # every gate defaults OFF -> 9 off
+    gates = all_tool_gates()  # master defaults on; the other 8 gates default off
     text = tool_gate_breadcrumb(gates)
     assert text is not None
-    assert "9" in text
-    assert "Servers mode" in text
-    assert "web_search, web_fetch, web_crawl" in text
-    assert "restart the app" in text
+    assert "8" in text
+    assert "Tools mode" in text
+    assert "web_search, web_fetch, web_crawl" not in text
 
 
 def test_gate_key_pairs_and_all_tool_gates_can_never_drift(monkeypatch):
@@ -557,12 +557,12 @@ def test_count_off_tool_gates_constructs_no_tools(monkeypatch):
     monkeypatch.setattr(
         "tldw_chatbook.config.get_cli_setting", lambda s, k, d=None: d
     )
-    assert builtin_tool_gate.count_off_tool_gates() == 9
+    assert builtin_tool_gate.count_off_tool_gates() == 8
     breadcrumb = builtin_tool_gate.tool_gate_breadcrumb()
     assert breadcrumb is not None
-    assert "9 tool gate(s)" in breadcrumb
-    assert "web_search, web_fetch, web_crawl" in breadcrumb
-    assert "restart the app" in breadcrumb
+    assert "8 tool gate(s)" in breadcrumb
+    assert "local/web master switch in Tools mode" in breadcrumb
+    assert "built-in server detail" in breadcrumb
 
 
 def test_tool_gate_breadcrumb_reads_each_config_gate_once(monkeypatch):

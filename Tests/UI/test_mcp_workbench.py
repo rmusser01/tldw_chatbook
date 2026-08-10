@@ -60,6 +60,18 @@ def _default_advanced_open(monkeypatch):
     """
     monkeypatch.setattr(mcp_inspector_module, "get_cli_setting", lambda *a, **k: True)
     monkeypatch.setattr(mcp_inspector_module, "save_setting_to_cli_config", lambda *a, **k: True)
+    # Keep this broad workbench fake's historical, deliberately small tool
+    # inventory stable. Tests for the production default override this seam
+    # explicitly; config/controller tests cover the shipped missing-key
+    # default independently.
+    original_workbench_get = mcp_workbench_module.get_cli_setting
+
+    def workbench_setting(section, key=None, default=None):
+        if section == "console" and key == "local_tools_enabled":
+            return False
+        return original_workbench_get(section, key, default)
+
+    monkeypatch.setattr(mcp_workbench_module, "get_cli_setting", workbench_setting)
 
 
 class FakeTarget:
@@ -8670,13 +8682,27 @@ def _enable_local_tools(monkeypatch):
     monkeypatch.setattr(mcp_workbench_module, "get_cli_setting", _patched)
 
 
+def _missing_local_master_uses_default(monkeypatch):
+    """Leave the master key absent so the production fallback is exercised."""
+    original = mcp_workbench_module.get_cli_setting
+
+    def _patched(section, key=None, default=None):
+        if section == "console" and key == "local_tools_enabled":
+            return default
+        return original(section, key, default)
+
+    monkeypatch.setattr(mcp_workbench_module, "get_cli_setting", _patched)
+
+
 @pytest.mark.asyncio
 async def test_tools_catalog_includes_local_agent_tools_as_own_group(monkeypatch):
     _enable_local_tools(monkeypatch)
     app = WorkbenchApp()
     async with app.run_test() as pilot:
         await pilot.pause()
+        await app.workers.wait_for_complete()
         workbench = app.query_one(MCPWorkbench)
+        await workbench._mount_deferred_canvases()
         await workbench._sync_children()
 
         local = [
@@ -8705,18 +8731,226 @@ async def test_tools_catalog_includes_local_agent_tools_as_own_group(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_local_agent_group_absent_when_master_flag_off():
-    # Default posture: `[console] local_tools_enabled` defaults False, so the
-    # management surface does not advertise the workspace tool set either.
+async def test_local_agent_group_absent_when_master_flag_explicitly_off():
     app = WorkbenchApp()
     async with app.run_test() as pilot:
         await pilot.pause()
+        await app.workers.wait_for_complete()
         workbench = app.query_one(MCPWorkbench)
+        await workbench._mount_deferred_canvases()
         await workbench._sync_children()
         assert [
             t for t in workbench._last_hub_tools
             if t.server_key == "local:__local__"
         ] == []
+        assert app.query_one("#mcp-tools-local-config").display is True
+        assert app.query_one("#mcp-tools-local-enabled", Checkbox).value is False
+
+
+@pytest.mark.asyncio
+async def test_local_agent_group_present_when_master_key_is_missing(monkeypatch):
+    _missing_local_master_uses_default(monkeypatch)
+    app = WorkbenchApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        workbench = app.query_one(MCPWorkbench)
+        await workbench._mount_deferred_canvases()
+        await workbench._sync_children()
+
+        names = {
+            tool.name
+            for tool in workbench._last_hub_tools
+            if tool.server_key == "local:__local__"
+        }
+        assert _LOCAL_AGENT_TOOL_NAMES <= names
+
+
+@pytest.mark.asyncio
+async def test_tools_mode_local_controls_round_trip_master_and_workspace(
+    monkeypatch, tmp_path
+):
+    values: dict[tuple[str, str], Any] = {}
+    save_calls: list[tuple[str, str, Any]] = []
+
+    def fake_get(section, key=None, default=None):
+        return values.get((section, key), default)
+
+    def fake_save(section, key, value):
+        save_calls.append((section, key, value))
+        values[(section, key)] = value
+        return True
+
+    monkeypatch.setattr(mcp_workbench_module, "get_cli_setting", fake_get)
+    monkeypatch.setattr(mcp_workbench_module, "save_setting_to_cli_config", fake_save)
+
+    notes_root = tmp_path / "notes-workspace"
+    notes_root.mkdir()
+    app = WorkbenchApp()
+    async with app.run_test(size=(120, 42)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+
+        checkbox = app.query_one("#mcp-tools-local-enabled", Checkbox)
+        assert checkbox.value is True
+        checkbox.value = False
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert ("console", "local_tools_enabled", False) in save_calls
+        assert app.query_one("#mcp-tools-local-enabled", Checkbox).value is False
+
+        checkbox.value = True
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert ("console", "local_tools_enabled", True) in save_calls
+        local_names = {
+            tool.name
+            for tool in workbench._last_hub_tools
+            if tool.server_key == "local:__local__"
+        }
+        assert _LOCAL_AGENT_TOOL_NAMES <= local_names
+
+        root_input = app.query_one("#mcp-tools-workspace-root", Input)
+        root_input.value = str(notes_root)
+        app.query_one("#mcp-tools-workspace-save", Button).press()
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert ("console", "workspace_root", str(notes_root.resolve())) in save_calls
+        assert app.query_one("#mcp-tools-workspace-root", Input).value == str(
+            notes_root.resolve()
+        )
+        status = app.query_one("#mcp-tools-local-config-status", Static)
+        assert "next Console agent run" in str(status.renderable)
+
+
+@pytest.mark.asyncio
+async def test_tools_mode_failed_master_save_restores_persisted_truth(monkeypatch):
+    def fake_get(section, key=None, default=None):
+        if section == "console" and key == "local_tools_enabled":
+            return True
+        return default
+
+    monkeypatch.setattr(mcp_workbench_module, "get_cli_setting", fake_get)
+    monkeypatch.setattr(
+        mcp_workbench_module, "save_setting_to_cli_config", lambda *args: False
+    )
+
+    app = WorkbenchApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        workbench = app.query_one(MCPWorkbench)
+        await workbench._mount_deferred_canvases()
+        await workbench._sync_children()
+        checkbox = app.query_one("#mcp-tools-local-enabled", Checkbox)
+        assert checkbox.value is True
+        checkbox.value = False
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert app.query_one("#mcp-tools-local-enabled", Checkbox).value is True
+        status = app.query_one("#mcp-tools-local-config-status", Static)
+        assert "persisted setting is shown" in str(status.renderable)
+        assert status.has_class("is-error")
+
+
+@pytest.mark.asyncio
+async def test_tools_mode_rejects_non_directory_workspace_root(
+    monkeypatch, tmp_path
+):
+    save_calls: list[tuple[str, str, Any]] = []
+    monkeypatch.setattr(
+        mcp_workbench_module,
+        "save_setting_to_cli_config",
+        lambda section, key, value: save_calls.append((section, key, value)) or True,
+    )
+
+    app = WorkbenchApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        workbench = app.query_one(MCPWorkbench)
+        await workbench._mount_deferred_canvases()
+        await workbench._sync_children()
+        root_input = app.query_one("#mcp-tools-workspace-root", Input)
+        root_input.value = str(tmp_path / "missing")
+        app.query_one("#mcp-tools-workspace-save", Button).press()
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert not [call for call in save_calls if call[1] == "workspace_root"]
+        status = app.query_one("#mcp-tools-local-config-status", Static)
+        assert "not saved" in str(status.renderable)
+        assert status.has_class("is-error")
+
+
+@pytest.mark.asyncio
+async def test_tools_mode_workspace_root_uses_shared_path_validator(
+    monkeypatch, tmp_path
+):
+    validated_root = tmp_path / "validated-workspace"
+    validated_root.mkdir()
+    validation_calls: list[tuple[Path, Path, bool, bool]] = []
+    save_calls: list[tuple[str, str, Any]] = []
+
+    def fake_validate_path(
+        user_path,
+        base_directory,
+        *,
+        redact_paths=False,
+        allow_hidden=False,
+    ):
+        validation_calls.append(
+            (
+                Path(user_path),
+                Path(base_directory),
+                redact_paths,
+                allow_hidden,
+            )
+        )
+        return validated_root.resolve()
+
+    monkeypatch.setattr(mcp_workbench_module, "validate_path", fake_validate_path)
+    monkeypatch.setattr(
+        mcp_workbench_module,
+        "save_setting_to_cli_config",
+        lambda section, key, value: save_calls.append((section, key, value)) or True,
+    )
+
+    app = WorkbenchApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        workbench = app.query_one(MCPWorkbench)
+        await workbench._mount_deferred_canvases()
+        await workbench._sync_children()
+
+        root_input = app.query_one("#mcp-tools-workspace-root", Input)
+        root_input.value = "relative-workspace"
+        app.query_one("#mcp-tools-workspace-save", Button).press()
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert len(validation_calls) == 1
+        candidate, validation_root, redact_paths, allow_hidden = validation_calls[0]
+        assert candidate == Path.cwd() / "relative-workspace"
+        assert validation_root == candidate.parent
+        assert redact_paths is True
+        assert allow_hidden is True
+        assert (
+            "console",
+            "workspace_root",
+            str(validated_root.resolve()),
+        ) in save_calls
 
 
 @pytest.mark.asyncio
@@ -8730,7 +8964,9 @@ async def test_local_agent_catalog_failure_degrades_to_no_local_group(monkeypatc
     app = WorkbenchApp()
     async with app.run_test() as pilot:
         await pilot.pause()
+        await app.workers.wait_for_complete()
         workbench = app.query_one(MCPWorkbench)
+        await workbench._mount_deferred_canvases()
         await workbench._sync_children()
 
         # The local group is simply absent...

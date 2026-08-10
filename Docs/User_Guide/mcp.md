@@ -17,14 +17,31 @@ organized into four modes: Servers, Tools, Permissions, and Audit.
   "Tab Navigation: Switch to MCP".
  
 
-## Turning tools on (Servers mode ▸ Tool gates)
+## Configuring local and web tools (Tools mode)
 
 Before a tool can appear anywhere else in the hub — Tools mode's catalog,
 the Permissions matrix, an agent's tool list — it needs to be *registered*,
 which is a separate, earlier step from *permission* (Allow/Ask/Off).
 Registration is controlled by a `[tools]`/`[console]` config switch called a
-**gate**, off by default for every one of them; a gate-off tool doesn't
-exist anywhere in the hub to grant permission to in the first place.
+**gate**. A gate-off tool doesn't exist anywhere in the hub to grant
+permission to in the first place.
+
+Under the local source, Tools mode now starts with an always-visible **Local
+workspace + web tools** control. This provider is enabled by default and
+includes `web_search`, `web_fetch`, and `web_crawl` alongside workspace file,
+read-only Git, and session-todo tools. Turning the master switch off remains a
+supported opt-out. The same panel lets you set **Workspace root**, the directory
+that confines every `fs_*` path. A blank root uses the folder from which the app
+was launched; a non-blank root must be an existing directory.
+
+Both changes are used by the next Console agent run. They do not grant tool
+permission: fresh permission state is still **Ask**, explicit Allow/Ask/Off
+overrides still win, mutating tools retain their risk floor, and the global
+kill switch remains authoritative. The controls read back persisted config
+truth after saving, and a failed save restores the persisted value instead of
+leaving an optimistic toggle on screen.
+
+## Other registration gates (Servers mode ▸ Tool gates)
 
 Select the built-in server's row in Servers mode; its detail pane has a
 **Tool gates** group under the existing enable/expose checkboxes, split
@@ -33,14 +50,11 @@ into two subheadings:
 - **Agent built-ins** — the app's own file/note tools (read/list/write a
   file, glob/grep the workspace, create/update a note).
 - **Local workspace + web tools** — a master switch, labeled **Local
-  workspace + web tools (master switch)**, that registers `web_search`,
-  `web_fetch`, and `web_crawl` alongside the workspace file, Git, and
-  session-todo tools for Console agents. `web_deep_search` (multi-query web
-  research that may cost real money on paid providers) has an additional
-  individual gate underneath it. While the master is off, the standard web
-  tools do not exist in Tools, Permissions, or the Console agent catalog.
-  Turning the master on and restarting the app registers them; use
-  Permissions afterward to choose Allow, Ask, or Off per tool.
+  workspace + web tools (master switch)**, mirroring the direct Tools-mode
+  control. `web_deep_search` (multi-query web research that may cost real
+  money on paid providers) has an additional individual gate underneath it.
+  Unlike the local master and workspace root, construction-time gates such as
+  `web_deep_search` require an app restart.
 
 The master switch governs the **Console/agent path only**. It does *not*
 control whether an enabled tool (e.g. `web_deep_search`) is exposed to
@@ -48,20 +62,17 @@ control whether an enabled tool (e.g. `web_deep_search`) is exposed to
 separate switch, `[mcp] expose_local_tools`, unrelated to this pane.
 
 Every checkbox here saves immediately and reads back the real config value
-after saving — never an optimistic guess. **These gates need an app
-restart to take effect**: tool providers build their catalog once, at
-startup, so a newly-flipped gate won't add (or remove) a tool from a
-running session until you restart. This pane is still labeled as the
+after saving — never an optimistic guess. The pane's restart note applies to
+the construction-time registration gates. This pane is still labeled as the
 built-in *MCP server* (the stdio process `python -m tldw_chatbook.MCP`
 clients launch) even though these particular checkboxes control the
 in-process *agent* tool catalog — a different subsystem sharing the same
 detail pane for discoverability.
 
-If the local master is off, both the Permissions matrix's legend (always
-visible, under the marker key) and the Tools-mode empty state explicitly name
-`web_search`, `web_fetch`, and `web_crawl`, point back to the built-in server
-detail, and say to restart. Other disabled gates still report the total number
-of gates that are off.
+If the local master is off, both the Permissions matrix's legend and the
+Tools-mode empty state explicitly name `web_search`, `web_fetch`, and
+`web_crawl` and point to the direct Tools-mode control. Other disabled gates
+still report the total number of gates that are off.
 
 ### Web research is not persistent ingestion
 

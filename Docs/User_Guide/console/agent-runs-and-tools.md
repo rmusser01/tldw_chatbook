@@ -174,11 +174,12 @@ servers are configured but unreachable. MCP tool calls go through the same
 
 Console's standard web tools are `web_search` (find links), `web_fetch`
 (extract one URL), and `web_crawl` (bounded same-host crawl). They are local
-agent tools, not tools supplied by an external MCP server. Enable them in
-**MCP → Servers → built-in server → Tool gates → Local workspace + web
-tools**, restart the app, then choose Allow, Ask, or Off for each one in MCP
-Permissions. `[mcp] expose_local_tools` is only for external MCP clients and
-does not enable these tools in Console.
+agent tools, not tools supplied by an external MCP server. They are registered
+by default. Configure the master switch and confinement directory in **MCP →
+Tools → Local workspace + web tools**, then choose Allow, Ask, or Off for each
+tool in MCP Permissions. Master/root changes apply to the next Console agent
+run. `[mcp] expose_local_tools` is only for external MCP clients and does not
+enable these tools in Console.
 
 Web-tool results are ephemeral. To persist a page in Library, use **Library →
 Import…** and submit its URL; Console does not advertise the retired

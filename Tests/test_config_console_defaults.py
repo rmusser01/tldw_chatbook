@@ -205,8 +205,15 @@ def test_console_local_tools_defaults(tmp_path, monkeypatch):
     settings = config_module.load_settings(force_reload=True)
     console = settings["console"]
 
-    assert console["local_tools_enabled"] is False
+    assert console["local_tools_enabled"] is True
     assert console["workspace_root"] == ""
+
+
+def test_config_template_enables_local_and_standard_web_tools():
+    """Fresh profiles persist the same default the missing-key loader uses."""
+    template = tomllib.loads(config_module.CONFIG_TOML_CONTENT)
+
+    assert template["console"]["local_tools_enabled"] is True
 
 
 def test_console_local_tools_coerced(tmp_path, monkeypatch):
