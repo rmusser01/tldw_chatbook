@@ -56,11 +56,11 @@
 
 ## Task 3: Define and Validate the Typed Application Request
 
-- [ ] Add tests for `PromptVariableApplication`: rendered lanes, lane flags, destination (`replace_snapshot` or `append_active`), target session, optional composer/System fingerprints, monotonic creation/expiry, nonempty applicable lane, and safe `repr`.
-- [ ] Add tests for `ConsolePromptTargetProjection`: session ID plus one-way System fingerprint only, safe `repr`, owner-thread publication/restoration, runtime-coupled invalidation, and the bounded no-prior-target Library refusal.
-- [ ] Ensure raw values, a separate source-body copy, and separate value maps are absent from the dataclass. Allow exactly the selected final original-or-rendered lane payload, hide it from `repr`, and expose no feature-owned serialization or persistence API.
-- [ ] Implement exact 120-second semantics: expired when elapsed is `>= 120`, with an injectable monotonic clock for deterministic tests.
-- [ ] Add log-capture tests asserting secret values/rendered bodies never appear during validation, expiry, refusal, or failure.
+- [x] Add tests for `PromptVariableApplication`: rendered lanes, lane flags, destination (`replace_snapshot` or `append_active`), target session, optional composer/System fingerprints, monotonic creation/expiry, nonempty applicable lane, and safe `repr`.
+- [x] Add tests for `ConsolePromptTargetProjection`: session ID plus one-way System fingerprint only, safe `repr`, owner-thread publication/restoration, runtime-coupled invalidation, and the bounded no-prior-target Library refusal.
+- [x] Ensure raw values, a separate source-body copy, and separate value maps are absent from the dataclass. Allow exactly the selected final original-or-rendered lane payload, hide it from `repr`, and expose no feature-owned serialization or persistence API.
+- [x] Implement exact 120-second semantics: expired when elapsed is `>= 120`, with an injectable monotonic clock for deterministic tests.
+- [x] Add log-capture tests asserting secret values/rendered bodies never appear during validation, expiry, refusal, or failure.
 
 ## Task 4: Build One Shared Dialog
 
