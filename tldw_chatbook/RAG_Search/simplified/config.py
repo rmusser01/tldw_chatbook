@@ -31,6 +31,22 @@ VECTOR_STORE_TYPE_AUTO = "auto"
 VECTOR_STORE_TYPE_CHROMA = "chroma"
 VECTOR_STORE_TYPE_MEMORY = "memory"
 
+# The single source of truth for SearchConfig.hybrid_pool_multiplier's
+# default (TASK-4110 review, minor b): `rag_service._resolve_hybrid_pool_
+# multiplier`'s invalid-value fallback imports this same constant rather
+# than the module-level `SEARCH_RESULT_MULTIPLIER` -- those two used to
+# collapse to the same number (2) by coincidence, not by any shared
+# definition, so a user who had tuned the undocumented
+# `[rag.service] search_result_multiplier` TOML knob (which still governs
+# `_semantic_search`'s own internal over-fetch on every search path) would
+# have silently gotten THEIR number back out of an invalid
+# hybrid_pool_multiplier, rather than this field's own default. Release
+# note: hybrid legs previously honored `search_result_multiplier` for their
+# over-fetch; they now honor `hybrid_pool_multiplier` instead -- a user who
+# set `search_result_multiplier = 4` gets the hybrid legs back to 2 until
+# they set `hybrid_pool_multiplier` explicitly.
+DEFAULT_HYBRID_POOL_MULTIPLIER = 2
+
 # Cached result of the embeddings_rag installed-probe. Availability cannot
 # change without a restart, so probe at most once per process.
 _EMBEDDINGS_RAG_AVAILABLE: Optional[bool] = None
@@ -330,10 +346,23 @@ class SearchConfig:
     # HYBRID legs only: `_semantic_search`'s own internal over-fetch
     # multiplier (used on both the hybrid and the direct semantic-search
     # path) is the separate module-level `SEARCH_RESULT_MULTIPLIER`
-    # constant and is untouched by this field. Floored to 1 at use time
-    # (each leg must fetch at least `top_k`); default 2 matches the prior
-    # shared `SEARCH_RESULT_MULTIPLIER` behavior byte-for-byte.
-    hybrid_pool_multiplier: int = 2
+    # constant and is untouched by this field. Resolved at use time via
+    # `rag_service._resolve_hybrid_pool_multiplier`: floored to 1 (each leg
+    # must fetch at least `top_k`), capped at a sanity ceiling, and an
+    # invalid value falls back to `DEFAULT_HYBRID_POOL_MULTIPLIER` (2,
+    # matching the prior shared `SEARCH_RESULT_MULTIPLIER` behavior
+    # byte-for-byte at THIS field's own default -- see
+    # `DEFAULT_HYBRID_POOL_MULTIPLIER`'s docstring above for the disclosure
+    # on the two knobs no longer being the same one).
+    #
+    # NOTE for the Task 4 sweep: this does not set the semantic leg's total
+    # effective over-fetch alone -- `_semantic_search` applies ITS OWN
+    # `SEARCH_RESULT_MULTIPLIER` on top of whatever top_k it is handed, so
+    # the semantic leg's raw vector-store fetch is
+    # `top_k * hybrid_pool_multiplier * SEARCH_RESULT_MULTIPLIER`
+    # (compounding), while the keyword leg's fetch is the simple
+    # `top_k * hybrid_pool_multiplier` (no second multiplier applies there).
+    hybrid_pool_multiplier: int = DEFAULT_HYBRID_POOL_MULTIPLIER
     # Re-ranking
     enable_reranking: bool = False
     reranker_model: Optional[str] = None

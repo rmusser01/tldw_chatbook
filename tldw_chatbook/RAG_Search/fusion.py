@@ -264,16 +264,38 @@ def resolve_hybrid_alpha(explicit: Optional[float] = None) -> float:
 def resolve_rrf_k(value: Optional[Any] = None) -> int:
     """Resolve the RRF constant k from an untrusted (config) value.
 
+    Precedence: explicit value -> the active profile's ``search.rrf_k``
+    (via ``resolve_active_rag_config``) -> ``DEFAULT_RRF_K`` (60, server
+    parity). Mirrors ``resolve_hybrid_alpha``'s precedence exactly (TASK-4110
+    review): the two live fusion call sites --
+    ``RAGService._fuse_hybrid_results`` (Library hybrid) and
+    ``pipeline_builder_simple._rrf_merge_parallel_results`` (Chat RAG
+    hybrid) -- must resolve k the same way they already resolve alpha, or a
+    future default change (e.g. Task 5 shipping a new k) moves one live path
+    and silently strands the other at 60. At today's defaults both paths
+    still resolve to 60, so this is byte-unchanged now; it only starts
+    mattering once something other than the default is active.
+
     Args:
         value: Caller/config-supplied k, if any (e.g. a TOML pipeline's
-            ``steps[].config.rrf_k``).
+            ``steps[].config.rrf_k``). ``None`` means "no explicit
+            override" -- the active profile is consulted next, exactly as
+            for alpha.
 
     Returns:
         A non-negative int; ``DEFAULT_RRF_K`` (60, server parity) when the
-        value is missing, non-numeric, or negative. Invalid values are
-        logged, never raised: a misconfigured pipeline must not abort
-        search at merge time.
+        value (after the active-profile fallback) is missing, non-numeric,
+        or negative. Invalid values are logged, never raised: a
+        misconfigured pipeline must not abort search at merge time.
     """
+    if value is None:
+        try:
+            from .simplified.active_config import resolve_active_rag_config
+
+            value = resolve_active_rag_config().search.rrf_k
+        except Exception as e:  # config loading must never break search
+            logger.warning(f"Could not read rrf_k from active profile: {e}")
+            value = None
     if value is None:
         return DEFAULT_RRF_K
     try:

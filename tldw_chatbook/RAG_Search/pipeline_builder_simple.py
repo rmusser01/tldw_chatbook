@@ -328,6 +328,14 @@ def _rrf_merge_parallel_results(
     Alpha precedence: step ``config.alpha`` -> ``hybrid_alpha`` runtime
     param -> ``[AppRAGSearchConfig.rag.retriever] hybrid_alpha`` -> 0.7.
 
+    k precedence (TASK-4110 review, mirrors alpha's): step
+    ``config.rrf_k`` -> the active profile's ``search.rrf_k`` -> 60
+    (``resolve_rrf_k``'s own fallback chain). Before this, ``rrf_k`` had NO
+    profile fallback while ``alpha`` did, so a future default change here
+    would move this (Chat RAG) hybrid path without moving
+    ``RAGService._fuse_hybrid_results`` (Library hybrid), or vice versa --
+    the two live fusion call sites disagreeing on a value measured on one.
+
     Args:
         func_names: Retrieval function name per results list, same order.
         results_lists: Per-function results (exceptions already logged).

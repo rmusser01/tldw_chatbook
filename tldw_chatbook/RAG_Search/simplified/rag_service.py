@@ -49,7 +49,7 @@ from tldw_chatbook.Metrics.metrics_logger import (
 from .embeddings_wrapper import EmbeddingsServiceWrapper
 from .vector_store import create_vector_store, SearchResult, SearchResultWithCitations
 from .citations import Citation, CitationType, merge_citations
-from .config import RAGConfig
+from .config import RAGConfig, DEFAULT_HYBRID_POOL_MULTIPLIER
 from .collection_fingerprint import fingerprinted_collection_name, collection_provenance
 from ..fusion import (
     reciprocal_rank_fusion,
@@ -182,33 +182,56 @@ async def _no_keyword_rows() -> List[Any]:
     return []
 
 
+# Sanity ceiling for _resolve_hybrid_pool_multiplier (TASK-4110 review,
+# minor a). Fusion still narrows back to top_k regardless of how wide the
+# legs over-fetch, so a multiplier this large protects nothing further and
+# only multiplies retrieval cost -- an absurd config value (typo, a stray
+# extra zero) is capped rather than honored outright.
+MAX_HYBRID_POOL_MULTIPLIER = 100
+
+
 def _resolve_hybrid_pool_multiplier(value: Any) -> int:
     """Resolve ``config.search.hybrid_pool_multiplier`` for ``_hybrid_search``.
 
     Use-time validation, matching ``resolve_hybrid_alpha``/``resolve_rrf_k``'s
-    pattern: an invalid (non-numeric) config value falls back to the default
-    (2, matching the prior shared ``SEARCH_RESULT_MULTIPLIER`` behavior) and
-    any value below 1 is floored to 1 -- each hybrid leg must fetch at least
-    ``top_k`` candidates for fusion to have anything to work with. Never
-    raises: a misconfigured pipeline must not abort search at merge time.
+    pattern: an invalid (non-numeric) config value falls back to
+    ``DEFAULT_HYBRID_POOL_MULTIPLIER`` -- this field's OWN default (2), not
+    the separate module-level ``SEARCH_RESULT_MULTIPLIER`` constant. The two
+    happened to both be 2 but are different knobs (``SEARCH_RESULT_
+    MULTIPLIER`` governs ``_semantic_search``'s own internal over-fetch on
+    every search path, untouched by this field); falling back to the wrong
+    one would silently hand a user's tuned ``search_result_multiplier`` back
+    out of an invalid ``hybrid_pool_multiplier`` (TASK-4110 review minor b --
+    see ``DEFAULT_HYBRID_POOL_MULTIPLIER``'s docstring in config.py for the
+    release-note disclosure). Any value below 1 is floored to 1 -- each
+    hybrid leg must fetch at least ``top_k`` candidates for fusion to have
+    anything to work with -- and any value above
+    ``MAX_HYBRID_POOL_MULTIPLIER`` is capped there. Never raises: a
+    misconfigured pipeline must not abort search at merge time.
 
     Args:
         value: Caller/config-supplied multiplier, if any.
 
     Returns:
-        An int >= 1.
+        An int in ``[1, MAX_HYBRID_POOL_MULTIPLIER]``.
     """
     try:
         multiplier = int(value)
     except (TypeError, ValueError):
         logger.warning(
             f"Invalid hybrid_pool_multiplier {value!r}; falling back to "
-            f"{SEARCH_RESULT_MULTIPLIER}"
+            f"{DEFAULT_HYBRID_POOL_MULTIPLIER}"
         )
-        return SEARCH_RESULT_MULTIPLIER
+        return DEFAULT_HYBRID_POOL_MULTIPLIER
     if multiplier < 1:
         logger.warning(f"hybrid_pool_multiplier {multiplier} < 1; flooring to 1")
         return 1
+    if multiplier > MAX_HYBRID_POOL_MULTIPLIER:
+        logger.warning(
+            f"hybrid_pool_multiplier {multiplier} > {MAX_HYBRID_POOL_MULTIPLIER}; "
+            f"capping to {MAX_HYBRID_POOL_MULTIPLIER}"
+        )
+        return MAX_HYBRID_POOL_MULTIPLIER
     return multiplier
 
 
@@ -802,6 +825,28 @@ class RAGService:
         log_histogram("rag_search_query_length", len(query))
         self._search_type_counts[search_type] += 1
 
+        # The RESOLVED fusion parameters a HYBRID search will actually use,
+        # so the cache key below reflects them (TASK-4110 review, important
+        # 1). Without this, two hybrid searches identical except for
+        # `rrf_k` (or `hybrid_alpha`, or `hybrid_pool_multiplier`) shared
+        # one cache entry -- the SECOND request was silently served the
+        # FIRST's stale results forever, which would have made Task 4's
+        # per-k strategy sweep report every value as "no effect" on a
+        # single cached service. Resolved (not raw config) values, so two
+        # configs that happen to resolve to the same effective number
+        # correctly SHARE an entry rather than needlessly splitting one.
+        # `None` for semantic/keyword: those legs never depend on these
+        # three, so their cache key stays exactly as it was.
+        hybrid_fusion_key: Optional[Tuple[float, int, int]] = None
+        if search_type == "hybrid":
+            hybrid_fusion_key = (
+                resolve_hybrid_alpha(self.config.search.hybrid_alpha),
+                resolve_rrf_k(self.config.search.rrf_k),
+                _resolve_hybrid_pool_multiplier(
+                    self.config.search.hybrid_pool_multiplier
+                ),
+            )
+
         # Check cache first
         cached_result = await self.cache.get_async(
             query,
@@ -810,6 +855,7 @@ class RAGService:
             filter_metadata,
             metadata_allowlist,
             keyword_source_types=keyword_source_types,
+            hybrid_fusion=hybrid_fusion_key,
         )
         if cached_result is not None:
             results, context = cached_result
@@ -903,6 +949,7 @@ class RAGService:
                 filter_metadata,
                 metadata_allowlist,
                 keyword_source_types=keyword_source_types,
+                hybrid_fusion=hybrid_fusion_key,
             )
 
             return results

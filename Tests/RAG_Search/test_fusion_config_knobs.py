@@ -309,3 +309,277 @@ def test_defaults_unchanged(monkeypatch):
         "semantic": 7 * SEARCH_RESULT_MULTIPLIER,
         "keyword": 7 * SEARCH_RESULT_MULTIPLIER,
     }
+
+
+# =============================================================================
+# TASK-4110 review (coordinator round): the search cache blinds the sweep
+# =============================================================================
+#
+# IMPORTANT 1: `SimpleRAGCache._make_key` had no fusion parameters, so a
+# hybrid search at rrf_k=10 was served BYTE-IDENTICAL to a request at
+# rrf_k=1000 (the reviewer's live probe). Task 4's runner mutates
+# `config.search` in place on ONE service with `enable_cache=True` -- every
+# k in the sweep would have reported identical metrics ("+0.000, k doesn't
+# matter"), corrupting the measurement this whole arc exists to make.
+#
+# Fixed by threading the RESOLVED `(alpha, rrf_k, pool_multiplier)` into the
+# cache key for HYBRID searches only -- semantic/keyword never depend on
+# these three, so their key is untouched. RESOLVED (not raw config) values
+# so two configs that happen to resolve to the same effective number
+# correctly SHARE an entry rather than needlessly splitting one.
+
+
+def test_make_key_hybrid_fusion_part_changes_the_key():
+    """Direct `_make_key` pin: each of the three resolved values, alone,
+    must produce a different key. (`SimpleRAGCache` is imported fresh here,
+    matching `test_keyword_leg_pushdown.py`'s `_cache()` helper pattern.)
+    """
+    from tldw_chatbook.RAG_Search.simplified.simple_cache import SimpleRAGCache
+
+    cache = SimpleRAGCache(enabled=True)
+    base = cache._make_key("q", "hybrid", 10, None, None, None, (0.7, 60, 2))
+    changed_alpha = cache._make_key("q", "hybrid", 10, None, None, None, (0.5, 60, 2))
+    changed_k = cache._make_key("q", "hybrid", 10, None, None, None, (0.7, 10, 2))
+    changed_multiplier = cache._make_key(
+        "q", "hybrid", 10, None, None, None, (0.7, 60, 5)
+    )
+
+    assert len({base, changed_alpha, changed_k, changed_multiplier}) == 4, (
+        "each fusion parameter must independently change the cache key"
+    )
+
+
+def test_make_key_no_hybrid_fusion_is_byte_identical_to_before_the_parameter_existed():
+    """Backward-compat pin, same idiom as the keyword_source_types one in
+    `test_keyword_leg_pushdown.py`: the pre-existing five/six-positional-arg
+    call must still find entries written before `hybrid_fusion` existed.
+    """
+    from tldw_chatbook.RAG_Search.simplified.simple_cache import SimpleRAGCache
+
+    cache = SimpleRAGCache(enabled=True)
+    legacy = cache._make_key("q", "semantic", 10, None, None)
+    explicit_none = cache._make_key("q", "semantic", 10, None, None, None, None)
+
+    assert legacy == explicit_none
+
+
+def test_cache_key_changes_when_rrf_k_changes(monkeypatch):
+    """THE REVIEWER'S EXACT PROBE: same query, same service, flip
+    `config.search.rrf_k` -> the second hybrid search MISSES the cache
+    (not served the first's stale rows) and its returned metadata records
+    the NEW k, proving the second call actually re-ran fusion rather than
+    merely computing a different key that happened to still miss for some
+    other reason.
+    """
+    service = _make_service(enable_cache=True, rrf_k=10)
+
+    keyword = [_result("m1", 0.5), _result("m2", 0.4)]
+    semantic = [_result("m2", 0.9), _result("m3", 0.3)]
+
+    async def fake_semantic_search(*args, **kwargs):
+        return semantic
+
+    async def fake_keyword_search(*args, **kwargs):
+        return keyword
+
+    monkeypatch.setattr(service, "_semantic_search", fake_semantic_search)
+    monkeypatch.setattr(service, "_keyword_search", fake_keyword_search)
+
+    first = asyncio.run(service.search("quokka", top_k=10, search_type="hybrid"))
+    assert service.cache._misses == 1
+    assert {r.id: r for r in first}["m2"].metadata["hybrid_fusion"]["rrf_k"] == 10
+
+    service.config.search.rrf_k = 1000
+
+    second = asyncio.run(service.search("quokka", top_k=10, search_type="hybrid"))
+    assert service.cache._misses == 2, (
+        "flipping rrf_k must MISS the k=10 entry, not silently reuse it"
+    )
+    assert {r.id: r for r in second}["m2"].metadata["hybrid_fusion"]["rrf_k"] == 1000
+
+
+def test_cache_key_changes_when_hybrid_alpha_changes(monkeypatch):
+    """Same probe, for alpha."""
+    service = _make_service(enable_cache=True, hybrid_alpha=0.7)
+
+    keyword = [_result("m1", 0.5), _result("m2", 0.4)]
+    semantic = [_result("m2", 0.9), _result("m3", 0.3)]
+
+    async def fake_semantic_search(*args, **kwargs):
+        return semantic
+
+    async def fake_keyword_search(*args, **kwargs):
+        return keyword
+
+    monkeypatch.setattr(service, "_semantic_search", fake_semantic_search)
+    monkeypatch.setattr(service, "_keyword_search", fake_keyword_search)
+
+    first = asyncio.run(service.search("quokka", top_k=10, search_type="hybrid"))
+    assert service.cache._misses == 1
+    assert {r.id: r for r in first}["m2"].metadata["hybrid_fusion"]["alpha"] == 0.7
+
+    service.config.search.hybrid_alpha = 0.1
+
+    second = asyncio.run(service.search("quokka", top_k=10, search_type="hybrid"))
+    assert service.cache._misses == 2, (
+        "flipping hybrid_alpha must MISS the alpha=0.7 entry, not silently reuse it"
+    )
+    assert {r.id: r for r in second}["m2"].metadata["hybrid_fusion"]["alpha"] == 0.1
+
+
+def test_cache_key_changes_when_hybrid_pool_multiplier_changes(monkeypatch):
+    """Same probe, for the pool multiplier. It never lands in the returned
+    metadata (only alpha/rrf_k do), so "records the new value" is pinned via
+    the leg spy instead: the SECOND call must actually re-run the legs at
+    the new multiplier's widened top_k, which is only observable if the
+    second call was a genuine miss.
+    """
+    service = _make_service(enable_cache=True, hybrid_pool_multiplier=2)
+
+    leg_calls = []
+
+    async def fake_semantic_search(query, top_k, *args, **kwargs):
+        leg_calls.append(top_k)
+        return [_result("m1", 0.5)]
+
+    async def fake_keyword_search(query, top_k, *args, **kwargs):
+        return [_result("m1", 0.5)]
+
+    monkeypatch.setattr(service, "_semantic_search", fake_semantic_search)
+    monkeypatch.setattr(service, "_keyword_search", fake_keyword_search)
+
+    asyncio.run(service.search("quokka", top_k=4, search_type="hybrid"))
+    assert service.cache._misses == 1
+    assert leg_calls == [8]  # 4 * 2
+
+    service.config.search.hybrid_pool_multiplier = 5
+
+    asyncio.run(service.search("quokka", top_k=4, search_type="hybrid"))
+    assert service.cache._misses == 2, (
+        "flipping hybrid_pool_multiplier must MISS the multiplier=2 entry"
+    )
+    assert leg_calls == [8, 20], (
+        "the second call must have actually re-run the legs at the new "
+        f"multiplier (4*5=20), not been served from cache: {leg_calls}"
+    )
+
+
+def test_semantic_mode_cache_key_is_unaffected_by_all_three_fusion_knobs(monkeypatch):
+    """Semantic-mode search never depends on alpha/rrf_k/pool_multiplier, so
+    flipping all three must NOT cause a semantic-mode cache miss.
+    """
+    service = _make_service(enable_cache=True)
+
+    async def fake_semantic_search(*args, **kwargs):
+        return [_result("m1", 0.5)]
+
+    monkeypatch.setattr(service, "_semantic_search", fake_semantic_search)
+
+    asyncio.run(service.search("quokka", top_k=5, search_type="semantic"))
+    assert service.cache._misses == 1
+    assert service.cache._hits == 0
+
+    service.config.search.hybrid_alpha = 0.1
+    service.config.search.rrf_k = 999
+    service.config.search.hybrid_pool_multiplier = 7
+
+    asyncio.run(service.search("quokka", top_k=5, search_type="semantic"))
+    assert service.cache._misses == 1, (
+        "semantic-mode cache key must be unaffected by the hybrid fusion knobs"
+    )
+    assert service.cache._hits == 1
+
+
+def test_keyword_mode_cache_key_is_unaffected_by_all_three_fusion_knobs(monkeypatch):
+    """Same pin, for keyword mode."""
+    service = _make_service(enable_cache=True)
+
+    async def fake_keyword_search(*args, **kwargs):
+        return [_result("m1", 0.5)]
+
+    monkeypatch.setattr(service, "_keyword_search", fake_keyword_search)
+
+    asyncio.run(service.search("quokka", top_k=5, search_type="keyword"))
+    assert service.cache._misses == 1
+
+    service.config.search.hybrid_alpha = 0.1
+    service.config.search.rrf_k = 999
+    service.config.search.hybrid_pool_multiplier = 7
+
+    asyncio.run(service.search("quokka", top_k=5, search_type="keyword"))
+    assert service.cache._misses == 1, (
+        "keyword-mode cache key must be unaffected by the hybrid fusion knobs"
+    )
+    assert service.cache._hits == 1
+
+
+# =============================================================================
+# TASK-4110 review (coordinator round): minors folded in
+# =============================================================================
+#
+# Minor (a): the multiplier floor/cap guard had no DIRECT unit test (only
+# exercised indirectly through _hybrid_search with a multiplier of 5) and
+# was therefore deletable with a green suite. Minor (b): the invalid-value
+# fallback must be the dataclass's OWN default (DEFAULT_HYBRID_POOL_
+# MULTIPLIER, 2), not the unrelated module-level SEARCH_RESULT_MULTIPLIER
+# constant -- the two happened to both be 2, which hid that they are
+# different knobs.
+#
+# RELEASE NOTE (disclosure, per the coordinator): hybrid legs previously
+# honored the undocumented `[rag.service] search_result_multiplier` TOML
+# setting for their over-fetch (shared with `_semantic_search`'s own
+# internal multiplier); they now honor `hybrid_pool_multiplier` instead. A
+# user who had set `search_result_multiplier = 4` gets the hybrid legs back
+# down to 2 until they explicitly set `hybrid_pool_multiplier`.
+#
+# Also for Task 4's sweep-range choice: the EFFECTIVE fetch compounds on the
+# semantic leg only -- `_semantic_search` applies its own
+# SEARCH_RESULT_MULTIPLIER on top of whatever top_k `_hybrid_search` hands
+# it, so the semantic leg's raw vector-store fetch is
+# `top_k * hybrid_pool_multiplier * SEARCH_RESULT_MULTIPLIER`, while the
+# keyword leg's fetch is the simple `top_k * hybrid_pool_multiplier` (no
+# second multiplier there).
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        (0, 1),  # floored
+        (-5, 1),  # floored
+        (-1000, 1),  # floored, far below
+        (1, 1),  # boundary: already valid, unchanged
+        (100, 100),  # boundary: at the cap, unchanged
+        (1000, 100),  # capped (MAX_HYBRID_POOL_MULTIPLIER)
+        ("abc", 2),  # non-numeric -> DEFAULT_HYBRID_POOL_MULTIPLIER
+        (None, 2),  # non-numeric -> DEFAULT_HYBRID_POOL_MULTIPLIER
+        (object(), 2),  # non-numeric -> DEFAULT_HYBRID_POOL_MULTIPLIER
+    ],
+)
+def test_pool_multiplier_resolver_floors_caps_and_falls_back(raw, expected):
+    from tldw_chatbook.RAG_Search.simplified.rag_service import (
+        _resolve_hybrid_pool_multiplier,
+    )
+
+    assert _resolve_hybrid_pool_multiplier(raw) == expected
+
+
+def test_invalid_pool_multiplier_falls_back_to_its_own_default_not_search_result_multiplier(
+    monkeypatch,
+):
+    """MINOR (b) PIN: the fallback source is DEFAULT_HYBRID_POOL_MULTIPLIER
+    (this field's own default), never the unrelated module-level
+    SEARCH_RESULT_MULTIPLIER -- proven by monkeypatching the latter to a
+    DIFFERENT value and showing it does not leak into the fallback.
+    """
+    import tldw_chatbook.RAG_Search.simplified.rag_service as rag_service_module
+    from tldw_chatbook.RAG_Search.simplified.config import (
+        DEFAULT_HYBRID_POOL_MULTIPLIER,
+    )
+
+    monkeypatch.setattr(rag_service_module, "SEARCH_RESULT_MULTIPLIER", 4)
+
+    assert (
+        rag_service_module._resolve_hybrid_pool_multiplier("not-a-number")
+        == DEFAULT_HYBRID_POOL_MULTIPLIER
+        == 2
+    )

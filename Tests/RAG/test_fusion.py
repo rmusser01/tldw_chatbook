@@ -275,11 +275,59 @@ class TestResolveHybridAlpha:
 
 
 class TestResolveRrfK:
-    def test_none_returns_default(self):
+    """TASK-4110 review, important 2: resolve_rrf_k now mirrors
+    resolve_hybrid_alpha's active-profile fallback exactly (see
+    TestResolveHybridAlpha above) -- before this, `rrf_k` had NO profile
+    fallback while `alpha` did, so a future default change would move one
+    live fusion call site (RAGService, whose config flows through the
+    active profile) without moving the other
+    (pipeline_builder_simple._rrf_merge_parallel_results, which also calls
+    resolve_rrf_k with no explicit value).
+    """
+
+    def test_none_returns_default(self, monkeypatch):
+        """No explicit value AND the active profile has nothing to say
+        (``search.rrf_k`` itself resolves to ``None``) -> DEFAULT_RRF_K.
+        Mocked rather than relying on the test env's real default profile,
+        so this is deterministic regardless of what that profile contains.
+        """
         from tldw_chatbook.RAG_Search.fusion import resolve_rrf_k
+        import tldw_chatbook.RAG_Search.simplified.active_config as ac
+
+        class _FakeSearch:
+            rrf_k = None
+
+        class _FakeConfig:
+            search = _FakeSearch()
+
+        monkeypatch.setattr(
+            ac, "resolve_active_rag_config", lambda *a, **k: _FakeConfig()
+        )
 
         assert resolve_rrf_k(None) == DEFAULT_RRF_K
         assert resolve_rrf_k() == DEFAULT_RRF_K
+
+    def test_reads_from_active_profile(self, monkeypatch):
+        """THE PIN: mirrors TestResolveHybridAlpha.test_reads_from_active_profile
+        exactly. A non-default profile ``rrf_k`` must be honored with no
+        explicit override -- this is what makes a Task 5 default-k change
+        move BOTH live fusion call sites together instead of stranding one
+        at 60.
+        """
+        from tldw_chatbook.RAG_Search.fusion import resolve_rrf_k
+        import tldw_chatbook.RAG_Search.simplified.active_config as ac
+
+        class _FakeSearch:
+            rrf_k = 15
+
+        class _FakeConfig:
+            search = _FakeSearch()
+
+        monkeypatch.setattr(
+            ac, "resolve_active_rag_config", lambda *a, **k: _FakeConfig()
+        )
+
+        assert resolve_rrf_k() == 15
 
     @pytest.mark.parametrize(
         "value,expected", [(60, 60), (0, 0), ("42", 42), (59.5, 59)]
@@ -289,8 +337,15 @@ class TestResolveRrfK:
 
         assert resolve_rrf_k(value) == expected
 
-    @pytest.mark.parametrize("bad", ["abc", -1, -60, object(), None])
+    @pytest.mark.parametrize("bad", ["abc", -1, -60, object()])
     def test_invalid_values_fall_back_to_default(self, bad):
+        """``None`` is deliberately NOT parametrized here (TASK-4110
+        review): it is no longer simply "an invalid value" that
+        short-circuits to the default -- it is the "no explicit override"
+        sentinel that now triggers a real active-profile lookup first (see
+        ``test_none_returns_default`` / ``test_reads_from_active_profile``
+        above).
+        """
         from tldw_chatbook.RAG_Search.fusion import resolve_rrf_k
 
         assert resolve_rrf_k(bad) == DEFAULT_RRF_K
