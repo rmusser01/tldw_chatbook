@@ -1,9 +1,11 @@
 ---
 id: TASK-13201
 title: Generate and supervise guided audio.cpp configurations on POSIX
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-08-09 17:38'
+updated_date: '2026-08-09 19:56'
 labels:
   - tts
   - audio-cpp
@@ -27,12 +29,18 @@ Project accepted guided settings into immutable generation-local server configur
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Saving guided settings remains side-effect free; only a deliberate Test, Start, Restart & Apply, or synthesis may validate launch inputs, allocate a loopback port, create an artifact, contact audio.cpp, or launch a child.
-- [ ] #2 A deliberate launch projects the exact accepted settings and recipes into one private immutable generation-local server.json using safe top-level fields, absolute accepted model paths, loopback-only/no-CORS/no-body-log defaults, lazy loading, and one generated endpoint.
-- [ ] #3 The existing app-scoped supervisor launches exactly one no-shell audiocpp_server child for all accepted models, publishes only the generated loopback endpoint, and definitively reaps the exact child and removes the exact artifact on failure, replacement, shutdown, and app exit.
-- [ ] #4 Saved, applied, process, recipe/file, catalog, and capability generations remain distinct; a live child keeps its accepted snapshot despite source-file changes, and the next deliberate replacement revalidates before mutation.
-- [ ] #5 Backend Auto and explicit overrides select only recipe-supported tuples, and fallback occurs only for allowlisted backend-unavailable failures after the failed child and artifact are definitively cleaned up.
-- [ ] #6 The native catalog admits only upstream tts and clone speech tasks, preserves typed capabilities including clone-only packages, and rejects ASR, VC, Music, and other task types from the TTS adapter.
-- [ ] #7 Launch, validation, probe, catalog, backend, and cleanup failures use stable recovery phases and context-free sanitized errors that expose no executable, config, model, temporary, environment, prompt, credential, or raw upstream detail.
+- [x] #1 Saving guided settings remains side-effect free; only a deliberate Test, Start, Restart & Apply, or synthesis may validate launch inputs, allocate a loopback port, create an artifact, contact audio.cpp, or launch a child.
+- [x] #2 A deliberate launch projects the exact accepted settings and recipes into one private immutable generation-local server.json using safe top-level fields, absolute accepted model paths, loopback-only/no-CORS/no-body-log defaults, lazy loading, and one generated endpoint.
+- [x] #3 The existing app-scoped supervisor launches exactly one no-shell audiocpp_server child for all accepted models, publishes only the generated loopback endpoint, and definitively reaps the exact child and removes the exact artifact on failure, replacement, shutdown, and app exit.
+- [x] #4 Saved, applied, process, recipe/file, catalog, and capability generations remain distinct; a live child keeps its accepted snapshot despite source-file changes, and the next deliberate replacement revalidates before mutation.
+- [x] #5 Backend Auto and explicit overrides select only recipe-supported tuples, and fallback occurs only for allowlisted backend-unavailable failures after the failed child and artifact are definitively cleaned up.
+- [x] #6 The native catalog admits only upstream tts and clone speech tasks, preserves typed capabilities including clone-only packages, and rejects ASR, VC, Music, and other task types from the TTS adapter.
+- [x] #7 Launch, validation, probe, catalog, backend, and cleanup failures use stable recovery phases and context-free sanitized errors that expose no executable, config, model, temporary, environment, prompt, credential, or raw upstream detail.
 - [ ] #8 Hermetic lifecycle tests and pinned macOS/Linux real-process evidence cover multi-model lazy registration, first synthesis, saved-while-running replacement, crash recovery, exact shutdown, and zero orphan/artifact leakage.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Preserve the full guided Settings projection through provider publication while keeping Save pure, and extend the native catalog contract to exact tts/clone typed capabilities.\n2. Add a POSIX guided launch materializer that revalidates accepted packages, resolves only recipe-supported backends, selects a bounded loopback port, and atomically creates one private immutable server.json.\n3. Feed the generated launch snapshot into the existing AudioCppAdapter and AudioCppSupervisor, with exact artifact cleanup on pre-spawn failure, exit, restart, shutdown, and app close.\n4. Add generation-fenced catalog cross-checking, stable sanitized failures, and no fallback except an explicit allowlisted backend-unavailable classification after cleanup.\n5. Prove concurrent first use, lazy multi-model launch, staged replacement, source-change behavior, crash/shutdown cleanup, and real POSIX child execution; then update docs and close the task.
+<!-- SECTION:PLAN:END -->

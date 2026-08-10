@@ -8,6 +8,7 @@ import signal
 import socket
 import sys
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -124,6 +125,29 @@ class _FakeProcess:
         self.close_parent_calls += 1
         self.stdout.finish()
         self.stderr.finish()
+
+
+class _GeneratedArtifactSpy:
+    def __init__(
+        self,
+        *,
+        validate_failure: BaseException | None = None,
+        cleanup_failure: BaseException | None = None,
+    ) -> None:
+        self.validate_calls = 0
+        self.cleanup_calls = 0
+        self.validate_failure = validate_failure
+        self.cleanup_failure = cleanup_failure
+
+    def validate(self) -> None:
+        self.validate_calls += 1
+        if self.validate_failure is not None:
+            raise self.validate_failure
+
+    def cleanup(self) -> None:
+        self.cleanup_calls += 1
+        if self.cleanup_failure is not None:
+            raise self.cleanup_failure
 
 
 class _FakeLauncher:
@@ -777,6 +801,204 @@ async def test_generation_hooks_factory_failure_rolls_back_child_and_uses_safe_c
     assert snapshot.state == "unavailable"
     assert snapshot.last_failure is not None
     assert private_detail not in snapshot.last_failure.message
+
+
+@pytest.mark.asyncio
+async def test_generated_artifact_is_revalidated_and_cleaned_after_exact_stop(
+    tmp_path: Path,
+) -> None:
+    artifact = _GeneratedArtifactSpy()
+    process = _FakeProcess()
+    supervisor = AudioCppSupervisor(
+        source_environment={},
+        process_launcher=_FakeLauncher([process]),
+        port_preflight=_available_preflight,
+    )
+    launch = replace(_make_launch(tmp_path), generated_artifact=artifact)
+
+    await supervisor.ensure_running(
+        launch,
+        generation_hooks_factory=_HooksFactory(),
+    )
+    await supervisor.stop()
+
+    assert artifact.validate_calls == 2
+    assert artifact.cleanup_calls == 1
+    assert process.wait_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_generated_artifact_is_cleaned_after_pre_spawn_failure(
+    tmp_path: Path,
+) -> None:
+    artifact = _GeneratedArtifactSpy()
+
+    async def unavailable_port(_port: int, _timeout: float) -> str:
+        return "occupied"
+
+    supervisor = AudioCppSupervisor(
+        source_environment={},
+        process_launcher=_FakeLauncher(),
+        port_preflight=unavailable_port,
+    )
+    launch = replace(_make_launch(tmp_path), generated_artifact=artifact)
+
+    with pytest.raises(TTSOperationError) as caught:
+        await supervisor.ensure_running(
+            launch,
+            generation_hooks_factory=_HooksFactory(),
+        )
+
+    assert caught.value.code == "port_in_use"
+    assert artifact.validate_calls == 1
+    assert artifact.cleanup_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_pre_spawn_cleanup_failure_blocks_later_launch_with_safe_phase(
+    tmp_path: Path,
+) -> None:
+    private_detail = "SYNTHETIC_PRIVATE_PRESPAWN_CLEANUP_DETAIL"
+    artifact = _GeneratedArtifactSpy(cleanup_failure=RuntimeError(private_detail))
+
+    async def unavailable_port(_port: int, _timeout: float) -> str:
+        return "occupied"
+
+    supervisor = AudioCppSupervisor(
+        source_environment={},
+        process_launcher=_FakeLauncher(),
+        port_preflight=unavailable_port,
+    )
+    launch = replace(_make_launch(tmp_path), generated_artifact=artifact)
+
+    try:
+        with pytest.raises(TTSOperationError) as initial:
+            await supervisor.ensure_running(
+                launch,
+                generation_hooks_factory=_HooksFactory(),
+            )
+
+        assert initial.value.code == "port_in_use"
+        assert _exception_graph(initial.value) == [initial.value]
+        snapshot = supervisor.snapshot()
+        assert snapshot.state == "unavailable"
+        assert snapshot.last_failure is not None
+        assert snapshot.last_failure.code == "cleanup_failed"
+        assert private_detail not in snapshot.last_failure.message
+        assert supervisor.admission_snapshot().stage_application_eligible is False
+        assert artifact.cleanup_calls == 1
+
+        with pytest.raises(TTSOperationError) as retried:
+            await supervisor.ensure_running(
+                launch,
+                generation_hooks_factory=_HooksFactory(),
+            )
+        assert retried.value.code == "cleanup_failed"
+        assert _exception_graph(retried.value) == [retried.value]
+    finally:
+        await asyncio.gather(supervisor.close(), return_exceptions=True)
+        await asyncio.gather(supervisor.wait_closed(), return_exceptions=True)
+
+
+def test_generated_artifact_validation_does_not_swallow_control_flow(
+    tmp_path: Path,
+) -> None:
+    class _ControlFlowSignal(BaseException):
+        pass
+
+    signal = _ControlFlowSignal()
+    artifact = _GeneratedArtifactSpy(validate_failure=signal)
+    supervisor = AudioCppSupervisor(source_environment={})
+    launch = replace(_make_launch(tmp_path), generated_artifact=artifact)
+
+    with pytest.raises(_ControlFlowSignal) as caught:
+        supervisor._revalidate_launch(launch)
+
+    assert caught.value is signal
+
+
+@pytest.mark.asyncio
+async def test_generated_artifact_cleanup_failure_is_safe_and_blocks_relaunch(
+    tmp_path: Path,
+) -> None:
+    private_detail = "SYNTHETIC_PRIVATE_ARTIFACT_CLEANUP_DETAIL"
+    artifact = _GeneratedArtifactSpy(cleanup_failure=RuntimeError(private_detail))
+    process = _FakeProcess()
+    supervisor = AudioCppSupervisor(
+        source_environment={},
+        process_launcher=_FakeLauncher([process]),
+        port_preflight=_available_preflight,
+    )
+    launch = replace(_make_launch(tmp_path), generated_artifact=artifact)
+    await supervisor.ensure_running(
+        launch,
+        generation_hooks_factory=_HooksFactory(),
+    )
+
+    try:
+        with pytest.raises(TTSOperationError) as stopped:
+            await supervisor.stop()
+
+        assert stopped.value.code == "cleanup_failed"
+        assert private_detail not in str(stopped.value)
+        assert _exception_graph(stopped.value) == [stopped.value]
+        snapshot = supervisor.snapshot()
+        assert snapshot.state == "unavailable"
+        assert snapshot.last_failure is not None
+        assert snapshot.last_failure.code == "cleanup_failed"
+        assert supervisor.admission_snapshot().stage_application_eligible is False
+        assert artifact.cleanup_calls == 1
+        assert process.wait_calls == 1
+
+        with pytest.raises(TTSOperationError) as retried:
+            await supervisor.ensure_running(
+                launch,
+                generation_hooks_factory=_HooksFactory(),
+            )
+        assert retried.value.code == "cleanup_failed"
+        assert _exception_graph(retried.value) == [retried.value]
+    finally:
+        await asyncio.gather(supervisor.close(), return_exceptions=True)
+        await asyncio.gather(supervisor.wait_closed(), return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_output_failure_cleanup_task_reports_artifact_failure_via_snapshot(
+    tmp_path: Path,
+) -> None:
+    artifact = _GeneratedArtifactSpy(
+        cleanup_failure=RuntimeError("SYNTHETIC_PRIVATE_OUTPUT_CLEANUP_DETAIL")
+    )
+    process = _FakeProcess()
+    supervisor = AudioCppSupervisor(
+        source_environment={},
+        process_launcher=_FakeLauncher([process]),
+        port_preflight=_available_preflight,
+    )
+    launch = replace(_make_launch(tmp_path), generated_artifact=artifact)
+    await supervisor.ensure_running(
+        launch,
+        generation_hooks_factory=_HooksFactory(),
+    )
+    record = supervisor._generation
+    assert record is not None
+
+    try:
+        process.stderr.fail(RuntimeError("synthetic output failure"))
+        await _wait_until(lambda: record.output_failure_cleanup is not None)
+        cleanup_task = record.output_failure_cleanup
+        assert cleanup_task is not None
+
+        await cleanup_task
+
+        snapshot = supervisor.snapshot()
+        assert snapshot.state == "unavailable"
+        assert snapshot.last_failure is not None
+        assert snapshot.last_failure.code == "cleanup_failed"
+        assert supervisor.admission_snapshot().stage_application_eligible is False
+    finally:
+        await asyncio.gather(supervisor.close(), return_exceptions=True)
+        await asyncio.gather(supervisor.wait_closed(), return_exceptions=True)
 
 
 @pytest.mark.asyncio

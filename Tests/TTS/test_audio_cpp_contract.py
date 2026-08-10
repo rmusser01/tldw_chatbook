@@ -561,15 +561,24 @@ def test_health_rejects_unsafe_or_overlong_backend(backend: str) -> None:
         )
 
 
-def test_models_filter_tts_case_insensitively_without_mutating_identity() -> None:
+def test_models_admit_only_exact_native_speech_tasks_without_mutating_identity() -> (
+    None
+):
     body = _models_body(
         _model(
             id="Opaque.Model/v1",
             family="Pocket_Family",
-            task="TTS",
+            task="tts",
             mode="Offline.Mode",
             future=True,
         ),
+        _model(
+            id="clone-model",
+            family="Pocket_Family",
+            task="clone",
+            mode="Offline.Mode",
+        ),
+        _model(id="uppercase-tts", family="tts_family", task="TTS"),
         _model(id="asr", family="asr_family", task="ASR"),
         future_root=True,
     )
@@ -578,14 +587,20 @@ def test_models_filter_tts_case_insensitively_without_mutating_identity() -> Non
         body,
         max_metadata_bytes=MAX_METADATA_BYTES,
         max_identifier_characters=MAX_IDENTIFIER_CHARACTERS,
-        max_models=2,
+        max_models=4,
     )
 
     assert result == (
         AudioCppModel(
             model_id="Opaque.Model/v1",
             family="Pocket_Family",
-            task="TTS",
+            task="tts",
+            mode="Offline.Mode",
+        ),
+        AudioCppModel(
+            model_id="clone-model",
+            family="Pocket_Family",
+            task="clone",
             mode="Offline.Mode",
         ),
     )

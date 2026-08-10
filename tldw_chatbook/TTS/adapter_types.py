@@ -30,9 +30,11 @@ TTSOperationCode = Literal[
     "process_startup_timeout",
     "process_exited",
     "runtime_unhealthy",
+    "cleanup_failed",
 ]
 VoiceDiscoveryState = Literal["complete", "model_missing", "unverified"]
 CapabilitySnapshotState = Literal["complete", "unverified"]
+TTSSpeechCapability = Literal["tts", "clone"]
 _VOICE_DISCOVERY_PROVIDER_ID_PATTERN = re.compile(r"[a-z][a-z0-9_]{0,63}\Z")
 
 
@@ -192,6 +194,7 @@ class TTSModelInfo:
     formats: tuple[str, ...]
     voices: tuple[str, ...]
     supports_speed: bool
+    speech_capabilities: tuple[TTSSpeechCapability, ...] = ("tts",)
     supports_options: tuple[str, ...] = ()
     omit_voice_uses_server_default: bool = False
 

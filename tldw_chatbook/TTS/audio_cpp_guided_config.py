@@ -25,7 +25,7 @@ from pydantic import (
     model_validator,
 )
 
-from .audio_cpp_config import AudioCppConfig
+from .audio_cpp_config import AudioCppConfig, _nested_audio_cpp_config
 
 
 _IDENTIFIER = re.compile(r"[a-z0-9][a-z0-9._-]{0,127}\Z", re.ASCII)
@@ -576,6 +576,30 @@ class AudioCppSettingsConfig(_FrozenModel):
         return deepcopy(self.model_dump(mode="json"))
 
 
+def project_audio_cpp_settings_config(
+    app_config: Mapping[str, Any],
+) -> AudioCppSettingsConfig:
+    """Project the complete durable audio.cpp Settings snapshot.
+
+    The exact nested raw entry takes precedence over the normalized entry, as
+    it does for the active transport projection. Dormant manual and guided
+    values remain present so later deliberate application can use them.
+
+    Args:
+        app_config: Normalized application settings with optional raw config.
+
+    Returns:
+        An immutable validated full-settings snapshot.
+
+    Raises:
+        ValueError: If the selected Settings entry is invalid.
+    """
+    selected = _nested_audio_cpp_config(app_config)
+    if not isinstance(selected, Mapping):
+        raise ValueError("audio.cpp settings configuration must be a mapping")
+    return AudioCppSettingsConfig.from_mapping(selected)
+
+
 __all__ = (
     "AudioCppAcceptedPackage",
     "AudioCppBackendPreference",
@@ -584,4 +608,5 @@ __all__ = (
     "AudioCppRecipeOption",
     "AudioCppSafeModelProjection",
     "AudioCppSettingsConfig",
+    "project_audio_cpp_settings_config",
 )

@@ -37,7 +37,9 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSProviderReconfiguringError,
     TTSRegistryClosedError,
 )
-from tldw_chatbook.TTS.audio_cpp_config import project_audio_cpp_config
+from tldw_chatbook.TTS.audio_cpp_guided_config import (
+    project_audio_cpp_settings_config,
+)
 from tldw_chatbook.TTS.legacy_bridge import legacy_provider_config
 from tldw_chatbook.TTS.playground_types import (
     PROFILE_SAVE_BLOCK_PROVIDER_OPTIONS,
@@ -300,7 +302,7 @@ def _effective_provider_config(
 ) -> Mapping[str, Any]:
     """Project one provider's effective registry configuration."""
     if provider_id == "audio_cpp":
-        return project_audio_cpp_config(effective_settings).to_mapping()
+        return project_audio_cpp_settings_config(effective_settings).to_mapping()
     return legacy_provider_config(provider_id, effective_settings)
 
 

@@ -86,6 +86,10 @@ class _Handler(BaseHTTPRequestHandler):
     def behavior(self) -> dict[str, Any]:
         return self.server.behavior  # type: ignore[attr-defined,no-any-return]
 
+    @property
+    def models(self) -> list[dict[str, str]]:
+        return self.server.models  # type: ignore[attr-defined,no-any-return]
+
     def _send_json(self, value: object) -> None:
         payload = json.dumps(value, separators=(",", ":")).encode()
         self.send_response(200)
@@ -97,22 +101,19 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 - stdlib handler contract
         path = urlsplit(self.path).path
         if path == "/health":
-            self._send_json({"status": "ok", "backend": "cpu", "models": 1})
+            self._send_json(
+                {
+                    "status": "ok",
+                    "backend": self.server.backend,  # type: ignore[attr-defined]
+                    "models": len(self.models),
+                }
+            )
             return
         if path == "/v1/models":
             self._send_json(
                 {
                     "object": "list",
-                    "data": [
-                        {
-                            "id": "fixture-model",
-                            "object": "model",
-                            "owned_by": "engine",
-                            "family": "fixture",
-                            "task": "tts",
-                            "mode": "native",
-                        }
-                    ],
+                    "data": self.models,
                 }
             )
             if self.behavior.get("exit_after_models"):
@@ -168,8 +169,46 @@ def _read_invocation() -> tuple[Path, dict[str, Any]]:
     return config_path, document
 
 
+def _catalog_models(config: dict[str, Any]) -> list[dict[str, str]]:
+    configured = config.get("models")
+    if configured is None:
+        return [
+            {
+                "id": "fixture-model",
+                "object": "model",
+                "owned_by": "engine",
+                "family": "fixture",
+                "task": "tts",
+                "mode": "native",
+            }
+        ]
+    if not isinstance(configured, list):
+        raise ValueError("models must be a list")
+    models: list[dict[str, str]] = []
+    for configured_model in configured:
+        if not isinstance(configured_model, dict):
+            raise ValueError("model must be an object")
+        public = {
+            key: configured_model.get(key) for key in ("id", "family", "task", "mode")
+        }
+        if not all(isinstance(value, str) for value in public.values()):
+            raise ValueError("model catalog fields must be strings")
+        models.append(
+            {
+                "id": public["id"],  # type: ignore[dict-item]
+                "object": "model",
+                "owned_by": "engine",
+                "family": public["family"],  # type: ignore[dict-item]
+                "task": public["task"],  # type: ignore[dict-item]
+                "mode": public["mode"],  # type: ignore[dict-item]
+            }
+        )
+    return models
+
+
 def main() -> int:
     _config_path, config = _read_invocation()
+    models = _catalog_models(config)
     behavior_value = config.get("test_behavior", {})
     behavior = behavior_value if isinstance(behavior_value, dict) else {}
     _write_chunks(sys.stdout, behavior.get("stdout_chunks"))
@@ -202,6 +241,9 @@ def main() -> int:
     server = HTTPServer((host, port), _Handler)
     server.timeout = 0.05
     server.behavior = behavior  # type: ignore[attr-defined]
+    server.models = models  # type: ignore[attr-defined]
+    backend = config.get("backend", "cpu")
+    server.backend = backend if isinstance(backend, str) else "cpu"  # type: ignore[attr-defined]
     server.exit_requested = False  # type: ignore[attr-defined]
     try:
         while not stopping and not server.exit_requested:  # type: ignore[attr-defined]

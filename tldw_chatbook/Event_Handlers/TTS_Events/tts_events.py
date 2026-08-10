@@ -2370,6 +2370,8 @@ class TTSEventHandler:
                     "The TTS service returned invalid audio; "
                     "check provider compatibility"
                 )
+            if error.code == "cleanup_failed":
+                return "TTS cleanup did not complete; restart Chatbook before retrying"
             return "TTS generation failed; retry"
         if isinstance(error, _TTSResponseContractError):
             return (

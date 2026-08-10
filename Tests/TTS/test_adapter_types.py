@@ -352,6 +352,7 @@ def test_tts_operation_code_contains_only_stable_values() -> None:
         "process_startup_timeout",
         "process_exited",
         "runtime_unhealthy",
+        "cleanup_failed",
     )
 
 
