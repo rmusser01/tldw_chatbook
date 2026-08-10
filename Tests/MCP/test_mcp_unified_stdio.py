@@ -6,11 +6,12 @@ import asyncio
 import ast
 from collections import deque
 from collections.abc import Callable
+import io
 import json
 import os
 from pathlib import Path
+from queue import Empty, Queue
 import runpy
-import selectors
 from types import SimpleNamespace
 import subprocess
 import sys
@@ -74,6 +75,18 @@ PROMPT_NAMES = [
     "character_writing",
 ]
 LONG_RESOURCE_TEXT = "é" * 140_000
+_SUBPROCESS_HOST_ENV_KEYS = (
+    "COMSPEC",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "PATH",
+    "PATHEXT",
+    "SYSTEMROOT",
+    "TZ",
+    "WINDIR",
+)
+_PROCESS_EOF = object()
 
 
 class _FakeTools:
@@ -900,48 +913,196 @@ def _isolated_subprocess_environment(profile: Path) -> dict[str, str]:
     data_home = profile / "data"
     temp_dir = profile / "tmp"
     for directory in (home, config_home, data_home, temp_dir):
-        directory.mkdir(parents=True, mode=0o700)
-    environment = dict(os.environ)
-    for key in list(environment):
-        upper = key.upper()
-        if (
-            "API_KEY" in upper
-            or upper.endswith("_TOKEN")
-            or upper.endswith("_SECRET")
-            or upper == "PYTHONPATH"
-        ):
-            environment.pop(key, None)
+        directory.mkdir(parents=True, mode=0o700, exist_ok=True)
+    environment = {
+        key: os.environ[key] for key in _SUBPROCESS_HOST_ENV_KEYS if key in os.environ
+    }
     environment.update(
         {
+            "APPDATA": str(config_home),
             "HOME": str(home),
+            "HF_HUB_OFFLINE": "1",
+            "HF_HUB_DISABLE_TELEMETRY": "1",
+            "LOCALAPPDATA": str(data_home),
+            "LOGURU_LEVEL": "ERROR",
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONUTF8": "1",
+            "PYTHONWARNINGS": "ignore",
+            "TEMP": str(temp_dir),
+            "TLDW_CONFIG_PATH": str(config_home / "config.toml"),
+            "TLDW_TEST_MODE": "1",
+            "TMP": str(temp_dir),
+            "TMPDIR": str(temp_dir),
+            "TOKENIZERS_PARALLELISM": "false",
+            "TRANSFORMERS_OFFLINE": "1",
             "USERPROFILE": str(home),
             "XDG_CONFIG_HOME": str(config_home),
             "XDG_DATA_HOME": str(data_home),
-            "TMPDIR": str(temp_dir),
-            "TLDW_CONFIG_PATH": str(config_home / "config.toml"),
-            "TLDW_TEST_MODE": "1",
-            "LOGURU_LEVEL": "ERROR",
-            "PYTHONUTF8": "1",
-            "PYTHONWARNINGS": "ignore",
-            "HF_HUB_OFFLINE": "1",
-            "TRANSFORMERS_OFFLINE": "1",
-            "HF_HUB_DISABLE_TELEMETRY": "1",
-            "TOKENIZERS_PARALLELISM": "false",
         }
     )
     return environment
 
 
+class _ProcessLineReader:
+    def __init__(self, stream: Any) -> None:
+        self._stream = stream
+        self._items: Queue[object] = Queue()
+        self._eof_seen = False
+        self._thread = threading.Thread(
+            target=self._read_lines,
+            name="mcp-subprocess-stdout",
+            daemon=True,
+        )
+        self._thread.start()
+
+    @property
+    def thread_alive(self) -> bool:
+        return self._thread.is_alive()
+
+    def _read_lines(self) -> None:
+        try:
+            while line := self._stream.readline():
+                self._items.put(line)
+        except BaseException as error:
+            self._items.put(error)
+        finally:
+            self._items.put(_PROCESS_EOF)
+
+    def _next(self, timeout: float) -> object:
+        try:
+            return self._items.get(timeout=timeout)
+        except Empty:
+            raise TimeoutError("standalone MCP server produced no response") from None
+
+    def readline(self, *, timeout: float = 20) -> str:
+        item = self._next(timeout)
+        if item is _PROCESS_EOF:
+            self._eof_seen = True
+            return ""
+        if isinstance(item, BaseException):
+            raise item
+        assert isinstance(item, str)
+        return item
+
+    def finish(self, *, timeout: float = 5) -> list[str]:
+        deadline = time.monotonic() + timeout
+        lines: list[str] = []
+        failure: BaseException | None = None
+        while not self._eof_seen:
+            item = self._next(max(0, deadline - time.monotonic()))
+            if item is _PROCESS_EOF:
+                self._eof_seen = True
+            elif isinstance(item, BaseException):
+                failure = item
+            else:
+                assert isinstance(item, str)
+                lines.append(item)
+        self._thread.join(max(0, deadline - time.monotonic()))
+        if self._thread.is_alive():
+            raise TimeoutError("standalone MCP stdout reader did not stop")
+        if failure is not None:
+            raise failure
+        return lines
+
+    def close(self, *, timeout: float = 5) -> None:
+        self._stream.close()
+        self._thread.join(timeout)
+        if self._thread.is_alive():
+            raise TimeoutError("standalone MCP stdout reader did not stop")
+        while True:
+            try:
+                self._items.get_nowait()
+            except Empty:
+                return
+
+
+def test_isolated_subprocess_environment_does_not_inherit_host_secrets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inherited_secrets = {
+        "AWS_SECRET_ACCESS_KEY": "aws-secret",
+        "DATABASE_URL": "postgresql://secret@host/db",
+        "CONFLUENCE_PASSWORD": "confluence-secret",
+        "GOOGLE_APPLICATION_CREDENTIALS": "/secret/credentials.json",
+        "OPENAI_API_KEY": "openai-secret",
+        "GITHUB_TOKEN": "github-secret",
+        "PYTHONPATH": "/secret/import/path",
+        "TASK2512_UNRELATED_HOST_VALUE": "host-only",
+    }
+    for key, value in inherited_secrets.items():
+        monkeypatch.setenv(key, value)
+
+    environment = _isolated_subprocess_environment(tmp_path / "profile")
+
+    assert set(environment).isdisjoint(inherited_secrets)
+
+
+def test_subprocess_harness_does_not_assume_selectable_pipes() -> None:
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    assert not any(
+        isinstance(node, ast.Import)
+        and any(alias.name == "selectors" for alias in node.names)
+        for node in ast.walk(tree)
+    )
+    assert not any(
+        isinstance(node, ast.Attribute) and node.attr == "DefaultSelector"
+        for node in ast.walk(tree)
+    )
+
+
+def test_process_line_reader_supports_non_selectable_pipe_and_joins() -> None:
+    reader = _ProcessLineReader(io.StringIO("first\nsecond\n"))
+
+    assert reader.readline(timeout=1) == "first\n"
+    assert reader.finish(timeout=1) == ["second\n"]
+    assert not reader.thread_alive
+
+
+def test_process_line_reader_propagates_failure_and_joins() -> None:
+    class _FailingPipe:
+        def readline(self) -> str:
+            raise OSError("read failed")
+
+        def close(self) -> None:
+            return None
+
+    reader = _ProcessLineReader(_FailingPipe())
+
+    with pytest.raises(OSError, match="read failed"):
+        reader.readline(timeout=1)
+    reader.finish(timeout=1)
+    assert not reader.thread_alive
+
+
+def test_process_line_reader_timeout_can_be_closed_without_leaking_thread() -> None:
+    release = threading.Event()
+
+    class _BlockingPipe:
+        def readline(self) -> str:
+            release.wait(timeout=5)
+            return ""
+
+        def close(self) -> None:
+            release.set()
+
+    reader = _ProcessLineReader(_BlockingPipe())
+
+    with pytest.raises(TimeoutError, match="produced no response"):
+        reader.readline(timeout=0.01)
+    reader.close(timeout=1)
+    assert not reader.thread_alive
+
+
 def _exchange_process_request(
     process: subprocess.Popen[str],
-    selector: selectors.BaseSelector,
+    reader: _ProcessLineReader,
     payload: dict[str, Any],
 ) -> dict[str, Any]:
     assert process.stdin is not None and process.stdout is not None
     process.stdin.write(json.dumps(payload, separators=(",", ":")) + "\n")
     process.stdin.flush()
-    assert selector.select(timeout=20), "standalone MCP server produced no response"
-    line = process.stdout.readline()
+    line = reader.readline(timeout=20)
     assert line, "standalone MCP server closed stdout before responding"
     return json.loads(line)
 
@@ -962,15 +1123,14 @@ def test_real_module_subprocess_is_protocol_clean_and_exits_on_eof(
         text=True,
         encoding="utf-8",
     )
-    selector = selectors.DefaultSelector()
     assert process.stdout is not None
-    selector.register(process.stdout, selectors.EVENT_READ)
+    reader = _ProcessLineReader(process.stdout)
     responses: list[dict[str, Any]] = []
     try:
         responses.append(
             _exchange_process_request(
                 process,
-                selector,
+                reader,
                 {
                     "jsonrpc": "2.0",
                     "id": "initialize",
@@ -1018,22 +1178,22 @@ def test_real_module_subprocess_is_protocol_clean_and_exits_on_eof(
             ),
         ]
         responses.extend(
-            _exchange_process_request(process, selector, request)
-            for request in requests
+            _exchange_process_request(process, reader, request) for request in requests
         )
 
         assert process.stdin is not None
         process.stdin.close()
         process.wait(timeout=20)
         assert process.stdout is not None and process.stderr is not None
-        trailing_stdout = process.stdout.read()
+        trailing_stdout = "".join(reader.finish(timeout=5))
         stderr = process.stderr.read()
     finally:
-        selector.close()
         if process.poll() is None:
             process.kill()
             process.wait(timeout=5)
+        reader.close(timeout=5)
 
+    assert not reader.thread_alive
     assert process.returncode == 0
     assert process.poll() == 0
     assert trailing_stdout == ""
@@ -1050,3 +1210,53 @@ def test_real_module_subprocess_is_protocol_clean_and_exits_on_eof(
         "get",
     ]
     assert all("result" in response for response in responses)
+
+
+def test_real_module_import_failure_is_fixed_and_payload_free(tmp_path: Path) -> None:
+    profile = tmp_path / "failure-profile"
+    secret = "import-secret-sentinel"
+    environment = _isolated_subprocess_environment(profile)
+    invalid_config = profile / "config" / f"{secret}.toml"
+    invalid_config.mkdir()
+    environment["TLDW_CONFIG_PATH"] = str(invalid_config)
+
+    result = subprocess.run(
+        [str(SHARED_VENV_PYTHON), "-m", "tldw_chatbook.MCP"],
+        cwd=REPO_ROOT,
+        env=environment,
+        input="",
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=20,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert result.stderr == "MCP server failed.\n"
+    assert secret not in result.stderr
+    assert str(invalid_config) not in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_database_init_failure_log_is_fixed_and_payload_free(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tldw_chatbook.config as config
+
+    secret = "database-secret-sentinel"
+    logged: list[str] = []
+
+    def fail_path_resolution() -> Path:
+        raise RuntimeError(secret)
+
+    monkeypatch.setattr(config, "get_chachanotes_db_path", fail_path_resolution)
+    monkeypatch.setattr(server_module.logger, "error", logged.append)
+    server = server_module.TldwMCPServer.__new__(server_module.TldwMCPServer)
+
+    with pytest.raises(RuntimeError, match=secret):
+        server._init_databases()
+
+    assert logged == ["Failed to initialize databases."]
+    assert secret not in logged[0]

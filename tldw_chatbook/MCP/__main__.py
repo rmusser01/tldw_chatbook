@@ -8,10 +8,10 @@ Usage:
 import asyncio
 import sys
 
-from tldw_chatbook.MCP.server import main
-
 if __name__ == "__main__":
     try:
+        from tldw_chatbook.MCP.server import main
+
         raise SystemExit(asyncio.run(main()))
     except KeyboardInterrupt:
         print("MCP server interrupted.", file=sys.stderr)

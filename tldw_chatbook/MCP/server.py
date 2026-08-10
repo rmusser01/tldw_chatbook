@@ -502,8 +502,8 @@ class TldwMCPServer:
             )
 
             logger.info("Databases initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize databases: {e}")
+        except Exception:
+            logger.error("Failed to initialize databases.")
             raise
 
     def _register_tools(self):

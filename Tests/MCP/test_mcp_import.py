@@ -10,9 +10,11 @@ import pytest
 from tldw_chatbook.MCP.mcp_import import parse_mcp_servers_json
 
 
-SERVER_PATH = (
-    Path(__file__).resolve().parents[2] / "tldw_chatbook" / "MCP" / "server.py"
-)
+MCP_PACKAGE = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "MCP"
+RUNTIME_IMPORTS = {
+    MCP_PACKAGE / "server.py": ["mcp_unified.gateway"],
+    MCP_PACKAGE / "gateway_runtime.py": ["mcp_unified.gateway"],
+}
 
 
 def test_parses_command_args_env_and_placeholder_passthrough():
@@ -76,15 +78,54 @@ def test_to_payload_uses_exact_store_keys():
     }
 
 
-def test_standalone_server_imports_only_the_public_mcp_unified_gateway() -> None:
-    tree = ast.parse(SERVER_PATH.read_text(encoding="utf-8"))
+def _mcp_imports(source: str) -> list[str]:
+    tree = ast.parse(source)
     mcp_imports: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             mcp_imports.extend(
-                alias.name for alias in node.names if alias.name.startswith("mcp")
+                alias.name
+                for alias in node.names
+                if alias.name in {"mcp", "mcp_unified"}
+                or alias.name.startswith(("mcp.", "mcp_unified."))
             )
-        elif isinstance(node, ast.ImportFrom) and (node.module or "").startswith("mcp"):
-            mcp_imports.append(node.module or "")
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if module in {"mcp", "mcp_unified"} or module.startswith(
+                ("mcp.", "mcp_unified.")
+            ):
+                mcp_imports.append(module)
+    return mcp_imports
 
-    assert mcp_imports == ["mcp_unified.gateway"]
+
+def _assert_public_gateway_imports(source: str, expected: list[str]) -> None:
+    assert _mcp_imports(source) == expected
+
+
+def test_standalone_runtime_imports_only_the_public_mcp_unified_gateway() -> None:
+    for path, expected in RUNTIME_IMPORTS.items():
+        _assert_public_gateway_imports(path.read_text(encoding="utf-8"), expected)
+
+
+def test_public_gateway_import_contract_accepts_exact_public_module() -> None:
+    _assert_public_gateway_imports(
+        "from mcp_unified.gateway import GatewayLimits, serve_stdio",
+        ["mcp_unified.gateway"],
+    )
+
+
+@pytest.mark.parametrize(
+    "mutated_import",
+    [
+        "from mcp.server import stdio",
+        "import mcp.types",
+        "import mcp_unified",
+        "from mcp_unified.gateway.protocol import Connection",
+        "import mcp_unified.gateway._private",
+    ],
+)
+def test_public_gateway_import_contract_kills_official_and_private_mutations(
+    mutated_import: str,
+) -> None:
+    with pytest.raises(AssertionError):
+        _assert_public_gateway_imports(mutated_import, [])
