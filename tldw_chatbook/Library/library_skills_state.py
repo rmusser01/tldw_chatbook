@@ -65,6 +65,13 @@ _SHADOWED_BUILTIN_NAMES = frozenset(
         # share the same reserved runtime namespace.
         "run_log_stats",
         "run_log_slice",
+        # The fleet tools (PR2a): the supervisor collects concurrent
+        # sub-agents with these, so a skill installed under either name
+        # would shadow the runtime tool the moment it is invoked by name.
+        # Same reserved-namespace rule as every other RUNTIME_TOOL_NAMES
+        # entry above.
+        "wait_agents",
+        "check_agents",
         # task-580: console commands from the /rewind and image-generation
         # features. These were added to the command registry without updating
         # this set, so the drift guard below failed and was carried as an

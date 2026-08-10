@@ -590,8 +590,17 @@ def test_end_of_turn_cancels_and_abandons_a_wedged_child(db):
         never.set()
 
 
-def test_single_child_path_is_unchanged(db):
-    """One spawn + wait produces the same run rows and result as inline."""
+def test_single_child_under_a_live_fleet_routes_through_wait_agents(db):
+    """One child, fleet ON: same run rows as inline, result via wait_agents.
+
+    Deliberately NOT named "path is unchanged": under a live fleet the
+    path is NOT unchanged. The run ROWS match the inline path exactly
+    (lineage, task, status, result, clean context), but the supervisor
+    reaches the result through an extra wait_agents call instead of
+    getting it back from spawn. The byte-identical acceptance criterion
+    is guarded by ``test_without_a_coordinator_spawn_stays_inline`` below
+    and by the untouched pre-existing spawn suites -- not by this test.
+    """
     service, chat, _coordinator = make_fleet_service(
         db,
         [
@@ -708,6 +717,141 @@ def test_fleet_tools_are_primary_only(db):
     refusals = _tool_results(child, WAIT_AGENTS_TOOL_NAME)
     assert refusals and "not permitted" in refusals[0]
     assert db.get_run(run_id)["status"] == RUN_DONE
+
+
+# -- the config switch: the ONLY production-reachable path ----------------
+#
+# Every other test in this file injects a coordinator. In production
+# nothing does (yet), so `[agents] max_live_subagents` -> `run_turn`'s
+# `max_live > 1` branch is the only way a real user turns the fleet on --
+# and it is the exact line the eventual default-flip will change.
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [
+        ("3", 3),
+        (3, 3),
+        # A TOML float must not silently disable the fleet.
+        (3.0, 3),
+        ("2.9", 2),
+        ("1", 1),
+        (0, 1),
+        (-5, 1),
+        # Unparseable -> the documented default, never a raise.
+        ("plenty", agent_service.DEFAULT_MAX_LIVE_SUBAGENTS),
+        (None, agent_service.DEFAULT_MAX_LIVE_SUBAGENTS),
+        ("", agent_service.DEFAULT_MAX_LIVE_SUBAGENTS),
+        (float("inf"), agent_service.DEFAULT_MAX_LIVE_SUBAGENTS),
+        (float("nan"), agent_service.DEFAULT_MAX_LIVE_SUBAGENTS),
+    ],
+)
+def test_coerce_max_live_subagents(configured, expected):
+    assert agent_service._coerce_max_live_subagents(configured) == expected
+
+
+def _patch_max_live(monkeypatch, value):
+    """Make `[agents] max_live_subagents` read as `value`.
+
+    Every OTHER `_setting` key (the run-log eviction knobs read by
+    `_make_call_model`) must keep returning its own default, or this
+    fixture would silently reconfigure unrelated behaviour.
+    """
+    real_key = agent_service.MAX_LIVE_SUBAGENTS_KEY
+
+    def fake_setting(key, default):
+        return value if key == real_key else default
+
+    monkeypatch.setattr(agent_service, "_setting", fake_setting)
+
+
+def test_config_above_one_builds_a_fleet_and_threads_spawns(db, monkeypatch):
+    """`max_live_subagents = 3` with NO injected coordinator: fleet ON."""
+    _patch_max_live(monkeypatch, "3")
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    chat = FleetChat(
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "task one"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "done",
+        ],
+        {"task one": ["answer one"]},
+    )
+    service = AgentService(db=db, registry=registry, chat_call=chat)
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    assert service._fleet is not None
+    # Threaded, not inline: spawn handed back a handle ...
+    spawn_results = _tool_results(db.get_run(run_id), SPAWN_TOOL_NAME)
+    assert spawn_results and spawn_results[0].startswith("started ")
+    # ... the tools were offered ...
+    system_prompt = chat.calls[0]["messages_payload"][0]["content"]
+    assert WAIT_AGENTS_TOOL_NAME in system_prompt
+    assert CHECK_AGENTS_TOOL_NAME in system_prompt
+    # ... and the result still came back.
+    waits = _tool_results(db.get_run(run_id), WAIT_AGENTS_TOOL_NAME)
+    assert waits and "answer one" in waits[0]
+
+
+@pytest.mark.parametrize("configured", ["1", 1, 0, "nonsense", None])
+def test_config_of_one_or_junk_keeps_the_inline_path(db, monkeypatch, configured):
+    """Anything that resolves to <= 1 -- including junk -- means no fleet.
+
+    This is the shipped default, and the guarantee the pre-existing spawn
+    suites rely on: no coordinator, no fleet tools, spawn returns the
+    child's own answer.
+    """
+    _patch_max_live(monkeypatch, configured)
+    service, chat = make_inline_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "compute 6*7"}),
+            "sub answer: 42",
+            "The sub-agent says 42.",
+        ],
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    assert service._fleet is None
+    spawn_results = _tool_results(db.get_run(run_id), SPAWN_TOOL_NAME)
+    assert spawn_results == ["sub answer: 42"]
+    system_prompt = chat.calls[0]["messages_payload"][0]["content"]
+    assert WAIT_AGENTS_TOOL_NAME not in system_prompt
+    assert CHECK_AGENTS_TOOL_NAME not in system_prompt
+
+
+def test_injected_coordinator_wins_over_the_config(db, monkeypatch):
+    """An injected coordinator is the opt-in; config sizing is the fallback."""
+    _patch_max_live(monkeypatch, "1")
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "task one"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "done",
+        ],
+        {"task one": ["answer one"]},
+    )
+    _run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    assert service._fleet is coordinator
+    assert len(coordinator.snapshot()) == 1
 
 
 # -- result budgeting (spec §5) -------------------------------------------
@@ -993,6 +1137,128 @@ def test_child_thread_exception_finishes_the_handle_as_error(db):
     handle = coordinator.snapshot()[0]
     assert handle.status == RUN_ERROR
     assert "child thread blew up" in handle.error
+
+
+class _SpyRunLogWriter:
+    """Minimal stand-in recording the run tree's two cleanup calls."""
+
+    def __init__(self):
+        self.is_active = False
+        self.log_dir = None
+        self.bound: str | None = None
+        self.manifests: list[dict] = []
+        self.closed = 0
+
+    def bind(self, run_id):
+        self.bound = run_id
+
+    def append(self, **kwargs):
+        return None
+
+    def write_manifest(self, data):
+        self.manifests.append(data)
+
+    def close(self):
+        self.closed += 1
+
+
+def test_thread_start_failure_is_contained_and_the_turn_still_finalizes(
+    db, monkeypatch
+):
+    """Thread exhaustion must not strand a handle or skip run finalization.
+
+    Registering the thread before ``start()`` succeeded meant
+    ``_settle_fleet`` would later join an unstarted thread -- a
+    RuntimeError out of ``run_turn`` that skips ``write_manifest()`` and
+    ``run_log_writer.close()``, leaking a file descriptor. The reserved
+    handle was never finished either, so the settle loop first burned the
+    whole remaining wall-clock waiting for a child that does not exist.
+    """
+    db.create_agent_definition(
+        AgentDefinition(
+            name="researcher",
+            description="Searches.",
+            instructions="Cite sources.",
+        )
+    )
+    # Fail only the FIRST fleet thread, and only fleet threads: everything
+    # else in the process (including _call_with_timeout's "tool-*" workers,
+    # sqlite, and loguru) must keep working normally.
+    real_start = threading.Thread.start
+    failures: list[str] = []
+
+    def flaky_start(self):
+        if self.name.startswith("fleet-") and not failures:
+            failures.append(self.name)
+            raise RuntimeError("can't start new thread")
+        return real_start(self)
+
+    monkeypatch.setattr(threading.Thread, "start", flaky_start)
+
+    spy = _SpyRunLogWriter()
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    chat = FleetChat(
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "doomed", "agent": "researcher"}),
+            fence(SPAWN_TOOL_NAME, {"task": "task two", "agent": "researcher"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "done",
+        ],
+        {"task two": ["answer two"]},
+    )
+    coordinator = FleetCoordinator(max_live=3, clock=time.monotonic)
+    service = AgentService(
+        db=db,
+        registry=registry,
+        chat_call=chat,
+        run_log_writer=spy,
+        fleet_coordinator=coordinator,
+    )
+    # ONE spawn slot: the failed spawn must give its slot back, or the
+    # second (real) spawn would be refused as budget-exhausted.
+    cfg = AgentConfig(
+        model="test-model",
+        system_prompt="You are helpful.",
+        allowed_tools=(SPAWN_TOOL_NAME,),
+        budget=RunBudget(
+            max_steps=40,
+            max_model_turns=40,
+            max_subagents=1,
+            max_wall_seconds=60.0,
+        ),
+    )
+    started_at = time.monotonic()
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=cfg,
+        api_endpoint="llama_cpp",
+    )
+    elapsed = time.monotonic() - started_at
+
+    assert failures, "the fleet thread's start() was never exercised"
+    assert outcome.status == RUN_DONE
+    # The turn was NOT held open by a handle nobody would ever finish.
+    assert elapsed < 10.0
+    # Finalization still happened -- manifest written, writer closed once.
+    assert len(spy.manifests) == 1
+    assert spy.manifests[0]["run_id"] == run_id
+    assert spy.closed == 1
+    # The stranded handle was finished, not left live.
+    assert coordinator.all_finished()
+    doomed = next(h for h in coordinator.snapshot() if h.task == "doomed")
+    assert doomed.status == RUN_ERROR
+    assert "could not start" in doomed.error
+    # The model was told, and no child run row was ever created for it.
+    spawn_results = _tool_results(db.get_run(run_id), SPAWN_TOOL_NAME)
+    assert len(spawn_results) == 2
+    assert "could not start sub-agent" in spawn_results[0]
+    # The spawn slot was given back: the second spawn started for real.
+    assert spawn_results[1].startswith("started ")
+    assert db.count_subagent_runs("c") == 1
+    waits = _tool_results(db.get_run(run_id), WAIT_AGENTS_TOOL_NAME)
+    assert waits and "answer two" in waits[0]
 
 
 def test_failed_child_is_reported_in_wait_result(db):

@@ -125,11 +125,27 @@ def _coerce_max_live_subagents(value) -> int:
         The configured cap, floored at 1 (which disables the fleet).
         Unparseable values fall back to the default rather than raising:
         a malformed config key must never stop an agent run.
+
+        A float is accepted and truncated (``3.0`` -> ``3``). TOML has no
+        way to distinguish "3" from "3.0" once a user writes the latter,
+        and an int-only parse would silently fall back to 1 -- turning a
+        perfectly reasonable ``max_live_subagents = 3.0`` into a switched
+        OFF fleet, which is exactly the kind of quiet downgrade nobody
+        would think to look for.
     """
+    text = str(value).strip()
     try:
-        parsed = int(str(value).strip())
+        parsed = int(text)
     except (TypeError, ValueError):
-        return DEFAULT_MAX_LIVE_SUBAGENTS
+        try:
+            parsed = int(float(text))
+        except (TypeError, ValueError, OverflowError):
+            # OverflowError: float("inf") parses but does not convert.
+            logger.warning(
+                f"[agents] {MAX_LIVE_SUBAGENTS_KEY}={value!r} is not a "
+                f"number; using {DEFAULT_MAX_LIVE_SUBAGENTS}"
+            )
+            return DEFAULT_MAX_LIVE_SUBAGENTS
     return max(parsed, 1)
 
 # Task 7: appended to config.system_prompt only when THIS run wired the
@@ -1325,8 +1341,41 @@ class AgentService:
                 name=f"fleet-{handle.handle_id[:8]}",
                 daemon=True,
             )
+            try:
+                thread.start()
+            except Exception as exc:  # noqa: BLE001 — thread exhaustion
+                # `Thread.start()` raises RuntimeError ("can't start new
+                # thread") when the process is out of thread slots. Every
+                # piece of state this spawn reserved has to be unwound
+                # here, because NOTHING else will: `run_child` never runs,
+                # so the handle would stay live forever -- making the
+                # end-of-turn settle burn the ENTIRE remaining wall-clock
+                # waiting for a child that does not exist. Registering the
+                # thread only AFTER a successful start is the other half:
+                # `_settle_fleet` joins every registered thread, and
+                # joining an unstarted one raises RuntimeError out of
+                # `run_turn`, skipping `write_manifest()` and
+                # `run_log_writer.close()` (leaking a file descriptor).
+                fleet.finish(
+                    handle.handle_id,
+                    RUN_ERROR,
+                    error=f"could not start sub-agent thread: {exc}",
+                )
+                self._fleet_cancels.pop(handle.handle_id, None)
+                if my_handle_ids and my_handle_ids[-1] == handle.handle_id:
+                    my_handle_ids.pop()
+                # No child was created, so this spawn costs no slot --
+                # same rule as the cap refusal above.
+                sub_agent_spawns -= 1
+                logger.opt(exception=True).warning(
+                    f"could not start sub-agent thread for handle "
+                    f"{handle.handle_id}"
+                )
+                return ToolResult(
+                    ok=False,
+                    error=f"could not start sub-agent: {exc}",
+                )
             self._fleet_threads.append(thread)
-            thread.start()
             snippet = spawn_task[:_SPAWN_ECHO_CHARS]
             return ToolResult(
                 ok=True,
@@ -2199,7 +2248,18 @@ class AgentService:
         # written and the writer closed below -- a child still running
         # would otherwise be appending records to a closed writer, and its
         # own run row would still read `running` after this call returns.
-        self._settle_fleet(config, should_cancel, turn_started)
+        try:
+            self._settle_fleet(config, should_cancel, turn_started)
+        except Exception:  # noqa: BLE001 — the answer is already produced
+            # Defence in depth for the class of bug the `thread.start()`
+            # guard above fixes one instance of: whatever goes wrong while
+            # settling children, it must not cost this turn its manifest or
+            # leak the run-log writer's file descriptor. The two calls
+            # below are the run tree's only cleanup.
+            logger.opt(exception=True).error(
+                "settling sub-agents at end of turn failed; finalizing the "
+                "run anyway"
+            )
         # Manifest needs run-level metadata the writer itself does not have
         # (including supersession), so it is written once the whole run
         # tree finishes, here rather than inside _run_one.
