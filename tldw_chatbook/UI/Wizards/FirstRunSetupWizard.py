@@ -2659,53 +2659,53 @@ class SpeechSetupStep(SetupStep):
         loop = asyncio.get_running_loop()
         service = self._source_service()
         token = self._external_selection_token
-        try:
-            source_commit = await loop.run_in_executor(
-                None,
-                service.prepare_config_commit,
-                prepared,
-            )
-        except Exception as exc:
-            logger.warning(
-                "External Parakeet config preparation failed; error_type={}",
-                type(exc).__name__,
-            )
-            return (
-                False,
-                "The external model or managed VAD changed. Choose the directory again.",
-            )
-        if token is not None and token != self._external_selection_token:
-            self._release_external_scope(token)
-            return False, "The external model selection changed. Choose it again."
-
-        patch = speech_state.speech_config_patch(selection, source_commit)
         self._external_commit_detached = False
         self._external_commit_pending = True
         self.refresh(recompose=True)
-        handoff = asyncio.create_task(
-            self.wizard.commit_config(
-                patch,
-                after_write=lambda: service.accept_committed(source_commit),
-            )
-        )
-        self._external_commit_handoff = handoff
-        cancelled = False
-
-        async def settle(operation: asyncio.Future[Any]) -> Any:
-            nonlocal cancelled
-            while True:
-                try:
-                    return await asyncio.shield(operation)
-                except asyncio.CancelledError:
-                    if operation.cancelled():
-                        raise
-                    cancelled = True
-                    self._external_commit_detached = True
-                    task = asyncio.current_task()
-                    if task is not None:
-                        task.uncancel()
-
         try:
+            try:
+                source_commit = await loop.run_in_executor(
+                    None,
+                    service.prepare_config_commit,
+                    prepared,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "External Parakeet config preparation failed; error_type={}",
+                    type(exc).__name__,
+                )
+                return (
+                    False,
+                    "The external model or managed VAD changed. Choose the directory again.",
+                )
+            if token is not None and token != self._external_selection_token:
+                self._release_external_scope(token)
+                return False, "The external model selection changed. Choose it again."
+
+            patch = speech_state.speech_config_patch(selection, source_commit)
+            handoff = asyncio.create_task(
+                self.wizard.commit_config(
+                    patch,
+                    after_write=lambda: service.accept_committed(source_commit),
+                )
+            )
+            self._external_commit_handoff = handoff
+            cancelled = False
+
+            async def settle(operation: asyncio.Future[Any]) -> Any:
+                nonlocal cancelled
+                while True:
+                    try:
+                        return await asyncio.shield(operation)
+                    except asyncio.CancelledError:
+                        if operation.cancelled():
+                            raise
+                        cancelled = True
+                        self._external_commit_detached = True
+                        task = asyncio.current_task()
+                        if task is not None:
+                            task.uncancel()
+
             try:
                 ok = await settle(handoff)
             except Exception as handoff_error:

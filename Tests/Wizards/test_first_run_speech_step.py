@@ -1618,6 +1618,100 @@ async def test_commit_pending_physically_blocks_every_source_control(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_slow_external_prepare_fences_every_source_control(monkeypatch):
+    prepared = SimpleNamespace(key=ParakeetSourceKey.V2_INT8)
+    source_commit = SimpleNamespace(
+        section_values={"transcription": {"parakeet_external_sources": {}}}
+    )
+    prepare_started = threading.Event()
+    allow_prepare = threading.Event()
+    source_service = MagicMock()
+
+    def delayed_prepare(selection):
+        prepare_started.set()
+        allow_prepare.wait(timeout=2)
+        return source_commit
+
+    source_service.prepare_config_commit.side_effect = delayed_prepare
+    owners = set()
+    source_service.release_scope.side_effect = owners.discard
+    step = _step(wizard=_wizard_with_source(source_service))
+    app = _StepHost(step)
+    preflight = MagicMock()
+    activate = MagicMock()
+    step._preflight_install = preflight
+    step._activate_model = activate
+    picker = MagicMock()
+    monkeypatch.setattr(app, "push_screen", picker)
+
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.pause(0.2)
+        step._loading = False
+        step._loaded = True
+        step._installed_item = None
+        token = step._next_external_token()
+        scope_id = step._external_scope_ids[token]
+        owners.add(scope_id)
+        worker = MagicMock(is_finished=True)
+        step._external_selection_worker = worker
+        step._pending_external_selection = prepared
+        scope_snapshot = dict(step._external_scope_ids)
+
+        task = asyncio.create_task(step.commit())
+        for _ in range(100):
+            if prepare_started.is_set():
+                break
+            await pilot.pause(0.01)
+        assert prepare_started.is_set()
+        try:
+            await pilot.pause()
+            assert step._external_commit_pending is True
+            disk = step.query_one("#setup-speech-use-from-disk", Button)
+            install = step.query_one("#setup-speech-install", Button)
+            language = step.query_one("#setup-speech-language-fr", RadioButton)
+            precision = step.query_one("#setup-speech-precision-f32", RadioButton)
+            controls = (disk, install, language, precision)
+            assert all(control.disabled for control in controls)
+
+            for control in controls:
+                control.disabled = False
+                control.focus()
+                await pilot.press(
+                    "space" if isinstance(control, RadioButton) else "enter"
+                )
+                await pilot.pause()
+
+            step._installed_item = _installed_item(active=False)
+            step.refresh(recompose=True)
+            await pilot.pause()
+            activation_controls = step.query_one(ModelActivationControls)
+            activation = activation_controls.query_one(".model-activate", Button)
+            assert activation.disabled
+            activation_controls.pending = False
+            activation.disabled = False
+            activation.focus()
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert picker.call_count == 0
+            preflight.assert_not_called()
+            activate.assert_not_called()
+            source_service.prefer_managed.assert_not_called()
+            source_service.accept_committed.assert_not_called()
+            assert step._external_selection_token == token
+            assert step._external_scope_ids == scope_snapshot
+            assert step._external_selection_worker is worker
+            assert scope_id in owners
+        finally:
+            allow_prepare.set()
+            result = await task
+
+        ok, error = result
+        assert ok, error
+        assert step._external_commit_pending is False
+
+
+@pytest.mark.asyncio
 async def test_vad_provision_cancellation_reaches_underlying_coroutine(
     monkeypatch,
     tmp_path,
