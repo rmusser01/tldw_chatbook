@@ -309,6 +309,34 @@ def test_save_refuses_empty_and_unsafe(store):
         store.save("msg-1", "has/slash", b"bytes")
 
 
+@pytest.mark.parametrize("operation", ["save", "adopt"])
+def test_public_writes_reject_internal_stage_namespace_without_mutation(
+    store, operation
+):
+    existing = store.save("existing", "clip", b"existing-bytes")
+    stream = io.BytesIO(b"oversized-source")
+    stream.seek(7)
+    reserved_slug = ".video-stage-SECRET"
+
+    with pytest.raises(ValueError, match="reserved internal stage namespace") as caught:
+        if operation == "save":
+            store.save("new", reserved_slug, b"new-bytes")
+        else:
+            store.adopt_oversized(
+                "new", reserved_slug, stream, size_bytes=len(stream.getvalue())
+            )
+
+    assert "SECRET" not in str(caught.value)
+    assert existing.read_bytes() == b"existing-bytes"
+    assert [(video.message_id, video.slug) for video in store.iter_stored()] == [
+        ("existing", "clip")
+    ]
+    assert not list(store.root.rglob(".video-stage-*"))
+    if operation == "adopt":
+        assert not stream.closed
+        assert stream.tell() == 7
+
+
 def test_allocate_slug_suffixes_collisions(store):
     first = store.allocate_slug("msg-1", "a red dragon")
     store.save("msg-1", first, b"v1")

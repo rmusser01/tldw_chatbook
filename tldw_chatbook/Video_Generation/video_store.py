@@ -220,6 +220,8 @@ class VideoStore:
     def _video_path(self, message_id: str, slug: str, extension: str) -> Path:
         if not slug or not _SAFE_COMPONENT.fullmatch(slug):
             raise ValueError(f"unsafe slug component: {slug!r}")
+        if slug.startswith(_STAGE_PREFIX):
+            raise ValueError("slug uses reserved internal stage namespace")
         safe_ext = re.sub(r"[^a-z0-9]", "", extension.lower()) or "mp4"
         candidate = (self._message_dir(message_id) / f"{slug}.{safe_ext}")
         resolved_root = self._root.resolve()
