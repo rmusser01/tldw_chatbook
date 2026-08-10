@@ -20,6 +20,7 @@ from tldw_chatbook.Tools.tool_executor import CalculatorTool, DateTimeTool
 
 from .agent_models import (
     AgentDefinition,
+    CHECK_AGENTS_TOOL_NAME,
     DIRECT_DISCLOSE_THRESHOLD,
     FIND_TOOLS_NAME,
     INSTALL_SKILL_TOOL_NAME,
@@ -34,6 +35,7 @@ from .agent_models import (
     ToolCatalogEntry,
     ToolResult,
     ToolSchema,
+    WAIT_AGENTS_TOOL_NAME,
 )
 from .run_context import current_run_id
 from .run_log_search import (
@@ -103,6 +105,49 @@ def build_spawn_schema(definitions: Sequence[AgentDefinition]) -> ToolSchema:
         description=SPAWN_TOOL_SCHEMA.description,
         parameters=parameters,
     )
+
+
+# Fleet (PR2a Task 6). Pinned together with the spawn schema, and only
+# for a run that actually has a fleet coordinator -- a model told it can
+# wait on children it can never start has been handed a dead end.
+WAIT_AGENTS_SCHEMA = ToolSchema(
+    id="runtime:wait_agents",
+    name=WAIT_AGENTS_TOOL_NAME,
+    description=(
+        "Wait for sub-agents you started with spawn_subagent and collect "
+        "their results. Omit 'ids' to wait for every sub-agent still "
+        "running, or pass the handle ids spawn_subagent returned to wait "
+        "for just those. Results that arrive after your final answer are "
+        "wasted, so always call this before you answer. When several "
+        "results come back together each one is shortened to share this "
+        "turn's result budget -- call wait_agents with a single id to get "
+        "that one sub-agent's full result."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Handle ids to wait for (omit for all of them)."
+                ),
+            }
+        },
+        "required": [],
+    },
+)
+
+CHECK_AGENTS_SCHEMA = ToolSchema(
+    id="runtime:check_agents",
+    name=CHECK_AGENTS_TOOL_NAME,
+    description=(
+        "List every sub-agent you have started in this turn with its "
+        "handle id, status, and elapsed time. Returns immediately and "
+        "never waits -- use wait_agents to actually collect results."
+    ),
+    parameters={"type": "object", "properties": {}, "required": []},
+)
 
 
 FIND_TOOLS_SCHEMA = ToolSchema(

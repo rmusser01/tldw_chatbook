@@ -9,8 +9,10 @@ runtime_schemas (never disclosure-gated) only for the top-level agent
 import json
 
 from tldw_chatbook.Agents.agent_models import (
+    CHECK_AGENTS_TOOL_NAME,
     INSTALL_SKILL_TOOL_NAME,
     RUNTIME_TOOL_NAMES,
+    WAIT_AGENTS_TOOL_NAME,
     RUN_LOG_SLICE_TOOL_NAME,
     RUN_LOG_STATS_TOOL_NAME,
     RUN_SKILL_SCRIPT_TOOL_NAME,
@@ -43,6 +45,8 @@ def test_install_skill_name_in_runtime_tool_names():
         SEARCH_RUN_LOG_TOOL_NAME,
         RUN_LOG_STATS_TOOL_NAME,
         RUN_LOG_SLICE_TOOL_NAME,
+        WAIT_AGENTS_TOOL_NAME,
+        CHECK_AGENTS_TOOL_NAME,
     }
 
 

@@ -3,6 +3,7 @@
 import dataclasses
 
 from tldw_chatbook.Agents.agent_models import (
+    CHECK_AGENTS_TOOL_NAME,
     DIRECT_DISCLOSE_THRESHOLD,
     INSTALL_SKILL_TOOL_NAME,
     LOOP_DETECTION_N,
@@ -28,6 +29,7 @@ from tldw_chatbook.Agents.agent_models import (
     ToolCatalogEntry,
     ToolResult,
     ToolSchema,
+    WAIT_AGENTS_TOOL_NAME,
     clamp_child_budget,
 )
 
@@ -63,6 +65,8 @@ def test_runtime_tool_names():
         SEARCH_RUN_LOG_TOOL_NAME,
         RUN_LOG_STATS_TOOL_NAME,
         RUN_LOG_SLICE_TOOL_NAME,
+        WAIT_AGENTS_TOOL_NAME,
+        CHECK_AGENTS_TOOL_NAME,
     }
     assert DIRECT_DISCLOSE_THRESHOLD == 16 and LOOP_DETECTION_N == 3
 

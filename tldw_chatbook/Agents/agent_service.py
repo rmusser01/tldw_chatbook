@@ -17,6 +17,8 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Callable, Protocol
 
+from loguru import logger
+
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.Internal_Prompts.catalog import CATALOG
@@ -25,10 +27,12 @@ from tldw_chatbook.Utils.token_counter import count_tokens_messages, estimate_to
 from .agent_models import (
     AGENT_KIND_PRIMARY,
     AGENT_KIND_SUBAGENT,
+    RUN_CANCELLED,
     RUN_DONE,
     RUN_ERROR,
     SPAWN_TOOL_NAME,
     STEP_ERROR,
+    TERMINAL_RUN_STATUSES,
     AgentConfig,
     AgentDefinition,
     AgentStep,
@@ -49,6 +53,7 @@ from .agent_models import (
     definition_fingerprint as compute_definition_fingerprint,
 )
 from .agent_runtime import LoopDeps, render_tool_protocol, run_agent_loop
+from .fleet_coordinator import FleetCoordinator, FleetHandle
 from .native_tools import (
     ensure_tool_call_ids,
     parse_native_tool_calls,
@@ -65,6 +70,7 @@ from .run_log_eviction import (
     coerce_min_recent_rounds,
 )
 from .tool_catalog import (
+    CHECK_AGENTS_SCHEMA,
     FIND_TOOLS_SCHEMA,
     INSTALL_SKILL_TOOL_SCHEMA,
     LOAD_TOOLS_SCHEMA,
@@ -74,6 +80,7 @@ from .tool_catalog import (
     SEARCH_RUN_LOG_TOOL_SCHEMA,
     SKILL_FILE_TOOL_SCHEMA,
     SPAWN_TOOL_SCHEMA,
+    WAIT_AGENTS_SCHEMA,
     ToolCatalogRegistry,
     build_spawn_schema,
     initial_disclosure,
@@ -85,6 +92,45 @@ from .tool_catalog import (
 SUBAGENT_SYSTEM_PROMPT = CATALOG["agents.subagent_system"].default
 
 TRUNCATION_NOTICE = "\n[truncated]"
+
+#: ``[agents]`` key sizing the fleet: how many sub-agents of one turn may
+#: be live at once. **1 (the default) means the fleet is OFF** and every
+#: spawn runs the child INLINE, synchronously, exactly as it did before
+#: PR2a -- see `AgentService.__init__`'s `fleet_coordinator` for why the
+#: switch is here and not at the coordinator's cap.
+MAX_LIVE_SUBAGENTS_KEY = "max_live_subagents"
+DEFAULT_MAX_LIVE_SUBAGENTS = 1
+#: How long a poll loop sleeps between coordinator checks. Small enough
+#: that a cancelled run is not held up perceptibly, large enough not to
+#: spin a core while several children work.
+_FLEET_POLL_SECONDS = 0.05
+#: Grace period for a cancelled child to notice and unwind before its
+#: thread is ABANDONED. Same precedent (and same reasoning) as
+#: `_call_with_timeout`'s daemon abandonment: Python cannot kill a thread,
+#: and a wedged one must not hold the turn open forever.
+FLEET_JOIN_TIMEOUT_SECONDS = 5.0
+#: Longest task snippet echoed back in a `started ...` spawn result.
+_SPAWN_ECHO_CHARS = 120
+
+
+def _coerce_max_live_subagents(value) -> int:
+    """Read the fleet size from config, tolerating any junk in the file.
+
+    Args:
+        value: Whatever ``_setting`` returned -- an env var is always a
+            string, a TOML value may be any type, and a hand-edited file
+            may hold nonsense.
+
+    Returns:
+        The configured cap, floored at 1 (which disables the fleet).
+        Unparseable values fall back to the default rather than raising:
+        a malformed config key must never stop an agent run.
+    """
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_LIVE_SUBAGENTS
+    return max(parsed, 1)
 
 # Task 7: appended to config.system_prompt only when THIS run wired the
 # search_run_log tool (see the `log_active` gate in _run_one, reused
@@ -297,6 +343,7 @@ class AgentService:
         run_skill_script_tool: Callable[[str, str, list[str]], ToolResult]
         | None = None,
         run_log_writer: "RunLogWriter | None" = None,
+        fleet_coordinator: FleetCoordinator | None = None,
     ) -> None:
         self.db = db
         self.registry = registry
@@ -382,6 +429,35 @@ class AgentService:
         # `run_turn` call; a service that never calls `run_turn` (none in
         # production) keeps spawn_subagent's identity-path schema.
         self._turn_definitions: list[AgentDefinition] = []
+        # PR2a Task 6 -- THE FLEET SWITCH.
+        #
+        # An explicitly injected coordinator turns concurrent sub-agents
+        # ON for every turn this service runs; the caller owns its
+        # lifecycle (same convention as `_injected_run_log_writer`).
+        # `None` -- every caller before this task, and the Console bridge
+        # today -- makes `run_turn` size a fresh coordinator per turn from
+        # `[agents] max_live_subagents`, and **a cap of 1 (the shipped
+        # default) means no fleet at all**: `spawn` keeps running the
+        # child inline, synchronously, and neither wait_agents nor
+        # check_agents is offered.
+        #
+        # Why the switch is "is there a fleet" rather than "how big is
+        # it": a non-blocking spawn is only coherent for a supervisor
+        # that can COLLECT, and collecting requires wait_agents. The two
+        # ship together or not at all -- a run that got a handle id back
+        # from spawn but no way to redeem it would simply lose its
+        # children's work. Sizing the fleet at 1 therefore means "one
+        # child at a time, inline" -- observably identical to pre-PR2a
+        # behaviour, which is this PR's stated acceptance criterion and
+        # what keeps the pre-existing spawn suites passing unmodified.
+        self._injected_fleet_coordinator = fleet_coordinator
+        # Per-TURN fleet state, all owned by the primary run's thread (a
+        # child never spawns -- clamp_child_budget zeroes max_subagents),
+        # so no lock is needed on these three. Reset at the top of every
+        # `run_turn`.
+        self._fleet: FleetCoordinator | None = None
+        self._fleet_threads: list[threading.Thread] = []
+        self._fleet_cancels: dict[str, threading.Event] = {}
 
     # -- internals -------------------------------------------------------
 
@@ -560,6 +636,215 @@ class AgentService:
 
         return invoke_tool
 
+    # -- fleet helpers (PR2a Task 6) --------------------------------------
+
+    @staticmethod
+    def _pending_handles(
+        fleet: FleetCoordinator, handle_ids: list[str]
+    ) -> list[str]:
+        """The subset of ``handle_ids`` not yet in a terminal status.
+
+        Args:
+            fleet: This turn's coordinator.
+            handle_ids: Handles to check.
+
+        Returns:
+            Ids still running, in the order given. A handle that has
+            vanished (impossible today -- the coordinator never forgets
+            one) counts as finished rather than blocking a wait forever.
+        """
+        pending = []
+        for handle_id in handle_ids:
+            handle = fleet.get(handle_id)
+            if handle is not None and handle.status not in TERMINAL_RUN_STATUSES:
+                pending.append(handle_id)
+        return pending
+
+    def _cancel_fleet_handles(self, handle_ids: list[str]) -> None:
+        """Ask the named children to stop, cooperatively.
+
+        Sets each child's own cancel Event; the child notices at its next
+        step or tool-call boundary and unwinds itself, persisting whatever
+        it reached. Nothing is forced here -- forcing happens only at end
+        of turn, and even then only as abandonment.
+
+        Args:
+            handle_ids: The handles to cancel.
+        """
+        for handle_id in handle_ids:
+            event = self._fleet_cancels.get(handle_id)
+            if event is not None:
+                event.set()
+
+    def _drain_fleet_handles(
+        self, fleet: FleetCoordinator, handle_ids: list[str]
+    ) -> None:
+        """Give just-cancelled children a bounded chance to record a status.
+
+        Args:
+            fleet: This turn's coordinator.
+            handle_ids: The handles being waited on.
+        """
+        deadline = time.monotonic() + FLEET_JOIN_TIMEOUT_SECONDS
+        while time.monotonic() < deadline:
+            if not self._pending_handles(fleet, handle_ids):
+                return
+            time.sleep(_FLEET_POLL_SECONDS)
+
+    def _format_wait_result(
+        self,
+        fleet: FleetCoordinator,
+        handle_ids: list[str],
+        budget,
+        note: str,
+    ) -> str:
+        """Render collected children within BOTH result budgets.
+
+        Per-child results are capped at ``max_subagent_result_chars`` as
+        they always have been, but the combined result must ALSO fit
+        ``max_tool_result_chars`` -- otherwise five 4000-char children
+        would be cut mid-result by the loop's history-append truncation,
+        losing the tail children entirely rather than shortening each one
+        fairly. The history budget is therefore divided evenly across the
+        children being returned, after subtracting the fixed per-entry
+        headers and the re-fetch hint.
+
+        Args:
+            fleet: This turn's coordinator.
+            handle_ids: The handles to render, in call order.
+            budget: This run's ``RunBudget``.
+            note: A cancellation/timeout sentence to append, or "".
+
+        Returns:
+            The rendered text, always within ``max_tool_result_chars``
+            (when that is non-zero).
+        """
+        handles = [
+            handle
+            for handle in (fleet.get(handle_id) for handle_id in handle_ids)
+            if handle is not None
+        ]
+        if not handles:  # pragma: no cover — handle_ids are pre-validated
+            return "No sub-agents to report." + note
+        headers = [
+            f"[{handle.handle_id}] {handle.agent or 'sub-agent'} — "
+            f"{handle.status}"
+            for handle in handles
+        ]
+        bodies = [
+            (handle.result or handle.error or "(no result)")
+            for handle in handles
+        ]
+        hint = (
+            "\n\n(Each result above was shortened to share this turn's "
+            "result budget. Call wait_agents with a single id for one "
+            "sub-agent's full result.)"
+        )
+        cap = budget.max_subagent_result_chars
+        if budget.max_tool_result_chars > 0:
+            # Reserve the fixed cost -- every header, the blank lines
+            # between entries, the hint, and the note -- before dividing
+            # what is left. The hint is reserved unconditionally even when
+            # nothing ends up truncated: over-reserving by one sentence is
+            # harmless, while under-reserving would push the whole result
+            # back over the ceiling it exists to respect.
+            fixed = (
+                # Each entry is "<header>\n<body>" ...
+                sum(len(header) + 1 for header in headers)
+                # ... and entries are joined by a blank line.
+                + 2 * (len(handles) - 1)
+                + len(hint)
+                + len(note)
+            )
+            share = (budget.max_tool_result_chars - fixed) // len(handles)
+            cap = max(min(cap, share - len(TRUNCATION_NOTICE)), 0)
+        truncated = False
+        entries = []
+        for header, body in zip(headers, bodies):
+            if len(body) > cap:
+                body = body[:cap] + TRUNCATION_NOTICE
+                truncated = True
+            entries.append(f"{header}\n{body}")
+        rendered = "\n\n".join(entries)
+        if truncated and len(handles) > 1:
+            rendered += hint
+        return rendered + note
+
+    def _settle_fleet(
+        self,
+        config: AgentConfig,
+        should_cancel: Callable[[], bool],
+        turn_started: float,
+    ) -> None:
+        """End-of-turn safety net: no child outlives the turn (phase 2).
+
+        Waits for stragglers within the parent's remaining wall-clock,
+        then cooperative-cancels them, then ABANDONS whatever is still
+        wedged after ``FLEET_JOIN_TIMEOUT_SECONDS`` -- marking those
+        handles and their run rows ``cancelled`` so nothing is left
+        ``running``. ``AgentRunsDB.set_status`` is first-writer-wins
+        (PR2a Task 2), so an abandoned thread that later persists its own
+        status is a no-op rather than a resurrection.
+
+        Args:
+            config: The primary run's config (its wall-clock budget).
+            should_cancel: The run-wide cancellation probe.
+            turn_started: ``self.clock()`` as of the start of the turn.
+        """
+        fleet = self._fleet
+        if fleet is None:
+            return
+        # This turn's handles only -- an injected coordinator may be
+        # long-lived (PR 3a), and settling a turn must never reach into
+        # another turn's children.
+        mine = list(self._fleet_cancels)
+        deadline = turn_started + config.budget.max_wall_seconds
+        # `self.clock` is injectable and some callers freeze it, which
+        # would make the budget deadline above unreachable. A real-time
+        # bound of the same length runs alongside it so this loop always
+        # terminates whatever the injected clock does.
+        wall_deadline = time.monotonic() + config.budget.max_wall_seconds
+        while self._pending_handles(fleet, mine):
+            if (
+                should_cancel()
+                or self.clock() >= deadline
+                or time.monotonic() >= wall_deadline
+            ):
+                break
+            time.sleep(_FLEET_POLL_SECONDS)
+        # Cancel unconditionally: for an already-finished fleet every
+        # Event set here is inert, and for a straggler it is the only
+        # cooperative stop signal there is.
+        self._cancel_fleet_handles(mine)
+        # ONE join budget shared across every thread, not 5s each: N
+        # wedged children must not hold the turn open for 5N seconds.
+        join_deadline = time.monotonic() + FLEET_JOIN_TIMEOUT_SECONDS
+        for thread in self._fleet_threads:
+            thread.join(max(join_deadline - time.monotonic(), 0.0))
+        for handle_id in self._pending_handles(fleet, mine):
+            handle = fleet.get(handle_id)
+            if handle is None:  # pragma: no cover — never forgotten
+                continue
+            logger.warning(
+                f"abandoning wedged sub-agent {handle.handle_id} "
+                f"(run {handle.run_id}) at end of turn"
+            )
+            fleet.finish(
+                handle.handle_id,
+                RUN_CANCELLED,
+                error="abandoned: still running at end of turn",
+            )
+            if not handle.run_id:
+                continue
+            try:
+                self.db.set_status(handle.run_id, RUN_CANCELLED)
+            except Exception:  # noqa: BLE001 — a DB failure here must not
+                # take down a turn that has already produced its answer.
+                logger.opt(exception=True).warning(
+                    f"could not mark abandoned sub-agent run "
+                    f"{handle.run_id} cancelled"
+                )
+
     def _persist(self, run_id: str, outcome: RunOutcome) -> None:
         stamp = _now_iso()
         step_dicts = []
@@ -584,6 +869,7 @@ class AgentService:
         assistant_message_id: str | None = None,
         agent_definition: str | None = None,
         definition_fingerprint: str | None = None,
+        on_run_id: Callable[[str], None] | None = None,
     ) -> tuple[str, RunOutcome]:
         run_id = self.db.create_run(
             conversation_id=conversation_id,
@@ -595,6 +881,19 @@ class AgentService:
             agent_definition=agent_definition,
             definition_fingerprint=definition_fingerprint,
         )
+        # PR2a Task 6: a threaded child's run id does not exist until this
+        # line, and its spawning parent has long since returned a handle to
+        # the model. This hook is how the id gets back to the coordinator
+        # (`FleetCoordinator.attach_run`) so an abandoned child's run row
+        # can still be marked cancelled at end of turn. Never allowed to
+        # break the run it is reporting on.
+        if on_run_id is not None:
+            try:
+                on_run_id(run_id)
+            except Exception:  # noqa: BLE001 — bookkeeping is not load-bearing
+                logger.opt(exception=True).warning(
+                    f"on_run_id hook raised for run {run_id}; continuing"
+                )
         # Two-phase: the writer was constructed before any run id existed.
         # Only the PRIMARY run binds; a child finds it already bound.
         if agent_kind == AGENT_KIND_PRIMARY:
@@ -608,8 +907,23 @@ class AgentService:
         active = [schema for schema in active if schema.name in config.allowed_tools]
         disclosed_names = {schema.name for schema in active}
         runtime_schemas = []
+        # PR2a Task 6: this run's fleet, or None when there is none. A
+        # sub-agent NEVER gets one -- depth-1 is structural (a child's
+        # max_subagents is clamped to 0, so it has nothing to wait on),
+        # and handing a child the parent's coordinator would let it
+        # observe, and wait on, its siblings.
+        fleet = self._fleet if agent_kind == AGENT_KIND_PRIMARY else None
+        # Both fleet tools are pinned under the SAME predicate the spawn
+        # schema uses (`max_subagents > 0`) plus the primary-only gate
+        # `install_skill` established -- and additionally on there BEING a
+        # fleet, since without one `spawn` still runs children inline and
+        # there is never anything live to wait on or check.
+        fleet_active = fleet is not None and config.budget.max_subagents > 0
         if config.budget.max_subagents > 0:
             runtime_schemas.append(build_spawn_schema(self._turn_definitions))
+        if fleet_active:
+            runtime_schemas.append(WAIT_AGENTS_SCHEMA)
+            runtime_schemas.append(CHECK_AGENTS_SCHEMA)
         if offer_find_load:
             runtime_schemas.extend([FIND_TOOLS_SCHEMA, LOAD_TOOLS_SCHEMA])
         if (
@@ -734,6 +1048,13 @@ class AgentService:
             return accepted
 
         sub_agent_spawns = 0
+        # Handles THIS run started, in spawn order. The coordinator is
+        # deliberately not run-scoped (PR 3a wants children that outlive
+        # their spawning turn), so "all my sub-agents" has to be tracked
+        # here rather than read off `snapshot()` -- otherwise a long-lived
+        # injected coordinator would show, and make this run wait on,
+        # another run's children.
+        my_handle_ids: list[str] = []
 
         def spawn(
             spawn_task: str,
@@ -758,10 +1079,24 @@ class AgentService:
             # Fleet spec §4: the skill path (allowed_tools override) and
             # the named-definition path are disjoint by construction --
             # skills never pass `agent`.
-            # Structural invariant, not input validation: unreachable in
-            # production (both call sites are internal, neither can supply
-            # both kwargs at once) and stripped entirely under `python -O`.
-            assert not (agent and allowed_tools is not None)
+            #
+            # A structural invariant, not input validation: unreachable in
+            # production today (both call sites are internal and neither
+            # can supply both kwargs at once). It is an explicit `raise`
+            # rather than an `assert` because an `assert` is STRIPPED
+            # under `python -O`, and the failure it guards is silent --
+            # `resolved.tool_allowlist` would intersect against the
+            # skill's own narrowed override below, quietly producing a
+            # child with neither party's intended allow-list. A future
+            # caller that gets this wrong must fail loudly in every
+            # interpreter mode, not just a non-optimised one.
+            if agent and allowed_tools is not None:
+                raise ValueError(
+                    "spawn(): `agent` and `allowed_tools` are mutually "
+                    "exclusive -- a named agent definition supplies its own "
+                    "tool allow-list, so passing both leaves the child's "
+                    "permissions ambiguous."
+                )
             resolved = None
             if agent:
                 resolved = next(
@@ -861,37 +1196,271 @@ class AgentService:
             # protection: both gates key verdicts by run, so the child
             # writes to its own slice and cannot reach this one. Retained
             # as belt-and-braces for the inline path.
-            scope = (
-                self.review_state_scope(run_id)
-                if self.review_state_scope
-                else contextlib.nullcontext()
+            child_kwargs = dict(
+                conversation_id=conversation_id,
+                messages=[{"role": "user", "content": spawn_task}],
+                config=child_config,
+                api_endpoint=api_endpoint,
+                agent_kind=AGENT_KIND_SUBAGENT,
+                task=spawn_task,
+                parent_run_id=run_id,
+                agent_definition=(resolved.name if resolved else None),
+                definition_fingerprint=(
+                    compute_definition_fingerprint(resolved) if resolved else None
+                ),
             )
-            with scope:
-                _child_id, child_outcome = self._run_one(
-                    conversation_id=conversation_id,
-                    messages=[{"role": "user", "content": spawn_task}],
-                    config=child_config,
-                    api_endpoint=api_endpoint,
-                    should_cancel=should_cancel,
-                    agent_kind=AGENT_KIND_SUBAGENT,
-                    task=spawn_task,
-                    parent_run_id=run_id,
-                    agent_definition=(resolved.name if resolved else None),
-                    definition_fingerprint=(
-                        compute_definition_fingerprint(resolved)
-                        if resolved
-                        else None
+            if fleet is None:
+                # -- INLINE path: byte-identical to every release before
+                # PR2a. Kept, not merely tolerated: with no fleet there is
+                # no wait_agents, so a handle id would be unredeemable and
+                # the child's work simply lost.
+                scope = (
+                    self.review_state_scope(run_id)
+                    if self.review_state_scope
+                    else contextlib.nullcontext()
+                )
+                with scope:
+                    _child_id, child_outcome = self._run_one(
+                        should_cancel=should_cancel, **child_kwargs
+                    )
+                text = child_outcome.final_text
+                cap = config.budget.max_subagent_result_chars
+                if len(text) > cap:
+                    text = text[:cap] + TRUNCATION_NOTICE
+                if child_outcome.status != RUN_DONE:
+                    return ToolResult(
+                        ok=False, error=f"sub-agent {child_outcome.status}: {text}"
+                    )
+                return ToolResult(ok=True, content=text)
+
+            # -- FLEET path: register, launch, return a handle.
+            handle = fleet.reserve(
+                task=spawn_task, agent=(resolved.name if resolved else None)
+            )
+            if handle is None:
+                # At the live cap. Unlike a budget refusal this is
+                # RETRYABLE -- collecting a finished child frees a slot --
+                # so it must not consume a spawn from the per-turn
+                # ceiling, exactly like the unknown-agent refusal above
+                # ("a typo costs no sub-agent slot"). The check/increment
+                # itself stays where it has always been; only this one
+                # no-child-was-created path unwinds it.
+                sub_agent_spawns -= 1
+                return ToolResult(
+                    ok=False,
+                    error=(
+                        f"live sub-agent limit reached ({fleet.live_count()} "
+                        "already running); call wait_agents to collect a "
+                        "finished sub-agent before starting another"
                     ),
                 )
-            text = child_outcome.final_text
-            cap = config.budget.max_subagent_result_chars
-            if len(text) > cap:
-                text = text[:cap] + TRUNCATION_NOTICE
-            if child_outcome.status != RUN_DONE:
+            # Cooperative cancellation for THIS child specifically, on top
+            # of the run-wide `should_cancel` it also honours. wait_agents
+            # and the end-of-turn settle both set it to unwind stragglers
+            # without cancelling the parent.
+            child_cancel = threading.Event()
+            self._fleet_cancels[handle.handle_id] = child_cancel
+            my_handle_ids.append(handle.handle_id)
+
+            def child_should_cancel() -> bool:
+                return should_cancel() or child_cancel.is_set()
+
+            def run_child(
+                handle: FleetHandle = handle,
+                child_kwargs: dict = child_kwargs,
+                child_should_cancel=child_should_cancel,
+            ) -> None:
+                """Run one child to completion, then release its handle.
+
+                Deliberately NOT wrapped in the parent's
+                `review_state_scope`, which the inline path above still
+                takes. That scope snapshots and RESTORES the parent's
+                verdict slice, which is sound only for a strictly nested
+                (LIFO) inline child: with siblings running concurrently,
+                one child's exit would roll the parent's slice back to a
+                snapshot taken before another child -- or before the
+                parent's own later turn -- had stamped anything, wiping
+                live verdicts. PR2a Task 5 made per-run keying the
+                load-bearing protection precisely so this scope is not
+                needed here: the child stamps `(child_run_id, tool)` and
+                cannot reach the parent's keys at all.
+                """
+                status = RUN_ERROR
+                result_text = ""
+                error_text = ""
+                try:
+                    _child_id, child_outcome = self._run_one(
+                        should_cancel=child_should_cancel,
+                        on_run_id=(
+                            lambda rid: fleet.attach_run(handle.handle_id, rid)
+                        ),
+                        **child_kwargs,
+                    )
+                    status = child_outcome.status
+                    result_text = child_outcome.final_text
+                    if status != RUN_DONE:
+                        error_text = f"sub-agent {status}"
+                except BaseException as exc:  # noqa: BLE001 — see below
+                    # EVERY exception, including BaseException: this runs
+                    # on a daemon thread whose exception would otherwise
+                    # go to the default excepthook and leave the handle
+                    # live forever -- stranding the parent's end-of-turn
+                    # join until its own timeout, every time, for what may
+                    # be a trivial bug. Same containment rule as
+                    # `_call_with_timeout._runner`.
+                    error_text = f"sub-agent failed: {exc}"
+                    logger.opt(exception=True).warning(
+                        f"sub-agent thread for handle {handle.handle_id} raised"
+                    )
+                finally:
+                    fleet.finish(
+                        handle.handle_id,
+                        status,
+                        result=result_text,
+                        error=error_text,
+                    )
+
+            thread = threading.Thread(
+                target=run_child,
+                name=f"fleet-{handle.handle_id[:8]}",
+                daemon=True,
+            )
+            self._fleet_threads.append(thread)
+            thread.start()
+            snippet = spawn_task[:_SPAWN_ECHO_CHARS]
+            return ToolResult(
+                ok=True,
+                content=(
+                    f"started {handle.handle_id}: {snippet}\n"
+                    "It is running now. Call wait_agents to collect its "
+                    "result before you answer."
+                ),
+            )
+
+        def wait_agents(ids: list[str] | None = None) -> ToolResult:
+            """Block until the named (or all) children finish; collect them.
+
+            Bounded by the parent's own remaining wall-clock and polling
+            ``should_cancel`` every ``_FLEET_POLL_SECONDS``, because this
+            is dispatched IN-LOOP rather than through ``invoke_tool``'s
+            per-call daemon wrapper (see ``LoopDeps.wait_agents``).
+
+            Args:
+                ids: Handle ids to wait for, or ``None`` for every child
+                    this run has started.
+
+            Returns:
+                One entry per child -- handle id, agent, terminal status,
+                and result -- each capped at
+                ``max_subagent_result_chars`` and the whole thing
+                additionally budgeted to ``max_tool_result_chars`` split
+                evenly across the children returned, so five 4000-char
+                results are shortened fairly here instead of being cut
+                mid-result by the history-append seam. Never raises.
+            """
+            if fleet is None:  # pragma: no cover — not wired without a fleet
                 return ToolResult(
-                    ok=False, error=f"sub-agent {child_outcome.status}: {text}"
+                    ok=False, error="wait_agents: this run has no sub-agents"
                 )
-            return ToolResult(ok=True, content=text)
+            known = {
+                handle.handle_id: handle
+                for handle in (
+                    fleet.get(handle_id) for handle_id in my_handle_ids
+                )
+                if handle is not None
+            }
+            if not known:
+                return ToolResult(
+                    ok=False,
+                    error=(
+                        "wait_agents: no sub-agents have been started; call "
+                        "spawn_subagent first"
+                    ),
+                )
+            if ids is None:
+                targets = list(known)
+            else:
+                targets = [hid for hid in dict.fromkeys(ids) if hid in known]
+                unknown = [hid for hid in dict.fromkeys(ids) if hid not in known]
+                if unknown:
+                    return ToolResult(
+                        ok=False,
+                        error=(
+                            "wait_agents: unknown sub-agent id(s): "
+                            + ", ".join(unknown)
+                            + ". Known ids: "
+                            + ", ".join(known)
+                        ),
+                    )
+            note = ""
+            # See `_settle_fleet`: a real-time bound runs alongside the
+            # budget deadline so an injected (possibly frozen) clock can
+            # never turn this into an unbounded wait.
+            wall_deadline = time.monotonic() + config.budget.max_wall_seconds
+            while True:
+                pending = self._pending_handles(fleet, targets)
+                if not pending:
+                    break
+                if should_cancel():
+                    note = "\n(The run was cancelled; sub-agents were stopped.)"
+                    self._cancel_fleet_handles(pending)
+                    break
+                if (
+                    self.clock() - started >= config.budget.max_wall_seconds
+                    or time.monotonic() >= wall_deadline
+                ):
+                    note = (
+                        "\n(This run's time budget ran out; sub-agents still "
+                        "working were stopped.)"
+                    )
+                    self._cancel_fleet_handles(pending)
+                    break
+                time.sleep(_FLEET_POLL_SECONDS)
+            if note:
+                # Give the children just cancelled a bounded chance to
+                # unwind and record a real status before we report them.
+                self._drain_fleet_handles(fleet, targets)
+            return ToolResult(
+                ok=True,
+                content=self._format_wait_result(
+                    fleet, targets, config.budget, note
+                ),
+            )
+
+        def check_agents() -> ToolResult:
+            """Non-blocking status snapshot of every child of this run.
+
+            Returns:
+                One compact line per child (handle id, agent, status,
+                elapsed seconds, task snippet), or a plain sentence when
+                nothing has been started yet. Never blocks, never raises.
+            """
+            if fleet is None:  # pragma: no cover — not wired without a fleet
+                return ToolResult(
+                    ok=False, error="check_agents: this run has no sub-agents"
+                )
+            handles = [
+                handle
+                for handle in (
+                    fleet.get(handle_id) for handle_id in my_handle_ids
+                )
+                if handle is not None
+            ]
+            if not handles:
+                return ToolResult(
+                    ok=True, content="No sub-agents have been started yet."
+                )
+            now = self.clock()
+            lines = []
+            for handle in handles:
+                end = handle.finished_at if handle.finished_at is not None else now
+                elapsed = max(end - handle.started_at, 0.0)
+                lines.append(
+                    f"[{handle.handle_id}] {handle.agent or 'sub-agent'} — "
+                    f"{handle.status} ({elapsed:.1f}s) — "
+                    f"{handle.task[:_SPAWN_ECHO_CHARS]}"
+                )
+            return ToolResult(ok=True, content="\n".join(lines))
 
         # Skill-aware invoke_tool, built AFTER spawn (it closes over it): a
         # skill-tool call never reaches the registry/ToolProvider.invoke
@@ -1478,6 +2047,12 @@ class AgentService:
             run_log_slice=(
                 run_log_slice if agent_kind == AGENT_KIND_PRIMARY else None
             ),
+            # PR2a Task 6: wired under the SAME `fleet_active` predicate
+            # that pinned their schemas above, so the model is never told
+            # about a tool this run cannot dispatch (and never dispatches
+            # one it was not told about).
+            wait_agents=wait_agents if fleet_active else None,
+            check_agents=check_agents if fleet_active else None,
             on_record=on_record,
         )
         try:
@@ -1588,6 +2163,26 @@ class AgentService:
             definition_from_row(row)
             for row in self.db.list_agent_definitions(enabled_only=True)
         ]
+        # PR2a Task 6: this turn's fleet. An injected coordinator is
+        # honored as-is (the injector owns its lifecycle, and its presence
+        # is itself the opt-in); otherwise the size comes from
+        # `[agents] max_live_subagents`, read through the same `_setting`
+        # helper the run-log knobs use, and a size of 1 -- the shipped
+        # default -- means NO fleet: spawn keeps running children inline.
+        self._fleet_threads = []
+        self._fleet_cancels = {}
+        if self._injected_fleet_coordinator is not None:
+            self._fleet = self._injected_fleet_coordinator
+        else:
+            max_live = _coerce_max_live_subagents(
+                _setting(MAX_LIVE_SUBAGENTS_KEY, DEFAULT_MAX_LIVE_SUBAGENTS)
+            )
+            self._fleet = (
+                FleetCoordinator(max_live=max_live, clock=self.clock)
+                if max_live > 1
+                else None
+            )
+        turn_started = self.clock()
         run_id, outcome = self._run_one(
             conversation_id=conversation_id,
             messages=messages,
@@ -1599,6 +2194,12 @@ class AgentService:
             parent_run_id=None,
             assistant_message_id=assistant_message_id,
         )
+        # Phase 2 keeps children TURN-SCOPED: the turn does not return
+        # while one is still running. Must happen BEFORE the manifest is
+        # written and the writer closed below -- a child still running
+        # would otherwise be appending records to a closed writer, and its
+        # own run row would still read `running` after this call returns.
+        self._settle_fleet(config, should_cancel, turn_started)
         # Manifest needs run-level metadata the writer itself does not have
         # (including supersession), so it is written once the whole run
         # tree finishes, here rather than inside _run_one.

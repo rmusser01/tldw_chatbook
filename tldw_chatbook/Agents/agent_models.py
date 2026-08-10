@@ -46,6 +46,14 @@ SEARCH_RUN_LOG_TOOL_NAME = "search_run_log"
 # `compute_stats`/`slice_records` for the implementations these dispatch to.
 RUN_LOG_STATS_TOOL_NAME = "run_log_stats"
 RUN_LOG_SLICE_TOOL_NAME = "run_log_slice"
+# Fleet (PR2a Task 6): the two tools a supervisor uses to manage children
+# that now run CONCURRENTLY on their own threads instead of inline. Both
+# are primary-only (pinned like install_skill) and both are dispatched
+# IN-LOOP like spawn_subagent -- never through invoke_tool's per-call
+# timeout wrapper, whose daemon thread would abandon a wait that is
+# supposed to be bounded by the parent's own wall-clock instead.
+WAIT_AGENTS_TOOL_NAME = "wait_agents"
+CHECK_AGENTS_TOOL_NAME = "check_agents"
 RUNTIME_TOOL_NAMES = frozenset(
     {
         SPAWN_TOOL_NAME,
@@ -57,6 +65,8 @@ RUNTIME_TOOL_NAMES = frozenset(
         SEARCH_RUN_LOG_TOOL_NAME,
         RUN_LOG_STATS_TOOL_NAME,
         RUN_LOG_SLICE_TOOL_NAME,
+        WAIT_AGENTS_TOOL_NAME,
+        CHECK_AGENTS_TOOL_NAME,
     }
 )
 
