@@ -350,7 +350,7 @@ Final IDs are exactly `local-input`, `local-prompt`, `local-credential`, `local-
 - [ ] **Step 2: Run RED**
 
 ```bash
-../../.venv/bin/python -B -m pytest -q Tests/LLM_Calls/test_summarization_diagnostic_privacy.py -k 'local_core or local_llm' -vv
+../../.venv/bin/python -B -m pytest -q Tests/LLM_Calls/test_summarization_diagnostic_privacy.py -k 'local_core or local_llm or runtime_sentinel' -vv
 ```
 
 Expected: failures expose the owned canaries and report exactly 24 pending entries.
@@ -364,7 +364,7 @@ Update only `outcome` to `metadata` or `deleted` and update `current` with final
 - [ ] **Step 4: Run GREEN and static checks**
 
 ```bash
-../../.venv/bin/python -B -m pytest -q Tests/LLM_Calls/test_summarization_diagnostic_privacy.py -k 'local_core or local_llm' -vv
+../../.venv/bin/python -B -m pytest -q Tests/LLM_Calls/test_summarization_diagnostic_privacy.py -k 'local_core or local_llm or runtime_sentinel' -vv
 ../../.venv/bin/python -m ruff format tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py Tests/LLM_Calls/summarization_diagnostic_guard.py Tests/LLM_Calls/test_summarization_diagnostic_privacy.py
 ../../.venv/bin/python -m ruff check tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py Tests/LLM_Calls/summarization_diagnostic_guard.py Tests/LLM_Calls/test_summarization_diagnostic_privacy.py
 ../../.venv/bin/python -m ruff format --check tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py Tests/LLM_Calls/summarization_diagnostic_guard.py Tests/LLM_Calls/test_summarization_diagnostic_privacy.py
