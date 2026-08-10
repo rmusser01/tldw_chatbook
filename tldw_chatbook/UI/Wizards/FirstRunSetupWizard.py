@@ -1227,6 +1227,7 @@ class SpeechSetupStep(SetupStep):
         self._pending_external_selection: PreparedExternalSelection | None = None
         self._external_commit_handoff: asyncio.Task[bool] | None = None
         self._external_commit_detached = False
+        self._external_commit_pending = False
         # Review Important 3: set only by a SUCCESSFUL install/activation
         # made THROUGH THIS STEP during this run -- see commit()'s use via
         # first_run_speech_step_state.should_persist_speech_config.
@@ -1359,10 +1360,13 @@ class SpeechSetupStep(SetupStep):
                 if self._transcribe_cpp_configured
                 else "Use an existing transcribe.cpp GGUF…",
                 id="setup-speech-choose-transcribe-cpp-gguf",
+                disabled=self._external_commit_pending,
             )
             yield Static("", classes="setup-step-error")
             yield Label("Language", classes="setup-field-label")
-            with RadioSet(id="setup-speech-language-choice", classes="setup-choice-list"):
+            with RadioSet(
+                id="setup-speech-language-choice", classes="setup-choice-list"
+            ):
                 for option in speech_state.speech_language_options(
                     curated_model_ids=self._curated_model_ids()
                 ):
@@ -1471,6 +1475,8 @@ class SpeechSetupStep(SetupStep):
         self._set_exact_selection(self._selected_language, precision)
 
     def _set_exact_selection(self, language: str, precision: str) -> None:
+        if self._external_commit_pending:
+            return
         selection = speech_state.resolve_speech_selection(
             selected_language=language,
             selected_precision=precision,
@@ -1577,7 +1583,12 @@ class SpeechSetupStep(SetupStep):
         the reload's own callback replaces it (InstalledView's own pending
         computation includes its loading flag for the identical reason).
         """
-        return self._operation is not None or self._loading or self._external_busy
+        return (
+            self._operation is not None
+            or self._loading
+            or self._external_busy
+            or self._external_commit_pending
+        )
 
     def _status_and_action(self) -> tuple[str, Optional[Widget]]:
         # Review Important 4: gate BEFORE the installed-state load so a
@@ -1737,6 +1748,15 @@ class SpeechSetupStep(SetupStep):
             "External setup cancelled. The prior source is unchanged.",
             busy=False,
         )
+        self.call_after_refresh(self._focus_external_disk_action)
+
+    def _focus_external_disk_action(self) -> None:
+        """Keep Enter on the external action after Cancel recomposes the step."""
+
+        try:
+            self.query_one("#setup-speech-use-from-disk", Button).focus()
+        except NoMatches:
+            pass
 
     def _external_directory_selected(
         self,
@@ -1750,11 +1770,15 @@ class SpeechSetupStep(SetupStep):
         if selected is None:
             self._discard_external_selection()
             return
+        scope_id = self._external_scope_ids.get(token)
+        if scope_id is None:
+            return
         self._set_external_status("Verifying model files…", busy=True)
         self._external_selection_worker = self._verify_external_source(
             token,
             key,
             Path(selected),
+            scope_id,
         )
 
     @work(
@@ -1769,11 +1793,11 @@ class SpeechSetupStep(SetupStep):
         token: tuple[int, int],
         key: ParakeetSourceKey,
         directory: Path,
+        scope_id: str,
     ) -> None:
         """Hash one exact external root outside the Textual event loop."""
 
         worker = get_current_worker()
-        scope_id = self._external_scope_ids.get(token, "")
 
         def cancelled() -> bool:
             return worker.is_cancelled
@@ -2238,8 +2262,11 @@ class SpeechSetupStep(SetupStep):
     def _choose_transcribe_cpp_gguf_pressed(self) -> None:
         """Open a GGUF-only picker for optional direct-local transcription."""
 
+        if self._external_commit_pending:
+            return
+
         async def picker_callback(selected_path: Path | None) -> None:
-            if selected_path is not None:
+            if selected_path is not None and not self._external_commit_pending:
                 self._configure_transcribe_cpp_gguf(selected_path)
 
         self.app.push_screen(
@@ -2325,6 +2352,8 @@ class SpeechSetupStep(SetupStep):
         )
 
     def _confirm_install(self, confirmed: bool) -> None:
+        if self._external_commit_pending:
+            return
         if not confirmed:
             self._pending_report = None
             self._operation = None
@@ -2332,7 +2361,9 @@ class SpeechSetupStep(SetupStep):
             return
         self._provision_install()
 
-    @work(thread=True, group="setup-speech-install", exclusive=True, exit_on_error=False)
+    @work(
+        thread=True, group="setup-speech-install", exclusive=True, exit_on_error=False
+    )
     def _provision_install(self) -> None:
         import asyncio
 
@@ -2593,7 +2624,11 @@ class SpeechSetupStep(SetupStep):
                 precision=selection.precision,
             )
         )
-        return (True, "") if ok else (False, "Saving the speech transcription choice failed.")
+        return (
+            (True, "")
+            if ok
+            else (False, "Saving the speech transcription choice failed.")
+        )
 
     async def _commit_external_selection(self) -> tuple[bool, str]:
         """Atomically write speech defaults plus one prepared external source."""
@@ -2645,6 +2680,8 @@ class SpeechSetupStep(SetupStep):
 
         patch = speech_state.speech_config_patch(selection, source_commit)
         self._external_commit_detached = False
+        self._external_commit_pending = True
+        self.refresh(recompose=True)
         handoff = asyncio.create_task(
             self.wizard.commit_config(
                 patch,
@@ -2653,58 +2690,70 @@ class SpeechSetupStep(SetupStep):
         )
         self._external_commit_handoff = handoff
         cancelled = False
-        handoff_error: Exception | None = None
-        try:
+
+        async def settle(operation: asyncio.Future[Any]) -> Any:
+            nonlocal cancelled
             while True:
                 try:
-                    ok = await asyncio.shield(handoff)
-                    break
+                    return await asyncio.shield(operation)
                 except asyncio.CancelledError:
+                    if operation.cancelled():
+                        raise
                     cancelled = True
                     self._external_commit_detached = True
                     task = asyncio.current_task()
                     if task is not None:
                         task.uncancel()
-        except Exception as exc:
-            handoff_error = exc
-            ok = False
-        finally:
-            self._external_commit_handoff = None
 
-        if cancelled:
+        try:
+            try:
+                ok = await settle(handoff)
+            except Exception as handoff_error:
+                logger.warning(
+                    "External Parakeet commit handoff failed; error_type={}",
+                    type(handoff_error).__name__,
+                )
+                retry = loop.run_in_executor(
+                    None,
+                    service.accept_committed,
+                    source_commit,
+                )
+                try:
+                    await settle(retry)
+                except Exception as retry_error:
+                    logger.warning(
+                        "External Parakeet commit reconciliation failed; error_type={}",
+                        type(retry_error).__name__,
+                    )
+                    message = (
+                        "The external source was saved, but it could not be activated "
+                        "in this session. Restart the app, then retry setup."
+                    )
+                    self._external_status = message
+                    return False, message
+                ok = True
+
+            if not ok:
+                return False, "Saving the speech transcription choice failed."
+
             if token is not None:
                 self._release_external_scope(token)
-            raise asyncio.CancelledError
-        if handoff_error is not None:
-            logger.warning(
-                "External Parakeet commit handoff failed; error_type={}",
-                type(handoff_error).__name__,
+            if self._external_selection_token == token:
+                self._external_selection_token = None
+            self._pending_external_selection = None
+            if cancelled:
+                raise asyncio.CancelledError
+            self._external_status = (
+                "External source ready."
+                if self._runtime_installed()
+                else "Runtime required"
             )
-            if self._external_commit_detached and token is not None:
-                self._release_external_scope(token)
-            return (
-                False,
-                "The saved external model could not be activated in this session.",
-            )
-        if not ok:
-            if self._external_commit_detached and token is not None:
-                self._release_external_scope(token)
-            return False, "Saving the speech transcription choice failed."
-
-        if token is not None:
-            self._release_external_scope(token)
-        if self._external_selection_token == token:
-            self._external_selection_token = None
-        self._pending_external_selection = None
-        if self._external_commit_detached:
             return True, ""
-        self._external_status = (
-            "External source ready."
-            if self._runtime_installed()
-            else "Runtime required"
-        )
-        self.refresh(recompose=True)
-        return True, ""
+        finally:
+            self._external_commit_handoff = None
+            self._external_commit_pending = False
+            if self.is_mounted:
+                self.refresh(recompose=True)
 
     def _check_active(self, selection: speech_state.SpeechSelection) -> Any:
         try:
@@ -3956,21 +4005,31 @@ class SetupWizardContainer(WizardContainer):
         if not section_values:
             return True
         if not wizard_state.commit_sections_allowed(section_values):
-            logger.error("Wizard commit rejected non-owned sections: {}", list(section_values))
+            logger.error(
+                "Wizard commit rejected non-owned sections: {}", list(section_values)
+            )
             return False
         import asyncio
 
         from tldw_chatbook.config import save_settings_to_cli_config
 
-        def _write() -> bool:
+        def _write() -> tuple[bool, Exception | None]:
             ok = save_settings_to_cli_config(section_values)
+            callback_error: Exception | None = None
             if ok and after_write is not None:
-                after_write()
-            return ok
+                try:
+                    after_write()
+                except Exception as exc:
+                    callback_error = exc
+            return ok, callback_error
 
-        ok = await asyncio.get_running_loop().run_in_executor(None, _write)
+        ok, callback_error = await asyncio.get_running_loop().run_in_executor(
+            None, _write
+        )
         if ok:
             self._mirror_into_app_config(section_values)
+        if callback_error is not None:
+            raise callback_error
         return ok
 
     def _mirror_into_app_config(self, section_values: dict) -> None:
