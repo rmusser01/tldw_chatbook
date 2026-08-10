@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from email.parser import Parser
+import io
 import json
 import os
 from pathlib import Path
@@ -15,6 +16,8 @@ import threading
 from typing import Any, BinaryIO
 import zipfile
 
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
 import pytest
 
 from Tests.Packaging.test_installed_distribution import (
@@ -257,9 +260,8 @@ def _metadata_and_license(artifact: Path, artifact_kind: str) -> tuple[Any, bool
                 name for name in names if name.endswith(".dist-info/METADATA")
             )
             metadata = Parser().parsestr(archive.read(metadata_name).decode("utf-8"))
-            has_license = any(
-                name.endswith(".dist-info/licenses/LICENSE") for name in names
-            )
+            dist_info = metadata_name.removesuffix("METADATA")
+            has_license = f"{dist_info}licenses/LICENSE" in names
         return metadata, has_license
 
     with tarfile.open(artifact, "r:gz") as archive:
@@ -272,8 +274,10 @@ def _metadata_and_license(artifact: Path, artifact_kind: str) -> tuple[Any, bool
         stream: BinaryIO | None = archive.extractfile(pkg_info)
         assert stream is not None
         metadata = Parser().parsestr(stream.read().decode("utf-8"))
+        sdist_root = pkg_info.name.rsplit("/", maxsplit=1)[0]
         has_license = any(
-            member.isfile() and member.name.endswith("/LICENSE") for member in members
+            member.isfile() and member.name == f"{sdist_root}/LICENSE"
+            for member in members
         )
     return metadata, has_license
 
@@ -282,9 +286,24 @@ def _assert_metadata_contract(metadata: Any, *, has_license: bool) -> None:
     assert metadata["License-Expression"] == "AGPL-3.0-or-later"
     assert "LICENSE" in (metadata.get_all("License-File") or [])
     assert has_license
-    assert 'mcp-unified==0.2.1; extra == "mcp"' in (
-        metadata.get_all("Requires-Dist") or []
-    )
+    requirements = [
+        Requirement(value) for value in metadata.get_all("Requires-Dist") or []
+    ]
+    mcp_unified = [
+        requirement
+        for requirement in requirements
+        if canonicalize_name(requirement.name) == "mcp-unified"
+    ]
+    assert len(mcp_unified) == 2
+    assert all(requirement.url is None for requirement in mcp_unified)
+    assert all(not requirement.extras for requirement in mcp_unified)
+    assert {
+        (str(requirement.specifier), str(requirement.marker))
+        for requirement in mcp_unified
+    } == {
+        ("==0.2.1", 'extra == "mcp"'),
+        ("==0.2.1", 'extra == "all-tools"'),
+    }
 
 
 def _assert_tool_inventory(tool_names: set[str]) -> None:
@@ -297,6 +316,73 @@ def _assert_private_stderr(stderr: str, *, secret: str, path: str) -> None:
     assert path not in stderr
     assert '"jsonrpc"' not in stderr
     assert "Traceback" not in stderr
+
+
+def _test_metadata(*requirements: str) -> Any:
+    headers = [
+        "License-Expression: AGPL-3.0-or-later",
+        "License-File: LICENSE",
+        *(f"Requires-Dist: {requirement}" for requirement in requirements),
+    ]
+    return Parser().parsestr("\n".join(headers) + "\n\n")
+
+
+def test_sdist_license_must_be_at_the_project_root(tmp_path: Path) -> None:
+    artifact = tmp_path / "nested-license.tar.gz"
+    with tarfile.open(artifact, "w:gz") as archive:
+        for name, content in (
+            ("project-1.0/PKG-INFO", b"Metadata-Version: 2.4\n"),
+            ("project-1.0/vendor/LICENSE", b"vendored license\n"),
+        ):
+            member = tarfile.TarInfo(name)
+            member.size = len(content)
+            archive.addfile(member, io.BytesIO(content))
+
+    _, has_license = _metadata_and_license(artifact, "sdist")
+    assert not has_license
+
+
+def test_wheel_license_must_match_the_metadata_dist_info_directory(
+    tmp_path: Path,
+) -> None:
+    artifact = tmp_path / "mismatched-license.whl"
+    with zipfile.ZipFile(artifact, "w") as archive:
+        archive.writestr("project-1.0.dist-info/METADATA", "Metadata-Version: 2.4\n")
+        archive.writestr("other-1.0.dist-info/licenses/LICENSE", "wrong project\n")
+
+    _, has_license = _metadata_and_license(artifact, "wheel")
+    assert not has_license
+
+
+@pytest.mark.parametrize(
+    "unexpected_requirement",
+    [
+        "mcp-unified==0.2.1",
+        'mcp-unified==0.2.1; extra == "dev"',
+        'mcp_unified>=0.2.1; extra == "mcp"',
+        'mcp-unified==0.2.1; extra == "mcp"',
+        'mcp-unified==0.2.1; extra == "all-tools"',
+    ],
+)
+def test_metadata_contract_rejects_every_additional_mcp_unified_requirement(
+    unexpected_requirement: str,
+) -> None:
+    expected = (
+        'mcp-unified==0.2.1; extra == "mcp"',
+        'mcp-unified==0.2.1; extra == "all-tools"',
+    )
+    _assert_metadata_contract(_test_metadata(*expected), has_license=True)
+    metadata = _test_metadata(*expected, unexpected_requirement)
+    with pytest.raises(AssertionError):
+        _assert_metadata_contract(metadata, has_license=True)
+
+
+def test_metadata_contract_accepts_only_the_exact_normalized_requirement() -> None:
+    metadata = _test_metadata(
+        "mcp_unified == 0.2.1 ; extra == 'all-tools'",
+        "mcp-unified == 0.2.1 ; extra == 'mcp'",
+    )
+    _assert_metadata_contract(metadata, has_license=True)
 
 
 def _python_in(venv_root: Path) -> Path:

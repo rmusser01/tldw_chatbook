@@ -17,17 +17,27 @@ Phase-4 follow-up (task-2828 notes): the FastMCP binding path in MCP/server.py::
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Server starts with expose_local_tools=true and lists the local tools,fs_read callable after grant, fs_write refused with EXTERNAL_NO_CALLBACK_REFUSAL,Findings recorded (including any FastMCP 2.x API drift)
+- [x] #1 TASK-2512 independently smoke-tests the installed wheel and sdist with the `mcp` extra
+- [x] #2 The original FastMCP smoke was not performed because its runtime boundary is obsolete
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Confirm TASK-2512 proves the replacement `mcp-unified` boundary from
+   independently installed wheel and sdist artifacts.
+2. Record the original FastMCP smoke as obsolete and close this duplicate
+   follow-up without claiming that smoke ran.
+
+ADR required: no
+ADR path: N/A
+Reason: task supersession records an already-decided runtime boundary; it does
+not introduce an architectural decision.
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Superseded as obsolete by TASK-2512. The standalone server no longer binds
-through FastMCP or the official MCP SDK, so this task's proposed smoke cannot
-exercise the shipped boundary. TASK-2512 replaces it with independent wheel
-and sdist installs of `tldw_chatbook[mcp]`; each artifact launches
-`python -m tldw_chatbook.MCP` from site-packages only and verifies the real
-`mcp-unified` stdio catalog, local-tool refusal, resources, prompts, isolated
-state, metadata, and clean shutdown.
+Original FastMCP acceptance criterion: superseded, not completed. No FastMCP
+smoke was performed. TASK-2512 replaces it with GREEN independent wheel and
+sdist installs of `tldw_chatbook[mcp]` that exercise the shipped `mcp-unified`
+stdio boundary from site-packages only.
 <!-- SECTION:NOTES:END -->

@@ -14,6 +14,12 @@ DOCUMENTS = (
     REPO_ROOT / "Docs" / "User_Guide" / "mcp.md",
     REPO_ROOT / "Docs" / "Development" / "release-recovery-setup.md",
 )
+TASK_2511 = (
+    REPO_ROOT
+    / "backlog"
+    / "tasks"
+    / "task-2511 - Smoke-test-FastMCP-local-tool-binding-with-the-mcp-extra.md"
+)
 BUILTIN_TOOLS = (
     "chat_with_llm",
     "chat_with_character",
@@ -60,6 +66,18 @@ PRIVATE_LIBRARY_TOOLS = (
     "library_get_collection",
     "library_search_collections",
 )
+INVENTORY_CONTRACT = {
+    "Built-in tools": BUILTIN_TOOLS,
+    "Resource templates": RESOURCE_TEMPLATES,
+    "Prompts": PROMPTS,
+    "Library tools excluded from standalone": PRIVATE_LIBRARY_TOOLS,
+}
+UNEXPECTED_INVENTORY_ITEMS = {
+    "Built-in tools": "unexpected_tool",
+    "Resource templates": "unexpected://{id}",
+    "Prompts": "unexpected_prompt",
+    "Library tools excluded from standalone": "library_unexpected",
+}
 FORBIDDEN_LIVE_COMMANDS = (
     re.compile(r"\bmcp\s+(?:dev|install|run)\b", re.IGNORECASE),
     re.compile(r"pip\s+install\s+[\"']?mcp(?:\[cli\])?\b", re.IGNORECASE),
@@ -72,6 +90,54 @@ FORBIDDEN_LIVE_COMMANDS = (
 def document(request: pytest.FixtureRequest) -> tuple[Path, str]:
     path = request.param
     return path, path.read_text(encoding="utf-8")
+
+
+def _standalone_inventory_block(text: str) -> str:
+    headings = list(re.finditer(r"^### Standalone inventory\s*$", text, re.MULTILINE))
+    assert len(headings) == 1
+    start = headings[0].end()
+    following_heading = re.search(r"^#{2,3} ", text[start:], re.MULTILINE)
+    end = start + following_heading.start() if following_heading else len(text)
+    return text[start:end].strip()
+
+
+def _assert_inventory_contract(path: Path, text: str) -> None:
+    block = _standalone_inventory_block(text)
+    category_pattern = re.compile(
+        r"^- \*\*(?P<label>[^\n]+?) \((?P<count>\d+)\):\*\*\s*"
+        r"(?P<body>.*?)(?=^- \*\*|\Z)",
+        re.MULTILINE | re.DOTALL,
+    )
+    categories = list(category_pattern.finditer(block))
+    assert len(categories) == len(INVENTORY_CONTRACT), path
+    assert len(re.findall(r"^- \*\*", block, re.MULTILINE)) == len(
+        INVENTORY_CONTRACT
+    ), path
+
+    documented = {match.group("label"): match for match in categories}
+    assert set(documented) == set(INVENTORY_CONTRACT), path
+    for label, expected in INVENTORY_CONTRACT.items():
+        match = documented[label]
+        items = re.findall(r"`([^`\n]+)`", match.group("body"))
+        assert int(match.group("count")) == len(expected), (path, label)
+        assert len(items) == len(expected), (path, label)
+        assert set(items) == set(expected), (path, label)
+
+
+def _mutate_inventory(
+    text: str, *, label: str, mutation: str, expected: tuple[str, ...]
+) -> str:
+    block = _standalone_inventory_block(text)
+    token = f"`{expected[0]}`"
+    assert block.count(token) == 1
+    if mutation == "extra":
+        replacement = f"{token}, `{UNEXPECTED_INVENTORY_ITEMS[label]}`"
+    elif mutation == "missing":
+        replacement = ""
+    else:
+        replacement = f"{token}, {token}"
+    mutated_block = block.replace(token, replacement, 1)
+    return text.replace(block, mutated_block, 1)
 
 
 def test_documents_publish_exact_install_and_launch_commands(
@@ -102,15 +168,27 @@ def test_documents_list_the_exact_standalone_and_private_inventories(
     document: tuple[Path, str],
 ) -> None:
     path, text = document
-    normalized = " ".join(text.split())
-    assert "exactly 10 built-in tools" in normalized, path
-    assert "exactly 5 resource templates" in normalized, path
-    assert "exactly 5 prompts" in normalized, path
-    assert all(f"`{name}`" in text for name in BUILTIN_TOOLS), path
-    assert all(f"`{uri}`" in text for uri in RESOURCE_TEMPLATES), path
-    assert all(f"`{name}`" in text for name in PROMPTS), path
-    assert "All 18 are excluded from the standalone stdio catalog" in normalized, path
-    assert all(f"`{name}`" in text for name in PRIVATE_LIBRARY_TOOLS), path
+    _assert_inventory_contract(path, text)
+
+
+@pytest.mark.parametrize("path", DOCUMENTS, ids=lambda path: path.name)
+@pytest.mark.parametrize("mutation", ("extra", "missing", "duplicate"))
+@pytest.mark.parametrize(
+    ("label", "expected"),
+    INVENTORY_CONTRACT.items(),
+    ids=lambda value: value if isinstance(value, str) else None,
+)
+def test_exact_inventory_contract_rejects_mutations(
+    path: Path,
+    mutation: str,
+    label: str,
+    expected: tuple[str, ...],
+) -> None:
+    text = path.read_text(encoding="utf-8")
+    _assert_inventory_contract(path, text)
+    mutated = _mutate_inventory(text, label=label, mutation=mutation, expected=expected)
+    with pytest.raises(AssertionError):
+        _assert_inventory_contract(path, mutated)
 
 
 def test_documents_explain_continuation_and_local_tool_policy(
@@ -139,3 +217,19 @@ def test_documents_warn_about_external_local_data_and_cloud_egress(
     assert "tools, resources, and prompts" in normalized, path
     assert "off-device" in normalized, path
     assert "cloud model" in normalized, path
+
+
+def test_task_2511_records_truthful_supersession_instead_of_fastmcp_completion():
+    text = TASK_2511.read_text(encoding="utf-8")
+    assert "status: Done" in text
+    assert "## Implementation Plan" in text
+    assert "- [ ]" not in text
+    assert (
+        "- [x] #1 TASK-2512 independently smoke-tests the installed wheel and "
+        "sdist with the `mcp` extra"
+    ) in text
+    assert (
+        "- [x] #2 The original FastMCP smoke was not performed because its "
+        "runtime boundary is obsolete"
+    ) in text
+    assert "Original FastMCP acceptance criterion: superseded, not completed." in text
