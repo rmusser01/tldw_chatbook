@@ -10,9 +10,11 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Mapping
 import json
+import math
 import subprocess
 from datetime import datetime
 from itertools import count
+from time import monotonic as _monotonic
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
@@ -21,7 +23,15 @@ from loguru import logger
 _MCP_PROTOCOL_VERSION = "2025-03-26"
 _REQUEST_TIMEOUT_SECONDS = 10.0
 _TERMINATE_TIMEOUT_SECONDS = 2.0
-_STDIO_STREAM_LIMIT_BYTES = 1024 * 1024
+CONNECT_TIMEOUT_SECONDS = 30.0
+CATALOG_TIMEOUT_SECONDS = 10.0
+CLEANUP_TIMEOUT_SECONDS = 5.0
+MAX_OUTPUT_LINE_BYTES = 1_048_576
+MAX_RESULT_BYTES = 786_432
+MAX_JSON_DEPTH = 64
+MAX_SCHEMA_BYTES = 262_144
+MAX_SCHEMA_DEPTH = 32
+MAX_DESCRIPTOR_STRING_LENGTH = 4096
 MAX_CATALOG_PAGES = 100
 MAX_CATALOG_ITEMS = 10_000
 
@@ -30,46 +40,166 @@ class MCPClientError(RuntimeError):
     """Bounded client-side validation failure."""
 
 
+def _remaining(deadline: float, message: str) -> float:
+    remaining = deadline - _monotonic()
+    if remaining <= 0:
+        raise MCPClientError(message)
+    return remaining
+
+
+def _bounded_json_copy(
+    value: Any,
+    *,
+    message: str,
+    max_bytes: int = MAX_RESULT_BYTES,
+    max_depth: int = MAX_JSON_DEPTH,
+    mapping: bool = False,
+) -> Any:
+    def validate(item: Any, depth: int, ancestors: set[int]) -> None:
+        if depth > max_depth:
+            raise ValueError
+        if isinstance(item, Mapping):
+            if not all(isinstance(key, str) for key in item):
+                raise ValueError
+            identity = id(item)
+            if identity in ancestors:
+                raise ValueError
+            ancestors.add(identity)
+            try:
+                for child in item.values():
+                    validate(child, depth + 1, ancestors)
+            finally:
+                ancestors.remove(identity)
+            return
+        if isinstance(item, list):
+            identity = id(item)
+            if identity in ancestors:
+                raise ValueError
+            ancestors.add(identity)
+            try:
+                for child in item:
+                    validate(child, depth + 1, ancestors)
+            finally:
+                ancestors.remove(identity)
+            return
+        if item is None or isinstance(item, (str, bool, int)):
+            return
+        if isinstance(item, float) and math.isfinite(item):
+            return
+        raise ValueError
+
+    try:
+        if mapping and not isinstance(value, Mapping):
+            raise ValueError
+        validate(value, 1, set())
+        encoded = json.dumps(
+            value,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        if len(encoded) > max_bytes:
+            raise ValueError
+        return json.loads(encoded)
+    except (TypeError, ValueError, OverflowError, RecursionError):
+        raise MCPClientError(message) from None
+
+
+def _required_string(payload: Mapping[str, Any], key: str) -> str:
+    value = payload.get(key)
+    if (
+        not isinstance(value, str)
+        or not value
+        or len(value) > MAX_DESCRIPTOR_STRING_LENGTH
+    ):
+        raise ValueError
+    return value
+
+
+def _optional_string(payload: Mapping[str, Any], key: str, default: str = "") -> str:
+    value = payload.get(key, default)
+    if not isinstance(value, str) or len(value) > MAX_DESCRIPTOR_STRING_LENGTH:
+        raise ValueError
+    return value
+
+
+def _annotations(payload: Mapping[str, Any]) -> Dict[str, Any]:
+    return _bounded_json_copy(
+        payload.get("annotations", {}),
+        message="Invalid MCP catalog items",
+        mapping=True,
+    )
+
+
 def _copy_resource_metadata(value: Any) -> Dict[str, Any]:
     if value is None:
         return {}
-    if not isinstance(value, Mapping):
-        raise MCPClientError("Invalid MCP resource metadata")
-    return dict(value)
+    return _bounded_json_copy(
+        value,
+        message="Invalid MCP resource metadata",
+        mapping=True,
+    )
 
 
 def _tool_from_payload(payload: Dict[str, Any]) -> SimpleNamespace:
+    if not isinstance(payload, Mapping):
+        raise ValueError
     return SimpleNamespace(
-        name=payload.get("name", ""),
-        description=payload.get("description", ""),
-        inputSchema=payload.get("inputSchema", {}),
+        name=_required_string(payload, "name"),
+        description=_optional_string(payload, "description"),
+        inputSchema=_bounded_json_copy(
+            payload.get("inputSchema"),
+            message="Invalid MCP catalog items",
+            max_bytes=MAX_SCHEMA_BYTES,
+            max_depth=MAX_SCHEMA_DEPTH,
+            mapping=True,
+        ),
+        annotations=_annotations(payload),
     )
 
 
 def _resource_from_payload(payload: Dict[str, Any]) -> SimpleNamespace:
+    if not isinstance(payload, Mapping):
+        raise ValueError
+    size = payload.get("size")
+    if size is not None and (
+        isinstance(size, bool) or not isinstance(size, int) or size < 0
+    ):
+        raise ValueError
     return SimpleNamespace(
-        uri=payload.get("uri", ""),
-        name=payload.get("name", ""),
-        description=payload.get("description", ""),
-        mimeType=payload.get("mimeType", "text/plain"),
+        uri=_required_string(payload, "uri"),
+        name=_required_string(payload, "name"),
+        description=_optional_string(payload, "description"),
+        mimeType=_optional_string(payload, "mimeType", "text/plain"),
+        annotations=_annotations(payload),
+        size=size,
     )
 
 
 def _prompt_argument_from_payload(payload: Dict[str, Any]) -> SimpleNamespace:
+    if not isinstance(payload, Mapping):
+        raise ValueError
+    required = payload.get("required", False)
+    if not isinstance(required, bool):
+        raise ValueError
     return SimpleNamespace(
-        name=payload.get("name", ""),
-        description=payload.get("description", ""),
-        required=bool(payload.get("required", False)),
+        name=_required_string(payload, "name"),
+        description=_optional_string(payload, "description"),
+        required=required,
     )
 
 
 def _prompt_from_payload(payload: Dict[str, Any]) -> SimpleNamespace:
+    if not isinstance(payload, Mapping):
+        raise ValueError
+    arguments = payload.get("arguments", [])
+    if not isinstance(arguments, list):
+        raise ValueError
     return SimpleNamespace(
-        name=payload.get("name", ""),
-        description=payload.get("description", ""),
-        arguments=[
-            _prompt_argument_from_payload(arg) for arg in payload.get("arguments", [])
-        ],
+        name=_required_string(payload, "name"),
+        description=_optional_string(payload, "description"),
+        arguments=[_prompt_argument_from_payload(arg) for arg in arguments],
+        annotations=_annotations(payload),
     )
 
 
@@ -127,7 +257,8 @@ class _StdioJSONRPCConnection:
         self._request_ids = count(1)
         self._pending_requests: Dict[int, asyncio.Future[Dict[str, Any]]] = {}
         self._write_lock = asyncio.Lock()
-        self._closed = False
+        self._reader_unavailable = False
+        self._cleanup_complete = False
         self._read_task = asyncio.create_task(self._read_loop())
         self._stderr_task = (
             asyncio.create_task(self._stderr_loop())
@@ -151,8 +282,16 @@ class _StdioJSONRPCConnection:
         if protocol_version != _MCP_PROTOCOL_VERSION:
             raise MCPClientError("Unexpected MCP protocol version")
         self.protocol_version = protocol_version
-        self.server_capabilities = dict(result.get("capabilities") or {})
-        self.server_info = dict(result.get("serverInfo") or {})
+        self.server_capabilities = _bounded_json_copy(
+            result.get("capabilities"),
+            message="Invalid MCP initialization metadata",
+            mapping=True,
+        )
+        self.server_info = _bounded_json_copy(
+            result.get("serverInfo"),
+            message="Invalid MCP initialization metadata",
+            mapping=True,
+        )
         await self.notify("notifications/initialized")
         return result
 
@@ -184,9 +323,14 @@ class _StdioJSONRPCConnection:
         collected: List[SimpleNamespace] = []
         seen_cursors: set[str] = set()
         params: Dict[str, Any] = {}
+        deadline = _monotonic() + CATALOG_TIMEOUT_SECONDS
 
         for page_number in range(1, MAX_CATALOG_PAGES + 1):
-            result = await self.request(method, params)
+            result = await self.request(
+                method,
+                params,
+                timeout_seconds=_remaining(deadline, "MCP catalog deadline exceeded"),
+            )
             page_items = result.get(item_key)
             if not isinstance(page_items, list):
                 raise MCPClientError("Invalid MCP catalog items")
@@ -266,7 +410,7 @@ class _StdioJSONRPCConnection:
         *,
         timeout_seconds: Optional[float] = None,
     ) -> Dict[str, Any]:
-        if self._closed:
+        if self._reader_unavailable or self._cleanup_complete:
             raise RuntimeError("Connection is closed")
 
         request_id = next(self._request_ids)
@@ -285,20 +429,20 @@ class _StdioJSONRPCConnection:
             )
             return await asyncio.wait_for(
                 future,
-                timeout=timeout_seconds or self.request_timeout_seconds,
+                timeout=(
+                    self.request_timeout_seconds
+                    if timeout_seconds is None
+                    else timeout_seconds
+                ),
             )
         except asyncio.TimeoutError as exc:
-            self._pending_requests.pop(request_id, None)
-            if not future.done():
-                future.cancel()
             raise TimeoutError(
                 f"Timed out waiting for MCP response to '{method}'"
             ) from exc
-        except Exception:
+        finally:
             self._pending_requests.pop(request_id, None)
             if not future.done():
                 future.cancel()
-            raise
 
     async def notify(
         self, method: str, params: Optional[Dict[str, Any]] = None
@@ -312,10 +456,10 @@ class _StdioJSONRPCConnection:
         )
 
     async def close(self) -> None:
-        if self._closed:
+        if self._cleanup_complete:
             return
 
-        self._closed = True
+        self._reader_unavailable = True
         self._fail_pending_requests(RuntimeError("MCP connection closed"))
 
         stdin = getattr(self.process, "stdin", None)
@@ -380,6 +524,8 @@ class _StdioJSONRPCConnection:
             except Exception:
                 pass
 
+        self._cleanup_complete = True
+
     async def _send_message(self, payload: Dict[str, Any]) -> None:
         stdin = getattr(self.process, "stdin", None)
         if stdin is None:
@@ -398,42 +544,33 @@ class _StdioJSONRPCConnection:
     async def _read_loop(self) -> None:
         stdout = getattr(self.process, "stdout", None)
         if stdout is None:
-            self._fail_pending_requests(
-                RuntimeError("MCP subprocess stdout is unavailable")
-            )
+            self._mark_reader_unavailable()
             return
 
         try:
             while True:
                 line = await stdout.readline()
                 if not line:
-                    break
+                    self._mark_reader_unavailable()
+                    return
+                if len(line) > MAX_OUTPUT_LINE_BYTES:
+                    raise ValueError
 
                 decoded_line = line.decode("utf-8").rstrip("\r\n")
                 if not decoded_line:
                     continue
 
-                try:
-                    payload = json.loads(decoded_line)
-                except json.JSONDecodeError:
-                    logger.warning(
-                        "Ignoring invalid MCP JSON-RPC payload from server: {}",
-                        decoded_line,
-                    )
-                    continue
-
+                payload = json.loads(decoded_line)
                 await self._handle_incoming_payload(payload)
         except asyncio.CancelledError:
             raise
-        except Exception as exc:
-            self._fail_pending_requests(RuntimeError(f"MCP read loop failed: {exc}"))
-            return
+        except Exception:
+            self._mark_reader_unavailable()
 
-        if not self._closed:
-            self._closed = True
-            self._fail_pending_requests(
-                RuntimeError("MCP server closed the stdio transport")
-            )
+    def _mark_reader_unavailable(self) -> None:
+        self._reader_unavailable = True
+        self._fail_pending_requests(RuntimeError("MCP transport unavailable"))
+        logger.warning("MCP transport unavailable")
 
     async def _stderr_loop(self) -> None:
         stderr = getattr(self.process, "stderr", None)
@@ -460,9 +597,7 @@ class _StdioJSONRPCConnection:
             return
 
         if not isinstance(payload, dict):
-            logger.debug(
-                "Ignoring unexpected MCP payload type: {}", type(payload).__name__
-            )
+            logger.debug("Ignoring unexpected MCP payload")
             return
 
         if "method" in payload and "id" in payload:
@@ -477,7 +612,7 @@ class _StdioJSONRPCConnection:
             self._handle_response(payload)
             return
 
-        logger.debug("Ignoring unrecognized MCP payload: {}", payload)
+        logger.debug("Ignoring unrecognized MCP payload")
 
     async def _handle_server_request(self, payload: Dict[str, Any]) -> None:
         request_id = payload.get("id")
@@ -506,8 +641,8 @@ class _StdioJSONRPCConnection:
 
     def _handle_response(self, payload: Dict[str, Any]) -> None:
         request_id = payload.get("id")
-        if not isinstance(request_id, int):
-            logger.debug("Ignoring MCP response with non-integer id: {}", request_id)
+        if isinstance(request_id, bool) or not isinstance(request_id, int):
+            logger.debug("Ignoring MCP response with invalid id")
             return
 
         future = self._pending_requests.pop(request_id, None)
@@ -526,10 +661,10 @@ class _StdioJSONRPCConnection:
 
     def _fail_pending_requests(self, exc: Exception) -> None:
         for request_id, future in list(self._pending_requests.items()):
+            self._pending_requests.pop(request_id, None)
             if future.done():
                 continue
             future.set_exception(exc)
-            self._pending_requests.pop(request_id, None)
 
 
 class MCPClient:
@@ -565,18 +700,26 @@ class MCPClient:
             await self._teardown_connection(server_id)
 
         session = None
+        deadline = _monotonic() + CONNECT_TIMEOUT_SECONDS
         try:
-            process = await asyncio.create_subprocess_exec(
-                command,
-                *(args or []),
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                env=env,
-                limit=_STDIO_STREAM_LIMIT_BYTES,
+            spawn_timeout = _remaining(deadline, "MCP connection deadline exceeded")
+            process = await asyncio.wait_for(
+                asyncio.create_subprocess_exec(
+                    command,
+                    *(args or []),
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env=env,
+                    limit=MAX_OUTPUT_LINE_BYTES,
+                ),
+                timeout=spawn_timeout,
             )
             session = _StdioJSONRPCConnection(process, client_name=self.name)
-            await session.initialize()
+            initialize_timeout = _remaining(
+                deadline, "MCP connection deadline exceeded"
+            )
+            await asyncio.wait_for(session.initialize(), timeout=initialize_timeout)
 
             self.sessions[server_id] = session
             self.servers[server_id] = {
@@ -587,17 +730,32 @@ class MCPClient:
                 "resources": [],
                 "prompts": [],
                 "protocol_version": session.protocol_version,
-                "server_info": dict(session.server_info),
-                "server_capabilities": dict(session.server_capabilities),
+                "server_info": _bounded_json_copy(
+                    session.server_info,
+                    message="Invalid MCP initialization metadata",
+                    mapping=True,
+                ),
+                "server_capabilities": _bounded_json_copy(
+                    session.server_capabilities,
+                    message="Invalid MCP initialization metadata",
+                    mapping=True,
+                ),
             }
 
-            await self._discover_server_capabilities(server_id)
+            discovery_timeout = _remaining(deadline, "MCP connection deadline exceeded")
+            await asyncio.wait_for(
+                self._discover_server_capabilities(server_id),
+                timeout=discovery_timeout,
+            )
 
             logger.info("Successfully connected to MCP server: {}", server_id)
             return True
 
+        except asyncio.CancelledError:
+            await self._bounded_teardown_connection(server_id, session=session)
+            raise
         except Exception as e:
-            await self._teardown_connection(server_id, session=session)
+            await self._bounded_teardown_connection(server_id, session=session)
             logger.error("Failed to connect to MCP server {}: {}", server_id, e)
             return False
 
@@ -805,7 +963,18 @@ class MCPClient:
                 {
                     "name": tool.name,
                     "description": tool.description,
-                    "inputSchema": tool.inputSchema,
+                    "inputSchema": _bounded_json_copy(
+                        tool.inputSchema,
+                        message="Invalid MCP catalog items",
+                        max_bytes=MAX_SCHEMA_BYTES,
+                        max_depth=MAX_SCHEMA_DEPTH,
+                        mapping=True,
+                    ),
+                    "annotations": _bounded_json_copy(
+                        getattr(tool, "annotations", {}),
+                        message="Invalid MCP catalog items",
+                        mapping=True,
+                    ),
                 }
             )
         return tools
@@ -830,6 +999,12 @@ class MCPClient:
                     "name": resource.name,
                     "description": resource.description,
                     "mimeType": resource.mimeType,
+                    "annotations": _bounded_json_copy(
+                        getattr(resource, "annotations", {}),
+                        message="Invalid MCP catalog items",
+                        mapping=True,
+                    ),
+                    "size": getattr(resource, "size", None),
                 }
             )
         return resources
@@ -860,6 +1035,11 @@ class MCPClient:
                         }
                         for arg in (prompt.arguments or [])
                     ],
+                    "annotations": _bounded_json_copy(
+                        getattr(prompt, "annotations", {}),
+                        message="Invalid MCP catalog items",
+                        mapping=True,
+                    ),
                 }
             )
         return prompts
@@ -902,6 +1082,60 @@ class MCPClient:
                 await active_session.close()
             except Exception:
                 pass
+            finally:
+                self.sessions.pop(server_id, None)
+                self.servers.pop(server_id, None)
+        else:
+            self.sessions.pop(server_id, None)
+            self.servers.pop(server_id, None)
 
-        self.sessions.pop(server_id, None)
-        self.servers.pop(server_id, None)
+    async def _bounded_teardown_connection(
+        self,
+        server_id: str,
+        *,
+        session: Optional[_StdioJSONRPCConnection] = None,
+    ) -> None:
+        active_session = (
+            session if session is not None else self.sessions.get(server_id)
+        )
+        cleanup = asyncio.create_task(
+            self._teardown_connection(server_id, session=session)
+        )
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(cleanup), timeout=CLEANUP_TIMEOUT_SECONDS
+            )
+        except asyncio.TimeoutError:
+            cleanup.cancel()
+            await asyncio.gather(cleanup, return_exceptions=True)
+            process = getattr(active_session, "process", None)
+            stdin = getattr(process, "stdin", None)
+            if stdin is not None:
+                try:
+                    stdin.close()
+                except Exception:
+                    pass
+            if process is not None and getattr(process, "returncode", None) is None:
+                try:
+                    process.terminate()
+                except Exception:
+                    pass
+                try:
+                    await asyncio.wait_for(
+                        process.wait(), timeout=_TERMINATE_TIMEOUT_SECONDS
+                    )
+                except Exception:
+                    try:
+                        process.kill()
+                    except Exception:
+                        pass
+                    else:
+                        try:
+                            await asyncio.wait_for(
+                                process.wait(), timeout=_TERMINATE_TIMEOUT_SECONDS
+                            )
+                        except Exception:
+                            pass
+        finally:
+            self.sessions.pop(server_id, None)
+            self.servers.pop(server_id, None)
