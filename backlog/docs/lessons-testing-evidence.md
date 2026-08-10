@@ -1847,6 +1847,9 @@ route the sub-legs through `connect_private_sqlite` with a registered owner
 (`rag.chachanotes_keyword_leg`, read-only URI), add the inventory row, and bump the
 ratchet — which is what the guard existed to make happen, roughly a day later than it
 should have.
+
+---
+
 ## `Widget.focus()` is deferred — a same-handler capture of `app.focused` sees the old widget
 
 **task-3311, 2026-08-09.** The Ingest Clear handler called `path_input.focus()` and
@@ -1896,3 +1899,58 @@ churn to bisect further. Corollary of the incident: line numbers in an earlier
 failure report drift as you edit the file — re-derive the failing STATEMENT
 before diagnosing (a "status query" failure here was actually the post-completion
 query racing the finish-of-run recompose, three asserts later than first read).
+
+---
+
+## A heuristic candidate list is not a complete remediation inventory (2026-08-09)
+
+**Incident (TASK-2118 final review).** A spelling-filtered logger sweep was
+correctly documented as heuristic AC evidence, but its content-bearing subset
+was later copied into a follow-up task as though it were the complete
+summarization privacy inventory. Reviewing every logger call in the two owned
+modules found many more prompt, response/output, credential-fragment, private
+endpoint/path, and exception/error-detail diagnostics that the filter was never
+designed to find.
+
+**The rule.** Preserve the stated proof boundary when evidence crosses into a
+follow-up. Build remediation inventories from the complete owning population,
+grouped by stable module/function/diagnostic identity; use heuristic matches
+only as candidates or cross-checks, never as the denominator.
+
+---
+
+## A line-independent diagnostic digest can still be indentation-sensitive (TASK-14651, 2026-08-09)
+
+**Incident.** The persistent-diagnostic inventory described its call digests as
+position-independent. Moving an unchanged multiline Library diagnostic into a
+more deeply nested block still changed its digest because
+`ast.get_source_segment()` retains continuation-line indentation. Later in the
+same reconciliation, range-formatting three already-reviewed logger calls made
+the architecture gate red again even though their AST behavior was unchanged.
+
+**The rule.** Treat this inventory as line-number-independent, not
+whitespace-independent. When reviewing a delta, compare the actual logger-call
+AST/source as well as the digest so a pure indentation change is not mistaken
+for a policy change. Run formatter gates before the final generated-artifact
+refresh, then rerun the inventory checker after formatting. Do not refresh the
+manifest first and assume later formatting is harmless.
+
+---
+
+## A generated-inventory rebase conflict is a new review boundary (TASK-14651, 2026-08-10)
+
+**Incident.** Rebasing the diagnostic-privacy PR 79 commits onto current dev
+conflicted in the generated manifest. Regenerating it made the architecture
+gate green, but also imported 17 upstream diagnostic additions since the prior
+reviewed base. Sixteen carried implicit tracebacks, exception messages, bound
+session/message IDs, a media ID, or user-entered trim values. Treating the
+generator as a mechanical conflict resolver would have silently blessed every
+one.
+
+**The rule.** A governed generated artifact must be re-reviewed when its source
+population changes during rebase. Compare the diagnostic call population from
+the last reviewed base to the new base, classify each added or changed call
+under the governing ADR, extend the guard for newly observed syntax such as
+dynamic `exception=` values, stdlib exception/stack capture, chained
+`bind(...)` fields, and direct keyword-format values, then regenerate. Passing
+the generator proves consistency, not policy compliance.

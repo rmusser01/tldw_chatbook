@@ -8037,9 +8037,10 @@ class ConsoleChatController:
         """Return one session's presentation context with a safe global fallback."""
         try:
             global_default = self._global_user_display_name()
-        except Exception:
-            logger.opt(exception=True).warning(
-                "Console global user display-name accessor failed."
+        except Exception as exc:
+            logger.warning(
+                "Console global user display-name accessor failed (error_type={}).",
+                type(exc).__name__,
             )
             global_default = "User"
         return self.store.presentation_context(session_id, global_default)

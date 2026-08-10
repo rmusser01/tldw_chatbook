@@ -37,7 +37,10 @@ def _derive_runs_db(app_instance) -> AgentRunsDB | None:
     try:
         return AgentRunsDB(Path(db_path).parent / "agent_runs.db")
     except Exception as exc:  # noqa: BLE001 - any failure means "no DB"
-        logger.warning(f"Settings ▸ Agents: could not open agent_runs.db: {exc}")
+        logger.warning(
+            "Settings ▸ Agents: could not open agent runs database (error_type={})",
+            type(exc).__name__,
+        )
         return None
 
 

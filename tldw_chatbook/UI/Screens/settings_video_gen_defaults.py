@@ -161,7 +161,10 @@ def load_user_video_generation_table() -> Mapping[str, Any]:
     try:
         config_path = _get_effective_config_path()
     except Exception as exc:
-        logger.debug(f"video_generation: could not resolve config path: {exc}")
+        logger.debug(
+            "video_generation: could not resolve config path (error_type={})",
+            type(exc).__name__,
+        )
         return {}
     if not config_path.exists():
         return {}
@@ -169,7 +172,10 @@ def load_user_video_generation_table() -> Mapping[str, Any]:
         with open(config_path, "rb") as f:
             parsed = tomllib.load(f)
     except Exception as exc:
-        logger.debug(f"video_generation: could not parse {config_path}: {exc}")
+        logger.debug(
+            "video_generation: could not parse video-generation config (error_type={})",
+            type(exc).__name__,
+        )
         return {}
     section = parsed.get("video_generation")
     return section if isinstance(section, dict) else {}

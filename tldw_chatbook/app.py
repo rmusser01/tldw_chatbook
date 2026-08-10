@@ -8888,7 +8888,10 @@ class TldwCli(
         try:
             self._maybe_warn_config_load_failure()
         except Exception as e:
-            logger.error(f"Config load failure warning failed: {e}")
+            logger.error(
+                "Config load failure warning failed (error_type={})",
+                type(e).__name__,
+            )
 
     async def _run_no_splash_post_mount_setup(self) -> None:
         """Run screen startup and post-mount setup when the splash screen is disabled."""

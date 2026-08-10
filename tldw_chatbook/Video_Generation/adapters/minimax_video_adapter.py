@@ -352,7 +352,9 @@ class MiniMaxVideoAdapter:
             from loguru import logger
 
             logger.warning(
-                "MiniMax remote task cancel failed (local stop still honored): {}", exc
+                "MiniMax remote task cancel failed; local stop still honored "
+                "(error_type={})",
+                type(exc).__name__,
             )
 
     # -- response parsing ---------------------------------------------------

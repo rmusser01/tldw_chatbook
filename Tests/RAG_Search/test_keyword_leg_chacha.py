@@ -330,9 +330,10 @@ def test_missing_chacha_db_degrades_to_media_only_with_warning(
     assert results, "media sub-leg must keep working when chacha is missing"
     assert {r.metadata.get("source_type") for r in results} == {"media"}
     assert not (tmp_path / "absent-chacha.db").exists(), "search must never create a DB"
-    assert any("absent-chacha.db" in m for m in warnings_captured), (
-        f"missing chacha DB degraded silently; warnings: {warnings_captured}"
-    )
+    assert any(
+        "ChaChaNotes database not found" in message for message in warnings_captured
+    ), f"missing chacha DB degraded silently; warnings: {warnings_captured}"
+    assert all("absent-chacha.db" not in message for message in warnings_captured)
 
 
 def test_chacha_connection_is_read_only(tmp_path):

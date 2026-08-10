@@ -184,10 +184,8 @@ def build_ffmpeg_trim_args(
     # Unparseable or non-positive window: keep the absolute meaning by
     # seeking on the output side, where -to is not rebased.
     logger.warning(
-        "Time-range trim {start!r}-{end!r} could not be converted to a "
-        "duration; falling back to slower output-side seeking.",
-        start=start,
-        end=end,
+        "Time-range trim could not be converted to a duration; falling back "
+        "to slower output-side seeking."
     )
     return [], ["-ss", start, "-to", end]
 

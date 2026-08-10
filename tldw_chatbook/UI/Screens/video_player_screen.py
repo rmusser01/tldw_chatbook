@@ -212,7 +212,10 @@ class VideoPlayerScreen(ModalScreen[None]):
                     frame_to_ascii(image, cols=PIXELS_MAX_COLS)
                 )
         except Exception as exc:
-            logger.debug("video player frame render skipped: {}", exc)
+            logger.debug(
+                "video player frame render skipped (error_type={})",
+                type(exc).__name__,
+            )
 
     # -- status ---------------------------------------------------------------
 

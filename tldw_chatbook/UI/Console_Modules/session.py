@@ -1267,9 +1267,10 @@ class ConsoleSessionController:
                 greeting_template=greeting_template,
                 global_default=global_default,
             )
-        except Exception:
-            logger.opt(exception=True).warning(
-                "Character swap: roleplay template seed failed."
+        except Exception as exc:
+            logger.warning(
+                "Character swap: roleplay template seed failed (error_type={}).",
+                type(exc).__name__,
             )
             self.app_instance.notify(
                 "Character changed for this session, but the change could not be saved.",
@@ -1479,9 +1480,11 @@ class ConsoleSessionController:
                 greeting_template=seed.greeting_template,
                 global_default=global_name,
             )
-        except Exception:
-            logger.opt(exception=True).warning(
-                "Start Chat: roleplay template seed/persist failed; continuing."
+        except Exception as exc:
+            logger.warning(
+                "Start Chat: roleplay template seed/persist failed; continuing "
+                "(error_type={}).",
+                type(exc).__name__,
             )
         try:
             await self._sync_native_console_chat_ui()

@@ -225,7 +225,7 @@ class RegressionDetector:
         )
 
         self._save_atomic(baseline)
-        logger.info(f"Saved metric baseline '{bid}' with {len(metrics)} metrics")
+        logger.info("Saved metric baseline with {} metrics", len(metrics))
         return baseline
 
     def load_baseline(self, baseline_id: str = "latest") -> MetricBaseline | None:

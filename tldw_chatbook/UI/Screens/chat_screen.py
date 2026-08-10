@@ -16207,9 +16207,7 @@ class ChatScreen(BaseAppScreen):
             try:
                 store.enforce_retention()
             except Exception:
-                logger.opt(exception=True).warning(
-                    "Console video store retention sweep failed."
-                )
+                logger.warning("Console video store retention sweep failed.")
         return store
 
     def _build_video_card_specs(
@@ -16367,9 +16365,7 @@ class ChatScreen(BaseAppScreen):
             if composer is not None and saved_draft:
                 composer.clear_draft()
                 composer.insert_text_as_paste(saved_draft)
-            logger.opt(exception=True).error(
-                f"Video generation raised for session {session.id}: {exc}"
-            )
+            logger.error("Video generation raised (error_type={})", type(exc).__name__)
             await self._append_native_console_system_message(
                 f"Video generation failed: {exc}", session_id=session.id
             )
@@ -16428,7 +16424,9 @@ class ChatScreen(BaseAppScreen):
             else:
                 subprocess.Popen(["xdg-open", str(path)])  # nosec B603
         except Exception as exc:
-            logger.opt(exception=True).warning(f"Console video play failed: {exc}")
+            logger.warning(
+                "Console video play failed (error_type={})", type(exc).__name__
+            )
             self.app_instance.notify(
                 f"Could not open the video: {exc}", severity="error"
             )
@@ -16484,7 +16482,7 @@ class ChatScreen(BaseAppScreen):
         try:
             written = await asyncio.to_thread(_copy_to_disk)
         except Exception as exc:
-            logger.opt(exception=True).warning("Console save-video copy failed.")
+            logger.warning("Console save-video copy failed.")
             self.app_instance.notify(
                 f"Could not save the video: {escape_markup(str(exc))}", severity="error"
             )
@@ -16552,8 +16550,8 @@ class ChatScreen(BaseAppScreen):
             )
             await self._sync_native_console_chat_ui()
         except Exception as exc:  # noqa: BLE001 - reported, never a bare crash
-            logger.opt(exception=True).error(
-                f"Video regeneration raised for message {message_id}: {exc}"
+            logger.error(
+                "Video regeneration raised (error_type={})", type(exc).__name__
             )
             await self._append_native_console_system_message(
                 f"Video regeneration failed: {exc}", session_id=session_id
@@ -16591,7 +16589,9 @@ class ChatScreen(BaseAppScreen):
             )
             return
         except Exception as exc:  # egress refusal or unexpected resolution failure
-            logger.opt(exception=True).warning(f"stream resolution failed: {exc}")
+            logger.warning(
+                "stream resolution failed (error_type={})", type(exc).__name__
+            )
             await self._append_native_console_system_message(
                 f"Cannot stream that URL: {exc}"
             )

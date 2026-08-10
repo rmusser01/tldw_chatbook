@@ -4348,10 +4348,14 @@ def chat_with_huggingface(
         )
     else:
         logger.debug(
-            f"HuggingFace Final Payload (excluding messages, tools): {{ {', '.join(f'{k}: {v}' for k, v in payload.items() if k not in ['messages', 'tools'])} }}"
+            "HuggingFace Final Payload (safe fields only): "
+            f"{safe_llm_request_payload_summary(payload)}"
         )
     if "tools" in payload and not is_sensitive_llm_request():
-        logger.debug(f"HuggingFace Tools: {payload['tools']}")
+        tools_summary = safe_llm_request_payload_summary(
+            {"tools": payload["tools"]}, content_keys=()
+        )
+        logger.debug(f"HuggingFace Tools: {tools_summary}")
     redacted_headers = {
         key: "<redacted>" if key.lower() == "authorization" else value
         for key, value in headers.items()

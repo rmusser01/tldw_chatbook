@@ -2155,11 +2155,11 @@ class ConsoleChatStore:
         if source_changed:
             self._bump_identity_revision(session_id)
         context_persisted = self._persist_roleplay_context(session)
-        self._materialize_roleplay_projections(session_id, global_default=global_default)
+        self._materialize_roleplay_projections(
+            session_id, global_default=global_default
+        )
         if not context_persisted:
-            logger.bind(session_id=session_id).warning(
-                "Failed to persist seeded Console roleplay context."
-            )
+            logger.warning("Failed to persist seeded Console roleplay context.")
         return self._append_character_greeting(
             session_id,
             greeting_template=greeting_template,
@@ -2680,11 +2680,13 @@ class ConsoleChatStore:
                 ):
                     system_prompt_persisted = False
                     persisted = False
-            except Exception:
+            except Exception as exc:
                 system_prompt_persisted = False
                 persisted = False
-                logger.bind(session_id=plan.session_id).exception(
-                    "Failed to persist Console roleplay system prompt projection."
+                logger.warning(
+                    "Failed to persist planned Console roleplay system prompt "
+                    "projection (error_type={}).",
+                    type(exc).__name__,
                 )
         message_outcomes: list[_RoleplayMessageProjectionPersistenceOutcome] = []
         for message_write in plan.message_writes:
@@ -2723,10 +2725,12 @@ class ConsoleChatStore:
                 )
             try:
                 message_persisted = bool(message_write.writer(**kwargs))
-            except Exception:
+            except Exception as exc:
                 message_persisted = False
-                logger.bind(message_id=message_write.message_id).exception(
-                    "Failed to persist Console roleplay message projection."
+                logger.warning(
+                    "Failed to persist planned Console roleplay message projection "
+                    "(error_type={}).",
+                    type(exc).__name__,
                 )
             if not message_persisted:
                 persisted = False
@@ -2798,9 +2802,11 @@ class ConsoleChatStore:
             )
             if isinstance(payload_hash, str) and payload_hash:
                 self._sync_v2_message_versions[sync_write.stable_key] = payload_hash
-        except Exception:
-            logger.bind(message_id=outcome.native_message_id).exception(
-                "Failed to enqueue Sync v2 chat message after local mutation"
+        except Exception as exc:
+            logger.warning(
+                "Failed to enqueue roleplay Sync v2 chat message after local mutation "
+                "(error_type={}).",
+                type(exc).__name__,
             )
 
     def _persist_message_projection(self, message: ConsoleChatMessage) -> bool:
@@ -2808,9 +2814,11 @@ class ConsoleChatStore:
             return True
         try:
             return self._persist_existing_message(message)
-        except Exception:
-            logger.bind(message_id=message.id).exception(
-                "Failed to persist Console roleplay message projection."
+        except Exception as exc:
+            logger.warning(
+                "Failed to persist Console roleplay message projection "
+                "(error_type={}).",
+                type(exc).__name__,
             )
             return False
 
@@ -2829,15 +2837,15 @@ class ConsoleChatStore:
                     system_prompt=system_prompt,
                 )
             )
-        except Exception:
-            logger.bind(session_id=session.id).exception(
-                "Failed to persist Console roleplay system prompt projection."
+        except Exception as exc:
+            logger.warning(
+                "Failed to persist Console roleplay system prompt projection "
+                "(error_type={}).",
+                type(exc).__name__,
             )
             return False
 
-    def _persist_roleplay_context(
-        self, session: ConsoleChatSession
-    ) -> bool:
+    def _persist_roleplay_context(self, session: ConsoleChatSession) -> bool:
         if self.persistence is None or session.persisted_conversation_id is None:
             return True
         writer = getattr(self.persistence, "update_conversation_roleplay_context", None)
@@ -2851,9 +2859,10 @@ class ConsoleChatStore:
                     character_system_template=session.character_system_template,
                 )
             )
-        except Exception:
-            logger.bind(session_id=session.id).exception(
-                "Failed to persist Console roleplay identity context."
+        except Exception as exc:
+            logger.warning(
+                "Failed to persist Console roleplay identity context (error_type={}).",
+                type(exc).__name__,
             )
             return False
 
@@ -3566,10 +3575,7 @@ class ConsoleChatStore:
             session.user_display_name_override is not None
             or session.character_system_template is not None
         ) and not self._persist_roleplay_context(session):
-            logger.bind(
-                session_id=session_id,
-                conversation_id=session.persisted_conversation_id,
-            ).warning("Failed to flush Console roleplay context on first persist.")
+            logger.warning("Failed to flush Console roleplay context on first persist.")
             if strict_roleplay_context:
                 raise RuntimeError(
                     "Failed to flush Console roleplay context while promoting "

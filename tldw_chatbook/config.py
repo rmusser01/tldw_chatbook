@@ -4550,11 +4550,9 @@ def _write_raw_cli_config_unlocked(
         tomllib.loads(serialized)
     except tomllib.TOMLDecodeError as exc:
         logger.error(
-            "Refusing to write CLI config to {} -- the freshly serialized "
-            "TOML failed to parse back (error_type={}): {}",
-            config_path,
+            "Refusing to write CLI config: serialized TOML failed to parse back "
+            "(error_type={})",
             type(exc).__name__,
-            exc,
         )
         raise ConfigSerializationError(
             f"Refusing to write {config_path}: the serialized configuration "
