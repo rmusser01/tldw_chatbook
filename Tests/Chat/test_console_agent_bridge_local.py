@@ -41,6 +41,8 @@ from tldw_chatbook.Chat.console_agent_bridge import (
 )
 from tldw_chatbook.Chat.console_chat_controller import build_local_review_hook
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+from Tests.Agents.test_agent_service import FleetChat
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 
 
@@ -317,13 +319,22 @@ def test_skill_run_child_still_approval_gated(tmp_path):
         approval_calls.append(pending)
         return {"web_fetch": "approve_once"}
 
-    chat = _ScriptedChat(
+    # PR2a Task 6.5: the fleet is ON by default and a SKILL's spawn goes
+    # through the same `spawn` closure as `spawn_subagent`, so the skill
+    # child runs on its own thread. Addressed per agent instead of one
+    # ordered queue; the child is keyed by the task text `_StubSkillsService`
+    # renders for it. The replies themselves are unchanged.
+    chat = FleetChat(
         [
             _fence("web-research", {"args": "the question"}),  # primary: skill
-            _fence("web_fetch", {"url": "http://example.com/"}),  # child: local
-            "child synthesis",  # child final
             "primary final",
-        ]
+        ],
+        {
+            "RENDERED[web-research](the question)": [
+                _fence("web_fetch", {"url": "http://example.com/"}),  # child: local
+                "child synthesis",  # child final
+            ]
+        },
     )
     service = AgentService(
         db=AgentRunsDB(tmp_path / "runs.db", client_id="t"),

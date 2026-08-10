@@ -14,9 +14,11 @@ the older one.
 Scripting note: ``test_agent_service.ScriptedChat`` pops one shared
 ordered list, which stops being deterministic the moment children run on
 their own threads (whichever thread wins the race takes the next reply).
-``FleetChat`` below keeps the same shape but ADDRESSES replies -- an
-ordered script for the parent, a per-task script for each child -- so
-every assertion here is deterministic under real threads.
+``test_agent_service.FleetChat`` keeps the same shape but ADDRESSES
+replies -- an ordered script for the parent, a per-task script for each
+child -- so every assertion here is deterministic under real threads. It
+was written here and moved next to ``ScriptedChat`` in Task 6.5, when
+flipping the default made nine other suites need it too.
 """
 
 import threading
@@ -46,10 +48,7 @@ from tldw_chatbook.Agents.agent_models import (
     WAIT_AGENTS_TOOL_NAME,
 )
 from tldw_chatbook.Agents import agent_service
-from tldw_chatbook.Agents.agent_service import (
-    SUBAGENT_SYSTEM_PROMPT,
-    AgentService,
-)
+from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator
 from tldw_chatbook.Agents.run_context import current_run_id
 from tldw_chatbook.Agents.tool_catalog import (
@@ -61,76 +60,14 @@ from tldw_chatbook.Agents.tool_catalog import (
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
-from Tests.Agents.test_agent_service import ScriptedChat, fence, provider_reply
-
-# The child's system prompt is the sub-agent prompt (plus, for a named
-# agent, its instructions) followed by the rendered fence protocol -- so a
-# prefix match on its first sentence is what identifies a child's provider
-# call, the same identity contract `console_agent_bridge._is_subagent`
-# relies on.
-_SUBAGENT_PREFIX = SUBAGENT_SYSTEM_PROMPT.split(".")[0]
+from Tests.Agents.test_agent_service import (
+    SUBAGENT_PROMPT_PREFIX,
+    FleetChat,
+    ScriptedChat,
+    fence,
+)
 
 _JOIN_TIMEOUT = 5.0
-
-
-def _child_task(payload: list[dict]) -> str | None:
-    """The task text of the child whose provider call this payload is.
-
-    Args:
-        payload: The ``messages_payload`` handed to ``chat_api_call``.
-
-    Returns:
-        The child's task text (its first user message), or ``None`` when
-        this payload belongs to the primary agent.
-    """
-    if not payload:
-        return None
-    system = payload[0]
-    if system.get("role") != "system":
-        return None
-    if not str(system.get("content", "")).startswith(_SUBAGENT_PREFIX):
-        return None
-    for message in payload[1:]:
-        if message.get("role") == "user":
-            return str(message.get("content", ""))
-    return None
-
-
-class FleetChat:
-    """Addressed scripted provider: one script per agent, not one queue.
-
-    Replies may be plain strings/dicts (as ``ScriptedChat``) or zero-arg
-    callables, which are invoked at call time -- that is how a test gates a
-    child on an ``Event`` or a ``Barrier`` while the parent keeps running.
-    """
-
-    def __init__(self, parent_replies, child_replies=None):
-        self.parent_replies = list(parent_replies)
-        self.child_replies = {
-            task: list(script) for task, script in (child_replies or {}).items()
-        }
-        self.calls: list[dict] = []
-        self.child_calls: dict[str, list[dict]] = {}
-        self._lock = threading.Lock()
-
-    def __call__(self, **kwargs):
-        payload = kwargs["messages_payload"]
-        task = _child_task(payload)
-        with self._lock:
-            self.calls.append(kwargs)
-            if task is None:
-                assert self.parent_replies, "parent script exhausted"
-                item = self.parent_replies.pop(0)
-            else:
-                self.child_calls.setdefault(task, []).append(kwargs)
-                script = self.child_replies.get(task)
-                assert script, f"no scripted reply left for child task {task!r}"
-                item = script.pop(0)
-        # Called OUTSIDE the lock: a gated reply blocks here, and holding
-        # the lock would serialize the very concurrency under test.
-        if callable(item):
-            item = item()
-        return provider_reply(item)
 
 
 class RunIdProbeProvider:
@@ -205,13 +142,40 @@ def make_fleet_service(
     return service, chat, coordinator
 
 
-def make_inline_service(db, replies):
-    """An AgentService with NO coordinator -- the pre-PR inline path.
+def _patch_max_live(monkeypatch, value):
+    """Make `[agents] max_live_subagents` read as `value`.
+
+    Every OTHER `_setting` key (the run-log eviction knobs read by
+    `_make_call_model`) must keep returning its own default, or this
+    fixture would silently reconfigure unrelated behaviour.
+    """
+    real_key = agent_service.MAX_LIVE_SUBAGENTS_KEY
+
+    def fake_setting(key, default):
+        return value if key == real_key else default
+
+    monkeypatch.setattr(agent_service, "_setting", fake_setting)
+
+
+def make_inline_service(db, replies, monkeypatch, *, max_live=1):
+    """An AgentService on the pre-PR inline path: no coordinator, cap 1.
+
+    `monkeypatch` is REQUIRED, not optional: since Task 6.5 the shipped
+    default is 3, so merely omitting the injected coordinator no longer
+    buys the inline path -- `run_turn` would size a fleet from config.
+    Every inline-path test therefore has to say `max_live_subagents = 1`
+    out loud, which is also what a user opting out actually writes.
 
     Uses the ORDINARY single-queue ``ScriptedChat``: with no fleet there
     are no threads, so strict reply ordering is exactly what should still
     hold -- and asserting against it is the point.
+
+    Args:
+        max_live: the raw `[agents] max_live_subagents` value to pin.
+            Defaults to the opt-out, `1`; the config-coercion test passes
+            other values that must ALSO resolve to the inline path.
     """
+    _patch_max_live(monkeypatch, max_live)
     registry = ToolCatalogRegistry()
     registry.register_provider(BuiltinToolProvider())
     chat = ScriptedChat(replies)
@@ -642,7 +606,7 @@ def test_single_child_under_a_live_fleet_routes_through_wait_agents(db):
     # Same clean context: the child saw only its task + its own prompt.
     child_call = chat.child_calls["compute 6*7"][0]["messages_payload"]
     assert child_call[0]["role"] == "system"
-    assert child_call[0]["content"].startswith(_SUBAGENT_PREFIX)
+    assert child_call[0]["content"].startswith(SUBAGENT_PROMPT_PREFIX)
     assert child_call[1] == {"role": "user", "content": "compute 6*7"}
     assert not any("delegate this" in m["content"] for m in child_call)
     # Same result text reaches the parent -- via wait_agents rather than
@@ -651,11 +615,16 @@ def test_single_child_under_a_live_fleet_routes_through_wait_agents(db):
     assert wait_results and "sub answer: 42" in wait_results[0]
 
 
-def test_without_a_coordinator_spawn_stays_inline(db):
-    """No coordinator => the pre-PR inline path, result returned by spawn.
+def test_max_live_of_one_keeps_spawn_inline(db, monkeypatch):
+    """`max_live_subagents = 1` => the pre-PR inline path, result from spawn.
 
-    This is the gate that keeps the existing spawn suites byte-identical:
-    the fleet is opt-in, and an un-opted-in service must not thread.
+    This is the KILL SWITCH gate. Before Task 6.5 the same guarantee was
+    reached by simply not injecting a coordinator (the default was 1);
+    since the default is 3, opting out is an explicit config value, and
+    this test now pins that value rather than the absence of an injection.
+    What it guarantees is unchanged: at a cap of 1 no coordinator is
+    built, the child runs inline and synchronously, and `spawn` itself
+    returns the child's answer instead of a handle.
     """
     service, _chat = make_inline_service(
         db,
@@ -664,6 +633,7 @@ def test_without_a_coordinator_spawn_stays_inline(db):
             "sub answer: 42",  # consumed by the child, INLINE and in order
             "The sub-agent says 42.",
         ],
+        monkeypatch,
     )
     run_id, outcome = service.run_turn(
         conversation_id="c",
@@ -672,6 +642,7 @@ def test_without_a_coordinator_spawn_stays_inline(db):
         api_endpoint="llama_cpp",
     )
     assert outcome.status == RUN_DONE
+    assert service._fleet is None
     spawn_results = _tool_results(db.get_run(run_id), SPAWN_TOOL_NAME)
     # The spawn call itself returned the child's answer -- no handle.
     assert spawn_results == ["sub answer: 42"]
@@ -679,8 +650,9 @@ def test_without_a_coordinator_spawn_stays_inline(db):
     assert child["result"] == "sub answer: 42"
 
 
-def test_fleet_tools_are_not_offered_without_a_coordinator(db):
-    service, chat = make_inline_service(db, ["just answering"])
+def test_fleet_tools_are_not_offered_at_max_live_of_one(db, monkeypatch):
+    """Same kill-switch pin: at a cap of 1 neither fleet tool is disclosed."""
+    service, chat = make_inline_service(db, ["just answering"], monkeypatch)
     service.run_turn(
         conversation_id="c",
         messages=[{"role": "user", "content": "go"}],
@@ -733,10 +705,11 @@ def test_fleet_tools_are_primary_only(db):
 
 # -- the config switch: the ONLY production-reachable path ----------------
 #
-# Every other test in this file injects a coordinator. In production
-# nothing does (yet), so `[agents] max_live_subagents` -> `run_turn`'s
-# `max_live > 1` branch is the only way a real user turns the fleet on --
-# and it is the exact line the eventual default-flip will change.
+# Every other test in this file injects a coordinator. Nothing in
+# production does, so `[agents] max_live_subagents` -> `run_turn`'s
+# `max_live > 1` branch is the whole of a real user's control over the
+# fleet. Task 6.5 moved DEFAULT_MAX_LIVE_SUBAGENTS 1 -> 3, so that branch
+# is now taken by DEFAULT and a cap of 1 is the opt-OUT.
 
 
 @pytest.mark.parametrize(
@@ -760,21 +733,6 @@ def test_fleet_tools_are_primary_only(db):
 )
 def test_coerce_max_live_subagents(configured, expected):
     assert agent_service._coerce_max_live_subagents(configured) == expected
-
-
-def _patch_max_live(monkeypatch, value):
-    """Make `[agents] max_live_subagents` read as `value`.
-
-    Every OTHER `_setting` key (the run-log eviction knobs read by
-    `_make_call_model`) must keep returning its own default, or this
-    fixture would silently reconfigure unrelated behaviour.
-    """
-    real_key = agent_service.MAX_LIVE_SUBAGENTS_KEY
-
-    def fake_setting(key, default):
-        return value if key == real_key else default
-
-    monkeypatch.setattr(agent_service, "_setting", fake_setting)
 
 
 def test_config_above_one_builds_a_fleet_and_threads_spawns(db, monkeypatch):
@@ -811,15 +769,20 @@ def test_config_above_one_builds_a_fleet_and_threads_spawns(db, monkeypatch):
     assert waits and "answer one" in waits[0]
 
 
-@pytest.mark.parametrize("configured", ["1", 1, 0, "nonsense", None])
-def test_config_of_one_or_junk_keeps_the_inline_path(db, monkeypatch, configured):
-    """Anything that resolves to <= 1 -- including junk -- means no fleet.
+@pytest.mark.parametrize("configured", ["1", 1, 0, -5])
+def test_config_of_one_or_less_keeps_the_inline_path(db, monkeypatch, configured):
+    """Anything that RESOLVES to <= 1 means no fleet: the opt-out.
 
-    This is the shipped default, and the guarantee the pre-existing spawn
-    suites rely on: no coordinator, no fleet tools, spawn returns the
-    child's own answer.
+    Before Task 6.5 this parametrization also carried `"nonsense"` and
+    `None`, because unparseable config fell back to a default of 1. The
+    default is now 3, so junk resolves to a FLEET -- that half moved to
+    `test_config_of_junk_now_lands_on_the_default_fleet` below rather than
+    being dropped. `-5` replaces them here: a negative is still floored to
+    1 by `_coerce_max_live_subagents`, so it still means inline.
+
+    The guarantee itself is unchanged and is what a user opting out gets:
+    no coordinator, no fleet tools, spawn returns the child's own answer.
     """
-    _patch_max_live(monkeypatch, configured)
     service, chat = make_inline_service(
         db,
         [
@@ -827,6 +790,8 @@ def test_config_of_one_or_junk_keeps_the_inline_path(db, monkeypatch, configured
             "sub answer: 42",
             "The sub-agent says 42.",
         ],
+        monkeypatch,
+        max_live=configured,
     )
     run_id, outcome = service.run_turn(
         conversation_id="c",
@@ -841,6 +806,42 @@ def test_config_of_one_or_junk_keeps_the_inline_path(db, monkeypatch, configured
     system_prompt = chat.calls[0]["messages_payload"][0]["content"]
     assert WAIT_AGENTS_TOOL_NAME not in system_prompt
     assert CHECK_AGENTS_TOOL_NAME not in system_prompt
+
+
+@pytest.mark.parametrize("configured", ["nonsense", None, ""])
+def test_config_of_junk_now_lands_on_the_default_fleet(db, monkeypatch, configured):
+    """Junk config still never raises -- it lands on the DEFAULT, now 3.
+
+    The other half of the old `test_config_of_one_or_junk_keeps_the_
+    inline_path`: its junk cases asserted "no fleet" only because the
+    default they fall back to WAS 1. The coverage worth keeping is that a
+    malformed `[agents] max_live_subagents` never stops a run and always
+    resolves to a defined size -- so this asserts the same inputs against
+    what the default now is: a live fleet, threading its spawns.
+    """
+    _patch_max_live(monkeypatch, configured)
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    chat = FleetChat(
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "task one"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "done",
+        ],
+        {"task one": ["answer one"]},
+    )
+    service = AgentService(db=db, registry=registry, chat_call=chat)
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    assert service._fleet is not None
+    assert service._fleet._max_live == agent_service.DEFAULT_MAX_LIVE_SUBAGENTS
+    spawn_results = _tool_results(db.get_run(run_id), SPAWN_TOOL_NAME)
+    assert spawn_results and spawn_results[0].startswith("started ")
 
 
 def test_injected_coordinator_wins_over_the_config(db, monkeypatch):

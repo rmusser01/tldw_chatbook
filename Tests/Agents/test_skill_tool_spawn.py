@@ -19,6 +19,8 @@ from tldw_chatbook.Agents.tool_catalog import (
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
+from Tests.Agents.test_agent_service import FleetChat, verbatim
+
 
 def _fence(name, args):
     return f"{FENCE_OPEN}\n{json.dumps({'name': name, 'arguments': args})}\n```"
@@ -264,28 +266,39 @@ def test_skill_tool_executes_after_find_load_discloses_it(tmp_path):
 def test_combined_budget_native_spawn_then_skill_call(tmp_path):
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     reg = _registry_with_code_review_skill()
-    script = [
-        {
-            "choices": [
-                {
-                    "message": {
-                        "content": _fence(SPAWN_TOOL_NAME, {"task": "native task"})
+    # PR2a Task 6.5: the fleet is ON by default, so the native child runs
+    # on its own thread -- one ordered queue is no longer deterministic.
+    # Addressed per agent instead; the replies themselves are unchanged,
+    # and the COMBINED ceiling this test is about is unaffected by where
+    # the child runs (the counter is incremented in the one shared `spawn`
+    # closure, before either path branches).
+    chat = FleetChat(
+        [
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": _fence(SPAWN_TOOL_NAME, {"task": "native task"})
+                        }
                     }
-                }
-            ]
-        },
-        {"choices": [{"message": {"content": "native child answer"}}]},
-        {
-            "choices": [
-                {"message": {"content": _fence("code-review", {"args": "the diff"})}}
-            ]
-        },
-        {"choices": [{"message": {"content": "final"}}]},
-    ]
-    runner = _FakeSkillRunner()
-    service = AgentService(
-        db, reg, chat_call=lambda **k: script.pop(0), skill_runner=runner
+                ]
+            },
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": _fence("code-review", {"args": "the diff"})
+                        }
+                    }
+                ]
+            },
+            {"choices": [{"message": {"content": "final"}}]},
+        ],
+        {"native task": [{"choices": [{"message": {"content": "native child answer"}}]}]},
+        reply=verbatim,
     )
+    runner = _FakeSkillRunner()
+    service = AgentService(db, reg, chat_call=chat, skill_runner=runner)
     _r, outcome = service.run_turn(
         conversation_id="c1",
         messages=[{"role": "user", "content": "go"}],
@@ -308,28 +321,41 @@ def test_combined_budget_native_spawn_then_skill_call(tmp_path):
 def test_combined_budget_skill_call_then_native_spawn(tmp_path):
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     reg = _registry_with_code_review_skill()
-    script = [
-        {
-            "choices": [
-                {"message": {"content": _fence("code-review", {"args": "the diff"})}}
-            ]
-        },
-        {"choices": [{"message": {"content": "skill child answer"}}]},
-        {
-            "choices": [
-                {
-                    "message": {
-                        "content": _fence(SPAWN_TOOL_NAME, {"task": "native task"})
+    # PR2a Task 6.5: addressed per agent (see the sibling test above). The
+    # SKILL's own spawn is threaded too -- both paths go through the one
+    # `spawn` closure -- so the skill child is addressed by the task text
+    # `_FakeSkillRunner.run` renders for it.
+    chat = FleetChat(
+        [
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": _fence("code-review", {"args": "the diff"})
+                        }
                     }
-                }
+                ]
+            },
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": _fence(SPAWN_TOOL_NAME, {"task": "native task"})
+                        }
+                    }
+                ]
+            },
+            {"choices": [{"message": {"content": "final"}}]},
+        ],
+        {
+            "RENDERED[the diff]": [
+                {"choices": [{"message": {"content": "skill child answer"}}]}
             ]
         },
-        {"choices": [{"message": {"content": "final"}}]},
-    ]
-    runner = _FakeSkillRunner()
-    service = AgentService(
-        db, reg, chat_call=lambda **k: script.pop(0), skill_runner=runner
+        reply=verbatim,
     )
+    runner = _FakeSkillRunner()
+    service = AgentService(db, reg, chat_call=chat, skill_runner=runner)
     _r, outcome = service.run_turn(
         conversation_id="c1",
         messages=[{"role": "user", "content": "go"}],
@@ -369,29 +395,39 @@ def test_native_spawn_child_cannot_call_a_skill_tool(tmp_path):
     never reached (the counting fake's `spawned_with` stays ``None``)."""
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     reg = _registry_with_code_review_skill()
-    script = [
-        {
-            "choices": [
-                {
-                    "message": {
-                        "content": _fence(SPAWN_TOOL_NAME, {"task": "native task"})
+    # PR2a Task 6.5: addressed per agent (see the sibling tests above).
+    chat = FleetChat(
+        [
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": _fence(SPAWN_TOOL_NAME, {"task": "native task"})
+                        }
                     }
-                }
-            ]
-        },
-        # Inside the child: the model attempts the skill tool directly.
+                ]
+            },
+            {"choices": [{"message": {"content": "final"}}]},
+        ],
         {
-            "choices": [
-                {"message": {"content": _fence("code-review", {"args": "the diff"})}}
+            "native task": [
+                # Inside the child: the model attempts the skill tool directly.
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": _fence("code-review", {"args": "the diff"})
+                            }
+                        }
+                    ]
+                },
+                {"choices": [{"message": {"content": "child gave up"}}]},
             ]
         },
-        {"choices": [{"message": {"content": "child gave up"}}]},
-        {"choices": [{"message": {"content": "final"}}]},
-    ]
-    runner = _FakeSkillRunner()
-    service = AgentService(
-        db, reg, chat_call=lambda **k: script.pop(0), skill_runner=runner
+        reply=verbatim,
     )
+    runner = _FakeSkillRunner()
+    service = AgentService(db, reg, chat_call=chat, skill_runner=runner)
     _r, outcome = service.run_turn(
         conversation_id="c1",
         messages=[{"role": "user", "content": "go"}],

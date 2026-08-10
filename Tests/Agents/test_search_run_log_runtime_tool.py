@@ -13,6 +13,7 @@ from tldw_chatbook.Agents.agent_models import (
     RUNTIME_TOOL_NAMES,
     SEARCH_RUN_LOG_TOOL_NAME,
     SPAWN_TOOL_NAME,
+    WAIT_AGENTS_TOOL_NAME,
     AgentConfig,
     ModelTurn,
     RunBudget,
@@ -29,6 +30,7 @@ from tldw_chatbook.Agents.tool_catalog import (
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 from Tests.Agents.test_agent_runtime import make_deps
+from Tests.Agents.test_agent_service import FleetChat, verbatim
 
 
 def test_name_is_registered_as_a_runtime_tool():
@@ -148,18 +150,24 @@ def test_subagent_cannot_call_search_run_log(tmp_path, monkeypatch):
     reg = ToolCatalogRegistry()
     reg.register_provider(BuiltinToolProvider())
 
-    calls = []
-    script = [
-        _svc_fence(SPAWN_TOOL_NAME, {"task": "native task"}),  # parent spawns
-        _svc_fence(SEARCH_RUN_LOG_TOOL_NAME, {"contains": "x"}),  # child tries
-        {"choices": [{"message": {"content": "child gave up"}}]},
-        {"choices": [{"message": {"content": "final"}}]},
-    ]
-
-    def chat(**kwargs):
-        calls.append(kwargs)
-        return script.pop(0)
-
+    # PR2a Task 6.5: the fleet is ON by default, so the child runs on its
+    # own thread and its provider call may interleave with the parent's.
+    # An ADDRESSED script (one queue per agent) replaces the single ordered
+    # queue this test used to pop; every reply below still goes to exactly
+    # the agent it was written for.
+    chat = FleetChat(
+        [
+            _svc_fence(SPAWN_TOOL_NAME, {"task": "native task"}),  # parent spawns
+            {"choices": [{"message": {"content": "final"}}]},
+        ],
+        {
+            "native task": [
+                _svc_fence(SEARCH_RUN_LOG_TOOL_NAME, {"contains": "x"}),  # child tries
+                {"choices": [{"message": {"content": "child gave up"}}]},
+            ]
+        },
+        reply=verbatim,
+    )
     service = AgentService(db, reg, chat_call=chat)
     _rid, outcome = service.run_turn(
         conversation_id="c1",
@@ -174,11 +182,14 @@ def test_subagent_cannot_call_search_run_log(tmp_path, monkeypatch):
     )
     assert outcome.status == RUN_DONE
 
-    # (a) schema gate: the child's OWN call (calls[1] -- the parent's spawn
-    # dispatch runs the child's whole loop inline before dispatch returns,
-    # so this is the second chat_call invocation overall) must never have
-    # been offered search_run_log at all.
-    child_system_prompt = calls[1]["messages_payload"][0]["content"]
+    # (a) schema gate: the child's OWN first call must never have been
+    # offered search_run_log at all. Addressed by task text rather than by
+    # `calls[1]`: under the fleet the child's call is no longer guaranteed
+    # to be the second chat_call overall, but it is still THE call this
+    # assertion always meant.
+    child_system_prompt = chat.child_calls["native task"][0]["messages_payload"][0][
+        "content"
+    ]
     assert SEARCH_RUN_LOG_TOOL_NAME not in child_system_prompt
 
     # (b) dispatch gate: the child's call, made regardless of (a), must be
@@ -340,15 +351,22 @@ def test_parent_can_filter_its_log_to_subagent_records_via_kind(tmp_path, monkey
     reg.register_provider(BuiltinToolProvider())
 
     child_marker = "CHILD_ONLY_MARKER_4b8e"
-    script = [
-        _svc_fence(SPAWN_TOOL_NAME, {"task": "investigate"}),  # parent spawns
-        {"choices": [{"message": {"content": child_marker}}]},  # child's final answer
-        _svc_fence(SEARCH_RUN_LOG_TOOL_NAME, {"kind": "subagent"}),  # parent searches
-        {"choices": [{"message": {"content": "done"}}]},  # parent's final answer
-    ]
-
-    def chat(**kwargs):
-        return script.pop(0)
+    # PR2a Task 6.5: with the fleet ON the child runs on its own thread, so
+    # (a) the script is ADDRESSED per agent instead of one ordered queue,
+    # and (b) the parent must `wait_agents` before searching -- previously
+    # the inline spawn guaranteed the child's records were already in the
+    # log by the time spawn returned. The step budget is raised to fit that
+    # extra round; nothing here ever asserted on the budget.
+    chat = FleetChat(
+        [
+            _svc_fence(SPAWN_TOOL_NAME, {"task": "investigate"}),  # parent spawns
+            _svc_fence(WAIT_AGENTS_TOOL_NAME, {}),  # ... and collects
+            _svc_fence(SEARCH_RUN_LOG_TOOL_NAME, {"kind": "subagent"}),  # then searches
+            {"choices": [{"message": {"content": "done"}}]},  # parent's final answer
+        ],
+        {"investigate": [{"choices": [{"message": {"content": child_marker}}]}]},
+        reply=verbatim,
+    )
 
     service = AgentService(db, reg, chat_call=chat)
     _rid, outcome = service.run_turn(
@@ -358,7 +376,7 @@ def test_parent_can_filter_its_log_to_subagent_records_via_kind(tmp_path, monkey
             model="m",
             system_prompt="s",
             allowed_tools=("calculator", SPAWN_TOOL_NAME),
-            budget=RunBudget(),
+            budget=RunBudget(max_steps=16),
         ),
         api_endpoint="llama_cpp",
     )

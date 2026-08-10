@@ -29,10 +29,12 @@ from tldw_chatbook.Agents.agent_models import (
     SPAWN_TOOL_NAME,
     STEP_ERROR,
     STEP_TOOL_RESULT,
+    WAIT_AGENTS_TOOL_NAME,
 )
 from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 
+from Tests.Agents.test_agent_service import SUBAGENT_PROMPT_PREFIX
 from Tests.Agents.test_mcp_tool_provider import (
     FakeMCPService,
     _catalog_record,
@@ -45,9 +47,20 @@ def _fence(name, args):
 
 
 class _Gateway:
-    def __init__(self, scripts):
+    """Scripted gateway, addressed by AGENT rather than arrival order.
+
+    PR2a Task 6.5: `child_scripts` holds the spawned child's own turns.
+    With the fleet ON by default the child runs on its own thread, so a
+    single call-indexed queue would hand the child's scripted turn to
+    whichever agent happened to call second.
+    """
+
+    def __init__(self, scripts, child_scripts=()):
         self._scripts = list(scripts)
+        self._child_scripts = list(child_scripts)
         self.calls = 0
+        self.parent_calls = 0
+        self.child_calls = 0
 
     async def resolve_for_send(self, selection):
         class _R:
@@ -58,17 +71,46 @@ class _Gateway:
         return _R()
 
     async def stream_chat(self, resolution, messages, **kwargs):
-        chunks = self._scripts[self.calls]
+        system = str(messages[0].get("content", "")) if messages else ""
+        if system.startswith(SUBAGENT_PROMPT_PREFIX):
+            chunks = self._child_scripts[self.child_calls]
+            self.child_calls += 1
+        else:
+            chunks = self._scripts[self.parent_calls]
+            self.parent_calls += 1
         self.calls += 1
         for chunk in chunks:
             yield chunk
 
 
 class _SignalGateway:
-    def __init__(self, scripts, *, mark_fallback_calls=frozenset()):
+    """Scripted gateway that records the shared out-of-band signal.
+
+    PR2a Task 6.5: scripts are addressed by AGENT rather than by arrival
+    order. With the fleet ON by default a spawned child runs on its own
+    thread, so "the second call overall" is no longer reliably the child's
+    turn -- and marking the synthetic fallback on the wrong turn is exactly
+    the kind of silent mis-aim that would leave a test green while testing
+    nothing. `mark_fallback_calls` therefore holds ``(who, index)`` pairs,
+    where `who` is ``"parent"`` or ``"child"`` and `index` counts THAT
+    agent's own turns, which are strictly sequential.
+
+    Args:
+        scripts: turns for the primary agent, in order.
+        child_scripts: turns for the child, in order.
+        mark_fallback_calls: ``(who, index)`` pairs whose turn marks the
+            shared synthetic-fallback signal.
+    """
+
+    def __init__(
+        self, scripts, *, child_scripts=(), mark_fallback_calls=frozenset()
+    ):
         self._scripts = list(scripts)
+        self._child_scripts = list(child_scripts)
         self._mark_fallback_calls = mark_fallback_calls
         self.calls = []
+        self.parent_calls = 0
+        self.child_calls = 0
         self.resolution = ConsoleProviderResolution(
             provider="openai",
             base_url="https://provider.invalid/v1",
@@ -97,7 +139,8 @@ class _SignalGateway:
         return self.resolution
 
     async def stream_chat(self, resolution, messages, tools=None, signals=None):
-        call_index = len(self.calls)
+        system = str(messages[0].get("content", "")) if messages else ""
+        is_child = system.startswith(SUBAGENT_PROMPT_PREFIX)
         self.calls.append(
             {
                 "resolution": resolution,
@@ -106,9 +149,17 @@ class _SignalGateway:
                 "signals": signals,
             }
         )
-        if call_index in self._mark_fallback_calls:
+        if is_child:
+            who, index = "child", self.child_calls
+            self.child_calls += 1
+            chunks = self._child_scripts[index]
+        else:
+            who, index = "parent", self.parent_calls
+            self.parent_calls += 1
+            chunks = self._scripts[index]
+        if (who, index) in self._mark_fallback_calls:
             signals.mark_synthetic_fallback()
-        for chunk in self._scripts[call_index]:
+        for chunk in chunks:
             yield chunk
 
 
@@ -125,10 +176,12 @@ async def _real_agent_citation_controller(
     tmp_path,
     scripts,
     *,
+    child_scripts=(),
     mark_fallback_calls=frozenset(),
 ):
     gateway = _SignalGateway(
         scripts,
+        child_scripts=child_scripts,
         mark_fallback_calls=mark_fallback_calls,
     )
     store = ConsoleChatStore()
@@ -161,8 +214,8 @@ async def _real_agent_citation_controller(
     return result, controller, store, gateway
 
 
-def _controller(tmp_path, scripts, *, enabled=True):
-    gateway = _Gateway(scripts)
+def _controller(tmp_path, scripts, *, child_scripts=(), enabled=True):
+    gateway = _Gateway(scripts, child_scripts)
     store = ConsoleChatStore()
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
@@ -178,7 +231,7 @@ def _controller(tmp_path, scripts, *, enabled=True):
 
 
 @pytest.mark.parametrize(
-    ("scripts", "fallback_call"),
+    ("scripts", "child_scripts", "fallback_call", "expected_calls"),
     (
         (
             [
@@ -189,7 +242,9 @@ def _controller(tmp_path, scripts, *, enabled=True):
                 ["Primary final answer"],
                 ["Primary final answer [S1]"],
             ],
-            0,
+            (),
+            ("parent", 0),
+            2,
         ),
         (
             [
@@ -201,16 +256,24 @@ def _controller(tmp_path, scripts, *, enabled=True):
                 ["Primary final answer"],
                 ["Primary final answer [S1]"],
             ],
-            1,
+            (),
+            ("parent", 1),
+            3,
         ),
+        # PR2a Task 6.5: the sub-agent's turn is now the CHILD's own first
+        # turn on its own thread, not "the second call overall". Same
+        # scenario, addressed rather than counted -- and the parent gains a
+        # wait_agents round, since a threaded spawn returns a handle.
         (
             [
                 [_fence(SPAWN_TOOL_NAME, {"task": "answer briefly"})],
-                [NO_PROVIDER_CONTENT_COPY],
+                [_fence(WAIT_AGENTS_TOOL_NAME, {})],
                 ["Primary final answer"],
                 ["Primary final answer [S1]"],
             ],
-            1,
+            ([NO_PROVIDER_CONTENT_COPY],),
+            ("child", 0),
+            4,
         ),
     ),
     ids=("first-tool-turn", "intermediate-tool-turn", "subagent-turn"),
@@ -219,11 +282,14 @@ def _controller(tmp_path, scripts, *, enabled=True):
 async def test_citation_repair_agent_shared_fallback_signal_bypasses_after_any_earlier_turn(
     tmp_path,
     scripts,
+    child_scripts,
     fallback_call,
+    expected_calls,
 ):
     result, _controller, store, gateway = await _real_agent_citation_controller(
         tmp_path,
         scripts,
+        child_scripts=child_scripts,
         mark_fallback_calls=frozenset({fallback_call}),
     )
 
@@ -233,7 +299,9 @@ async def test_citation_repair_agent_shared_fallback_signal_bypasses_after_any_e
         if message.role is ConsoleMessageRole.ASSISTANT
     )
     assert result.visible_copy == assistant.content == "Primary final answer"
-    assert len(gateway.calls) == len(scripts) - 1
+    # The repair turn (the last parent script) is bypassed, which is the
+    # whole point -- so the run stops one parent turn short.
+    assert len(gateway.calls) == expected_calls
     signals = [call["signals"] for call in gateway.calls]
     assert signals[0] is not None
     assert all(signal is signals[0] for signal in signals)
@@ -1612,13 +1680,16 @@ async def test_mcp_tool_call_gates_subagent_call_same_as_primary(tmp_path):
     `AgentService._run_one`'s `spawn` closure threads the SAME ctor-level
     `review_tool_calls` hook (and the same `self.registry`) into the
     child's own `LoopDeps`/`invoke_tool`, not a bespoke unwired path."""
+    # PR2a Task 6.5: addressed per agent -- the child is on its own thread.
     scripts = [
         [_fence(SPAWN_TOOL_NAME, {"task": "please run it"})],  # primary: spawn a child
-        [_fence("mcp__srv__run", {"x": 1})],  # child: call the MCP tool
-        ["child refused."],  # child: final answer
         ["primary done."],  # primary: final answer
     ]
-    controller, store, db = _controller(tmp_path, scripts)
+    child_scripts = [
+        [_fence("mcp__srv__run", {"x": 1})],  # child: call the MCP tool
+        ["child refused."],  # child: final answer
+    ]
+    controller, store, db = _controller(tmp_path, scripts, child_scripts=child_scripts)
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
     )

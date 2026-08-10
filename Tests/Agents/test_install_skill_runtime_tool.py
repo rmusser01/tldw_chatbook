@@ -32,6 +32,8 @@ from tldw_chatbook.Agents.agent_models import (
 from tldw_chatbook.Agents.tool_catalog import INSTALL_SKILL_TOOL_SCHEMA
 from tldw_chatbook.Agents.agent_runtime import LoopDeps, run_agent_loop
 
+from Tests.Agents.test_agent_service import FleetChat, verbatim
+
 
 def test_install_skill_name_in_runtime_tool_names():
     assert INSTALL_SKILL_TOOL_NAME == "install_skill"
@@ -184,15 +186,25 @@ def test_subagent_cannot_call_install_skill(tmp_path):
     def installer(url):
         raise AssertionError("subagent must never reach the installer")
 
-    script = [
-        _svc_fence(SPAWN_TOOL_NAME, {"task": "native task"}),   # parent spawns
-        _svc_fence("install_skill", {"url": "https://github.com/o/r"}),  # child tries
-        {"choices": [{"message": {"content": "child gave up"}}]},
-        {"choices": [{"message": {"content": "final"}}]},
-    ]
-    service = AgentService(
-        db, reg, chat_call=lambda **k: script.pop(0), install_skill_tool=installer
+    # PR2a Task 6.5: the fleet is ON by default, so the child runs on its
+    # own thread -- one ordered queue is no longer deterministic. Addressed
+    # per agent instead; the replies themselves are unchanged.
+    chat = FleetChat(
+        [
+            _svc_fence(SPAWN_TOOL_NAME, {"task": "native task"}),   # parent spawns
+            {"choices": [{"message": {"content": "final"}}]},
+        ],
+        {
+            "native task": [
+                _svc_fence(
+                    "install_skill", {"url": "https://github.com/o/r"}
+                ),  # child tries
+                {"choices": [{"message": {"content": "child gave up"}}]},
+            ]
+        },
+        reply=verbatim,
     )
+    service = AgentService(db, reg, chat_call=chat, install_skill_tool=installer)
     _rid, outcome = service.run_turn(
         conversation_id="c1",
         messages=[{"role": "user", "content": "go"}],

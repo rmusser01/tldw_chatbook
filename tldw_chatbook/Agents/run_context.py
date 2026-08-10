@@ -1,11 +1,40 @@
-"""The dispatching run's id, bound for the duration of one tool invocation.
+"""The dispatching run's id, bound around a run's tool-facing work.
 
-PR2a Task 5. Both permission gates now key this turn's verdict stamps by
-``(run_id, tool_name)`` instead of by tool name alone, so that concurrent
-sub-agent runs sharing ONE gate instance cannot clear or overwrite each
-other's verdicts. The WRITE side gets its run id explicitly: the review
-hook is a callable ``AgentService`` wires per run, so ``run_id`` is just a
-parameter (see ``AgentService.review_tool_calls``).
+Two bindings exist, both established by ``AgentService`` and both reading
+back through ``current_run_id()``. They are not redundant: they cover
+different THREADS, because the work they guard runs in different places.
+
+1. **Per-invocation** (PR2a Task 5, ``_make_invoke_tool``) -- bound around
+   each ``ToolProvider.invoke``, so the permission gates can find this
+   run's own approval stamps when a tool executes. It must be established
+   inside the callable handed to ``_call_with_timeout``, because that
+   helper runs the tool on a fresh per-call daemon thread which does NOT
+   inherit the caller's context; a binding set on the loop thread would
+   simply be invisible there.
+
+2. **Loop-wide** (PR2a Task 7, around ``run_agent_loop`` in ``_run_one``)
+   -- bound for the whole run, on the loop thread. The per-invocation
+   binding above cannot cover this: the two things that ARM HUMAN
+   APPROVAL CARDS run on the loop thread rather than inside a provider
+   invoke -- ``review_tool_calls`` (one batch-approval round trip per
+   turn) and the in-loop runtime tools, of which ``run_skill_script``
+   raises a confirm card of its own. Both record ``current_run_id()`` at
+   arm time so a cancelled child's card can be revoked without touching a
+   live sibling's, and neither can be handed the id as a parameter (the
+   approval bridge is a pre-bound partial shared with
+   ``MCPToolProvider.approval_callback``; the runtime-tool closures are
+   built one layer below any run identity). One binding there covers both
+   -- and every future loop-thread consumer -- with no signature churn.
+
+The two nest harmlessly: the inner binding sets the same id the outer one
+holds, on a different thread.
+
+WHY A ContextVar AT ALL (PR2a Task 5). Both permission gates key this
+turn's verdict stamps by ``(run_id, tool_name)`` instead of by tool name
+alone, so that concurrent sub-agent runs sharing ONE gate instance cannot
+clear or overwrite each other's verdicts. The WRITE side gets its run id
+explicitly: the review hook is a callable ``AgentService`` wires per run,
+so ``run_id`` is just a parameter (see ``AgentService.review_tool_calls``).
 
 The READ side cannot. A stamp is consumed inside ``ToolProvider.invoke``
 (``BuiltinToolProvider.invoke`` -> ``BuiltinToolGate.check``,
@@ -20,13 +49,10 @@ each invocation instead -- the same shape, and for the same reason, as
 ``Tools/workspace_file_roots.run_workspace``, which already binds THIS
 run's workspace around ``BuiltinToolProvider.invoke``'s tool execution.
 
-Why a per-invocation binding is sound: the binding is established inside
-the callable ``AgentService._make_invoke_tool`` hands to
-``_call_with_timeout``, i.e. *on the thread that actually runs the tool*
-(``_call_with_timeout`` runs it on a fresh per-call daemon thread, which
-does NOT inherit the caller's context), and it is reset in its own
-``finally``. Nested inline runs are therefore LIFO-safe on one thread, and
-a run on its own thread (PR2a Task 6) simply sets its own value.
+Why either binding is sound under concurrency: each is reset in its own
+``finally``, so nested inline runs unwind LIFO on one thread, and a run on
+its own thread (PR2a Task 6, ON by default since Task 6.5) simply sets its
+own value in its own context -- siblings never see each other's.
 
 ``current_run_id()`` returns ``""`` outside any agent run -- e.g. a direct
 ``provider.invoke()`` from the MCP workbench's Test Tool. That is a

@@ -94,12 +94,21 @@ SUBAGENT_SYSTEM_PROMPT = CATALOG["agents.subagent_system"].default
 TRUNCATION_NOTICE = "\n[truncated]"
 
 #: ``[agents]`` key sizing the fleet: how many sub-agents of one turn may
-#: be live at once. **1 (the default) means the fleet is OFF** and every
-#: spawn runs the child INLINE, synchronously, exactly as it did before
-#: PR2a -- see `AgentService.__init__`'s `fleet_coordinator` for why the
-#: switch is here and not at the coordinator's cap.
+#: be live at once. **A value of 1 means the fleet is OFF** and every spawn
+#: runs the child INLINE, synchronously, exactly as it did before PR2a --
+#: see `AgentService.__init__`'s `fleet_coordinator` for why the switch is
+#: here and not at the coordinator's cap.
+#:
+#: PR2a Task 6.5 raised the DEFAULT from 1 to 3, turning the fleet ON for
+#: every user who has not opted out. Task 6 shipped the runtime dark at 1
+#: so the conversion of the ordered spawn suites could land as its own
+#: reviewable change; at 1 the feature was unreachable in production and
+#: its live verification unperformable. Setting `[agents]
+#: max_live_subagents = 1` restores the pre-PR2a inline path exactly --
+#: that is the supported kill switch, and it stays guarded by the
+#: `max_live=1` / config-of-one tests in `Tests/Agents/test_fleet_runtime`.
 MAX_LIVE_SUBAGENTS_KEY = "max_live_subagents"
-DEFAULT_MAX_LIVE_SUBAGENTS = 1
+DEFAULT_MAX_LIVE_SUBAGENTS = 3
 #: How long a poll loop sleeps between coordinator checks. Small enough
 #: that a cancelled run is not held up perceptibly, large enough not to
 #: spin a core while several children work.
@@ -457,10 +466,11 @@ class AgentService:
         # lifecycle (same convention as `_injected_run_log_writer`).
         # `None` -- every caller before this task, and the Console bridge
         # today -- makes `run_turn` size a fresh coordinator per turn from
-        # `[agents] max_live_subagents`, and **a cap of 1 (the shipped
-        # default) means no fleet at all**: `spawn` keeps running the
-        # child inline, synchronously, and neither wait_agents nor
-        # check_agents is offered.
+        # `[agents] max_live_subagents`, and **a cap of 1 means no fleet at
+        # all**: `spawn` keeps running the child inline, synchronously, and
+        # neither wait_agents nor check_agents is offered. Since Task 6.5
+        # the shipped DEFAULT is 3, so the Console gets a fleet unless the
+        # user opts out with that cap of 1.
         #
         # Why the switch is "is there a fleet" rather than "how big is
         # it": a non-blocking spawn is only coherent for a supervisor
@@ -469,8 +479,7 @@ class AgentService:
         # from spawn but no way to redeem it would simply lose its
         # children's work. Sizing the fleet at 1 therefore means "one
         # child at a time, inline" -- observably identical to pre-PR2a
-        # behaviour, which is this PR's stated acceptance criterion and
-        # what keeps the pre-existing spawn suites passing unmodified.
+        # behaviour, which is exactly what makes it a usable kill switch.
         self._injected_fleet_coordinator = fleet_coordinator
         # PR2a Task 7 -- the cancellation half of the approval gate.
         #
@@ -2320,8 +2329,9 @@ class AgentService:
         # honored as-is (the injector owns its lifecycle, and its presence
         # is itself the opt-in); otherwise the size comes from
         # `[agents] max_live_subagents`, read through the same `_setting`
-        # helper the run-log knobs use, and a size of 1 -- the shipped
-        # default -- means NO fleet: spawn keeps running children inline.
+        # helper the run-log knobs use, and a size of 1 -- the opt-out,
+        # since Task 6.5 made the default 3 -- means NO fleet: spawn keeps
+        # running children inline.
         self._fleet_threads = []
         self._fleet_cancels = {}
         if self._injected_fleet_coordinator is not None:
