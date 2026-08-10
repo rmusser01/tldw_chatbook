@@ -531,7 +531,17 @@ class ChatbookGatewayRuntime:
         normalized = self._normalize_prompt_arguments(
             arguments, self._prompt_parameter_kinds[name]
         )
-        return self._canonical_prompt_result(await handler(**normalized))
+        raw_result: object = None
+        handler_failed = False
+        try:
+            raw_result = await handler(**normalized)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            handler_failed = True
+        if handler_failed:
+            self._raise_invalid_prompt_result()
+        return self._canonical_prompt_result(raw_result)
 
     @classmethod
     def _normalize_prompt_arguments(
@@ -564,7 +574,7 @@ class ChatbookGatewayRuntime:
                 normalized[name] = value
             elif isinstance(value, bool):
                 cls._raise_invalid_prompt_arguments()
-            elif isinstance(value, int):
+            elif type(value) is int:
                 normalized[name] = value
             elif (
                 isinstance(value, str)
@@ -596,24 +606,36 @@ class ChatbookGatewayRuntime:
                 cls._raise_invalid_prompt_result()
             messages.append((role, content))
 
-        leading_system: list[str] = []
-        while messages and messages[0][0] == "system":
-            leading_system.append(messages.pop(0)[1])
-        if leading_system:
-            if not messages or messages[0][0] != "user":
+        leading_system_count = 0
+        while (
+            leading_system_count < len(messages)
+            and messages[leading_system_count][0] == "system"
+        ):
+            leading_system_count += 1
+        if leading_system_count:
+            if (
+                leading_system_count == len(messages)
+                or messages[leading_system_count][0] != "user"
+            ):
                 cls._raise_invalid_prompt_result()
-            user_text = messages[0][1]
-            messages[0] = (
-                "user",
-                "System instructions:\n"
-                + "\n\n".join(leading_system)
-                + "\n\nUser request:\n"
-                + user_text,
-            )
+            leading_system = [
+                content for _role, content in messages[:leading_system_count]
+            ]
+            user_text = messages[leading_system_count][1]
+            messages = [
+                (
+                    "user",
+                    "System instructions:\n"
+                    + "\n\n".join(leading_system)
+                    + "\n\nUser request:\n"
+                    + user_text,
+                ),
+                *messages[leading_system_count + 1 :],
+            ]
         if any(role == "system" for role, _content in messages):
             cls._raise_invalid_prompt_result()
 
-        return {
+        result = {
             "messages": [
                 {
                     "role": role,
@@ -622,6 +644,19 @@ class ChatbookGatewayRuntime:
                 for role, content in messages
             ]
         }
+        try:
+            serialized_result = json.dumps(
+                result,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+        except (RecursionError, TypeError, ValueError, UnicodeEncodeError):
+            cls._raise_invalid_prompt_result()
+        if len(serialized_result) > _GATEWAY_LIMITS.max_result_bytes:
+            cls._raise_invalid_prompt_result()
+        return result
 
     @staticmethod
     def _raise_invalid_prompt_arguments() -> NoReturn:
