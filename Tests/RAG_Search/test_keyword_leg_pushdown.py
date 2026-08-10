@@ -39,6 +39,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from loguru import logger
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
@@ -108,6 +109,22 @@ def _seed_chacha(tmp_path, notes, conversations, name="chacha.db"):
     finally:
         db.close_connection()
     return tmp_path / name
+
+
+@pytest.fixture
+def debug_logs():
+    """Collect loguru DEBUG+ records.
+
+    Same idiom as `test_keyword_leg_chacha.warnings_captured`, one level
+    lower. `capsys` never sees loguru output, so a "we logged it" claim is
+    unverifiable without a sink.
+    """
+    messages = []
+    sink_id = logger.add(lambda m: messages.append(str(m)), level="DEBUG")
+    try:
+        yield messages
+    finally:
+        logger.remove(sink_id)
 
 
 @pytest.fixture
@@ -377,8 +394,16 @@ def test_empty_selection_returns_an_empty_leg_without_querying(
     )
 
 
-def test_unknown_source_types_are_ignored_rather_than_crashing(mixed_corpus):
-    """Fail open to fewer sub-legs: an unknown name never breaks a search."""
+def test_unknown_source_types_are_ignored_rather_than_crashing(
+    mixed_corpus, debug_logs
+):
+    """Fail open to fewer sub-legs: an unknown name never breaks a search.
+
+    Failing open is only defensible if it leaves a trace -- a dropped type
+    silently narrows retrieval, and the debug line is the single thread
+    anyone debugging "why did my notes vanish" has to pull. Asserting the
+    log is what makes "ignored with a debug log" true rather than aspirational.
+    """
     media_path, chacha_path = mixed_corpus
     service = _make_service(media_db_path=media_path, chachanotes_db_path=chacha_path)
 
@@ -392,8 +417,124 @@ def test_unknown_source_types_are_ignored_rather_than_crashing(mixed_corpus):
     # not the engine's -- both are dropped, leaving the media sub-leg alone.
     assert _counts(results) == {"media": 12}
 
+    dropped = [
+        message
+        for message in debug_logs
+        if "unknown keyword-leg source type" in message
+    ]
+    assert dropped, "dropping a source type must leave a debug trace"
+    # Both offenders named, so the log identifies WHICH types were dropped
+    # rather than merely that something was.
+    assert "'notes'" in dropped[0] and "'prompts'" in dropped[0], dropped[0]
+
+
+def test_the_real_engine_refuses_a_selection_on_a_semantic_search(mixed_corpus):
+    """The guard must be pinned on the ENGINE, not only on a double.
+
+    `metadata_allowlist` scopes the vector leg and `keyword_source_types`
+    scopes the FTS leg; each is meaningless to the other, and the engine
+    raises rather than accepting a scoping request it will not honor. That
+    contract was previously asserted only by the Library suite's
+    `_ProfileRagService` double -- delete the real guard and that double
+    keeps happily asserting a contract nothing implements.
+    """
+    media_path, chacha_path = mixed_corpus
+    service = _make_service(media_db_path=media_path, chachanotes_db_path=chacha_path)
+
+    with pytest.raises(ValueError, match="keyword_source_types"):
+        asyncio.run(
+            service.search(
+                QUERY,
+                top_k=5,
+                search_type="semantic",
+                keyword_source_types={"note"},
+            )
+        )
+
+    # `None` is the default and must stay accepted on the semantic path.
+    asyncio.run(
+        service.search(
+            QUERY, top_k=5, search_type="semantic", keyword_source_types=None
+        )
+    )
+
 
 # --- The cache must not serve one selection's rows to another ---------------
+
+
+def _cache():
+    from tldw_chatbook.RAG_Search.simplified.simple_cache import SimpleRAGCache
+
+    return SimpleRAGCache(enabled=True)
+
+
+@pytest.mark.parametrize(
+    "equivalent",
+    [
+        ["note", "media"],  # list
+        ("media", "note"),  # tuple, the REVERSE of the list above
+        frozenset({"note", "media"}),  # frozenset
+        {"note", "media"},  # set, different literal order
+    ],
+)
+def test_one_selection_is_one_cache_key_whatever_its_iteration_order(equivalent):
+    """THE HIT DIRECTION. The miss pin below is only half the property.
+
+    `{"media","note"}` and `["note","media"]` are the same request, and set
+    iteration order for strings is hash-seed dependent, so without the
+    `sorted()` in `_make_key` the same selection hashes differently from run
+    to run (and between a set and the list a caller happened to build). The
+    result is not a wrong answer -- it is a cache that never hits again for
+    any mixed selection, silently, with every miss-direction test still
+    green.
+
+    The list and tuple cases are REVERSES of each other on purpose, and
+    neither is redundant: within one process a set's iteration order is
+    fixed, so it can agree with at most one of them. Deleting either leaves
+    a 50/50 chance (per hash seed) that dropping `sorted()` goes unnoticed.
+    Verified by mutation: `sorted(...)` -> `list(...)` reds exactly one of
+    the two.
+    """
+    cache = _cache()
+
+    canonical = cache._make_key(
+        "quokka", "hybrid", 10, None, None, {"media", "note"}
+    )
+
+    assert (
+        cache._make_key("quokka", "hybrid", 10, None, None, equivalent) == canonical
+    ), f"{equivalent!r} did not canonicalize to the same key"
+
+
+def test_no_selection_keeps_the_legacy_key_byte_identical():
+    """Backward compat: entries written before this parameter existed must
+    still be findable. `None` contributes NO key part, so the pre-TASK-14751
+    five-argument call and today's six-argument one agree."""
+    cache = _cache()
+
+    legacy = cache._make_key("quokka", "hybrid", 10, None, None)
+    explicit_none = cache._make_key("quokka", "hybrid", 10, None, None, None)
+
+    assert legacy == explicit_none
+
+
+def test_an_empty_selection_is_not_the_same_request_as_no_selection():
+    """`set()` means "no keyword leg" and `None` means "all of it" -- two
+    different searches returning different rows, so two different keys."""
+    cache = _cache()
+
+    assert cache._make_key("quokka", "hybrid", 10, None, None, set()) != cache._make_key(
+        "quokka", "hybrid", 10, None, None, None
+    )
+
+
+def test_different_selections_get_different_cache_keys():
+    """The miss direction, at the key level (the end-to-end pin is below)."""
+    cache = _cache()
+
+    assert cache._make_key(
+        "quokka", "hybrid", 10, None, None, {"media"}
+    ) != cache._make_key("quokka", "hybrid", 10, None, None, {"note"})
 
 
 def test_selections_do_not_share_a_cache_entry(tmp_path):
