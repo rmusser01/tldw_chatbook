@@ -15,7 +15,21 @@
 - Worktree `.worktrees/fleet-pr2a`, branch `feat/fleet-concurrency-runtime` (already cut from merged dev). NEVER run git outside it. NEVER use `git stash` (shared across 100+ worktrees). Push after every task.
 - pytest is the ONLY python entry point. A bare `python -c` importing `tldw_chatbook.config` triggers the app's config-rewrite and has touched the user's LIVE config — never do it. Never read/write `~/.config/tldw_cli` or `~/.local/share/tldw_cli`.
 - `agent_models.py` and `agent_runtime.py` stay pure (stdlib only; no Textual/app/DB/I/O). `fleet_coordinator.py` may import `threading` and stdlib only — no DB, no Textual. The impure wiring lives in `agent_service.py`.
-- **Byte-identical single-child behavior is an acceptance criterion.** With `max_live_subagents=1` (or one spawn), observable behavior — ordering of steps, run rows, results, budget accounting — must match pre-PR. The existing spawn suite is the guard; it must pass unmodified.
+- **Byte-identical behavior AC — amended 2026-08-09 after Task 6 (the original was unsatisfiable).**
+  The original constraint required all three of: (i) byte-identical at `max_live_subagents=1`
+  *or one spawn*, (ii) the existing spawn suites pass unmodified, (iii) default 3 (Task 8).
+  These cannot all hold: those suites drive one ordered reply queue and index
+  `chat.calls[1]`, and they assert the *spawn* tool_result carries the child's capped text —
+  all three encode inline **semantics**, not just inline ordering. Under a live fleet the
+  result arrives via `wait_agents` and the parent emits an extra tool call, so "one spawn"
+  is not byte-identical either. Flipping the default measures at **23 failures across 11
+  files**. The AC is therefore re-pinned as:
+  - **`max_live_subagents=1` means no coordinator is built and the spawn closure takes the
+    verbatim pre-PR inline branch** — byte-identical, guarded by the three suites passing
+    unmodified. This is the *only* byte-identical claim.
+  - **At `max_live_subagents>1` behavior deliberately changes** (results via `wait_agents`);
+    the affected suites are converted to addressed replies in **Task 6.5**, which also flips
+    the default. No task may claim the byte-identical AC while the fleet is on.
 - Depth-1 stays structural: children never spawn (`clamp_child_budget` zeroes `max_subagents`); fleet tools are primary-only, pinned like `install_skill`.
 - Intersection-never-union and the identity-contract prompt append (PR 1) are untouched.
 - `clamp_child_budget` stays byte-identical in this PR (turn-scoped children must still die with the parent). Containment changes land in PR 3a.
@@ -697,6 +711,77 @@ git add -u && git commit -m "fix: revoke pending approval cards when a child is 
 
 ---
 
+### Task 6.5: Turn the fleet ON (default flip + convert ordered spawn scripts)
+
+**Added 2026-08-09.** Task 6 shipped the runtime behind `max_live_subagents=1`, i.e. dark:
+at the default no coordinator is built, spawn stays inline, and neither fleet tool is
+offered. Without this task the PR merges with its central feature unreachable and Task 8's
+live verification ("spawn two agents in one reply") permanently unperformable. Do not fold
+this into Task 8 — it is a suite conversion, not a config tweak.
+
+**Files:**
+- Modify: `tldw_chatbook/Agents/agent_service.py` (`DEFAULT_MAX_LIVE_SUBAGENTS` 1 → 3)
+- Modify: the 11 test files below
+- Test: `Tests/Agents/test_fleet_runtime.py` (re-pin the two default-dependent tests)
+
+**Interfaces:** no API change — this flips a default and converts test harnesses.
+
+- [ ] **Step 1: Measure the true baseline before changing anything**
+
+Flip `DEFAULT_MAX_LIVE_SUBAGENTS` to 3, run the full battery, and record the exact failing
+test list. The review measured **23 failures / 11 files**: `test_agent_service.py` (8),
+`test_skill_tool_spawn.py` (3), `test_console_agent_bridge.py` (2),
+`test_search_run_log_runtime_tool.py` (2), `test_fleet_runtime.py` (2, self-inflicted),
+and 1 each in `test_install_skill_runtime_tool.py`, `test_run_log_cross_run_search.py`,
+`test_run_log_sandbox_isolation.py`, `test_run_log_stats_slice_runtime_tools.py`,
+`test_run_log_workspace_isolation.py`, `test_run_skill_script_runtime_tool.py`.
+If your list differs, reconcile it before proceeding — a new failure is a real regression.
+
+- [ ] **Step 2: Convert ordered reply queues to addressed ones**
+
+`ScriptedChat` pops off one shared list (`self.replies.pop(0)`) and tests index
+`chat.calls[1]` positionally; with concurrent children neither is deterministic. Use the
+`FleetChat` pattern already in `Tests/Agents/test_fleet_runtime.py` (address replies by
+which agent/turn asked for them, not by arrival order). Convert each failing test.
+**Preserve every assertion's meaning.** Where a test asserted the *spawn* tool_result
+carries the child's capped text, that assertion moves to the `wait_agents` result — same
+guarantee, new carrier; say so in a comment so a future reader doesn't read it as a
+weakening.
+
+- [ ] **Step 3: Re-pin the two default-dependent fleet tests**
+
+`test_without_a_coordinator_spawn_stays_inline` and
+`test_fleet_tools_are_not_offered_without_a_coordinator` currently rely on default==1.
+Re-pin them on an explicit `max_live_subagents=1` (monkeypatched config or injected
+`None`), so they keep guarding the inline branch after the default moves.
+
+- [ ] **Step 4: Retire the contradicted bridge test**
+
+`Tests/Chat/test_console_agent_bridge.py::test_run_reply_wires_mcp_provider_stamp_scope_around_a_spawned_child`
+pins the behavior Task 6 deliberately removed on the threaded path (holding
+`review_state_scope` around a child). Task 5's per-run keying is the replacement
+protection, and `LocalToolProvider.stamp_scope` *clears* the parent's slice on entry, so
+holding it across siblings would wipe the parent's live verdicts. Replace it with a test
+asserting the parent's verdicts SURVIVE a concurrent child (the protection that actually
+holds now) rather than deleting the coverage.
+
+- [ ] **Step 5: Gate**
+
+```bash
+pytest Tests/Agents/ Tests/Chat/ Tests/MCP/ -q
+pytest --collect-only -q | tail -2
+```
+Expected: 0 failures. READ and report the counts. Any test you touched: state in the report
+what its assertion guaranteed before and after.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add -u && git commit -m "feat: enable the agent fleet by default (max_live_subagents=3)" && git push
+```
+
+---
+
 ### Task 8: Provider thread-safety audit + config + docs
 
 **Files:**
@@ -715,7 +800,14 @@ Per spec §5: an unaudited or unsafe provider gets a per-provider `threading.Loc
 
 - [ ] **Step 3: Config knob**
 
-Add `[agents] max_live_subagents` (default 3) to the config defaults and make the coordinator read it. Add a test that a config value of 1 makes a second concurrent spawn refuse with the cap message.
+`[agents] max_live_subagents` already exists (Task 6) and is already 3 (Task 6.5) — this
+step is now only: make sure it is documented wherever the repo lists config defaults, and
+that an out-of-range/garbage value degrades safely.
+**The original step's test ("a config value of 1 makes a second concurrent spawn refuse")
+is unwritable and must not be attempted**: 1 means no coordinator is built at all, so the
+second spawn runs inline rather than refusing. The equivalent coverage — a cap refusal —
+already exists in `Tests/Agents/test_fleet_runtime.py` via an injected `max_live=1`
+coordinator.
 
 - [ ] **Step 4: Docs**
 
