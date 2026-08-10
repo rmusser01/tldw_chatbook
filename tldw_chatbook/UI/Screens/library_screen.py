@@ -3064,6 +3064,11 @@ class LibraryScreen(BaseAppScreen):
         self._library_external_submit_generation: int = 0
         self._library_external_submit_scope_id: str | None = None
         self._library_external_submit_worker: Worker | None = None
+        self._library_external_submit_backend: str | None = None
+        self._library_external_submit_busy: bool = False
+        self._library_external_submit_status: str = ""
+        self._library_model_install_progress_label: str = ""
+        self._library_model_install_progress_owner: str | None = None
         # (task-2015) While-typing validation: each path edit restarts this
         # timer; its fire runs the pre-flight so feedback no longer waits
         # for blur.
@@ -7688,6 +7693,14 @@ class LibraryScreen(BaseAppScreen):
             id="library-model-install-progress",
         )
         install_progress.display = self._parakeet_v2_install_progress is not None
+        install_label = Static(
+            self._library_model_install_progress_label,
+            id="library-model-install-progress-label",
+            classes="library-ingest-quiet-line",
+            markup=False,
+        )
+        install_label.display = install_progress.display
+        yield install_label
         yield install_progress
         if shell.canvas_kind in LIBRARY_NOTES_SOURCE_STRIP_CANVAS_KINDS:
             with Horizontal(id="library-notes-source-strip"):
@@ -8124,6 +8137,8 @@ class LibraryScreen(BaseAppScreen):
                 elif shell.canvas_kind == "ingest-media":
                     yield LibraryIngestCanvas(
                         self._build_library_ingest_state(),
+                        external_busy=self._library_external_submit_busy,
+                        external_status=self._library_external_submit_status,
                         id="library-ingest-canvas",
                     )
                 elif shell.canvas_kind == "export":
@@ -20174,6 +20189,7 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the backend switch.
         """
         event.stop()
+        self._invalidate_library_external_submission()
         resolve_backend = getattr(self.app_instance, "_resolve_ingest_backend", None)
         current = resolve_backend() if callable(resolve_backend) else "local"
         target = "local" if current == "server" else "server"
@@ -20588,6 +20604,20 @@ class LibraryScreen(BaseAppScreen):
             picker_callback,
         )
 
+    @on(LibraryIngestCanvas.ExternalPreparationCancelRequested)
+    def handle_library_external_preparation_cancel(
+        self,
+        event: LibraryIngestCanvas.ExternalPreparationCancelRequested,
+    ) -> None:
+        """Cancel verification or VAD setup without clearing the form."""
+
+        event.stop()
+        self._invalidate_library_external_submission()
+        self._set_library_external_status(
+            "External preparation cancelled; no import was queued.",
+            busy=False,
+        )
+
     @on(LibraryIngestCanvas.ParakeetInstallRequested)
     def handle_parakeet_v2_install_requested(
         self,
@@ -20691,11 +20721,14 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         self._parakeet_v2_install_progress = event.progress
         try:
+            label = self.query_one("#library-model-install-progress-label", Static)
             progress = self.query_one(
                 "#library-model-install-progress", ModelInstallProgress
             )
         except NoMatches:
             return
+        label.update(self._library_model_install_progress_label)
+        label.display = True
         progress.display = True
         progress.update_progress(event.progress)
 
@@ -20756,6 +20789,8 @@ class LibraryScreen(BaseAppScreen):
             "Installing verified Parakeet v2 INT8 in the background…",
             severity="information",
         )
+        self._library_model_install_progress_label = "Parakeet v2"
+        self._library_model_install_progress_owner = "managed"
         self._parakeet_v2_install_worker = self._run_parakeet_v2_install()
 
     @work(thread=True, group="library_parakeet_v2_install", exit_on_error=False)
@@ -20804,7 +20839,12 @@ class LibraryScreen(BaseAppScreen):
         self._parakeet_v2_install_worker = None
         self._parakeet_v2_pending_report = None
         self._parakeet_v2_install_progress = None
+        self._library_model_install_progress_label = ""
+        self._library_model_install_progress_owner = None
         try:
+            self.query_one(
+                "#library-model-install-progress-label", Static
+            ).display = False
             self.query_one(
                 "#library-model-install-progress", ModelInstallProgress
             ).display = False
@@ -20857,6 +20897,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_external_submit_worker = None
         scope_id = getattr(self, "_library_external_submit_scope_id", None)
         self._library_external_submit_scope_id = None
+        self._library_external_submit_backend = None
         if scope_id:
             try:
                 self.app_instance._ensure_parakeet_source_service().release_scope(
@@ -20864,6 +20905,37 @@ class LibraryScreen(BaseAppScreen):
                 )
             except Exception:
                 logger.warning("Could not release a provisional Library model scope.")
+        self._set_library_external_status("", busy=False)
+        self._clear_library_external_vad_progress()
+
+    def _set_library_external_status(self, status: str, *, busy: bool) -> None:
+        """Set path-free preparation state and refresh the mounted canvas."""
+
+        self._library_external_submit_status = status
+        self._library_external_submit_busy = busy
+        if getattr(self, "_is_mounted", False):
+            self.refresh(recompose=True)
+
+    def _clear_library_external_vad_progress(self) -> None:
+        """Hide shared progress only when it belongs to external VAD setup."""
+
+        owner = getattr(self, "_library_model_install_progress_owner", None)
+        if owner not in (None, "external-vad"):
+            return
+        self._parakeet_v2_install_progress = None
+        self._library_model_install_progress_label = ""
+        self._library_model_install_progress_owner = None
+        if not getattr(self, "_is_mounted", False):
+            return
+        try:
+            self.query_one(
+                "#library-model-install-progress-label", Static
+            ).display = False
+            self.query_one(
+                "#library-model-install-progress", ModelInstallProgress
+            ).display = False
+        except (NoMatches, QueryError):
+            pass
 
     def _cancel_library_ingest_preflight(self) -> None:
         """Cancel any in-flight pre-flight worker, ignoring a finished one."""
@@ -21273,11 +21345,15 @@ class LibraryScreen(BaseAppScreen):
             chunk_size=clamp_chunk_size(form.chunk_size),
         )
         audio_options = snapshot.get("audio_video", {})
+        resolve_backend = getattr(self.app_instance, "_resolve_ingest_backend", None)
+        resolved_backend = resolve_backend() if callable(resolve_backend) else "local"
+        captured_backend = "server" if resolved_backend == "server" else "local"
         external_directory = str(
             audio_options.get("transcription_model_dir") or ""
         ).strip()
         if (
-            audio_options.get("transcription_provider") == "parakeet-onnx"
+            captured_backend == "local"
+            and audio_options.get("transcription_provider") == "parakeet-onnx"
             and external_directory
         ):
             route = resolve_batch_stt_route(
@@ -21295,6 +21371,11 @@ class LibraryScreen(BaseAppScreen):
             scope_id = f"library-external-{uuid.uuid4().hex}"
             self._library_external_submit_generation = generation
             self._library_external_submit_scope_id = scope_id
+            self._library_external_submit_backend = captured_backend
+            self._set_library_external_status(
+                "Verifying external Parakeet model directory…",
+                busy=True,
+            )
             self._library_external_submit_worker = (
                 self._prepare_library_external_submission(
                     generation,
@@ -21305,6 +21386,8 @@ class LibraryScreen(BaseAppScreen):
                 )
             )
             return
+        if getattr(self, "_library_external_submit_scope_id", None):
+            self._invalidate_library_external_submission()
         self._enqueue_library_ingest_snapshot(submit_kwargs)
 
     @work(
@@ -21394,6 +21477,14 @@ class LibraryScreen(BaseAppScreen):
                 "validation_failed",
             )
 
+    def _library_external_backend_is_current(self) -> bool:
+        """Return whether the captured external submission still targets local."""
+
+        if getattr(self, "_library_external_submit_backend", "local") != "local":
+            return False
+        resolve_backend = getattr(self.app_instance, "_resolve_ingest_backend", None)
+        return not callable(resolve_backend) or resolve_backend() != "server"
+
     def _apply_library_external_preparation(
         self,
         generation: int,
@@ -21408,17 +21499,27 @@ class LibraryScreen(BaseAppScreen):
         if (
             generation != self._library_external_submit_generation
             or scope_id != self._library_external_submit_scope_id
+            or not self._library_external_backend_is_current()
         ):
             self.app_instance._ensure_parakeet_source_service().release_scope(scope_id)
+            if not getattr(self, "_library_external_submit_scope_id", None):
+                self._set_library_external_status("", busy=False)
+                self._clear_library_external_vad_progress()
             return
         self._library_external_submit_worker = None
         if error is not None or prepared is None:
             self._library_external_submit_scope_id = None
+            self._library_external_submit_backend = None
             self.app_instance._ensure_parakeet_source_service().release_scope(scope_id)
-            self.app_instance.notify(
-                "That Parakeet model directory could not be verified.",
-                severity="error",
-            )
+            self._clear_library_external_vad_progress()
+            if error == "vad_failed":
+                message = "Silero VAD could not be installed; no import was queued."
+                status = "Retry, choose Faster Whisper, or install the managed model."
+            else:
+                message = "That Parakeet model directory could not be verified."
+                status = "Directory verification failed. Correct the folder and retry."
+            self._set_library_external_status(status, busy=False)
+            self.app_instance.notify(message, severity="error")
             return
         if vad_report is not None:
             vad_reference = parakeet_vad_reference()
@@ -21432,14 +21533,24 @@ class LibraryScreen(BaseAppScreen):
                 )
             ):
                 self._library_external_submit_scope_id = None
+                self._library_external_submit_backend = None
                 self.app_instance._ensure_parakeet_source_service().release_scope(
                     scope_id
+                )
+                self._clear_library_external_vad_progress()
+                self._set_library_external_status(
+                    "Silero VAD plan changed. Choose the model again.",
+                    busy=False,
                 )
                 self.app_instance.notify(
                     "The managed VAD plan changed. Choose the model again.",
                     severity="error",
                 )
                 return
+            self._set_library_external_status(
+                "Silero VAD dependency is required; review the install plan.",
+                busy=True,
+            )
             self.app.push_screen(
                 ModelInstallModal(
                     vad_report,
@@ -21458,6 +21569,7 @@ class LibraryScreen(BaseAppScreen):
                 ),
             )
             return
+        self._set_library_external_status("Queueing import…", busy=True)
         self._enqueue_library_ingest_snapshot(
             submit_kwargs,
             generation=generation,
@@ -21478,12 +21590,23 @@ class LibraryScreen(BaseAppScreen):
         if (
             generation != self._library_external_submit_generation
             or scope_id != self._library_external_submit_scope_id
+            or not self._library_external_backend_is_current()
         ):
             self.app_instance._ensure_parakeet_source_service().release_scope(scope_id)
             return
         if not confirmed:
             self._invalidate_library_external_submission()
+            self._set_library_external_status(
+                "Silero VAD install cancelled; no import was queued.",
+                busy=False,
+            )
             return
+        self._library_model_install_progress_label = "Silero VAD dependency"
+        self._library_model_install_progress_owner = "external-vad"
+        self._set_library_external_status(
+            "Installing Silero VAD dependency…",
+            busy=True,
+        )
         self._library_external_submit_worker = self._provision_library_external_vad(
             generation,
             scope_id,
@@ -21493,12 +21616,11 @@ class LibraryScreen(BaseAppScreen):
         )
 
     @work(
-        thread=True,
         group="library_external_parakeet_vad",
         exclusive=True,
         exit_on_error=False,
     )
-    def _provision_library_external_vad(
+    async def _provision_library_external_vad(
         self,
         generation: int,
         scope_id: str,
@@ -21508,46 +21630,69 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         """Provision VAD, then perform the final snapshot check and retain."""
 
-        worker = get_current_worker()
         service = self.app_instance._ensure_parakeet_source_service()
+
+        def progress(event: Any) -> None:
+            self._apply_library_external_vad_progress(generation, scope_id, event)
+
         try:
-            asyncio.run(  # policy-exception: worker-thread loop
-                run_parakeet_vad_provision(
-                    report,
-                    progress=make_progress_callback(self.post_message),
-                )
-            )
+            await run_parakeet_vad_provision(report, progress=progress)
             service.prepare_config_commit(prepared)
             service.retain_prepared(scope_id, prepared)
+        except asyncio.CancelledError:
+            service.release_scope(scope_id)
+            raise
         except Exception as exc:
             logger.warning(
                 "Library VAD provision failed (error_type={}).",
                 type(exc).__name__,
             )
-            service.release_scope(scope_id)
-            if not worker.is_cancelled:
-                self.app.call_from_thread(
-                    self._apply_library_external_preparation,
-                    generation,
-                    scope_id,
-                    prepared,
-                    submit_kwargs,
-                    None,
-                    "vad_failed",
-                )
-            return
-        if not worker.is_cancelled:
-            self.app.call_from_thread(
-                self._apply_library_external_preparation,
+            self._apply_library_external_preparation(
                 generation,
                 scope_id,
                 prepared,
                 submit_kwargs,
                 None,
-                None,
+                "vad_failed",
             )
-        else:
-            service.release_scope(scope_id)
+            return
+        self._apply_library_external_preparation(
+            generation,
+            scope_id,
+            prepared,
+            submit_kwargs,
+            None,
+            None,
+        )
+
+    def _apply_library_external_vad_progress(
+        self,
+        generation: int,
+        scope_id: str,
+        event: Any,
+    ) -> None:
+        """Render progress only for the still-current local submission."""
+
+        if (
+            generation != self._library_external_submit_generation
+            or scope_id != self._library_external_submit_scope_id
+            or not self._library_external_backend_is_current()
+        ):
+            return
+        self._parakeet_v2_install_progress = event
+        self._library_model_install_progress_label = "Silero VAD dependency"
+        self._library_model_install_progress_owner = "external-vad"
+        try:
+            label = self.query_one("#library-model-install-progress-label", Static)
+            progress = self.query_one(
+                "#library-model-install-progress", ModelInstallProgress
+            )
+        except (NoMatches, QueryError):
+            return
+        label.update("Silero VAD dependency")
+        label.display = True
+        progress.display = True
+        progress.update_progress(event)
 
     def _enqueue_library_ingest_snapshot(
         self,
@@ -21561,6 +21706,7 @@ class LibraryScreen(BaseAppScreen):
         if generation is not None and (
             generation != self._library_external_submit_generation
             or scope_id != self._library_external_submit_scope_id
+            or not self._library_external_backend_is_current()
         ):
             if scope_id:
                 self.app_instance._ensure_parakeet_source_service().release_scope(
@@ -21595,6 +21741,12 @@ class LibraryScreen(BaseAppScreen):
             )
             self._library_external_submit_worker = None
             self._library_external_submit_scope_id = None
+            self._library_external_submit_backend = None
+            self._clear_library_external_vad_progress()
+            self._set_library_external_status(
+                "Queueing failed. Correct the form and retry.",
+                busy=False,
+            )
             self.app_instance.notify(
                 "The import could not be queued. Your form is still available.",
                 severity="error",
@@ -21603,6 +21755,9 @@ class LibraryScreen(BaseAppScreen):
         if scope_id is not None:
             self._library_external_submit_worker = None
             self._library_external_submit_scope_id = None
+            self._library_external_submit_backend = None
+            self._clear_library_external_vad_progress()
+            self._set_library_external_status("", busy=False)
         # One batched write. Saving key-by-key re-read and re-parsed the whole
         # config file and invalidated the global settings cache once per
         # option -- roughly six full reload cycles for a single submitted file,
@@ -22218,6 +22373,7 @@ class LibraryScreen(BaseAppScreen):
         button_id = event.button.id or ""
         if not button_id.startswith("opt-") or not button_id.endswith("-reset"):
             return
+        self._invalidate_library_external_submission()
         # opt-{group}-reset -> {group}
         group = button_id[4:-6]
         form = self._library_ingest_form

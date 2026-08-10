@@ -2075,6 +2075,7 @@ class LibraryIngestQueueMixin:
         ] = None
         self._parakeet_source_service: Any | None = None
         self._parakeet_source_registry_listener: Callable[[], None] | None = None
+        self._parakeet_submitting_scope_ids: set[str] = set()
         self._ingest_local_stt_jobs: dict[str, tuple[int, str]] = {}
         self._ingest_shutdown: bool = False
 
@@ -2212,25 +2213,41 @@ class LibraryIngestQueueMixin:
             # so the queue can group this run's rows under one header and
             # the tally can answer "what did THIS run just do".
             folder_batch_id = f"local-{uuid.uuid4().hex[:12]}"
-            for expanded_path in expanded:
-                job = self.submit_library_ingest_job(
-                    source_path=expanded_path,
-                    ingest_options=ingest_options,
-                    batch_id=folder_batch_id,
-                    # Title is per-file (the ingest form clears it on submit
-                    # for exactly this reason), so a folder's files each take
-                    # their own filename-derived title rather than all
-                    # sharing one. Author and keywords are batch metadata and
-                    # do carry across.
-                    title="",
-                    author=author,
-                    keywords=keywords,
-                    perform_analysis=perform_analysis,
-                    chunk_enabled=chunk_enabled,
-                    chunk_size=chunk_size,
-                )
-                if first_job is None:
-                    first_job = job
+            audio_options = (ingest_options or {}).get("audio_video", {})
+            scope_id = (
+                str(audio_options.get("transcription_external_scope_id") or "").strip()
+                if isinstance(audio_options, dict)
+                else ""
+            )
+            submitting_scopes = getattr(self, "_parakeet_submitting_scope_ids", None)
+            if submitting_scopes is None:
+                submitting_scopes = self._parakeet_submitting_scope_ids = set()
+            if scope_id:
+                submitting_scopes.add(scope_id)
+            try:
+                for expanded_path in expanded:
+                    job = self.submit_library_ingest_job(
+                        source_path=expanded_path,
+                        ingest_options=ingest_options,
+                        batch_id=folder_batch_id,
+                        # Title is per-file (the ingest form clears it on submit
+                        # for exactly this reason), so a folder's files each take
+                        # their own filename-derived title rather than all
+                        # sharing one. Author and keywords are batch metadata and
+                        # do carry across.
+                        title="",
+                        author=author,
+                        keywords=keywords,
+                        perform_analysis=perform_analysis,
+                        chunk_enabled=chunk_enabled,
+                        chunk_size=chunk_size,
+                    )
+                    if first_job is None:
+                        first_job = job
+            finally:
+                if scope_id:
+                    submitting_scopes.discard(scope_id)
+                    self._sync_parakeet_source_scopes()
             # ``expanded`` is non-empty here, so the loop always assigns.
             assert first_job is not None
             return first_job
@@ -2909,6 +2926,7 @@ class LibraryIngestQueueMixin:
             for job in self.library_ingest_jobs.jobs()
             if job.state in active_states
         }
+        active.update(getattr(self, "_parakeet_submitting_scope_ids", ()))
         service.release_scopes_except(active)
 
     def _ensure_local_stt_dispatch_coordinator(

@@ -651,6 +651,52 @@ def test_registry_releases_batch_scope_only_after_last_sibling_is_terminal(
     assert service.active_snapshots[-1] == set()
 
 
+def test_folder_submission_keeps_scope_while_terminal_siblings_are_constructed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _minimal_stt_app()
+    app.media_db = None
+    app._resolve_ingest_backend = lambda: "local"  # type: ignore[method-assign]
+    release_at_job_counts: list[int] = []
+
+    class _ConstructionTrackingService(_ScopeTrackingSourceService):
+        def release_scopes_except(self, active_scope_ids: set[str]) -> None:
+            before = list(self.released)
+            super().release_scopes_except(active_scope_ids)
+            if self.released != before:
+                release_at_job_counts.append(len(app.library_ingest_jobs.jobs()))
+
+    service = _ConstructionTrackingService()
+    monkeypatch.setattr(
+        app, "_create_parakeet_source_service", lambda: service, raising=False
+    )
+    app._ensure_parakeet_source_service()
+    scope_id = "folder-construction-scope"
+    service.observed.add(scope_id)
+    folder = tmp_path / "batch"
+    folder.mkdir()
+    for name in ("one.wav", "two.wav"):
+        (folder / name).write_bytes(b"audio")
+
+    app.submit_library_ingest_job(
+        source_path=str(folder),
+        ingest_options={
+            "audio_video": {
+                "transcription_provider": "parakeet-onnx",
+                "transcription_model_dir": str(tmp_path / "external"),
+                "transcription_external_scope_id": scope_id,
+            }
+        },
+    )
+
+    jobs = app.library_ingest_jobs.jobs()
+    assert len(jobs) == 2
+    assert all(job.state is IngestJobState.FAILED for job in jobs)
+    assert release_at_job_counts == [2]
+    assert service.released == [scope_id]
+
+
 def test_registry_scope_falls_back_to_batch_then_job_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1754,6 +1800,35 @@ class TestIngestJobOptionsWiring:
         )
         assert (
             local_options["chunk_options"]["size"] == server_kwargs["chunk_size"]
+        )
+
+    def test_server_request_strips_external_parakeet_path_and_scope(self) -> None:
+        from tldw_chatbook.Library.server_ingest_request import (
+            build_server_ingest_kwargs,
+        )
+
+        private_path = "/private/user-owned/parakeet-sentinel"
+        private_scope = "library-external-private-scope"
+        options = {
+            "audio_video": {
+                "transcription_provider": "parakeet-onnx",
+                "transcription_model_dir": private_path,
+                "transcription_external_scope_id": private_scope,
+                "language": "en",
+            }
+        }
+
+        kwargs = build_server_ingest_kwargs("/tmp/speech.wav", options=options)
+
+        assert kwargs["transcription_provider"] == "parakeet-onnx"
+        assert kwargs["language"] == "en"
+        assert "transcription_model_dir" not in kwargs
+        assert "transcription_external_scope_id" not in kwargs
+        assert private_path not in str(kwargs)
+        assert private_scope not in str(kwargs)
+        assert options["audio_video"]["transcription_model_dir"] == private_path
+        assert (
+            options["audio_video"]["transcription_external_scope_id"] == private_scope
         )
 
     def test_display_string_sizes_are_coerced_to_int(self) -> None:
