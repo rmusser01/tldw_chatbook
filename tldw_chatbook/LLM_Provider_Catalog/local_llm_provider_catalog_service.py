@@ -705,6 +705,31 @@ class LocalLLMProviderCatalogService:
             provider_resolution.provider_list_key, current_endpoint
         )
 
+    def has_discovered_model_snapshot(
+        self,
+        *,
+        provider: str,
+        staged_settings: Mapping[str, Any] | None = None,
+    ) -> bool:
+        """Return whether the current provider endpoint has a cached snapshot."""
+        self._enforce("llm.catalog.models.list.local")
+        provider_resolution = resolve_provider_list_key(provider, self._catalog())
+        if (
+            provider_resolution.status != "resolved"
+            or provider_resolution.provider_list_key is None
+        ):
+            return False
+        current_endpoint = self._current_endpoint_fingerprint(
+            provider_key=provider_resolution.normalized_provider,
+            staged_settings=staged_settings,
+        )
+        if current_endpoint is None:
+            return False
+        return self.discovery_cache.has_snapshot(
+            provider_resolution.provider_list_key,
+            current_endpoint,
+        )
+
     def clear_discovered_models(self, *, provider: str | None = None) -> None:
         """Clear runtime-discovered models globally or for one provider."""
         self._enforce("llm.catalog.models.persist.local")

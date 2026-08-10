@@ -95,7 +95,7 @@ async def test_model_options_merge_explicit_saved_models_and_catalog_scope() -> 
         (
             _entry(
                 "gpt-4o",
-                source="saved",
+                source="persisted_discovered",
                 capability_status="known",
                 persisted=True,
             ),
@@ -120,6 +120,12 @@ async def test_model_options_merge_explicit_saved_models_and_catalog_scope() -> 
 async def test_model_options_keep_discovery_out_of_capped_dropdowns() -> None:
     scope = CatalogScopeFixture(
         (
+            _entry(
+                "saved",
+                source="persisted_discovered",
+                capability_status="known",
+                persisted=True,
+            ),
             _entry("runtime-one", source="runtime_discovered"),
             _entry("runtime-two", source="runtime_discovered"),
         )
@@ -150,8 +156,8 @@ async def test_model_options_keep_discovery_out_of_capped_dropdowns() -> None:
 @pytest.mark.parametrize(
     ("discovered_count", "expected_count"),
     [
-        (SELECTOR_MERGE_CAP, SELECTOR_MERGE_CAP + 1),
-        (SELECTOR_MERGE_CAP + 1, 1),
+        (SELECTOR_MERGE_CAP - 1, SELECTOR_MERGE_CAP),
+        (SELECTOR_MERGE_CAP, 1),
     ],
 )
 async def test_model_options_enforce_the_configured_merge_cap_boundary(
@@ -160,7 +166,17 @@ async def test_model_options_enforce_the_configured_merge_cap_boundary(
 ) -> None:
     options = await resolve_provider_model_options(
         {"OpenRouter": ["saved"]},
-        CatalogScopeFixture(_runtime_entries(discovered_count)),
+        CatalogScopeFixture(
+            (
+                _entry(
+                    "saved",
+                    source="persisted_discovered",
+                    capability_status="known",
+                    persisted=True,
+                ),
+                *_runtime_entries(discovered_count),
+            )
+        ),
         provider="OpenRouter",
     )
 
@@ -177,7 +193,7 @@ async def test_oversized_catalog_still_preserves_the_current_model() -> None:
         current_model="session-only",
     )
 
-    assert [option.model_id for option in options] == ["session-only", "saved"]
+    assert [option.model_id for option in options] == ["session-only"]
 
 
 @pytest.mark.asyncio

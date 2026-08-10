@@ -17,6 +17,7 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx
 from loguru import logger
+from rich.markup import escape as escape_markup
 
 from tldw_chatbook.Chat.Chat_Deps import (
     ChatAuthenticationError,
@@ -173,6 +174,27 @@ def safe_provider_error_copy(provider: str, exc: BaseException) -> str:
     status_code = getattr(exc, "status_code", None)
     status_copy = f" Status: {status_code}." if isinstance(status_code, int) else ""
     return f"Provider error from {provider or 'unknown'}: {category}.{status_copy}"
+
+
+def _provider_error_copy_with_model_recovery(
+    copy: str,
+    *,
+    model: str | None,
+    status_code: int | None,
+) -> str:
+    """Add safe model-specific recovery to provider bad-request copy."""
+    if status_code != 400:
+        return copy
+    model_id = "".join(
+        character for character in str(model or "").strip() if character.isprintable()
+    )[:256]
+    if not model_id:
+        return copy
+    return (
+        f"{copy} Selected model: {escape_markup(model_id)}. "
+        "The provider rejected this request. Confirm the model is still "
+        "available, or choose another model from the model picker."
+    )
 
 
 def normalize_llamacpp_base_url(api_url: str | None) -> str:
@@ -1631,12 +1653,16 @@ class ConsoleProviderGateway:
                         )
             except BaseException as exc:
                 raw_status = getattr(exc, "status_code", None)
+                status_code = raw_status if isinstance(raw_status, int) else None
+                error_copy = _provider_error_copy_with_model_recovery(
+                    self._safe_error_copy(resolution.provider, exc),
+                    model=resolution.model,
+                    status_code=status_code,
+                )
                 enqueue(
                     _QueueItem.error(
-                        self._safe_error_copy(resolution.provider, exc),
-                        status_code=raw_status
-                        if isinstance(raw_status, int)
-                        else None,
+                        error_copy,
+                        status_code=status_code,
                     )
                 )
             finally:

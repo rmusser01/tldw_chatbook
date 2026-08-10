@@ -1656,6 +1656,45 @@ async def test_stream_chat_generic_provider_error_raises_sanitized_exception() -
 
 
 @pytest.mark.asyncio
+async def test_stream_bad_request_names_model_and_offers_picker_recovery() -> None:
+    def fake_chat_api_call(**_kwargs):
+        raise ChatBadRequestError(
+            "retired model; Authorization: Bearer SECRET-CANARY",
+            provider="anthropic",
+        )
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {"anthropic": {"api_key": "test-key"}}
+        },
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="anthropic",
+            explicit_model="claude-3-haiku-20240307",
+        )
+    )
+
+    with pytest.raises(ChatProviderError) as exc_info:
+        _ = [
+            chunk
+            async for chunk in gateway.stream_chat(
+                resolution,
+                [{"role": "user", "content": "hi"}],
+            )
+        ]
+
+    message = str(exc_info.value)
+    assert "Provider error from anthropic" in message
+    assert "claude-3-haiku-20240307" in message
+    assert "Confirm the model is still available" in message
+    assert "choose another model from the model picker" in message
+    assert "Status: 400" in message
+    assert "SECRET-CANARY" not in message
+
+
+@pytest.mark.asyncio
 async def test_stream_chat_generic_sse_error_raises_sanitized_exception() -> None:
     def fake_chat_api_call(**_kwargs):
         yield 'data: {"error":{"message":"Authorization: Bearer sk-1234567890abcdef"}}'

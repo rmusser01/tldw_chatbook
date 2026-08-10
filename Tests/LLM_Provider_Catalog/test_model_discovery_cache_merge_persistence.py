@@ -102,7 +102,7 @@ def test_merge_preserves_saved_order_then_adds_discovered_models():
     assert merged[-1].persisted is False
 
 
-def test_merge_discovered_duplicate_of_saved_is_saved_and_persisted():
+def test_merge_discovered_duplicate_of_saved_preserves_endpoint_provenance():
     merged = merge_saved_and_discovered_models(
         saved_model_ids=["gpt-4.1-mini"],
         discovered_models=(model("gpt-4.1-mini"),),
@@ -111,8 +111,22 @@ def test_merge_discovered_duplicate_of_saved_is_saved_and_persisted():
     )
 
     assert len(merged) == 1
-    assert merged[0].source == "saved"
+    assert merged[0].source == "persisted_discovered"
     assert merged[0].persisted is True
+
+
+def test_merge_saved_model_absent_from_endpoint_remains_saved_only():
+    merged = merge_saved_and_discovered_models(
+        saved_model_ids=["retired-model", "current-model"],
+        discovered_models=(model("current-model"),),
+        provider="OpenAI",
+        provider_list_key="OpenAI",
+    )
+
+    assert [(entry.model_id, entry.source) for entry in merged] == [
+        ("retired-model", "saved"),
+        ("current-model", "persisted_discovered"),
+    ]
 
 
 def test_vision_false_does_not_make_capabilities_known():

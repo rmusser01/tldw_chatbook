@@ -36,6 +36,7 @@ from tldw_chatbook.Widgets.Console.console_workspace_context import (
 from tldw_chatbook.Widgets.Console.console_workspace_details import (
     ConsoleWorkspaceDetailsTray,
 )
+from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT,
     ConsoleConversationBrowserInputRow,
@@ -702,8 +703,9 @@ class _PopoverApp(App):
 async def test_popover_apply_returns_replaced_settings():
     app = _PopoverApp()
     async with app.run_test(size=(90, 30)) as pilot:
-        model_select = app.screen.query_one("#console-popover-model")
-        model_select.value = "model-b"
+        await pilot.click("#model-search-picker-input")
+        await pilot.press(*"model-b", "enter")
+        await pilot.pause()
         await pilot.click("#console-popover-streaming")
         await pilot.pause()
         await pilot.click("#console-popover-apply")
@@ -850,9 +852,35 @@ async def test_popover_model_search_inserts_transient_option():
         results.post_message(OptionList.OptionSelected(results, option, 0))
         await pilot.pause()
         model_select = app.screen.query_one("#console-popover-model", Select)
+        picker = app.screen.query_one(
+            "#console-popover-model-search", ModelSearchPicker
+        )
         option_values = [value for _, value in model_select._options]
+        assert picker.display is True
+        assert model_select.display is False
         assert "anthropic/claude-x" in option_values
         assert model_select.value == "anthropic/claude-x"
+
+
+@pytest.mark.asyncio
+async def test_popover_search_control_fits_compact_terminal_geometry():
+    """The shared picker stays operable at the popover's minimum width."""
+    from textual.widgets import Input, OptionList
+
+    app = _PopoverSearchApp()
+    async with app.run_test(size=(60, 24)) as pilot:
+        search_input = app.screen.query_one("#model-search-picker-input", Input)
+        search_input.focus()
+        await pilot.pause()
+        results = app.screen.query_one("#model-search-picker-results", OptionList)
+        popover = app.screen.query_one("#console-model-popover")
+
+        assert results.display is True
+        for widget in (popover, search_input, results):
+            assert widget.region.x >= 0
+            assert widget.region.y >= 0
+            assert widget.region.right <= app.size.width
+            assert widget.region.bottom <= app.size.height
 
 
 @pytest.mark.asyncio
@@ -884,6 +912,27 @@ async def test_popover_changing_provider_still_resets_the_model():
         model_select = app.screen.query_one("#console-popover-model", Select)
         # The stale llama.cpp model must not linger under the new provider.
         assert model_select.value != "model-a"
+        picker = app.screen.query_one(
+            "#console-popover-model-search", ModelSearchPicker
+        )
+        assert picker.value is None
+
+
+@pytest.mark.asyncio
+async def test_popover_custom_model_uses_shared_picker_escape_hatch():
+    from textual.widgets import Input
+
+    app = _PopoverApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        await pilot.click("#model-search-picker-custom")
+        custom_input = app.screen.query_one("#model-search-picker-input", Input)
+        custom_input.value = "private/model-id"
+        await pilot.pause()
+        await pilot.click("#console-popover-apply")
+        await pilot.pause()
+
+    assert app.result is not None
+    assert app.result.model == "private/model-id"
 
 
 @pytest.mark.asyncio
@@ -893,7 +942,7 @@ async def test_popover_provider_options_use_display_names():
     from textual.widgets import Select
 
     app = _PopoverApp()
-    async with app.run_test(size=(90, 30)) as pilot:
+    async with app.run_test(size=(90, 30)):
         provider_select = app.screen.query_one("#console-popover-provider", Select)
         labels = {label: value for label, value in provider_select._options}
         assert "llama.cpp" in labels
@@ -908,7 +957,7 @@ async def test_popover_labels_temperature_input():
     from textual.widgets import Static
 
     app = _PopoverApp()
-    async with app.run_test(size=(90, 30)) as pilot:
+    async with app.run_test(size=(90, 30)):
         texts = [
             str(getattr(w.renderable, "plain", w.renderable))
             for w in app.screen.query(Static)

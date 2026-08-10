@@ -3614,9 +3614,6 @@ class ChatScreen(BaseAppScreen):
                 current_model,
             )
             return providers_models
-        if not model_options:
-            return providers_models
-
         merged = {
             provider_name: list(model_ids)
             for provider_name, model_ids in providers_models.items()
