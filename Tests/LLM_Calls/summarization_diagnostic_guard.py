@@ -137,7 +137,7 @@ def _is_explicitly_disabled(node: ast.AST) -> bool:
 
 
 def _captures_exception(node: ast.Call, *, method: str) -> bool:
-    if method == "exception":
+    if "exception" in method.split("|"):
         return True
     if any(
         keyword.arg in {"exc_info", "stack_info"}
@@ -195,9 +195,7 @@ def _merge_alias_values(values: list[_AliasValue]) -> _AliasValue:
         ),
         captures_exception=any(value.captures_exception for value in values),
         is_factory=any(value.is_factory for value in values),
-        methods=_stable_unique(
-            tuple(method for value in values for method in value.methods)
-        ),
+        methods=tuple(sorted({method for value in values for method in value.methods})),
     )
 
 
@@ -401,8 +399,8 @@ def _alias_snapshots(tree: ast.Module) -> dict[int, _AliasState]:
 def _diagnostic_method(node: ast.Call, state: _AliasState) -> str | None:
     if isinstance(node.func, ast.Name):
         value = state.get(node.func.id)
-        if value is not None and len(value.methods) == 1:
-            return value.methods[0]
+        if value is not None and value.methods:
+            return "|".join(sorted(value.methods))
         return None
     if not isinstance(node.func, ast.Attribute) or node.func.attr not in LOG_METHODS:
         return None
@@ -599,6 +597,11 @@ def _is_approved_metadata_expression(expression: str) -> bool:
     return False
 
 
+def _unambiguous_diagnostic_severity(method: str) -> str | None:
+    severities = {_DIAGNOSTIC_SEVERITIES.get(member) for member in method.split("|")}
+    return severities.pop() if len(severities) == 1 and None not in severities else None
+
+
 def assert_review_outcome(
     starting: DiagnosticCall, current: DiagnosticCall, *, outcome: str
 ) -> None:
@@ -606,10 +609,14 @@ def assert_review_outcome(
     if outcome in {"pending", "frozen"}:
         assert starting == current, f"{outcome} diagnostic changed"
     elif outcome == "metadata":
-        assert (
-            _DIAGNOSTIC_SEVERITIES[starting.method]
-            == _DIAGNOSTIC_SEVERITIES[current.method]
-        ), "metadata repair must preserve diagnostic severity"
+        starting_severity = _unambiguous_diagnostic_severity(starting.method)
+        current_severity = _unambiguous_diagnostic_severity(current.method)
+        assert starting_severity is not None and current_severity is not None, (
+            "metadata repair requires unambiguous diagnostic severity"
+        )
+        assert starting_severity == current_severity, (
+            "metadata repair must preserve diagnostic severity"
+        )
         if starting.method == "log":
             assert starting.level_expression == current.level_expression, (
                 "metadata repair must preserve log level"

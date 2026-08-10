@@ -421,6 +421,101 @@ audit.error("after branch")
     assert call.captures_exception is True
 
 
+def test_guard_branch_callable_method_union_is_discovered() -> None:
+    source = """
+import logging
+
+if use_error:
+    emit = logging.error
+else:
+    emit = logging.warning
+emit(private_value)
+"""
+
+    call = _single_call(source)
+
+    assert call.method == "error|warning"
+    assert call.expressions == ("private_value",)
+    assert call.captures_exception is False
+    _guard().assert_review_outcome(call, call, outcome="pending")
+    _guard().assert_review_outcome(call, call, outcome="frozen")
+
+
+@pytest.mark.parametrize(
+    ("body_method", "else_method"),
+    [("log_error", "log_warning"), ("log_warning", "log_error")],
+)
+def test_guard_imported_callable_method_union_is_sorted(
+    body_method: str, else_method: str
+) -> None:
+    source = f"""
+from logging import error as log_error, warning as log_warning
+
+if choose_body:
+    emit = {body_method}
+else:
+    emit = {else_method}
+emit(private_value)
+"""
+
+    call = _single_call(source)
+
+    assert call.method == "error|warning"
+    assert call.expressions == ("private_value",)
+
+
+def test_guard_branch_callable_method_union_captures_any_exception() -> None:
+    source = """
+import logging
+
+if include_traceback:
+    emit = logging.exception
+else:
+    emit = logging.error
+emit("fixed")
+"""
+
+    call = _single_call(source)
+
+    assert call.method == "error|exception"
+    assert call.captures_exception is True
+
+
+def test_guard_same_severity_method_union_can_migrate_to_metadata() -> None:
+    starting = _single_call(
+        """
+import logging
+
+if include_traceback:
+    emit = logging.exception
+else:
+    emit = logging.error
+emit(private_value)
+"""
+    )
+    current = _single_call('logging.error("fixed")\n')
+
+    _guard().assert_review_outcome(starting, current, outcome="metadata")
+
+
+def test_guard_ambiguous_severity_method_union_rejects_metadata() -> None:
+    starting = _single_call(
+        """
+import logging
+
+if use_error:
+    emit = logging.error
+else:
+    emit = logging.warning
+emit(private_value)
+"""
+    )
+    current = _single_call('logging.error("fixed")\n')
+
+    with pytest.raises(AssertionError, match="unambiguous diagnostic severity"):
+        _guard().assert_review_outcome(starting, current, outcome="metadata")
+
+
 def test_guard_finds_bind_and_opt_derived_logger_aliases() -> None:
     source = """
 from loguru import logger
