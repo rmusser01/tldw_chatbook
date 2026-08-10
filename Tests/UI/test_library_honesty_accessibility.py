@@ -497,3 +497,104 @@ def test_f1_title_names_the_current_surface():
     LibraryScreen.action_show_workbench_help(fake)
     (panel,) = fake._pushed
     assert panel.state.title == "Library Shortcuts — Landing"
+
+
+# ---------------------------------------------------------------------------
+# AC#1 follow-up (Task 2 review M-1): the IN-PLACE marker patchers had zero
+# automated coverage -- removing `_patch_library_disabled_marker_label` from
+# `_apply_library_row_toggle` (mutation C) or the collections patcher's label
+# rebuild (mutation D) survived every existing suite. These pins drive the
+# real patch paths across the disabled boundary in both directions.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_row_toggle_patcher_rebuilds_marker_label_both_directions():
+    """Mutation C's survival: `_apply_library_row_toggle` flips `.disabled`
+    on the bulk buttons in place, so it must rebuild the "○" marker label
+    too. Crossing 0->1 must strip the marker AND enable; 1->0 must restore
+    both. The host app recomposes to the 0-selected state, so the
+    patcher's full-recompose fallback cannot mask a missing label patch."""
+    from tldw_chatbook.Library.row_selection import RowSelection
+    from tldw_chatbook.UI.Screens.library_screen import _apply_library_row_toggle
+
+    app = _SelectModeApp(0)
+    async with app.run_test() as pilot:
+        app._library_media_row_selection = RowSelection("media")
+        row_button = pilot.app.query_one("#library-media-row-0", Button)
+        export_btn = pilot.app.query_one("#library-media-export-selected", Button)
+        delete_btn = pilot.app.query_one("#library-media-delete-selected", Button)
+        assert str(export_btn.label) == f"{LIBRARY_DISABLED_ACTION_MARKER} Export selected"
+
+        # 0 -> 1 selected through the real patch path.
+        app._library_media_row_selection.toggle("m0")
+        _apply_library_row_toggle(app, "media", row_button, "m0")
+        await pilot.pause()
+        assert export_btn.disabled is False
+        assert str(export_btn.label) == "Export selected"
+        assert delete_btn.disabled is False
+        assert str(delete_btn.label) == "Delete selected"
+        assert str(row_button.label).startswith("☑")
+
+        # 1 -> 0: the marker must come back with `disabled`.
+        app._library_media_row_selection.toggle("m0")
+        _apply_library_row_toggle(app, "media", row_button, "m0")
+        await pilot.pause()
+        assert export_btn.disabled is True
+        assert str(export_btn.label) == (
+            f"{LIBRARY_DISABLED_ACTION_MARKER} Export selected"
+        )
+        assert delete_btn.disabled is True
+        assert str(delete_btn.label) == (
+            f"{LIBRARY_DISABLED_ACTION_MARKER} Delete selected"
+        )
+        assert str(row_button.label).startswith("☐")
+
+
+@pytest.mark.asyncio
+async def test_collections_patcher_rebuilds_marker_label_both_directions():
+    """Mutation D's survival: `_refresh_collections_panel_action_state_widgets`
+    flips `.disabled` on the three form actions in place (no recompose), so
+    it must rebuild the "○" marker label alongside. Driven through the real
+    Input.Changed path on the mounted Library screen."""
+    from textual.widgets import Input
+
+    from Tests.UI.test_product_maturity_phase39_library_collections import (
+        DestinationHarness,
+        FakeLibraryCollectionsService,
+        _active_destination_screen,
+        _seed_library_sources,
+        _wait_for_library_snapshot,
+        _wait_for_selector,
+    )
+    from Tests.UI.app_factory import _build_test_app
+
+    app = _build_test_app()
+    _seed_library_sources(app)
+    app.library_collections_service = FakeLibraryCollectionsService()
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+        screen.query_one("#library-row-browse-collections", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-collections-panel")
+
+        create_btn = screen.query_one("#library-create-collection", Button)
+        assert create_btn.disabled is True
+        assert str(create_btn.label).startswith(
+            f"{LIBRARY_DISABLED_ACTION_MARKER} "
+        )
+
+        name_input = screen.query_one("#library-collection-name-input", Input)
+        name_input.value = "Research"
+        await pilot.pause()
+        assert create_btn.disabled is False
+        assert str(create_btn.label) == "Create Collection"
+
+        name_input.value = ""
+        await pilot.pause()
+        assert create_btn.disabled is True
+        assert str(create_btn.label) == (
+            f"{LIBRARY_DISABLED_ACTION_MARKER} Create Collection"
+        )
