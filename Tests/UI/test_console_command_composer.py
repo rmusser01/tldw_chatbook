@@ -1,10 +1,12 @@
 """Composer command interception + unknown-command Enter-again (Task 10);
 `/prompt` resolution + insertion + Library-insert consumption (Task 12)."""
 
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from textual.app import App
 from textual.widgets import Button, Input
 
 from Tests.UI.test_console_native_chat_flow import (
@@ -23,8 +25,13 @@ from tldw_chatbook.Prompt_Management.prompt_scope_service import (
     LocalPromptService as ScopeLocalPromptService,
     PromptScopeService,
 )
+from tldw_chatbook.Prompt_Management.prompt_variables import (
+    PromptVariableApplication,
+    fingerprint_system_text,
+)
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 from tldw_chatbook.UI.Console_Modules.prompts import ConsolePromptsController
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleCommandPopup, ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_prompt_picker_modal import (
     FILTER_INPUT_ID,
@@ -74,6 +81,55 @@ def _unknown_command_hint(name: str) -> str:
 
 UNKNOWN_NOPE_HINT = _unknown_command_hint("nope")
 UNKNOWN_NADA_HINT = _unknown_command_hint("nada")
+
+
+def _library_prompt_application(
+    console,
+    user_text: str | None,
+    *,
+    system_text: str | None = None,
+    apply_system: bool = False,
+    target_session_id: str | None = None,
+    system_fingerprint: str | None = None,
+    created_monotonic: float | None = None,
+) -> PromptVariableApplication:
+    store = console._ensure_console_chat_store()
+    session_id = target_session_id or store.active_session_id
+    assert session_id is not None
+    settings = store.session_settings(store.active_session_id)
+    current_system = "" if settings is None else str(settings.system_prompt or "")
+    return PromptVariableApplication(
+        system_text=system_text if apply_system else None,
+        user_text=user_text,
+        apply_system=apply_system,
+        apply_user=user_text is not None,
+        destination="append_active",
+        target_session_id=session_id,
+        composer_fingerprint=None,
+        system_fingerprint=(
+            system_fingerprint
+            if apply_system and system_fingerprint is not None
+            else (fingerprint_system_text(current_system) if apply_system else None)
+        ),
+        created_monotonic=(
+            time.monotonic() if created_monotonic is None else created_monotonic
+        ),
+    )
+
+
+class _StagedPromptConsoleHarness(App[None]):
+    def __init__(self, app_instance) -> None:
+        super().__init__()
+        self.app_instance = app_instance
+
+    async def on_mount(self) -> None:
+        console = ChatScreen(self.app_instance)
+        console._session._ensure_active_console_session_settings()
+        self.app_instance.pending_handoffs.stage(
+            HandoffChannel.CONSOLE_PROMPT_INSERT,
+            _library_prompt_application(console, "staged on mount"),
+        )
+        await self.push_screen(console)
 
 
 def _recipe_record() -> dict[str, object]:
@@ -1104,8 +1160,7 @@ async def test_console_pending_prompt_insert_is_consumed_automatically_on_mount(
     hand-off actually lands without any test-only shortcut."""
     app = _build_test_app()
     _configure_native_ready_console(app)
-    app.pending_handoffs.stage(HandoffChannel.CONSOLE_PROMPT_INSERT, "staged on mount")
-    host = ConsoleHarness(app)
+    host = _StagedPromptConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
@@ -1140,7 +1195,8 @@ async def test_console_pending_prompt_insert_is_consumed_automatically_on_resume
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
         app.pending_handoffs.stage(
-            HandoffChannel.CONSOLE_PROMPT_INSERT, "staged on resume"
+            HandoffChannel.CONSOLE_PROMPT_INSERT,
+            _library_prompt_application(console, "staged on resume"),
         )
         console.on_screen_resume()
 
@@ -1194,7 +1250,8 @@ async def test_console_resume_triggered_prompt_insert_survives_stale_session_swi
         assert console._console_visible_draft_session_id == first_session.id
 
         app.pending_handoffs.stage(
-            HandoffChannel.CONSOLE_PROMPT_INSERT, "resume-triggered insert"
+            HandoffChannel.CONSOLE_PROMPT_INSERT,
+            _library_prompt_application(console, "resume-triggered insert"),
         )
         console.on_screen_resume()
         await pilot.pause(0.25)  # past the 0.15s consumption timer
@@ -1228,7 +1285,8 @@ async def test_console_consumes_pending_prompt_insert_empty_draft_is_clean_inser
         assert composer.draft_text() == ""
 
         app.pending_handoffs.stage(
-            HandoffChannel.CONSOLE_PROMPT_INSERT, "inserted body"
+            HandoffChannel.CONSOLE_PROMPT_INSERT,
+            _library_prompt_application(console, "inserted body"),
         )
         await console._consume_pending_console_prompt_insert()
 
@@ -1254,7 +1312,8 @@ async def test_console_consumes_pending_prompt_insert_appends_to_existing_draft(
         composer.load_draft("abc")
 
         app.pending_handoffs.stage(
-            HandoffChannel.CONSOLE_PROMPT_INSERT, "inserted body"
+            HandoffChannel.CONSOLE_PROMPT_INSERT,
+            _library_prompt_application(console, "inserted body"),
         )
         await console._consume_pending_console_prompt_insert()
 
@@ -1283,7 +1342,10 @@ async def test_console_consumes_pending_prompt_insert_large_body_appends_as_coll
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("abc")
 
-        app.pending_handoffs.stage(HandoffChannel.CONSOLE_PROMPT_INSERT, large_body)
+        app.pending_handoffs.stage(
+            HandoffChannel.CONSOLE_PROMPT_INSERT,
+            _library_prompt_application(console, large_body),
+        )
         await console._consume_pending_console_prompt_insert()
 
         assert composer.draft_text() == f"abc\n{large_body}"
@@ -1312,7 +1374,8 @@ async def test_console_consumes_pending_prompt_insert_blocked_shows_exact_toast(
         app.notify = notify_spy
 
         app.pending_handoffs.stage(
-            HandoffChannel.CONSOLE_PROMPT_INSERT, "inserted body"
+            HandoffChannel.CONSOLE_PROMPT_INSERT,
+            _library_prompt_application(console, "inserted body"),
         )
         await console._consume_pending_console_prompt_insert()
 
@@ -1351,6 +1414,362 @@ async def test_console_consumes_pending_prompt_insert_noop_when_nothing_pending(
         assert not app.pending_handoffs.has_pending(
             HandoffChannel.CONSOLE_PROMPT_INSERT
         )
+
+
+@pytest.mark.asyncio
+async def test_console_rejects_empty_user_only_append_as_noop():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("settled draft")
+        application = _library_prompt_application(console, "")
+        app.pending_handoffs.stage(HandoffChannel.CONSOLE_PROMPT_INSERT, application)
+        notify_spy = Mock()
+        app.notify = notify_spy
+
+        await console._consume_pending_console_prompt_insert()
+
+        assert composer.draft_text() == "settled draft"
+        assert not app.pending_handoffs.has_pending(
+            HandoffChannel.CONSOLE_PROMPT_INSERT
+        )
+        notify_spy.assert_called_once_with(
+            "This Prompt has no text to append.", severity="warning"
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_library_append_targets_draft_at_consumption_and_preserves_attachment():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        application = _library_prompt_application(console, "settled append")
+        app.pending_handoffs.stage(HandoffChannel.CONSOLE_PROMPT_INSERT, application)
+
+        composer.load_draft("draft changed after Library authorization")
+        composer.set_pending_attachment_label("evidence.txt", count=1, total=5)
+        await console._consume_pending_console_prompt_insert()
+
+        assert composer.draft_text() == (
+            "draft changed after Library authorization\nsettled append"
+        )
+        assert composer._pending_attachment_label == "evidence.txt"
+
+
+@pytest.mark.asyncio
+async def test_console_library_append_expired_claim_warns_once_and_discards():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("keep")
+        app.notify = Mock()
+        app.pending_handoffs.stage(
+            HandoffChannel.CONSOLE_PROMPT_INSERT,
+            _library_prompt_application(
+                console,
+                "expired secret",
+                created_monotonic=time.monotonic() - 120.0,
+            ),
+        )
+
+        await console._consume_pending_console_prompt_insert()
+        await console._consume_pending_console_prompt_insert()
+
+        assert composer.draft_text() == "keep"
+        app.notify.assert_called_once_with(
+            "This Prompt insertion expired. Open the Prompt and retry.",
+            severity="warning",
+        )
+        assert app.pending_handoffs.claim(HandoffChannel.CONSOLE_PROMPT_INSERT) is None
+
+
+@pytest.mark.asyncio
+async def test_console_library_append_latest_wins_and_wrong_session_is_discarded():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        app.pending_handoffs.stage(
+            HandoffChannel.CONSOLE_PROMPT_INSERT,
+            _library_prompt_application(console, "superseded"),
+        )
+        app.pending_handoffs.stage(
+            HandoffChannel.CONSOLE_PROMPT_INSERT,
+            _library_prompt_application(
+                console,
+                "wrong target",
+                target_session_id="wrong-session",
+            ),
+        )
+        app.notify = Mock()
+
+        await console._consume_pending_console_prompt_insert()
+
+        assert composer.draft_text() == ""
+        app.notify.assert_called_once_with(
+            "The Console session or System prompt changed. Open the Prompt and retry.",
+            severity="warning",
+        )
+        assert app.pending_handoffs.claim(HandoffChannel.CONSOLE_PROMPT_INSERT) is None
+
+
+@pytest.mark.asyncio
+async def test_console_library_append_stale_system_discards_before_draft_mutation():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("keep")
+        app.notify = Mock()
+        app.pending_handoffs.stage(
+            HandoffChannel.CONSOLE_PROMPT_INSERT,
+            _library_prompt_application(
+                console,
+                "do not append",
+                system_text="new system",
+                apply_system=True,
+                system_fingerprint=fingerprint_system_text("stale system"),
+            ),
+        )
+
+        await console._consume_pending_console_prompt_insert()
+
+        assert composer.draft_text() == "keep"
+        app.notify.assert_called_once_with(
+            "The Console session or System prompt changed. Open the Prompt and retry.",
+            severity="warning",
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_library_append_missing_composer_releases_for_retry():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        application = _library_prompt_application(console, "retry me")
+        app.pending_handoffs.stage(HandoffChannel.CONSOLE_PROMPT_INSERT, application)
+        real_accessor = console._prompts._composer_accessor
+        console._prompts._composer_accessor = lambda: None
+
+        await console._consume_pending_console_prompt_insert()
+
+        assert app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_PROMPT_INSERT)
+        console._prompts._composer_accessor = real_accessor
+        await console._consume_pending_console_prompt_insert()
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        assert composer.draft_text() == "retry me"
+
+
+@pytest.mark.asyncio
+async def test_console_library_system_only_leaves_draft_and_warns_on_persistence_failure(
+    monkeypatch,
+):
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("unchanged")
+        store = console._ensure_console_chat_store()
+        real_set_system = store.set_session_system_prompt
+
+        def set_system_but_report_unsaved(session_id, system_text):
+            session, _persisted = real_set_system(session_id, system_text)
+            return session, False
+
+        monkeypatch.setattr(
+            store, "set_session_system_prompt", set_system_but_report_unsaved
+        )
+        app.notify = Mock()
+        app.pending_handoffs.stage(
+            HandoffChannel.CONSOLE_PROMPT_INSERT,
+            _library_prompt_application(
+                console,
+                None,
+                system_text="authorized system",
+                apply_system=True,
+            ),
+        )
+
+        await console._consume_pending_console_prompt_insert()
+
+        assert composer.draft_text() == "unchanged"
+        assert store.session_settings(store.active_session_id).system_prompt == (
+            "authorized system"
+        )
+        app.notify.assert_called_once_with(
+            "System prompt applied for this session, but the change could not be "
+            "saved -- it may not survive a reload.",
+            severity="warning",
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_library_append_rolls_back_draft_when_system_mutation_raises(
+    monkeypatch,
+):
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.insert_text("literal")
+        composer.insert_file_segment("file body", "file.txt")
+        before = composer.capture_draft_snapshot()
+        store = console._ensure_console_chat_store()
+
+        def fail_system_mutation(_session_id, _system_text):
+            raise RuntimeError("private failure")
+
+        monkeypatch.setattr(store, "set_session_system_prompt", fail_system_mutation)
+        app.notify = Mock()
+        app.pending_handoffs.stage(
+            HandoffChannel.CONSOLE_PROMPT_INSERT,
+            _library_prompt_application(
+                console,
+                "append",
+                system_text="new system",
+                apply_system=True,
+            ),
+        )
+
+        await console._consume_pending_console_prompt_insert()
+
+        after = composer.capture_draft_snapshot()
+        assert after.segments == before.segments
+        assert after.cursor_index == before.cursor_index
+        assert store.session_draft(store.active_session_id) == composer.draft_text()
+        assert store.session_settings(store.active_session_id).system_prompt is None
+        app.notify.assert_called_once_with(
+            "The Prompt could not be applied. The Console draft was restored.",
+            severity="warning",
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_library_append_rolls_back_when_paste_mutates_then_raises(
+    monkeypatch,
+):
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.insert_text("before")
+        before = composer.capture_draft_snapshot()
+        real_insert = composer.insert_text_as_paste
+
+        def mutate_then_raise(text):
+            real_insert(text)
+            raise RuntimeError("private failure")
+
+        monkeypatch.setattr(composer, "insert_text_as_paste", mutate_then_raise)
+        app.notify = Mock()
+        app.pending_handoffs.stage(
+            HandoffChannel.CONSOLE_PROMPT_INSERT,
+            _library_prompt_application(console, "append"),
+        )
+
+        await console._consume_pending_console_prompt_insert()
+
+        after = composer.capture_draft_snapshot()
+        assert after.segments == before.segments
+        assert after.cursor_index == before.cursor_index
+        store = console._ensure_console_chat_store()
+        assert store.session_draft(store.active_session_id) == "before"
+
+
+@pytest.mark.asyncio
+async def test_console_library_system_only_replaces_stale_prompt_undo(
+    monkeypatch,
+):
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        captured = composer.capture_draft_snapshot()
+        composer.replace_snapshot_as_paste(captured, "prior Prompt change")
+        assert composer.improvement_undo_available is True
+
+        app.pending_handoffs.stage(
+            HandoffChannel.CONSOLE_PROMPT_INSERT,
+            _library_prompt_application(
+                console,
+                None,
+                system_text="authorized system",
+                apply_system=True,
+            ),
+        )
+        await console._consume_pending_console_prompt_insert()
+
+        assert composer.draft_text() == "prior Prompt change"
+        assert composer.improvement_undo_available is False
+
+        second_capture = composer.capture_draft_snapshot()
+        composer.replace_snapshot_as_paste(second_capture, "newer Prompt change")
+        assert composer.improvement_undo_available is True
+
+        def fail_system_mutation(_session_id, _system_text):
+            raise RuntimeError("private failure")
+
+        monkeypatch.setattr(
+            console._ensure_console_chat_store(),
+            "set_session_system_prompt",
+            fail_system_mutation,
+        )
+        app.pending_handoffs.stage(
+            HandoffChannel.CONSOLE_PROMPT_INSERT,
+            _library_prompt_application(
+                console,
+                None,
+                system_text="failed system",
+                apply_system=True,
+            ),
+        )
+        await console._consume_pending_console_prompt_insert()
+
+        assert composer.draft_text() == "newer Prompt change"
+        assert composer.improvement_undo_available is True
 
 
 @pytest.mark.asyncio

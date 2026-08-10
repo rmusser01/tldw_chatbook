@@ -73,6 +73,10 @@ from tldw_chatbook.Prompt_Management.prompt_restore_errors import (
     PromptRestoreError,
     PromptRestoreErrorCode,
 )
+from tldw_chatbook.Prompt_Management.prompt_variables import (
+    PromptVariableApplication,
+    fingerprint_system_text,
+)
 from tldw_chatbook.Prompt_Management import (
     prompt_scope_service as prompt_scope_service_module,
 )
@@ -94,6 +98,9 @@ from tldw_chatbook.UI.Library_Modules import (
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+from tldw_chatbook.UI.Navigation.screen_state_store import (
+    ConsolePromptTargetProjection,
+)
 from tldw_chatbook.Widgets.Library.library_prompts_canvas import (
     LibraryPromptsListCanvas,
 )
@@ -102,6 +109,9 @@ from tldw_chatbook.Widgets.Library.prompt_delete_confirmation_modal import (
     PromptDeleteDecision,
 )
 from tldw_chatbook.Widgets.Prompts.prompt_block_editor import PromptBlockEditor
+from tldw_chatbook.Widgets.Console.prompt_variables_dialog import (
+    PromptVariablesDialog,
+)
 
 from Tests.UI.test_destination_shells import (
     StaticLibraryConversationScopeService,
@@ -7551,23 +7561,72 @@ def test_library_prompt_insert_console_refuses_while_dirty():
     stage.assert_not_called()
 
 
-def test_library_prompt_insert_console_notifies_when_user_prompt_is_empty():
+def _library_prompt_target() -> ConsolePromptTargetProjection:
+    return ConsolePromptTargetProjection(
+        target_session_id="console-session",
+        system_fingerprint=fingerprint_system_text("current system"),
+    )
+
+
+class _LibraryPromptHandlerHarness(SimpleNamespace):
+    _stage_library_prompt_for_console = LibraryScreen._stage_library_prompt_for_console
+
+
+def test_library_block_editor_apply_preserves_both_selected_lanes():
+    state = _structured_editor_state()
+    apply_working_copy = Mock()
+    screen = SimpleNamespace(
+        _library_prompt_block_state=None,
+        _apply_library_prompt_working_copy=apply_working_copy,
+    )
+    event = SimpleNamespace(
+        stop=Mock(),
+        state=state.block_editor_state,
+        apply_system=True,
+        system_prompt="System {customer}",
+        apply_user=True,
+        user_prompt="User {customer}",
+    )
+
+    LibraryScreen.on_prompt_block_editor_apply_requested(screen, event)
+
+    event.stop.assert_called_once_with()
+    apply_working_copy.assert_called_once_with(
+        state=state.block_editor_state,
+        system_prompt="System {customer}",
+        user_prompt="User {customer}",
+    )
+
+
+@pytest.mark.parametrize("projection_error", [False, True], ids=["absent", "error"])
+def test_library_prompt_insert_console_refuses_without_published_target(
+    projection_error,
+):
     notify = Mock()
     stage = Mock()
-    screen = SimpleNamespace(
+    push_screen = Mock()
+
+    def target_getter():
+        if projection_error:
+            raise RuntimeError("private projection failure")
+        return None
+
+    screen = _LibraryPromptHandlerHarness(
         _library_prompts_view="editor",
         _library_prompt_dirty=False,
         app_instance=SimpleNamespace(
             notify=notify,
             stage_console_prompt_insert=stage,
+            console_prompt_target_projection=target_getter,
+            push_screen=push_screen,
         ),
         _current_library_prompt_editor_state=lambda: _structured_editor_state(),
         _read_library_prompt_editor_fields=lambda: (
-            "System Only",
+            "Prompt",
             "",
             "",
-            "You are helpful.",
-            "",
+            "System",
+            "User",
             "",
         ),
         _sanitize_note_content=lambda value, *, max_length: value,
@@ -7578,10 +7637,68 @@ def test_library_prompt_insert_console_notifies_when_user_prompt_is_empty():
 
     event.stop.assert_called_once_with()
     notify.assert_called_once_with(
-        "This prompt has no user prompt text to insert.",
+        "Open Console once, then retry Use in Console.",
         severity="warning",
     )
     stage.assert_not_called()
+    push_screen.assert_not_called()
+
+
+def test_library_prompt_insert_console_system_only_uses_shared_dialog():
+    notify = Mock()
+    stage = Mock()
+    pushed: list[tuple[object, object]] = []
+
+    def push_screen(screen, *, callback):
+        pushed.append((screen, callback))
+
+    target = _library_prompt_target()
+    screen = _LibraryPromptHandlerHarness(
+        _library_prompts_view="editor",
+        _library_prompt_dirty=False,
+        app_instance=SimpleNamespace(
+            notify=notify,
+            stage_console_prompt_insert=stage,
+            console_prompt_target_projection=lambda: target,
+            push_screen=push_screen,
+        ),
+        _current_library_prompt_editor_state=lambda: _structured_editor_state(),
+        _read_library_prompt_editor_fields=lambda: (
+            "System Only",
+            "",
+            "",
+            "You are {role}.",
+            "",
+            "",
+        ),
+        _sanitize_note_content=lambda value, *, max_length: value,
+    )
+    event = SimpleNamespace(stop=Mock())
+
+    LibraryScreen.handle_library_prompt_insert_console(screen, event)
+
+    assert len(pushed) == 1
+    dialog, callback = pushed[0]
+    assert isinstance(dialog, PromptVariablesDialog)
+    assert dialog.request.destination == "append_active"
+    assert dialog.request.target_session_id == "console-session"
+    assert dialog.request.system_text == "You are {role}."
+    assert dialog.request.user_text is None
+    stage.assert_not_called()
+
+    application = PromptVariableApplication(
+        system_text="You are concise.",
+        user_text=None,
+        apply_system=True,
+        apply_user=False,
+        destination="append_active",
+        target_session_id=target.target_session_id,
+        composer_fingerprint=None,
+        system_fingerprint=target.system_fingerprint,
+    )
+    callback(application)
+    stage.assert_called_once_with(application)
+    notify.assert_not_called()
 
 
 @pytest.mark.parametrize("structured", [False, True], ids=["legacy", "supported-v2"])
@@ -7600,19 +7717,22 @@ def test_library_prompt_insert_console_stages_safe_prompt_states(structured):
             }
         )
     )
-    screen = SimpleNamespace(
+    target = _library_prompt_target()
+    screen = _LibraryPromptHandlerHarness(
         _library_prompts_view="editor",
         _library_prompt_dirty=False,
         app_instance=SimpleNamespace(
             notify=notify,
             stage_console_prompt_insert=stage,
+            console_prompt_target_projection=lambda: target,
+            push_screen=Mock(),
         ),
         _current_library_prompt_editor_state=lambda: editor_state,
         _read_library_prompt_editor_fields=lambda: (
             "Prompt",
             "",
             "",
-            "Stay direct.",
+            "",
             "Ship it.",
             "",
         ),
@@ -7624,4 +7744,129 @@ def test_library_prompt_insert_console_stages_safe_prompt_states(structured):
 
     event.stop.assert_called_once_with()
     notify.assert_not_called()
-    stage.assert_called_once_with("Ship it.")
+    application = stage.call_args.args[0]
+    assert isinstance(application, PromptVariableApplication)
+    assert application.destination == "append_active"
+    assert application.target_session_id == "console-session"
+    assert application.apply_system is False
+    assert application.user_text == "Ship it."
+
+
+def test_library_prompt_insert_console_variables_share_one_dialog_and_use_original():
+    stage = Mock()
+    pushed: list[tuple[PromptVariablesDialog, object]] = []
+
+    def push_screen(dialog, *, callback):
+        pushed.append((dialog, callback))
+
+    target = _library_prompt_target()
+    screen = _LibraryPromptHandlerHarness(
+        _library_prompts_view="editor",
+        _library_prompt_dirty=False,
+        app_instance=SimpleNamespace(
+            notify=Mock(),
+            stage_console_prompt_insert=stage,
+            console_prompt_target_projection=lambda: target,
+            push_screen=push_screen,
+        ),
+        _current_library_prompt_editor_state=lambda: _structured_editor_state(),
+        _read_library_prompt_editor_fields=lambda: (
+            "Prompt",
+            "",
+            "",
+            "Address {customer}.",
+            "Draft for {customer}.",
+            "",
+        ),
+        _sanitize_note_content=lambda value, *, max_length: value,
+    )
+
+    LibraryScreen.handle_library_prompt_insert_console(
+        screen,
+        SimpleNamespace(stop=Mock()),
+    )
+
+    assert len(pushed) == 1
+    dialog, callback = pushed[0]
+    assert dialog.request.system_text == "Address {customer}."
+    assert dialog.request.user_text == "Draft for {customer}."
+    assert dialog.request.destination == "append_active"
+    stage.assert_not_called()
+
+    original = PromptVariableApplication(
+        system_text=None,
+        user_text="Draft for {customer}.",
+        apply_system=False,
+        apply_user=True,
+        destination="append_active",
+        target_session_id=target.target_session_id,
+        composer_fingerprint=None,
+        system_fingerprint=None,
+    )
+    callback(original)
+    stage.assert_called_once_with(original)
+
+
+@pytest.mark.parametrize("projection_error", [False, True], ids=["absent", "error"])
+def test_library_prompt_dialog_rechecks_projection_before_staging(projection_error):
+    notify = Mock()
+    stage = Mock()
+    pushed: list[tuple[PromptVariablesDialog, object]] = []
+    target = _library_prompt_target()
+    projection_calls = 0
+
+    def target_getter():
+        nonlocal projection_calls
+        projection_calls += 1
+        if projection_calls == 1:
+            return target
+        if projection_error:
+            raise RuntimeError("private projection failure")
+        return None
+
+    def push_screen(dialog, *, callback):
+        pushed.append((dialog, callback))
+
+    screen = _LibraryPromptHandlerHarness(
+        _library_prompts_view="editor",
+        _library_prompt_dirty=False,
+        app_instance=SimpleNamespace(
+            notify=notify,
+            stage_console_prompt_insert=stage,
+            console_prompt_target_projection=target_getter,
+            push_screen=push_screen,
+        ),
+        _current_library_prompt_editor_state=lambda: _structured_editor_state(),
+        _read_library_prompt_editor_fields=lambda: (
+            "Prompt",
+            "",
+            "",
+            "System {customer}",
+            "User {customer}",
+            "",
+        ),
+        _sanitize_note_content=lambda value, *, max_length: value,
+    )
+    LibraryScreen.handle_library_prompt_insert_console(
+        screen,
+        SimpleNamespace(stop=Mock()),
+    )
+    _dialog, callback = pushed[0]
+    application = PromptVariableApplication(
+        system_text=None,
+        user_text="User Acme",
+        apply_system=False,
+        apply_user=True,
+        destination="append_active",
+        target_session_id=target.target_session_id,
+        composer_fingerprint=None,
+        system_fingerprint=None,
+    )
+
+    callback(application)
+
+    stage.assert_not_called()
+    notify.assert_called_once_with(
+        "Open Console once, then retry Use in Console.",
+        severity="warning",
+    )

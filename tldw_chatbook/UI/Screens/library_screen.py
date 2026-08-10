@@ -191,6 +191,10 @@ from ...Library.library_skills_state import (
 from ...Prompt_Management.prompt_markdown_export import render_prompt_markdown
 from ...Prompt_Management.prompt_artifact_codec import deserialize_definition
 from ...Prompt_Management.prompt_artifact_models import ArtifactType
+from ...Prompt_Management.prompt_variables import (
+    PromptVariableApplication,
+    compile_prompt_variables,
+)
 from ...Prompt_Management.prompt_source_capabilities import (
     PromptSourceCapabilities,
     local_prompt_capabilities,
@@ -206,6 +210,11 @@ from ...Widgets.Prompts.prompt_block_editor_state import (
     PromptBlockEditorState,
     set_artifact_type,
 )
+from ...Widgets.Console.prompt_variables_dialog import (
+    PromptVariablesDialog,
+    PromptVariablesDialogRequest,
+)
+from ..Navigation.screen_state_store import ConsolePromptTargetProjection
 from ...Widgets.Library.prompt_delete_confirmation_modal import (
     PromptDeleteConfirmationModal,
     PromptDeleteDecision,
@@ -17494,6 +17503,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompt_block_state = event.state
         self._apply_library_prompt_working_copy(
             state=event.state,
+            system_prompt=event.system_prompt if event.apply_system else None,
             user_prompt=event.user_prompt if event.apply_user else None,
         )
 
@@ -18089,6 +18099,7 @@ class LibraryScreen(BaseAppScreen):
         self,
         *,
         state: PromptBlockEditorState,
+        system_prompt: str | None,
         user_prompt: str | None,
     ) -> None:
         """Stage a Prompt, or detach a Recipe into an unsaved Prompt copy."""
@@ -18126,39 +18137,128 @@ class LibraryScreen(BaseAppScreen):
                 )
             return
 
-        if not user_prompt or not user_prompt.strip():
+        self._stage_library_prompt_for_console(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+        )
+
+    def _stage_library_prompt_for_console(
+        self,
+        *,
+        system_prompt: str | None,
+        user_prompt: str | None,
+    ) -> None:
+        """Open the shared Prompt dialog or stage a variable-free User append."""
+        notify = getattr(self.app_instance, "notify", None)
+        target_getter = getattr(
+            self.app_instance,
+            "console_prompt_target_projection",
+            None,
+        )
+
+        def _current_console_target() -> ConsolePromptTargetProjection | None:
+            try:
+                projection = target_getter() if callable(target_getter) else None
+            except Exception:
+                return None
+            return (
+                projection
+                if isinstance(projection, ConsolePromptTargetProjection)
+                else None
+            )
+
+        target = _current_console_target()
+        if target is None:
             if callable(notify):
                 notify(
-                    "This prompt has no selected User text to insert.",
+                    "Open Console once, then retry Use in Console.",
                     severity="warning",
                 )
             return
         stage = getattr(self.app_instance, "stage_console_prompt_insert", None)
-        if not callable(stage):
+        push_screen = getattr(self.app_instance, "push_screen", None)
+        if not callable(stage) or not callable(push_screen):
             if callable(notify):
                 notify("Console insert is unavailable.", severity="warning")
             return
-        stage(user_prompt)
+
+        system_source = self._sanitize_note_content(
+            system_prompt or "",
+            max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS,
+        )
+        user_source = self._sanitize_note_content(
+            user_prompt or "",
+            max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS,
+        )
+        system_text = system_source if system_source.strip() else None
+        user_text = (
+            None if system_text is not None and not user_source.strip() else user_source
+        )
+        if system_text is None and not user_source.strip():
+            if callable(notify):
+                notify(
+                    "This prompt has no user prompt text to insert.",
+                    severity="warning",
+                )
+            return
+
+        plan = compile_prompt_variables(
+            system_text=system_text,
+            user_text=user_text,
+        )
+        if system_text is None and plan.is_valid and not plan.variables:
+            stage(
+                PromptVariableApplication(
+                    system_text=None,
+                    user_text=user_text,
+                    apply_system=False,
+                    apply_user=True,
+                    destination="append_active",
+                    target_session_id=target.target_session_id,
+                    composer_fingerprint=None,
+                    system_fingerprint=None,
+                )
+            )
+            return
+
+        request = PromptVariablesDialogRequest(
+            system_text=system_text,
+            user_text=user_text,
+            destination="append_active",
+            target_session_id=target.target_session_id,
+            composer_fingerprint=None,
+            system_fingerprint=(
+                target.system_fingerprint if system_text is not None else None
+            ),
+        )
+
+        def _stage_dialog_result(
+            application: PromptVariableApplication | None,
+        ) -> None:
+            if application is None:
+                return
+            live_target = _current_console_target()
+            if live_target != target:
+                if callable(notify):
+                    notify(
+                        "Open Console once, then retry Use in Console.",
+                        severity="warning",
+                    )
+                return
+            stage(application)
+
+        push_screen(
+            PromptVariablesDialog(request),
+            callback=_stage_dialog_result,
+        )
 
     @on(Button.Pressed, "#library-prompt-insert-console")
     def handle_library_prompt_insert_console(self, event: Button.Pressed) -> None:
-        """Stage the open prompt's live User prompt text for Console and navigate there.
+        """Stage the open Prompt through the shared Console append flow.
 
-        ChatHandoffPayload-free direct route (Task 12): unlike this screen's
-        other "Use in Console" actions (notes/media/conversations, which
-        stage a richer, RAG-evidence-aware ``ChatHandoffPayload``), a prompt
-        only ever needs to hand a bare string to the Console composer --
-        appended onto whatever draft already exists there, never replacing
-        it (``TldwCli.stage_console_prompt_insert``).
-
-        Reads the editor's LIVE (possibly-unsaved) User prompt text,
-        mirroring Save's own field read -- what you currently see in the
-        editor is what gets inserted. Refuses while the editor has an
-        unsaved edit: navigating away would otherwise be vetoed by
-        ``_flush_library_prompt_save`` (leaving a staged insert to fire
-        unexpectedly on some later, unrelated Console visit) -- the same
-        "resolve the dirty edit first" rule Back/rail-row selection already
-        enforce.
+        Reads the editor's live System/User text after the artifact and dirty
+        guards. Variable-bearing or System-bearing prompts use the shared
+        dialog; a variable-free User-only prompt takes the typed fast path.
 
         Args:
             event: Button press event emitted by the editor's "Use in
@@ -18184,6 +18284,7 @@ class LibraryScreen(BaseAppScreen):
         if block_state.artifact_type == "recipe":
             self._apply_library_prompt_working_copy(
                 state=block_state,
+                system_prompt=None,
                 user_prompt=None,
             )
             return
@@ -18205,25 +18306,13 @@ class LibraryScreen(BaseAppScreen):
         fields = self._read_library_prompt_editor_fields()
         if fields is None:
             return
-        _name, _author, _details, _system_prompt, raw_user_prompt, _keywords_text = (
+        _name, _author, _details, raw_system_prompt, raw_user_prompt, _keywords_text = (
             fields
         )
-        user_prompt = self._sanitize_note_content(
-            raw_user_prompt, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS
+        self._stage_library_prompt_for_console(
+            system_prompt=raw_system_prompt,
+            user_prompt=raw_user_prompt,
         )
-        if not user_prompt.strip():
-            if callable(notify):
-                notify(
-                    "This prompt has no user prompt text to insert.",
-                    severity="warning",
-                )
-            return
-        stage = getattr(self.app_instance, "stage_console_prompt_insert", None)
-        if not callable(stage):
-            if callable(notify):
-                notify("Console insert is unavailable.", severity="warning")
-            return
-        stage(user_prompt)
 
     @on(Button.Pressed, "#library-prompt-back")
     async def handle_library_prompt_back(self, event: Button.Pressed) -> None:

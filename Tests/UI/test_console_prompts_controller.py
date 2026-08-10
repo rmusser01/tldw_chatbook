@@ -107,6 +107,19 @@ def _replacement_application(
     return PromptVariableApplication(**values)
 
 
+def _append_application(session_id: str, user_text: str) -> PromptVariableApplication:
+    return PromptVariableApplication(
+        system_text=None,
+        user_text=user_text,
+        apply_system=False,
+        apply_user=True,
+        destination="append_active",
+        target_session_id=session_id,
+        composer_fingerprint=None,
+        system_fingerprint=None,
+    )
+
+
 class _PromptScopeService:
     """The `app_instance.prompt_scope_service` seam the cluster reads."""
 
@@ -1125,7 +1138,12 @@ async def test_library_prompt_insert_handoff_appends_onto_the_live_draft() -> No
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.clear_draft()
         composer.insert_text("existing")
-        app.pending_handoffs.stage(HandoffChannel.CONSOLE_PROMPT_INSERT, "staged body")
+        session_id = console._ensure_console_chat_store().active_session_id
+        assert session_id is not None
+        app.pending_handoffs.stage(
+            HandoffChannel.CONSOLE_PROMPT_INSERT,
+            _append_application(session_id, "staged body"),
+        )
 
         await console._consume_pending_console_prompt_insert()
         await pilot.pause()
@@ -1155,7 +1173,12 @@ async def test_library_prompt_insert_handoff_is_blocked_before_setup_completes()
         console._console_setup_blocked_reason = lambda: "blocked"
         notify = Mock()
         app.notify = notify
-        app.pending_handoffs.stage(HandoffChannel.CONSOLE_PROMPT_INSERT, "staged body")
+        session_id = console._ensure_console_chat_store().active_session_id
+        assert session_id is not None
+        app.pending_handoffs.stage(
+            HandoffChannel.CONSOLE_PROMPT_INSERT,
+            _append_application(session_id, "staged body"),
+        )
 
         await console._consume_pending_console_prompt_insert()
         await pilot.pause()

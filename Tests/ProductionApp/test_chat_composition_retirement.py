@@ -22,6 +22,7 @@ from tldw_chatbook.config import load_settings
 from tldw_chatbook.Constants import TAB_CHAT
 from tldw_chatbook.Prompt_Management.prompt_variables import (
     PromptVariableApplication,
+    fingerprint_system_text,
 )
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
@@ -262,14 +263,18 @@ def test_video_retention_startup_failure_is_bounded(
     assert retention_calls == [app.generated_video_store]
 
 
-def _prompt_application(user_text: str) -> PromptVariableApplication:
+def _prompt_application(
+    user_text: str,
+    *,
+    target_session_id: str = "session-1",
+) -> PromptVariableApplication:
     return PromptVariableApplication(
         system_text=None,
         user_text=user_text,
         apply_system=False,
         apply_user=True,
         destination="append_active",
-        target_session_id="session-1",
+        target_session_id=target_session_id,
         composer_fingerprint=None,
         system_fingerprint=None,
     )
@@ -298,6 +303,8 @@ async def test_registered_chat_route_uses_only_native_console_and_restores_snaps
                 ChatScreen,
                 selector="#console-session-surface",
             )
+            session_id = chat._ensure_console_chat_store().active_session_id
+            assert session_id is not None
             chat.query_one("#console-session-surface", ConsoleSessionSurface)
             composer = chat.query_one("#console-native-composer", ConsoleComposerBar)
             chat.query_one("#console-command-input", Input)
@@ -329,6 +336,11 @@ async def test_registered_chat_route_uses_only_native_console_and_restores_snaps
             assert chat._build_video_card_specs([message])[message_id].status == "ready"
 
             composer.load_draft(draft)
+            store = chat._ensure_console_chat_store()
+            session_id = store.active_session_id
+            assert session_id is not None
+            store.set_session_system_prompt(session_id, "projection system")
+            assert app.console_prompt_target_projection() is None
             await pilot.click("#console-composer-collapse")
             assert chat._console_composer_collapsed is True
             await pilot.click("#console-composer-expand")
@@ -336,6 +348,12 @@ async def test_registered_chat_route_uses_only_native_console_and_restores_snaps
 
             app.post_message(NavigateToScreen("settings"))
             await _wait_for_screen(app, pilot, SettingsScreen)
+            projection = app.console_prompt_target_projection()
+            assert projection is not None
+            assert projection.target_session_id == session_id
+            assert projection.system_fingerprint == fingerprint_system_text(
+                "projection system"
+            )
             app.post_message(NavigateToScreen("chat"))
             restored_chat = await _wait_for_screen(
                 app,
@@ -494,13 +512,18 @@ async def test_native_console_prompt_handoff_releases_transient_and_acknowledges
                 ChatScreen,
                 selector="#console-session-surface",
             )
+            session_id = chat._ensure_console_chat_store().active_session_id
+            assert session_id is not None
 
             monkeypatch.setattr(
                 chat, "_console_setup_blocked_reason", lambda: "blocked"
             )
             app.pending_handoffs.stage(
                 HandoffChannel.CONSOLE_PROMPT_INSERT,
-                _prompt_application("terminal prompt"),
+                _prompt_application(
+                    "terminal prompt",
+                    target_session_id=session_id,
+                ),
             )
             await chat._consume_pending_console_prompt_insert()
             assert not app.pending_handoffs.has_pending(
@@ -511,14 +534,13 @@ async def test_native_console_prompt_handoff_releases_transient_and_acknowledges
             )
 
             monkeypatch.setattr(chat, "_console_setup_blocked_reason", lambda: "")
-            monkeypatch.setattr(
-                chat,
-                "_insert_prompt_text_into_composer",
-                lambda text, *, replace: False,
-            )
+            monkeypatch.setattr(chat._prompts, "_composer_accessor", lambda: None)
             app.pending_handoffs.stage(
                 HandoffChannel.CONSOLE_PROMPT_INSERT,
-                _prompt_application("retry prompt"),
+                _prompt_application(
+                    "retry prompt",
+                    target_session_id=session_id,
+                ),
             )
             await chat._consume_pending_console_prompt_insert()
             assert app.pending_handoffs.has_pending(

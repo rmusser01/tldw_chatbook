@@ -108,6 +108,7 @@ import uuid
 from loguru import logger
 
 from ..Navigation.pending_handoff_store import HandoffChannel
+from ..Navigation.screen_state_store import ConsolePromptTargetProjection
 from ...Chat.console_command_grammar import CommandParse
 from ...Chat.console_provider_endpoints import safe_endpoint_display
 from ...Chat.prompt_history import PromptHistory, default_prompt_history_path
@@ -759,6 +760,10 @@ class ConsolePromptsController:
         "The Console draft, session, or System prompt changed. "
         "Open the Prompt and retry."
     )
+    _PROMPT_APPEND_STALE_COPY = (
+        "The Console session or System prompt changed. Open the Prompt and retry."
+    )
+    _PROMPT_APPEND_EMPTY_COPY = "This Prompt has no text to append."
     _PROMPT_APPLICATION_FAILED_COPY = (
         "The Prompt could not be applied. The Console draft was restored."
     )
@@ -1503,76 +1508,152 @@ class ConsolePromptsController:
         )
 
     async def _consume_pending_console_prompt_insert(self) -> None:
-        """Consume a Library "Use in Console" staged prompt body, if any.
-
-        Mirrors ``_consume_pending_chat_handoff``'s stage-then-consume
-        shape, but the staged payload is a bare string appended into the
-        composer -- never a ``ChatHandoffPayload``. Gated on the same
-        first-run provider/model setup readiness the composer's own Send
-        button uses: unlike the in-composer `/prompt` command (which Task
-        10 deliberately lets run even while Send is blocked, since
-        composing is not sending), this cross-screen hop is an unattended
-        action the user did not consciously type into this composer, so a
-        blocked first-run state gets an honest toast instead of a silent
-        insert -- the draft is left untouched and nothing about the source
-        Library prompt is touched either.
-        """
-        store = self.app_instance.pending_handoffs
-        claim = store.claim(HandoffChannel.CONSOLE_PROMPT_INSERT)
+        """Settle and apply one typed Library append request, if pending."""
+        handoffs = self.app_instance.pending_handoffs
+        claim = handoffs.claim(HandoffChannel.CONSOLE_PROMPT_INSERT)
         if claim is None:
             return
-        text = claim.value
-        if not text.strip():
-            store.acknowledge(claim)
+        if claim.status == "expired":
+            handoffs.acknowledge(claim)
+            self._warn_prompt_application(self._PROMPT_APPLICATION_EXPIRED_COPY)
+            return
+        application = claim.value
+        if (
+            not isinstance(application, PromptVariableApplication)
+            or application.destination != "append_active"
+        ):
+            handoffs.acknowledge(claim)
+            self._warn_prompt_application(self._PROMPT_APPEND_STALE_COPY)
+            return
+        if (
+            application.apply_user
+            and not application.user_text
+            and not application.apply_system
+        ):
+            handoffs.acknowledge(claim)
+            self._warn_prompt_application(self._PROMPT_APPEND_EMPTY_COPY)
             return
         if self._console_setup_blocked_reason():
-            # A persistent state, not a mount-timing race -- always safe to
-            # consume+notify here regardless of whether the composer widget
-            # itself has finished mounting yet.
-            store.acknowledge(claim)
+            handoffs.acknowledge(claim)
             self.app_instance.notify(
                 self._LIBRARY_PROMPT_INSERT_BLOCKED_COPY,
                 severity="warning",
             )
             return
-        # Settle the active-session draft tracking BEFORE inserting so this
-        # consumption is self-guarding no matter which lifecycle hook
-        # (`on_mount`, `on_screen_resume`, or any other resume-adjacent path)
-        # scheduled it. If a session switch races ahead of us,
-        # `_console_visible_draft_session_id` can be stale relative to the
-        # store's active session; a *later* `_sync_native_console_chat_ui`
-        # pass would then unconditionally reload the composer from that
-        # newly-active session's stored draft, silently discarding the
-        # insert below (the pending field is already cleared once the
-        # insert lands, so there is no retry). Calling this here -- and
-        # nowhere between here and the insert, so the two run atomically
-        # within this event-loop turn -- settles the tracker onto the
-        # current active session first, so any subsequent sync pass takes
-        # the no-op fast path instead of clobbering what we're about to
-        # insert.
         try:
             self._sync_console_session_draft()
-            inserted = self._insert_prompt_text_into_composer(text, replace=False)
         except asyncio.CancelledError:
-            store.release(claim)
+            handoffs.release(claim)
             raise
-        except Exception as exc:
-            store.release(claim)
-            logger.warning(
-                "Console prompt handoff transfer failed "
-                "(channel={}, revision={}, exception_category={})",
-                claim.channel.value,
-                claim.revision,
-                type(exc).__name__,
+        except Exception:
+            handoffs.release(claim)
+            return
+
+        composer = self._console_composer_or_none()
+        if composer is None:
+            handoffs.release(claim)
+            return
+        console_store = self._ensure_console_chat_store()
+        session_id = console_store.active_session_id
+        settings = (
+            console_store.session_settings(session_id)
+            if session_id is not None
+            else None
+        )
+        expired = application.is_expired()
+        if (
+            expired
+            or session_id != application.target_session_id
+            or settings is None
+            or (
+                application.apply_system
+                and fingerprint_system_text(str(settings.system_prompt or ""))
+                != application.system_fingerprint
             )
+        ):
+            handoffs.acknowledge(claim)
+            copy = (
+                self._PROMPT_APPLICATION_EXPIRED_COPY
+                if expired
+                else self._PROMPT_APPEND_STALE_COPY
+            )
+            self._warn_prompt_application(copy)
             return
-        # A missing composer is transient. Release the exact claim so a later
-        # mount/resume can retry without disturbing any newer replacement.
-        if not inserted:
-            store.release(claim)
+
+        captured_snapshot = composer.capture_draft_snapshot()
+        composer_mutated = False
+        try:
+            if application.apply_user and application.user_text:
+                composer_mutated = True
+                if composer.draft_text():
+                    composer.move_cursor_end()
+                    composer.insert_text_as_paste(f"\n{application.user_text}")
+                else:
+                    composer.insert_text_as_paste(application.user_text)
+            console_store.set_session_draft(session_id, composer.draft_text())
+            persisted = True
+            if application.apply_system:
+                _session, persisted = console_store.set_session_system_prompt(
+                    session_id,
+                    application.system_text,
+                )
+                if not composer_mutated:
+                    composer.invalidate_improvement_undo()
+        except Exception:
+            try:
+                if composer_mutated:
+                    composer.restore_snapshot(captured_snapshot)
+                    console_store.set_session_draft(session_id, composer.draft_text())
+                if application.apply_system:
+                    console_store.replace_session_settings(session_id, settings)
+                    self._sync_console_system_prompt_surfaces()
+                self._sync_console_command_popup()
+            except Exception:
+                pass
+            handoffs.acknowledge(claim)
+            self._warn_prompt_application(self._PROMPT_APPLICATION_FAILED_COPY)
             return
-        store.acknowledge(claim)
-        self._focus_console_composer_if_needed(force=True)
+
+        handoffs.acknowledge(claim)
+        display_sync_failed = False
+        if application.apply_system:
+            try:
+                self._sync_console_system_prompt_surfaces()
+            except Exception:
+                display_sync_failed = True
+        try:
+            self._sync_console_command_popup()
+        except Exception:
+            display_sync_failed = True
+        if display_sync_failed:
+            self._warn_prompt_application(self._PROMPT_DISPLAY_SYNC_FAILED_COPY)
+        if not persisted:
+            self._warn_prompt_application(self._PROMPT_SYSTEM_PERSISTENCE_FAILED_COPY)
+        if not display_sync_failed and persisted:
+            self._focus_console_composer_if_needed(force=True)
+
+    def console_prompt_target_projection(
+        self,
+    ) -> ConsolePromptTargetProjection | None:
+        """Return the sanitized live Console target for app-owned publication.
+
+        Returns:
+            The active session and one-way System fingerprint, or ``None``
+            when Console has no complete active target.
+        """
+        store = self._ensure_console_chat_store()
+        session_id = store.active_session_id
+        settings = (
+            store.session_settings(session_id) if session_id is not None else None
+        )
+        if session_id is None or settings is None:
+            return None
+        return ConsolePromptTargetProjection(
+            target_session_id=session_id,
+            system_fingerprint=fingerprint_system_text(
+                str(settings.system_prompt or "")
+            ),
+        )
 
     async def _console_command_apply_system(self, parse: CommandParse) -> None:
         """Resolve and apply a saved prompt's ``system_prompt`` for `/system`.

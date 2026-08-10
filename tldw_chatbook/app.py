@@ -407,7 +407,11 @@ from .UI.Navigation.pending_handoff_store import (
     HandoffValueError,
     PendingHandoffStore,
 )
-from .UI.Navigation.screen_state_store import RuntimeIdentity, ScreenStateStore
+from .UI.Navigation.screen_state_store import (
+    ConsolePromptTargetProjection,
+    RuntimeIdentity,
+    ScreenStateStore,
+)
 from .UI.Navigation.screen_registry import (
     ScreenRoute,
     registered_screen_aliases,
@@ -7692,6 +7696,20 @@ class TldwCli(
         """Return the screen-snapshot scope from authoritative runtime state."""
         return RuntimeIdentity.from_state(self.runtime_policy.state)
 
+    def console_prompt_target_projection(
+        self,
+    ) -> ConsolePromptTargetProjection | None:
+        """Return the app-owned Console Prompt target for the current runtime.
+
+        Returns:
+            The compatible sanitized projection, or ``None`` when Console has
+            not published one for the authoritative runtime snapshot.
+        """
+        return self.screen_state_store.restore_console_prompt_target(
+            TAB_CHAT,
+            self._current_runtime_identity(),
+        )
+
     def _screen_navigation_lock(self) -> asyncio.Lock:
         """Return the lock serializing `handle_screen_navigation` attempts.
 
@@ -8065,6 +8083,26 @@ class TldwCli(
                         state,
                         runtime_identity,
                     )
+                    if outgoing_key == TAB_CHAT:
+                        projection_getter = getattr(
+                            current_screen,
+                            "console_prompt_target_projection",
+                            None,
+                        )
+                        try:
+                            projection = (
+                                projection_getter()
+                                if callable(projection_getter)
+                                else None
+                            )
+                        except Exception:
+                            projection = None
+                        if isinstance(projection, ConsolePromptTargetProjection):
+                            self.screen_state_store.publish_console_prompt_target(
+                                outgoing_key,
+                                projection,
+                                runtime_identity,
+                            )
                     logger.debug(
                         "Saved screen snapshot for canonical route: {}",
                         outgoing_key,
