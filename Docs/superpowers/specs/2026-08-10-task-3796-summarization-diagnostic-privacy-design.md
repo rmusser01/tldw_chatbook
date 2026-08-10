@@ -68,9 +68,9 @@ Apply direct, one-for-one call-site repairs. Each private argument is removed be
 
 This is deliberately not a new abstraction. The two modules already use different logging imports and numerous provider-specific control-flow shapes. A new wrapper would add a second diagnostic policy surface without eliminating the need to inspect and edit every leaking expression. Direct substitutions make the privacy property visible at the actual source and keep behavior reviewable.
 
-### Allowed metadata
+### Allowed metadata for the 199 repaired sites
 
-A repaired diagnostic may contain only fields justified by the event:
+A replacement for an inventoried private diagnostic may contain only fields justified by the event:
 
 - a fixed, code-authored event label;
 - integer counts and lengths, such as input characters, chunk count, response bytes, or retry number;
@@ -80,7 +80,9 @@ A repaired diagnostic may contain only fields justified by the event:
 - a bounded exception class name, never an exception instance or message;
 - another bounded identifier only when it passes the existing `safe_metadata_token()` boundary.
 
-Prefer fixed labels and numeric/boolean fields. Do not add a dynamic provider/model/type token merely to preserve the shape of an old log. If a dynamic token is operationally necessary, pass it through `safe_metadata_token()` before it reaches the logger; the helper's fixed `invalid` result is the only fallback. Raw `type(value).__name__`, model names, provider names, object class names, and arbitrary string values are not automatically trusted metadata.
+Prefer fixed labels and numeric/boolean fields. Do not add a dynamic provider/model/type token merely to preserve the shape of an old private log. If a replacement needs a dynamic string token, pass it through `safe_metadata_token()` before it reaches the logger; the helper's fixed `invalid` result is the only fallback. Raw `type(value).__name__`, model names, provider names, object class names, and arbitrary string values are not automatically trusted metadata for a replacement.
+
+The other 324 logger calls were already reviewed and excluded from the private-site inventory because their current values are fixed, type, length, status, count, provider/model, or other bounded operational metadata. This task does not mechanically rewrite those calls to the stricter replacement style. Instead, the exhaustive guard freezes each reviewed call's current normalized expression structure and rationale. That exact legacy-safe structure is not a general allowlist: a new call or any changed dynamic expression fails until it is reviewed against the strict schema above or assigned to a separately approved scope.
 
 ### Forbidden values and operations
 
@@ -127,7 +129,12 @@ Where the old diagnostic is deleted, the main control-flow edge remains untouche
 
 The permanent guard must enumerate every stdlib-logging and Loguru call in both modules, including nested functions and bound forms such as `logger.opt(...).error(...)`. It may use AST extraction plus reviewed source context, but it may not claim completeness from identifier names such as `data`, `payload`, `prompt`, or `response`.
 
-The guard records stable call identity as module, qualified enclosing function, fixed event label, privacy category/classification, and occurrence ordinal where required. It does not key expectations to line numbers. Every dynamic expression at every call is explicitly classified against the approved metadata schema; an unclassified call or expression fails closed. The reviewed all-call population and repaired-site ledger must reconcile with the task inventory, including explicit records for intentionally deleted sites.
+The guard records stable call identity as module, qualified enclosing function, fixed event label, privacy category/classification, and occurrence ordinal where required. It does not key expectations to line numbers. It reconciles two explicit classes:
+
+1. the 199 inventoried sites, each recorded as an approved strict-schema replacement or an intentional deletion; and
+2. the 324 previously reviewed-safe calls, each recorded with its exact normalized dynamic-expression structure and its existing safe classification.
+
+An unclassified call, a changed expression in the frozen reviewed-safe class, or a replacement outside the strict schema fails closed. The implementation does not change a previously reviewed-safe call merely to make its style uniform. If the fresh all-call review finds that one was misclassified, update the verified task inventory and obtain approval before expanding production scope. The starting population, the two classes, and the deleted-site ledger must reconcile arithmetically and by stable identity.
 
 Structural rejection includes, at minimum:
 
@@ -242,7 +249,8 @@ Rejected. TASK-2118 demonstrated that such a search missed private diagnostics w
 | A replacement leaks during eager formatting | Reject dynamic message construction and forbidden pre-formatting before the logger boundary |
 | Removing exception text changes user-visible behavior | Assert logging separately from the existing return/raise/yield contract |
 | A streaming test never reaches the leaking code | Fully consume the real generator and mutation-test the exact path |
-| A dynamic metadata token contains user text | Prefer fixed/numeric metadata; otherwise require `safe_metadata_token()` and accept its fixed `invalid` result |
+| A replacement's dynamic metadata token contains user text | Prefer fixed/numeric metadata; otherwise require `safe_metadata_token()` and accept its fixed `invalid` result |
+| A broad guard turns the task into cleanup of reviewed-safe legacy calls | Freeze their exact reviewed structures separately; apply the new strict schema only to inventoried replacements and future changes |
 | Manifest regeneration blesses unrelated drift | Compare exact current-dev and branch inventories, permitting only the two owner entries |
 | Line-number churn invalidates the guard | Key by module/function/event/category/occurrence; retain lines only as navigation aids |
 | A test passes without observing the changed call | Independently restore each category/module leak and require the owning assertion to fail |
