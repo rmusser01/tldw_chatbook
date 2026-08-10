@@ -8,6 +8,7 @@ and use their tools, resources, and prompts within tldw_chatbook.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable, Mapping
 import json
 import subprocess
 from datetime import datetime
@@ -20,6 +21,21 @@ from loguru import logger
 _MCP_PROTOCOL_VERSION = "2025-03-26"
 _REQUEST_TIMEOUT_SECONDS = 10.0
 _TERMINATE_TIMEOUT_SECONDS = 2.0
+_STDIO_STREAM_LIMIT_BYTES = 1024 * 1024
+MAX_CATALOG_PAGES = 100
+MAX_CATALOG_ITEMS = 10_000
+
+
+class MCPClientError(RuntimeError):
+    """Bounded client-side validation failure."""
+
+
+def _copy_resource_metadata(value: Any) -> Dict[str, Any]:
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise MCPClientError("Invalid MCP resource metadata")
+    return dict(value)
 
 
 def _tool_from_payload(payload: Dict[str, Any]) -> SimpleNamespace:
@@ -136,27 +152,64 @@ class _StdioJSONRPCConnection:
         return result
 
     async def list_tools(self) -> SimpleNamespace:
-        result = await self.request("tools/list", {})
         return SimpleNamespace(
-            tools=[_tool_from_payload(tool) for tool in result.get("tools", [])]
+            tools=await self._collect_catalog("tools/list", "tools", _tool_from_payload)
         )
 
     async def list_resources(self) -> SimpleNamespace:
-        result = await self.request("resources/list", {})
         return SimpleNamespace(
-            resources=[
-                _resource_from_payload(resource)
-                for resource in result.get("resources", [])
-            ]
+            resources=await self._collect_catalog(
+                "resources/list", "resources", _resource_from_payload
+            )
         )
 
     async def list_prompts(self) -> SimpleNamespace:
-        result = await self.request("prompts/list", {})
         return SimpleNamespace(
-            prompts=[
-                _prompt_from_payload(prompt) for prompt in result.get("prompts", [])
-            ]
+            prompts=await self._collect_catalog(
+                "prompts/list", "prompts", _prompt_from_payload
+            )
         )
+
+    async def _collect_catalog(
+        self,
+        method: str,
+        item_key: str,
+        converter: Callable[[Dict[str, Any]], SimpleNamespace],
+    ) -> List[SimpleNamespace]:
+        collected: List[SimpleNamespace] = []
+        seen_cursors: set[str] = set()
+        params: Dict[str, Any] = {}
+
+        for page_number in range(1, MAX_CATALOG_PAGES + 1):
+            result = await self.request(method, params)
+            page_items = result.get(item_key)
+            if not isinstance(page_items, list):
+                raise MCPClientError("Invalid MCP catalog items")
+
+            cursor = result.get("nextCursor")
+            if cursor is not None:
+                if not isinstance(cursor, str) or not cursor:
+                    raise MCPClientError("Invalid MCP catalog cursor")
+                if cursor in seen_cursors:
+                    raise MCPClientError("Repeated MCP catalog cursor")
+
+            if len(collected) + len(page_items) > MAX_CATALOG_ITEMS:
+                raise MCPClientError("MCP catalog item limit exceeded")
+            if cursor is not None and page_number == MAX_CATALOG_PAGES:
+                raise MCPClientError("MCP catalog page limit exceeded")
+
+            try:
+                converted = [converter(item) for item in page_items]
+            except Exception:
+                raise MCPClientError("Invalid MCP catalog items") from None
+            collected.extend(converted)
+
+            if cursor is None:
+                return collected
+            seen_cursors.add(cursor)
+            params = {"cursor": cursor}
+
+        raise MCPClientError("MCP catalog page limit exceeded")
 
     async def call_tool(
         self, tool_name: str, arguments: Dict[str, Any]
@@ -181,7 +234,8 @@ class _StdioJSONRPCConnection:
             contents=[
                 _resource_content_from_payload(item)
                 for item in result.get("contents", [])
-            ]
+            ],
+            _meta=_copy_resource_metadata(result.get("_meta")),
         )
 
     async def get_prompt(
@@ -514,6 +568,7 @@ class MCPClient:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 env=env,
+                limit=_STDIO_STREAM_LIMIT_BYTES,
             )
             session = _StdioJSONRPCConnection(process, client_name=self.name)
             await session.initialize()
@@ -650,6 +705,7 @@ class MCPClient:
                 "mimeType": result.contents[0].mimeType
                 if result.contents
                 else "text/plain",
+                "_meta": _copy_resource_metadata(getattr(result, "_meta", None)),
             }
 
         except Exception as e:

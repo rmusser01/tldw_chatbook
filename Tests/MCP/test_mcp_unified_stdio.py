@@ -30,6 +30,7 @@ GatewayRequestContext = gateway.GatewayRequestContext
 serve_stdio = gateway.serve_stdio
 
 from tldw_chatbook.Agents.agent_models import ToolResult  # noqa: E402
+from tldw_chatbook.config import CLI_APP_CLIENT_ID  # noqa: E402
 from tldw_chatbook.Library.library_tool_contract import (  # noqa: E402
     LIBRARY_TOOL_DESCRIPTORS,
 )
@@ -40,6 +41,8 @@ from tldw_chatbook.MCP.gateway_runtime import (  # noqa: E402
 from tldw_chatbook.MCP.local_server_tools import (  # noqa: E402
     LocalToolRegistration,
 )
+from tldw_chatbook.MCP.client import MCPClient  # noqa: E402
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB  # noqa: E402
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -1210,6 +1213,103 @@ def test_real_module_subprocess_is_protocol_clean_and_exits_on_eof(
         "get",
     ]
     assert all("result" in response for response in responses)
+
+
+@pytest.mark.asyncio
+async def test_real_legacy_client_command_discovers_calls_continues_and_stops_child(
+    tmp_path: Path,
+) -> None:
+    assert SHARED_VENV_PYTHON.is_absolute()
+    assert SHARED_VENV_PYTHON.is_file()
+    profile = tmp_path / "client-profile"
+    environment = _isolated_subprocess_environment(profile)
+    database_path = (
+        profile
+        / "home"
+        / ".local"
+        / "share"
+        / "tldw_cli"
+        / "default_user"
+        / "tldw_chatbook_ChaChaNotes.db"
+    )
+    database_path.parent.mkdir(parents=True, mode=0o700)
+    database = CharactersRAGDB(database_path, client_id=CLI_APP_CLIENT_ID)
+    conversation_id = database.add_conversation({"title": "Client flow fixture"})
+    assert conversation_id is not None
+    long_body = "é" * 300_000
+    assert database.add_message(
+        {
+            "conversation_id": conversation_id,
+            "sender": "user",
+            "role": "user",
+            "content": long_body,
+        }
+    )
+    database.close()
+
+    client = MCPClient(name="task-2512-real-client")
+    process: asyncio.subprocess.Process | None = None
+    try:
+        connected = await asyncio.wait_for(
+            client.connect_to_server(
+                "standalone",
+                str(SHARED_VENV_PYTHON),
+                args=["-m", "tldw_chatbook.MCP"],
+                env=environment,
+            ),
+            timeout=30,
+        )
+        assert connected is True
+        session = client.sessions["standalone"]
+        process = session.process
+        assert client.servers["standalone"]["command"] == str(SHARED_VENV_PYTHON)
+        assert client.servers["standalone"]["args"] == [
+            "-m",
+            "tldw_chatbook.MCP",
+        ]
+        assert {item["name"] for item in client.get_server_tools("standalone")} == set(
+            BUILTIN_TOOL_NAMES
+        )
+        assert [item["uri"] for item in client.get_server_resources("standalone")] == [
+            f"conversation://{conversation_id}"
+        ]
+        assert {
+            item["name"] for item in client.get_server_prompts("standalone")
+        } == set(PROMPT_NAMES)
+
+        tool_result = await client.call_tool("standalone", "list_characters", {})
+        assert "error" not in tool_result
+        assert tool_result["result"]
+
+        resource_uri = f"conversation://{conversation_id}"
+        resource_parts: list[str] = []
+        for _ in range(10):
+            resource_result = await client.read_resource("standalone", resource_uri)
+            assert set(resource_result) == {"uri", "content", "mimeType", "_meta"}
+            assert resource_result["uri"] == resource_uri
+            resource_parts.append(resource_result["content"])
+            continuation = resource_result["_meta"]["tldw.chatbook/continuation"]
+            if not continuation["hasMore"]:
+                break
+            resource_uri = continuation["nextUri"]
+        else:
+            pytest.fail("resource continuation did not terminate within ten reads")
+        assert long_body in "".join(resource_parts)
+        assert len(resource_parts) > 1
+
+        prompt_result = await client.get_prompt(
+            "standalone",
+            "summarize_conversation",
+            {"conversation_id": "999"},
+        )
+        assert len(prompt_result) == 1
+        assert prompt_result[0]["role"] == "user"
+        assert prompt_result[0]["content"]
+    finally:
+        await asyncio.wait_for(client.disconnect_all(), timeout=10)
+
+    assert process is not None
+    assert process.returncode is not None
 
 
 def test_real_module_import_failure_is_fixed_and_payload_free(tmp_path: Path) -> None:

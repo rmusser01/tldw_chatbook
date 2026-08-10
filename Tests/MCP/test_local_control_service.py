@@ -1900,6 +1900,7 @@ async def test_mcp_client_tool_resource_and_prompt_calls_use_jsonrpc_requests(
         "uri": "remote://resource/1",
         "content": "resource-body",
         "mimeType": "text/plain",
+        "_meta": {},
     }
     assert prompt_result == [{"role": "assistant", "content": "prompt-body"}]
 
