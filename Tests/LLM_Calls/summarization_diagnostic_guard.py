@@ -25,6 +25,7 @@ class DiagnosticCall:
     message_shape: str
     expressions: tuple[str, ...]
     captures_exception: bool
+    level_expression: str | None = None
 
     @property
     def identity(self) -> tuple[str, str, str, int]:
@@ -41,7 +42,9 @@ def _literal_projection(node: ast.AST) -> str:
             for value in node.values
             if isinstance(value, ast.Constant) and isinstance(value.value, str)
         )
-    if isinstance(node, ast.BinOp):
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
+        return _literal_projection(node.left)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
         return _literal_projection(node.left) + _literal_projection(node.right)
     if (
         isinstance(node, ast.Call)
@@ -60,13 +63,14 @@ def _first_argument_expressions(node: ast.AST) -> list[str]:
     if isinstance(node, ast.Constant):
         return []
     if isinstance(node, ast.JoinedStr):
-        return _unparse_many(
-            [
-                value.value
-                for value in node.values
-                if isinstance(value, ast.FormattedValue)
-            ]
-        )
+        expressions = []
+        for value in node.values:
+            if not isinstance(value, ast.FormattedValue):
+                continue
+            expressions.append(ast.unparse(value.value))
+            if value.format_spec is not None:
+                expressions.extend(_first_argument_expressions(value.format_spec))
+        return expressions
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
         values = (
             list(node.right.elts)
@@ -79,9 +83,10 @@ def _first_argument_expressions(node: ast.AST) -> list[str]:
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "format"
     ):
-        return _unparse_many(
-            [*node.args, *(keyword.value for keyword in node.keywords)]
-        )
+        return [
+            *_first_argument_expressions(node.func.value),
+            *_unparse_many([*node.args, *(keyword.value for keyword in node.keywords)]),
+        ]
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
         return [
             *_first_argument_expressions(node.left),
@@ -145,6 +150,40 @@ def _captures_exception(node: ast.Call) -> bool:
     return False
 
 
+def _message_parts(
+    node: ast.Call,
+) -> tuple[ast.AST | None, list[ast.AST], list[ast.AST], str | None]:
+    method = node.func.attr if isinstance(node.func, ast.Attribute) else ""
+    message_index = 1 if method == "log" else 0
+    level_node = node.args[0] if method == "log" and node.args else None
+    consumed_keywords: set[int] = set()
+
+    if len(node.args) > message_index:
+        message = node.args[message_index]
+    else:
+        message = None
+        for index, keyword in enumerate(node.keywords):
+            if keyword.arg in {"msg", "message"}:
+                message = keyword.value
+                consumed_keywords.add(index)
+                break
+    if method == "log" and level_node is None:
+        for index, keyword in enumerate(node.keywords):
+            if keyword.arg == "level":
+                level_node = keyword.value
+                consumed_keywords.add(index)
+                break
+
+    positional_fields = list(node.args[message_index + 1 :])
+    keyword_fields = [
+        keyword.value
+        for index, keyword in enumerate(node.keywords)
+        if index not in consumed_keywords
+    ]
+    level_expression = ast.unparse(level_node) if level_node is not None else None
+    return message, positional_fields, keyword_fields, level_expression
+
+
 def discover_diagnostic_calls(source: str, *, module: str) -> list[DiagnosticCall]:
     """Extract diagnostic calls with stable identities from Python source."""
     tree = ast.parse(source, filename=module)
@@ -154,25 +193,25 @@ def discover_diagnostic_calls(source: str, *, module: str) -> list[DiagnosticCal
         (
             node
             for node in ast.walk(tree)
-            if isinstance(node, ast.Call)
-            and _is_diagnostic_call(node, symbols)
-            and node.args
+            if isinstance(node, ast.Call) and _is_diagnostic_call(node, symbols)
         ),
         key=lambda node: (node.lineno, node.col_offset),
     )
     occurrences: defaultdict[tuple[str, str], int] = defaultdict(int)
     calls: list[DiagnosticCall] = []
     for node in nodes:
-        first = node.args[0]
+        first, positional_fields, keyword_fields, level_expression = _message_parts(
+            node
+        )
         qualname = scopes.get(id(node), "") or "<module>"
-        event = _literal_projection(first)
+        event = _literal_projection(first) if first is not None else ""
         occurrence_key = (qualname, event)
         occurrences[occurrence_key] += 1
         receiver = node.func.value if isinstance(node.func, ast.Attribute) else node
         expressions = [
-            *_first_argument_expressions(first),
-            *_unparse_many(list(node.args[1:])),
-            *_unparse_many([keyword.value for keyword in node.keywords]),
+            *(_first_argument_expressions(first) if first is not None else []),
+            *_unparse_many(positional_fields),
+            *_unparse_many(keyword_fields),
             *_receiver_field_expressions(receiver),
         ]
         calls.append(
@@ -184,9 +223,14 @@ def discover_diagnostic_calls(source: str, *, module: str) -> list[DiagnosticCal
                 ),
                 event=event,
                 occurrence=occurrences[occurrence_key],
-                message_shape=ast.dump(first, include_attributes=False),
+                message_shape=(
+                    ast.dump(first, include_attributes=False)
+                    if first is not None
+                    else "<missing>"
+                ),
                 expressions=tuple(expressions),
                 captures_exception=_captures_exception(node),
+                level_expression=level_expression,
             )
         )
     return calls

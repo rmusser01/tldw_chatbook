@@ -160,6 +160,98 @@ def summarize():
     assert before == after
 
 
+def test_guard_records_keyword_only_message_and_detects_addition() -> None:
+    starting_source = 'logger.info("existing event")\n'
+    added_source = starting_source + "logger.info(msg=private_summary)\n"
+
+    starting = _guard().discover_diagnostic_calls(
+        starting_source, module="synthetic.py"
+    )
+    added = _guard().discover_diagnostic_calls(added_source, module="synthetic.py")
+
+    assert len(added) == len(starting) + 1
+    assert {call.identity for call in added} != {call.identity for call in starting}
+    keyword_call = added[-1]
+    assert keyword_call.event == ""
+    assert keyword_call.message_shape == _message_shape("private_summary")
+    assert keyword_call.expressions == ("private_summary",)
+    with pytest.raises(AssertionError, match="constant string first argument"):
+        _guard().assert_review_outcome(keyword_call, keyword_call, outcome="metadata")
+
+
+def test_guard_records_recognized_call_without_message() -> None:
+    call = _single_call("logger.info(extra=private_value)\n")
+
+    assert call.event == ""
+    assert call.message_shape == "<missing>"
+    assert call.expressions == ("private_value",)
+    with pytest.raises(AssertionError, match="constant string first argument"):
+        _guard().assert_review_outcome(call, call, outcome="metadata")
+
+
+def test_guard_log_calls_use_second_positional_message() -> None:
+    source = """
+import logging
+from loguru import logger
+
+logging.log(logging.WARNING, "stdlib event: %s", stdlib_field)
+logger.log("INFO", f"loguru event: {private_value}", loguru_field)
+"""
+
+    calls = _guard().discover_diagnostic_calls(source, module="synthetic.py")
+
+    assert [call.event for call in calls] == [
+        "stdlib event: %s",
+        "loguru event: ",
+    ]
+    assert [call.message_shape for call in calls] == [
+        _message_shape('"stdlib event: %s"'),
+        _message_shape('f"loguru event: {private_value}"'),
+    ]
+    assert [call.expressions for call in calls] == [
+        ("stdlib_field",),
+        ("private_value", "loguru_field"),
+    ]
+    assert [getattr(call, "level_expression", None) for call in calls] == [
+        "logging.WARNING",
+        "'INFO'",
+    ]
+
+
+def test_guard_records_dynamic_format_receiver() -> None:
+    call = _single_call("logger.error(template.format(secret))\n")
+
+    assert call.event == ""
+    assert call.message_shape == _message_shape("template.format(secret)")
+    assert call.expressions == ("template", "secret")
+    with pytest.raises(AssertionError, match="constant string first argument"):
+        _guard().assert_review_outcome(call, call, outcome="metadata")
+
+
+def test_guard_records_nested_fstring_format_spec_expressions() -> None:
+    call = _single_call('logger.info(f"secret={secret:{width}.{precision}f}")\n')
+
+    assert call.event == "secret="
+    assert call.message_shape == _message_shape(
+        'f"secret={secret:{width}.{precision}f}"'
+    )
+    assert call.expressions == ("secret", "width", "precision")
+    with pytest.raises(AssertionError, match="constant string first argument"):
+        _guard().assert_review_outcome(call, call, outcome="metadata")
+
+
+def test_guard_percent_event_excludes_literal_rhs() -> None:
+    call = _single_call('logger.warning("private marker: %s" % "literal-private")\n')
+
+    assert call.event == "private marker: %s"
+    assert call.message_shape == _message_shape(
+        '"private marker: %s" % "literal-private"'
+    )
+    assert call.expressions == ("'literal-private'",)
+    with pytest.raises(AssertionError, match="constant string first argument"):
+        _guard().assert_review_outcome(call, call, outcome="metadata")
+
+
 def test_guard_rejects_changed_reviewed_safe_expression() -> None:
     starting = _single_call('logger.info("Retry count: {}", retry_count)\n')
     changed = _single_call('logger.info("Retry count: {}", retry_total)\n')
