@@ -238,6 +238,17 @@ warn(msg=other_private)
             _guard().assert_review_outcome(call, call, outcome="metadata")
 
 
+def test_guard_imported_exception_callable_captures_exception() -> None:
+    call = _single_call(
+        'from logging import exception as log_exception\nlog_exception("fixed")\n'
+    )
+
+    assert call.method == "exception"
+    assert call.captures_exception is True
+    with pytest.raises(AssertionError, match="must not capture exception"):
+        _guard().assert_review_outcome(call, call, outcome="metadata")
+
+
 def test_guard_finds_bind_and_opt_derived_logger_aliases() -> None:
     source = """
 from loguru import logger
@@ -458,6 +469,9 @@ def test_guard_accepts_metadata_replacement_with_new_fixed_event() -> None:
         "response.headers",
         "response.status",
         "http_response.status_code",
+        "safe_metadata_token(event_type, provider_name)",
+        "safe_metadata_token(value=event_type)",
+        "utils.safe_metadata_token(event_type)",
     ],
 )
 def test_guard_metadata_rejects_private_lazy_expression(
@@ -495,6 +509,50 @@ def test_guard_metadata_accepts_approved_lazy_expression(
     _guard().assert_review_outcome(starting, current, outcome="metadata")
 
 
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "i + 1",
+        "safe_metadata_token(event_type)",
+        "safe_metadata_token(provider_name)",
+    ],
+)
+def test_guard_metadata_accepts_index_arithmetic_and_sanitized_tokens(
+    expression: str,
+) -> None:
+    starting = _single_call('logger.error(f"Legacy failure: {private}")\n')
+    current = _single_call(f'logger.error("Fixed failure; field=%s", {expression})\n')
+
+    _guard().assert_review_outcome(starting, current, outcome="metadata")
+
+
+@pytest.mark.parametrize("expression", ["i", "index", "idx"])
+def test_guard_metadata_rejects_bare_index_names(expression: str) -> None:
+    starting = _single_call('logger.error(f"Legacy failure: {private}")\n')
+    current = _single_call(f'logger.error("Fixed failure; field=%s", {expression})\n')
+
+    with pytest.raises(AssertionError, match="approved metadata expression"):
+        _guard().assert_review_outcome(starting, current, outcome="metadata")
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "i + safe_metadata_token(event_type)",
+        "idx + streaming",
+        "index + True",
+    ],
+)
+def test_guard_metadata_rejects_non_numeric_index_compositions(
+    expression: str,
+) -> None:
+    starting = _single_call('logger.error(f"Legacy failure: {private}")\n')
+    current = _single_call(f'logger.error("Fixed failure; field=%s", {expression})\n')
+
+    with pytest.raises(AssertionError, match="approved metadata expression"):
+        _guard().assert_review_outcome(starting, current, outcome="metadata")
+
+
 def test_guard_metadata_accepts_fixed_event_without_fields() -> None:
     starting = _single_call('logger.error(f"Legacy failure: {private}")\n')
     current = _single_call('logger.error("Fixed failure")\n')
@@ -502,11 +560,34 @@ def test_guard_metadata_accepts_fixed_event_without_fields() -> None:
     _guard().assert_review_outcome(starting, current, outcome="metadata")
 
 
-def test_guard_metadata_rejects_severity_change() -> None:
-    starting = _single_call('logger.error(f"Legacy failure: {private}")\n')
-    current = _single_call('logger.warning("Fixed failure")\n')
+def test_guard_metadata_allows_exception_to_error_same_severity() -> None:
+    starting = _single_call('logging.exception("Legacy failure: %s", private)\n')
+    current = _single_call('logging.error("Fixed failure")\n')
 
-    with pytest.raises(AssertionError, match="preserve diagnostic method"):
+    _guard().assert_review_outcome(starting, current, outcome="metadata")
+
+
+@pytest.mark.parametrize(
+    ("starting_method", "current_method"),
+    [
+        ("error", "warning"),
+        ("error", "debug"),
+        ("warning", "error"),
+        ("info", "debug"),
+        ("critical", "error"),
+        ("success", "info"),
+        ("trace", "debug"),
+    ],
+)
+def test_guard_metadata_rejects_severity_change(
+    starting_method: str, current_method: str
+) -> None:
+    starting = _single_call(
+        f'logger.{starting_method}(f"Legacy failure: {{private}}")\n'
+    )
+    current = _single_call(f'logger.{current_method}("Fixed failure")\n')
+
+    with pytest.raises(AssertionError, match="preserve diagnostic severity"):
         _guard().assert_review_outcome(starting, current, outcome="metadata")
 
 

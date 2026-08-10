@@ -14,6 +14,19 @@ from scripts.check_persistent_diagnostic_inventory import (
 )
 
 
+_DIAGNOSTIC_SEVERITIES = {
+    "critical": "critical",
+    "error": "error",
+    "exception": "error",
+    "warning": "warning",
+    "info": "info",
+    "debug": "debug",
+    "success": "success",
+    "trace": "trace",
+    "log": "log",
+}
+
+
 @dataclass(frozen=True)
 class DiagnosticCall:
     """Stable description of one diagnostic call."""
@@ -123,8 +136,8 @@ def _is_explicitly_disabled(node: ast.AST) -> bool:
     return isinstance(node, ast.Constant) and node.value in {False, None}
 
 
-def _captures_exception(node: ast.Call) -> bool:
-    if isinstance(node.func, ast.Attribute) and node.func.attr == "exception":
+def _captures_exception(node: ast.Call, *, method: str) -> bool:
+    if method == "exception":
         return True
     if any(
         keyword.arg in {"exc_info", "stack_info"}
@@ -320,7 +333,7 @@ def discover_diagnostic_calls(source: str, *, module: str) -> list[DiagnosticCal
                 ),
                 expressions=tuple(expressions),
                 captures_exception=(
-                    _captures_exception(node)
+                    _captures_exception(node, method=method)
                     or alias_captures.get(receiver_root or "", False)
                 ),
                 level_expression=level_expression,
@@ -339,6 +352,36 @@ def _has_constant_string_message(call: DiagnosticCall) -> bool:
         return isinstance(ast.literal_eval(call.message_shape[len(prefix) : -1]), str)
     except (SyntaxError, ValueError):
         return False
+
+
+def _is_approved_numeric_expression(node: ast.AST) -> bool:
+    if isinstance(node, ast.Constant):
+        return type(node.value) is int
+    if isinstance(node, ast.Name):
+        return (
+            node.id in {"i", "index", "idx", "attempt"}
+            or node.id.startswith("retry_")
+            or node.id.endswith(("_count", "_length", "_retries"))
+        )
+    if isinstance(node, ast.Attribute):
+        return (
+            node.attr == "status_code"
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "response"
+        )
+    if isinstance(node, ast.Call):
+        return (
+            isinstance(node.func, ast.Name)
+            and node.func.id == "len"
+            and len(node.args) == 1
+            and not node.keywords
+        )
+    return (
+        isinstance(node, ast.BinOp)
+        and isinstance(node.op, (ast.Add, ast.Sub))
+        and _is_approved_numeric_expression(node.left)
+        and _is_approved_numeric_expression(node.right)
+    )
 
 
 def _is_approved_metadata_expression(expression: str) -> bool:
@@ -377,19 +420,9 @@ def _is_approved_metadata_expression(expression: str) -> bool:
             and node.func.id == "safe_metadata_token"
             and len(node.args) == 1
             and not node.keywords
-            and isinstance(node.args[0], ast.Attribute)
-            and node.args[0].attr == "__name__"
-            and isinstance(node.args[0].value, ast.Call)
-            and isinstance(node.args[0].value.func, ast.Name)
-            and node.args[0].value.func.id == "type"
-            and len(node.args[0].value.args) == 1
-            and not node.args[0].value.keywords
-            and isinstance(node.args[0].value.args[0], ast.Name)
         )
     if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Sub)):
-        return _is_approved_metadata_expression(
-            ast.unparse(node.left)
-        ) and _is_approved_metadata_expression(ast.unparse(node.right))
+        return _is_approved_numeric_expression(node)
     return False
 
 
@@ -400,9 +433,10 @@ def assert_review_outcome(
     if outcome in {"pending", "frozen"}:
         assert starting == current, f"{outcome} diagnostic changed"
     elif outcome == "metadata":
-        assert starting.method == current.method, (
-            "metadata repair must preserve diagnostic method"
-        )
+        assert (
+            _DIAGNOSTIC_SEVERITIES[starting.method]
+            == _DIAGNOSTIC_SEVERITIES[current.method]
+        ), "metadata repair must preserve diagnostic severity"
         if starting.method == "log":
             assert starting.level_expression == current.level_expression, (
                 "metadata repair must preserve log level"
