@@ -17354,12 +17354,13 @@ class SettingsScreen(BaseAppScreen):
                 if callable(refresh):
                     try:
                         refresh(generation)
-                    except Exception:
-                        logger.exception(
+                    except Exception as exc:
+                        logger.warning(
                             "Console identity refresh hook failed after settings save "
-                            "(screen_type=%s, generation=%s)",
+                            "(screen_type={}, generation={}, error_type={}).",
                             type(screen).__name__,
                             generation,
+                            type(exc).__name__,
                         )
 
     def _apply_appearance_save_result(

@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from scripts import check_persistent_diagnostic_inventory as diagnostic_inventory
 
 
@@ -13,6 +15,30 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
+    "tldw_chatbook/Chat/console_chat_controller.py": {
+        "Console global user display-name accessor failed": ("type(exc).__name__",),
+    },
+    "tldw_chatbook/Chat/console_chat_store.py": {
+        "Failed to persist seeded Console roleplay context": (),
+        "Failed to persist planned Console roleplay system prompt projection": (
+            "type(exc).__name__",
+        ),
+        "Failed to persist planned Console roleplay message projection": (
+            "type(exc).__name__",
+        ),
+        "Failed to enqueue roleplay Sync v2 chat message": ("type(exc).__name__",),
+        "Failed to persist Console roleplay message projection": (
+            "type(exc).__name__",
+        ),
+        "Failed to persist Console roleplay system prompt projection": (
+            "type(exc).__name__",
+        ),
+        "Failed to persist Console roleplay identity context": ("type(exc).__name__",),
+        "Failed to flush Console roleplay context on first persist": (),
+    },
+    "tldw_chatbook/Local_Ingestion/audio_processing.py": {
+        "Time-range trim could not be converted": (),
+    },
     "tldw_chatbook/Media_Playback/frame_source.py": {
         "decode stopped early": ("type(exc).__name__",),
     },
@@ -43,6 +69,24 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
     },
     "tldw_chatbook/UI/Screens/library_screen.py": {
         "in bulk delete": (),
+        "Failed to restore a Library media item in bulk-delete undo": (
+            "type(exc).__name__",
+        ),
+    },
+    "tldw_chatbook/UI/Console_Modules/session.py": {
+        "Character swap: roleplay template seed failed": ("type(exc).__name__",),
+        "Start Chat: roleplay template seed/persist failed": ("type(exc).__name__",),
+    },
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": {
+        "MCP Tools-mode local master save failed": ("type(exc).__name__",),
+        "MCP Tools-mode workspace root save failed": ("type(exc).__name__",),
+    },
+    "tldw_chatbook/UI/Screens/settings_screen.py": {
+        "Console identity refresh hook failed after settings save": (
+            "type(screen).__name__",
+            "generation",
+            "type(exc).__name__",
+        ),
     },
     "tldw_chatbook/UI/Screens/settings_video_gen_defaults.py": {
         "could not resolve config path": ("type(exc).__name__",),
@@ -86,6 +130,7 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Config load failure warning failed": ("type(e).__name__",),
     },
     "tldw_chatbook/config.py": {
+        "Invalid chat display name in [chat_defaults]": (),
         "Refusing to write CLI config": ("type(exc).__name__",),
     },
 }
@@ -131,14 +176,35 @@ def test_reviewed_diagnostic_changes_are_metadata_only() -> None:
                 if isinstance(node, ast.FormattedValue)
             ]
             fields.extend(ast.unparse(argument) for argument in call.args[1:])
-            captures_exception = (
-                isinstance(call.func, ast.Attribute) and call.func.attr == "exception"
-            ) or any(
-                isinstance(node, ast.keyword)
-                and node.arg == "exception"
-                and isinstance(node.value, ast.Constant)
-                and node.value.value is True
+            fields.extend(
+                ast.unparse(node.value)
                 for node in ast.walk(call.func)
+                if isinstance(node, ast.keyword) and node.arg != "exception"
+            )
+            fields.extend(
+                ast.unparse(keyword.value)
+                for keyword in call.keywords
+                if keyword.arg not in {"exc_info", "stack_info", "stacklevel"}
+            )
+            captures_exception = (
+                (isinstance(call.func, ast.Attribute) and call.func.attr == "exception")
+                or any(
+                    isinstance(node, ast.keyword)
+                    and node.arg == "exception"
+                    and not (
+                        isinstance(node.value, ast.Constant)
+                        and node.value.value is False
+                    )
+                    for node in ast.walk(call.func)
+                )
+                or any(
+                    keyword.arg in {"exc_info", "stack_info"}
+                    and not (
+                        isinstance(keyword.value, ast.Constant)
+                        and keyword.value.value in {False, None}
+                    )
+                    for keyword in call.keywords
+                )
             )
             if sorted(fields) != sorted(expected_fields):
                 failures.append(
@@ -146,9 +212,93 @@ def test_reviewed_diagnostic_changes_are_metadata_only() -> None:
                     f"expected {list(expected_fields)!r}"
                 )
             if captures_exception:
-                failures.append(f"{relative}: {label!r} captures exception details")
+                failures.append(
+                    f"{relative}: {label!r} captures exception or stack details"
+                )
 
     assert failures == []
+
+
+def _run_metadata_guard(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, source: str
+) -> None:
+    relative = "tldw_chatbook/reviewed_diagnostic.py"
+    reviewed_module = tmp_path / relative
+    reviewed_module.parent.mkdir(parents=True)
+    reviewed_module.write_text(source, encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "REVIEWED_METADATA_ONLY_DIAGNOSTICS",
+        {relative: {"reviewed diagnostic": ()}},
+    )
+    test_reviewed_diagnostic_changes_are_metadata_only()
+
+
+def test_metadata_guard_rejects_dynamic_exception_capture(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = (
+        "from loguru import logger\n"
+        "def emit(exc: Exception) -> None:\n"
+        "    logger.opt(exception=exc).warning('reviewed diagnostic')\n"
+    )
+
+    with pytest.raises(AssertionError, match="captures exception or stack details"):
+        _run_metadata_guard(monkeypatch, tmp_path, source)
+
+
+def test_metadata_guard_allows_explicitly_disabled_exception_capture(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = (
+        "from loguru import logger\n"
+        "def emit() -> None:\n"
+        "    logger.opt(exception=False).warning('reviewed diagnostic')\n"
+    )
+
+    _run_metadata_guard(monkeypatch, tmp_path, source)
+
+
+def test_metadata_guard_rejects_bound_private_fields(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = (
+        "from loguru import logger\n"
+        "def emit(session_id: str) -> None:\n"
+        "    logger.bind(session_id=session_id).warning('reviewed diagnostic')\n"
+    )
+
+    with pytest.raises(AssertionError, match="fields.*session_id"):
+        _run_metadata_guard(monkeypatch, tmp_path, source)
+
+
+def test_metadata_guard_rejects_keyword_private_fields(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = (
+        "from loguru import logger\n"
+        "def emit(secret: str) -> None:\n"
+        "    logger.warning('reviewed diagnostic: {secret}', secret=secret)\n"
+    )
+
+    with pytest.raises(AssertionError, match="fields.*secret"):
+        _run_metadata_guard(monkeypatch, tmp_path, source)
+
+
+def test_metadata_guard_rejects_stdlib_exception_capture(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = (
+        "import logging\n"
+        "def emit(exc: Exception) -> None:\n"
+        "    logging.getLogger(__name__).warning(\n"
+        "        'reviewed diagnostic', exc_info=exc\n"
+        "    )\n"
+    )
+
+    with pytest.raises(AssertionError, match="captures exception or stack details"):
+        _run_metadata_guard(monkeypatch, tmp_path, source)
 
 
 def test_persistent_metadata_marker_cannot_be_forged_outside_its_owner() -> None:

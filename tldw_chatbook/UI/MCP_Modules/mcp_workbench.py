@@ -3032,7 +3032,10 @@ class MCPWorkbench(Container):
                 enabled,
             )
         except Exception as exc:
-            logger.warning(f"MCP Tools-mode local master save failed: {exc}")
+            logger.warning(
+                "MCP Tools-mode local master save failed (error_type={}).",
+                type(exc).__name__,
+            )
             canvas = self._refresh_local_tools_controls()
             if canvas is not None:
                 canvas.set_local_config_status(
@@ -3110,7 +3113,10 @@ class MCPWorkbench(Container):
                 stored,
             )
         except Exception as exc:
-            logger.warning(f"MCP Tools-mode workspace root save failed: {exc}")
+            logger.warning(
+                "MCP Tools-mode workspace root save failed (error_type={}).",
+                type(exc).__name__,
+            )
             canvas = self._refresh_local_tools_controls()
             if canvas is not None:
                 canvas.set_local_config_status(

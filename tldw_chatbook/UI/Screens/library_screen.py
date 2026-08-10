@@ -12332,10 +12332,11 @@ class LibraryScreen(BaseAppScreen):
                         )
                         if isinstance(result, Mapping):
                             restored_records.append(result)
-                    except Exception:
-                        logger.opt(exception=True).warning(
-                            f"Failed to restore Library media item {media_id!r} "
-                            "in bulk-delete undo."
+                    except Exception as exc:
+                        logger.warning(
+                            "Failed to restore a Library media item in bulk-delete "
+                            "undo (error_type={}).",
+                            type(exc).__name__,
                         )
                         failed.append(media_id)
             else:

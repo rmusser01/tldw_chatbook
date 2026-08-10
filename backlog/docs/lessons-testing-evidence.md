@@ -1917,6 +1917,8 @@ follow-up. Build remediation inventories from the complete owning population,
 grouped by stable module/function/diagnostic identity; use heuristic matches
 only as candidates or cross-checks, never as the denominator.
 
+---
+
 ## A line-independent diagnostic digest can still be indentation-sensitive (TASK-14651, 2026-08-09)
 
 **Incident.** The persistent-diagnostic inventory described its call digests as
@@ -1932,3 +1934,23 @@ AST/source as well as the digest so a pure indentation change is not mistaken
 for a policy change. Run formatter gates before the final generated-artifact
 refresh, then rerun the inventory checker after formatting. Do not refresh the
 manifest first and assume later formatting is harmless.
+
+---
+
+## A generated-inventory rebase conflict is a new review boundary (TASK-14651, 2026-08-10)
+
+**Incident.** Rebasing the diagnostic-privacy PR 79 commits onto current dev
+conflicted in the generated manifest. Regenerating it made the architecture
+gate green, but also imported 17 upstream diagnostic additions since the prior
+reviewed base. Sixteen carried implicit tracebacks, exception messages, bound
+session/message IDs, a media ID, or user-entered trim values. Treating the
+generator as a mechanical conflict resolver would have silently blessed every
+one.
+
+**The rule.** A governed generated artifact must be re-reviewed when its source
+population changes during rebase. Compare the diagnostic call population from
+the last reviewed base to the new base, classify each added or changed call
+under the governing ADR, extend the guard for newly observed syntax such as
+dynamic `exception=` values, stdlib exception/stack capture, chained
+`bind(...)` fields, and direct keyword-format values, then regenerate. Passing
+the generator proves consistency, not policy compliance.
