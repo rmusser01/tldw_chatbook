@@ -1,11 +1,13 @@
 """Pure display-state contracts for the Library prompts canvas."""
 
-from dataclasses import replace
+from collections.abc import Mapping
+from dataclasses import FrozenInstanceError, replace
 import sqlite3
 from datetime import datetime, timezone
 
 import pytest
 
+import tldw_chatbook.Library.library_prompts_state as prompts_state_module
 from tldw_chatbook.DB.Prompts_DB import ConflictError
 from tldw_chatbook.Library.library_prompts_state import (
     PromptArtifactDraft,
@@ -80,6 +82,906 @@ PROMPT_C = {
     "keywords": ["kw1", "kw2"],
     "last_modified": "2026-07-07T11:00:00+00:00",
 }
+
+
+def test_browse_prompt_scope_normalizes_query_sort_and_bounded_page_size():
+    scope = prompts_state_module.PromptBrowseScope(
+        query="  alpha beta \n",
+        collection_id=7,
+        sort_by=" NAME ",
+        sort_order=" ASC ",
+        page=2,
+        page_size=prompts_state_module.MAX_PROMPT_BROWSE_PAGE_SIZE + 500,
+    )
+
+    assert scope.backend == "local"
+    assert scope.query == "alpha beta"
+    assert scope.collection_id == 7
+    assert scope.sort_by == "name"
+    assert scope.sort_order == "asc"
+    assert scope.page == 2
+    assert scope.page_size == prompts_state_module.MAX_PROMPT_BROWSE_PAGE_SIZE
+    assert (
+        scope.fingerprint
+        == prompts_state_module.PromptBrowseScope(
+            query="alpha beta",
+            collection_id=7,
+            sort_by="name",
+            sort_order="asc",
+            page=2,
+            page_size=prompts_state_module.MAX_PROMPT_BROWSE_PAGE_SIZE,
+        ).fingerprint
+    )
+    assert replace(scope, page=3).fingerprint != scope.fingerprint
+    with pytest.raises(FrozenInstanceError):
+        scope.query = "changed"  # type: ignore[misc]
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"backend": "server"}, "local"),
+        ({"collection_id": 0}, "collection_id"),
+        ({"collection_id": True}, "collection_id"),
+        ({"sort_by": "name; DROP TABLE Prompts"}, "sort_by"),
+        ({"sort_order": "sideways"}, "sort_order"),
+        ({"page": 0}, "page"),
+        ({"page": True}, "page"),
+        ({"page_size": 0}, "page_size"),
+        ({"page_size": True}, "page_size"),
+        ({"query": None}, "query"),
+    ],
+)
+def test_browse_prompt_scope_rejects_invalid_public_inputs(kwargs, message):
+    with pytest.raises((TypeError, ValueError), match=message):
+        prompts_state_module.PromptBrowseScope(**kwargs)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"query": "changed"},
+        {"collection_id": 7},
+        {"sort_by": "name"},
+        {"sort_order": "asc"},
+        {"page": 2},
+        {"page_size": 51},
+    ],
+)
+def test_browse_prompt_scope_fingerprint_covers_every_variable_field(changes):
+    scope = prompts_state_module.PromptBrowseScope()
+
+    assert replace(scope, **changes).fingerprint != scope.fingerprint
+
+
+def test_prompt_collection_catalog_appends_complete_bounded_pages_literally():
+    loading = prompts_state_module.begin_prompt_collection_catalog(
+        query="  [bold]  ", request_token=7
+    )
+
+    first = prompts_state_module.apply_prompt_collection_catalog_page(
+        loading,
+        {
+            "collections": [
+                {
+                    "collection_id": collection_id,
+                    "name": f"[bold] {collection_id}",
+                    "display_name": (
+                        "[bold] · #1"
+                        if collection_id == 1
+                        else f"[bold] {collection_id}"
+                    ),
+                    "prompt_ids": [],
+                    "backend": "local",
+                }
+                for collection_id in range(1, 101)
+            ],
+            "limit": 100,
+            "offset": 0,
+            "total": 207,
+        },
+        request_token=7,
+    )
+    second = prompts_state_module.apply_prompt_collection_catalog_page(
+        first,
+        {
+            "collections": [
+                {
+                    "collection_id": collection_id,
+                    "name": f"集合 {collection_id}",
+                    "display_name": f"集合 {collection_id}",
+                    "prompt_ids": [],
+                    "backend": "local",
+                }
+                for collection_id in range(101, 201)
+            ],
+            "limit": 100,
+            "offset": 100,
+            "total": 207,
+        },
+        request_token=7,
+        append=True,
+    )
+
+    assert loading.query == "[bold]"
+    assert second.status == "ready"
+    assert second.total == 207
+    assert len(second.items) == 200
+    assert second.has_more is True
+    assert second.next_offset == 200
+    assert second.items[0].display_name == "[bold] · #1"
+    assert second.items[-1].display_name == "集合 200"
+
+
+def test_prompt_collection_catalog_rejects_late_page_and_cross_query_append():
+    current = prompts_state_module.begin_prompt_collection_catalog(
+        query="current", request_token=9
+    )
+    stale_record = {
+        "collections": [],
+        "limit": 100,
+        "offset": 0,
+        "total": 0,
+    }
+
+    assert (
+        prompts_state_module.apply_prompt_collection_catalog_page(
+            current, stale_record, request_token=8
+        )
+        is current
+    )
+    with pytest.raises(ValueError, match="offset"):
+        prompts_state_module.apply_prompt_collection_catalog_page(
+            current,
+            {**stale_record, "offset": 100},
+            request_token=9,
+            append=True,
+        )
+
+
+def test_prompt_collection_catalog_rejects_duplicate_ids_and_total_drift():
+    loading = prompts_state_module.begin_prompt_collection_catalog(
+        query="", request_token=11
+    )
+    first = prompts_state_module.apply_prompt_collection_catalog_page(
+        loading,
+        {
+            "collections": [
+                {
+                    "collection_id": 1,
+                    "name": "One",
+                    "display_name": "One",
+                    "backend": "local",
+                }
+            ],
+            "limit": 100,
+            "offset": 0,
+            "total": 2,
+        },
+        request_token=11,
+    )
+    for next_page in (
+        {
+            "collections": [
+                {
+                    "collection_id": 1,
+                    "name": "Again",
+                    "display_name": "Again",
+                    "backend": "local",
+                }
+            ],
+            "limit": 100,
+            "offset": 1,
+            "total": 2,
+        },
+        {
+            "collections": [
+                {
+                    "collection_id": 2,
+                    "name": "Two",
+                    "display_name": "Two",
+                    "backend": "local",
+                }
+            ],
+            "limit": 100,
+            "offset": 1,
+            "total": 3,
+        },
+    ):
+        with pytest.raises(ValueError):
+            prompts_state_module.apply_prompt_collection_catalog_page(
+                first,
+                next_page,
+                request_token=11,
+                append=True,
+            )
+
+
+def test_prompt_memberships_stage_and_apply_without_content_save_coupling():
+    loading = prompts_state_module.begin_prompt_memberships(
+        prompt_id=41,
+        identity_fingerprint="local:prompt:41:v3",
+        request_token=3,
+    )
+    ready = prompts_state_module.apply_prompt_memberships_loaded(
+        loading,
+        collection_ids=(2, 7),
+        labels={2: "[bold] literal", 7: "研究"},
+        request_token=3,
+    )
+    staged = prompts_state_module.stage_prompt_memberships(ready, (7, 9))
+    applying = prompts_state_module.begin_prompt_memberships_apply(
+        staged, request_token=4
+    )
+    applied = prompts_state_module.apply_prompt_memberships_saved(
+        applying,
+        collection_ids=(7, 9),
+        request_token=4,
+    )
+
+    assert not hasattr(ready, "summary")
+    assert staged.applied_ids == (2, 7)
+    assert staged.staged_ids == (7, 9)
+    assert staged.can_apply is True
+    assert applying.status == "applying"
+    assert applied.applied_ids == (7, 9)
+    assert applied.staged_ids == (7, 9)
+    assert applied.labels == ((7, "研究"),)
+    assert applied.status == "success"
+    assert applied.outcome == "Memberships applied."
+    assert not hasattr(applied, "content_dirty")
+    assert not hasattr(applied, "save_status")
+
+
+def test_prompt_memberships_reject_stale_apply_and_disable_unsaved_identity():
+    disabled = prompts_state_module.disable_prompt_memberships(
+        "Save this prompt before managing collections."
+    )
+    loading = prompts_state_module.begin_prompt_memberships(
+        prompt_id=41,
+        identity_fingerprint="local:prompt:41:v3",
+        request_token=5,
+    )
+    ready = prompts_state_module.apply_prompt_memberships_loaded(
+        loading,
+        collection_ids=(2,),
+        labels={2: "Work"},
+        request_token=5,
+    )
+    applying = prompts_state_module.begin_prompt_memberships_apply(
+        prompts_state_module.stage_prompt_memberships(ready, ()), request_token=6
+    )
+
+    assert disabled.can_manage is False
+    assert disabled.disabled_reason == "Save this prompt before managing collections."
+    assert disabled.can_apply is False
+    assert (
+        prompts_state_module.apply_prompt_memberships_saved(
+            applying,
+            collection_ids=(),
+            request_token=5,
+        )
+        is applying
+    )
+
+
+def test_prompt_membership_load_error_blocks_mutation_but_apply_error_retries():
+    loading = prompts_state_module.begin_prompt_memberships(
+        prompt_id=41,
+        identity_fingerprint="local:prompt:41:v3",
+        request_token=7,
+    )
+    load_error = prompts_state_module.fail_prompt_memberships(
+        loading,
+        request_token=7,
+        error="Couldn't load memberships. Retry.",
+        phase="load",
+    )
+
+    assert load_error.status == "load_error"
+    assert load_error.can_manage is False
+    assert load_error.can_retry_load is True
+    assert prompts_state_module.stage_prompt_memberships(load_error, (9,)) is load_error
+    assert (
+        prompts_state_module.begin_prompt_memberships_apply(load_error, request_token=8)
+        is load_error
+    )
+
+    ready = prompts_state_module.apply_prompt_memberships_loaded(
+        loading,
+        collection_ids=(2,),
+        labels={2: "Current"},
+        request_token=7,
+    )
+    staged = prompts_state_module.stage_prompt_memberships(ready, (2, 9))
+    applying = prompts_state_module.begin_prompt_memberships_apply(
+        staged, request_token=8
+    )
+    apply_error = prompts_state_module.fail_prompt_memberships(
+        applying,
+        request_token=8,
+        error="Couldn't apply memberships. Retry.",
+        phase="apply",
+    )
+
+    assert apply_error.status == "apply_error"
+    assert apply_error.applied_ids == (2,)
+    assert apply_error.staged_ids == (2, 9)
+    assert apply_error.can_manage is True
+    assert apply_error.can_retry_load is False
+    assert apply_error.can_apply is True
+
+
+def test_prompt_membership_state_rejects_ambiguous_active_and_label_shapes():
+    loading = prompts_state_module.begin_prompt_memberships(
+        prompt_id=41,
+        identity_fingerprint="local:prompt:41:v3",
+        request_token=7,
+    )
+    ready = prompts_state_module.apply_prompt_memberships_loaded(
+        loading,
+        collection_ids=(2,),
+        labels={2: "Current"},
+        request_token=7,
+    )
+    load_error = prompts_state_module.fail_prompt_memberships(
+        loading,
+        request_token=7,
+        error="Couldn't load memberships. Retry.",
+        phase="load",
+    )
+    disabled = prompts_state_module.disable_prompt_memberships("Save first.")
+
+    invalid_states = (
+        (loading, {"identity_fingerprint": ""}),
+        (loading, {"identity_fingerprint": "   "}),
+        (loading, {"request_token": 0}),
+        (disabled, {"applied_ids": (2,)}),
+        (disabled, {"labels": ((2, "Current"),)}),
+        (disabled, {"outcome": "Not allowed"}),
+        (ready, {"labels": ((2, "Current"), (2, "Duplicate"))}),
+        (ready, {"labels": ((0, "Invalid"),)}),
+        (ready, {"labels": ((9, "Unrelated"),)}),
+        (load_error, {"outcome": ""}),
+        (load_error, {"outcome": "x" * 201}),
+    )
+    for state, changes in invalid_states:
+        with pytest.raises(ValueError):
+            replace(state, **changes)
+
+
+def test_browse_prompt_result_preserves_exact_total_pages_and_clamped_page():
+    scope = prompts_state_module.PromptBrowseScope(page=9, page_size=2)
+
+    result = prompts_state_module.build_prompt_browse_result(
+        scope,
+        {
+            "items": [PROMPT_C],
+            "total_items": 5,
+            "total_pages": 3,
+            "current_page": 3,
+            "per_page": 2,
+        },
+    )
+
+    assert isinstance(result, prompts_state_module.PromptBrowseResult)
+    assert result.scope.page == 3
+    assert result.scope_fingerprint == replace(scope, page=3).fingerprint
+    assert result.items[0]["id"] == PROMPT_C["id"]
+    assert result.items[0]["keywords"] == tuple(PROMPT_C["keywords"])
+    assert result.total_items == 5
+    assert result.total_pages == 3
+    assert result.page == 3
+    assert result.status == "ready"
+
+
+@pytest.mark.parametrize(
+    ("scope", "items", "total_items", "total_pages", "current_page"),
+    [
+        (
+            prompts_state_module.PromptBrowseScope(page=2, page_size=2),
+            [PROMPT_A, PROMPT_B],
+            5,
+            3,
+            2,
+        ),
+        (
+            prompts_state_module.PromptBrowseScope(page=3, page_size=2),
+            [PROMPT_C],
+            5,
+            3,
+            3,
+        ),
+        (
+            prompts_state_module.PromptBrowseScope(page_size=2),
+            [],
+            0,
+            0,
+            1,
+        ),
+    ],
+)
+def test_browse_prompt_result_requires_exact_page_cardinality(
+    scope, items, total_items, total_pages, current_page
+):
+    result = prompts_state_module.build_prompt_browse_result(
+        scope,
+        {
+            "items": items,
+            "total_items": total_items,
+            "total_pages": total_pages,
+            "current_page": current_page,
+            "per_page": scope.page_size,
+        },
+    )
+
+    assert len(result.items) == len(items)
+
+
+def test_browse_prompt_result_rejects_overfull_partial_last_page():
+    scope = prompts_state_module.PromptBrowseScope(page=3, page_size=2)
+
+    with pytest.raises(ValueError, match="item count"):
+        prompts_state_module.build_prompt_browse_result(
+            scope,
+            {
+                "items": [PROMPT_A, PROMPT_B],
+                "total_items": 5,
+                "total_pages": 3,
+                "current_page": 3,
+                "per_page": 2,
+            },
+        )
+
+
+@pytest.mark.parametrize(
+    ("scope", "items", "total_items", "total_pages", "current_page"),
+    [
+        (
+            prompts_state_module.PromptBrowseScope(page=2, page_size=2),
+            [PROMPT_A],
+            5,
+            3,
+            2,
+        ),
+        (
+            prompts_state_module.PromptBrowseScope(page=3, page_size=2),
+            [],
+            5,
+            3,
+            3,
+        ),
+    ],
+)
+def test_browse_prompt_result_rejects_underfilled_pages(
+    scope, items, total_items, total_pages, current_page
+):
+    with pytest.raises(ValueError, match="item count"):
+        prompts_state_module.build_prompt_browse_result(
+            scope,
+            {
+                "items": items,
+                "total_items": total_items,
+                "total_pages": total_pages,
+                "current_page": current_page,
+                "per_page": scope.page_size,
+            },
+        )
+
+
+def test_browse_prompt_result_deeply_freezes_detached_mapping_rows():
+    source = {
+        "id": 7,
+        "name": "Original",
+        "keywords": ["first"],
+        "metadata": {"labels": ["stable"]},
+    }
+    result = prompts_state_module.build_prompt_browse_result(
+        prompts_state_module.PromptBrowseScope(),
+        {
+            "items": [source],
+            "total_items": 1,
+            "total_pages": 1,
+            "current_page": 1,
+            "per_page": 50,
+        },
+    )
+
+    source["name"] = "Changed"
+    source["keywords"].append("late")
+    source["metadata"]["labels"].append("late")
+
+    row = result.items[0]
+    assert isinstance(row, Mapping)
+    assert row.get("name") == "Original"
+    assert dict(row)["name"] == "Original"
+    assert tuple(row) == ("id", "name", "keywords", "metadata")
+    assert row["name"] == "Original"
+    assert row["keywords"] == ("first",)
+    assert row["metadata"]["labels"] == ("stable",)
+    with pytest.raises(TypeError):
+        row["name"] = "Direct change"  # type: ignore[index]
+    with pytest.raises(TypeError):
+        row["metadata"]["new"] = "Direct change"  # type: ignore[index]
+    with pytest.raises(TypeError):
+        row["keywords"][0] = "Direct change"  # type: ignore[index]
+
+
+def _direct_prompt_browse_result(items=None, **overrides):
+    scope = overrides.pop("scope", prompts_state_module.PromptBrowseScope())
+    values = {
+        "scope": scope,
+        "items": [{"id": 8}] if items is None else items,
+        "total_items": 1,
+        "total_pages": 1,
+        "page": 1,
+        "status": "ready",
+        "request_fingerprint": (
+            scope.fingerprint
+            if isinstance(scope, prompts_state_module.PromptBrowseScope)
+            else "invalid"
+        ),
+        "request_token": 1,
+    }
+    values.update(overrides)
+    return prompts_state_module.PromptBrowseResult(**values)
+
+
+def test_browse_prompt_result_constructor_deeply_freezes_and_detaches_items():
+    source = {
+        "id": 8,
+        "values": [None, "text", True, 3, 4.5],
+        "metadata": {
+            "labels": ["stable"],
+            "seen_at": datetime(2026, 8, 9, tzinfo=timezone.utc),
+        },
+    }
+    source_items = [source]
+
+    result = _direct_prompt_browse_result(source_items)
+    source_items.append({"id": 9})
+    source["values"].append("late")
+    source["metadata"]["labels"].append("late")
+
+    assert isinstance(result.items, tuple)
+    assert len(result.items) == 1
+    assert result.items[0]["values"] == (None, "text", True, 3, 4.5)
+    assert result.items[0]["metadata"]["labels"] == ("stable",)
+    assert result.items[0]["metadata"]["seen_at"] == "2026-08-09T00:00:00+00:00"
+    with pytest.raises(TypeError):
+        result.items[0]["id"] = 10  # type: ignore[index]
+
+
+def test_browse_prompt_result_constructor_rejects_non_mapping_items():
+    with pytest.raises(TypeError, match="items must be mappings"):
+        _direct_prompt_browse_result([{"id": 8}, "not a mapping"])
+
+
+@pytest.mark.parametrize("unsupported", [{"set value"}, object()])
+def test_browse_prompt_result_rejects_unsupported_nested_leaves(unsupported):
+    with pytest.raises(TypeError, match="JSON-like"):
+        _direct_prompt_browse_result([{"id": 8, "unsupported": unsupported}])
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"scope": "local"}, "scope"),
+        ({"total_items": True}, "total_items"),
+        ({"total_items": -1}, "total_items"),
+        ({"total_pages": True}, "total_pages"),
+        ({"total_pages": -1}, "total_pages"),
+        ({"page": True}, "page"),
+        ({"page": 0}, "page"),
+        ({"status": "settled"}, "status"),
+        ({"request_fingerprint": None}, "request_fingerprint"),
+        ({"request_fingerprint": "0" * 64}, "request_fingerprint"),
+        ({"error": object()}, "error"),
+    ],
+)
+def test_browse_prompt_result_constructor_rejects_invalid_public_fields(
+    overrides, message
+):
+    with pytest.raises((TypeError, ValueError), match=message):
+        _direct_prompt_browse_result(**overrides)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"status": "ready", "error": "unexpected"},
+        {
+            "items": [],
+            "total_items": 0,
+            "total_pages": 0,
+            "status": "error",
+            "error": "",
+        },
+        {
+            "items": [],
+            "total_items": 0,
+            "total_pages": 0,
+            "status": "loading",
+            "error": "unexpected",
+        },
+        {"status": "empty_library"},
+        {
+            "items": [],
+            "total_items": 0,
+            "total_pages": 0,
+            "status": "ready",
+        },
+    ],
+)
+def test_browse_prompt_result_constructor_enforces_status_error_consistency(
+    overrides,
+):
+    values = dict(overrides)
+    items = values.pop("items", None)
+    with pytest.raises(ValueError, match="status|error|items"):
+        _direct_prompt_browse_result(items, **values)
+
+
+@pytest.mark.parametrize(
+    ("items", "overrides", "message"),
+    [
+        ([{"id": 8}], {"total_items": 2}, "item count"),
+        ([{"id": 8}], {"total_pages": 2}, "total_pages"),
+        ([{"id": 8}], {"page": 2}, "page"),
+    ],
+)
+def test_browse_prompt_result_constructor_enforces_page_totals_and_cardinality(
+    items, overrides, message
+):
+    with pytest.raises(ValueError, match=message):
+        _direct_prompt_browse_result(items, **overrides)
+
+
+def test_browse_prompt_result_constructor_accepts_valid_state_shapes():
+    ready = _direct_prompt_browse_result()
+    loading = _direct_prompt_browse_result(
+        [], total_items=0, total_pages=0, status="loading"
+    )
+    error = _direct_prompt_browse_result(
+        [], total_items=0, total_pages=0, status="error", error=" Retry. "
+    )
+    empty = _direct_prompt_browse_result(
+        [], total_items=0, total_pages=0, status="empty_library"
+    )
+
+    assert ready.status == "ready"
+    assert loading.status == "loading"
+    assert error.error == "Retry."
+    assert empty.status == "empty_library"
+
+
+def test_browse_prompt_result_constructor_rejects_forged_stale_scope_guard():
+    current = prompts_state_module.begin_prompt_browse(
+        prompts_state_module.PromptBrowseScope(query="current"), request_token=7
+    )
+    stale_scope = prompts_state_module.PromptBrowseScope(query="stale")
+
+    with pytest.raises(ValueError, match="request_fingerprint"):
+        _direct_prompt_browse_result(
+            [],
+            scope=stale_scope,
+            total_items=0,
+            total_pages=0,
+            status="no_matches",
+            request_fingerprint=current.request_fingerprint,
+            request_token=current.request_token,
+        )
+
+
+def test_browse_prompt_reducer_rejects_forged_stale_scope_with_copied_guards():
+    current = prompts_state_module.begin_prompt_browse(
+        prompts_state_module.PromptBrowseScope(query="current"), request_token=7
+    )
+    stale = prompts_state_module.build_prompt_browse_result(
+        prompts_state_module.PromptBrowseScope(query="stale"),
+        {
+            "items": [],
+            "total_items": 0,
+            "total_pages": 0,
+            "current_page": 1,
+            "per_page": 50,
+        },
+        request_token=current.request_token,
+    )
+    object.__setattr__(stale, "request_fingerprint", current.request_fingerprint)
+
+    assert prompts_state_module.apply_prompt_browse_result(current, stale) is current
+
+
+@pytest.mark.parametrize(
+    ("scope_kwargs", "expected_status"),
+    [
+        ({}, "empty_library"),
+        ({"collection_id": 4}, "empty_collection"),
+        ({"query": "needle"}, "no_matches"),
+        ({"query": "needle", "collection_id": 4}, "no_matches"),
+    ],
+)
+def test_browse_prompt_result_distinguishes_truthful_empty_states(
+    scope_kwargs, expected_status
+):
+    scope = prompts_state_module.PromptBrowseScope(**scope_kwargs)
+    result = prompts_state_module.build_prompt_browse_result(
+        scope,
+        {
+            "items": [],
+            "total_items": 0,
+            "total_pages": 0,
+            "current_page": 1,
+            "per_page": scope.page_size,
+        },
+    )
+
+    assert result.status == expected_status
+    assert result.total_items == 0
+    assert result.total_pages == 0
+    assert result.page == 1
+
+
+def test_browse_prompt_loading_error_and_stale_fingerprint_are_distinct():
+    current_scope = prompts_state_module.PromptBrowseScope(query="current")
+    loading = prompts_state_module.begin_prompt_browse(current_scope)
+    error = prompts_state_module.build_prompt_browse_error(current_scope)
+    stale = prompts_state_module.build_prompt_browse_result(
+        prompts_state_module.PromptBrowseScope(query="stale"),
+        {
+            "items": [],
+            "total_items": 0,
+            "total_pages": 0,
+            "current_page": 1,
+            "per_page": 50,
+        },
+    )
+
+    assert loading.status == "loading"
+    assert error.status == "error"
+    assert error.error == "Couldn't load prompts. Try again."
+    assert prompts_state_module.apply_prompt_browse_result(loading, stale) is loading
+    assert prompts_state_module.apply_prompt_browse_result(loading, error) is error
+
+
+def test_browse_prompt_result_rejects_late_same_scope_request_token():
+    scope = prompts_state_module.PromptBrowseScope(query="same scope")
+    loading = prompts_state_module.begin_prompt_browse(scope, request_token=2)
+    payload = {
+        "items": [PROMPT_A],
+        "total_items": 1,
+        "total_pages": 1,
+        "current_page": 1,
+        "per_page": scope.page_size,
+    }
+    stale = prompts_state_module.build_prompt_browse_result(
+        scope, payload, request_token=1
+    )
+    fresh = prompts_state_module.build_prompt_browse_result(
+        scope, payload, request_token=2
+    )
+
+    assert prompts_state_module.apply_prompt_browse_result(loading, stale) is loading
+    assert prompts_state_module.apply_prompt_browse_result(loading, fresh) is fresh
+    with pytest.raises(FrozenInstanceError):
+        fresh.status = "error"  # type: ignore[misc]
+
+
+def test_browse_prompt_reducer_rejects_settled_state_and_loading_result():
+    scope = prompts_state_module.PromptBrowseScope()
+    payload = {
+        "items": [PROMPT_A],
+        "total_items": 1,
+        "total_pages": 1,
+        "current_page": 1,
+        "per_page": scope.page_size,
+    }
+    settled = prompts_state_module.build_prompt_browse_result(scope, payload)
+    error = prompts_state_module.build_prompt_browse_error(scope)
+    loading = prompts_state_module.begin_prompt_browse(scope)
+    duplicate_loading = prompts_state_module.begin_prompt_browse(scope)
+
+    assert prompts_state_module.apply_prompt_browse_result(settled, error) is settled
+    assert (
+        prompts_state_module.apply_prompt_browse_result(loading, duplicate_loading)
+        is loading
+    )
+
+
+@pytest.mark.parametrize(
+    "field", ["total_items", "total_pages", "current_page", "per_page"]
+)
+def test_browse_prompt_result_rejects_bool_response_integers(field):
+    scope = prompts_state_module.PromptBrowseScope()
+    payload = {
+        "items": [PROMPT_A],
+        "total_items": 1,
+        "total_pages": 1,
+        "current_page": 1,
+        "per_page": scope.page_size,
+    }
+    payload[field] = True
+
+    with pytest.raises(ValueError, match=field):
+        prompts_state_module.build_prompt_browse_result(scope, payload)
+
+
+def test_browse_prompt_request_token_rejects_bool():
+    scope = prompts_state_module.PromptBrowseScope()
+    result = _direct_prompt_browse_result([{"id": 8}])
+
+    with pytest.raises(ValueError, match="request_token"):
+        prompts_state_module.begin_prompt_browse(scope, request_token=True)
+    with pytest.raises(ValueError, match="request_token"):
+        replace(result, request_token=True)
+
+
+def test_browse_prompt_error_strips_text_and_rejects_whitespace_only():
+    scope = prompts_state_module.PromptBrowseScope()
+
+    result = prompts_state_module.build_prompt_browse_error(
+        scope, error="  Couldn't load this page. Retry. \n"
+    )
+
+    assert result.error == "Couldn't load this page. Retry."
+    with pytest.raises(ValueError, match="error"):
+        prompts_state_module.build_prompt_browse_error(scope, error=" \n\t ")
+
+
+def test_browse_prompt_scope_clamps_to_last_exact_page_or_first_empty_page():
+    scope = prompts_state_module.PromptBrowseScope(page=9)
+
+    assert (
+        prompts_state_module.clamp_prompt_browse_scope(scope, total_pages=3).page == 3
+    )
+    assert (
+        prompts_state_module.clamp_prompt_browse_scope(scope, total_pages=0).page == 1
+    )
+    assert (
+        prompts_state_module.clamp_prompt_browse_scope(scope, total_pages=12) is scope
+    )
+    with pytest.raises(ValueError, match="total_pages"):
+        prompts_state_module.clamp_prompt_browse_scope(scope, total_pages=-1)
+
+
+def test_browse_prompt_list_state_preserves_service_order_and_local_identity():
+    scope = prompts_state_module.PromptBrowseScope(
+        sort_by="name", sort_order="desc", page_size=2
+    )
+    result = prompts_state_module.build_prompt_browse_result(
+        scope,
+        {
+            "items": [
+                {
+                    "id": "local:prompt:uuid-z",
+                    "local_id": 9,
+                    "name": "Zulu",
+                    "last_modified": datetime(2020, 1, 1, tzinfo=timezone.utc),
+                },
+                {
+                    "id": "local:prompt:uuid-a",
+                    "local_id": 4,
+                    "name": "Alpha",
+                    "last_modified": "2030-01-01T00:00:00+00:00",
+                },
+            ],
+            "total_items": 2,
+            "total_pages": 1,
+            "current_page": 1,
+            "per_page": 2,
+        },
+    )
+
+    state = prompts_state_module.build_prompt_browse_list_state(result, now=NOW)
+
+    assert [(row.prompt_id, row.name) for row in state.rows] == [
+        (9, "Zulu"),
+        (4, "Alpha"),
+    ]
+    assert state.count == 2
+    assert state.sort == "name"
+    assert result.items[0]["last_modified"] == "2020-01-01T00:00:00+00:00"
 
 
 def test_list_state_newest_sort_orders_by_modified_desc():

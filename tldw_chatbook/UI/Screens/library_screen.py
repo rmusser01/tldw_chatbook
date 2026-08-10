@@ -162,11 +162,13 @@ from ...Library.library_notes_sync_state import (
     sync_status_line,
 )
 from ...Library.library_prompts_state import (
+    PromptBrowseResult,
+    PromptBrowseScope,
     PromptEditorState,
     PromptHistoryRestoreRequest,
     PromptHistoryState,
     build_prompt_editor_state,
-    build_prompts_list_state,
+    build_prompt_browse_list_state,
     classify_prompt_save_error,
     prepare_prompt_artifact_save,
     prompt_editor_meta_line,
@@ -341,6 +343,8 @@ from ...Widgets.ModelArtifacts import (
 )
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ..Library_Modules import (
+    LibraryPromptBrowseController,
+    LibraryPromptCollectionsController,
     LibraryPromptHistoryController,
     LibraryPromptHistoryRegion,
 )
@@ -367,13 +371,8 @@ LIBRARY_SOURCE_PAGE_SIZES = {
     "notes": 100,
     "media": 50,
     "conversations": 50,
-    "prompts": 100,
 }
-# Only two prompts sort modes (unlike notes' three) -- cycled by
-# handle_library_prompts_sort. Kept local to the screen (not
-# library_prompts_state.py) since it's screen-toolbar-cycling concern, not
-# pure list-state-building logic.
-_LIBRARY_PROMPTS_SORT_MODES = ("newest", "name")
+_LIBRARY_PROMPTS_SEARCH_DEBOUNCE_SECONDS = 0.25
 # Skills sort modes (Task 3 of the Skills sub-project): "name" (pure
 # alphabetical) <-> "status" (needs-review first, then alphabetical) --
 # cycled by handle_library_skills_sort. Same "screen-toolbar-cycling
@@ -2225,13 +2224,8 @@ class LibraryScreen(BaseAppScreen):
             "notes": (),
             "media": (),
             "conversations": (),
-            # Task 1/3 (count seam + rail row + list canvas): unlike the
-            # three sources above, "prompts" carries ``(count,
-            # page_records)`` rather than a bare records tuple. The
-            # ``LibraryPromptsListCanvas`` list view now renders this
-            # page's records (see ``_build_library_prompts_state``); only
-            # fetching/paging past the first page of records remains
-            # future work.
+            # Rail-only lightweight count seam. Prompt rows live exclusively
+            # in the browse controller result and never in this snapshot.
             "prompts": (None, ()),
             # Skills sub-project Task 1: also ``(count, payload)``, not a
             # bare records tuple -- but unlike prompts' ``page_records``
@@ -2429,8 +2423,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_create_status: str = ""
         self._library_notes_operation_counter: int = 0
         self._library_notes_operation: LibraryNotesOperationState | None = None
-        self._library_prompts_sort: str = "newest"
-        self._library_prompts_filter: str = ""
+        self._library_prompts_debounce_timer: Timer | None = None
         self._selected_prompt_id: int | None = None
         self._library_prompts_view: str = "list"
         self._library_prompt_detail: Mapping[str, Any] | None = None
@@ -2447,6 +2440,42 @@ class LibraryScreen(BaseAppScreen):
                 self.app_instance, "prompt_scope_service", None
             ),
             sync_view=lambda state: self._sync_library_prompt_history_region(state),
+        )
+        self._library_prompt_browse_controller = LibraryPromptBrowseController(
+            screen=self,
+            run_service_call=lambda: self._run_library_service_call,
+            prompt_service=lambda: getattr(
+                self.app_instance, "prompt_scope_service", None
+            ),
+            sync_view=lambda: self._sync_library_prompts_browse_result,
+            request_is_active=lambda: (
+                self._library_selected_row_id
+                in {LIBRARY_ROW_BROWSE_PROMPTS, LIBRARY_ROW_CREATE_PROMPT}
+                and self._library_prompts_view == "list"
+            ),
+        )
+        self._library_prompt_collections_controller = (
+            LibraryPromptCollectionsController(
+                run_service_call=lambda: self._run_library_service_call,
+                prompt_service=lambda: getattr(
+                    self.app_instance, "prompt_scope_service", None
+                ),
+                sync_memberships=lambda: self._sync_library_prompt_memberships,
+                current_prompt_id=lambda: self._selected_prompt_id,
+                current_prompt_detail=lambda: self._library_prompt_detail,
+                prompt_editor_active=lambda: self._library_prompts_view == "editor",
+                push_modal=lambda: self.app.push_screen,
+                current_browse_collection_id=lambda: (
+                    self._library_prompt_browse_controller.scope.collection_id
+                ),
+                apply_browse_collection=lambda: self._apply_library_prompt_collection,
+                refresh_browse_projection=lambda: (
+                    self._sync_library_prompt_collection_label
+                ),
+                membership_applied=lambda: (
+                    self._refresh_library_prompt_after_membership_apply
+                ),
+            )
         )
         self._library_prompt_conflict_snapshot: PromptEditorState | None = None
         self._library_prompt_block_state: PromptBlockEditorState | None = None
@@ -2482,8 +2511,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompt_editor_armed: bool = False
         # Skills list canvas (Task 3 of the Skills sub-project): sort/filter
         # are pure in-memory operations over the already-fetched
-        # ``get_context`` snapshot payload (mirrors
-        # ``_library_prompts_sort``/``_library_prompts_filter``).
+        # ``get_context`` snapshot payload.
         # ``_selected_skill_name`` is recording-only for now -- the
         # in-canvas skill detail/trust editor lands in a later task -- same
         # posture ``handle_library_prompt_row`` originally had before its
@@ -4598,6 +4626,15 @@ class LibraryScreen(BaseAppScreen):
             # paint.
             self.refresh(recompose=True)
         self._refresh_local_source_snapshot()
+        if (
+            self._library_selected_row_id
+            in (LIBRARY_ROW_BROWSE_PROMPTS, LIBRARY_ROW_CREATE_PROMPT)
+            and self._library_prompts_view == "list"
+        ):
+            self._request_library_prompts_browse(
+                self._library_prompt_browse_controller.scope,
+                focus_identity=None,
+            )
         registry = self._library_ingest_registry()
         if registry is not None:
             counts_fn = getattr(registry, "counts", None)
@@ -4707,6 +4744,8 @@ class LibraryScreen(BaseAppScreen):
         if self._library_notes_autosave_timer is not None:
             self._library_notes_autosave_timer.stop()
             self._library_notes_autosave_timer = None
+        self._invalidate_library_prompts_browse()
+        self._library_prompt_collections_controller.invalidate()
         self._cancel_library_notes_auto_sync_timer()
         super().on_unmount()
         registry = self._library_ingest_registry()
@@ -4716,32 +4755,28 @@ class LibraryScreen(BaseAppScreen):
     def save_state(self) -> dict[str, Any]:
         """Persist Library selection/view state for the next visit.
 
-        Only SELECTION and VIEW state is captured -- never bulk fetched
-        snapshots (``_local_source_records`` and friends re-fetch fresh on
-        the next mount's ``_refresh_local_source_snapshot``, and a restored
-        id may be stale by then) or note editor text (``flush_pending_work``
-        has already persisted any dirty edit to the DB before the app calls
-        this). The ingest form/queue, rail collapse preferences, and search
-        history are deliberately excluded here: they are already persisted
-        elsewhere (the app-owned ingest job registry and the CLI config,
-        respectively) and re-seeding them from this in-memory dict would
-        fight those owners. The RAG results tuple (and its paired retrieval
-        status / recovery state, set together by
+        Only lightweight selection, view, and browse-request scope is captured
+        -- never bulk fetched snapshots (``_local_source_records`` and friends
+        re-fetch fresh on the next mount's ``_refresh_local_source_snapshot``,
+        and a restored id may be stale by then) or note editor text
+        (``flush_pending_work`` has already persisted any dirty edit to the DB
+        before the app calls this). The ingest form/queue, rail collapse
+        preferences, and search history are deliberately excluded here: they
+        are already persisted elsewhere (the app-owned ingest job registry and
+        the CLI config, respectively) and re-seeding them from this in-memory
+        dict would fight those owners. The RAG results tuple (and its paired
+        retrieval status / recovery state, set together by
         ``_apply_library_rag_search_outcome``) are safe to carry verbatim
         because their rows are frozen dataclasses -- copies are taken below
         only to avoid aliasing a live mutable set with the stashed dict.
 
-        The per-pane filter/sort values below (media type cycle, notes
-        sort mode, notes substring filter, prompts sort mode, prompts
-        substring filter, selected prompt id, conversations query) are VIEW
-        state exactly like the selection ids above -- they change what the
-        canvas builders render, not what data is fetched -- so they belong
-        here too (PR #595 shipped the selection/RAG half of this contract
-        but left these out). ``_library_notes_filter_records`` (the
-        substring filter's recomputed result cache) is deliberately NOT
-        persisted -- it is a derived/bulk snapshot like
-        ``_local_source_records``, and restore leaves it ``None`` so the
-        canvas recomputes it fresh from ``_library_notes_filter`` on mount.
+        The media type cycle, notes sort/filter, selected prompt id, and
+        conversations query are view/selection state. The Prompt browse scope
+        is request state instead: its query, collection, sort, and page values
+        define the exact local Prompt service request issued after restore.
+        Only that immutable scope is saved; its result rows are fetched fresh.
+        ``_library_notes_filter_records`` is likewise never persisted because
+        it is a derived/bulk snapshot recomputed from the saved notes filter.
         """
         state = super().save_state()
         state["library_selected_row_id"] = self._library_selected_row_id
@@ -4770,8 +4805,7 @@ class LibraryScreen(BaseAppScreen):
         state["library_media_type_filter"] = self._library_media_type_filter
         state["library_notes_sort"] = self._library_notes_sort
         state["library_notes_filter"] = self._library_notes_filter
-        state["library_prompts_sort"] = self._library_prompts_sort
-        state["library_prompts_filter"] = self._library_prompts_filter
+        state["library_prompts_scope"] = self._library_prompt_browse_controller.scope
         state["selected_prompt_id"] = self._selected_prompt_id
         state["library_conversation_query"] = getattr(
             self, "_library_conversation_query", ""
@@ -4903,14 +4937,19 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_filter = (
             notes_filter if isinstance(notes_filter, str) else ""
         )
-        prompts_sort = state.get("library_prompts_sort")
-        self._library_prompts_sort = (
-            prompts_sort if isinstance(prompts_sort, str) and prompts_sort else "newest"
-        )
-        prompts_filter = state.get("library_prompts_filter")
-        self._library_prompts_filter = (
-            prompts_filter if isinstance(prompts_filter, str) else ""
-        )
+        prompts_scope = state.get("library_prompts_scope")
+        if isinstance(prompts_scope, PromptBrowseScope):
+            restored_prompts_scope = prompts_scope
+        else:
+            # In-memory compatibility with pre-TASK-198 saved screen state.
+            legacy_sort = state.get("library_prompts_sort")
+            legacy_query = state.get("library_prompts_filter")
+            restored_prompts_scope = PromptBrowseScope(
+                query=legacy_query if isinstance(legacy_query, str) else "",
+                sort_by="name" if legacy_sort == "name" else "last_modified",
+                sort_order="asc" if legacy_sort == "name" else "desc",
+            )
+        self._library_prompt_browse_controller.invalidate(restored_prompts_scope)
         selected_prompt_id = state.get("selected_prompt_id")
         self._selected_prompt_id = (
             selected_prompt_id if isinstance(selected_prompt_id, int) else None
@@ -5625,17 +5664,15 @@ class LibraryScreen(BaseAppScreen):
         if self.is_mounted and not self._file_notes_active():
             if (
                 self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
-                or (
-                    self._library_selected_row_id
-                    in {LIBRARY_ROW_BROWSE_PROMPTS, LIBRARY_ROW_CREATE_PROMPT}
-                    and self._library_prompts_view == "editor"
-                )
+                or self._library_selected_row_id
+                in {LIBRARY_ROW_BROWSE_PROMPTS, LIBRARY_ROW_CREATE_PROMPT}
                 or self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
             ):
-                # A source refresh may update the Prompts count while a newly
-                # created Prompt remains open. Recompose only the rail so the
-                # shared block editor keeps its TextAreas, cursor, selection,
-                # scroll position, and native undo history.
+                # A source refresh only updates the Prompts rail count. Exact
+                # list rows have their own browse result, while an open editor
+                # owns a dirty working copy. Recompose only the rail in either
+                # Prompt view so rows, cursor, selection, scroll position, and
+                # native undo history remain under their rightful owners.
                 # (task-2042) Same protection for the Ingest canvas: this
                 # snapshot lands right after every completed job, and a full
                 # recompose here remounted the form mid-click (the queue
@@ -5925,12 +5962,9 @@ class LibraryScreen(BaseAppScreen):
         ``_notes_true_count_or_none``: the count seam is optional (guarded
         by ``callable(count_prompts)`` at the call site), so when it is
         missing this method is never invoked, and when it *is* present but
-        raises, the failure is swallowed and ``None`` is returned -- unlike
-        the paginated page-records fetch (``_prompts_page_records_or_empty``,
-        run alongside this in the same gather), a failed count has no
-        fallback of its own, so it simply renders the Prompts rail row with
-        no badge at all rather than surfacing an error or failing the whole
-        snapshot fetch.
+        raises, the failure is swallowed and ``None`` is returned. A failed
+        count has no fallback of its own, so it simply renders the Prompts
+        rail row with no badge rather than failing the exact browse result.
 
         Args:
             count_prompts: The bound ``count_prompts`` callable to invoke.
@@ -5951,124 +5985,6 @@ class LibraryScreen(BaseAppScreen):
             return None
         return result if isinstance(result, int) else None
 
-    async def _prompts_page_records_or_empty(
-        self, list_prompts: Any, **kwargs: Any
-    ) -> tuple[Mapping[str, Any], ...]:
-        """Fetch the local prompts snapshot page, degrading quietly on failure.
-
-        Runs inside the same ``asyncio.gather`` as ``count_prompts`` (see
-        ``_list_local_source_snapshot``). Mirrors ``_prompts_count_or_none``'s
-        degrade contract: the page fetch is optional (guarded by
-        ``callable(list_prompts)`` at the call site), and on failure this
-        returns an empty tuple rather than surfacing an error or failing the
-        whole snapshot fetch -- the Prompts rail badge (from the sibling
-        ``count_prompts`` call) still renders even when this fails, just
-        with an empty list canvas underneath.
-
-        ``PromptScopeService.list_prompts`` returns a *normalized* envelope
-        (composite ``"local:prompt:<id>"`` string ids and a separate integer
-        ``local_id``, per ``normalize_prompt_record``) rather than the raw
-        ``PromptsDatabase.list_prompts`` row shape
-        ``build_prompts_list_state`` expects. Each item is remapped to keep
-        the integer display ``id`` while preserving the normalized identity,
-        backend, artifact type, version, and lane-presence metadata used by
-        the row UI. Backward-compatible defaults tolerate older raw-shaped
-        service doubles without hiding Recipe or lane information when the
-        normalized fields are present.
-
-        Note: the raw local ``list_prompts`` DB query selects identity,
-        display fields, version, artifact type, and lane-presence flags, but
-        it does not join keywords. Every remapped record's ``keywords`` here
-        is therefore the (always empty) list the normalizer defaults to.
-        Bulk-enriching a page of prompts with keywords would need either a new
-        batched-join DB seam or N per-row ``fetch_keywords_for_prompt`` calls;
-        the notes list canvas sets the precedent for skipping this (its own
-        bulk ``list_notes`` fetch has never carried keywords either -- only
-        the single-note session port enriches in its normalized load reply),
-        so this deliberately matches that
-        precedent rather than fetching keywords per row here. ``details``,
-        unlike keywords, IS cheap to carry (a single extra column on the same
-        query, Task 8b D2) -- ``build_prompts_list_state``'s filter/secondary-
-        line now use it instead of the never-populated ``keywords``.
-
-        Args:
-            list_prompts: The bound ``list_prompts`` callable to invoke.
-            **kwargs: Forwarded to ``list_prompts`` (``mode``, ``page``,
-                ``per_page``).
-
-        Returns:
-            The fetched page's records, display-shaped for
-            ``build_prompts_list_state`` with normalized identity and
-            artifact metadata preserved, or ``()`` on failure or an
-            unrecognized response shape.
-        """
-        try:
-            response = await self._run_library_service_call(
-                list_prompts, isolate_in_worker=True, **kwargs
-            )
-        except Exception:
-            logger.opt(exception=True).warning(
-                "Failed to fetch local prompts page; Prompts list will render empty."
-            )
-            return ()
-        items = response.get("items") if isinstance(response, Mapping) else None
-        if not isinstance(items, (list, tuple)):
-            return ()
-        records: list[Mapping[str, Any]] = []
-        for item in items:
-            if not isinstance(item, Mapping):
-                continue
-            raw_id = item.get("id")
-            local_id = item.get("local_id")
-            if local_id is None and isinstance(raw_id, int):
-                local_id = raw_id
-            backend = str(item.get("backend") or "local")
-            source_id = item.get("source_id") or item.get("uuid")
-            if source_id in (None, ""):
-                source_id = item.get("server_id") or local_id or raw_id
-            has_system_prompt = item.get("has_system_prompt")
-            if not isinstance(has_system_prompt, bool):
-                has_system_prompt = bool(
-                    str(
-                        item.get("system_prompt")
-                        or item.get("compiled_system_prompt")
-                        or ""
-                    ).strip()
-                )
-            has_user_prompt = item.get("has_user_prompt")
-            if not isinstance(has_user_prompt, bool):
-                has_user_prompt = bool(
-                    str(
-                        item.get("user_prompt")
-                        or item.get("compiled_user_prompt")
-                        or ""
-                    ).strip()
-                )
-            records.append(
-                {
-                    "id": local_id,
-                    "source_id": (
-                        str(source_id) if source_id not in (None, "") else None
-                    ),
-                    "local_id": local_id,
-                    "server_id": item.get("server_id"),
-                    "uuid": item.get("uuid"),
-                    "backend": backend,
-                    "name": item.get("name"),
-                    "author": item.get("author"),
-                    "details": item.get("details"),
-                    "keywords": item.get("keywords"),
-                    "last_modified": item.get("last_modified"),
-                    "version": item.get("version"),
-                    "artifact_type": (
-                        "recipe" if item.get("artifact_type") == "recipe" else "prompt"
-                    ),
-                    "has_system_prompt": has_system_prompt,
-                    "has_user_prompt": has_user_prompt,
-                }
-            )
-        return tuple(records)
-
     async def _skills_context_or_none(
         self, get_context: Any, **kwargs: Any
     ) -> Mapping[str, Any] | None:
@@ -6084,9 +6000,9 @@ class LibraryScreen(BaseAppScreen):
         rather than surfacing an error or failing the whole snapshot
         fetch.
 
-        Unlike prompts (a separate ``count_prompts`` call plus a separate
-        paginated ``list_prompts`` page fetch), a single ``get_context``
-        call here supplies both: the count is derived from its
+        Unlike prompts (whose rail count and exact browse result have
+        separate owners), a single ``get_context`` call here supplies both:
+        the count is derived from its
         ``available_skills``/``blocked_skills`` lengths by the caller, and
         the same payload is stashed for a future Skills canvas to render.
 
@@ -6185,8 +6101,6 @@ class LibraryScreen(BaseAppScreen):
         count_quizzes = getattr(quiz_service, "count_quizzes", None)
         count_prompts = getattr(prompt_service, "count_prompts", None)
         count_prompts_available = callable(count_prompts)
-        list_prompts = getattr(prompt_service, "list_prompts", None)
-        list_prompts_available = callable(list_prompts)
         get_skills_context = getattr(skills_service, "get_context", None)
         get_skills_context_available = callable(get_skills_context)
         notes_user_id = (
@@ -6197,8 +6111,7 @@ class LibraryScreen(BaseAppScreen):
             "notes": (),
             "media": (),
             "conversations": (),
-            # See ``__init__``'s ``_local_source_records`` default: this key
-            # carries ``(count, page_records)``, not a bare records tuple.
+            # Rail-only count carrier; the second slot intentionally stays empty.
             "prompts": (None, ()),
             # Likewise ``(count, context_payload)`` -- see ``__init__``'s
             # comment on this same key.
@@ -6289,18 +6202,6 @@ class LibraryScreen(BaseAppScreen):
                     self._prompts_count_or_none(count_prompts, mode="local"),
                 )
             )
-        if list_prompts_available:
-            optional_calls.append(
-                (
-                    "prompts_page",
-                    self._prompts_page_records_or_empty(
-                        list_prompts,
-                        mode="local",
-                        page=1,
-                        per_page=LIBRARY_SOURCE_PAGE_SIZES["prompts"],
-                    ),
-                )
-            )
         if get_skills_context_available:
             optional_calls.append(
                 (
@@ -6355,7 +6256,6 @@ class LibraryScreen(BaseAppScreen):
 
         notes_true_count = optional_values.get("notes_true_count")
         prompts_count = optional_values.get("prompts_count")
-        prompts_page_records = optional_values.get("prompts_page") or ()
         skills_context = optional_values.get("skills_context")
         if isinstance(skills_context, Mapping):
             skills_available = skills_context.get("available_skills") or []
@@ -6390,12 +6290,9 @@ class LibraryScreen(BaseAppScreen):
                 "notes": notes,
                 "media": media,
                 "conversations": conversations,
-                # (count, page_records) -- see the ``__init__``/
-                # ``empty_records`` comments above. ``prompts_page_records``
-                # is ``()`` whenever the local backend has no ``list_prompts``
-                # seam or the fetch failed (degrade-quietly contract; see
-                # ``_prompts_page_records_or_empty``).
-                "prompts": (prompts_count, prompts_page_records),
+                # The second slot is permanently empty: Prompt rows are owned
+                # by the exact request-tokened browse result, not this sample.
+                "prompts": (prompts_count, ()),
                 # (count, context_payload) -- see the ``__init__``/
                 # ``empty_records`` comments above. ``skills_count`` spans
                 # BOTH ``available_skills`` and ``blocked_skills`` (needs
@@ -7599,6 +7496,7 @@ class LibraryScreen(BaseAppScreen):
                             history_current_compatible=(
                                 self._library_prompt_block_state is not None
                             ),
+                            membership_state=self._library_prompt_collections_controller.membership_state,
                             id="library-prompts-canvas",
                         )
                     elif self._library_prompt_detail is None:
@@ -7633,16 +7531,26 @@ class LibraryScreen(BaseAppScreen):
                             history_current_compatible=(
                                 self._library_prompt_block_state is not None
                             ),
+                            membership_state=self._library_prompt_collections_controller.membership_state,
                             id="library-prompts-canvas",
                         )
                 elif shell.canvas_kind == "prompts":
                     yield LibraryPromptsListCanvas(
                         self._build_library_prompts_state(),
-                        sort_mode=self._library_prompts_sort,
-                        filter_value=self._library_prompts_filter,
+                        browse_result=self._library_prompt_browse_controller.result,
+                        sort_mode=(
+                            "name"
+                            if self._library_prompt_browse_controller.scope.sort_by
+                            == "name"
+                            else "newest"
+                        ),
+                        filter_value=self._library_prompt_browse_controller.scope.query,
                         import_open=self._library_prompts_import_open,
                         import_path=self._library_prompts_import_path,
                         import_status=self._library_prompts_import_status,
+                        collection_label=self._library_prompt_collections_controller.collection_label(
+                            self._library_prompt_browse_controller.scope.collection_id
+                        ),
                         id="library-prompts-canvas",
                     )
                 elif (
@@ -7897,11 +7805,9 @@ class LibraryScreen(BaseAppScreen):
             conversations_known=known.get("conversations", True),
             notes_count=counts.get("notes") if counts_available else None,
             notes_known=known.get("notes", True),
-            # Unlike notes/media/conversations, "prompts" has no sample-cap
-            # fallback yet (no paginated fetch backs it in Task 1) -- the
-            # count is either the exact seam result or ``None`` (uncounted
-            # row), never a "+"-suffixed estimate, so ``prompts_known``
-            # stays ``True``.
+            # Prompt rows have their own exact browse owner; this rail value
+            # is either the lightweight count seam's exact result or ``None``
+            # (uncounted), never a sample-derived "+" estimate.
             prompts_count=prompts_count if counts_available else None,
             prompts_known=True,
             # Same posture as prompts: no sample-cap fallback backs this
@@ -8029,25 +7935,194 @@ class LibraryScreen(BaseAppScreen):
     def _build_library_prompts_state(self):
         """Build the Library prompts canvas's list-view display state.
 
-        Reads the ``(count, page_records)`` snapshot entry seeded by
-        ``_list_local_source_snapshot`` (Task 1's count seam, Task 3's
-        ``list_prompts`` page fetch) -- ``page_records`` degrades to ``()``
-        whenever the local backend has no ``list_prompts`` seam, the fetch
-        failed, or the snapshot simply hasn't loaded yet, in which case the
-        pure builder below renders an empty list rather than raising.
+        Rows and order come exclusively from the immutable exact browse
+        result. The local-source snapshot retains only the rail count seam.
         """
-        prompts_entry = self._local_source_records.get("prompts")
-        page_records = (
-            prompts_entry[1]
-            if isinstance(prompts_entry, tuple) and len(prompts_entry) == 2
-            else ()
-        )
-        return build_prompts_list_state(
-            page_records,
-            query=self._library_prompts_filter,
-            sort=self._library_prompts_sort,
+        return build_prompt_browse_list_state(
+            self._library_prompt_browse_controller.result,
             now=datetime.now(timezone.utc),
         )
+
+    def _sync_library_prompt_memberships(self, state) -> None:
+        """Patch only membership controls; preserve editor inputs and undo state."""
+        try:
+            self.query_one(
+                "#library-prompts-canvas", LibraryPromptsListCanvas
+            ).sync_memberships(state)
+        except (NoMatches, QueryError):
+            pass
+
+    def _reconcile_library_prompt_memberships(self) -> None:
+        self._sync_library_prompt_memberships(
+            self._library_prompt_collections_controller.membership_state
+        )
+
+    def _apply_library_prompt_collection(self, collection_id: int | None) -> None:
+        self._request_library_prompts_browse(
+            dataclasses.replace(
+                self._library_prompt_browse_controller.scope,
+                collection_id=collection_id,
+                page=1,
+            ),
+            focus_identity="library-prompts-collection",
+        )
+
+    def _sync_library_prompt_collection_label(self) -> None:
+        try:
+            button = self.query_one("#library-prompts-collection", Button)
+        except (NoMatches, QueryError):
+            return
+        label = self._library_prompt_collections_controller.collection_label(
+            self._library_prompt_browse_controller.scope.collection_id
+        )
+        button.label = f"collection: {escape_markup(label)} ▸"
+
+    def _refresh_library_prompt_after_membership_apply(self) -> None:
+        """Invalidate list data and refresh counts after membership Apply.
+
+        The Prompt editor remains mounted here, so the browse controller's
+        active-list guard intentionally prevents service dispatch. The clean
+        Back-to-list path requests this invalidated exact scope once the list
+        owns the canvas again. Prompt Save state is never changed here.
+        """
+        self._library_prompt_browse_controller.invalidate()
+        self._refresh_local_source_snapshot()
+
+    def _load_library_prompt_memberships(self) -> None:
+        self.run_worker(
+            self._library_prompt_collections_controller.load_memberships(),
+            exclusive=True,
+            group="library_prompt_memberships_load",
+        )
+        self.call_after_refresh(self._reconcile_library_prompt_memberships)
+
+    def _library_prompts_focus_identity(self) -> str | None:
+        """Return the focused Prompt control's stable DOM id, when useful."""
+        focused = getattr(self, "focused", None)
+        focused_id = getattr(focused, "id", None)
+        if not isinstance(focused_id, str):
+            return None
+        if focused_id.startswith("library-prompt-row-") or focused_id in {
+            "library-prompts-filter",
+            "library-prompts-sort",
+            "library-prompts-import",
+            "library-prompts-retry",
+            "library-prompts-page-previous",
+            "library-prompts-page-next",
+        }:
+            return focused_id
+        return None
+
+    def _restore_library_prompts_focus(self, focus_identity: str | None) -> None:
+        """Restore a surviving Prompt control, else the stable sort control."""
+        if not self._library_list_canvas_showing_list():
+            return
+        if focus_identity:
+            try:
+                target = self.query_one(f"#{focus_identity}", Widget)
+            except (NoMatches, QueryError):
+                target = None
+            if target is not None and not getattr(target, "disabled", False):
+                target.focus()
+                return
+        try:
+            self.query_one("#library-prompts-sort", Button).focus()
+        except (NoMatches, QueryError):
+            pass
+
+    def _stop_library_prompts_search_debounce(self) -> None:
+        """Cancel the pending search timer without changing its request scope."""
+        timer = self._library_prompts_debounce_timer
+        if timer is not None:
+            timer.stop()
+            self._library_prompts_debounce_timer = None
+
+    def _request_library_prompts_browse(
+        self,
+        scope: PromptBrowseScope,
+        *,
+        focus_identity: str | None = None,
+    ) -> Any | None:
+        """Capture presentation context and request one exact Prompt page."""
+        self._stop_library_prompts_search_debounce()
+        if focus_identity is None:
+            focus_identity = self._library_prompts_focus_identity()
+        return self._library_prompt_browse_controller.request(
+            scope,
+            focus_identity=focus_identity,
+        )
+
+    def _sync_library_prompts_browse_result(
+        self,
+        result: PromptBrowseResult,
+        focus_identity: str | None,
+    ) -> None:
+        """Project controller state and restore stable Prompt-list focus."""
+        if self.is_mounted:
+            self.refresh(recompose=True)
+            if result.status == "loading" or focus_identity is not None:
+                self.call_after_refresh(
+                    self._restore_library_prompts_focus,
+                    focus_identity,
+                )
+            elif not self._library_pending_list_entry_focus:
+                self.call_after_refresh(
+                    self._restore_library_prompts_focus,
+                    None,
+                )
+
+    def _queue_library_prompts_search(self, query: str) -> None:
+        """Debounce one normalized search without blocking the UI loop."""
+        query = self._safe_text(query, max_length=200).strip()
+        controller = self._library_prompt_browse_controller
+        if query == controller.scope.query:
+            return
+        self._stop_library_prompts_search_debounce()
+        scope = dataclasses.replace(controller.scope, query=query, page=1)
+        token = controller.begin(scope)
+
+        def dispatch() -> None:
+            self._library_prompts_debounce_timer = None
+            controller.dispatch(
+                scope,
+                request_token=token,
+                focus_identity="library-prompts-filter",
+            )
+
+        self._library_prompts_debounce_timer = self.set_timer(
+            _LIBRARY_PROMPTS_SEARCH_DEBOUNCE_SECONDS,
+            dispatch,
+        )
+
+    def _flush_library_prompts_search(self, query: str) -> None:
+        """Flush Enter through the pending token without duplicating its call."""
+        query = self._safe_text(query, max_length=200).strip()
+        pending = self._library_prompts_debounce_timer is not None
+        self._stop_library_prompts_search_debounce()
+        controller = self._library_prompt_browse_controller
+        current = controller.result
+        if query != controller.scope.query:
+            scope = dataclasses.replace(
+                controller.scope,
+                query=query,
+                page=1,
+            )
+            token = controller.begin(scope)
+        elif pending and current.status == "loading":
+            scope = controller.scope
+            token = current.request_token
+        else:
+            return
+        controller.dispatch(
+            scope,
+            request_token=token,
+            focus_identity="library-prompts-filter",
+        )
+
+    def _invalidate_library_prompts_browse(self) -> None:
+        """Cancel presentation timing and supersede the active browse token."""
+        self._stop_library_prompts_search_debounce()
+        self._library_prompt_browse_controller.invalidate()
 
     def _build_library_skills_state(self):
         """Build the Library skills canvas's list-view display state.
@@ -11481,6 +11556,8 @@ class LibraryScreen(BaseAppScreen):
             # retained workspace, so normalize the source only after its
             # flush and transition admission have succeeded.
             self._library_notes_source = LIBRARY_NOTES_SOURCE_DATABASE
+        if row_id != LIBRARY_ROW_BROWSE_PROMPTS:
+            self._invalidate_library_prompts_browse()
         # A rail selection is an explicit route boundary, even when the user
         # later returns to the same visual Notes region. Invalidate the token
         # now so leave→return cannot recreate authority by region equality.
@@ -11564,6 +11641,11 @@ class LibraryScreen(BaseAppScreen):
             # refresh) -- read off-thread, see
             # ``_refresh_library_skills_trust_posture``'s docstring for why.
             self._refresh_library_skills_trust_posture()
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS:
+            self._request_library_prompts_browse(
+                self._library_prompt_browse_controller.scope,
+                focus_identity=None,
+            )
         if (
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
             and not self._library_collections_loaded
@@ -12258,51 +12340,105 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-prompts-sort")
     def handle_library_prompts_sort(self, event: Button.Pressed) -> None:
-        """Cycle the Library prompts canvas sort mode (newest/name).
-
-        Unlike the notes filter (which re-fetches via the ``search_notes``
-        seam), the prompts filter/sort are both pure in-memory operations
-        over the already-fetched snapshot page (``_build_library_prompts_state``
-        -> ``build_prompts_list_state``) -- no worker needed, just a
-        recompose.
-
-        Args:
-            event: Button press event emitted by the prompts sort control.
-        """
+        """Cycle newest/name by requesting a new exact service scope."""
         event.stop()
-        try:
-            index = _LIBRARY_PROMPTS_SORT_MODES.index(self._library_prompts_sort)
-        except ValueError:
-            index = -1
-        self._library_prompts_sort = _LIBRARY_PROMPTS_SORT_MODES[
-            (index + 1) % len(_LIBRARY_PROMPTS_SORT_MODES)
-        ]
-        self.refresh(recompose=True)
+        scope = self._library_prompt_browse_controller.scope
+        if scope.sort_by == "name":
+            scope = dataclasses.replace(
+                scope,
+                sort_by="last_modified",
+                sort_order="desc",
+                page=1,
+            )
+        else:
+            scope = dataclasses.replace(
+                scope,
+                sort_by="name",
+                sort_order="asc",
+                page=1,
+            )
+        self._request_library_prompts_browse(
+            scope,
+            focus_identity="library-prompts-sort",
+        )
+
+    @on(Button.Pressed, "#library-prompts-collection")
+    def handle_library_prompts_collection(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._library_prompt_collections_controller.open_manager("browse")
+
+    @on(Button.Pressed, "#library-prompt-memberships-manage")
+    def handle_library_prompt_memberships_manage(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self._library_prompt_collections_controller.membership_state.can_retry_load:
+            self._load_library_prompt_memberships()
+        else:
+            self._library_prompt_collections_controller.open_manager("membership")
+
+    @on(Button.Pressed, "#library-prompt-memberships-apply")
+    def handle_library_prompt_memberships_apply(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.run_worker(
+            self._library_prompt_collections_controller.apply_memberships(),
+            exclusive=True,
+            group="library_prompt_memberships_apply",
+        )
+
+    @on(Input.Changed, "#library-prompts-filter")
+    def handle_library_prompts_filter_changed(self, event: Input.Changed) -> None:
+        """Queue the service-backed Prompt search after a short debounce."""
+        self._queue_library_prompts_search(event.value)
 
     @on(Input.Submitted, "#library-prompts-filter")
     def handle_library_prompts_filter(self, event: Input.Submitted) -> None:
-        """Apply the Library prompts filter on Enter.
-
-        Purely in-memory (see ``handle_library_prompts_sort``'s note): the
-        submitted text is stored and the canvas recomposes, re-running
-        ``build_prompts_list_state`` over the already-fetched snapshot page
-        with the new query -- no service call or worker involved.
-
-        Args:
-            event: Input submission event emitted by the prompts filter box.
-        """
+        """Flush the pending debounced search once when Enter is pressed."""
         event.stop()
-        self._library_prompts_filter = self._safe_text(
-            event.value, max_length=200
-        ).strip()
-        self.refresh(recompose=True)
+        self._flush_library_prompts_search(event.value)
+
+    @on(Button.Pressed, "#library-prompts-retry")
+    def handle_library_prompts_retry(self, event: Button.Pressed) -> None:
+        """Retry the failed exact Prompt scope with a fresh request token."""
+        event.stop()
+        self._stop_library_prompts_search_debounce()
+        self._library_prompt_browse_controller.retry(
+            focus_identity="library-prompts-retry"
+        )
+
+    @on(Button.Pressed, "#library-prompts-page-previous")
+    def handle_library_prompts_page_previous(self, event: Button.Pressed) -> None:
+        """Request the previous exact Prompt page."""
+        event.stop()
+        scope = self._library_prompt_browse_controller.scope
+        if scope.page <= 1:
+            return
+        self._request_library_prompts_browse(
+            dataclasses.replace(
+                scope,
+                page=scope.page - 1,
+            ),
+            focus_identity="library-prompts-page-previous",
+        )
+
+    @on(Button.Pressed, "#library-prompts-page-next")
+    def handle_library_prompts_page_next(self, event: Button.Pressed) -> None:
+        """Request the next exact Prompt page."""
+        event.stop()
+        controller = self._library_prompt_browse_controller
+        if controller.scope.page >= controller.result.total_pages:
+            return
+        self._request_library_prompts_browse(
+            dataclasses.replace(
+                controller.scope,
+                page=controller.scope.page + 1,
+            ),
+            focus_identity="library-prompts-page-next",
+        )
 
     @on(Button.Pressed, "#library-skills-sort")
     def handle_library_skills_sort(self, event: Button.Pressed) -> None:
         """Cycle the Library skills canvas sort mode (name/status).
 
-        Same pure in-memory posture as ``handle_library_prompts_sort``: the
-        already-fetched ``get_context`` snapshot payload is re-sorted by
+        The already-fetched ``get_context`` snapshot payload is re-sorted by
         ``_build_library_skills_state`` -> ``build_skills_list_state`` on
         recompose, no worker needed.
 
@@ -15244,6 +15380,10 @@ class LibraryScreen(BaseAppScreen):
         if failed:
             status = f"{status} · {failed} failed"
         self._apply_library_prompts_import_status(status)
+        self._request_library_prompts_browse(
+            self._library_prompt_browse_controller.scope,
+            focus_identity="library-prompts-import",
+        )
         self._refresh_local_source_snapshot()
 
     def _current_library_prompt_editor_state(
@@ -15315,6 +15455,7 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         if not await self._flush_library_prompt_save():
             return
+        self._invalidate_library_prompts_browse()
         prompt_id = getattr(event.button, "prompt_id", None)
         self._reset_library_prompt_editor_state()
         if isinstance(prompt_id, int):
@@ -15414,14 +15555,17 @@ class LibraryScreen(BaseAppScreen):
                 f"Library prompt {prompt_id!r} is no longer available; returning to list."
             )
             self._reset_library_prompt_editor_state()
+            self._request_library_prompts_browse(
+                self._library_prompt_browse_controller.scope,
+                focus_identity=None,
+            )
             self._refresh_local_source_snapshot()
-            if self.is_mounted:
-                self.refresh(recompose=True)
             return
         self._adopt_library_prompt_persisted_detail(
             detail,
             open_history=open_history,
         )
+        self._load_library_prompt_memberships()
         if self.is_mounted:
             self.refresh(recompose=True)
             self.call_after_refresh(self._arm_library_prompt_editor)
@@ -15483,6 +15627,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompt_version = None
         self._library_prompt_conflict_snapshot = None
         self._invalidate_library_prompt_history()
+        self._library_prompt_collections_controller.invalidate()
 
     def _arm_library_prompt_editor(self) -> None:
         """Enable dirty-tracking once the prompt editor is mounted."""
@@ -15780,6 +15925,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompt_include_starter_content = False
         self._library_prompt_editor_armed = False
         self._invalidate_library_prompt_history()
+        self._library_prompt_collections_controller.invalidate()
 
     def _reset_library_prompt_editor_state(self) -> None:
         """Clear all in-canvas Library prompt editor/save state.
@@ -15801,6 +15947,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompt_delete_pending_fingerprint = None
         self._library_prompt_editor_armed = False
         self._invalidate_library_prompt_history()
+        self._library_prompt_collections_controller.invalidate()
 
     def _mark_library_prompt_dirty(self) -> None:
         """Record an in-progress prompt edit.
@@ -15981,8 +16128,11 @@ class LibraryScreen(BaseAppScreen):
         if not await self._flush_library_prompt_save():
             return
         self._reset_library_prompt_editor_state()
+        self._request_library_prompts_browse(
+            self._library_prompt_browse_controller.scope,
+            focus_identity=None,
+        )
         self._refresh_local_source_snapshot()
-        self.refresh(recompose=True)
 
     def on_prompt_block_editor_apply_requested(
         self, event: PromptBlockEditor.ApplyRequested
@@ -16476,6 +16626,7 @@ class LibraryScreen(BaseAppScreen):
                 status=LIBRARY_PROMPT_SAVE_STATUS_COPY["ok"],
                 open_history=history_was_open,
             )
+            self._load_library_prompt_memberships()
             # This success patches the existing editor in place rather than
             # remounting it, so retain its prior dirty-tracking arm state.
             self._library_prompt_editor_armed = editor_was_armed
@@ -16756,8 +16907,11 @@ class LibraryScreen(BaseAppScreen):
         if not await self._flush_library_prompt_save():
             return False
         self._reset_library_prompt_editor_state()
+        self._request_library_prompts_browse(
+            self._library_prompt_browse_controller.scope,
+            focus_identity=None,
+        )
         self._refresh_local_source_snapshot()
-        self.refresh(recompose=True)
         # task-2856 AC1: every "back to list" exit re-focuses the list's
         # first row so Up/Down/Enter work immediately.
         self._arm_library_list_entry_focus()
@@ -17385,15 +17539,20 @@ class LibraryScreen(BaseAppScreen):
                 return
 
             self._reset_library_prompt_editor_state()
-            self._library_prompts_filter = ""
+            self._request_library_prompts_browse(
+                dataclasses.replace(
+                    self._library_prompt_browse_controller.scope,
+                    query="",
+                    page=1,
+                ),
+                focus_identity=None,
+            )
             # Reuses the same full local-source reload the notes delete flow
             # uses (already its own exclusive worker via @work) so the list
             # view and the rail's Prompts count both drop the deleted prompt --
             # fire-and-forget, not awaited (see `_save_library_prompt`'s
             # matching comment for why).
             self._refresh_local_source_snapshot()
-            if self.is_mounted:
-                self.refresh(recompose=True)
         finally:
             if (
                 delete_fingerprint is not None
@@ -17561,9 +17720,11 @@ class LibraryScreen(BaseAppScreen):
                 f"Library prompt {prompt_id!r} is no longer available; returning to list."
             )
             self._reset_library_prompt_editor_state()
+            self._request_library_prompts_browse(
+                self._library_prompt_browse_controller.scope,
+                focus_identity=None,
+            )
             self._refresh_local_source_snapshot()
-            if self.is_mounted:
-                self.refresh(recompose=True)
             return
 
         if not overwrite:
@@ -17783,6 +17944,7 @@ class LibraryScreen(BaseAppScreen):
             status=LIBRARY_PROMPT_SAVE_STATUS_COPY["ok"],
             open_history=False,
         )
+        self._load_library_prompt_memberships()
         # Mirrors `_save_library_prompt`'s own create-success branch: a
         # brand-new prompt changes the list's membership/count, so the
         # Prompts rail badge/list must pick up the new row now.
@@ -23078,6 +23240,7 @@ class LibraryScreen(BaseAppScreen):
         if source_type == "prompt":
             if not await self._flush_library_prompt_save():
                 return
+            self._invalidate_library_prompts_browse()
             try:
                 parsed_prompt_id = int(record_id)
             except (TypeError, ValueError):
