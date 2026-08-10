@@ -6,7 +6,7 @@ import os
 import subprocess
 import threading
 import time
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 from types import SimpleNamespace
@@ -86,12 +86,23 @@ def _call_while_root_lease_is_held(root, monkeypatch, operation) -> None:
 def _call_while_instance_rlock_is_held(store, operation, assert_still_blocked) -> None:
     """Assert one operation cannot cross a same-store held instance RLock."""
     held = threading.Event()
+    attempted = threading.Event()
     release = threading.Event()
     finished = threading.Event()
     errors = []
+    real_lock = store._transaction_lock
+
+    class SignalingRLock:
+        def __enter__(self):
+            attempted.set()
+            real_lock.acquire()
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            real_lock.release()
 
     def hold_lock():
-        with store._transaction_lock:
+        with real_lock:
             held.set()
             assert release.wait(5)
 
@@ -107,8 +118,10 @@ def _call_while_instance_rlock_is_held(store, operation, assert_still_blocked) -
     caller = threading.Thread(target=call_operation, daemon=True)
     holder.start()
     assert held.wait(5)
+    store._transaction_lock = SignalingRLock()
     caller.start()
-    assert not finished.wait(0.25)
+    assert attempted.wait(5)
+    assert not finished.is_set()
     assert assert_still_blocked() is not False
     release.set()
     holder.join(5)
@@ -116,6 +129,116 @@ def _call_while_instance_rlock_is_held(store, operation, assert_still_blocked) -
     assert not holder.is_alive() and not caller.is_alive()
     assert finished.is_set()
     assert errors == []
+
+
+class _ScandirWrapper:
+    """Wrap one scandir context while preserving its close semantics."""
+
+    def __init__(self, wrapped, transform):
+        self._wrapped = wrapped
+        self._transform = transform
+
+    def __enter__(self):
+        self._wrapped.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return self._wrapped.__exit__(exc_type, exc, traceback)
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return self._transform(next(self._wrapped))
+
+
+class _DirEntryWrapper:
+    """Delegate a DirEntry except for a test-controlled stat failure."""
+
+    def __init__(self, wrapped, fail_stat):
+        self._wrapped = wrapped
+        self._fail_stat = fail_stat
+
+    def stat(self, *, follow_symlinks=True):
+        self._fail_stat(Path(self._wrapped.path))
+        return self._wrapped.stat(follow_symlinks=follow_symlinks)
+
+    def __getattr__(self, name):
+        return getattr(self._wrapped, name)
+
+
+def _inject_snapshot_failure(store, monkeypatch, victim, seam, error_type):
+    """Inject a persistent private I/O error only while `_snapshot` runs."""
+    state = {"active": True, "in_snapshot": False, "failures": 0}
+    original_snapshot = store._snapshot
+
+    def marked_snapshot():
+        state["in_snapshot"] = True
+        try:
+            return original_snapshot()
+        finally:
+            state["in_snapshot"] = False
+
+    def fail():
+        state["failures"] += 1
+        raise error_type("PRIVATE-INVENTORY-PATH")
+
+    monkeypatch.setattr(store, "_snapshot", marked_snapshot)
+    original_scandir = os.scandir
+
+    def fail_stat(path):
+        if not state["active"] or not state["in_snapshot"]:
+            return
+        if seam == "message_stat" and path == victim.parent:
+            fail()
+        if seam == "file_stat" and path == victim:
+            fail()
+
+    def patched_scandir(path):
+        candidate = Path(path)
+        if (
+            state["active"]
+            and state["in_snapshot"]
+            and seam == "message_scan"
+            and candidate == victim.parent
+        ):
+            fail()
+        return _ScandirWrapper(
+            original_scandir(path),
+            lambda entry: _DirEntryWrapper(entry, fail_stat),
+        )
+
+    monkeypatch.setattr(os, "scandir", patched_scandir)
+    if seam == "resolve":
+        original_resolve = Path.resolve
+
+        def patched_resolve(path, *args, **kwargs):
+            if (
+                state["active"]
+                and state["in_snapshot"]
+                and path == victim
+            ):
+                fail()
+            return original_resolve(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "resolve", patched_resolve)
+    return state
+
+
+class _CloseRaisingHandle:
+    """Delegate a lease file handle but raise after actually closing it."""
+
+    def __init__(self, wrapped, close_calls):
+        self._wrapped = wrapped
+        self._close_calls = close_calls
+
+    def close(self):
+        self._close_calls.append("close")
+        self._wrapped.close()
+        raise OSError("PRIVATE-CLOSE-FAILURE")
+
+    def __getattr__(self, name):
+        return getattr(self._wrapped, name)
 
 
 @pytest.fixture
@@ -668,15 +791,313 @@ def test_capacity_operations_never_follow_windows_junction(tmp_path):
     assert sentinel.read_bytes() == b"PRIVATE-SENTINEL"
 
 
+@pytest.mark.parametrize(
+    ("seam", "error_type"),
+    [
+        pytest.param("message_stat", PermissionError, id="message-stat"),
+        pytest.param("message_scan", OSError, id="message-scan"),
+        pytest.param("file_stat", PermissionError, id="file-stat"),
+        pytest.param("resolve", OSError, id="file-resolve"),
+    ],
+)
+@pytest.mark.parametrize("operation", ["save", "adopt"])
+def test_capacity_transactions_fail_closed_on_inventory_io_errors(
+    tmp_path, monkeypatch, seam, error_type, operation
+):
+    store = VideoStore(
+        root=tmp_path / "gv",
+        config=_config(retention="ttl", max_store_mb=1),
+    )
+    existing = store.save("existing", "clip", b"o" * 700_000)
+    existing_bytes = existing.read_bytes()
+    state = _inject_snapshot_failure(store, monkeypatch, existing, seam, error_type)
+    stream = io.BytesIO(b"z" * (1024 * 1024 + 1))
+    stream.seek(17)
+
+    try:
+        with pytest.raises(video_store_module.VideoStoreSaveError) as caught:
+            if operation == "save":
+                store.save("new", "clip", b"n" * 500_000)
+            else:
+                store.adopt_oversized(
+                    "new",
+                    "clip",
+                    stream,
+                    size_bytes=1024 * 1024 + 1,
+                )
+    finally:
+        state["active"] = False
+
+    assert state["failures"] > 0
+    assert "PRIVATE" not in str(caught.value)
+    assert existing.read_bytes() == existing_bytes
+    assert store.resolve("new", "clip") is None
+    assert not list(store.root.rglob(".video-stage-*"))
+    if operation == "adopt":
+        assert not stream.closed
+        assert stream.tell() == 0
+        assert stream.read(16) == b"z" * 16
+
+
+def _plant_orphan_stage(store, *, size_bytes=900_000):
+    message_dir = store.root / "orphaned"
+    message_dir.mkdir(parents=True, exist_ok=True)
+    stage = message_dir / ".video-stage-crash.tmp"
+    stage.write_bytes(b"s" * size_bytes)
+    return stage
+
+
+@pytest.mark.parametrize("operation", ["startup", "save", "adopt"])
+def test_transactions_remove_regular_orphan_stages_before_capacity_work(
+    tmp_path, operation
+):
+    store = VideoStore(
+        root=tmp_path / "gv",
+        config=_config(retention="ttl", max_store_mb=1),
+    )
+    stage = _plant_orphan_stage(store)
+
+    if operation == "startup":
+        store.enforce_retention()
+    elif operation == "save":
+        saved = store.save("new", "clip", b"n" * 300_000)
+        assert saved.read_bytes() == b"n" * 300_000
+    else:
+        payload = b"z" * (1024 * 1024 + 1)
+        adopted = store.adopt_oversized(
+            "new", "clip", io.BytesIO(payload), size_bytes=len(payload)
+        )
+        assert adopted.read_bytes() == payload
+
+    assert not stage.exists()
+    assert not list(store.root.rglob(".video-stage-*"))
+    actual_bytes = sum(
+        path.stat().st_size for path in store.root.rglob("*") if path.is_file()
+    )
+    if operation != "adopt":
+        assert actual_bytes <= store.capacity_bytes
+
+
+@pytest.mark.parametrize("operation", ["save", "adopt"])
+def test_orphan_stage_cleanup_failure_aborts_capacity_transaction(
+    tmp_path, monkeypatch, operation
+):
+    store = VideoStore(
+        root=tmp_path / "gv",
+        config=_config(retention="ttl", max_store_mb=1),
+    )
+    stage = _plant_orphan_stage(store)
+    original_unlink = store._checked_unlink
+
+    def fail_stage(video):
+        if video.path == stage:
+            raise OSError("PRIVATE-STAGE-CLEANUP")
+        return original_unlink(video)
+
+    monkeypatch.setattr(store, "_checked_unlink", fail_stage)
+    stream = io.BytesIO(b"z" * (1024 * 1024 + 1))
+    stream.seek(23)
+    with pytest.raises(video_store_module.VideoStoreSaveError) as caught:
+        if operation == "save":
+            store.save("new", "clip", b"n" * 300_000)
+        else:
+            store.adopt_oversized(
+                "new", "clip", stream, size_bytes=1024 * 1024 + 1
+            )
+
+    assert "PRIVATE" not in str(caught.value)
+    assert stage.read_bytes() == b"s" * 900_000
+    assert store.resolve("new", "clip") is None
+    if operation == "adopt":
+        assert not stream.closed
+        assert stream.tell() == 0
+
+
+def test_startup_orphan_stage_cleanup_failure_is_not_hidden(tmp_path, monkeypatch):
+    store = VideoStore(
+        root=tmp_path / "gv",
+        config=_config(retention="ttl", max_store_mb=1),
+    )
+    stage = _plant_orphan_stage(store)
+
+    def fail_stage(video):
+        assert video.path == stage
+        raise OSError("PRIVATE-STAGE-CLEANUP")
+
+    monkeypatch.setattr(store, "_checked_unlink", fail_stage)
+    with pytest.raises(video_store_module.VideoStoreSaveError) as caught:
+        store.enforce_retention()
+
+    assert "PRIVATE" not in str(caught.value)
+    assert stage.read_bytes() == b"s" * 900_000
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX symlinked orphan-stage case")
+@pytest.mark.parametrize("operation", ["startup", "save", "adopt"])
+def test_transactions_leave_suspicious_orphan_stage_link_and_external_target(
+    tmp_path, operation
+):
+    store = VideoStore(
+        root=tmp_path / "gv",
+        config=_config(retention="ttl", max_store_mb=1),
+    )
+    external = tmp_path / "private"
+    external.mkdir()
+    sentinel = external / "PRIVATE-SENTINEL"
+    sentinel.write_bytes(b"PRIVATE-SENTINEL")
+    message_dir = store.root / "orphaned"
+    message_dir.mkdir(parents=True)
+    stage_link = message_dir / ".video-stage-linked.tmp"
+    stage_link.symlink_to(sentinel)
+
+    if operation == "startup":
+        store.enforce_retention()
+    elif operation == "save":
+        store.save("new", "clip", b"n" * 300_000)
+    else:
+        payload = b"z" * (1024 * 1024 + 1)
+        store.adopt_oversized(
+            "new", "clip", io.BytesIO(payload), size_bytes=len(payload)
+        )
+
+    assert stage_link.is_symlink()
+    assert sentinel.read_bytes() == b"PRIVATE-SENTINEL"
+
+
+def test_unlock_failure_after_success_does_not_reverse_committed_save(
+    tmp_path, monkeypatch
+):
+    root = tmp_path / "gv"
+    store = VideoStore(root=root, config=_config(retention="ttl", max_store_mb=1))
+    warnings = []
+    close_calls = []
+    original_open = Path.open
+
+    class CloseTrackingHandle:
+        def __init__(self, wrapped):
+            self._wrapped = wrapped
+
+        def close(self):
+            close_calls.append("close")
+            self._wrapped.close()
+
+        def __getattr__(self, name):
+            return getattr(self._wrapped, name)
+
+    def tracked_open(path, *args, **kwargs):
+        handle = original_open(path, *args, **kwargs)
+        return CloseTrackingHandle(handle) if path == store._lease_path else handle
+
+    with monkeypatch.context() as release_patch:
+        release_patch.setattr(Path, "open", tracked_open)
+        release_patch.setattr(
+            video_store_module.portalocker,
+            "unlock",
+            lambda handle: (_ for _ in ()).throw(OSError("PRIVATE-UNLOCK")),
+        )
+        release_patch.setattr(
+            video_store_module.logger,
+            "warning",
+            lambda message, *args: warnings.append((message, args)),
+        )
+        saved = store.save("new", "clip", b"committed")
+
+    assert saved.read_bytes() == b"committed"
+    assert close_calls == ["close"]
+    assert warnings == [("VideoStore: lease unlock failed ({})", ("OSError",))]
+    assert VideoStore(root=root, config=_config(retention="ttl")).save(
+        "later", "clip", b"later"
+    ).read_bytes() == b"later"
+
+
+def test_unlock_failure_never_masks_primary_transaction_error(tmp_path, monkeypatch):
+    store = VideoStore(
+        root=tmp_path / "gv",
+        config=_config(retention="ttl", max_store_mb=1),
+    )
+    warnings = []
+
+    def fail_publish(*args, **kwargs):
+        raise OSError("PRIVATE-PUBLISH")
+
+    monkeypatch.setattr(store, "_atomic_publish", fail_publish)
+    monkeypatch.setattr(
+        video_store_module.portalocker,
+        "unlock",
+        lambda handle: (_ for _ in ()).throw(OSError("PRIVATE-UNLOCK")),
+    )
+    monkeypatch.setattr(
+        video_store_module.logger,
+        "warning",
+        lambda message, *args: warnings.append((message, args)),
+    )
+
+    with pytest.raises(
+        video_store_module.VideoStoreSaveError,
+        match="managed video publication failed",
+    ) as caught:
+        store.save("new", "clip", b"payload")
+
+    assert "PRIVATE" not in str(caught.value)
+    assert warnings == [("VideoStore: lease unlock failed ({})", ("OSError",))]
+
+
+def test_close_failure_after_success_does_not_reverse_committed_save(
+    tmp_path, monkeypatch
+):
+    root = tmp_path / "gv"
+    store = VideoStore(root=root, config=_config(retention="ttl", max_store_mb=1))
+    original_open = Path.open
+    close_calls = []
+    warnings = []
+
+    def close_failing_open(path, *args, **kwargs):
+        handle = original_open(path, *args, **kwargs)
+        if path == store._lease_path:
+            return _CloseRaisingHandle(handle, close_calls)
+        return handle
+
+    with monkeypatch.context() as release_patch:
+        release_patch.setattr(Path, "open", close_failing_open)
+        release_patch.setattr(
+            video_store_module.logger,
+            "warning",
+            lambda message, *args: warnings.append((message, args)),
+        )
+        saved = store.save("new", "clip", b"committed")
+
+    assert saved.read_bytes() == b"committed"
+    assert close_calls == ["close"]
+    assert warnings == [("VideoStore: lease close failed ({})", ("OSError",))]
+    assert VideoStore(root=root, config=_config(retention="ttl")).save(
+        "later", "clip", b"later"
+    ).read_bytes() == b"later"
+
+
 def test_instance_rlock_prevents_thread_transaction_overlap(tmp_path, monkeypatch):
     store = VideoStore(root=tmp_path / "gv", config=_config(max_store_mb=1))
     monkeypatch.setattr(store, "_root_lease", lambda: nullcontext())
+    real_lock = store._transaction_lock
     original_publish = store._atomic_publish
     first_entered = threading.Event()
+    second_attempted_lock = threading.Event()
     second_entered = threading.Event()
     release = threading.Event()
     calls = 0
     errors = []
+    second_thread = None
+
+    class SignalingRLock:
+        def __enter__(self):
+            if threading.current_thread() is second_thread:
+                second_attempted_lock.set()
+            real_lock.acquire()
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            real_lock.release()
+
+    store._transaction_lock = SignalingRLock()
 
     def blocking_publish(source, target, *, expected_size):
         nonlocal calls
@@ -698,10 +1119,12 @@ def test_instance_rlock_prevents_thread_transaction_overlap(tmp_path, monkeypatc
 
     first = threading.Thread(target=save, args=("first",), daemon=True)
     second = threading.Thread(target=save, args=("second",), daemon=True)
+    second_thread = second
     first.start()
     assert first_entered.wait(5)
     second.start()
-    assert not second_entered.wait(0.25)
+    assert second_attempted_lock.wait(5)
+    assert not second_entered.is_set()
     release.set()
     first.join(5)
     second.join(5)
@@ -768,7 +1191,9 @@ def test_two_store_instances_serialize_through_root_lease(tmp_path, monkeypatch)
     second_store = VideoStore(root=root, config=_config(max_store_mb=1))
     original_first = first_store._atomic_publish
     original_second = second_store._atomic_publish
+    original_second_lease = second_store._root_lease
     first_entered = threading.Event()
+    second_attempted_lease = threading.Event()
     second_entered = threading.Event()
     release = threading.Event()
     errors = []
@@ -782,8 +1207,15 @@ def test_two_store_instances_serialize_through_root_lease(tmp_path, monkeypatch)
         second_entered.set()
         return original_second(source, target, expected_size=expected_size)
 
+    @contextmanager
+    def signaling_second_lease():
+        second_attempted_lease.set()
+        with original_second_lease():
+            yield
+
     monkeypatch.setattr(first_store, "_atomic_publish", blocking_first)
     monkeypatch.setattr(second_store, "_atomic_publish", observe_second)
+    monkeypatch.setattr(second_store, "_root_lease", signaling_second_lease)
 
     def save(store, message_id):
         try:
@@ -796,7 +1228,8 @@ def test_two_store_instances_serialize_through_root_lease(tmp_path, monkeypatch)
     first.start()
     assert first_entered.wait(5)
     second.start()
-    assert not second_entered.wait(0.25)
+    assert second_attempted_lease.wait(5)
+    assert not second_entered.is_set()
     release.set()
     first.join(5)
     second.join(5)

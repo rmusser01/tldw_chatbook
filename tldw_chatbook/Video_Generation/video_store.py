@@ -190,11 +190,19 @@ class VideoStore:
                     raise VideoStoreSaveError("managed store lease failed") from exc
             yield
         finally:
-            try:
-                if locked:
+            if locked:
+                try:
                     portalocker.unlock(handle)
-            finally:
+                except Exception as exc:
+                    logger.warning(
+                        "VideoStore: lease unlock failed ({})", type(exc).__name__
+                    )
+            try:
                 handle.close()
+            except Exception as exc:
+                logger.warning(
+                    "VideoStore: lease close failed ({})", type(exc).__name__
+                )
 
     # -- path safety ------------------------------------------------------
 
@@ -295,6 +303,7 @@ class VideoStore:
         with self._transaction_lock:
             with self._root_lease():
                 self._ensure_safe_root(create=True)
+                self._cleanup_orphan_stages_unlocked()
                 self._ensure_target_absent(path)
                 try:
                     self._atomic_publish(content, path, expected_size=size_bytes)
@@ -340,6 +349,7 @@ class VideoStore:
             with self._transaction_lock:
                 with self._root_lease():
                     self._ensure_safe_root(create=True)
+                    self._cleanup_orphan_stages_unlocked()
                     self._ensure_target_absent(path)
                     try:
                         self._atomic_publish(stream, path, expected_size=size_bytes)
@@ -414,6 +424,8 @@ class VideoStore:
         try:
             with os.scandir(self._root) as entries:
                 message_entries = sorted(entries, key=lambda entry: entry.name)
+        except FileNotFoundError:
+            return ()
         except OSError as exc:
             raise VideoStoreSaveError("managed store inventory failed") from exc
 
@@ -422,8 +434,10 @@ class VideoStore:
                 continue
             try:
                 message_metadata = message_entry.stat(follow_symlinks=False)
-            except OSError:
+            except FileNotFoundError:
                 continue
+            except OSError as exc:
+                raise VideoStoreSaveError("managed store inventory failed") from exc
             if (
                 not stat.S_ISDIR(message_metadata.st_mode)
                 or stat.S_ISLNK(message_metadata.st_mode)
@@ -432,12 +446,15 @@ class VideoStore:
                 continue
             message_path = Path(message_entry.path)
             try:
-                if message_path.resolve(strict=True).parent != resolved_root:
+                resolved_message = message_path.resolve(strict=True)
+                if resolved_message.parent != resolved_root:
                     continue
                 with os.scandir(message_path) as entries:
                     file_entries = sorted(entries, key=lambda entry: entry.name)
-            except OSError:
+            except FileNotFoundError:
                 continue
+            except OSError as exc:
+                raise VideoStoreSaveError("managed store inventory failed") from exc
 
             for file_entry in file_entries:
                 if file_entry.name.startswith(_STAGE_PREFIX):
@@ -446,8 +463,10 @@ class VideoStore:
                     continue
                 try:
                     file_metadata = file_entry.stat(follow_symlinks=False)
-                except OSError:
+                except FileNotFoundError:
                     continue
+                except OSError as exc:
+                    raise VideoStoreSaveError("managed store inventory failed") from exc
                 if (
                     not stat.S_ISREG(file_metadata.st_mode)
                     or stat.S_ISLNK(file_metadata.st_mode)
@@ -456,10 +475,12 @@ class VideoStore:
                     continue
                 path = Path(file_entry.path)
                 try:
-                    if path.resolve(strict=True).parent != message_path.resolve(strict=True):
+                    if path.resolve(strict=True).parent != resolved_message:
                         continue
-                except OSError:
+                except FileNotFoundError:
                     continue
+                except OSError as exc:
+                    raise VideoStoreSaveError("managed store inventory failed") from exc
                 videos.append(
                     StoredVideo(
                         message_id=message_entry.name,
@@ -470,6 +491,83 @@ class VideoStore:
                     )
                 )
         return tuple(videos)
+
+    def _cleanup_orphan_stages_unlocked(self) -> None:
+        """Remove regular unpublished siblings inside one root transaction."""
+        resolved_root = self._ensure_safe_root()
+        if resolved_root is None:
+            return
+        try:
+            with os.scandir(self._root) as entries:
+                message_entries = sorted(entries, key=lambda entry: entry.name)
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            raise VideoStoreSaveError("managed stage cleanup failed") from exc
+
+        for message_entry in message_entries:
+            if not _SAFE_COMPONENT.fullmatch(message_entry.name):
+                continue
+            try:
+                message_metadata = message_entry.stat(follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                raise VideoStoreSaveError("managed stage cleanup failed") from exc
+            if (
+                not stat.S_ISDIR(message_metadata.st_mode)
+                or stat.S_ISLNK(message_metadata.st_mode)
+                or self._is_reparse(message_metadata)
+            ):
+                continue
+            message_path = Path(message_entry.path)
+            try:
+                resolved_message = message_path.resolve(strict=True)
+                if resolved_message.parent != resolved_root:
+                    continue
+                with os.scandir(message_path) as entries:
+                    file_entries = sorted(entries, key=lambda entry: entry.name)
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                raise VideoStoreSaveError("managed stage cleanup failed") from exc
+
+            for file_entry in file_entries:
+                if not file_entry.name.startswith(_STAGE_PREFIX):
+                    continue
+                if not _SAFE_COMPONENT.fullmatch(file_entry.name):
+                    continue
+                try:
+                    file_metadata = file_entry.stat(follow_symlinks=False)
+                except FileNotFoundError:
+                    continue
+                except OSError as exc:
+                    raise VideoStoreSaveError("managed stage cleanup failed") from exc
+                if (
+                    not stat.S_ISREG(file_metadata.st_mode)
+                    or stat.S_ISLNK(file_metadata.st_mode)
+                    or self._is_reparse(file_metadata)
+                ):
+                    continue
+                path = Path(file_entry.path)
+                try:
+                    if path.resolve(strict=True).parent != resolved_message:
+                        continue
+                except FileNotFoundError:
+                    continue
+                except OSError as exc:
+                    raise VideoStoreSaveError("managed stage cleanup failed") from exc
+                stage = StoredVideo(
+                    message_id=message_entry.name,
+                    slug=path.stem,
+                    path=path,
+                    size_bytes=file_metadata.st_size,
+                    mtime=file_metadata.st_mtime,
+                )
+                try:
+                    self._checked_unlink(stage)
+                except Exception as exc:
+                    raise VideoStoreSaveError("managed stage cleanup failed") from exc
 
     def _is_safe_regular_file(self, path: Path) -> bool:
         try:
@@ -627,6 +725,7 @@ class VideoStore:
 
         with self._transaction_lock:
             with self._root_lease():
+                self._cleanup_orphan_stages_unlocked()
                 stored = self._snapshot()
                 survivors: list[StoredVideo] = []
                 for video in stored:
