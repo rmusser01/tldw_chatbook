@@ -2998,3 +2998,27 @@ test persists is what the app reads. And when a test needs a state — no provid
 `[library]` section, a feature off — **arrange it explicitly**; a state you inherited
 from an empty fixture is a state you never chose, and the day the fixture gets honest you
 cannot tell which of your assertions were ever real.
+
+---
+
+## A cancellation flag does not make check-and-commit atomic
+
+**TASK-3401.20, 2026-08-10.** The first generated-video teardown fix checked a
+screen-owned cancellation flag before publishing a managed file. Review found a
+real gap between that check and the filesystem commit: unmount could win in the
+middle, close the staged stream, and still leave a committed file without durable
+message metadata. A second version shielded `asyncio.to_thread()`, but cancellation
+of the awaiting coroutine did not stop the executor thread; releasing ownership in
+the async `finally` could still close bytes the thread was using. Timing-only tests
+missed both defects because they never proved which side had reached lock
+acquisition or the final commit boundary.
+
+**What to do.** Make the state transition linearizable: share one lock across the
+final active check and commit, and cancel under that same lock. When blocking work
+runs through `asyncio.to_thread()`, retain an explicit executor task and keep resource
+ownership until that task actually finishes; coroutine cancellation alone is not
+completion. Put durable commit-winning metadata finalization inside the shielded
+unit, but leave stale-screen UI refresh outside it and normally cancellable. Tests
+must use events or instrumented locks to force both cancel-wins and commit-wins
+orders, including cancellation after commit but before metadata append; a sleep and
+an assertion that “nothing happened yet” are not evidence of ordering.

@@ -60,7 +60,7 @@ Run `ruff E9,F63,F7,F82` plus `py_compile` on `chat_screen.py` if whole-file Ruf
 - Modify: `Tests/Video_Generation/test_video_store.py`
 - Modify: `tldw_chatbook/Video_Generation/video_store.py`
 
-- [ ] **Step 1: Add named RED tests for ordinary saves and startup separation**
+- [x] **Step 1: Add named RED tests for ordinary saves and startup separation**
 
 Add tests using the existing `_config(max_store_mb=1)` and real `tmp_path` files:
 
@@ -80,7 +80,7 @@ def test_save_enforces_cap_oldest_first_without_startup_cleanup(tmp_path):
 
 Use payload sizes/order that require exactly the oldest victim and prove an unrelated current-run survivor remains. Assert `resolve(old_message_id, old_slug) is None` while newer pairs still resolve. Add equal-mtime candidates whose safe paths sort differently and prove the documented path tie-breaker makes the same victim deterministic. Parameterize the startup-policy-separation case over both `session` and `ttl`; spy on `enforce_retention()` and make any save-time call fail, proving cap-only enforcement never reuses either startup policy.
 
-- [ ] **Step 2: Add RED overflow and sole-exception tests**
+- [x] **Step 2: Add RED overflow and sole-exception tests**
 
 Expect a frozen `VideoCapacityExceeded(size_bytes, max_bytes)` from `save()` for a `1 MiB + 1` payload, with no managed file. Add `adopt_oversized(message_id, slug, stream, size_bytes)` expectations proving:
 
@@ -90,13 +90,13 @@ Expect a frozen `VideoCapacityExceeded(size_bytes, max_bytes)` from `save()` for
 - session startup removes it; and
 - a later ordinary save removes it before reporting success.
 
-- [ ] **Step 3: Add RED non-following deletion tests**
+- [x] **Step 3: Add RED non-following deletion tests**
 
 On POSIX, create an external directory containing `PRIVATE-SENTINEL`, symlink `store.root / "linked-message"` to it, and force ordinary capacity, startup capacity, and `adopt_oversized()` scans. Assert the external file and bytes are unchanged and the symlink is not traversed. Add a direct file symlink case. On Windows, create a junction/reparse fixture where supported and skip only when construction is unavailable.
 
 Mutation requirement: temporarily change the inventory directory check to follow links; the POSIX sentinel test must fail.
 
-- [ ] **Step 4: Add RED bounded locking and concurrency tests**
+- [x] **Step 4: Add RED bounded locking and concurrency tests**
 
 Add deterministic tests for:
 
@@ -107,13 +107,13 @@ Add deterministic tests for:
 
 For the thread case, patch only the root-lease helper to `nullcontext`, block the first thread inside atomic publication with Events, and prove the second thread cannot enter publication until release; removing `RLock` must set the forbidden second-entered Event. For process cases, use a top-level spawn-safe worker and `multiprocessing.get_context("spawn")`; do not reload the module that defines result/error types. Capture child outcomes through a queue and enforce bounded joins.
 
-- [ ] **Step 5: Add RED publication and victim-deletion failure tests**
+- [x] **Step 5: Add RED publication and victim-deletion failure tests**
 
 Plant byte-distinct old files that are within the cap. For publication failure, patch only the private atomic-commit seam to raise `OSError` after the complete sibling exists but before target replacement; assert `VideoStoreSaveError`, every old path/byte remains exact, the new target is absent, and no sibling remains.
 
 For required-victim deletion failure, allow new candidate publication, patch the checked-unlink seam to fail on the first required old victim, and assert `VideoStoreSaveError`, the new managed target is withdrawn, the failing old path/bytes remain, actual managed bytes do not falsely report success, and no partial sibling remains. Add a second case that permits one earlier oldest victim to be deleted before a later victim fails, proving the resulting surviving store remains bounded and the new target is still withdrawn.
 
-- [ ] **Step 6: Run the storage tests to verify RED**
+- [x] **Step 6: Run the storage tests to verify RED**
 
 Run:
 
@@ -123,7 +123,7 @@ Run:
 
 Expected: failures for missing typed outcomes, post-save enforcement, safe inventory, lock timeout, process serialization, and oversized adoption. Record the exact failure set.
 
-- [ ] **Step 7: Implement minimal typed contracts and lock boundary**
+- [x] **Step 7: Implement minimal typed contracts and lock boundary**
 
 In `video_store.py`, add:
 
@@ -146,7 +146,7 @@ Add a read-only `capacity_bytes` property that applies the existing integer-MiB 
 
 Do not reuse the app's profile-instance warning lock: it is detection-only and concurrent app instances remain allowed.
 
-- [ ] **Step 8: Implement non-following inventory and deletion**
+- [x] **Step 8: Implement non-following inventory and deletion**
 
 Replace follow-link `Path.is_dir()/is_file()/stat()` inventory with an internal snapshot based on `os.scandir` and `entry.stat(follow_symlinks=False)`. Add one helper that rejects:
 
@@ -158,7 +158,7 @@ Replace follow-link `Path.is_dir()/is_file()/stat()` inventory with an internal 
 
 Repeat those checks immediately before unlink. Return immutable `StoredVideo` snapshots; never log rejected paths or external targets. Public `iter_stored()` returns an iterator over a completed safe snapshot so no lock is held across caller iteration.
 
-- [ ] **Step 9: Implement atomic publish, ordinary eviction, and oversized adoption**
+- [x] **Step 9: Implement atomic publish, ordinary eviction, and oversized adoption**
 
 Create a complete private sibling with `tempfile.NamedTemporaryFile(delete=False, dir=target.parent)`, flush it, then `os.replace()` it into the target; unlink any unpublished sibling in `finally`. For ordinary saves:
 
@@ -170,7 +170,7 @@ Create a complete private sibling with `tempfile.NamedTemporaryFile(delete=False
 
 For `adopt_oversized()`, rewind/copy the caller-owned stream without closing it, publish a candidate, remove every prior managed file, roll back the candidate on failure, verify it is the sole file, then return the path. Modify startup cap enforcement so one sole oversized survivor is retained after TTL filtering, but multiple/ordinary over-cap survivors are reduced oldest-first. Keep startup per-file removal best-effort while save/adopt operations fail closed.
 
-- [ ] **Step 10: Run storage tests GREEN and perform mutations**
+- [x] **Step 10: Run storage tests GREEN and perform mutations**
 
 Run the Task 1 command. Expected: all tests pass. Then prove named failures by separately removing:
 
@@ -185,7 +185,7 @@ Also mutate the atomic-commit and checked-unlink failure rollbacks so the new ca
 
 Restore exactly after each mutation and rerun GREEN.
 
-- [ ] **Step 11: Commit the storage boundary**
+- [x] **Step 11: Commit the storage boundary**
 
 ```bash
 git add tldw_chatbook/Video_Generation/video_store.py Tests/Video_Generation/test_video_store.py
@@ -199,13 +199,13 @@ git commit -m "fix: enforce generated video store capacity"
 - Modify: `Tests/Chat/test_console_generate_video.py`
 - Modify: `tldw_chatbook/Chat/console_generate_video.py`
 
-- [ ] **Step 1: Write RED tests for both pending reasons**
+- [x] **Step 1: Write RED tests for both pending reasons**
 
 Extend the existing fake adapter path with payloads larger than a 1 MiB store. Assert `run_video_generation()` returns `PendingVideoArtifact(reason="over_capacity")`, no managed file, exact metadata/size/cap/message id, and a rewound temporary handle containing exact bytes.
 
 Inject `VideoStoreSaveError("PRIVATE-PATH")` from a store after generation and assert a `reason="store_failure"` artifact holds exact bytes, obtains `max_bytes` from the store's public `capacity_bytes`, and exposes only `error_type == "VideoStoreSaveError"`, never exception text. Hold the real root lease through a second `VideoStore`, shorten the timeout, and prove real contention returns the same readable `store_failure` artifact instead of hanging. Verify `close()` is idempotent and makes later reads fail.
 
-- [ ] **Step 2: Run focused generation tests RED**
+- [x] **Step 2: Run focused generation tests RED**
 
 ```bash
 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B -m pytest Tests/Chat/test_console_generate_video.py -q -k 'pending_video or run_video_generation_saves'
@@ -213,7 +213,7 @@ Inject `VideoStoreSaveError("PRIVATE-PATH")` from a store after generation and a
 
 Expected: missing artifact/result union and current exception propagation.
 
-- [ ] **Step 3: Implement the minimal artifact contract**
+- [x] **Step 3: Implement the minimal artifact contract**
 
 Add:
 
@@ -238,11 +238,11 @@ class PendingVideoArtifact:
 
 Build metadata immediately after the adapter result. Call `VideoStore.save()` while the adapter bytes remain owned. On `VideoCapacityExceeded` or `VideoStoreSaveError`, write those bytes once to `tempfile.TemporaryFile(mode="w+b")`, rewind, and return the artifact. If staging itself fails, close the temporary handle and re-raise; do not create a half-valid artifact.
 
-- [ ] **Step 4: Run generation tests GREEN and mutate ownership**
+- [x] **Step 4: Run generation tests GREEN and mutate ownership**
 
 Run the Task 2 command and then the complete file. Remove the rewind and idempotent close guards separately; the exact artifact tests must fail. Restore and rerun GREEN.
 
-- [ ] **Step 5: Commit the generation contract**
+- [x] **Step 5: Commit the generation contract**
 
 ```bash
 git add tldw_chatbook/Chat/console_generate_video.py Tests/Chat/test_console_generate_video.py
@@ -256,7 +256,7 @@ git commit -m "fix: preserve unstored generated videos"
 - Create: `tldw_chatbook/Widgets/Console/console_video_capacity_modal.py`
 - Create: `Tests/Chat/test_console_video_capacity.py`
 
-- [ ] **Step 1: Write modal RED tests**
+- [x] **Step 1: Write modal RED tests**
 
 Create a minimal Textual test app and assert the mounted modal:
 
@@ -268,7 +268,7 @@ Create a minimal Textual test app and assert the mounted modal:
 
 Add geometry assertions proving all three buttons remain inside a 90-column screen.
 
-- [ ] **Step 2: Run modal tests RED**
+- [x] **Step 2: Run modal tests RED**
 
 ```bash
 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B -m pytest Tests/Chat/test_console_video_capacity.py -q -k 'modal'
@@ -276,15 +276,15 @@ Add geometry assertions proving all three buttons remain inside a 90-column scre
 
 Expected: import failure because the modal does not exist.
 
-- [ ] **Step 3: Implement one narrow modal**
+- [x] **Step 3: Implement one narrow modal**
 
 Create `ConsoleVideoCapacityModal(ModalScreen[CapacityAction])` with a frozen input model or explicit constructor arguments for reason/size/cap. Use three Buttons in one responsive container, `markup=False` for dynamic copy, and no storage/Console imports. Button handlers only stop the event and dismiss the typed result. Escape calls the discard action.
 
-- [ ] **Step 4: Run modal tests GREEN and mutate action routing**
+- [x] **Step 4: Run modal tests GREEN and mutate action routing**
 
 Run the Task 3 command. Temporarily map Keep and Escape to the wrong results; named tests must fail. Restore and rerun GREEN.
 
-- [ ] **Step 5: Commit the modal**
+- [x] **Step 5: Commit the modal**
 
 ```bash
 git add tldw_chatbook/Widgets/Console/console_video_capacity_modal.py Tests/Chat/test_console_video_capacity.py
@@ -297,18 +297,29 @@ git commit -m "feat: add generated video capacity choices"
 **Files:**
 - Modify: `Tests/Chat/test_console_video_capacity.py`
 - Modify: `tldw_chatbook/UI/Screens/chat_screen.py`
+- Modify: `Tests/Video_Generation/test_video_store.py`
+- Modify: `tldw_chatbook/Video_Generation/video_store.py`
+- Modify: `Tests/Chat/test_console_generate_video.py`
+- Modify: `tldw_chatbook/Chat/console_generate_video.py`
 
-- [ ] **Step 1: Write RED tests for shared initial/Regenerate dispatch**
+> **Review amendment:** mounted teardown must be linearizable with final
+> managed-store publication. A screen-owned cancellation flag alone has a
+> check/commit race, while private store locks or an unlocked compensating
+> unlink violate the storage boundary. The store therefore accepts a narrow
+> optional publication gate whose lock spans the final active check and
+> commit. Existing callers retain the unchanged default path.
+
+- [x] **Step 1: Write RED tests for shared initial/Regenerate dispatch**
 
 Drive `_console_command_generate_video()` and `_regenerate_console_video_message()` with `asyncio.to_thread` returning real temporary-file-backed artifacts. Assert both call one `_resolve_generated_video_outcome(...)` seam. For normal tuple results, preserve current append/sync behavior. For Discard and picker cancellation, assert no `append_video_message`, stage closed, and in-flight/cancel bookkeeping cleared.
 
-- [ ] **Step 2: Write RED Keep/Retry tests with real `VideoStore` files**
+- [x] **Step 2: Write RED Keep/Retry tests with real `VideoStore` files**
 
 For oversized Keep, plant two managed videos and associated resolvable specs, choose Keep, and prove both old paths disappear, the oversized target is the sole file, and exactly one new card is appended only after `resolve()` succeeds. Inject an adoption unlink failure and prove no card, readable stage, sanitized notification, and the choice is re-offered.
 
 For `store_failure`, choose Retry and prove the normal capped save path is called without `adopt_oversized()` or evict-all copy. A repeated busy/failure outcome must re-offer choices without recursion or artifact loss.
 
-- [ ] **Step 3: Write RED external-save race tests**
+- [x] **Step 3: Write RED external-save race tests**
 
 Patch `EnhancedFileSave` only at the modal-result boundary while using real files for copy behavior. Assert:
 
@@ -326,11 +337,25 @@ Inject an `OSError` during sibling copy and separately during commit; both must 
 
 Use a complete sibling plus an atomic hard-link/no-clobber commit for new targets. For confirmed replacement, revalidate non-following identity immediately before `os.replace`. Always remove the temporary sibling.
 
-- [ ] **Step 4: Write RED mounted teardown tests**
+- [x] **Step 4: Write RED mounted teardown tests**
 
 Run a mounted production `ChatScreen` with a resolver waiting first on `ConsoleVideoCapacityModal`, then separately on `EnhancedFileSave`. Navigate away/unmount through the real screen lifecycle. Assert `_pending_video_artifacts` is drained, every stream is closed once, the modal/picker waiter may finish late without error, and no card/path is created afterward.
 
-- [ ] **Step 5: Run Console capacity tests RED**
+Also pause ordinary retry and oversized adoption immediately before final
+publication. Let unmount win the shared publication gate and prove the store
+aborts without a target or partial stage. If publication wins first, it is
+linearized before teardown; teardown must still prevent every later card or UI
+continuation. Do not call private store transaction helpers or perform an
+unlocked compensating unlink from `ChatScreen`.
+
+Create that same per-message gate before initial or Regenerate generation
+enters `run_video_generation()` and pass it through the normal `VideoStore.save`
+boundary. A cancel-winning generation leaves no path. A commit-winning normal
+or pending result persists its durable message metadata even if teardown wins
+screen ownership immediately afterward, but skips stale-screen UI work. This
+prevents a committed managed file from becoming an orphan.
+
+- [x] **Step 5: Run Console capacity tests RED**
 
 ```bash
 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B -m pytest Tests/Chat/test_console_video_capacity.py -q -k 'not modal'
@@ -338,7 +363,7 @@ Run a mounted production `ChatScreen` with a resolver waiting first on `ConsoleV
 
 Expected: failures for the missing resolver, registry, external-copy helper, and shared dispatch wiring.
 
-- [ ] **Step 6: Implement screen ownership and result resolution**
+- [x] **Step 6: Implement screen ownership and result resolution**
 
 In `ChatScreen`, lazily own `dict[str, PendingVideoArtifact]`. Add one resolver that:
 
@@ -352,15 +377,27 @@ In `ChatScreen`, lazily own `dict[str, PendingVideoArtifact]`. Add one resolver 
 
 All modal and picker waits use a small screen helper that starts `app.push_screen_wait(...)` through `run_worker(exclusive=False, exit_on_error=False)` and awaits `worker.wait()`. Do not bare-await `push_screen_wait` from the slash-command event stack. Before every append, external open, or retry continuation, require `_pending_video_artifacts.get(message_id) is artifact`; unmount drains the mapping, so a late modal/picker callback becomes a no-op rather than appending after navigation.
 
+Use one small thread-safe publication gate for active store work. `VideoStore`
+holds that gate across its final active check and candidate commit; teardown
+cancels under the same gate and defers stream closure while a worker still
+owns it. This makes pre-publication cancellation atomic without exposing
+private store locks or deleting a committed path outside the store.
+
+External saves require pinned directory-relative staging, commit, and cleanup.
+Select that capability before allocating the sibling. If the platform cannot
+provide the required non-following directory operations, fail closed and
+retain the pending artifact for another choice; do not fall back to a
+path-re-resolving commit that can be redirected by a parent swap.
+
 Replace both tuple-unpack call sites with this resolver. Add one line in `on_unmount()` calling a small drain helper; do not inline artifact cleanup into the already-large teardown method.
 
-- [ ] **Step 7: Implement external copy and OS-open helpers**
+- [x] **Step 7: Implement external copy and OS-open helpers**
 
 Keep helpers private to `chat_screen.py` unless tests prove a second production owner. Reuse `EnhancedFileSave` and `ConfirmationDialog`; do not modify the shared picker. Extract the existing platform opener from `_play_console_video()` so managed playback fallback and newly external-saved playback share one path. Pass argv lists, never `shell=True`.
 
 External destination errors may include the chosen path in user-facing escaped notifications, but diagnostic logs contain only operation/error type. Never log prompt, staged filename, bytes, or exception text.
 
-- [ ] **Step 8: Run Console tests GREEN and mutate load-bearing seams**
+- [x] **Step 8: Run Console tests GREEN and mutate load-bearing seams**
 
 Run `Tests/Chat/test_console_video_capacity.py` and the touched `Tests/Chat/test_console_generate_video.py`. Prove named failures after separately removing:
 
@@ -374,7 +411,7 @@ Run `Tests/Chat/test_console_video_capacity.py` and the touched `Tests/Chat/test
 
 Restore after each mutation and rerun GREEN.
 
-- [ ] **Step 9: Commit the Console integration**
+- [x] **Step 9: Commit the Console integration**
 
 ```bash
 git add tldw_chatbook/UI/Screens/chat_screen.py Tests/Chat/test_console_video_capacity.py
@@ -387,16 +424,17 @@ git commit -m "feat: resolve generated video capacity outcomes"
 **Files:**
 - Modify: `backlog/tasks/task-3401.20 - Enforce-generated-video-store-size-cap-after-every-save.md`
 - Modify only if required: `Tests/ProductionApp/test_chat_composition_retirement.py`
+- Modify: `backlog/docs/lessons-testing-evidence.md`
 
-- [ ] **Step 1: Run the exact related-file gate**
+- [x] **Step 1: Run the exact related-file gate**
 
 Run all tests in the three touched/new focused files plus only the exact existing generated-video startup-containment node. Record command, count, warnings, duration, and any justified deviation. Do not run broad/full collections.
 
-- [ ] **Step 2: Run static and syntax checks**
+- [x] **Step 2: Run static and syntax checks**
 
 Run full Ruff on the six focused production/test files listed in the static gate. Run targeted fatal-rule Ruff on `chat_screen.py` if it retains unrelated baseline findings. Compile all four touched production modules to a `TemporaryDirectory` destination so no `__pycache__` artifacts enter the worktree. Run `git diff --check`.
 
-- [ ] **Step 3: Audit security, privacy, scope, and artifacts**
+- [x] **Step 3: Audit security, privacy, scope, and artifacts**
 
 Verify:
 
@@ -406,11 +444,11 @@ Verify:
 - no media, lock, build, temporary sibling, `.pyc`, or cache artifact is tracked/untracked; and
 - the diff from `076c39219` contains only planned production/tests/task/plan paths.
 
-- [ ] **Step 4: Request code review and fix findings separately**
+- [x] **Step 4: Request code review and fix findings separately**
 
 Use `superpowers:requesting-code-review` against the implementation range. Any substantive fix gets its own RED/GREEN evidence and separate commit; do not amend reviewed commits. Re-run only the affected focused tests plus the final exact gate.
 
-- [ ] **Step 5: Complete the task through Backlog CLI**
+- [x] **Step 5: Complete the task through Backlog CLI**
 
 After all evidence is fresh:
 
@@ -420,7 +458,7 @@ After all evidence is fresh:
 
 Re-read with `backlog task 3401.20 --plain` and confirm status, checked ACs, plan, notes, and ADR hygiene survived the CLI edit.
 
-- [ ] **Step 6: Commit closeout documentation**
+- [x] **Step 6: Commit closeout documentation**
 
 ```bash
 git add \
