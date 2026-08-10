@@ -15,6 +15,9 @@ from Tests.reactive_ownership_contract import (
 from tldw_chatbook.runtime_policy.bootstrap import RuntimePolicyContext
 from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+from tldw_chatbook.Prompt_Management.prompt_variables import (
+    PromptVariableApplication,
+)
 from tldw_chatbook.state import (
     AppState,
     ChatState,
@@ -40,9 +43,7 @@ CHAT_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "chat_screen.py"
 #: The Console prompt cluster moved off `ChatScreen` in the wave-3
 #: decomposition (task 3); the screen keeps only a thin delegation, so the
 #: real `_consume_pending_console_prompt_insert` body lives here now.
-CONSOLE_PROMPTS_PATH = (
-    PRODUCTION_ROOT / "UI" / "Console_Modules" / "prompts.py"
-)
+CONSOLE_PROMPTS_PATH = PRODUCTION_ROOT / "UI" / "Console_Modules" / "prompts.py"
 CHAT_SCREEN_STATE_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "chat_screen_state.py"
 MEDIA_WINDOW_PATH = PRODUCTION_ROOT / "UI" / "MediaWindow_v2.py"
 MEDIA_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "media_screen.py"
@@ -2167,9 +2168,7 @@ def test_handoff_exception_logs_are_metadata_only() -> None:
     study_class = _class_definition(STUDY_SCREEN_PATH, "StudyScreen")
     artifacts_class = _class_definition(ARTIFACTS_SCREEN_PATH, "ArtifactsScreen")
     acp_class = _class_definition(ACP_SCREEN_PATH, "ACPScreen")
-    prompts_class = _class_definition(
-        CONSOLE_PROMPTS_PATH, "ConsolePromptsController"
-    )
+    prompts_class = _class_definition(CONSOLE_PROMPTS_PATH, "ConsolePromptsController")
     methods = (
         (APP_PATH, _method_definition(app_class, "_stage_handoff")),
         (
@@ -2178,9 +2177,7 @@ def test_handoff_exception_logs_are_metadata_only() -> None:
         ),
         (
             CONSOLE_PROMPTS_PATH,
-            _method_definition(
-                prompts_class, "_consume_pending_console_prompt_insert"
-            ),
+            _method_definition(prompts_class, "_consume_pending_console_prompt_insert"),
         ),
         (
             CHAT_SCREEN_PATH,
@@ -2239,3 +2236,117 @@ def test_handoff_exception_logs_are_metadata_only() -> None:
                 )
 
     assert violations == []
+
+
+def _prompt_application_for_staging() -> PromptVariableApplication:
+    return PromptVariableApplication(
+        system_text=None,
+        user_text="private final prompt",
+        apply_system=False,
+        apply_user=True,
+        destination="append_active",
+        target_session_id="session-1",
+        composer_fingerprint=None,
+        system_fingerprint=None,
+        created_monotonic=10.0,
+    )
+
+
+def test_app_stages_typed_console_prompt_application_then_navigates() -> None:
+    from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import (
+        HandoffChannel,
+        PendingHandoffStore,
+    )
+
+    class StagingHost:
+        _stage_handoff = TldwCli._stage_handoff
+
+        def __init__(self) -> None:
+            self.pending_handoffs = PendingHandoffStore(monotonic_clock=lambda: 20.0)
+            self.notifications: list[tuple[str, str]] = []
+            self.messages: list[object] = []
+
+        def notify(self, message: str, *, severity: str) -> None:
+            self.notifications.append((message, severity))
+
+        def post_message(self, message: object) -> None:
+            self.messages.append(message)
+
+    host = StagingHost()
+    application = _prompt_application_for_staging()
+
+    TldwCli.stage_console_prompt_insert(host, application)
+
+    claim = host.pending_handoffs.claim(HandoffChannel.CONSOLE_PROMPT_INSERT)
+    assert claim is not None
+    assert claim.value == application
+    assert claim.value is not application
+    assert host.notifications == []
+    assert len(host.messages) == 1
+
+
+def test_app_console_prompt_staging_failure_does_not_navigate() -> None:
+    from tldw_chatbook.app import TldwCli
+
+    staged: list[object] = []
+    messages: list[object] = []
+
+    class RejectingHost:
+        def _stage_handoff(
+            self,
+            channel: object,
+            value: object,
+            *,
+            recovery: str,
+        ) -> bool:
+            staged.append((channel, value, recovery))
+            return False
+
+        def post_message(self, message: object) -> None:
+            messages.append(message)
+
+    application = _prompt_application_for_staging()
+
+    TldwCli.stage_console_prompt_insert(RejectingHost(), application)
+
+    assert len(staged) == 1
+    assert staged[0][1] is application
+    assert messages == []
+
+
+def test_app_console_prompt_staging_has_no_bare_string_compatibility() -> None:
+    from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import (
+        HandoffChannel,
+        PendingHandoffStore,
+    )
+
+    class StagingHost:
+        _stage_handoff = TldwCli._stage_handoff
+
+        def __init__(self) -> None:
+            self.pending_handoffs = PendingHandoffStore()
+            self.notifications: list[tuple[str, str]] = []
+            self.messages: list[object] = []
+
+        def notify(self, message: str, *, severity: str) -> None:
+            self.notifications.append((message, severity))
+
+        def post_message(self, message: object) -> None:
+            self.messages.append(message)
+
+    host = StagingHost()
+
+    TldwCli.stage_console_prompt_insert(host, "legacy prompt")  # type: ignore[arg-type]
+
+    assert (
+        host.pending_handoffs.has_pending(HandoffChannel.CONSOLE_PROMPT_INSERT) is False
+    )
+    assert host.messages == []
+    assert host.notifications == [
+        (
+            "Console prompt could not be staged. Review it and try again.",
+            "warning",
+        )
+    ]

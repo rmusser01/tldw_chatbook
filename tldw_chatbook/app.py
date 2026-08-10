@@ -418,6 +418,7 @@ from .UI.Navigation.screen_registry import (
 from .UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 from .UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpState
 from .UI.Screens.study_scope_models import StudyScopeContext
+from .Prompt_Management.prompt_variables import PromptVariableApplication
 
 from .UI.Tools_Settings_Window import ToolsSettingsWindow  # noqa: E402
 from .UI.console_command_provider import ConsoleCommandProvider  # noqa: E402
@@ -5408,26 +5409,22 @@ class TldwCli(
             return
         self.post_message(NavigateToScreen(TAB_CHAT))
 
-    def stage_console_prompt_insert(self, text: str) -> None:
-        """Stage a resolved Library prompt body for the Console composer and navigate there.
+    def stage_console_prompt_insert(
+        self,
+        application: PromptVariableApplication,
+    ) -> None:
+        """Stage a guarded Prompt application and then navigate to Console.
 
-        ``ChatHandoffPayload``-free direct route (Task 12): Library's prompt
-        editor "Use in Console" action only ever needs to land plain text
-        into the Console draft -- appended onto whatever the user was
-        already composing, never replacing it -- so this deliberately skips
-        ``open_chat_with_handoff``'s richer RAG-evidence-aware staging
-        machinery. Mirrors that method's stage-then-navigate shape, but the
-        payload is a bare string and there is no tabs-enabled gate: whether
-        the insert actually lands is decided by ``ChatScreen`` once it
-        settles this claim (it alone owns Console's provider/model
-        readiness state).
+        The typed, memory-only application carries the final selected lanes
+        plus destination/session/staleness guards. Console remains the only
+        owner allowed to settle the claim and mutate its active draft.
 
         Args:
-            text: The prompt's ``user_prompt`` body to insert.
+            application: Validated Prompt application to stage.
         """
         if not self._stage_handoff(
             HandoffChannel.CONSOLE_PROMPT_INSERT,
-            text,
+            application,
             recovery="Console prompt could not be staged. Review it and try again.",
         ):
             return

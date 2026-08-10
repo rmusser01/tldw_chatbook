@@ -9,9 +9,13 @@ import pytest
 import tldw_chatbook.ACP_Interop.runtime_session as runtime_session
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+from tldw_chatbook.Prompt_Management.prompt_variables import (
+    PromptVariableApplication,
+)
 from tldw_chatbook.UI.Navigation.pending_handoff_store import (
     ConsoleProviderIntent,
     HandoffChannel,
+    HandoffClaim,
     HandoffValueError,
     PendingHandoffStore,
 )
@@ -53,6 +57,24 @@ def _study_scope() -> StudyScopeContext:
     )
 
 
+def _prompt_application(
+    user_text: str = "private rendered prompt",
+    *,
+    created_monotonic: float = 10.0,
+) -> PromptVariableApplication:
+    return PromptVariableApplication(
+        system_text=None,
+        user_text=user_text,
+        apply_system=False,
+        apply_user=True,
+        destination="append_active",
+        target_session_id="session-1",
+        composer_fingerprint=None,
+        system_fingerprint=None,
+        created_monotonic=created_monotonic,
+    )
+
+
 def _claim_title(store: PendingHandoffStore, channel: HandoffChannel) -> str:
     claim = store.claim(channel)
     assert claim is not None
@@ -65,7 +87,7 @@ def test_stage_replaces_unclaimed_value_with_channel_local_revision() -> None:
     store = PendingHandoffStore()
 
     assert store.stage(HandoffChannel.CHAT, _chat_payload("first")) == 1
-    assert store.stage(HandoffChannel.CONSOLE_PROMPT_INSERT, "prompt") == 1
+    assert store.stage(HandoffChannel.CONSOLE_PROMPT_INSERT, _prompt_application()) == 1
     assert store.stage(HandoffChannel.CHAT, _chat_payload("second")) == 2
 
     assert _claim_title(store, HandoffChannel.CHAT) == "second"
@@ -235,31 +257,223 @@ def test_console_from_pending_detaches_an_existing_launch() -> None:
     assert launch.payload["nested"]["items"] == ["original"]
 
 
-@pytest.mark.parametrize("prompt", ["", "   ", "\n\t"])
-def test_prompt_rejects_empty_text_without_mutating_existing_pending(
-    prompt: str,
+@pytest.mark.parametrize("prompt", ["", "prompt", object(), {"user_text": "prompt"}])
+def test_prompt_channel_rejects_untyped_values_without_mutating_pending(
+    prompt: object,
 ) -> None:
     store = PendingHandoffStore()
-    store.stage(HandoffChannel.CONSOLE_PROMPT_INSERT, "existing prompt")
+    existing = _prompt_application("existing prompt")
+    store.stage(HandoffChannel.CONSOLE_PROMPT_INSERT, existing)
 
-    with pytest.raises(ValueError, match="normalized"):
+    with pytest.raises(HandoffValueError, match="normalized"):
         store.stage(HandoffChannel.CONSOLE_PROMPT_INSERT, prompt)
 
     claim = store.claim(HandoffChannel.CONSOLE_PROMPT_INSERT)
     assert claim is not None
-    assert claim.value == "existing prompt"
+    assert claim.value == existing
+    assert claim.value is not existing
     assert claim.revision == 1
 
 
-def test_prompt_preserves_user_text_exactly() -> None:
-    store = PendingHandoffStore()
-    prompt = "  keep surrounding whitespace\n"
+def test_prompt_stage_claim_and_release_values_are_structurally_detached() -> None:
+    source = _prompt_application("private original")
+    store = PendingHandoffStore(monotonic_clock=lambda: 20.0)
 
-    store.stage(HandoffChannel.CONSOLE_PROMPT_INSERT, prompt)
+    store.stage(HandoffChannel.CONSOLE_PROMPT_INSERT, source)
+    object.__setattr__(source, "user_text", "producer mutation")
 
     claim = store.claim(HandoffChannel.CONSOLE_PROMPT_INSERT)
     assert claim is not None
-    assert claim.value == prompt
+    assert claim.value.user_text == "private original"
+    assert claim.value is not source
+    object.__setattr__(claim.value, "user_text", "consumer mutation")
+
+    assert store.release(claim) is True
+    retry = store.claim(HandoffChannel.CONSOLE_PROMPT_INSERT)
+    assert retry is not None
+    assert retry.value.user_text == "private original"
+    assert retry.value is not claim.value
+
+
+def test_prompt_latest_pending_application_wins() -> None:
+    store = PendingHandoffStore(monotonic_clock=lambda: 20.0)
+
+    first_revision = store.stage(
+        HandoffChannel.CONSOLE_PROMPT_INSERT,
+        _prompt_application("first"),
+    )
+    second = _prompt_application("second")
+    second_revision = store.stage(HandoffChannel.CONSOLE_PROMPT_INSERT, second)
+    claim = store.claim(HandoffChannel.CONSOLE_PROMPT_INSERT)
+
+    assert second_revision == first_revision + 1
+    assert claim is not None
+    assert claim.revision == second_revision
+    assert claim.value == second
+    assert claim.status == "ready"
+
+
+def test_prompt_claim_is_one_shot_and_exclusive_until_exact_settlement() -> None:
+    store = PendingHandoffStore(monotonic_clock=lambda: 20.0)
+    store.stage(HandoffChannel.CONSOLE_PROMPT_INSERT, _prompt_application())
+
+    claim = store.claim(HandoffChannel.CONSOLE_PROMPT_INSERT)
+
+    assert claim is not None
+    assert store.claim(HandoffChannel.CONSOLE_PROMPT_INSERT) is None
+    assert store.acknowledge(replace(claim)) is False
+    assert store.release(replace(claim)) is False
+    assert store.acknowledge(claim) is True
+    assert store.acknowledge(claim) is False
+    assert store.claim(HandoffChannel.CONSOLE_PROMPT_INSERT) is None
+
+
+def test_prompt_claim_status_changes_at_exact_120_second_boundary() -> None:
+    now = [129.999]
+    store = PendingHandoffStore(monotonic_clock=lambda: now[0])
+    store.stage(HandoffChannel.CONSOLE_PROMPT_INSERT, _prompt_application())
+
+    ready = store.claim(HandoffChannel.CONSOLE_PROMPT_INSERT)
+
+    assert ready is not None
+    assert ready.status == "ready"
+    assert store.release(ready) is True
+
+    now[0] = 130.0
+    expired = store.claim(HandoffChannel.CONSOLE_PROMPT_INSERT)
+
+    assert expired is not None
+    assert expired.status == "expired"
+
+
+def test_prompt_expiring_between_claim_and_release_is_not_requeued() -> None:
+    now = [129.0]
+    store = PendingHandoffStore(monotonic_clock=lambda: now[0])
+    store.stage(HandoffChannel.CONSOLE_PROMPT_INSERT, _prompt_application())
+    claim = store.claim(HandoffChannel.CONSOLE_PROMPT_INSERT)
+    assert claim is not None
+    assert claim.status == "ready"
+
+    now[0] = 130.0
+
+    assert store.release(claim) is True
+    assert store.has_pending(HandoffChannel.CONSOLE_PROMPT_INSERT) is False
+    assert store.claim(HandoffChannel.CONSOLE_PROMPT_INSERT) is None
+
+
+def test_expired_prompt_claim_is_visible_once_and_never_requeued() -> None:
+    store = PendingHandoffStore(monotonic_clock=lambda: 130.0)
+    store.stage(HandoffChannel.CONSOLE_PROMPT_INSERT, _prompt_application())
+
+    claim = store.claim(HandoffChannel.CONSOLE_PROMPT_INSERT)
+
+    assert claim is not None
+    assert claim.status == "expired"
+    assert store.claim(HandoffChannel.CONSOLE_PROMPT_INSERT) is None
+    assert store.release(claim) is True
+    assert store.release(claim) is False
+    assert store.claim(HandoffChannel.CONSOLE_PROMPT_INSERT) is None
+
+
+def test_expired_prompt_claim_can_be_acknowledged_exactly_once() -> None:
+    store = PendingHandoffStore(monotonic_clock=lambda: 130.0)
+    store.stage(HandoffChannel.CONSOLE_PROMPT_INSERT, _prompt_application())
+    claim = store.claim(HandoffChannel.CONSOLE_PROMPT_INSERT)
+
+    assert claim is not None
+    assert claim.status == "expired"
+    assert store.acknowledge(claim) is True
+    assert store.acknowledge(claim) is False
+
+
+def test_expired_old_prompt_release_preserves_newer_pending_revision() -> None:
+    now = [20.0]
+    store = PendingHandoffStore(monotonic_clock=lambda: now[0])
+    store.stage(
+        HandoffChannel.CONSOLE_PROMPT_INSERT,
+        _prompt_application("old", created_monotonic=10.0),
+    )
+    old_claim = store.claim(HandoffChannel.CONSOLE_PROMPT_INSERT)
+    assert old_claim is not None
+    store.stage(
+        HandoffChannel.CONSOLE_PROMPT_INSERT,
+        _prompt_application("new", created_monotonic=20.0),
+    )
+
+    now[0] = 130.0
+
+    assert store.release(old_claim) is True
+    new_claim = store.claim(HandoffChannel.CONSOLE_PROMPT_INSERT)
+    assert new_claim is not None
+    assert new_claim.value.user_text == "new"
+    assert new_claim.status == "ready"
+
+
+def test_non_prompt_claims_are_always_ready() -> None:
+    store = PendingHandoffStore(monotonic_clock=lambda: 10_000.0)
+    store.stage(HandoffChannel.CHAT, _chat_payload())
+
+    claim = store.claim(HandoffChannel.CHAT)
+
+    assert claim is not None
+    assert claim.status == "ready"
+
+
+def test_claim_status_rejects_values_outside_the_bounded_contract() -> None:
+    with pytest.raises(ValueError, match="status"):
+        HandoffClaim(
+            channel=HandoffChannel.CHAT,
+            revision=1,
+            value=_chat_payload(),
+            status="waiting",  # type: ignore[arg-type]
+        )
+
+
+def test_store_rejects_a_non_callable_clock() -> None:
+    with pytest.raises(TypeError, match="clock"):
+        PendingHandoffStore(monotonic_clock=10.0)  # type: ignore[arg-type]
+
+
+def test_prompt_claim_rejects_non_finite_clock_without_moving_pending() -> None:
+    store = PendingHandoffStore(monotonic_clock=lambda: float("nan"))
+    store.stage(HandoffChannel.CONSOLE_PROMPT_INSERT, _prompt_application())
+
+    with pytest.raises(HandoffValueError, match="clock"):
+        store.claim(HandoffChannel.CONSOLE_PROMPT_INSERT)
+
+    assert store.has_pending(HandoffChannel.CONSOLE_PROMPT_INSERT) is True
+
+
+def test_prompt_release_with_invalid_clock_settles_and_fails_closed() -> None:
+    now = [20.0]
+    store = PendingHandoffStore(monotonic_clock=lambda: now[0])
+    store.stage(HandoffChannel.CONSOLE_PROMPT_INSERT, _prompt_application())
+    claim = store.claim(HandoffChannel.CONSOLE_PROMPT_INSERT)
+    assert claim is not None
+
+    now[0] = float("inf")
+
+    assert store.release(claim) is True
+    assert store.has_pending(HandoffChannel.CONSOLE_PROMPT_INSERT) is False
+
+
+def test_clock_failure_does_not_expose_exception_or_prompt_values() -> None:
+    secret = "PRIVATE-CLOCK-AND-PROMPT-SENTINEL"
+
+    def fail_clock() -> float:
+        raise ValueError(secret)
+
+    store = PendingHandoffStore(monotonic_clock=fail_clock)
+    store.stage(
+        HandoffChannel.CONSOLE_PROMPT_INSERT,
+        _prompt_application(secret),
+    )
+
+    with pytest.raises(HandoffValueError) as caught:
+        store.claim(HandoffChannel.CONSOLE_PROMPT_INSERT)
+
+    assert secret not in str(caught.value)
+    assert secret not in repr(caught.value)
 
 
 @pytest.mark.parametrize(
@@ -285,7 +499,10 @@ def test_invalid_value_leaves_no_partial_slot(
 def test_claim_repr_never_contains_payload_content() -> None:
     sentinel = "TASK-645-PRIVATE-SENTINEL"
     store = PendingHandoffStore()
-    store.stage(HandoffChannel.CONSOLE_PROMPT_INSERT, sentinel)
+    store.stage(
+        HandoffChannel.CONSOLE_PROMPT_INSERT,
+        _prompt_application(sentinel),
+    )
 
     claim = store.claim(HandoffChannel.CONSOLE_PROMPT_INSERT)
 
