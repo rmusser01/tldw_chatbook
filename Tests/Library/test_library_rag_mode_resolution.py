@@ -94,6 +94,7 @@ class _ProfileRagService:
         include_citations=None,
         score_threshold=None,
         metadata_allowlist=None,
+        keyword_source_types=None,
     ):
         # The real engine raises here (rag_service.py:580) -- allowlists are
         # a semantic-only pushdown. Reproduced so a routing bug that sends a
@@ -102,6 +103,14 @@ class _ProfileRagService:
             raise ValueError(
                 "metadata_allowlist is only supported for search_type='semantic'"
             )
+        # The mirror-image guard (TASK-14751): `keyword_source_types` scopes
+        # the KEYWORD leg, so the engine refuses it for a semantic search
+        # rather than silently ignoring it. Reproduced for the same reason.
+        if keyword_source_types is not None and search_type == "semantic":
+            raise ValueError(
+                "keyword_source_types is not supported for "
+                "search_type='semantic'"
+            )
         self.calls.append(
             {
                 "query": query,
@@ -109,6 +118,7 @@ class _ProfileRagService:
                 "search_type": search_type,
                 "include_citations": include_citations,
                 "metadata_allowlist": metadata_allowlist,
+                "keyword_source_types": keyword_source_types,
             }
         )
         return self.results

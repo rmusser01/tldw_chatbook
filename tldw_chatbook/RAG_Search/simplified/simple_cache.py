@@ -9,7 +9,7 @@ import hashlib
 import json
 import time
 import threading
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Collection, Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass, field
 from collections import OrderedDict
 from loguru import logger
@@ -133,6 +133,7 @@ class SimpleRAGCache:
         top_k: int,
         filters: Optional[Dict[str, Any]] = None,
         metadata_allowlist: Optional[Dict[str, Any]] = None,
+        keyword_source_types: Optional[Collection[str]] = None,
     ) -> str:
         """
         Create a cache key from search parameters.
@@ -151,6 +152,13 @@ class SimpleRAGCache:
                 identical to what this method returned before this
                 parameter existed -- no behavior change for existing
                 callers.
+            keyword_source_types: Optional keyword-leg source-type selection
+                (TASK-14751). Two searches identical except for which
+                source types the FTS leg budgets for return DIFFERENT rows,
+                so they must never share an entry -- a shared key would
+                silently serve a media-only search's rows to a notes-only
+                one. ``None`` is omitted from the key, so keys built without
+                a selection stay byte-identical to before.
 
         Returns:
             A unique cache key
@@ -171,6 +179,18 @@ class SimpleRAGCache:
             # is stable.
             key_parts.append(json.dumps(sorted(canonical_allowlist)))
 
+        if keyword_source_types is not None:
+            # Prefixed so this part can never be confused with the
+            # allowlist part above, and sorted so set iteration order (which
+            # is hash-seed dependent for strings) does not affect the key.
+            # An EMPTY selection is a real, distinct request ("no keyword
+            # leg") and must not collapse onto `None`, which is why the
+            # presence of the part -- not its truthiness -- is the test.
+            key_parts.append(
+                "kst:"
+                + json.dumps(sorted(str(x) for x in keyword_source_types))
+            )
+
         # Use a faster hash function - fallback to md5 if xxhash not available
         key_str = "|".join(key_parts)
         try:
@@ -189,6 +209,8 @@ class SimpleRAGCache:
         top_k: int,
         filters: Optional[Dict[str, Any]] = None,
         metadata_allowlist: Optional[Dict[str, Any]] = None,
+        *,
+        keyword_source_types: Optional[Collection[str]] = None,
     ) -> Optional[Tuple[List[Any], str]]:
         """
         Async-safe get cached search results.
@@ -202,6 +224,8 @@ class SimpleRAGCache:
                 in the cache key so differently-scoped searches never share
                 a cache entry. Defaults to ``None`` (no change for existing
                 callers).
+            keyword_source_types: Optional keyword-leg source-type selection;
+                also part of the key, for the same reason.
 
         Returns:
             Tuple of (results, context) if found and valid, None otherwise
@@ -218,7 +242,14 @@ class SimpleRAGCache:
                 await self._prune_expired_async()
                 self._last_prune_time = current_time
 
-            key = self._make_key(query, search_type, top_k, filters, metadata_allowlist)
+            key = self._make_key(
+                query,
+                search_type,
+                top_k,
+                filters,
+                metadata_allowlist,
+                keyword_source_types,
+            )
             log_counter("cache_request", labels={"type": search_type})
 
             if key not in self._cache:
@@ -379,6 +410,8 @@ class SimpleRAGCache:
         context: str,
         filters: Optional[Dict[str, Any]] = None,
         metadata_allowlist: Optional[Dict[str, Any]] = None,
+        *,
+        keyword_source_types: Optional[Collection[str]] = None,
     ) -> None:
         """
         Async-safe cache search results.
@@ -394,12 +427,24 @@ class SimpleRAGCache:
                 in the cache key so differently-scoped searches never share
                 a cache entry. Defaults to ``None`` (no change for existing
                 callers).
+            keyword_source_types: Optional keyword-leg source-type selection;
+                also part of the key. The synchronous ``get``/``put`` twins
+                deliberately do not take it: no caller can hand them one, so
+                they key without it, and the worst a mixed sync/async
+                workload can produce is a miss -- never a wrong hit.
         """
         if not self.enabled:
             return
 
         async with self._async_lock:
-            key = self._make_key(query, search_type, top_k, filters, metadata_allowlist)
+            key = self._make_key(
+                query,
+                search_type,
+                top_k,
+                filters,
+                metadata_allowlist,
+                keyword_source_types,
+            )
 
             # Calculate memory for new entry
             entry = CacheEntry(key=key, value=(results, context), timestamp=time.time())

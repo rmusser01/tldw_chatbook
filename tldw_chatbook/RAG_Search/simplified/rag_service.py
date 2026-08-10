@@ -17,6 +17,7 @@ from typing import (
     Any,
     Collection,
     Dict,
+    FrozenSet,
     Hashable,
     List,
     Literal,
@@ -120,6 +121,64 @@ DEFAULT_BATCH_SIZE = _rag_service_config.get(
 SOURCE_TYPE_MEDIA = "media"
 SOURCE_TYPE_NOTE = "note"
 SOURCE_TYPE_CONVERSATION = "conversation"
+
+# Every source type the keyword (FTS5) leg has a sub-leg for, and the two of
+# those that live in the ChaChaNotes database. A caller's
+# ``keyword_source_types`` selection is expressed in THIS vocabulary (the
+# engine's singular spelling), never in a UI's plural scope identifiers.
+KEYWORD_LEG_SOURCE_TYPES = frozenset(
+    {SOURCE_TYPE_MEDIA, SOURCE_TYPE_NOTE, SOURCE_TYPE_CONVERSATION}
+)
+CHACHA_KEYWORD_SOURCE_TYPES = frozenset({SOURCE_TYPE_NOTE, SOURCE_TYPE_CONVERSATION})
+
+
+def _resolve_keyword_source_types(
+    selection: Optional[Collection[str]],
+) -> FrozenSet[str]:
+    """Resolve a caller's keyword-leg source-type selection.
+
+    TASK-14751. TASK-3996 made the keyword leg three sub-legs sharing one
+    fixed ``top_k`` budget, round-robined rank-fairly. Callers that only
+    want some of those types (the Library post-filters the fused rows by the
+    user's selected scope) were spending up to two thirds of the budget on
+    rows they then discarded; a media-only hybrid search over an empty
+    vector index showed roughly a third of the media rows the pre-TASK-3996
+    leg returned. Naming the types up front lets the leg give its whole
+    budget to the sub-legs whose rows will actually survive.
+
+    Args:
+        selection: Source types in the engine's vocabulary, or ``None`` for
+            "every sub-leg" -- the behavior of every caller that predates
+            this parameter.
+
+    Returns:
+        The selected subset of ``KEYWORD_LEG_SOURCE_TYPES``. Unrecognized
+        values are dropped with one debug log rather than raising: a
+        selection is a retrieval hint, and failing open to fewer sub-legs
+        can never be worse than failing the search. An empty result means
+        "run no sub-legs" -- which is a real request, not a mistake, and is
+        why ``None`` and ``set()`` are deliberately different.
+    """
+    if selection is None:
+        return KEYWORD_LEG_SOURCE_TYPES
+    requested = frozenset(str(source_type) for source_type in selection)
+    unknown = requested - KEYWORD_LEG_SOURCE_TYPES
+    if unknown:
+        logger.debug(
+            "Ignoring unknown keyword-leg source type(s) {}; the leg serves {}",
+            sorted(unknown),
+            sorted(KEYWORD_LEG_SOURCE_TYPES),
+        )
+    return requested & KEYWORD_LEG_SOURCE_TYPES
+
+
+async def _no_keyword_rows() -> List[Any]:
+    """A skipped sub-leg's contribution: nothing, and no query to get it.
+
+    Used so ``_keyword_search`` can keep gathering a fixed pair of awaitables
+    while an unselected sub-leg never touches a database.
+    """
+    return []
 
 
 def _fusion_doc_key(result: Any) -> Hashable:
@@ -640,6 +699,7 @@ class RAGService:
         score_threshold: Optional[float] = None,
         *,
         metadata_allowlist: Optional[Mapping[str, Collection[str]]] = None,
+        keyword_source_types: Optional[Collection[str]] = None,
     ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
         """
         Search with optional citations.
@@ -660,17 +720,34 @@ class RAGService:
                 a non-empty allowlist with ``search_type="hybrid"`` or
                 ``search_type="keyword"`` raises ``ValueError`` rather than
                 silently ignoring the scoping request.
+            keyword_source_types: Source types the keyword (FTS5) leg should
+                budget for, in the engine's vocabulary
+                (``media``/``note``/``conversation``). ``None`` -- the
+                default, and every pre-TASK-14751 caller -- serves all three.
+                The mirror image of ``metadata_allowlist``: it scopes the
+                KEYWORD leg only, so passing it with
+                ``search_type="semantic"`` raises ``ValueError`` rather than
+                silently ignoring the scoping request. It is part of the
+                cache key, so two selections of the same query never share
+                an entry.
 
         Returns:
             List of search results (with or without citations)
 
         Raises:
             ValueError: If ``metadata_allowlist`` is provided with a
-                ``search_type`` other than ``"semantic"``.
+                ``search_type`` other than ``"semantic"``, or if
+                ``keyword_source_types`` is provided with
+                ``search_type="semantic"``.
         """
         if metadata_allowlist and search_type != "semantic":
             raise ValueError(
                 "metadata_allowlist is only supported for search_type='semantic'"
+            )
+        if keyword_source_types is not None and search_type == "semantic":
+            raise ValueError(
+                "keyword_source_types is not supported for search_type='semantic' "
+                "(the semantic leg has no keyword sub-legs to scope)"
             )
 
         # Use defaults from config if not specified
@@ -696,7 +773,12 @@ class RAGService:
 
         # Check cache first
         cached_result = await self.cache.get_async(
-            query, search_type, top_k, filter_metadata, metadata_allowlist
+            query,
+            search_type,
+            top_k,
+            filter_metadata,
+            metadata_allowlist,
+            keyword_source_types=keyword_source_types,
         )
         if cached_result is not None:
             results, context = cached_result
@@ -725,11 +807,20 @@ class RAGService:
                 )
             elif search_type == "hybrid":
                 results = await self._hybrid_search(
-                    query, top_k, filter_metadata, include_citations, score_threshold
+                    query,
+                    top_k,
+                    filter_metadata,
+                    include_citations,
+                    score_threshold,
+                    keyword_source_types=keyword_source_types,
                 )
             elif search_type == "keyword":
                 results = await self._keyword_search(
-                    query, top_k, filter_metadata, include_citations
+                    query,
+                    top_k,
+                    filter_metadata,
+                    include_citations,
+                    keyword_source_types=keyword_source_types,
                 )
             else:
                 raise ValueError(f"Unknown search type: {search_type}")
@@ -780,6 +871,7 @@ class RAGService:
                 context,
                 filter_metadata,
                 metadata_allowlist,
+                keyword_source_types=keyword_source_types,
             )
 
             return results
@@ -868,6 +960,8 @@ class RAGService:
         top_k: int,
         filter_metadata: Optional[Dict[str, Any]] = None,
         include_citations: bool = True,
+        *,
+        keyword_source_types: Optional[Collection[str]] = None,
     ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
         """
         Perform keyword (FTS5) search across media, notes and conversations.
@@ -893,7 +987,43 @@ class RAGService:
         robin by rank position) rather than concatenated: FTS5 scores from
         different tables are not comparable, and concatenation would let one
         well-stocked source consume every ``top_k`` slot.
+
+        TASK-14751 narrows *which* sub-legs run without touching that
+        merge. ``keyword_source_types`` names the types the caller will
+        actually keep (``None`` = all three, i.e. unchanged for every caller
+        that predates it); the unnamed sub-legs are never queried, so the
+        whole ``top_k`` budget goes to the ones that were asked for. A
+        single-type selection therefore gets that sub-leg's full natural
+        best-first order -- the pre-TASK-3996 behavior for media -- and a
+        multi-type selection keeps the round robin among exactly the types
+        selected.
+
+        Args:
+            query: Raw user query (escaped for FTS5 downstream).
+            top_k: Maximum rows the merged leg returns.
+            filter_metadata: Optional metadata equality filters.
+            include_citations: Whether to build citation-carrying rows.
+            keyword_source_types: Source types to serve, in the engine's
+                vocabulary (``media``/``note``/``conversation``). ``None``
+                serves all three; an empty collection serves none and
+                returns ``[]`` without a database lookup; unrecognized
+                values are dropped (see ``_resolve_keyword_source_types``).
+
+        Returns:
+            The merged leg, best first, capped at ``top_k``.
         """
+        selected = _resolve_keyword_source_types(keyword_source_types)
+        if not selected:
+            # An explicitly empty selection is "no keyword leg" -- an
+            # answer, not a failure. Hybrid degrades to its semantic leg
+            # through the same disclosed path an empty FTS result already
+            # takes.
+            logger.debug(
+                "Keyword search asked for no source types; returning no "
+                "results without a database lookup."
+            )
+            return []
+
         # TASK-3995: a query with no FTS5-searchable tokens (empty,
         # whitespace-only, or all punctuation) escapes to "" and can only
         # ever match nothing. Short-circuit before resolving any DB
@@ -905,13 +1035,22 @@ class RAGService:
             )
             return []
 
+        chacha_types = selected & CHACHA_KEYWORD_SOURCE_TYPES
         media_ranking, chacha_rankings = await asyncio.gather(
             self._media_keyword_subleg(
                 query, top_k, filter_metadata, include_citations
-            ),
+            )
+            if SOURCE_TYPE_MEDIA in selected
+            else _no_keyword_rows(),
             self._chacha_keyword_sublegs(
-                query, top_k, filter_metadata, include_citations
-            ),
+                query,
+                top_k,
+                filter_metadata,
+                include_citations,
+                source_types=chacha_types,
+            )
+            if chacha_types
+            else _no_keyword_rows(),
         )
 
         rankings = [
@@ -1061,6 +1200,8 @@ class RAGService:
         top_k: int,
         filter_metadata: Optional[Dict[str, Any]] = None,
         include_citations: bool = True,
+        *,
+        source_types: Optional[Collection[str]] = None,
     ) -> List[Union[List[SearchResult], List[SearchResultWithCitations]]]:
         """The notes and conversation sub-legs, over a read-only chacha DB.
 
@@ -1069,6 +1210,10 @@ class RAGService:
             top_k: Maximum rows each sub-leg contributes.
             filter_metadata: Optional metadata equality filters.
             include_citations: Whether to build citation-carrying rows.
+            source_types: Which of ``note``/``conversation`` to run
+                (TASK-14751). ``None`` runs both. An unselected sub-query is
+                never issued, and when neither is selected the database is
+                not even opened.
 
         Returns:
             One ranking per non-empty sub-leg (notes, then conversations),
@@ -1077,6 +1222,13 @@ class RAGService:
             rankings and one logged warning; it never raises and never
             affects the media sub-leg.
         """
+        selected = (
+            _resolve_keyword_source_types(source_types)
+            & CHACHA_KEYWORD_SOURCE_TYPES
+        )
+        if not selected:
+            return []
+
         # Nothing below may raise: `_hybrid_search` gathers this leg with the
         # semantic one without `return_exceptions`, so an escaping exception
         # would fail the whole search rather than degrade one sub-leg.
@@ -1092,6 +1244,7 @@ class RAGService:
                 db_path,
                 query,
                 top_k * SEARCH_RESULT_MULTIPLIER,  # Get extra for filtering
+                selected,
             )
 
             rankings: List[Any] = []
@@ -1233,14 +1386,21 @@ class RAGService:
         return conn
 
     def _chacha_fts_rows(
-        self, db_path: Path, query: str, limit: int
+        self,
+        db_path: Path,
+        query: str,
+        limit: int,
+        source_types: Optional[Collection[str]] = None,
     ) -> Dict[str, List[Dict[str, Any]]]:
-        """Run both ChaChaNotes FTS sub-queries on one read-only connection.
+        """Run the selected ChaChaNotes FTS sub-queries on one connection.
 
         Args:
             db_path: Validated path to the ChaChaNotes database.
             query: Raw user query.
             limit: Maximum rows per sub-query.
+            source_types: Which of ``note``/``conversation`` to query
+                (TASK-14751); ``None`` queries both. An unselected sub-query
+                is never issued and its key stays empty.
 
         Returns:
             ``{"note": [...], "conversation": [...]}`` -- an unopenable
@@ -1251,6 +1411,13 @@ class RAGService:
             SOURCE_TYPE_NOTE: [],
             SOURCE_TYPE_CONVERSATION: [],
         }
+
+        selected = (
+            _resolve_keyword_source_types(source_types)
+            & CHACHA_KEYWORD_SOURCE_TYPES
+        )
+        if not selected:
+            return rows
 
         escaped_query = self._escape_fts5_query(query)
         if not escaped_query:
@@ -1275,12 +1442,14 @@ class RAGService:
             return rows
 
         with closing(conn):
-            rows[SOURCE_TYPE_NOTE] = self._chacha_notes_fts(
-                conn, escaped_query, limit
-            )
-            rows[SOURCE_TYPE_CONVERSATION] = self._chacha_conversations_fts(
-                conn, escaped_query, limit
-            )
+            if SOURCE_TYPE_NOTE in selected:
+                rows[SOURCE_TYPE_NOTE] = self._chacha_notes_fts(
+                    conn, escaped_query, limit
+                )
+            if SOURCE_TYPE_CONVERSATION in selected:
+                rows[SOURCE_TYPE_CONVERSATION] = self._chacha_conversations_fts(
+                    conn, escaped_query, limit
+                )
         return rows
 
     @staticmethod
@@ -1455,6 +1624,8 @@ class RAGService:
         filter_metadata: Optional[Dict[str, Any]] = None,
         include_citations: bool = True,
         score_threshold: float = 0.0,
+        *,
+        keyword_source_types: Optional[Collection[str]] = None,
     ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
         """
         Perform hybrid search combining semantic (vector) and keyword (FTS5) legs.
@@ -1464,6 +1635,12 @@ class RAGService:
         matching the tldw_server reference design. Alpha comes from
         ``config.search.hybrid_alpha`` (0 = FTS only, 1 = vector only).
         Citations are combined when the same chunk appears in both legs.
+
+        ``keyword_source_types`` (TASK-14751) narrows the FTS leg to the
+        types the caller will keep, so its budget is not spent on rows a
+        downstream source-type filter would discard; ``None`` leaves the leg
+        exactly as it was. It does not scope the semantic leg -- that is
+        ``metadata_allowlist``'s job, and it is semantic-only.
         """
         # Get results from both search types
         semantic_task = self._semantic_search(
@@ -1474,7 +1651,11 @@ class RAGService:
             score_threshold,
         )
         keyword_task = self._keyword_search(
-            query, top_k * SEARCH_RESULT_MULTIPLIER, filter_metadata, include_citations
+            query,
+            top_k * SEARCH_RESULT_MULTIPLIER,
+            filter_metadata,
+            include_citations,
+            keyword_source_types=keyword_source_types,
         )
 
         # Run both searches in parallel

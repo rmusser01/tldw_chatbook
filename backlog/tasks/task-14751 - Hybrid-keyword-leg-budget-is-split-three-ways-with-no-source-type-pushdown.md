@@ -1,10 +1,10 @@
 ---
 id: TASK-14751
 title: Hybrid keyword-leg budget is split three ways with no source-type pushdown
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-09 21:21'
-updated_date: '2026-08-10 21:32'
+updated_date: '2026-08-10 22:09'
 labels:
   - rag
   - retrieval
@@ -25,14 +25,36 @@ This is invisible to both existing guards: the P1 eval gate selects all three so
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The caller's selected source types reach the keyword leg (pushdown), or equivalently the leg's top_k budget is allocated only across the selected types, so no budget is spent on rows that fusion's caller will discard.
-- [ ] #2 A media-only hybrid search against an empty or thin vector index returns as many media rows as the pre-TASK-3996 leg did for the same query and top_k.
-- [ ] #3 A test pins the leg's composition against a REAL mixed corpus (media, notes and conversations seeded in real DBs, as Tests/RAG_Search/test_keyword_leg_chacha.py does), not canned fakes - it must red if the budget silently reverts to a fixed three-way split under a single-type selection.
-- [ ] #4 Rank-fair interleaving is preserved among the types that ARE selected (a multi-type selection must not regress to concatenation, where one well-stocked source consumes every slot).
+- [x] #1 The caller's selected source types reach the keyword leg (pushdown), or equivalently the leg's top_k budget is allocated only across the selected types, so no budget is spent on rows that fusion's caller will discard.
+- [x] #2 A media-only hybrid search against an empty or thin vector index returns as many media rows as the pre-TASK-3996 leg did for the same query and top_k.
+- [x] #3 A test pins the leg's composition against a REAL mixed corpus (media, notes and conversations seeded in real DBs, as Tests/RAG_Search/test_keyword_leg_chacha.py does), not canned fakes - it must red if the budget silently reverts to a fixed three-way split under a single-type selection.
+- [x] #4 Rank-fair interleaving is preserved among the types that ARE selected (a multi-type selection must not regress to concatenation, where one well-stocked source consumes every slot).
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-See Docs/superpowers/plans/2026-08-10-rag-fusion-weighting.md (Task 2: source-type pushdown) and Docs/superpowers/specs/2026-08-10-rag-fusion-weighting-design.md (pushdown fix design) for the implementation.
+1. READ: confirm no positional callers of _keyword_search past top_k; map sub-leg budgeting (each sub-leg already gets full top_k; the three-way split happens at the interleave truncation).
+2. RED tests in Tests/RAG_Search/test_keyword_leg_pushdown.py over REAL DBs (media + chacha writer APIs): media-only full budget (direct leg AND through hybrid over an empty vector index), unselected sub-legs never queried (spies), multi-type rank-fair interleaving, None == today, empty selection == [], Library vocabulary translation, cache-key separation.
+3. Implement keyword-only kwarg keyword_source_types on search/_hybrid_search/_keyword_search/_chacha_keyword_sublegs/_chacha_fts_rows (None => all three; unknown values ignored with a debug log; empty => no sub-legs, no queries, []). Include the selection in the search cache key. Library _search_hybrid translates its plural scope through _ENGINE_KEYWORD_SOURCE_TYPES.
+4. Mutation: drop the pushdown (ignore the kwarg) -> media-only + never-queried tests red, rest green; Edit-restore.
+5. Battery + informational gated RAG_EVAL run.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Pushes the caller's source-type selection INTO the engine's keyword leg instead of letting fusion's caller discard rows the leg already paid for.
+
+Approach: a keyword-only `keyword_source_types: Collection[str] | None` on `RAGService.search` / `_hybrid_search` / `_keyword_search` (plus `source_types` on `_chacha_keyword_sublegs`/`_chacha_fts_rows`). `None` means all three sub-legs, so every pre-existing caller is byte-for-byte unchanged; unknown values are dropped with a debug log (fail open to fewer sub-legs, never a crash); an empty collection means no sub-legs at all and returns [] without touching a database (hybrid then degrades to semantic through the existing disclosed route). Only the selected sub-legs RUN -- a media-only leg does not even open the ChaChaNotes DB -- so the whole top_k budget goes to types whose rows survive. Interleaving is untouched: it is now applied among exactly the selected types, which is the trade-off being restored rather than reverted (FTS5 scores from different tables are not comparable).
+
+Library `_search_hybrid` translates its plural scope through a pure map (`_ENGINE_KEYWORD_SOURCE_TYPES`: media->media, notes->note, conversations->conversation; prompts has no engine seam). The engine's vocabulary is singular, and a plural handed down would be dropped as unknown -- i.e. an EMPTY keyword leg -- so a test pins both the translation and the map's domain against `_FTS_SERVABLE_SOURCE_TYPES`.
+
+Two things the work turned up beyond the plan:
+* The selection had to enter the search CACHE key (`SimpleRAGCache._make_key`/`get_async`/`put_async`, `kst:` part, omitted when None so old keys are unchanged). Without it a media-only and a notes-only search of the same query/top_k share an entry and the second is served the first's rows -- reinstating the defect for every query after the first. The sync `get`/`put` twins deliberately stay as they are: no caller can hand them a selection, so the worst a mixed workload yields is a miss.
+* `EnhancedRAGServiceV2` -- the class actually instantiated at runtime -- overrides `search()` with an explicit signature, so it did NOT inherit the new kwarg. The Library's pushdown crashed the P1 eval harness with a TypeError while all 12 unit tests stayed green, because every double mirrors `RAGService.search` rather than the override. Fixed and pinned by a test that drives the real subclass.
+
+Evidence: Tests/RAG_Search/test_keyword_leg_pushdown.py (14 tests, real media + ChaChaNotes DBs via the writer APIs -- canned fakes are the blindness that let this defect live). The AC#2 pin runs the HYBRID path against an unindexed vector store (the 'semantic leg empty -- keyword-only results' route the defect was worst on): 25 matching media, top_k=20 -> 20 media rows = min(N, top_k), the pre-TASK-3996 full budget; the same call without a selection returns 7 and is asserted in the same test so the pin cannot be satisfied by a corpus too small to show it. `test_none_means_all_three_sub_legs_unchanged` reproduces the reviewer's measured probe exactly (12/12/12, top_k=20 -> media 7, note 7, conversation 6). Mutation (ignore the kwarg): 8 pushdown pins red, the backward-compat and vocabulary pins green; a second mutation (drop the forward in the V2 override) reds only the runtime-class pin. Battery 413 passed / 6 skipped across the new file + test_keyword_leg_chacha + test_keyword_leg_db_resolution + test_hybrid_doc_fusion + the two Library RAG suites + Tests/DB/test_private_sqlite_inventory + Tests/RAG/simplified. Gated harness (RAG_EVAL=1 Tests/RAG_Eval): 142 passed, every metric +0.000 in all three modes -- expected and gate-invisible BY CONSTRUCTION, since the harness selects all three source types and therefore exercises the None path.
+
+Files: tldw_chatbook/RAG_Search/simplified/rag_service.py, simple_cache.py, enhanced_rag_service_v2.py; tldw_chatbook/Library/library_local_rag_search_service.py; Tests/RAG_Search/test_keyword_leg_pushdown.py (new); Tests/Library/test_library_rag_mode_resolution.py (double mirrors the real signature).
+<!-- SECTION:NOTES:END -->
