@@ -600,6 +600,28 @@ def test_native_kill_switch_off_stays_on_fence_path(tmp_path):
     assert bridge._gateway.tools_seen[0] is None  # no tools= despite groq
 
 
+def test_captured_native_tools_override_beats_later_callback_change(tmp_path):
+    enabled = True
+    bridge, _db, store, session, aid = _bridge(
+        tmp_path,
+        [[_native_calls("get_current_datetime", {})], ["Done."]],
+        native_tools_enabled=lambda: enabled,
+    )
+    enabled = False
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        resolution=_NativeResolution(),
+        native_tools_enabled=True,
+    )
+
+    assert outcome.status == "done"
+    assert bridge._gateway.tools_seen[0] is not None
+
+
 def test_multi_turn_run_reuses_one_event_loop_across_chat_call_turns(tmp_path):
     """PR #629 Fix 1(c) (Gemini HIGH x2 + Qodo-8): ``_StreamingModelAdapter.
     chat_call`` used to bridge every turn via its own ``asyncio.run()`` --

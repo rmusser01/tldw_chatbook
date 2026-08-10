@@ -144,7 +144,9 @@ from ...Chat.console_session_settings import (
     build_console_settings_readiness,
     build_default_console_session_settings,
 )
+from ...Chat.console_turn_context import ConsoleTurnExecutionContext
 from ...Chat.provider_readiness import provider_config_key
+from ...config import coerce_bool_setting
 from ...Widgets.Console import ConsoleComposerUndoHistory, ConsoleRenameSessionModal
 from ...Widgets.Console.console_session_switcher_modal import ConsoleSwitcherChoice
 from ...Workspaces import ConsoleConversationBrowserRow
@@ -383,6 +385,9 @@ class ConsoleSessionController:
         composer_accessor: Callable[[], Any],
         effective_console_provider_model: Callable[[], tuple[Any, Any]],
         provider_readiness_app_config: Callable[[], Any],
+        build_provider_selection: Callable[[str], Any],
+        rag_source_types_accessor: Callable[[], tuple[str, ...]],
+        rag_top_k_accessor: Callable[[], int],
         sync_native_console_chat_ui: Callable[[], Any],
         sync_chat_core_state: Callable[[], Any],
         sync_temporary_chip: Callable[[], None],
@@ -445,6 +450,9 @@ class ConsoleSessionController:
                 settings`.
             provider_readiness_app_config: `ChatScreen._provider_readiness_
                 app_config`.
+            build_provider_selection: Owning-session provider selection builder.
+            rag_source_types_accessor: Current normalized Console RAG source kinds.
+            rag_top_k_accessor: Current active-profile RAG result count.
             sync_native_console_chat_ui: `ChatScreen._sync_native_console_
                 chat_ui` -- a coroutine FUNCTION, called (not awaited
                 directly) by every moved body exactly as the original did.
@@ -513,6 +521,9 @@ class ConsoleSessionController:
         self._composer_accessor = composer_accessor
         self._effective_console_provider_model_fn = effective_console_provider_model
         self._provider_readiness_app_config_fn = provider_readiness_app_config
+        self._build_provider_selection_fn = build_provider_selection
+        self._rag_source_types_accessor = rag_source_types_accessor
+        self._rag_top_k_accessor = rag_top_k_accessor
         self._sync_native_console_chat_ui_fn = sync_native_console_chat_ui
         self._sync_chat_core_state_fn = sync_chat_core_state
         self._sync_temporary_chip_fn = sync_temporary_chip
@@ -948,6 +959,109 @@ class ConsoleSessionController:
             return store.session_settings(store.active_session_id)
         except KeyError:
             return None
+
+    def _console_session_settings(
+        self, session_id: str
+    ) -> ConsoleSessionSettings | None:
+        """Return settings for an owning session without switching the UI."""
+        store = self._console_chat_store
+        if store is None:
+            return None
+        try:
+            return store.session_settings(session_id)
+        except KeyError:
+            return None
+
+    def _build_console_turn_execution_context(
+        self, session_id: str
+    ) -> ConsoleTurnExecutionContext:
+        """Capture one detached configuration snapshot for an owning session."""
+        from ...Chat.attachment_core import max_history_images
+        from ...Tools.workspace_file_roots import folder_binding_roots
+        from ..Screens.settings_library_rag_defaults import (
+            load_direct_library_tools,
+        )
+        from ...model_capabilities import is_vision_capable
+
+        app_config = self._provider_readiness_app_config()
+        selection = self._build_provider_selection_fn(session_id)
+        settings = self._console_session_settings(session_id)
+        model = selection.explicit_model or selection.configured_model
+        console_config = (
+            app_config.get("console", {}) if isinstance(app_config, Mapping) else {}
+        )
+        chat_defaults = (
+            app_config.get("chat_defaults", {})
+            if isinstance(app_config, Mapping)
+            else {}
+        )
+        if not isinstance(console_config, Mapping):
+            console_config = {}
+        if not isinstance(chat_defaults, Mapping):
+            chat_defaults = {}
+        workspace_id = self._ensure_console_chat_store().session_workspace_id(
+            session_id
+        )
+        try:
+            workspace_roots = tuple(folder_binding_roots(workspace_id))
+        except Exception:  # noqa: BLE001 -- optional roots never block a send
+            workspace_roots = ()
+
+        return ConsoleTurnExecutionContext.capture(
+            session_id=session_id,
+            provider_selection=selection,
+            session_settings=settings,
+            workspace_roots=workspace_roots,
+            capabilities={
+                "vision": bool(model)
+                and is_vision_capable(selection.provider, model or ""),
+                "max_history_images": max_history_images(
+                    selection.provider, model
+                ),
+            },
+            rag_defaults={
+                "auto_retrieve_on_send": coerce_bool_setting(
+                    chat_defaults.get("rag_auto_retrieve_on_send", False),
+                    False,
+                ),
+                "source_types": tuple(self._rag_source_types_accessor()),
+                "top_k": self._rag_top_k_accessor(),
+            },
+            tool_configuration={
+                "agent_runtime_enabled": coerce_bool_setting(
+                    console_config.get("agent_runtime", True),
+                    True,
+                ),
+                "native_tool_calls_enabled": coerce_bool_setting(
+                    console_config.get("native_tool_calls", True),
+                    True,
+                ),
+                "local_tools_enabled": coerce_bool_setting(
+                    console_config.get("local_tools_enabled", False),
+                    False,
+                ),
+                "workspace_root": str(
+                    console_config.get("workspace_root", "") or ""
+                ).strip(),
+                "direct_library_tools": load_direct_library_tools(app_config),
+            },
+            provider_payload_settings={
+                "streaming": selection.streaming,
+                "temperature": selection.temperature,
+                "top_p": selection.top_p,
+                "min_p": selection.min_p,
+                "top_k": selection.top_k,
+                "max_tokens": selection.max_tokens,
+                "seed": selection.seed,
+                "presence_penalty": selection.presence_penalty,
+                "frequency_penalty": selection.frequency_penalty,
+                "reasoning_effort": selection.reasoning_effort,
+                "reasoning_summary": selection.reasoning_summary,
+                "verbosity": selection.verbosity,
+                "thinking_effort": selection.thinking_effort,
+                "thinking_budget_tokens": selection.thinking_budget_tokens,
+            },
+        )
 
     def _default_console_session_settings(self) -> ConsoleSessionSettings:
         """Build the default settings snapshot for a new native Console session."""

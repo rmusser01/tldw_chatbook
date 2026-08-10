@@ -1604,6 +1604,7 @@ class ConsoleAgentBridge:
         # `AgentService(revoke_approvals=...)`; `None` (a caller with no UI)
         # leaves cancellation exactly as it was.
         revoke_approvals: Callable[[str], object] | None = None,
+        native_tools_enabled: bool | None = None,
     ) -> tuple[str, RunOutcome]:
         # Per-run tool registry + allow-list (Task 12, extended by P5-T6 for
         # MCP, by task-545/T6 for a per-run builtin_gate, and extended again
@@ -1956,9 +1957,13 @@ class ConsoleAgentBridge:
         # no predicate (fakes/tests that never pass one) defaults to
         # always-on, matching the pre-kill-switch behavior.
         native_tools = (
-            True
-            if self._native_tools_enabled is None
-            else bool(self._native_tools_enabled())
+            bool(native_tools_enabled)
+            if native_tools_enabled is not None
+            else (
+                True
+                if self._native_tools_enabled is None
+                else bool(self._native_tools_enabled())
+            )
         )
         config = AgentConfig(
             model=model,

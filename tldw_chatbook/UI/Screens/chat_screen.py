@@ -210,8 +210,10 @@ from ...Chat.console_chat_models import (
     ConsoleProviderSelection,
     ConsoleRunStatus,
     MessageAttachment,
+    ConsoleWorkspaceContext,
     derive_console_session_title,
 )
+from ...Chat.console_turn_context import ConsoleTurnExecutionContext
 from ...Chat.console_glyphs import GLYPH_VOICE_WORKING
 from ...Widgets.glyph_fallback import resolve_glyph
 from ...Chat.console_session_settings import (
@@ -3205,7 +3207,13 @@ class ChatScreen(BaseAppScreen):
         # wiring's late-binding lambdas. See `build_console_
         # controllers`' docstring for the build order and why it is
         # documentation rather than a constraint.
-        build_console_controllers(self)
+        build_console_controllers(
+            self,
+            rag_source_types_accessor=(
+                lambda: _console_library_rag_source_scope(self)
+            ),
+            rag_top_k_accessor=lambda: _console_library_rag_profile_top_k(),
+        )
         self._console_conversation_browser_query = ""
         self._console_conversation_browser_search_timer: Any | None = None
         self._console_conversation_browser_search_token = 0
@@ -4097,11 +4105,30 @@ class ChatScreen(BaseAppScreen):
             return
         search.focus()
 
-    def _build_console_provider_selection(self) -> ConsoleProviderSelection:
-        """Return the effective native Console provider selection for sends."""
+    def _build_console_provider_selection(
+        self, session_id: str | None = None
+    ) -> ConsoleProviderSelection:
+        """Return an owning-session provider selection without switching tabs."""
         app_config = self._provider_readiness_app_config()
-        selection_settings = self._session._ensure_active_console_session_settings()
-        _legacy_provider, legacy_model = self._effective_console_provider_model()
+        store = self._ensure_console_chat_store()
+        if session_id is None:
+            selection_settings = (
+                self._session._ensure_active_console_session_settings()
+            )
+            target_session_id = store.active_session_id
+        else:
+            selection_settings = self._session._console_session_settings(session_id)
+            if selection_settings is None:
+                raise KeyError(f"Unknown Console session: {session_id}")
+            target_session_id = session_id
+        legacy_model = None
+        if session_id is None:
+            _legacy_provider, legacy_model = self._effective_console_provider_model()
+        elif getattr(selection_settings, "source", "derived") == "user":
+            legacy_model = selection_settings.model
+        else:
+            chat_defaults = self._config_section(app_config, "chat_defaults")
+            legacy_model = chat_defaults.get("model")
         provider = provider_config_key(selection_settings.provider) or "llama_cpp"
         explicit_model = (
             str(selection_settings.model).strip()
@@ -4142,6 +4169,17 @@ class ChatScreen(BaseAppScreen):
         elif _has_selected_text(selection_settings.base_url):
             base_url = str(selection_settings.base_url).strip()
 
+        current_workspace_context = self._workspace._current_console_workspace_context()
+        if target_session_id is None:
+            workspace_context = current_workspace_context
+        else:
+            workspace_id = store.session_workspace_id(target_session_id)
+            workspace_context = (
+                current_workspace_context
+                if current_workspace_context.active_workspace_id == workspace_id
+                else ConsoleWorkspaceContext(active_workspace_id=workspace_id)
+            )
+
         return ConsoleProviderSelection(
             provider=provider,
             base_url=base_url,
@@ -4162,7 +4200,7 @@ class ChatScreen(BaseAppScreen):
             thinking_budget_tokens=selection_settings.thinking_budget_tokens,
             streaming=selection_settings.streaming,
             system_prompt=selection_settings.system_prompt,
-            workspace_context=self._workspace._current_console_workspace_context(),
+            workspace_context=workspace_context,
         )
 
     def _active_console_provider_model_display(
@@ -4559,14 +4597,16 @@ class ChatScreen(BaseAppScreen):
         """Delegate to `ConsolePromptsController` (wave-3 console decomposition, task 3)."""
         return self._prompts._ensure_console_prompt_history()
 
-    def _console_library_provider_factory(self):
+    def _console_library_provider_factory(
+        self, turn_context: ConsoleTurnExecutionContext | None = None
+    ):
         """Resolve the Library retrieval provider for one Console agent run.
 
-        task-1337 (spec section 8): reads ``[console].direct_library_tools``
-        FRESH on every call, so flipping the Settings toggle applies to the
-        next run without rebuilding the cached controller or bridge. Direct
-        mode assembles ``LocalLibraryToolService`` purely from the app's local
-        service attributes (any missing backend degrades its own tools to
+        task-1337 (spec section 8): a turn context pins
+        ``[console].direct_library_tools`` for one run; the compatibility
+        no-context path still reads it fresh. Direct mode assembles
+        ``LocalLibraryToolService`` purely from the app's local service
+        attributes (any missing backend degrades its own tools to
         ``feature_unavailable``); off mode binds the bounded RAG provider to
         the app-owned ``library_rag_search_service``.
         """
@@ -4578,7 +4618,12 @@ class ChatScreen(BaseAppScreen):
         )
 
         app = self.app_instance
-        if not load_direct_library_tools():
+        direct_library_tools = (
+            bool(turn_context.tool_configuration.get("direct_library_tools", False))
+            if turn_context is not None
+            else load_direct_library_tools()
+        )
+        if not direct_library_tools:
             from tldw_chatbook.Agents.library_rag_tool_provider import (
                 LibraryRagToolProvider,
             )
@@ -4636,6 +4681,9 @@ class ChatScreen(BaseAppScreen):
                 default_session_settings=self._session._default_console_session_settings,
                 library_provider_factory=self._console_library_provider_factory,
                 global_user_display_name=self._global_chat_display_name,
+                turn_context_provider=(
+                    self._session._build_console_turn_execution_context
+                ),
             )
         self._console_chat_controller.on_submission_accepted = (
             self._on_console_submission_accepted
@@ -4684,7 +4732,11 @@ class ChatScreen(BaseAppScreen):
         self._sync_console_chat_core_state()
         return self._console_chat_controller
 
-    async def _capture_console_staged_rag(self, draft: str):
+    async def _capture_console_staged_rag(
+        self,
+        draft: str,
+        turn_context: ConsoleTurnExecutionContext | None = None,
+    ):
         """Resolve the current staged Library-RAG bundle for one Console send.
 
         This is the ONLY consume-on-send seam. The controller calls it once
@@ -4715,7 +4767,9 @@ class ChatScreen(BaseAppScreen):
         # would also discard whatever the consume below was about to hand
         # the model. An optional convenience must never be able to do that.
         try:
-            await self._maybe_auto_retrieve_for_send(draft)
+            await self._maybe_auto_retrieve_for_send(
+                draft, turn_context=turn_context
+            )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -13239,7 +13293,11 @@ class ChatScreen(BaseAppScreen):
                 type(exc).__name__,
             )
 
-    async def _maybe_auto_retrieve_for_send(self, draft_text: str) -> None:
+    async def _maybe_auto_retrieve_for_send(
+        self,
+        draft_text: str,
+        turn_context: ConsoleTurnExecutionContext | None = None,
+    ) -> None:
         """Auto-retrieve library evidence for a plain text send (TASK-406).
 
         Fires only when ALL hold: the config toggle is on; the send is plain
@@ -13258,7 +13316,20 @@ class ChatScreen(BaseAppScreen):
         Args:
             draft_text: The validated draft this send is about to transmit.
         """
-        if not get_cli_setting("chat_defaults", "rag_auto_retrieve_on_send", False):
+        auto_retrieve_enabled = (
+            coerce_bool_setting(
+                turn_context.rag_defaults.get("auto_retrieve_on_send", False),
+                False,
+            )
+            if turn_context is not None
+            else coerce_bool_setting(
+                get_cli_setting(
+                    "chat_defaults", "rag_auto_retrieve_on_send", False
+                ),
+                False,
+            )
+        )
+        if not auto_retrieve_enabled:
             return
         if not _is_plain_text_send(draft_text):
             return
@@ -13271,11 +13342,21 @@ class ChatScreen(BaseAppScreen):
             # Nothing survived centralized validation -- there is no query to
             # run, and no user action to recommend. Stay silent.
             return
+        source_types = (
+            turn_context.rag_defaults.get("source_types", ())
+            if turn_context is not None
+            else _console_library_rag_source_scope(self)
+        )
+        top_k = (
+            int(turn_context.rag_defaults.get("top_k", 0) or 0)
+            if turn_context is not None
+            else _console_library_rag_profile_top_k()
+        )
         request = LibraryRagSearchRequest(
             query=query,
-            source_types=_console_library_rag_source_scope(self),
+            source_types=source_types,
             mode="rag",
-            top_k=_console_library_rag_profile_top_k(),
+            top_k=top_k,
             include_citations=True,
         )
         (

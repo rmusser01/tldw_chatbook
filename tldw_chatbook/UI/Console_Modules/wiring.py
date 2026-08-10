@@ -45,6 +45,7 @@ hand back the same object. Patch a controller on the module that defines it;
 do not reintroduce a re-export in `chat_screen.py` to patch through.
 """
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from .agent import ConsoleAgentController
@@ -61,7 +62,12 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 __all__ = ["build_console_controllers"]
 
 
-def build_console_controllers(screen: "ChatScreen") -> None:
+def build_console_controllers(
+    screen: "ChatScreen",
+    *,
+    rag_source_types_accessor: Callable[[], tuple[str, ...]],
+    rag_top_k_accessor: Callable[[], int],
+) -> None:
     """Construct the Console screen's seven controllers and attach them.
 
     Assigns, in this order, `screen._workspace`, `screen._session`,
@@ -231,6 +237,11 @@ def build_console_controllers(screen: "ChatScreen") -> None:
         provider_readiness_app_config=(
             lambda: screen._provider_readiness_app_config()
         ),
+        build_provider_selection=(
+            lambda session_id: screen._build_console_provider_selection(session_id)
+        ),
+        rag_source_types_accessor=rag_source_types_accessor,
+        rag_top_k_accessor=rag_top_k_accessor,
         sync_native_console_chat_ui=lambda: screen._sync_native_console_chat_ui(),
         sync_chat_core_state=lambda: screen._sync_console_chat_core_state(),
         sync_temporary_chip=lambda: screen._sync_console_temporary_chip(),
