@@ -637,6 +637,117 @@ def outer():
     ]
 
 
+def test_guard_class_method_inherits_later_module_logger_state() -> None:
+    source = """
+from logging import getLogger
+
+class C:
+    def method(self):
+        audit.error(private_value)
+
+audit = getLogger(__name__)
+"""
+
+    call = _single_call(source)
+
+    assert call.qualname == "C.method"
+    assert call.method == "error"
+    assert call.expressions == ("private_value",)
+
+
+def test_guard_class_attribute_does_not_shadow_method_free_logger() -> None:
+    source = """
+from loguru import logger
+
+audit = logger.bind(secret=module_private).opt(exception=module_exc)
+
+class C:
+    audit = object()
+
+    def method(self):
+        audit.error(private_value)
+"""
+
+    call = _single_call(source)
+
+    assert call.qualname == "C.method"
+    assert call.expressions == (
+        "private_value",
+        "secret=module_private",
+        "exception=module_exc",
+    )
+    assert call.captures_exception is True
+
+
+def test_guard_nested_class_method_inherits_enclosing_function_logger() -> None:
+    source = """
+from loguru import logger
+
+def outer():
+    audit = logger.bind(secret=outer_private).opt(exception=outer_exc)
+
+    class C:
+        audit = object()
+
+        def method(self):
+            audit.warning(private_value)
+"""
+
+    call = _single_call(source)
+
+    assert call.qualname == "outer.C.method"
+    assert call.expressions == (
+        "private_value",
+        "secret=outer_private",
+        "exception=outer_exc",
+    )
+    assert call.captures_exception is True
+
+
+def test_guard_class_body_diagnostics_use_class_body_state() -> None:
+    source = """
+from loguru import logger
+
+audit = logger.bind(secret=module_private)
+
+class C:
+    audit.info("before class assignment")
+    audit = logger.bind(secret=class_private)
+    audit.info("after class assignment")
+"""
+
+    calls = _guard().discover_diagnostic_calls(source, module="synthetic.py")
+
+    assert [(call.qualname, call.expressions) for call in calls] == [
+        ("C", ("secret=module_private",)),
+        ("C", ("secret=class_private",)),
+    ]
+
+
+def test_guard_method_parameter_and_local_assignment_shadow_free_logger() -> None:
+    source = """
+from logging import getLogger
+from loguru import logger
+
+audit = logger.bind(secret=module_private).opt(exception=module_exc)
+
+class C:
+    def parameter(self, audit):
+        audit.error("parameter")
+
+    def local(self):
+        audit = getLogger(__name__)
+        audit.error(private_value)
+"""
+
+    calls = _guard().discover_diagnostic_calls(source, module="synthetic.py")
+
+    assert [(call.qualname, call.expressions) for call in calls] == [
+        ("C.local", ("private_value",)),
+    ]
+    assert calls[0].captures_exception is False
+
+
 def test_guard_finds_bind_and_opt_derived_logger_aliases() -> None:
     source = """
 from loguru import logger

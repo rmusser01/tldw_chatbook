@@ -385,6 +385,7 @@ def _function_local_names(node: ast.FunctionDef | ast.AsyncFunctionDef) -> set[s
 
 
 _DeferredFunction = tuple[ast.FunctionDef | ast.AsyncFunctionDef, _AliasState]
+_DeferredClass = tuple[ast.ClassDef, _AliasState]
 _AliasHistory = list[tuple[int, _AliasState]]
 
 
@@ -394,6 +395,7 @@ def _process_alias_block(
     snapshots: dict[int, _AliasState],
     history: _AliasHistory,
     deferred: list[_DeferredFunction],
+    deferred_classes: list[_DeferredClass],
 ) -> _AliasState:
     state = dict(initial)
     for statement in statements:
@@ -415,11 +417,21 @@ def _process_alias_block(
         elif isinstance(statement, ast.If):
             _record_call_snapshots(statement.test, state, snapshots)
             body = _process_alias_block(
-                statement.body, state, snapshots, history, deferred
+                statement.body,
+                state,
+                snapshots,
+                history,
+                deferred,
+                deferred_classes,
             )
             if statement.orelse:
                 otherwise = _process_alias_block(
-                    statement.orelse, state, snapshots, history, deferred
+                    statement.orelse,
+                    state,
+                    snapshots,
+                    history,
+                    deferred,
+                    deferred_classes,
                 )
                 state = _merge_alias_states(body, otherwise)
             else:
@@ -436,7 +448,7 @@ def _process_alias_block(
         elif isinstance(statement, ast.ClassDef):
             for expression in (*statement.decorator_list, *statement.bases):
                 _record_call_snapshots(expression, state, snapshots)
-            _process_alias_statements(statement.body, state, snapshots)
+            deferred_classes.append((statement, dict(state)))
             state.pop(statement.name, None)
         else:
             for child in ast.iter_child_nodes(statement):
@@ -450,22 +462,51 @@ def _process_alias_statements(
     statements: list[ast.stmt],
     initial: _AliasState,
     snapshots: dict[int, _AliasState],
+    *,
+    function_parent: _AliasState | None = None,
 ) -> _AliasState:
     history: _AliasHistory = []
     deferred: list[_DeferredFunction] = []
-    state = _process_alias_block(statements, initial, snapshots, history, deferred)
+    deferred_classes: list[_DeferredClass] = []
+    state = _process_alias_block(
+        statements,
+        initial,
+        snapshots,
+        history,
+        deferred,
+        deferred_classes,
+    )
     for function, definition_state in deferred:
-        later_states = [
-            later
-            for lineno, later in history
-            if lineno > (function.end_lineno or function.lineno)
-        ]
-        inherited = _merge_alias_states(definition_state, *later_states)
+        if function_parent is None:
+            later_states = [
+                later
+                for lineno, later in history
+                if lineno > (function.end_lineno or function.lineno)
+            ]
+            inherited = _merge_alias_states(definition_state, *later_states)
+        else:
+            inherited = dict(function_parent)
         local_names = _function_local_names(function)
         inherited = {
             name: value for name, value in inherited.items() if name not in local_names
         }
         _process_alias_statements(function.body, inherited, snapshots)
+    for class_node, definition_state in deferred_classes:
+        if function_parent is None:
+            later_states = [
+                later
+                for lineno, later in history
+                if lineno > (class_node.end_lineno or class_node.lineno)
+            ]
+            method_parent = _merge_alias_states(definition_state, *later_states)
+        else:
+            method_parent = function_parent
+        _process_alias_statements(
+            class_node.body,
+            definition_state,
+            snapshots,
+            function_parent=method_parent,
+        )
     return state
 
 
