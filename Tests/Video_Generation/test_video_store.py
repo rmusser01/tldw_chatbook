@@ -252,6 +252,24 @@ def _config(**overrides):
     return SimpleNamespace(**base)
 
 
+def _gated_write(store, operation, gate):
+    """Run either public managed-publication path through one gate."""
+    if operation == "save":
+        return store.save(
+            "gated-message",
+            "clip",
+            b"gated-video",
+            publication_gate=gate,
+        )
+    return store.adopt_oversized(
+        "gated-message",
+        "clip",
+        io.BytesIO(b"gated-video"),
+        size_bytes=len(b"gated-video"),
+        publication_gate=gate,
+    )
+
+
 # -- markers ---------------------------------------------------------------
 
 
@@ -290,6 +308,92 @@ def test_save_and_resolve_round_trip(store):
     assert path.parent.name == "msg-1"
     assert store.resolve("msg-1", "a-red-dragon") == path
     assert path.read_bytes() == b"video-bytes"
+
+
+@pytest.mark.parametrize("operation", ["save", "adopt"])
+def test_publication_gate_cancel_wins_before_save_or_adopt_commit(
+    store, operation
+):
+    reached_precommit = threading.Event()
+    release_precommit = threading.Event()
+    errors = []
+    gate_type = video_store_module.VideoPublicationGate
+
+    class PausingGate(gate_type):
+        @contextmanager
+        def claim_publication(self):
+            reached_precommit.set()
+            assert release_precommit.wait(5)
+            with super().claim_publication() as active:
+                yield active
+
+    gate = PausingGate()
+
+    def write():
+        try:
+            _gated_write(store, operation, gate)
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    worker = threading.Thread(target=write, daemon=True)
+    worker.start()
+    assert reached_precommit.wait(5)
+    gate.cancel()
+    release_precommit.set()
+    worker.join(5)
+
+    assert not worker.is_alive()
+    assert len(errors) == 1
+    assert isinstance(errors[0], video_store_module.VideoStoreSaveError)
+    assert "gated" not in str(errors[0]).lower()
+    assert store.resolve("gated-message", "clip") is None
+    assert not list(store.root.rglob(".video-stage-*"))
+
+
+@pytest.mark.parametrize("operation", ["save", "adopt"])
+def test_publication_gate_commit_wins_before_later_cancel(
+    store, operation, monkeypatch
+):
+    commit_started = threading.Event()
+    release_commit = threading.Event()
+    cancel_finished = threading.Event()
+    errors = []
+    gate = video_store_module.VideoPublicationGate()
+    original_commit = store._commit_sibling
+
+    def blocking_commit(sibling, target):
+        commit_started.set()
+        assert release_commit.wait(5)
+        original_commit(sibling, target)
+
+    def write():
+        try:
+            _gated_write(store, operation, gate)
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    def cancel():
+        gate.cancel()
+        cancel_finished.set()
+
+    monkeypatch.setattr(store, "_commit_sibling", blocking_commit)
+    worker = threading.Thread(target=write, daemon=True)
+    worker.start()
+    assert commit_started.wait(5)
+    canceller = threading.Thread(target=cancel, daemon=True)
+    canceller.start()
+    assert not cancel_finished.wait(0.05)
+    release_commit.set()
+    worker.join(5)
+    canceller.join(5)
+
+    assert not worker.is_alive() and not canceller.is_alive()
+    assert errors == []
+    target = store.resolve("gated-message", "clip")
+    assert target is not None
+    assert target.read_bytes() == b"gated-video"
+    assert cancel_finished.is_set()
+    assert not list(store.root.rglob(".video-stage-*"))
 
 
 def test_resolve_missing_is_none_not_error(store):
@@ -1127,7 +1231,7 @@ def test_instance_rlock_prevents_thread_transaction_overlap(tmp_path, monkeypatc
 
     store._transaction_lock = SignalingRLock()
 
-    def blocking_publish(source, target, *, expected_size):
+    def blocking_publish(source, target, *, expected_size, publication_gate=None):
         nonlocal calls
         calls += 1
         if calls == 1:
@@ -1135,7 +1239,12 @@ def test_instance_rlock_prevents_thread_transaction_overlap(tmp_path, monkeypatc
             assert release.wait(5)
         else:
             second_entered.set()
-        return original_publish(source, target, expected_size=expected_size)
+        return original_publish(
+            source,
+            target,
+            expected_size=expected_size,
+            publication_gate=publication_gate,
+        )
 
     monkeypatch.setattr(store, "_atomic_publish", blocking_publish)
 
@@ -1226,14 +1335,24 @@ def test_two_store_instances_serialize_through_root_lease(tmp_path, monkeypatch)
     release = threading.Event()
     errors = []
 
-    def blocking_first(source, target, *, expected_size):
+    def blocking_first(source, target, *, expected_size, publication_gate=None):
         first_entered.set()
         assert release.wait(5)
-        return original_first(source, target, expected_size=expected_size)
+        return original_first(
+            source,
+            target,
+            expected_size=expected_size,
+            publication_gate=publication_gate,
+        )
 
-    def observe_second(source, target, *, expected_size):
+    def observe_second(source, target, *, expected_size, publication_gate=None):
         second_entered.set()
-        return original_second(source, target, expected_size=expected_size)
+        return original_second(
+            source,
+            target,
+            expected_size=expected_size,
+            publication_gate=publication_gate,
+        )
 
     @contextmanager
     def signaling_second_lease():

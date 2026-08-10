@@ -1,7 +1,7 @@
 """Chat screen implementation with comprehensive state management."""
 
 from collections.abc import Callable, Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, replace
 import asyncio
 from functools import partial
@@ -199,6 +199,7 @@ from ...Chat.console_generate_video import (
 from ...Video_Generation.config import get_video_generation_config
 from ...Video_Generation.video_store import (
     VideoCapacityExceeded,
+    VideoPublicationGate,
     VideoStore,
     VideoStoreSaveError,
 )
@@ -16821,18 +16822,110 @@ class ChatScreen(BaseAppScreen):
     def _owns_pending_console_video(self, artifact: PendingVideoArtifact) -> bool:
         """Whether this mounted screen still owns this exact staged result."""
         return (
-            self._pending_console_video_artifacts().get(artifact.message_id)
+            not getattr(self, "_pending_video_artifacts_closed", False)
+            and self._pending_console_video_artifacts().get(artifact.message_id)
             is artifact
         )
 
+    @staticmethod
+    def _close_pending_console_video(artifact: PendingVideoArtifact) -> None:
+        """Close one artifact without letting cleanup interrupt its caller."""
+        try:
+            artifact.close()
+        except Exception as exc:  # noqa: BLE001 - teardown must continue
+            logger.warning(
+                "Console video operation={} failed error_type={}",
+                "artifact_close",
+                type(exc).__name__,
+            )
+
+    def _begin_pending_console_video_operation(
+        self, artifact: PendingVideoArtifact
+    ) -> VideoPublicationGate | None:
+        """Mark a stream-using operation active and return its cancellation gate."""
+        if not self._owns_pending_console_video(artifact):
+            return None
+        active = getattr(self, "_pending_video_active_operations", None)
+        if active is None:
+            active = {}
+            self._pending_video_active_operations = active
+        entry = active.get(artifact.message_id)
+        if entry is not None and entry[0] is not artifact:
+            return None
+        count = entry[1] if entry is not None else 0
+        active[artifact.message_id] = (artifact, count + 1)
+        gates = getattr(self, "_pending_video_operation_cancels", None)
+        if gates is None:
+            gates = {}
+            self._pending_video_operation_cancels = gates
+        gate = gates.get(artifact.message_id)
+        if gate is None:
+            gate = VideoPublicationGate()
+            gates[artifact.message_id] = gate
+        return gate
+
+    def _end_pending_console_video_operation(
+        self, artifact: PendingVideoArtifact
+    ) -> None:
+        """Release one active operation and perform any deferred close."""
+        active = getattr(self, "_pending_video_active_operations", {})
+        entry = active.get(artifact.message_id)
+        if entry is None or entry[0] is not artifact:
+            return
+        if entry[1] > 1:
+            active[artifact.message_id] = (artifact, entry[1] - 1)
+            return
+        active.pop(artifact.message_id, None)
+        deferred = getattr(self, "_pending_video_deferred_closes", {})
+        if deferred.get(artifact.message_id) is artifact:
+            deferred.pop(artifact.message_id, None)
+            ChatScreen._close_pending_console_video(artifact)
+
+    async def _run_pending_console_video_operation(
+        self,
+        artifact: PendingVideoArtifact,
+        function,
+        *args,
+        **kwargs,
+    ) -> tuple[bool, Any]:
+        """Run one blocking artifact operation while deferring teardown close."""
+        gate = self._begin_pending_console_video_operation(artifact)
+        if gate is None:
+            return False, None
+        try:
+            return True, await asyncio.to_thread(
+                function,
+                *args,
+                publication_gate=gate,
+                **kwargs,
+            )
+        finally:
+            self._end_pending_console_video_operation(artifact)
+
     def _drain_pending_console_videos(self) -> None:
         """Atomically detach and close every staged video owned by the screen."""
+        self._pending_video_artifacts_closed = True
+        for cancel in getattr(self, "_console_videogen_cancels", {}).values():
+            cancel.set()
+        for cancel in getattr(
+            self, "_pending_video_operation_cancels", {}
+        ).values():
+            cancel.cancel()
         artifacts = getattr(self, "_pending_video_artifacts", None)
         self._pending_video_artifacts = {}
         if not artifacts:
             return
+        active = getattr(self, "_pending_video_active_operations", {})
+        deferred = getattr(self, "_pending_video_deferred_closes", None)
+        if deferred is None:
+            deferred = {}
+            self._pending_video_deferred_closes = deferred
         for artifact in artifacts.values():
-            artifact.close()
+            entry = active.get(artifact.message_id)
+            if entry is not None and entry[0] is artifact and entry[1] > 0:
+                deferred[artifact.message_id] = artifact
+                continue
+            ChatScreen._close_pending_console_video(artifact)
 
     async def _wait_for_console_screen_result(self, screen) -> Any:
         """Wait for a Console modal through a non-exclusive Textual worker."""
@@ -16847,6 +16940,13 @@ class ChatScreen(BaseAppScreen):
     def _external_video_target_identity(path: Path) -> tuple[int, int, int, int, int]:
         """Capture one target's non-following identity for overwrite consent."""
         metadata = path.lstat()
+        return ChatScreen._external_video_stat_identity(metadata)
+
+    @staticmethod
+    def _external_video_stat_identity(
+        metadata,
+    ) -> tuple[int, int, int, int, int]:
+        """Return the non-following fields used for race revalidation."""
         return (
             metadata.st_dev,
             metadata.st_ino,
@@ -16856,10 +16956,54 @@ class ChatScreen(BaseAppScreen):
         )
 
     @staticmethod
+    def _external_video_parent_identity(
+        parent: Path,
+    ) -> tuple[int, int, int]:
+        """Validate and identify a real, non-reparse destination directory."""
+        import stat
+
+        metadata = parent.lstat()
+        reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+        attributes = getattr(metadata, "st_file_attributes", 0)
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or stat.S_ISLNK(metadata.st_mode)
+            or bool(reparse_flag and attributes & reparse_flag)
+        ):
+            raise OSError("unsafe external video parent")
+        return (metadata.st_dev, metadata.st_ino, metadata.st_mode)
+
+    @staticmethod
+    def _external_video_precommit_check(
+        parent: Path,
+        parent_fd: int | None,
+        parent_identity: tuple[int, int, int],
+        sibling: str | Path,
+        sibling_identity: tuple[int, int, int, int, int],
+    ) -> None:
+        """Revalidate the pinned parent and complete sibling before commit."""
+        if ChatScreen._external_video_parent_identity(parent) != parent_identity:
+            raise OSError("external video parent changed")
+        if parent_fd is None:
+            metadata = Path(sibling).lstat()
+        else:
+            pinned_metadata = os.fstat(parent_fd)
+            if (
+                pinned_metadata.st_dev,
+                pinned_metadata.st_ino,
+                pinned_metadata.st_mode,
+            ) != parent_identity:
+                raise OSError("pinned external video parent changed")
+            metadata = os.stat(sibling, dir_fd=parent_fd, follow_symlinks=False)
+        if ChatScreen._external_video_stat_identity(metadata) != sibling_identity:
+            raise OSError("external video sibling changed")
+
+    @staticmethod
     def _copy_pending_video_external(
         artifact: PendingVideoArtifact,
         target: Path,
         confirmed_identity: tuple[int, int, int, int, int] | None,
+        publication_gate: VideoPublicationGate | None = None,
     ) -> Literal["saved", "confirm"]:
         """Copy to a complete sibling, then commit without silent overwrite.
 
@@ -16868,61 +17012,186 @@ class ChatScreen(BaseAppScreen):
         a concurrent creator from being overwritten. A confirmed replacement
         is revalidated immediately before ``os.replace``.
         """
+        import secrets
         import shutil
         import tempfile
 
-        sibling: Path | None = None
+        target.parent.mkdir(parents=False, exist_ok=True)
+        parent_identity = ChatScreen._external_video_parent_identity(target.parent)
+        directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        directory_flags |= getattr(os, "O_NOFOLLOW", 0)
+        parent_fd: int | None = None
+        sibling_name: str | None = None
+        sibling_path: Path | None = None
+        sibling_identity: tuple[int, int, int, int, int] | None = None
         try:
-            target.parent.mkdir(parents=False, exist_ok=True)
-            with tempfile.NamedTemporaryFile(
-                mode="w+b",
-                delete=False,
-                dir=target.parent,
-                prefix=f".{target.name}.",
-                suffix=".tmp",
-            ) as staged:
-                sibling = Path(staged.name)
+            try:
+                parent_fd = os.open(target.parent, directory_flags)
+                pinned_metadata = os.fstat(parent_fd)
+                if (
+                    pinned_metadata.st_dev,
+                    pinned_metadata.st_ino,
+                    pinned_metadata.st_mode,
+                ) != parent_identity:
+                    raise OSError("external video parent changed during pin")
+                for _attempt in range(32):
+                    candidate = f".{target.name}.{secrets.token_hex(8)}.tmp"
+                    try:
+                        staged_fd = os.open(
+                            candidate,
+                            os.O_RDWR | os.O_CREAT | os.O_EXCL,
+                            0o600,
+                            dir_fd=parent_fd,
+                        )
+                    except FileExistsError:
+                        continue
+                    sibling_name = candidate
+                    break
+                else:
+                    raise OSError("could not allocate external video sibling")
+                staged_context = os.fdopen(staged_fd, "w+b")
+            except (NotImplementedError, TypeError):
+                if parent_fd is not None:
+                    os.close(parent_fd)
+                    parent_fd = None
+                staged_context = tempfile.NamedTemporaryFile(
+                    mode="w+b",
+                    delete=False,
+                    dir=target.parent,
+                    prefix=f".{target.name}.",
+                    suffix=".tmp",
+                )
+                sibling_path = Path(staged_context.name)
+
+            with staged_context as staged:
                 artifact.rewind()
                 shutil.copyfileobj(artifact.stream, staged)
                 staged.flush()
                 os.fsync(staged.fileno())
                 if os.fstat(staged.fileno()).st_size != artifact.size_bytes:
                     raise OSError("generated video payload size changed")
+                sibling_identity = ChatScreen._external_video_stat_identity(
+                    os.fstat(staged.fileno())
+                )
 
-            if confirmed_identity is None:
+            sibling: str | Path
+            sibling = sibling_name if parent_fd is not None else sibling_path
+            if sibling is None:  # pragma: no cover - allocation guarantees it
+                raise OSError("external video sibling unavailable")
+            ChatScreen._external_video_precommit_check(
+                target.parent,
+                parent_fd,
+                parent_identity,
+                sibling,
+                sibling_identity,
+            )
+            claim = (
+                publication_gate.claim_publication()
+                if publication_gate is not None
+                else nullcontext(True)
+            )
+            with claim as active:
+                if not active:
+                    raise OSError("external video commit cancelled")
+                ChatScreen._external_video_precommit_check(
+                    target.parent,
+                    parent_fd,
+                    parent_identity,
+                    sibling,
+                    sibling_identity,
+                )
+                if confirmed_identity is None:
+                    try:
+                        if parent_fd is None:
+                            os.link(sibling, target, follow_symlinks=False)
+                        else:
+                            os.link(
+                                sibling,
+                                target.name,
+                                src_dir_fd=parent_fd,
+                                dst_dir_fd=parent_fd,
+                                follow_symlinks=False,
+                            )
+                    except FileExistsError:
+                        return "confirm"
+                    if parent_fd is None:
+                        Path(sibling).unlink()
+                        sibling_path = None
+                    else:
+                        os.unlink(sibling, dir_fd=parent_fd)
+                        sibling_name = None
+                    return "saved"
+
                 try:
-                    os.link(sibling, target, follow_symlinks=False)
-                except FileExistsError:
+                    if parent_fd is None:
+                        current_identity = (
+                            ChatScreen._external_video_target_identity(target)
+                        )
+                    else:
+                        current_identity = ChatScreen._external_video_stat_identity(
+                            os.stat(
+                                target.name,
+                                dir_fd=parent_fd,
+                                follow_symlinks=False,
+                            )
+                        )
+                except FileNotFoundError:
                     return "confirm"
-                sibling.unlink()
-                sibling = None
+                if current_identity != confirmed_identity:
+                    return "confirm"
+                if parent_fd is None:
+                    os.replace(sibling, target)
+                    sibling_path = None
+                else:
+                    os.replace(
+                        sibling,
+                        target.name,
+                        src_dir_fd=parent_fd,
+                        dst_dir_fd=parent_fd,
+                    )
+                    sibling_name = None
                 return "saved"
-
-            try:
-                current_identity = ChatScreen._external_video_target_identity(target)
-            except FileNotFoundError:
-                return "confirm"
-            if current_identity != confirmed_identity:
-                return "confirm"
-            os.replace(sibling, target)
-            sibling = None
-            return "saved"
         finally:
             try:
                 artifact.rewind()
             except (OSError, ValueError):
                 pass
-            if sibling is not None:
+            if sibling_name is not None and parent_fd is not None:
                 try:
-                    sibling.unlink(missing_ok=True)
+                    os.unlink(sibling_name, dir_fd=parent_fd)
+                except FileNotFoundError:
+                    pass
                 except OSError:
                     logger.warning(
                         "Console video operation={} failed error_type={}",
                         "external_stage_cleanup",
                         "OSError",
                     )
+            if sibling_path is not None:
+                try:
+                    current_parent = ChatScreen._external_video_parent_identity(
+                        target.parent
+                    )
+                    current_sibling = ChatScreen._external_video_target_identity(
+                        sibling_path
+                    )
+                    if (
+                        current_parent == parent_identity
+                        and sibling_identity is not None
+                        and current_sibling == sibling_identity
+                    ):
+                        sibling_path.unlink()
+                except (FileNotFoundError, OSError):
+                    pass
+            if parent_fd is not None:
+                os.close(parent_fd)
 
-    def _retry_pending_console_video(self, artifact: PendingVideoArtifact) -> Path:
+    def _retry_pending_console_video(
+        self,
+        artifact: PendingVideoArtifact,
+        *,
+        publication_gate: VideoPublicationGate | None = None,
+    ) -> Path:
         """Retry a failed ordinary managed save from the retained payload."""
         artifact.rewind()
         content = artifact.stream.read()
@@ -16934,6 +17203,7 @@ class ChatScreen(BaseAppScreen):
             artifact.slug,
             content,
             extension=artifact.extension,
+            publication_gate=publication_gate,
         )
         if isinstance(outcome, VideoCapacityExceeded):
             raise VideoStoreSaveError("pending video no longer fits managed storage")
@@ -17022,13 +17292,22 @@ class ChatScreen(BaseAppScreen):
 
                 if not self._owns_pending_console_video(artifact):
                     return None
+                operation_cancel = self._begin_pending_console_video_operation(
+                    artifact
+                )
+                if operation_cancel is None:
+                    return None
                 try:
-                    result = await asyncio.to_thread(
-                        self._copy_pending_video_external,
-                        artifact,
-                        target,
-                        confirmed_identity,
-                    )
+                    try:
+                        result = await asyncio.to_thread(
+                            self._copy_pending_video_external,
+                            artifact,
+                            target,
+                            confirmed_identity,
+                            operation_cancel,
+                        )
+                    finally:
+                        self._end_pending_console_video_operation(artifact)
                 except (OSError, ValueError) as exc:
                     if not self._owns_pending_console_video(artifact):
                         return None
@@ -17076,6 +17355,8 @@ class ChatScreen(BaseAppScreen):
         """Resolve one normal or staged generation result for either caller."""
         chat_store = self._ensure_console_chat_store()
         if not isinstance(outcome, PendingVideoArtifact):
+            if getattr(self, "_pending_video_artifacts_closed", False):
+                return
             metadata, _managed_path = outcome
             chat_store.append_video_message(
                 session_id,
@@ -17087,13 +17368,17 @@ class ChatScreen(BaseAppScreen):
             return
 
         artifact = outcome
-        if artifact.message_id != message_id:
-            artifact.close()
+        if (
+            artifact.message_id != message_id
+            or getattr(self, "_pending_video_artifacts_closed", False)
+        ):
+            ChatScreen._close_pending_console_video(artifact)
             return
         artifacts = self._pending_console_video_artifacts()
-        displaced = artifacts.get(message_id)
-        if displaced is not None and displaced is not artifact:
-            displaced.close()
+        existing = artifacts.get(message_id)
+        if existing is not None and existing is not artifact:
+            ChatScreen._close_pending_console_video(artifact)
+            return
         artifacts[message_id] = artifact
         try:
             while self._owns_pending_console_video(artifact):
@@ -17138,18 +17423,27 @@ class ChatScreen(BaseAppScreen):
                 try:
                     video_store = self._ensure_console_video_store()
                     if artifact.reason == "over_capacity":
-                        managed_path = await asyncio.to_thread(
-                            video_store.adopt_oversized,
-                            artifact.message_id,
-                            artifact.slug,
-                            artifact.stream,
-                            artifact.size_bytes,
-                            extension=artifact.extension,
+                        started, managed_path = (
+                            await self._run_pending_console_video_operation(
+                                artifact,
+                                video_store.adopt_oversized,
+                                artifact.message_id,
+                                artifact.slug,
+                                artifact.stream,
+                                artifact.size_bytes,
+                                extension=artifact.extension,
+                            )
                         )
                     else:
-                        managed_path = await asyncio.to_thread(
-                            self._retry_pending_console_video, artifact
+                        started, managed_path = (
+                            await self._run_pending_console_video_operation(
+                                artifact,
+                                self._retry_pending_console_video,
+                                artifact,
+                            )
                         )
+                    if not started:
+                        return
                 except Exception as exc:  # noqa: BLE001 - recoverable store boundary
                     if not self._owns_pending_console_video(artifact):
                         return
@@ -17193,7 +17487,16 @@ class ChatScreen(BaseAppScreen):
             current = self._pending_console_video_artifacts()
             if current.get(message_id) is artifact:
                 current.pop(message_id, None)
-            artifact.close()
+            active = getattr(self, "_pending_video_active_operations", {})
+            entry = active.get(message_id)
+            if entry is not None and entry[0] is artifact and entry[1] > 0:
+                deferred = getattr(self, "_pending_video_deferred_closes", None)
+                if deferred is None:
+                    deferred = {}
+                    self._pending_video_deferred_closes = deferred
+                deferred[message_id] = artifact
+            else:
+                ChatScreen._close_pending_console_video(artifact)
 
     async def _console_command_generate_video(self, parse: CommandParse) -> None:
         """Resolve and run one ``/generate-video`` generation (task-3401.5).

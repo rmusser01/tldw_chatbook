@@ -127,6 +127,25 @@ class VideoStoreBusyError(VideoStoreSaveError):
     """The root-scoped capacity lease was not acquired in time."""
 
 
+class VideoPublicationGate:
+    """Linearize cancellation against one managed-file publication."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._cancelled = False
+
+    def cancel(self) -> None:
+        """Prevent a publication that has not already claimed the gate."""
+        with self._lock:
+            self._cancelled = True
+
+    @contextmanager
+    def claim_publication(self) -> Iterator[bool]:
+        """Hold the cancellation lock across the caller's final commit."""
+        with self._lock:
+            yield not self._cancelled
+
+
 class VideoStore:
     """Resolves and retains ephemeral generated-video files.
 
@@ -289,6 +308,7 @@ class VideoStore:
         content: bytes,
         *,
         extension: str = "mp4",
+        publication_gate: VideoPublicationGate | None = None,
     ) -> Path | VideoCapacityExceeded:
         """Publish a normal payload and evict only the old files needed for it."""
         if not content:
@@ -308,7 +328,12 @@ class VideoStore:
                 self._cleanup_orphan_stages_unlocked()
                 self._ensure_target_absent(path)
                 try:
-                    self._atomic_publish(content, path, expected_size=size_bytes)
+                    self._atomic_publish(
+                        content,
+                        path,
+                        expected_size=size_bytes,
+                        publication_gate=publication_gate,
+                    )
                 except (OSError, VideoStoreSaveError) as exc:
                     raise VideoStoreSaveError("managed video publication failed") from exc
 
@@ -333,6 +358,7 @@ class VideoStore:
         size_bytes: int,
         *,
         extension: str = "mp4",
+        publication_gate: VideoPublicationGate | None = None,
     ) -> Path:
         """Adopt one caller-owned over-cap stream as the sole managed video.
 
@@ -354,7 +380,12 @@ class VideoStore:
                     self._cleanup_orphan_stages_unlocked()
                     self._ensure_target_absent(path)
                     try:
-                        self._atomic_publish(stream, path, expected_size=size_bytes)
+                        self._atomic_publish(
+                            stream,
+                            path,
+                            expected_size=size_bytes,
+                            publication_gate=publication_gate,
+                        )
                     except Exception as exc:
                         raise VideoStoreSaveError(
                             "managed video publication failed"
@@ -603,6 +634,7 @@ class VideoStore:
         target: Path,
         *,
         expected_size: int,
+        publication_gate: VideoPublicationGate | None = None,
     ) -> None:
         resolved_root = self._ensure_safe_root(create=True)
         if resolved_root is None:  # pragma: no cover - create=True guarantees it
@@ -638,7 +670,15 @@ class VideoStore:
                 actual_size = os.fstat(staged.fileno()).st_size
                 if actual_size != expected_size:
                     raise VideoStoreSaveError("managed video source size changed")
-            self._commit_sibling(sibling, target)
+            if publication_gate is None:
+                self._commit_sibling(sibling, target)
+            else:
+                with publication_gate.claim_publication() as active:
+                    if not active:
+                        raise VideoStoreSaveError(
+                            "managed video publication cancelled"
+                        )
+                    self._commit_sibling(sibling, target)
             sibling = None
         finally:
             if sibling is not None:
