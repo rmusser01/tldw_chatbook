@@ -16,7 +16,7 @@ references:
 documentation:
 - Docs/superpowers/specs/2026-08-09-console-prompt-queue-design.md
 - Docs/superpowers/plans/2026-08-09-console-prompt-queue.md
-updated_date: 2026-08-10 06:11
+updated_date: 2026-08-10 06:31
 ---
 
 ## Description
@@ -33,6 +33,9 @@ Protect process-memory queued prompts at every user-initiated loss boundary befo
 - [ ] #5 Quit approval marks controller shutdown before cancellation and cleanup; Stay or confirmation errors fail closed, clear the reentrancy guard, and preserve the mounted Console and all unsent state.
 - [ ] #6 Lifecycle tests prove exact counts, one dialog and cleanup pass, empty-transcript validation windows, cancellation-after-tombstone suppression, repeated quit handling, and failure preservation.
 - [ ] #7 The lifecycle integration adds no queue persistence and unsent prompt text remains absent from snapshots, prompt history, diagnostics, logs, and application-level state.
+- [ ] #8 Lifecycle counts are a revisioned immutable aggregate derived from the controller activity projection, not a second mutable owner; session close is pinned to its requested session ID and close, leave, and quit revalidate after confirmation, failing closed if impact changed.
+- [ ] #9 Every user-initiated in-app exit entry point uses the async quit guard; startup password cancellation and signal or forced termination remain explicitly outside the interactive guarantee.
+- [ ] #10 Approved quit keeps blocking cache and configuration persistence and timed joins off the Textual event loop, marshals app-owned state and final exit correctly, preserves cleanup ordering, and remains responsive with exactly one cleanup pass.
 <!-- AC:END -->
 
 ## Implementation Notes

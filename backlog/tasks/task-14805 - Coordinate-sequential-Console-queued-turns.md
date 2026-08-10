@@ -17,7 +17,7 @@ references:
 documentation:
 - Docs/superpowers/specs/2026-08-09-console-prompt-queue-design.md
 - Docs/superpowers/plans/2026-08-09-console-prompt-queue.md
-updated_date: 2026-08-10 06:14
+updated_date: 2026-08-10 06:26
 ---
 
 ## Description
@@ -36,6 +36,8 @@ Integrate the bounded queue with Console run ownership so accepted follow-up pro
 - [ ] #6 Queue-aware gates prevent unrelated Continue, Regenerate, Edit and resend, Summarize, or hands-free actions from bypassing older queued work while allowing non-generating history mutations to force context review.
 - [ ] #7 Session close and shutdown tombstone chains before cancellation can wake terminal callbacks, and the queue-empty admission race produces either one queued entry or one normal send, never a stranded or duplicate prompt.
 - [ ] #8 Joined controller tests prove ordered multi-turn drains, slot retention and reacquisition, session isolation, approval waits, authority revalidation, recovery paths, boundary races, and shutdown suppression against production signatures.
+- [ ] #9 Queue recovery crosses the generation gate only through a narrow internal typed authorization unavailable to unrelated actions; activity state distinguishes slot occupancy, preparation/validation, accepted live work, approval waits, queue presence, and pause state.
+- [ ] #10 Accepted queued prompts enter normal persistence and prompt history exactly once in accepted order; admission, edit, reorder, refused starts, and recovery selection do not write history, and the queue-empty admission race emits one final notification.
 <!-- AC:END -->
 
 ## Implementation Notes

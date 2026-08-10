@@ -14,7 +14,7 @@ references:
 documentation:
 - Docs/superpowers/specs/2026-08-09-console-prompt-queue-design.md
 - Docs/superpowers/plans/2026-08-09-console-prompt-queue.md
-updated_date: 2026-08-10 06:14
+updated_date: 2026-08-10 06:25
 ---
 
 ## Description
@@ -30,6 +30,7 @@ Give Console a store-owned, per-session signal for detecting provider-relevant c
 - [ ] #3 The epoch remains stable for ordinary linear appends, streaming and terminal status updates, persistence, feedback, display overlays, off-path edits, and idempotent same-value selections or writes.
 - [ ] #4 The epoch is process-memory-only and introduces no schema, persistence, snapshot, configuration, or logging changes.
 - [ ] #5 Focused store tests cover every provider-relevant mutation seam, session isolation, lifecycle cleanup, and mutation checks that prove the guards can fail.
+- [ ] #6 A successful failed-assistant retry advances the epoch exactly once when the row becomes provider-visible history, including same-text recovery; a failed or refused retry does not advance or authorize adoption.
 <!-- AC:END -->
 
 ## Implementation Plan

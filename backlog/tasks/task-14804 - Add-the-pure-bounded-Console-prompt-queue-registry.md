@@ -13,7 +13,7 @@ references:
 documentation:
 - Docs/superpowers/specs/2026-08-09-console-prompt-queue-design.md
 - Docs/superpowers/plans/2026-08-09-console-prompt-queue.md
-updated_date: 2026-08-10 06:14
+updated_date: 2026-08-10 06:30
 ---
 
 ## Description
@@ -31,6 +31,7 @@ Provide a deterministic process-memory owner for per-session queued prompt state
 - [ ] #5 All transitions are synchronous and event-loop-thread confined; foreign-thread access is rejected or marshalled by callers rather than protected by widget locks.
 - [ ] #6 The registry has no Textual, provider, database, snapshot, prompt-history, diagnostics, or logging dependency, and queued prompt bodies are never serialized.
 - [ ] #7 Pure tests cover capacity, FIFO, revisions, lifecycle, every pause and claim transition, and mutation checks for the ten-entry and stale-revision guards.
+- [ ] #8 Admission and edit precompute a sanitized one-line preview against a fixed maximum cell budget independent of viewport width; body-free snapshots reuse unchanged previews without traversing full prompt bodies, prompt-bearing representations and errors are redacted, and widgets crop the safe preview further after resize.
 <!-- AC:END -->
 
 ## Implementation Notes

@@ -59,6 +59,9 @@ ownership and keybindings.
   or mutate queue state from a Textual widget.
 - Do not persist queue entries in the database, `TaskResumeState`, native screen
   snapshots, prompt history, diagnostics, or logs. Never log prompt bodies.
+- Prompt-bearing dataclasses and exceptions must use redacted representations.
+  Render snapshots contain precomputed safe previews and never copy full bodies;
+  only the selected edit request may fetch one exact body.
 - Do not snapshot API keys, approval grants, skill trust, or permission verdicts.
   Authority is revalidated by the existing runtime owners.
 - Preserve the no-argument `on_submission_accepted` callback for manual-origin sends
@@ -104,6 +107,10 @@ ownership and keybindings.
       active-path content/lineage/variant/summary changes advance; ordinary append,
       streaming/status/persistence/feedback, off-path edits, and idempotent writes do
       not.
+- [ ] Characterize failed-message retry separately: a successful retry changes an
+      existing failed row into provider-visible history and advances once; a failed
+      retry does not authorize unrelated epoch adoption. Stopped regeneration keeps
+      its existing sibling/branch semantics.
 - [ ] Add a private per-session epoch map, a read-only
       `conversation_context_epoch(session_id)` API, and one internal increment seam.
       Initialize on create/restore and purge on close.
@@ -153,6 +160,9 @@ re-selection.
 - [ ] Define frozen `ConsoleTurnExecutionContext` configuration records. Keep
       credentials, approval/trust decisions, cancel events, live streams, and staged
       manual evidence out of the model.
+- [ ] Deep-copy mutable mappings, sequences, roots, and settings into immutable
+      values. Do not retain a live `ConsoleWorkspaceContext`, session settings
+      object, or mutable callback; mutate the sources after capture in tests.
 - [ ] Add one owning-session resolver seam. Resolve from the session's stored
       `ConsoleSessionSettings`, workspace identity/context, current app/provider
       configuration, and capability catalog exactly once per turn.
@@ -191,8 +201,10 @@ Manual UX is unchanged and no queue is yet reachable.
 - [ ] Write red pure tests for immutable entry IDs, FIFO order, per-session isolation,
       `queued + claimed <= 10`, stale revisions, and session cleanup.
 - [ ] Define bounded enums/dataclasses for entry, claim, queue mode, pause reason,
-      reservation, mutation result, and content-free render snapshot. Inject stable ID
-      and monotonic-time producers where tests require determinism.
+      reservation, mutation result, and body-free render snapshot. Precompute a
+      sanitized one-line preview at admission/edit using a fixed maximum cell budget
+      independent of viewport width, redact prompt-bearing representations, and
+      inject stable ID and monotonic-time producers where tests require determinism.
 - [ ] Implement revision-checked admission, edit, move, remove, clear-waiting, claim,
       settle, return-to-head, pause-after-turn, keep-draining, pause, resume,
       reservation, context baseline/adoption, closing tombstone, shutdown, and
@@ -206,6 +218,9 @@ Manual UX is unchanged and no queue is yet reachable.
 - [ ] Assert queue models have no imports from Textual, provider gateways, database,
       prompt history, diagnostics, or screen modules. Assert snapshots contain no
       full prompt bodies.
+- [ ] Prove unchanged revisions reuse a body-free snapshot without walking ten
+      100,000-character entries. Cover ANSI/control sequences, Rich markup,
+      multiline text, wide glyphs, and combining characters in pure preview tests.
 - [ ] Mutation-check capacity and stale revision rejection. Complete task notes and
       DoD.
 
@@ -253,12 +268,17 @@ provider, widget, or persistence side effect.
       exception pauses. Wire Retry, Skip and resume, Resume next, Retry stopped turn,
       Keep draining, and Use current context and resume to the exact approved
       transitions.
+- [ ] Authorize queue recovery through a narrow typed internal capability at the
+      existing generation gate. Do not add a general `force=True` bypass available
+      to unrelated controller actions.
 - [ ] Make queued RAG capture session-targeted and origin-aware. Auto-RAG may generate
       owning-session evidence; manually staged evidence remains screen-owned and is
       never read or cleared by queued origin.
 - [ ] Add one immutable controller activity projection and migrate busy count, cap,
       markers, fleet summary, polling, navigation warnings, and notification
-      eligibility to it. Intermediate completions remain running and do not toast.
+      eligibility to it. Distinguish slot occupancy, validation/preparation, accepted
+      live work, approval wait, queue presence, and pause state. Intermediate
+      completions remain running and do not toast.
 - [ ] Gate competing Continue, Regenerate, Edit and resend, Summarize, transcript
       recovery, and hands-free entry points through the coordinator whenever future
       queue work exists.
@@ -267,6 +287,9 @@ provider, widget, or persistence side effect.
 - [ ] Add joined async tests for three ordered turns, queue-empty/admission races,
       refusal before and exception after acceptance, approval waits, global cap
       reacquisition, cross-session concurrency, context review staleness, and shutdown.
+- [ ] Prove accepted queued prompts enter normal persistence and prompt history once,
+      in accepted order; admission, edit, reorder, and refused starts write neither.
+      Assert the queue-empty/admission race emits exactly one final notification.
 - [ ] Mutation-check legacy-hook isolation, owning-session context, shutdown
       suppression, and intermediate notification suppression. Complete task notes and
       DoD.
@@ -295,18 +318,31 @@ new visible shelf or manager is mounted until TASK-14806 also supplies loss guar
 
 ### Implementation steps
 
-- [ ] Add one content-free lifecycle projection that reports exact live-run,
-      queued-session, and unsent-prompt counts, including claimed pre-accept entries.
-      Keep paused queues distinct from running agents in copy and tests.
+- [ ] Derive one content-free, revisioned lifecycle aggregate from TASK-14805's
+      controller activity projection. Report exact live-run, queued-session, and
+      unsent-prompt counts, including claimed pre-accept entries. Do not introduce a
+      second mutable projection; keep paused queues distinct from running agents.
 - [ ] Replace session close with one combined transcript/live/queue confirmation.
       Extend Console leave warnings to separate live-run, queued-session, and queued-
       prompt counts, including an empty transcript with live/queued work.
+- [ ] Pin session-close confirmation to the requested session ID and capture the
+      lifecycle revision. After any close, leave, or quit approval, re-read the
+      impact; if its revision or counts changed, fail closed and present updated copy
+      instead of destroying newly admitted or newly live work.
 - [ ] Make `TldwCli.action_quit()` dispatch one exclusive async confirmation worker
       guarded by `_quit_in_progress`. Set shutdown state and run cleanup only after
       approval; Stay or errors fail closed and preserve all Console state.
+- [ ] Split approved quit cleanup so blocking cache/config persistence and timed
+      joins run off the Textual event loop, while app state, timers, audio ownership,
+      and final `exit()` remain on or marshal back to the app thread. Preserve current
+      cleanup ordering and exactly-once behavior.
+- [ ] Inventory every user-initiated app exit entry point and route it through that
+      guard. Keep startup password cancellation and signal/forced termination outside
+      the interactive guarantee and document those exclusions in tests.
 - [ ] Add lifecycle tests for repeated quit, confirmation failure, Stay preservation,
       combined close, cancellation-after-tombstone, and absence from persistence,
-      snapshots, history, diagnostics, and logs.
+      snapshots, history, diagnostics, and logs. Prove the app loop remains responsive
+      while approved blocking persistence is in progress.
 - [ ] Prove the controller shutdown/tombstone ordering by waking the real terminal
       transition after cancellation and observing that no subsequent queue claim or
       provider submission occurs.
@@ -357,12 +393,15 @@ boundary before the queue becomes reachable from the composer.
 - [ ] Route Enter, Send/Queue button, mouse, voice, hands-free, and programmatic sends
       through the same typed `sent | queued | refused` dispatcher. Refusals restore
       the exact text/cursor/selection/undo transaction.
-- [ ] Build the focused manager modal with stable selection and typed edit, move,
+- [ ] Build the focused manager modal pinned to its owning session ID and queue
+      revision, with stable selection and typed edit, move,
       remove, clear-waiting, pause/resume/recovery, review, and confirm-current-context
       intents. Fetch full text only when one selected entry enters edit mode.
-- [ ] Generate previews by stripping ANSI/control text, escaping Rich markup,
-      collapsing to one line, and truncating by terminal cell width for wide and
-      combining Unicode. Collapsed/background surfaces show count and state only.
+- [ ] Render the registry's precomputed previews without fetching queue bodies.
+      Let widget layout crop the safe fixed-budget string further after terminal
+      resize. Collapsed/background surfaces show count and state only; session
+      switches while the manager is open never retarget its intents to the newly
+      viewed session.
 - [ ] Integrate the already-landed session-close, leave, and quit guards with the
       mounted shelf/manager. Stay must preserve current focus and edit text.
 - [ ] Update F1 help, fleet/session markers, both Console guide pages, collapsed-

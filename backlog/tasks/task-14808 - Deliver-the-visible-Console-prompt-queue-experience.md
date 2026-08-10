@@ -16,6 +16,7 @@ references:
 documentation:
 - Docs/superpowers/specs/2026-08-09-console-prompt-queue-design.md
 - Docs/superpowers/plans/2026-08-09-console-prompt-queue.md
+updated_date: 2026-08-10 06:26
 ---
 
 ## Description
@@ -34,6 +35,7 @@ Expose the already-safe bounded queue through an honest keyboard-first Console s
 - [ ] #6 Mounted tests prove rendering, key routing, draft transactions, revision-gated polling, safe previews, privacy, lifecycle-dialog integration, and neighboring control geometry at 80x24, 100x30, and 160x40.
 - [ ] #7 An isolated live-provider walkthrough verifies sequential draining, management, approval, pause, failure, Stop recovery, background isolation, one final notification, and close, leave, and quit warnings.
 - [ ] #8 Unsent queue text remains absent from database persistence, screen snapshots, prompt history, diagnostics, and logs; accepted queued turns persist through the normal message path.
+- [ ] #9 The manager remains pinned to its owning session ID and queue revision across tab switches, never retargets intents to the viewed session, and renders precomputed previews without fetching unselected prompt bodies.
 <!-- AC:END -->
 
 ## Implementation Notes

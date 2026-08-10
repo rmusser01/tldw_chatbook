@@ -196,11 +196,20 @@ one paused/failure signal.
 
 - Stable entry ID.
 - Exact canonical text.
+- A precomputed, one-line, terminal-safe preview derived at admission or edit
+  against a fixed maximum cell budget, independent of the current viewport.
 - Owning session ID or ownership through its registry bucket.
 - Insertion order.
 
 It contains no attachment, evidence bundle, provider selection, secret, widget,
 task, or persistence identifier.
+
+Prompt-bearing records use a redacted representation so exceptions, assertions,
+and diagnostics cannot expose the canonical text accidentally. Render snapshots
+reuse the precomputed preview and never traverse or copy every prompt body during
+the Console's polling loop. The preview is recomputed only for the entry whose
+text changes. Widgets crop or elide that already-safe preview further for their
+current geometry, so a terminal resize never requires access to the full body.
 
 Admission reuses `MAX_CONSOLE_DRAFT_LENGTH` (currently 100,000 characters), so
 the ten-entry limit also bounds queued text to at most 1,000,000 characters per
@@ -312,6 +321,7 @@ The controller exposes one per-session activity projection used by all fleet
 consumers. It answers:
 
 - Occupies an agent slot.
+- Is validating or preparing before acceptance.
 - Has a live accepted turn.
 - Needs approval.
 - Has queued prompts.
@@ -321,6 +331,11 @@ consumers. It answers:
 Busy count, global-cap enforcement, run markers, fleet summary, transcript
 polling, completion notifications, and navigation warnings derive from this
 projection rather than duplicating queue awareness.
+
+Queue-authorized failed retry and stopped-turn regeneration use a narrow internal
+recovery capability checked at the controller's existing generation gate. It is
+not a general `force` switch and cannot be supplied by unrelated Continue,
+Regenerate, Edit and resend, Summarize, hands-free, or external callers.
 
 ### 6.3 Per-session turn execution context
 
@@ -339,6 +354,11 @@ construction, capability checks, caching/fingerprinting, and stream execution,
 so a tab switch or settings edit cannot produce a half-old, half-new turn.
 Changes completed after a claim apply to the following queued turn. Pinned and
 one-shot prefill keep their existing session-level next-send semantics.
+
+Immutability is detached, not only nominal: mappings, sequences, workspace roots,
+and other mutable source settings are copied into immutable values during capture.
+The context does not retain a live `ConsoleWorkspaceContext`, session settings
+object, or callback whose later mutation could change provider input.
 
 The execution context contains configuration, not durable authority: it stores
 no API key, approval grant, skill-trust grant, or reusable permission decision.
@@ -393,6 +413,9 @@ Construction and named late-binding callbacks live in
 exclusive confirmation worker. A `_quit_in_progress` guard absorbs repeated
 requests. The worker consults a generic asynchronous screen pre-quit seam,
 then sets the app shutdown flag and runs existing cleanup only after approval.
+Blocking cache/config persistence and timed thread joins run off the Textual
+event loop; app-owned state changes and the final `exit()` remain marshalled to
+the app thread. Existing cleanup ordering and the one-pass guarantee remain.
 
 Choosing Stay or encountering a confirmation error fails closed, clears the
 guard, and preserves the mounted queue manager, edited text, runs, and queues.
@@ -551,6 +574,14 @@ Navigation and quit guards count:
 The dialog uses those separate counts and does not imply that a paused queue is
 a running agent.
 
+Lifecycle projections carry a monotonic revision over the counted work. Session
+close is pinned to the requested session ID, and close, leave, and quit re-read
+the projection after confirmation. If work or counts changed while the dialog was
+open, destruction fails closed and presents an updated confirmation; approval for
+an older impact snapshot never discards newly admitted work. The lifecycle view
+is an immutable aggregate derived from the controller activity projection, not a
+second mutable state owner.
+
 Shutdown first marks the controller as shutting down. Claim, resume, retry, and
 drain entry points then become no-ops or explicit refusals. Only after that guard
 is active may shutdown cancel runs, deny approval waits, release reservations,
@@ -560,7 +591,8 @@ start another queued turn.
 Queue state never enters `TaskResumeState`, the native Console screen snapshot,
 database rows, prompt history, diagnostics, or logs. After a queued entry is
 accepted as a real turn, its user message and prompt-history entry follow normal
-persistence rules.
+persistence rules exactly once and in accepted-turn order. Queue admission,
+editing, reorder, and recovery selection never touch prompt history.
 
 ## 10. Hands-free and other input paths
 
@@ -599,6 +631,9 @@ inside the viewport.
 - `queued + claimed` capacity accounting.
 - Edit, move, remove, clear, pause, resume, and keep-draining transitions.
 - Stable entry IDs and stale revision rejection.
+- Safe previews are precomputed on admission/edit, unchanged-revision snapshots
+  are reused without traversing ten maximum-size bodies, and prompt-bearing
+  representations and errors remain redacted.
 - Session isolation and exact session removal.
 - Conversation-context epoch behavior: ordinary linear appends stay stable;
   active-path edit, selected textual variant, summary, deletion, and lineage
@@ -617,6 +652,8 @@ inside the viewport.
 - Background dispatch uses one immutable owning-session turn context for
   provider, model, system prompt, capabilities, generation parameters, and
   workspace roots while a different session is viewed or settings change.
+- Mutating or replacing captured source mappings, sequences, settings, roots, or
+  workspace objects cannot alter that turn context.
 - Activity projection drives busy count, markers, fleet summary, polling, cap,
   notifications, and navigation consistently.
 - Intermediate completions create no Finished marker or completion toast.
@@ -634,6 +671,9 @@ inside the viewport.
   paths pause without duplication or loss.
 - Failed retry, skip, stopped regeneration, and resume-next start exactly one
   following turn.
+- Queue recovery authorization cannot bypass the generation gate for any
+  unrelated action, and accepted queued prompts enter persistence and prompt
+  history exactly once in accepted order.
 - Transcript recovery actions join the coordinator, while unrelated Continue,
   Regenerate, and Edit & resend cannot bypass a nonempty queue.
 - Context review adopts the current epoch only through explicit confirmation;
@@ -655,6 +695,8 @@ inside the viewport.
 - Shelf and polling snapshots never contain full queued prompt bodies.
 - Collapsed composer privacy.
 - Live manager snapshots, stable selection, and stale-edit recovery.
+- A manager stays pinned to its opening session ID and revision across a viewed-
+  session switch; it never fetches bodies for unselected entries.
 - Background labels remain session-correct.
 - Geometry assertions at 80x24, 100x30, and 160x40.
 - Revision-gated rendering performs no update on an unchanged 0.2-second tick.
@@ -668,6 +710,8 @@ inside the viewport.
   terminal transition cannot dispatch another prompt.
 - Session close uses one combined confirmation for transcript, live-turn, and
   queued-prompt impact, including the empty-transcript validation window.
+- Work admitted or started while a close, leave, or quit dialog is open changes
+  the lifecycle revision and requires an updated confirmation.
 - Repeated quit requests produce one dialog and one cleanup pass.
 - Confirmation failure fails closed.
 - Unsent queue text is absent from snapshots, persistence, history, and logs.
