@@ -29,6 +29,7 @@ from urllib3 import Retry
 #
 # Import Local Libraries
 from tldw_chatbook.Utils.Utils import extract_text_from_segments, logging
+from tldw_chatbook.Utils.persistent_diagnostics import safe_metadata_token
 from tldw_chatbook.config import load_settings
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
 
@@ -45,7 +46,6 @@ def summarize_with_local_llm(
         logging.debug("openai: Using provided string data for summarization")
         data = input_data
 
-        logging.debug(f"Local LLM: Loaded data: {data}")
         logging.debug(f"Local LLM: Type of data: {type(data)}")
 
         if isinstance(data, dict) and "summary" in data:
@@ -111,7 +111,7 @@ def summarize_with_local_llm(
                                             yield content
                                 except json.JSONDecodeError:
                                     logging.error(
-                                        f"Local LLM: Error decoding JSON from line: {decoded_line}"
+                                        "Local LLM: Failed to decode streamed JSON"
                                     )
                                     continue
 
@@ -133,7 +133,10 @@ def summarize_with_local_llm(
             )
             return f"Local LLM: Failed to process summary, status code {response.status_code}"
     except Exception as e:
-        logging.error(f"Local LLM: Error in processing: {str(e)}")
+        logging.error(
+            "Local LLM: Processing failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Local LLM: Error occurred while processing summary: {str(e)}"
 
 
@@ -166,13 +169,12 @@ def summarize_with_llama(
 
         logging.info("llama.cpp: Attempting to use API URL from config file")
         api_url = loaded_config_data["llama_api"]["api_ip"]
-        logging.debug(f"Llama: Using API URL: {api_url}")
+        logging.debug("Llama: API endpoint configured")
 
         # Load transcript
         logging.debug("Llama.cpp: Using provided string data for summarization")
         data = input_data
 
-        logging.debug(f"Llama.cpp Summarize: Loaded data: {data}")
         logging.debug(f"Llama.cpp Summarize: Type of data: {type(data)}")
 
         if isinstance(data, dict) and "summary" in data:
@@ -202,14 +204,17 @@ def summarize_with_llama(
         # Prepare system message and prompt
         if system_message is None:
             system_message = "You are a helpful AI assistant."
-        logging.debug(f"Llama Summarize: System Prompt being sent is {system_message}")
+        logging.debug("Llama Summarize: System prompt prepared")
 
         if custom_prompt is None:
             llama_prompt = f"{get_internal_prompt('summarization.local_summarizer_template')}\n\n{text}"
         else:
             llama_prompt = f"{custom_prompt}\n\n{text}"
 
-        logging.debug(f"Llama Summarize: Prompt being sent is {llama_prompt[:500]}...")
+        logging.debug(
+            "Llama Summarize: Prompt prepared; character_count=%s",
+            len(llama_prompt),
+        )
 
         # Temperature handling
         if temp is None:
@@ -294,7 +299,7 @@ def summarize_with_llama(
                                             yield content
                                 except json.JSONDecodeError:
                                     logging.error(
-                                        f"Llama: Error decoding JSON from line: {decoded_line}"
+                                        "Llama: Failed to decode streamed JSON"
                                     )
                                     continue
 
@@ -303,7 +308,6 @@ def summarize_with_llama(
                 logging.debug("Llama.cpp Summarizer: Processing non-streaming response")
                 response_data = response.json()
                 if "content" in response_data and len(response_data["content"]) > 0:
-                    logging.debug(response_data)
                     summary = response_data["content"].strip()
                     logging.debug("llama: Summarization successful")
                     logging.info("Summarization successful.")
@@ -313,12 +317,16 @@ def summarize_with_llama(
                     return "Llama: No choices in response data"
         else:
             logging.error(
-                f"Llama: API request failed with status code {response.status_code}: {response.text}"
+                "Llama: API request failed; status_code=%s",
+                response.status_code,
             )
             return f"Llama: API request failed: {response.text}"
 
     except Exception as e:
-        logging.error(f"Llama: Error in processing: {str(e)}")
+        logging.error(
+            "Llama: Processing failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Llama: Error occurred while processing summary with Llama: {str(e)}"
 
 
@@ -354,14 +362,13 @@ def summarize_with_kobold(
             # Get the Streaming API IP from the config
             kobold_openai_api_IP = loaded_config_data["local_api_ip"]["kobold_openai"]
 
-        logging.debug(
-            f"Kobold: Using API Key: {kobold_api_key[:5]}...{kobold_api_key[-5:]}"
-        )
+        if kobold_api_key is None:
+            raise TypeError("'NoneType' object is not subscriptable")
+        logging.debug("Kobold: Credential state resolved")
 
         logging.debug("Kobold.cpp: Using provided string data for summarization")
         data = input_data
 
-        logging.debug(f"Kobold.cpp: Loaded data: {data}")
         logging.debug(f"Kobold.cpp: Type of data: {type(data)}")
 
         if isinstance(data, dict) and "summary" in data:
@@ -387,7 +394,10 @@ def summarize_with_kobold(
         else:
             kobold_prompt = f"{custom_prompt_input}\n\n\n\n{text}"
 
-        logging.debug(f"Kobold summarization: Prompt being sent is {kobold_prompt}")
+        logging.debug(
+            "Kobold summarization: Prompt prepared; character_count=%s",
+            len(kobold_prompt),
+        )
 
         # Construct the data payload
         data_payload = {
@@ -446,9 +456,6 @@ def summarize_with_kobold(
                     for line in response.iter_lines():
                         if line:
                             decoded_line = line.decode("utf-8")
-                            logging.debug(
-                                "Kobold: Received streamed data: %s", decoded_line
-                            )
                             # OpenAI API streams data prefixed with 'data: '
                             if decoded_line.startswith("data: "):
                                 content = decoded_line[len("data: ") :].strip()
@@ -472,18 +479,20 @@ def summarize_with_kobold(
                                         )
                                 except json.JSONDecodeError as e:
                                     logging.error(
-                                        "Kobold: Error decoding streamed JSON: %s",
-                                        str(e),
+                                        "Kobold: Failed to decode streamed JSON; exception_type=%s",
+                                        safe_metadata_token(type(e).__name__),
                                     )
-                            else:
-                                logging.debug("Kobold: Ignoring line: %s", decoded_line)
                 else:
                     logging.error(
-                        f"Kobold: API request failed with status code {response.status_code}: {response.text}"
+                        "Kobold: API request failed; status_code=%s",
+                        response.status_code,
                     )
                     yield f"Kobold: API request failed: {response.text}"
             except Exception as e:
-                logging.error("Kobold: Error in processing: %s", str(e))
+                logging.error(
+                    "Kobold: Processing failed; exception_type=%s",
+                    safe_metadata_token(type(e).__name__),
+                )
                 yield f"Kobold: Error occurred while processing summary with Kobold: {str(e)}"
         else:
             try:
@@ -518,7 +527,6 @@ def summarize_with_kobold(
                 if response.status_code == 200:
                     try:
                         response_data = response.json()
-                        logging.debug("Kobold: API Response Data: %s", response_data)
 
                         if (
                             response_data
@@ -532,18 +540,28 @@ def summarize_with_kobold(
                             logging.error("Expected data not found in API response.")
                             return "Expected data not found in API response."
                     except ValueError as e:
-                        logging.error("Kobold: Error parsing JSON response: %s", str(e))
+                        logging.error(
+                            "Kobold: Failed to parse JSON response; exception_type=%s",
+                            safe_metadata_token(type(e).__name__),
+                        )
                         return f"Error parsing JSON response: {str(e)}"
                 else:
                     logging.error(
-                        f"Kobold: API request failed with status code {response.status_code}: {response.text}"
+                        "Kobold: API request failed; status_code=%s",
+                        response.status_code,
                     )
                     return f"Kobold: API request failed: {response.text}"
             except Exception as e:
-                logging.error("Kobold: Error in processing: %s", str(e))
+                logging.error(
+                    "Kobold: Processing failed; exception_type=%s",
+                    safe_metadata_token(type(e).__name__),
+                )
                 return f"Kobold: Error occurred while processing summary with Kobold: {str(e)}"
     except Exception as e:
-        logging.error("Kobold: Error in processing: %s", str(e))
+        logging.error(
+            "Kobold: Processing failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Kobold: Error occurred while processing summary with Kobold: {str(e)}"
 
 

@@ -7,12 +7,19 @@ import copy
 import hashlib
 import importlib
 import json
+import logging as stdlib_logging
 import sys
 from collections import Counter
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
+from typing import Any, Callable, Iterator
 
 import pytest
+from loguru import logger as loguru_logger
+
+from tldw_chatbook.LLM_Calls import Local_Summarization_Lib as local_summarization
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -60,6 +67,276 @@ PRIVATE_CATEGORY_COUNTS_BY_MODULE = {
         "private endpoint/path": 5,
     },
 }
+
+
+@dataclass(frozen=True)
+class _CapturedDiagnostics:
+    caplog: pytest.LogCaptureFixture
+    loguru_messages: list[str]
+
+    @property
+    def text(self) -> str:
+        return "\n".join([*self.caplog.messages, *self.loguru_messages])
+
+
+@contextmanager
+def _capture_stdlib_and_loguru(
+    caplog: pytest.LogCaptureFixture,
+) -> Iterator[_CapturedDiagnostics]:
+    caplog.clear()
+    caplog.set_level(stdlib_logging.DEBUG)
+    loguru_messages: list[str] = []
+    sink_id = loguru_logger.add(
+        loguru_messages.append,
+        level="DEBUG",
+        format="{message}",
+    )
+    try:
+        yield _CapturedDiagnostics(caplog, loguru_messages)
+    finally:
+        loguru_logger.remove(sink_id)
+
+
+class _FakeResponse:
+    def __init__(
+        self,
+        *,
+        status_code: int = 200,
+        json_data: object | None = None,
+        lines: tuple[bytes, ...] = (),
+        text: str = "",
+    ) -> None:
+        self.status_code = status_code
+        self._json_data = json_data
+        self._lines = lines
+        self.text = text
+
+    def json(self) -> object:
+        if isinstance(self._json_data, BaseException):
+            raise self._json_data
+        return self._json_data
+
+    def iter_lines(self) -> Iterator[bytes]:
+        yield from self._lines
+
+
+class _FakeSession:
+    def __init__(self, response: _FakeResponse) -> None:
+        self.response = response
+
+    def mount(self, prefix: str, adapter: object) -> None:
+        del prefix, adapter
+
+    def post(self, *args: object, **kwargs: object) -> _FakeResponse:
+        del args, kwargs
+        return self.response
+
+
+def _local_settings(*, llama_endpoint: str = "http://llama.invalid") -> dict[str, Any]:
+    return {
+        "llama_api": {
+            "api_key": "fixed-llama-key",
+            "api_ip": llama_endpoint,
+            "temperature": 0.7,
+            "max_tokens": 64,
+            "streaming": False,
+            "api_retries": 0,
+            "api_retry_delay": 0,
+        },
+        "api_keys": {"kobold": "fixed-kobold-key"},
+        "local_api_ip": {
+            "kobold": "http://kobold.invalid/generate",
+            "kobold_openai": "http://kobold.invalid/chat",
+        },
+        "kobold_api": {"api_retries": 0, "api_retry_delay": 0},
+    }
+
+
+def _consume_generator(generator: Iterator[str]) -> tuple[list[str], object]:
+    chunks: list[str] = []
+    while True:
+        try:
+            chunks.append(next(generator))
+        except StopIteration as stop:
+            return chunks, stop.value
+
+
+LOCAL_INPUT_CANARY = "LOCAL_INPUT_CANARY_3796"
+LOCAL_PROMPT_CANARY = "LOCAL_PROMPT_CANARY_3796"
+LOCAL_CREDENTIAL_CANARY = "K3YQZ"
+LOCAL_PATH_CANARY = "http://LOCAL_PATH_CANARY_3796.invalid"
+LOCAL_RESPONSE_CANARY = "LOCAL_RESPONSE_CANARY_3796"
+LOCAL_EXCEPTION_CANARY = "LOCAL_EXCEPTION_CANARY_3796"
+
+
+def _invoke_local_input(monkeypatch: pytest.MonkeyPatch) -> object:
+    response = _FakeResponse(
+        json_data={"choices": [{"message": {"content": "  fixed summary  "}}]}
+    )
+    monkeypatch.setattr(
+        local_summarization.requests, "post", lambda *args, **kwargs: response
+    )
+    return local_summarization.summarize_with_local_llm(
+        LOCAL_INPUT_CANARY,
+        "fixed prompt",
+        0.2,
+    )
+
+
+def _invoke_local_prompt(monkeypatch: pytest.MonkeyPatch) -> object:
+    response = _FakeResponse(json_data={"content": "  fixed llama summary  "})
+    monkeypatch.setattr(local_summarization, "load_settings", _local_settings)
+    monkeypatch.setattr(
+        local_summarization.requests,
+        "Session",
+        lambda: _FakeSession(response),
+    )
+    return local_summarization.summarize_with_llama(
+        "fixed input",
+        LOCAL_PROMPT_CANARY,
+        api_key="fixed-llama-key",
+        system_message="fixed system message",
+    )
+
+
+def _invoke_local_credential(monkeypatch: pytest.MonkeyPatch) -> object:
+    monkeypatch.setattr(local_summarization, "load_settings", _local_settings)
+    generator = local_summarization.summarize_with_kobold(
+        {"summary": "existing summary"},
+        f"{LOCAL_CREDENTIAL_CANARY}-middle-{LOCAL_CREDENTIAL_CANARY}",
+        "fixed prompt",
+    )
+    return _consume_generator(generator)
+
+
+def _invoke_local_path(monkeypatch: pytest.MonkeyPatch) -> object:
+    monkeypatch.setattr(
+        local_summarization,
+        "load_settings",
+        lambda: _local_settings(llama_endpoint=LOCAL_PATH_CANARY),
+    )
+    return local_summarization.summarize_with_llama(
+        {"summary": "existing summary"},
+        "fixed prompt",
+        api_key="fixed-llama-key",
+    )
+
+
+def _invoke_local_response(monkeypatch: pytest.MonkeyPatch) -> object:
+    response = _FakeResponse(
+        lines=(f"data: {{{LOCAL_RESPONSE_CANARY}".encode(), b"data: [DONE]")
+    )
+    monkeypatch.setattr(
+        local_summarization.requests, "post", lambda *args, **kwargs: response
+    )
+    generator = local_summarization.summarize_with_local_llm(
+        "fixed input",
+        "fixed prompt",
+        0.2,
+        streaming=True,
+    )
+    return list(generator)
+
+
+def _invoke_local_exception(monkeypatch: pytest.MonkeyPatch) -> object:
+    def raise_private_exception(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise RuntimeError(LOCAL_EXCEPTION_CANARY)
+
+    monkeypatch.setattr(local_summarization.requests, "post", raise_private_exception)
+    return local_summarization.summarize_with_local_llm(
+        "fixed input",
+        "fixed prompt",
+        0.2,
+    )
+
+
+def _assert_fixed_summary(result: object) -> None:
+    assert result == "fixed summary"
+
+
+def _assert_fixed_llama_summary(result: object) -> None:
+    assert result == "fixed llama summary"
+
+
+def _assert_existing_kobold_summary(result: object) -> None:
+    assert result == ([], "existing summary")
+
+
+def _assert_existing_llama_summary(result: object) -> None:
+    assert result == "existing summary"
+
+
+def _assert_empty_stream(result: object) -> None:
+    assert result == []
+
+
+def _assert_local_exception_contract(result: object) -> None:
+    assert result == (
+        f"Local LLM: Error occurred while processing summary: {LOCAL_EXCEPTION_CANARY}"
+    )
+
+
+@dataclass(frozen=True)
+class RuntimeSentinelCase:
+    module: str
+    category: str
+    canary: str
+    invoke: Callable[[pytest.MonkeyPatch], object]
+    assert_contract: Callable[[object], None]
+    expected_event: str
+
+
+RUNTIME_SENTINEL_CASES = (
+    RuntimeSentinelCase(
+        "local",
+        "input",
+        LOCAL_INPUT_CANARY,
+        _invoke_local_input,
+        _assert_fixed_summary,
+        "Local LLM: Type of data:",
+    ),
+    RuntimeSentinelCase(
+        "local",
+        "prompt",
+        LOCAL_PROMPT_CANARY,
+        _invoke_local_prompt,
+        _assert_fixed_llama_summary,
+        "Llama Summarize: Prompt prepared; character_count=",
+    ),
+    RuntimeSentinelCase(
+        "local",
+        "credential",
+        LOCAL_CREDENTIAL_CANARY,
+        _invoke_local_credential,
+        _assert_existing_kobold_summary,
+        "Kobold: Credential state resolved",
+    ),
+    RuntimeSentinelCase(
+        "local",
+        "path",
+        LOCAL_PATH_CANARY,
+        _invoke_local_path,
+        _assert_existing_llama_summary,
+        "Llama: API endpoint configured",
+    ),
+    RuntimeSentinelCase(
+        "local",
+        "response",
+        LOCAL_RESPONSE_CANARY,
+        _invoke_local_response,
+        _assert_empty_stream,
+        "Local LLM: Failed to decode streamed JSON",
+    ),
+    RuntimeSentinelCase(
+        "local",
+        "exception",
+        LOCAL_EXCEPTION_CANARY,
+        _invoke_local_exception,
+        _assert_local_exception_contract,
+        "Local LLM: Processing failed; exception_type=RuntimeError",
+    ),
+)
 
 
 def _guard() -> ModuleType:
@@ -1402,3 +1679,173 @@ def test_ledger_deletion_reason_contract() -> None:
     }
     with pytest.raises(AssertionError, match="only deleted diagnostics"):
         _assert_ledger_lifecycle([pending_with_reason])
+
+
+def test_no_pending_local_core_sites() -> None:
+    pending = [
+        site
+        for site in _ledger_sites()
+        if site["group"] == "local_core" and site["outcome"] == "pending"
+    ]
+
+    assert not pending, (
+        f"local_core has {len(pending)} pending private diagnostics: "
+        f"{[site['site_id'] for site in pending]}"
+    )
+
+
+@pytest.mark.parametrize(
+    "case",
+    RUNTIME_SENTINEL_CASES,
+    ids=lambda case: f"{case.module}-{case.category}",
+)
+def test_runtime_sentinel_hides_private_value(
+    case: RuntimeSentinelCase,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = case.invoke(monkeypatch)
+        case.assert_contract(result)
+
+    assert case.canary not in captured.text
+    assert case.expected_event in captured.text
+
+
+def test_local_llm_success_contract_hides_input_canary(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = _invoke_local_input(monkeypatch)
+
+    _assert_fixed_summary(result)
+    assert LOCAL_INPUT_CANARY not in captured.text
+
+
+def test_local_llm_malformed_stream_contract_hides_response_canary(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = _invoke_local_response(monkeypatch)
+
+    _assert_empty_stream(result)
+    assert LOCAL_RESPONSE_CANARY not in captured.text
+
+
+def test_local_llm_exception_contract_hides_exception_canary(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = _invoke_local_exception(monkeypatch)
+
+    _assert_local_exception_contract(result)
+    assert LOCAL_EXCEPTION_CANARY not in captured.text
+
+
+def test_local_core_llama_success_hides_prompt_and_endpoint_canaries(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    response = _FakeResponse(json_data={"content": "  fixed llama summary  "})
+    monkeypatch.setattr(
+        local_summarization,
+        "load_settings",
+        lambda: _local_settings(llama_endpoint=LOCAL_PATH_CANARY),
+    )
+    monkeypatch.setattr(
+        local_summarization.requests,
+        "Session",
+        lambda: _FakeSession(response),
+    )
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = local_summarization.summarize_with_llama(
+            "fixed input",
+            LOCAL_PROMPT_CANARY,
+            api_key="fixed-llama-key",
+            system_message="fixed system message",
+        )
+
+    _assert_fixed_llama_summary(result)
+    assert LOCAL_PROMPT_CANARY not in captured.text
+    assert LOCAL_PATH_CANARY not in captured.text
+
+
+def test_local_core_llama_accepts_non_string_system_message_as_before(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = _FakeResponse(json_data={"content": "  fixed llama summary  "})
+    monkeypatch.setattr(local_summarization, "load_settings", _local_settings)
+    monkeypatch.setattr(
+        local_summarization.requests,
+        "Session",
+        lambda: _FakeSession(response),
+    )
+
+    result = local_summarization.summarize_with_llama(
+        "fixed input",
+        "fixed prompt",
+        api_key="fixed-llama-key",
+        system_message=object(),
+    )
+
+    _assert_fixed_llama_summary(result)
+
+
+def test_local_core_kobold_missing_key_error_contract_is_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def transport_must_not_run() -> _FakeSession:
+        raise AssertionError("transport invoked before missing-key failure")
+
+    settings = _local_settings()
+    settings["api_keys"]["kobold"] = None
+    monkeypatch.setattr(local_summarization, "load_settings", lambda: settings)
+    monkeypatch.setattr(
+        local_summarization.requests,
+        "Session",
+        transport_must_not_run,
+    )
+
+    generator = local_summarization.summarize_with_kobold(
+        "fixed input",
+        None,
+        "fixed prompt",
+    )
+    result = _consume_generator(generator)
+
+    assert result == (
+        [],
+        "Kobold: Error occurred while processing summary with Kobold: "
+        "'NoneType' object is not subscriptable",
+    )
+
+
+def test_local_core_kobold_stream_fully_consumed_without_private_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    response = _FakeResponse(
+        lines=(f"data: {{{LOCAL_RESPONSE_CANARY}".encode(), b"data: [DONE]")
+    )
+    monkeypatch.setattr(local_summarization, "load_settings", _local_settings)
+    monkeypatch.setattr(
+        local_summarization.requests,
+        "Session",
+        lambda: _FakeSession(response),
+    )
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        generator = local_summarization.summarize_with_kobold(
+            "fixed input",
+            "fixed-kobold-key",
+            "fixed prompt",
+            streaming=True,
+        )
+        result = _consume_generator(generator)
+
+    assert result == ([], None)
+    assert LOCAL_RESPONSE_CANARY not in captured.text
