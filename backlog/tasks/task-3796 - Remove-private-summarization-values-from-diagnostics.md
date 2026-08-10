@@ -1,9 +1,11 @@
 ---
 id: TASK-3796
 title: Remove private summarization values from diagnostics
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-08-09 14:49'
+updated_date: '2026-08-10 19:38'
 labels:
   - llm-calls
   - observability
@@ -17,6 +19,10 @@ priority: high
 <!-- SECTION:DESCRIPTION:BEGIN -->
 TASK-2118's final review found that its identifier-filtered candidate list had been incorrectly promoted into a complete summarization follow-up. A fresh review of every logger call in `Local_Summarization_Lib.py` and `Summarization_General_Lib.py` verified a broader boundary: raw/processed/extracted input, custom/system/combined prompts, response and generated-output content, credential fragments, private endpoint or local-path values, and exception/error details are written to diagnostics. These sites are not raw provider request-payload dictionaries or tool definitions, so they remain outside TASK-2118 acceptance criterion 4, but they violate ADR-029's metadata-only persistent-log boundary and need one atomic containment repair.
 <!-- SECTION:DESCRIPTION:END -->
+
+## Design Reference
+
+- [TASK-3796 summarization diagnostic privacy design](../../Docs/superpowers/specs/2026-08-10-task-3796-summarization-diagnostic-privacy-design.md)
 
 ## Verified Diagnostic Inventory
 
