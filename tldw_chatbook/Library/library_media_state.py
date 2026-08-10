@@ -147,6 +147,11 @@ def build_library_media_state(
             first displayed row when absent from the filtered/limited rows.
         now: Reference time for relative age labels; defaults to current UTC time.
         limit: Maximum number of rows to display after sorting and filtering.
+        delete_receipt_count: Count of items from the most recently
+            completed bulk delete, rendered as a "✓ deleted · N items"
+            receipt with Undo/Dismiss until acted on or replaced by a
+            newer bulk-delete action. 0 (the default) means no receipt to
+            show.
 
     Returns:
         Immutable canvas state: rows, type options, active type, status/empty copy,

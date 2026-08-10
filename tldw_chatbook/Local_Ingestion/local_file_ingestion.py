@@ -1583,6 +1583,19 @@ def persist_parsed_media(
     reading-list bulk imports, Console "save message as media", ...)
     leaves the flag at its default ``False`` and a trashed match is left
     untouched, same as before task-4022 ever existed.
+
+    P1 re-critique finding 2: ``parse_local_file_for_ingest`` always
+    normalizes ``payload["keywords"]`` to a list (``[]`` when the user
+    typed none and nothing was auto-extracted -- see its own ``if
+    keywords is None: keywords = []``), never ``None``. The DB layer now
+    distinguishes "keywords argument omitted" (preserve existing curated
+    keywords on a restore) from "keywords argument is an explicit empty
+    list" (clear them) -- so passing ``payload["keywords"]`` through
+    unchanged would silently WIPE a restored row's curated keywords on
+    every plain re-import where the user didn't retype them, which is
+    exactly the data loss task-4022 was written to prevent. ``or None``
+    below restores the "nothing to contribute" signal this caller always
+    means whenever the list is empty.
     """
     file_type = payload["file_type"]
     _reject_empty_extraction(payload, file_type)
@@ -1593,7 +1606,7 @@ def persist_parsed_media(
             title=payload["title"],
             media_type=payload["media_type"],
             content=payload["content"],
-            keywords=payload["keywords"],
+            keywords=payload["keywords"] or None,
             url=payload["url"],
             analysis_content=payload["analysis_content"],
             author=payload["author"],

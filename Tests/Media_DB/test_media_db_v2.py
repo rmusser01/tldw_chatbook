@@ -1244,13 +1244,20 @@ class TestReimportAfterTrashChunks:
 
 
 class TestReimportAfterTrashKeywords:
-    """task-4022 review round 2 (I2, Important): restoring a trashed row
-    must not silently wipe the user's curated keywords just because the
-    caller re-importing it didn't happen to pass any -- ``keywords=[]`` on
-    a restore call almost always means "the caller didn't supply any",
-    not "delete every keyword this row had"."""
+    """task-4022 review round 2 (I2, Important), corrected by the P1
+    re-critique (finding 2): restoring a trashed row must not silently wipe
+    the user's curated keywords just because the caller re-importing it
+    never supplied a ``keywords`` argument at all (``keywords=None``, the
+    default) -- most restore callers simply have no opinion on keywords.
+    An explicit ``keywords=[]`` is a different signal (the caller DOES want
+    them cleared) and must not be conflated with "not supplied" -- see
+    ``TestReimportAfterTrashKeywords.test_restore_with_overwrite_and_
+    explicit_empty_keywords_clears_them`` below for that contract. The I2
+    fix originally kept both signals indistinguishable (``keywords_norm``
+    is ``[]`` either way); this class now covers all three: not supplied
+    (preserve), non-empty (apply), and explicit empty (clear)."""
 
-    def test_restore_with_empty_keywords_preserves_existing_keywords(
+    def test_restore_with_keywords_omitted_preserves_existing_keywords(
         self, file_db
     ):
         url = "file:///keywords/preserve.txt"
@@ -1272,11 +1279,13 @@ class TestReimportAfterTrashKeywords:
         assert before == ["important", "mine"]
         assert file_db.mark_as_trash(media_id) is True
 
+        # ``keywords`` is genuinely omitted here (defaults to ``None``) --
+        # NOT an explicit ``keywords=[]`` -- the two must no longer behave
+        # the same way (see finding 2).
         reimported_id, _, msg = file_db.add_media_with_keywords(
             title="preserve.txt",
             media_type="document",
             content="content with curated keywords",
-            keywords=[],
             url=url,
             restore_trashed=True,
         )
@@ -1293,7 +1302,7 @@ class TestReimportAfterTrashKeywords:
         )
         assert after == ["important", "mine"], (
             "restore must not wipe curated keywords just because the "
-            "re-import call happened to pass an empty list"
+            "re-import call didn't supply a keywords argument at all"
         )
 
     def test_restore_with_nonempty_keywords_still_applies_them(self, file_db):
@@ -1330,6 +1339,58 @@ class TestReimportAfterTrashKeywords:
             ).fetchall()
         )
         assert after == ["new-keyword"]
+
+    def test_restore_with_overwrite_and_explicit_empty_keywords_clears_them(
+        self, file_db
+    ):
+        """P1 re-critique finding 2: the I2 guard above must not make an
+        explicit clear impossible. ``keywords_norm`` alone can't tell
+        "caller didn't pass keywords" (``None``) apart from "caller wants
+        them all gone" (``[]``) -- both normalise to the same empty list.
+        With ``overwrite=True`` and an explicit ``keywords=[]``, a restore
+        must still clear the row's existing keywords, exactly as a plain
+        (non-restore) ``overwrite=True`` + ``keywords=[]`` call already
+        does."""
+        url = "file:///keywords/explicit-clear.txt"
+        media_id, _, _ = file_db.add_media_with_keywords(
+            title="explicit-clear.txt",
+            media_type="document",
+            content="content with keywords to be explicitly cleared",
+            keywords=["stale", "obsolete"],
+            url=url,
+        )
+        before = sorted(
+            r["keyword"]
+            for r in file_db.execute_query(
+                "SELECT k.keyword FROM Keywords k JOIN MediaKeywords mk ON k.id = mk.keyword_id "
+                "WHERE mk.media_id = ? AND k.deleted = 0",
+                (media_id,),
+            ).fetchall()
+        )
+        assert before == ["obsolete", "stale"]
+        assert file_db.mark_as_trash(media_id) is True
+
+        reimported_id, _, msg = file_db.add_media_with_keywords(
+            title="explicit-clear.txt",
+            media_type="document",
+            content="content with keywords to be explicitly cleared",
+            keywords=[],
+            url=url,
+            overwrite=True,
+            restore_trashed=True,
+        )
+
+        assert reimported_id == media_id, msg
+        assert "restored" in msg.lower(), msg
+        after = file_db.execute_query(
+            "SELECT k.keyword FROM Keywords k JOIN MediaKeywords mk ON k.id = mk.keyword_id "
+            "WHERE mk.media_id = ? AND k.deleted = 0",
+            (media_id,),
+        ).fetchall()
+        assert after == [], (
+            "overwrite=True + an explicit keywords=[] must clear keywords "
+            "during a restore, exactly as it does outside a restore"
+        )
 
 
 class TestReimportAfterTrashUrlCanonicalization:
@@ -1409,7 +1470,12 @@ class TestReimportAfterTrashCombined:
             title="deep-dive",
             media_type="article",
             content=content,
-            keywords=[],  # I2: must not wipe "mine"/"curated"
+            # I2, corrected by the P1 re-critique (finding 2): ``keywords``
+            # is genuinely OMITTED here, not an explicit ``keywords=[]`` --
+            # only "no keywords argument at all" preserves the existing
+            # curated set; an explicit empty list now clears them (see
+            # ``TestReimportAfterTrashKeywords.test_restore_with_
+            # overwrite_and_explicit_empty_keywords_clears_them``).
             url=local_url,  # I3: must not clobber the canonical https url
             chunks=[  # C1: must not IntegrityError against the old chunks
                 {"text": "fresh chunk one", "chunk_type": "text"},
@@ -1428,7 +1494,7 @@ class TestReimportAfterTrashCombined:
         # I3: canonical url survives a restore from a less-canonical path.
         assert row["url"] == canonical_url
 
-        # I2: pre-existing curated keywords survive an empty incoming list.
+        # I2: pre-existing curated keywords survive an omitted keywords arg.
         keywords = sorted(
             r["keyword"]
             for r in file_db.execute_query(

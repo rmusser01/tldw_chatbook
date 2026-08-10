@@ -2399,6 +2399,24 @@ class LibraryScreen(BaseAppScreen):
         # second worker would decrement it again for ids already gone from
         # ``_local_source_records``. Checked at the very top of the confirm
         # button handler, before it even reads the selection.
+        #
+        # P1 re-critique finding 3: this flag now ALSO guards
+        # ``_undo_library_media_bulk_delete`` -- a single shared flag for
+        # both directions, not one flag per direction. Delete and Undo were
+        # previously gated by two independent flags AND scheduled into two
+        # different exclusive worker groups, so nothing stopped one from
+        # starting while the other was still awaiting its own per-item
+        # service calls; both mutate the same shared state
+        # (``_local_source_records["media"]``, ``_local_source_counts
+        # ["media"]``, ``_library_media_delete_receipt_ids``), so an
+        # interleaving let Undo finish LAST and clobber a newer delete's
+        # writes with its own stale snapshot (or vice versa). Sharing one
+        # flag (checked at the top of BOTH button handlers, before either
+        # reads any state) makes the two mutually exclusive: whichever
+        # press lands first runs to completion in the ``finally`` below
+        # before the other can even schedule its worker, and the losing
+        # press is a silent no-op rather than a second worker racing the
+        # first over the same mutable state.
         self._library_media_bulk_delete_in_flight: bool = False
         # task-4022 AC2: the ids from the most recently completed bulk
         # delete, rendered as a "✓ deleted · N items" receipt (with
@@ -2408,7 +2426,6 @@ class LibraryScreen(BaseAppScreen):
         # entered, set to the succeeded subset when a delete completes, and
         # narrowed to only the still-failed ids by a partial Undo.
         self._library_media_delete_receipt_ids: tuple[str, ...] = ()
-        self._library_media_bulk_delete_undo_in_flight: bool = False
         self._library_media_view: str = "list"
         self._library_media_detail: Mapping[str, Any] | None = None
         self._library_media_editing: bool = False
@@ -12047,6 +12064,12 @@ class LibraryScreen(BaseAppScreen):
         a second line of defense, matching this screen's other single-
         flight workers (e.g. ``library_note_save``).
 
+        P1 re-critique finding 3: the same flag and the same worker
+        ``group`` are now shared with ``handle_library_media_bulk_delete_
+        undo`` -- see the flag's own declaration for why. A press here
+        while an Undo is still running is refused exactly like a double-
+        press on this same button always was.
+
         Args:
             event: Button press event emitted by the confirm row's "Delete".
         """
@@ -12225,24 +12248,35 @@ class LibraryScreen(BaseAppScreen):
         Reads the receipt's frozen id tuple synchronously (mirroring how
         the confirm button reads the selection before scheduling
         ``_delete_library_media_selection``) and hands off to a worker.
-        Guarded by its own in-flight flag -- separate from the delete
-        path's -- since Undo and a fresh bulk delete are different
-        actions that could otherwise race on the same ids.
+
+        P1 re-critique finding 3: guarded by the SAME
+        ``_library_media_bulk_delete_in_flight`` flag and scheduled into
+        the SAME exclusive worker ``group`` as the delete path, not a
+        separate flag/group of its own -- a previous version used two
+        independent flags reasoning that "Undo and a fresh bulk delete...
+        could otherwise race on the same ids", which was backwards: two
+        independent flags is exactly what let them race, since neither
+        blocked the other and both mutate the same shared state
+        (``_local_source_records["media"]``, ``_local_source_counts
+        ["media"]``, ``_library_media_delete_receipt_ids``). Sharing one
+        flag means a delete press while Undo is running (or vice versa) is
+        refused outright rather than racing to completion in whichever
+        order the two workers happen to finish.
 
         Args:
             event: Button press event emitted by the receipt row's "Undo".
         """
         event.stop()
-        if self._library_media_bulk_delete_undo_in_flight:
+        if self._library_media_bulk_delete_in_flight:
             return
         media_ids = self._library_media_delete_receipt_ids
         if not media_ids:
             return
-        self._library_media_bulk_delete_undo_in_flight = True
+        self._library_media_bulk_delete_in_flight = True
         self.run_worker(
             self._undo_library_media_bulk_delete(media_ids),
             exclusive=True,
-            group="library_media_bulk_delete_undo",
+            group="library_media_bulk_delete",
         )
 
     @on(Button.Pressed, "#library-media-bulk-delete-receipt-dismiss")
@@ -12350,7 +12384,7 @@ class LibraryScreen(BaseAppScreen):
                 # AC3 review round 2).
                 self._arm_library_list_entry_focus()
         finally:
-            self._library_media_bulk_delete_undo_in_flight = False
+            self._library_media_bulk_delete_in_flight = False
 
     @on(Button.Pressed, "#library-media-open-viewer")
     def handle_library_media_open_viewer(self, event: Button.Pressed) -> None:

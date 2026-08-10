@@ -3581,6 +3581,15 @@ class MediaDatabase:
         )
         title = title or "Untitled"
         media_type = media_type or "unknown"
+        # task-4022 review round P1 (finding 2): capture whether the caller
+        # supplied a ``keywords`` argument at all -- BEFORE normalisation,
+        # which collapses both "not passed" (``None``) and "explicitly
+        # cleared" (``[]``) to the same empty ``keywords_norm`` list. The
+        # trash-restore guards below need to tell those two apart: a
+        # restore that got no ``keywords`` argument must preserve the row's
+        # existing curated keywords, while a restore that got an explicit
+        # ``keywords=[]`` must be able to clear them.
+        keywords_provided = keywords is not None
         keywords_norm = [k.strip().lower() for k in keywords or [] if k and k.strip()]
 
         now = self._get_current_utc_timestamp_str()
@@ -3806,16 +3815,21 @@ class MediaDatabase:
                             )
 
                             # Update keywords first (task-4022 review round
-                            # 2 / I2: a restore with no incoming keywords
-                            # must NOT wipe the row's existing, user-
-                            # curated keywords -- ``keywords=[]`` here
-                            # almost always just means "the caller didn't
-                            # pass any", not "the user wants them all
-                            # removed". A genuine explicit clear via
-                            # ``overwrite=True`` + ``keywords=[]`` is
-                            # unaffected -- this only skips the sync when
-                            # BOTH conditions hold.)
-                            if not (restoring_from_trash and not keywords_norm):
+                            # 2 / I2, corrected in review round P1 / finding
+                            # 2: a restore where the caller never passed a
+                            # ``keywords`` argument must NOT wipe the row's
+                            # existing, user-curated keywords -- most
+                            # restore callers simply don't have an opinion
+                            # on keywords. That is keyed on
+                            # ``keywords_provided`` (captured before
+                            # normalisation), NOT on ``keywords_norm`` being
+                            # empty -- the earlier version conflated "not
+                            # passed" with "explicitly cleared", which made
+                            # an explicit ``keywords=[]`` clear impossible
+                            # during a restore even with ``overwrite=True``.
+                            # A genuine explicit clear (``keywords=[]``) now
+                            # always syncs, restoring or not.
+                            if not (restoring_from_trash and not keywords_provided):
                                 self.update_keywords_for_media(media_id, keywords_norm)
                             _persist_chunks(
                                 conn,
@@ -4034,11 +4048,14 @@ class MediaDatabase:
                         self._update_fts_media(
                             conn, media_id, payload["title"], payload["content"]
                         )
-                        # task-4022 review round 2 / I2: see the identical-
-                        # content branch above for why an empty incoming
-                        # keyword list is skipped, not synced, while
-                        # restoring from trash.
-                        if not (restoring_from_trash and not keywords_norm):
+                        # task-4022 review round 2 / I2, corrected in review
+                        # round P1 / finding 2: see the identical-content
+                        # branch above -- an incoming keyword argument that
+                        # was never provided (``keywords_provided`` is
+                        # False) is skipped, not synced, while restoring
+                        # from trash; an explicit ``keywords=[]`` still
+                        # syncs (and clears).
+                        if not (restoring_from_trash and not keywords_provided):
                             self.update_keywords_for_media(media_id, keywords_norm)
                         self.create_document_version(
                             media_id=media_id,

@@ -328,6 +328,76 @@ def test_persist_db_failure_is_wrapped_as_file_ingestion_error(tmp_path: Path) -
         persist_parsed_media(payload, _ExplodingDB())
 
 
+def test_persist_reimport_without_keywords_preserves_curated_keywords_on_restore(
+    tmp_path: Path,
+) -> None:
+    """P1 re-critique finding 2 follow-through: ``parse_local_file_for_
+    ingest`` always normalizes an omitted ``keywords`` option to ``[]``
+    (never ``None``), so ``persist_parsed_media`` must convert that empty
+    list back to "not provided" before handing it to the DB layer -- which
+    now distinguishes "no keywords argument" (preserve existing curated
+    keywords on a trash-restore) from "explicit empty list" (clear them).
+    Without that conversion, plainly re-importing the same file (the
+    real-world "I deleted this by mistake, let me re-import it" flow, the
+    one production caller that passes ``restore_trashed=True``) would
+    silently wipe every curated keyword the row had, exactly the data loss
+    task-4022 was written to prevent. Uses a real file-backed
+    ``MediaDatabase`` (never a mock or ``:memory:``) since this is a
+    DB-layer keyword-persistence claim.
+    """
+    db_path = tmp_path / "media.db"
+    db = MediaDatabase(str(db_path), client_id="test-persist-restore-keywords")
+
+    source = tmp_path / "reimport-me.txt"
+    source.write_text("Original content.", encoding="utf-8")
+
+    # First import: the user explicitly curates keywords via the ingest
+    # options.
+    first_payload = parse_local_file_for_ingest(
+        str(source), {"keywords": ["curated", "mine"]}
+    )
+    # ``parse_local_file_for_ingest`` builds this via ``list(set(...))``
+    # internally, so its order is not guaranteed (varies with the
+    # process's hash seed, not with test order) -- compare unordered.
+    assert sorted(first_payload["keywords"]) == ["curated", "mine"]
+    media_id, _media_uuid, msg = persist_parsed_media(first_payload, db)
+    assert media_id is not None, msg
+
+    def _current_keywords() -> list[str]:
+        return sorted(
+            r["keyword"]
+            for r in db.execute_query(
+                "SELECT k.keyword FROM Keywords k JOIN MediaKeywords mk "
+                "ON k.id = mk.keyword_id WHERE mk.media_id = ? AND k.deleted = 0",
+                (media_id,),
+            ).fetchall()
+        )
+
+    assert _current_keywords() == ["curated", "mine"]
+    assert db.mark_as_trash(media_id) is True
+
+    # Re-import the SAME file with the SAME options object shape a real
+    # "just re-drop the file in" flow produces: no keywords typed this
+    # time, and no extraction gave any either -- the ingest options
+    # normalize that to an EMPTY list (``parse_local_file_for_ingest``'s
+    # own ``if keywords is None: keywords = []``), never ``None``.
+    second_payload = parse_local_file_for_ingest(str(source), {})
+    assert second_payload["keywords"] == []
+    reimported_id, _reimported_uuid, msg2 = persist_parsed_media(second_payload, db)
+
+    assert reimported_id == media_id, msg2
+    assert "restored" in msg2.lower(), msg2
+    row = db.get_media_by_id(media_id, include_trash=True)
+    assert row["is_trash"] == 0
+
+    assert _current_keywords() == ["curated", "mine"], (
+        "re-importing a restored file without retyping its keywords must "
+        "not wipe the curated keywords it already had"
+    )
+
+    db.close_connection()
+
+
 # --- ingest_local_file (compose) --------------------------------------------
 
 
