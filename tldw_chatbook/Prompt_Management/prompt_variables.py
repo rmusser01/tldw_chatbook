@@ -27,6 +27,55 @@ class PromptVariableValidationError(ValueError):
     """Report that a Prompt variable plan cannot be rendered safely."""
 
 
+def validate_prompt_application_guards(
+    *,
+    destination: PromptApplicationDestination,
+    target_session_id: str,
+    composer_fingerprint: str | None,
+    system_fingerprint: str | None,
+    requires_system_fingerprint: bool,
+) -> None:
+    """Validate application identity without starting an application TTL.
+
+    Args:
+        destination: Composer replacement or active-draft append behavior.
+        target_session_id: Exact Console session authorized by the caller.
+        composer_fingerprint: Captured composer digest for replacement.
+        system_fingerprint: Authorized System digest when required.
+        requires_system_fingerprint: Whether the selected source has a System
+            lane that requires authorization.
+
+    Raises:
+        TypeError: If the System-fingerprint requirement is not a bool.
+        ValueError: If the destination, target, or fingerprints are invalid.
+    """
+    if type(requires_system_fingerprint) is not bool:
+        raise TypeError("System fingerprint requirement must be a boolean")
+    if type(destination) is not str or destination not in (
+        "replace_snapshot",
+        "append_active",
+    ):
+        raise ValueError("Prompt application destination is invalid")
+    if (
+        type(target_session_id) is not str
+        or not target_session_id.strip()
+        or target_session_id != target_session_id.strip()
+    ):
+        raise ValueError("Prompt application target session is invalid")
+
+    if destination == "replace_snapshot":
+        if not _is_composer_fingerprint(composer_fingerprint):
+            raise ValueError("Prompt application composer fingerprint is invalid")
+    elif composer_fingerprint is not None:
+        raise ValueError("Append application forbids a composer fingerprint")
+
+    if requires_system_fingerprint:
+        if not _is_system_fingerprint(system_fingerprint):
+            raise ValueError("Prompt application System fingerprint is invalid")
+    elif system_fingerprint is not None:
+        raise ValueError("Inactive System lane forbids a System fingerprint")
+
+
 @dataclass(frozen=True, slots=True)
 class PromptVariableApplication:
     """Carry one guarded, memory-only Prompt application.
@@ -62,29 +111,13 @@ class PromptVariableApplication:
             raise ValueError("Prompt application requires at least one lane")
         _validate_lane_payload("System", self.system_text, self.apply_system)
         _validate_lane_payload("User", self.user_text, self.apply_user)
-        if type(self.destination) is not str or self.destination not in (
-            "replace_snapshot",
-            "append_active",
-        ):
-            raise ValueError("Prompt application destination is invalid")
-        if (
-            type(self.target_session_id) is not str
-            or not self.target_session_id.strip()
-            or self.target_session_id != self.target_session_id.strip()
-        ):
-            raise ValueError("Prompt application target session is invalid")
-
-        if self.destination == "replace_snapshot":
-            if not _is_composer_fingerprint(self.composer_fingerprint):
-                raise ValueError("Prompt application composer fingerprint is invalid")
-        elif self.composer_fingerprint is not None:
-            raise ValueError("Append application forbids a composer fingerprint")
-
-        if self.apply_system:
-            if not _is_system_fingerprint(self.system_fingerprint):
-                raise ValueError("Prompt application System fingerprint is invalid")
-        elif self.system_fingerprint is not None:
-            raise ValueError("Inactive System lane forbids a System fingerprint")
+        validate_prompt_application_guards(
+            destination=self.destination,
+            target_session_id=self.target_session_id,
+            composer_fingerprint=self.composer_fingerprint,
+            system_fingerprint=self.system_fingerprint,
+            requires_system_fingerprint=self.apply_system,
+        )
 
         created = _finite_monotonic(
             self.created_monotonic,
