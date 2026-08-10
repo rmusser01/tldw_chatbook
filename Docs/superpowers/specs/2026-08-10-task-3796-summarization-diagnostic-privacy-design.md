@@ -6,7 +6,7 @@
 - Existing decision: [ADR-029: Local Private Data Boundary](../../../backlog/decisions/029-local-private-data-boundary.md)
 - ADR required: no
 - ADR path: `backlog/decisions/029-local-private-data-boundary.md`
-- ADR reason: ADR-029 already defines the governing boundary: diagnostics may retain bounded operational metadata, but not user/model content, key fragments, private values, or exception messages. This task applies that existing decision to two summarization modules without changing storage, sink admission, provider contracts, or another cross-module interface.
+- ADR reason: ADR-029 defines the persistent-log boundary: persistent records may retain bounded operational metadata, but not user/model content, key fragments, private values, or exception messages. TASK-3796 applies the same allowlist at the leaking call sites as a scoped defense-in-depth repair, without changing the global contract for other UI/terminal diagnostics, storage, sink admission, provider contracts, or another cross-module interface.
 
 ## Outcome
 
@@ -34,6 +34,8 @@ The 199 sites comprise:
 | **Total** | **100** | **99** | **199** |
 
 The task's verified inventory is authoritative for the pre-implementation sites. Its line numbers are navigation aids. Stable identity is the module, qualified enclosing function, fixed diagnostic event/label, category, and an occurrence ordinal only when those fields would otherwise collide.
+
+The current persistent sink rejects ordinary Chatbook records that do not pass through its metadata admission helper. The inventoried private values are nevertheless formatted and submitted to stdlib logging or Loguru, where non-persistent handlers can observe them and a later sink change could admit them. This task removes those values at the narrower source boundary; it does not claim they all currently reach the persistent file.
 
 The focused pre-change baseline on current `origin/dev` is 37 passing tests across:
 
