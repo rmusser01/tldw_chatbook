@@ -1066,9 +1066,7 @@ def summarize_with_vllm(
             logging.info("vLLM Summarize: Attempting to use API key from config file")
             loaded_config_data = load_settings()
             api_key = loaded_config_data.get("vllm_api", {}).get("api_key", "")
-            logging.debug(
-                f"vLLM Summarize: Using API key from config file: {api_key[:5]}...{api_key[-5:]}"
-            )
+            logging.debug("vLLM Summarize: Credential loaded from config")
 
         if not api_key or api_key.strip() == "":
             logging.error("vLLM Summarize: API key not found or is empty")
@@ -1076,13 +1074,11 @@ def summarize_with_vllm(
                 "vLLM Summarize: API Key Not Provided/Found in Config file or is empty"
             )
 
-        logging.debug(f"vLLM Summarize: Using API Key: {api_key[:5]}...{api_key[-5:]}")
+        logging.debug("vLLM Summarize: Credential state resolved")
 
         # Input data handling
         logging.debug(f"vLLM Summarize: Raw input data type: {type(input_data)}")
-        logging.debug(
-            f"vLLM Summarize: Raw input data (first 500 chars): {str(input_data)[:500]}..."
-        )
+        logging.debug("vLLM Summarize: Raw input received")
 
         if isinstance(input_data, str):
             if input_data.strip().startswith("{"):
@@ -1094,7 +1090,8 @@ def summarize_with_vllm(
                     data = json.loads(input_data)
                 except json.JSONDecodeError as e:
                     logging.error(
-                        f"vLLM Summarize: Error parsing JSON string: {str(e)}"
+                        "vLLM Summarize: JSON input parsing failed; exception_type=%s",
+                        safe_metadata_token(type(e).__name__),
                     )
                     return f"vLLM Summarize: Error parsing JSON input: {str(e)}"
             else:
@@ -1106,9 +1103,7 @@ def summarize_with_vllm(
             data = input_data
 
         logging.debug(f"vLLM Summarize: Processed data type: {type(data)}")
-        logging.debug(
-            f"vLLM Summarize: Processed data (first 500 chars): {str(data)[:500]}..."
-        )
+        logging.debug("vLLM Summarize: Input processing completed")
 
         # Text extraction
         if isinstance(data, dict):
@@ -1128,10 +1123,8 @@ def summarize_with_vllm(
         else:
             raise ValueError(f"vLLM Summarize: Invalid input data format: {type(data)}")
 
-        logging.debug(
-            f"vLLM Summarize: Extracted text (first 500 chars): {text[:500]}..."
-        )
-        logging.debug(f"vLLM Summarize: Custom prompt: {custom_prompt_arg}")
+        logging.debug("vLLM Summarize: Text extraction completed")
+        logging.debug("vLLM Summarize: Custom prompt received")
 
         config_settings = load_settings()
         vllm_model = config_settings["vllm_api"]["model"]
@@ -1142,9 +1135,7 @@ def summarize_with_vllm(
             "Content-Type": "application/json",
         }
 
-        logging.debug(
-            f"vLLM API Key: {api_key[:5]}...{api_key[-5:] if api_key else None}"
-        )
+        logging.debug("vLLM Summarize: Credential applied to request")
         logging.debug("vLLM Summarize: Preparing data + prompt for submittal")
         user_prompt = f"{text} \n\n\n\n{custom_prompt_arg}"
         if temp is None:
@@ -1219,7 +1210,9 @@ def summarize_with_vllm(
                             yield chunk
                         except json.JSONDecodeError:
                             logging.error(
-                                f"OpenAI: Error decoding JSON from line: {line}"
+                                "vLLM Summarize: Failed to decode streamed JSON; "
+                                "line_length=%s",
+                                len(line),
                             )
                             continue
 
@@ -1255,7 +1248,8 @@ def summarize_with_vllm(
                     summary = response_data["choices"][0]["message"]["content"].strip()
                     logging.debug("vLLM Summarization: Summarization successful")
                     logging.debug(
-                        f"vLLM Summarization: Summary (first 500 chars): {summary[:500]}..."
+                        "vLLM Summarization: Summary produced; character_count=%s",
+                        len(summary),
                     )
                     return summary
                 else:
@@ -1267,20 +1261,25 @@ def summarize_with_vllm(
                 logging.error(
                     f"vLLM Summarization: Summarization failed with status code {response.status_code}"
                 )
-                logging.error(f"vLLM Summarization: Error response: {response.text}")
+                logging.error("vLLM Summarization: Error response received")
                 return f"vLLM Summarization: Failed to process summary. Status code: {response.status_code}"
     except json.JSONDecodeError as e:
         logging.error(
-            f"vLLM Summarization: Error decoding JSON: {str(e)}", exc_info=True
+            "vLLM Summarization: JSON decoding failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
         )
         return f"vLLM Summarization: Error decoding JSON input: {str(e)}"
     except requests.RequestException as e:
         logging.error(
-            f"vLLM Summarization: Error making API request: {str(e)}", exc_info=True
+            "vLLM Summarization: API request failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
         )
         return f"vLLM Summarization: Error making API request: {str(e)}"
     except Exception as e:
-        logging.error(f"vLLM Summarization: Unexpected error: {str(e)}", exc_info=True)
+        logging.error(
+            "vLLM Summarization: Unexpected failure; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"vLLM Summarization: Unexpected error occurred: {str(e)}"
 
 
@@ -1313,7 +1312,10 @@ def summarize_with_ollama(
 
         ollama_config = loaded_config_data.get("ollama_api", {})
     except Exception as e:
-        logging.error(f"summarize_with_ollama: Error loading config: {e}")
+        logging.error(
+            "summarize_with_ollama: Config loading failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Ollama: Error loading config: {str(e)}"
 
     # 2) Determine API Key
@@ -1394,7 +1396,10 @@ def summarize_with_ollama(
 
         # 10) Build final prompt
         ollama_prompt = f"{custom_prompt}\n\n{text_content}"
-        logging.debug(f"Ollama: Summarization prompt:\n{ollama_prompt}")
+        logging.debug(
+            "Ollama: Summarization prompt prepared; character_count=%s",
+            len(ollama_prompt),
+        )
 
         # 11) Prepare request
         max_tokens = int(ollama_config.get("max_tokens", 500))
@@ -1459,13 +1464,22 @@ def summarize_with_ollama(
             logging.error("Ollama: Request timed out.")
             return "Ollama: Request timed out."
         except requests.exceptions.HTTPError as http_err:
-            logging.error(f"Ollama: HTTP error occurred: {http_err}")
+            logging.error(
+                "Ollama: HTTP request failed; exception_type=%s",
+                safe_metadata_token(type(http_err).__name__),
+            )
             return f"Ollama: HTTP error: {http_err}"
         except requests.exceptions.RequestException as req_err:
-            logging.error(f"Ollama: Request exception: {req_err}")
+            logging.error(
+                "Ollama: Request failed; exception_type=%s",
+                safe_metadata_token(type(req_err).__name__),
+            )
             return f"Ollama: Request exception: {req_err}"
         except Exception as e:
-            logging.error(f"Ollama: Unexpected error: {str(e)}")
+            logging.error(
+                "Ollama: Request setup failed; exception_type=%s",
+                safe_metadata_token(type(e).__name__),
+            )
             return f"Ollama: Unexpected error: {str(e)}"
 
         # 13) Handle streaming or non-streaming
@@ -1492,7 +1506,8 @@ def summarize_with_ollama(
                             break
                     except json.JSONDecodeError:
                         logging.error(
-                            f"Ollama: JSON decode error on line: {decoded_line}"
+                            "Ollama: Failed to decode streamed JSON; line_length=%s",
+                            len(decoded_line),
                         )
                         continue
 
@@ -1525,7 +1540,7 @@ def summarize_with_ollama(
                 logging.error("Ollama: Failed to parse JSON response.")
                 return "Ollama: JSON parse error from summarization API."
 
-            logging.debug(f"Ollama: Full JSON response: {response_data}")
+            logging.debug("Ollama: Response parsed")
             # Attempt to retrieve final summary
             summary = None
             if "response" in response_data and response_data["response"]:
@@ -1544,7 +1559,10 @@ def summarize_with_ollama(
                 return "Ollama: Summarization API response missing text."
 
     except Exception as e:
-        logging.error(f"Ollama Summarize: Exception: {str(e)}")
+        logging.error(
+            "Ollama Summarize: Summarization failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Ollama: Error occurred while summarizing: {str(e)}"
 
 

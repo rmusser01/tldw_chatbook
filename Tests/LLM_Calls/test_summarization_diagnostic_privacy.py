@@ -111,6 +111,7 @@ class _FakeResponse:
         self._json_data = json_data
         self._lines = lines
         self.text = text
+        self.iter_lines_started = False
 
     def json(self) -> object:
         if isinstance(self._json_data, BaseException):
@@ -118,6 +119,7 @@ class _FakeResponse:
         return self._json_data
 
     def iter_lines(self) -> Iterator[bytes]:
+        self.iter_lines_started = True
         yield from self._lines
 
     def raise_for_status(self) -> None:
@@ -176,6 +178,54 @@ def _local_adapter_settings(
     }
 
 
+def _vllm_settings(*, api_key: str = "fixed-vllm-key") -> dict[str, Any]:
+    return {
+        "vllm_api": {
+            "api_key": api_key,
+            "api_ip": "http://vllm.invalid/v1/chat/completions",
+            "model": "fixed-vllm-model",
+            "temperature": 0.2,
+            "max_tokens": 64,
+            "api_retries": 0,
+            "api_retry_delay": 0,
+        }
+    }
+
+
+def _ollama_settings() -> dict[str, Any]:
+    return {
+        "ollama_api": {
+            "api_key": "fixed-ollama-key",
+            "api_url": "http://ollama.invalid/api/chat",
+            "model": "fixed-ollama-model",
+            "temperature": 0.2,
+            "top_p": 0.9,
+            "max_tokens": 64,
+            "api_timeout": 5,
+            "api_retries": 0,
+            "api_retry_delay": 0,
+        }
+    }
+
+
+def _install_signature_bound_settings(
+    monkeypatch: pytest.MonkeyPatch,
+    result: dict[str, Any] | BaseException,
+) -> list[tuple[tuple[object, ...], dict[str, object]]]:
+    real_load_settings = local_summarization.load_settings
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def fake_load_settings(*args: object, **kwargs: object) -> dict[str, Any]:
+        inspect.signature(real_load_settings).bind(*args, **kwargs)
+        calls.append((args, kwargs))
+        if isinstance(result, BaseException):
+            raise result
+        return result
+
+    monkeypatch.setattr(local_summarization, "load_settings", fake_load_settings)
+    return calls
+
+
 def _install_signature_bound_session_post(
     monkeypatch: pytest.MonkeyPatch,
     result: _FakeResponse | BaseException,
@@ -220,6 +270,16 @@ TABBY_INPUT_CANARY = "TABBY_INPUT_CANARY_3796"
 TABBY_CREDENTIAL_CANARY = "T4BBY"
 TABBY_STREAM_CANARY = "TABBY_STREAM_CANARY_3796"
 TABBY_EXCEPTION_CANARY = "TABBY_EXCEPTION_CANARY_3796"
+VLLM_INPUT_CANARY = "VLLM_INPUT_CANARY_3796"
+VLLM_PROMPT_CANARY = "VLLM_PROMPT_CANARY_3796"
+VLLM_CREDENTIAL_CANARY = "V11MK3YQZ"
+VLLM_RESPONSE_CANARY = "VLLM_RESPONSE_CANARY_3796"
+VLLM_STREAM_CANARY = "VLLM_STREAM_CANARY_3796"
+VLLM_EXCEPTION_CANARY = "VLLM_EXCEPTION_CANARY_3796"
+OLLAMA_PROMPT_CANARY = "OLLAMA_PROMPT_CANARY_3796"
+OLLAMA_RESPONSE_CANARY = "OLLAMA_RESPONSE_CANARY_3796"
+OLLAMA_STREAM_CANARY = "OLLAMA_STREAM_CANARY_3796"
+OLLAMA_EXCEPTION_CANARY = "OLLAMA_EXCEPTION_CANARY_3796"
 
 
 def _invoke_local_input(monkeypatch: pytest.MonkeyPatch) -> object:
@@ -1760,6 +1820,19 @@ def test_no_pending_local_adapters_sites() -> None:
     )
 
 
+def test_no_pending_local_vllm_ollama_sites() -> None:
+    pending = [
+        site
+        for site in _ledger_sites()
+        if site["group"] == "local_vllm_ollama" and site["outcome"] == "pending"
+    ]
+
+    assert not pending, (
+        f"local_vllm_ollama has {len(pending)} pending private diagnostics: "
+        f"{[site['site_id'] for site in pending]}"
+    )
+
+
 @pytest.mark.parametrize(
     "case",
     RUNTIME_SENTINEL_CASES,
@@ -2172,3 +2245,236 @@ def test_tabby_empty_configured_credential_reports_resolved_state_truthfully(
     assert "TabbyAPI: No API key found in config file" in captured.text
     assert "TabbyAPI: Credential state resolved" in captured.text
     assert "TabbyAPI: Credential configured" not in captured.text
+
+
+def test_vllm_success_hides_input_prompt_credential_and_response(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    response = _FakeResponse(
+        json_data={"choices": [{"message": {"content": f"  {VLLM_RESPONSE_CANARY}  "}}]}
+    )
+    settings_calls = _install_signature_bound_settings(
+        monkeypatch,
+        _vllm_settings(api_key=VLLM_CREDENTIAL_CANARY),
+    )
+    transport_calls = _install_signature_bound_session_post(monkeypatch, response)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = local_summarization.summarize_with_vllm(
+            None,
+            VLLM_INPUT_CANARY,
+            VLLM_PROMPT_CANARY,
+            system_message="fixed system message",
+        )
+
+    assert result == VLLM_RESPONSE_CANARY
+    assert settings_calls
+    assert len(transport_calls) == 1
+    args, kwargs = transport_calls[0]
+    assert args == ("http://vllm.invalid/v1/chat/completions",)
+    assert kwargs["headers"]["Authorization"] == f"Bearer {VLLM_CREDENTIAL_CANARY}"
+    assert kwargs["json"]["messages"][1]["content"] == (
+        f"{VLLM_INPUT_CANARY} \n\n\n\n{VLLM_PROMPT_CANARY}"
+    )
+    for canary in (
+        VLLM_INPUT_CANARY,
+        VLLM_PROMPT_CANARY,
+        VLLM_CREDENTIAL_CANARY,
+        VLLM_RESPONSE_CANARY,
+    ):
+        assert canary not in captured.text
+    assert "vLLM Summarize: Credential loaded from config" in captured.text
+    assert "vLLM Summarize: Raw input received" in captured.text
+    assert "vLLM Summarize: Input processing completed" in captured.text
+    assert "vLLM Summarize: Text extraction completed" in captured.text
+    assert "vLLM Summarize: Custom prompt received" in captured.text
+    assert "vLLM Summarization: Summary produced; character_count=" in captured.text
+
+
+def test_vllm_error_response_hides_body_and_preserves_status_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    response = _FakeResponse(status_code=503, text=VLLM_RESPONSE_CANARY)
+    _install_signature_bound_settings(monkeypatch, _vllm_settings())
+    _install_signature_bound_session_post(monkeypatch, response)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = local_summarization.summarize_with_vllm(
+            None,
+            "fixed input",
+            "fixed prompt",
+        )
+
+    assert result == ("vLLM Summarization: Failed to process summary. Status code: 503")
+    assert VLLM_RESPONSE_CANARY not in captured.text
+    assert (
+        "vLLM Summarization: Summarization failed with status code 503" in captured.text
+    )
+
+
+def test_vllm_malformed_stream_is_lazy_fully_consumed_and_hides_line(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    response = _FakeResponse(
+        lines=(
+            b'data: {"choices":[{"delta":{"content":"fixed chunk"}}]}',
+            f'data: {{"content":"{VLLM_STREAM_CANARY}"'.encode(),
+            b"data: [DONE]",
+        )
+    )
+    _install_signature_bound_settings(monkeypatch, _vllm_settings())
+    transport_calls = _install_signature_bound_session_post(monkeypatch, response)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        generator = local_summarization.summarize_with_vllm(
+            None,
+            "fixed input",
+            "fixed prompt",
+            streaming=True,
+        )
+        assert len(transport_calls) == 1
+        assert response.iter_lines_started is False
+        result = _consume_generator(generator)
+
+    assert result == (["fixed chunk"], None)
+    assert response.iter_lines_started is True
+    assert VLLM_STREAM_CANARY not in captured.text
+    assert "vLLM Summarize: Failed to decode streamed JSON; line_length=" in (
+        captured.text
+    )
+
+
+def test_vllm_request_exception_hides_message_and_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_settings(monkeypatch, _vllm_settings())
+    _install_signature_bound_session_post(
+        monkeypatch,
+        local_summarization.requests.RequestException(VLLM_EXCEPTION_CANARY),
+    )
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = local_summarization.summarize_with_vllm(
+            None,
+            "fixed input",
+            "fixed prompt",
+        )
+
+    assert result == (
+        "vLLM Summarization: Error making API request: " + VLLM_EXCEPTION_CANARY
+    )
+    assert VLLM_EXCEPTION_CANARY not in captured.text
+    assert (
+        "vLLM Summarization: API request failed; exception_type=RequestException"
+        in captured.text
+    )
+    assert all(record.exc_info is None for record in caplog.records)
+
+
+def test_ollama_success_hides_prompt_and_response(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    response = _FakeResponse(json_data={"response": f"  {OLLAMA_RESPONSE_CANARY}  "})
+    settings_calls = _install_signature_bound_settings(monkeypatch, _ollama_settings())
+    transport_calls = _install_signature_bound_session_post(monkeypatch, response)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = local_summarization.summarize_with_ollama(
+            "fixed input",
+            OLLAMA_PROMPT_CANARY,
+        )
+
+    assert result == OLLAMA_RESPONSE_CANARY
+    assert settings_calls == [((), {})]
+    assert len(transport_calls) == 1
+    args, kwargs = transport_calls[0]
+    assert args == ("http://ollama.invalid/api/chat",)
+    assert kwargs["json"]["messages"][1]["content"] == (
+        f"{OLLAMA_PROMPT_CANARY}\n\nfixed input"
+    )
+    assert OLLAMA_PROMPT_CANARY not in captured.text
+    assert OLLAMA_RESPONSE_CANARY not in captured.text
+    assert "Ollama: Summarization prompt prepared; character_count=" in captured.text
+    assert "Ollama: Response parsed" in captured.text
+
+
+def test_ollama_malformed_stream_is_lazy_fully_consumed_and_hides_line(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    response = _FakeResponse(
+        lines=(
+            b'{"response":"fixed chunk","done":false}',
+            f'{{"response":"{OLLAMA_STREAM_CANARY}"'.encode(),
+            b'{"done":true}',
+        )
+    )
+    _install_signature_bound_settings(monkeypatch, _ollama_settings())
+    transport_calls = _install_signature_bound_session_post(monkeypatch, response)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        generator = local_summarization.summarize_with_ollama(
+            "fixed input",
+            "fixed prompt",
+            streaming=True,
+        )
+        assert len(transport_calls) == 1
+        assert response.iter_lines_started is False
+        result = _consume_generator(generator)
+
+    assert result == (["fixed chunk"], None)
+    assert response.iter_lines_started is True
+    assert OLLAMA_STREAM_CANARY not in captured.text
+    assert "Ollama: Failed to decode streamed JSON; line_length=" in captured.text
+
+
+def test_ollama_config_exception_hides_message_and_preserves_error_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings_calls = _install_signature_bound_settings(
+        monkeypatch,
+        RuntimeError(OLLAMA_EXCEPTION_CANARY),
+    )
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = local_summarization.summarize_with_ollama(
+            "fixed input",
+            "fixed prompt",
+        )
+
+    assert settings_calls == [((), {})]
+    assert result == f"Ollama: Error loading config: {OLLAMA_EXCEPTION_CANARY}"
+    assert OLLAMA_EXCEPTION_CANARY not in captured.text
+    assert (
+        "summarize_with_ollama: Config loading failed; exception_type=RuntimeError"
+        in captured.text
+    )
+    assert all(record.exc_info is None for record in caplog.records)
+
+
+def test_ollama_http_exception_hides_message_and_preserves_error_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_settings(monkeypatch, _ollama_settings())
+    _install_signature_bound_session_post(
+        monkeypatch,
+        local_summarization.requests.exceptions.HTTPError(OLLAMA_EXCEPTION_CANARY),
+    )
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = local_summarization.summarize_with_ollama(
+            "fixed input",
+            "fixed prompt",
+        )
+
+    assert result == f"Ollama: HTTP error: {OLLAMA_EXCEPTION_CANARY}"
+    assert OLLAMA_EXCEPTION_CANARY not in captured.text
+    assert "Ollama: HTTP request failed; exception_type=HTTPError" in captured.text
+    assert all(record.exc_info is None for record in caplog.records)
