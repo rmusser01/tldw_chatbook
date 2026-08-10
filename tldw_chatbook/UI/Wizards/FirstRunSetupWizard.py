@@ -1167,7 +1167,8 @@ class SpeechSetupStep(SetupStep):
     Runtime gate (review Important 4): the `onnx-asr` extra is optional --
     missing it means a downloaded Parakeet artifact could never actually run.
     Gated exactly like RagStep gates on ``embeddings_rag_deps_installed()``:
-    when the extra is absent, no install is ever offered.
+    when the extra is absent, the install action stays visible for orientation
+    but disabled so no unusable download can start.
 
     Persistence gate (AC#5 / review Important 3): commit() re-verifies --
     off the event loop -- that the exact selected artifact is active,
@@ -1224,6 +1225,8 @@ class SpeechSetupStep(SetupStep):
         self._external_busy = False
         self._external_status = ""
         self._pending_external_selection: PreparedExternalSelection | None = None
+        self._external_commit_handoff: asyncio.Task[bool] | None = None
+        self._external_commit_detached = False
         # Review Important 3: set only by a SUCCESSFUL install/activation
         # made THROUGH THIS STEP during this run -- see commit()'s use via
         # first_run_speech_step_state.should_persist_speech_config.
@@ -1309,7 +1312,12 @@ class SpeechSetupStep(SetupStep):
             yield Button(
                 "Use model from disk…",
                 id="setup-speech-use-from-disk",
-                variant="primary" if action_widget is None else "default",
+                variant=(
+                    "primary"
+                    if action_widget is None
+                    or getattr(action_widget, "disabled", False)
+                    else "default"
+                ),
                 disabled=self._external_busy or self._lifecycle_pending,
             )
             external_status = Static(
@@ -1320,6 +1328,12 @@ class SpeechSetupStep(SetupStep):
             )
             external_status.display = bool(self._external_status)
             yield external_status
+            if self._external_busy:
+                yield Button(
+                    "Cancel external setup",
+                    id="setup-speech-cancel-external",
+                    variant="default",
+                )
             if action_widget is not None:
                 yield action_widget
             if self._use_as_default_offer():
@@ -1567,8 +1581,8 @@ class SpeechSetupStep(SetupStep):
 
     def _status_and_action(self) -> tuple[str, Optional[Widget]]:
         # Review Important 4: gate BEFORE the installed-state load so a
-        # minimal install sees the real reason immediately, and no install
-        # is ever offered without the runtime that would actually run it.
+        # minimal install sees the real reason immediately. The action stays
+        # visible for orientation but cannot start an unusable download.
         if not self._runtime_installed():
             return (
                 'The "onnx-asr" runtime is not installed, so a downloaded '
@@ -1577,7 +1591,12 @@ class SpeechSetupStep(SetupStep):
                 "pip install 'onnx-asr[cpu]==0.12.0'), then revisit this "
                 "step. Skipping is safe — set this up later from Lab ▸ "
                 "Models.",
-                None,
+                Button(
+                    "Review and install…",
+                    id="setup-speech-install",
+                    variant="primary",
+                    disabled=True,
+                ),
             )
         if not self._loaded:
             if self._load_error:
@@ -1663,6 +1682,10 @@ class SpeechSetupStep(SetupStep):
         """Cancel pending external work without changing persisted source state."""
 
         token = self._external_selection_token
+        handoff_active = (
+            self._external_commit_handoff is not None
+            and not self._external_commit_handoff.done()
+        )
         worker = self._external_selection_worker
         if worker is not None and not worker.is_finished:
             worker.cancel()
@@ -1672,7 +1695,9 @@ class SpeechSetupStep(SetupStep):
         self._external_busy = False
         self._external_status = ""
         self._pending_external_selection = None
-        if token is not None:
+        if handoff_active:
+            self._external_commit_detached = True
+        elif token is not None:
             self._release_external_scope(token)
 
     def _set_external_status(
@@ -1702,6 +1727,15 @@ class SpeechSetupStep(SetupStep):
                 key,
                 selected,
             ),
+        )
+
+    @on(Button.Pressed, "#setup-speech-cancel-external")
+    def _cancel_external_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._discard_external_selection()
+        self._set_external_status(
+            "External setup cancelled. The prior source is unchanged.",
+            busy=False,
         )
 
     def _external_directory_selected(
@@ -1742,7 +1776,7 @@ class SpeechSetupStep(SetupStep):
         scope_id = self._external_scope_ids.get(token, "")
 
         def cancelled() -> bool:
-            return worker.is_cancelled or not self._owns_external_token(token)
+            return worker.is_cancelled
 
         def progress(done: int, total: int) -> None:
             self.app.call_from_thread(
@@ -1855,7 +1889,7 @@ class SpeechSetupStep(SetupStep):
         """Recheck root/VAD and prepare a write-free config patch off-loop."""
 
         worker = get_current_worker()
-        if worker.is_cancelled or not self._owns_external_token(token):
+        if worker.is_cancelled:
             return
         try:
             self._source_service().prepare_config_commit(prepared)
@@ -2017,42 +2051,40 @@ class SpeechSetupStep(SetupStep):
         )
 
     @work(
-        thread=True,
         group="setup-speech-external-vad-install",
         exclusive=True,
         exit_on_error=False,
         description="Install managed VAD dependency",
     )
-    def _provision_external_vad(
+    async def _provision_external_vad(
         self,
         token: tuple[int, int],
         prepared: PreparedExternalSelection,
         report: Any,
     ) -> None:
         def progress(event: Any) -> None:
-            self.app.call_from_thread(
-                self._apply_external_vad_progress,
+            self._apply_external_vad_progress(
                 token,
                 event.bytes_done,
                 event.bytes_total,
             )
 
         try:
-            asyncio.run(run_parakeet_vad_provision(report, progress=progress))
+            await run_parakeet_vad_provision(report, progress=progress)
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
             logger.warning(
                 "Managed VAD installation failed; error_type={}",
                 type(exc).__name__,
             )
-            self.app.call_from_thread(
-                self._apply_external_vad_provision_result,
+            self._apply_external_vad_provision_result(
                 token,
                 prepared,
                 "The managed VAD dependency could not be installed.",
             )
             return
-        self.app.call_from_thread(
-            self._apply_external_vad_provision_result,
+        self._apply_external_vad_provision_result(
             token,
             prepared,
             None,
@@ -2321,12 +2353,27 @@ class SpeechSetupStep(SetupStep):
                     progress=make_progress_callback(self.post_message),
                 )
             )
-            self._source_service().prefer_managed(self._source_key())
         except Exception as exc:
             logger.opt(exception=True).error("Speech model installation failed")
             self.app.call_from_thread(
                 self._apply_provision_result,
                 install_failure_message(exc, model_label=self._model_label()),
+            )
+            return
+        try:
+            self._source_service().prefer_managed(self._source_key())
+        except Exception as exc:
+            logger.warning(
+                "Speech model source preference failed after installation; "
+                "error_type={}",
+                type(exc).__name__,
+            )
+            self.app.call_from_thread(
+                self._apply_provision_result,
+                None,
+                "Speech model installed and activated, but its source "
+                "preference could not be saved. Activate it again to retry "
+                "the preference.",
             )
             return
         self.app.call_from_thread(self._apply_provision_result, None)
@@ -2345,7 +2392,11 @@ class SpeechSetupStep(SetupStep):
         progress.display = True
         progress.update_progress(event.progress)
 
-    def _apply_provision_result(self, error: Optional[str]) -> None:
+    def _apply_provision_result(
+        self,
+        error: Optional[str],
+        preference_error: Optional[str] = None,
+    ) -> None:
         self._pending_report = None
         self._operation = None
         self._progress = None
@@ -2357,7 +2408,10 @@ class SpeechSetupStep(SetupStep):
             # requires -- see should_persist_speech_config.
             self._acted_this_run = True
             self._discard_external_selection()
-            self.notify("Speech model installed and activated.", severity="information")
+            self.notify(
+                preference_error or "Speech model installed and activated.",
+                severity="warning" if preference_error else "information",
+            )
         # AC#6: failures never trap -- always refresh installed state so the
         # step reflects reality (and drops the disabled "installing…" affordance)
         # whether provisioning succeeded or failed.
@@ -2377,12 +2431,25 @@ class SpeechSetupStep(SetupStep):
     def _activate_model(self) -> None:
         try:
             self._service_for_worker().activate(self._reference)
-            self._source_service().prefer_managed(self._source_key())
         except Exception as exc:
             logger.opt(exception=True).error("Speech model activation failed")
             self.app.call_from_thread(
                 self._apply_lifecycle_result,
                 lifecycle_failure_message(exc, operation="activation"),
+            )
+            return
+        try:
+            self._source_service().prefer_managed(self._source_key())
+        except Exception as exc:
+            logger.warning(
+                "Speech model source preference failed after activation; error_type={}",
+                type(exc).__name__,
+            )
+            self.app.call_from_thread(
+                self._apply_lifecycle_result,
+                None,
+                "Speech model activated, but its source preference could not "
+                "be saved. Activate it again to retry the preference.",
             )
             return
         self.app.call_from_thread(self._apply_lifecycle_result, None)
@@ -2424,7 +2491,11 @@ class SpeechSetupStep(SetupStep):
             return
         self.app.call_from_thread(self._apply_lifecycle_result, None)
 
-    def _apply_lifecycle_result(self, error: Optional[str]) -> None:
+    def _apply_lifecycle_result(
+        self,
+        error: Optional[str],
+        preference_error: Optional[str] = None,
+    ) -> None:
         # Capture BEFORE clearing: only a successful ACTIVATE counts as
         # engagement (review Important 3) -- deleting is not "opting in",
         # and the artifact will not be active afterwards anyway, so
@@ -2437,7 +2508,10 @@ class SpeechSetupStep(SetupStep):
             if operation == "activate":
                 self._acted_this_run = True
                 self._discard_external_selection()
-            self.notify("Speech model updated.", severity="information")
+            self.notify(
+                preference_error or "Speech model updated.",
+                severity="warning" if preference_error else "information",
+            )
         self._ensure_loaded(force=True)
 
     # -- persistence gate (AC#5 / review Important 3 & 4) -------------------
@@ -2548,10 +2622,12 @@ class SpeechSetupStep(SetupStep):
             )
 
         loop = asyncio.get_running_loop()
+        service = self._source_service()
+        token = self._external_selection_token
         try:
             source_commit = await loop.run_in_executor(
                 None,
-                self._source_service().prepare_config_commit,
+                service.prepare_config_commit,
                 prepared,
             )
         except Exception as exc:
@@ -2563,30 +2639,65 @@ class SpeechSetupStep(SetupStep):
                 False,
                 "The external model or managed VAD changed. Choose the directory again.",
             )
+        if token is not None and token != self._external_selection_token:
+            self._release_external_scope(token)
+            return False, "The external model selection changed. Choose it again."
 
         patch = speech_state.speech_config_patch(selection, source_commit)
-        if not await self.wizard.commit_config(patch):
-            return False, "Saving the speech transcription choice failed."
+        self._external_commit_detached = False
+        handoff = asyncio.create_task(
+            self.wizard.commit_config(
+                patch,
+                after_write=lambda: service.accept_committed(source_commit),
+            )
+        )
+        self._external_commit_handoff = handoff
+        cancelled = False
+        handoff_error: Exception | None = None
         try:
-            await loop.run_in_executor(
-                None,
-                self._source_service().accept_committed,
-                source_commit,
-            )
+            while True:
+                try:
+                    ok = await asyncio.shield(handoff)
+                    break
+                except asyncio.CancelledError:
+                    cancelled = True
+                    self._external_commit_detached = True
+                    task = asyncio.current_task()
+                    if task is not None:
+                        task.uncancel()
         except Exception as exc:
+            handoff_error = exc
+            ok = False
+        finally:
+            self._external_commit_handoff = None
+
+        if cancelled:
+            if token is not None:
+                self._release_external_scope(token)
+            raise asyncio.CancelledError
+        if handoff_error is not None:
             logger.warning(
-                "External Parakeet commit acceptance failed; error_type={}",
-                type(exc).__name__,
+                "External Parakeet commit handoff failed; error_type={}",
+                type(handoff_error).__name__,
             )
+            if self._external_commit_detached and token is not None:
+                self._release_external_scope(token)
             return (
                 False,
                 "The saved external model could not be activated in this session.",
             )
+        if not ok:
+            if self._external_commit_detached and token is not None:
+                self._release_external_scope(token)
+            return False, "Saving the speech transcription choice failed."
 
-        token = self._external_selection_token
         if token is not None:
             self._release_external_scope(token)
+        if self._external_selection_token == token:
+            self._external_selection_token = None
         self._pending_external_selection = None
+        if self._external_commit_detached:
+            return True, ""
         self._external_status = (
             "External source ready."
             if self._runtime_installed()
@@ -3737,8 +3848,24 @@ class SetupWizardContainer(WizardContainer):
         """
         if self._advancing or not self.can_proceed:
             return
-        self._advancing = True
+        self._set_advancing(True)
         self.run_worker(self._advance(), exclusive=True, group="setup-wizard-advance")
+
+    def _set_advancing(self, active: bool) -> None:
+        """Fence navigation while a step's config handoff is settling."""
+
+        self._advancing = active
+        try:
+            if active:
+                for selector in ("#wizard-back", "#wizard-next", "#wizard-cancel"):
+                    self.query_one(selector, Button).disabled = True
+            else:
+                self.update_progress()
+                nav = self.query_one(".wizard-navigation", WizardNavigation)
+                nav.update_button_states()
+                self.query_one("#wizard-cancel", Button).disabled = False
+        except NoMatches:
+            pass
 
     async def _advance(self) -> None:
         try:
@@ -3759,7 +3886,7 @@ class SetupWizardContainer(WizardContainer):
             else:
                 self.show_step(next_index)
         finally:
-            self._advancing = False
+            self._set_advancing(False)
 
     @on(Button.Pressed, "#wizard-back")
     def handle_back(self, event: Button.Pressed) -> None:
@@ -3767,6 +3894,8 @@ class SetupWizardContainer(WizardContainer):
         # there. WizardContainer.handle_back() would otherwise also fire and
         # flat-decrement current_step, ignoring the active-id subset.
         event.prevent_default()
+        if self._advancing:
+            return
         previous = self._previous_active_index(self.current_step)
         if previous is not None:
             self.show_step(previous)
@@ -3799,6 +3928,8 @@ class SetupWizardContainer(WizardContainer):
         exactly, minus the event.prevent_default() call action dispatch has
         no event for.
         """
+        if self._advancing:
+            return
         previous = self._previous_active_index(self.current_step)
         if previous is not None:
             self.show_step(previous)
@@ -3815,7 +3946,12 @@ class SetupWizardContainer(WizardContainer):
         self._dismiss_screen({"completed": True, "exit_route": None})
 
     # -- persistence (the only write path for steps) -----------------------
-    async def commit_config(self, section_values: dict) -> bool:
+    async def commit_config(
+        self,
+        section_values: dict,
+        *,
+        after_write: Callable[[], None] | None = None,
+    ) -> bool:
         """Serialize every config write through one worker-side call."""
         if not section_values:
             return True
@@ -3827,7 +3963,10 @@ class SetupWizardContainer(WizardContainer):
         from tldw_chatbook.config import save_settings_to_cli_config
 
         def _write() -> bool:
-            return save_settings_to_cli_config(section_values)
+            ok = save_settings_to_cli_config(section_values)
+            if ok and after_write is not None:
+                after_write()
+            return ok
 
         ok = await asyncio.get_running_loop().run_in_executor(None, _write)
         if ok:
@@ -3912,6 +4051,8 @@ class SetupWizardContainer(WizardContainer):
             screen.dismiss(result)
 
     def action_cancel(self) -> None:
+        if self._advancing:
+            return
         screen = self.screen
         if isinstance(screen, FirstRunSetupWizard):
             screen.action_cancel()
@@ -4013,6 +4154,11 @@ class FirstRunSetupWizard(WizardScreen):
             ] = True
 
     def action_cancel(self) -> None:
+        try:
+            if self.query_one(SetupWizardContainer)._advancing:
+                return
+        except NoMatches:
+            pass
         dialog = _SettlingGuardedConfirmationDialog(
             title="Finish setup later?",
             message=(

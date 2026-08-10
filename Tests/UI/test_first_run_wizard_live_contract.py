@@ -36,10 +36,12 @@ Two empirically-found traps drove the choices below:
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Callable
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 from textual.widgets import Button, Input, RadioButton, Static
@@ -52,9 +54,11 @@ from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Constants import TAB_CHAT, TAB_HOME
 from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
 from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    SpeechSetupStep,
     SetupWizardContainer,
     _SettlingGuardedConfirmationDialog,
 )
+from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
 from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     STEP_MODEL,
     STEP_PROVIDER,
@@ -772,6 +776,133 @@ async def test_speech_step_install_button_visible_at_120x40_without_scrolling(
             disk_button.press()
             await _wait_until(pilot, lambda: isinstance(app.screen, SelectDirectory))
             assert isinstance(app.screen, SelectDirectory)
+
+
+@pytest.mark.asyncio
+async def test_external_cancel_is_keyboard_reachable_and_in_bounds_at_80_columns(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(80, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            _select_radio(app.screen, "#setup-track-full")
+            _press(app.screen, "#wizard-next")
+            await pilot.pause(0.2)
+            container = app.screen.query_one(SetupWizardContainer)
+            while container.steps[container.current_step].config.id != "speech":
+                _press(app.screen, "#wizard-next")
+                await pilot.pause(0.2)
+
+            step = container.steps[container.current_step]
+            assert isinstance(step, SpeechSetupStep)
+            worker = MagicMock(is_finished=False)
+            step._external_selection_worker = worker
+            step._external_selection_token = (1, id(step))
+            step._external_busy = True
+            step._external_status = "Verifying model files…"
+            step.refresh(recompose=True)
+            await _wait_until(
+                pilot,
+                lambda: len(app.screen.query("#setup-speech-cancel-external")) == 1,
+            )
+            cancel = app.screen.query_one("#setup-speech-cancel-external", Button)
+            await _wait_until(pilot, lambda: cancel.region.height > 0)
+            assert cancel.region.right <= 80 and cancel.region.bottom <= 40
+            assert cancel in app.screen._compositor.visible_widgets
+
+            cancel.focus()
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert step._external_busy is False
+            assert "prior source is unchanged" in step._external_status.lower()
+            worker.cancel.assert_called_once_with()
+
+
+@pytest.mark.parametrize("attempt", ["back", "finish-later"])
+@pytest.mark.asyncio
+async def test_external_commit_fences_back_and_finish_later_until_handoff_settles(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    attempt: str,
+) -> None:
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            _select_radio(app.screen, "#setup-track-full")
+            _press(app.screen, "#wizard-next")
+            await pilot.pause(0.2)
+            container = app.screen.query_one(SetupWizardContainer)
+            while container.steps[container.current_step].config.id != "speech":
+                _press(app.screen, "#wizard-next")
+                await pilot.pause(0.2)
+
+            step = container.steps[container.current_step]
+            assert isinstance(step, SpeechSetupStep)
+            prepared = SimpleNamespace(key=ParakeetSourceKey.V2_INT8)
+            source_commit = SimpleNamespace(
+                section_values={"transcription": {"parakeet_external_sources": {}}}
+            )
+            source_service = MagicMock()
+            source_service.prepare_config_commit.return_value = source_commit
+            owners = {"setup-speech-live-handoff"}
+            source_service.release_scope.side_effect = owners.discard
+            source_service.accept_committed.side_effect = lambda commit: None
+            app._parakeet_source_service = source_service
+            step._pending_external_selection = prepared
+            token = (1, id(step))
+            step._external_selection_token = token
+            step._external_scope_ids[token] = "setup-speech-live-handoff"
+            write_started = asyncio.Event()
+            allow_write = asyncio.Event()
+
+            async def delayed_commit(values, *, after_write=None):
+                write_started.set()
+                await allow_write.wait()
+                if after_write is not None:
+                    after_write()
+                return True
+
+            container.commit_config = delayed_commit
+            _press(app.screen, "#wizard-next")
+            await asyncio.wait_for(write_started.wait(), timeout=2)
+            if attempt == "back":
+                _press(app.screen, "#wizard-back")
+            else:
+                _press(app.screen, "#wizard-cancel")
+            await pilot.pause()
+            stayed_on_speech = (
+                type(app.screen).__name__ == "FirstRunSetupWizard"
+                and container.steps[container.current_step].config.id == "speech"
+            )
+            nav_fenced = (
+                all(
+                    app.screen.query_one(selector, Button).disabled
+                    for selector in ("#wizard-back", "#wizard-cancel")
+                )
+                if type(app.screen).__name__ == "FirstRunSetupWizard"
+                else False
+            )
+            owner_retained = owners == {"setup-speech-live-handoff"}
+            allow_write.set()
+            await _wait_until(
+                pilot,
+                lambda: source_service.accept_committed.call_count == 1,
+            )
+
+            assert stayed_on_speech
+            assert nav_fenced
+            assert owner_retained
+            assert owners == set()
 
 
 # ---------------------------------------------------------------------------

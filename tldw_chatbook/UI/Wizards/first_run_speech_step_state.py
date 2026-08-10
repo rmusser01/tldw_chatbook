@@ -99,11 +99,6 @@ class SpeechSelection:
     precision: str
 
 
-# Task 8 names the pending wizard state explicitly while preserving the
-# existing public selection type and every caller that already uses it.
-SpeechSetupState = SpeechSelection
-
-
 def speech_language_options(
     *, curated_model_ids: frozenset[str]
 ) -> tuple[SpeechLanguageOption, ...]:
@@ -277,7 +272,7 @@ def build_speech_transcription_commit(
 
 
 def speech_config_patch(
-    state: SpeechSetupState,
+    state: SpeechSelection,
     source_commit: Any,
 ) -> dict[str, object]:
     """Merge speech defaults with a prepared external-source config patch.
@@ -457,7 +452,6 @@ __all__ = [
     "SpeechPrecisionOption",
     "SpeechPrefill",
     "SpeechSelection",
-    "SpeechSetupState",
     "build_speech_transcription_commit",
     "read_speech_prefill",
     "speech_config_patch",

@@ -10,12 +10,14 @@ end-to-end test that drives the real (module-patched) preflight/provision
 functions through the actual @work-decorated bodies.
 """
 
+import asyncio
 from pathlib import Path
 import threading
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from loguru import logger
 from textual.app import App, ComposeResult
 from textual.widgets import Button, RadioButton, Static
 
@@ -162,6 +164,28 @@ def _wizard_with_source(source_service, **overrides):
         _ensure_parakeet_source_service=lambda: source_service,
     )
     return _wizard(app_instance=app_instance, **overrides)
+
+
+class _OwnerTrackingSource:
+    """Stateful source double: releases and accepts change observable state."""
+
+    def __init__(self, records=None):
+        self._records = dict(records or {})
+        self.owners: set[str] = set()
+        self.accepted = []
+        self.prepared_commit = None
+
+    def records(self):
+        return dict(self._records)
+
+    def release_scope(self, scope_id):
+        self.owners.discard(scope_id)
+
+    def prepare_config_commit(self, prepared):
+        return self.prepared_commit
+
+    def accept_committed(self, commit):
+        self.accepted.append(commit)
 
 
 def _step(*, installed=(), wizard=None, runtime_installed=None) -> SpeechSetupStep:
@@ -601,7 +625,7 @@ async def test_commit_persists_after_use_as_default_without_reinstalling(monkeyp
 # ---------------------------------------------------------------------------
 # Runtime-dependency gate (Important 4): mirrors RagStep's own
 # embeddings_rag_deps_installed() gate exactly -- missing extra means no
-# download is ever offered, regardless of curated/artifact-service state.
+# download remains disabled, regardless of curated/artifact-service state.
 # ---------------------------------------------------------------------------
 
 
@@ -615,7 +639,7 @@ async def test_missing_runtime_extra_shows_install_instructions_no_download_offe
         await pilot.pause(0.2)
         text = "\n".join(str(s.render()) for s in step.query(Static))
         assert "onnx-asr" in text
-        assert not step.query("#setup-speech-install")
+        assert step.query_one("#setup-speech-install", Button).disabled
         assert not step.query(ModelActivationControls)
 
 
@@ -628,7 +652,9 @@ async def test_missing_runtime_extra_message_shown_immediately_without_waiting_f
     step = _step(runtime_installed=lambda: False)
     status_text, action_widget = step._status_and_action()
     assert "onnx-asr" in status_text
-    assert action_widget is None
+    assert isinstance(action_widget, Button)
+    assert action_widget.id == "setup-speech-install"
+    assert action_widget.disabled
 
 
 @pytest.mark.asyncio
@@ -1446,7 +1472,91 @@ async def test_runtime_missing_keeps_disk_selection_available():
         await pilot.pause()
 
         assert step.query_one("#setup-speech-use-from-disk", Button)
-        assert not step.query("#setup-speech-install")
+        assert step.query_one("#setup-speech-install", Button)
+
+
+@pytest.mark.asyncio
+async def test_busy_external_setup_has_keyboard_cancel_with_path_private_copy():
+    step = _step()
+    worker = MagicMock(is_finished=False)
+    step._external_selection_worker = worker
+    step._external_selection_token = (1, id(step))
+    step._external_busy = True
+    step._external_status = "Verifying model files…"
+    app = _StepHost(step)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        cancel = step.query_one("#setup-speech-cancel-external", Button)
+        assert cancel.region.width > 0 and cancel.region.height > 0
+        assert cancel.region.right <= 80 and cancel.region.bottom <= 24
+        cancel.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert step._external_busy is False
+        assert step._external_status == (
+            "External setup cancelled. The prior source is unchanged."
+        )
+        worker.cancel.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_vad_provision_cancellation_reaches_underlying_coroutine(
+    monkeypatch,
+    tmp_path,
+):
+    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+
+    started = threading.Event()
+    cancelled = threading.Event()
+    release = threading.Event()
+    terminal_results = []
+
+    async def gated_provision(report, *, progress=None):
+        started.set()
+        try:
+            while not release.is_set():
+                await asyncio.sleep(0.01)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    monkeypatch.setattr(wizard_module, "run_parakeet_vad_provision", gated_provision)
+    prepared = SimpleNamespace(key=ParakeetSourceKey.V2_INT8)
+    step = _step(wizard=_wizard_with_source(_OwnerTrackingSource()))
+    step._apply_external_vad_provision_result = lambda *args: terminal_results.append(
+        args
+    )
+    app = _StepHost(step)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        token = step._next_external_token()
+        worker = step._provision_external_vad(
+            token,
+            prepared,
+            _vad_report(destination=tmp_path / "vad"),
+        )
+        step._external_selection_worker = worker
+        for _ in range(100):
+            if started.is_set():
+                break
+            await pilot.pause(0.01)
+        assert started.is_set()
+        step._discard_external_selection()
+        try:
+            for _ in range(20):
+                if cancelled.is_set():
+                    break
+                await pilot.pause(0.01)
+            assert cancelled.is_set()
+        finally:
+            release.set()
+            await pilot.pause(0.05)
+
+    assert terminal_results == []
+    assert step._pending_external_selection is None
 
 
 def test_disk_action_opens_real_directory_picker_and_cancel_changes_nothing(
@@ -1495,6 +1605,7 @@ async def test_external_verification_worker_hashes_off_the_event_loop(tmp_path):
 
     def prepare_external(*args, **kwargs):
         worker_threads.append(threading.get_ident())
+        assert kwargs["cancelled"]() is False
         return prepared
 
     source_service.prepare_external.side_effect = prepare_external
@@ -1502,6 +1613,13 @@ async def test_external_verification_worker_hashes_off_the_event_loop(tmp_path):
     step._apply_external_verification_result = MagicMock()
     app = _StepHost(step)
     event_loop_thread = threading.get_ident()
+    original_owns = step._owns_external_token
+
+    def loop_only_ownership(token):
+        assert threading.get_ident() == event_loop_thread
+        return original_owns(token)
+
+    step._owns_external_token = loop_only_ownership
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -1572,6 +1690,36 @@ def test_corrupt_external_source_reports_stable_path_private_error(
 
 
 @pytest.mark.asyncio
+async def test_external_worker_never_logs_or_describes_exception_path(tmp_path):
+    sentinel = str(tmp_path / "private-owner-model")
+    source_service = MagicMock()
+    source_service.prepare_external.side_effect = RuntimeError(sentinel)
+    step = _step(wizard=_wizard_with_source(source_service))
+    app = _StepHost(step)
+    messages: list[str] = []
+    sink = logger.add(lambda message: messages.append(str(message)))
+
+    try:
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            token = step._next_external_token()
+            worker = step._verify_external_source(
+                token,
+                ParakeetSourceKey.V2_INT8,
+                Path(sentinel),
+            )
+            await worker.wait()
+            await pilot.pause()
+
+            assert sentinel not in worker.description
+            assert sentinel not in step._external_status
+    finally:
+        logger.remove(sink)
+
+    assert sentinel not in "".join(messages)
+
+
+@pytest.mark.asyncio
 async def test_stale_verification_after_exact_selection_change_is_ignored():
     source_service = MagicMock()
     step = _step(wizard=_wizard_with_source(source_service))
@@ -1634,37 +1782,41 @@ def test_vad_cancel_leaves_prior_source_and_pending_selection_untouched(
     tmp_path,
 ):
     _patch_app(monkeypatch)
-    source_service = MagicMock()
     prior_records = {ParakeetSourceKey.V2_INT8: object()}
-    source_service.records.return_value = prior_records
+    source_service = _OwnerTrackingSource(prior_records)
     prepared = SimpleNamespace(key=ParakeetSourceKey.V2_INT8)
     step = _step(wizard=_wizard_with_source(source_service))
     step.refresh = MagicMock()
     report = _vad_report(destination=tmp_path / "managed")
     token = (1, id(step))
     step._external_selection_token = token
-    step._external_scope_ids[token] = "setup-speech-scope"
+    scope_id = "setup-speech-scope"
+    step._external_scope_ids[token] = scope_id
+    source_service.owners.add(scope_id)
     step._owns_external_token = lambda candidate: candidate == token
 
     step._confirm_external_vad(False, token, prepared, report)
 
     assert step._pending_external_selection is None
     assert source_service.records() == prior_records
-    source_service.accept_committed.assert_not_called()
-    source_service.commit_external.assert_not_called()
+    assert source_service.accepted == []
+    assert source_service.owners == set()
     assert "prior source is unchanged" in step._external_status.lower()
 
 
 def test_vad_failure_leaves_prior_source_untouched(monkeypatch):
     _patch_app(monkeypatch)
-    source_service = MagicMock()
+    prior_records = {ParakeetSourceKey.V2_INT8: object()}
+    source_service = _OwnerTrackingSource(prior_records)
     prepared = SimpleNamespace(key=ParakeetSourceKey.V2_INT8)
     step = _step(wizard=_wizard_with_source(source_service))
     step.notify = MagicMock()
     step.refresh = MagicMock()
     token = (1, id(step))
     step._external_selection_token = token
-    step._external_scope_ids[token] = "setup-speech-scope"
+    scope_id = "setup-speech-scope"
+    step._external_scope_ids[token] = scope_id
+    source_service.owners.add(scope_id)
     step._owns_external_token = lambda candidate: candidate == token
 
     step._apply_external_vad_provision_result(
@@ -1674,8 +1826,9 @@ def test_vad_failure_leaves_prior_source_untouched(monkeypatch):
     )
 
     assert step._pending_external_selection is None
-    source_service.accept_committed.assert_not_called()
-    source_service.commit_external.assert_not_called()
+    assert source_service.records() == prior_records
+    assert source_service.accepted == []
+    assert source_service.owners == set()
     assert step.notify.call_args.kwargs["severity"] == "error"
 
 
@@ -1703,8 +1856,10 @@ async def test_external_next_commits_defaults_and_source_once_then_accepts():
     )
     source_service.accept_committed.side_effect = lambda value: events.append("accept")
 
-    async def commit_config(values):
+    async def commit_config(values, *, after_write=None):
         events.append("write")
+        if after_write is not None:
+            after_write()
         return True
 
     wizard = _wizard_with_source(source_service)
@@ -1716,7 +1871,9 @@ async def test_external_next_commits_defaults_and_source_once_then_accepts():
 
     assert ok, error
     assert events == ["prepare", "write", "accept"]
-    wizard.commit_config.assert_awaited_once_with(
+    wizard.commit_config.assert_awaited_once()
+    assert callable(wizard.commit_config.call_args.kwargs["after_write"])
+    assert wizard.commit_config.call_args.args == (
         {
             "transcription": {
                 "default_provider": "parakeet-onnx",
@@ -1732,7 +1889,7 @@ async def test_external_next_commits_defaults_and_source_once_then_accepts():
                     }
                 },
             }
-        }
+        },
     )
 
 
@@ -1742,22 +1899,99 @@ async def test_external_write_failure_never_accepts_or_drops_pending_selection()
     source_commit = SimpleNamespace(
         section_values={"transcription": {"parakeet_external_sources": {}}}
     )
-    source_service = MagicMock()
-    source_service.prepare_config_commit.return_value = source_commit
-    wizard = _wizard_with_source(
-        source_service,
-        commit_config=AsyncMock(return_value=False),
+    source_service = _OwnerTrackingSource()
+    source_service.prepared_commit = source_commit
+    persisted = {"transcription": {"default_provider": "remote-whisper"}}
+    app_instance = SimpleNamespace(
+        app_config=persisted,
+        _parakeet_source_service=source_service,
+        _ensure_parakeet_source_service=lambda: source_service,
+    )
+    wizard = _wizard(
+        app_instance=app_instance, commit_config=AsyncMock(return_value=False)
     )
     step = _step(wizard=wizard)
     step._pending_external_selection = prepared
+    token = (1, id(step))
+    scope_id = "setup-speech-write"
+    step._external_selection_token = token
+    step._external_scope_ids[token] = scope_id
+    source_service.owners.add(scope_id)
 
     ok, error = await step.commit()
 
     assert ok is False
     assert error
-    source_service.accept_committed.assert_not_called()
-    source_service.commit_external.assert_not_called()
+    assert persisted == {"transcription": {"default_provider": "remote-whisper"}}
+    assert source_service.accepted == []
+    assert source_service.owners == {scope_id}
     assert step._pending_external_selection is prepared
+
+
+@pytest.mark.asyncio
+async def test_cancelled_external_commit_settles_write_and_accept_before_scope_release():
+    prepared = SimpleNamespace(key=ParakeetSourceKey.V2_INT8)
+    source_commit = SimpleNamespace(
+        section_values={"transcription": {"parakeet_external_sources": {}}}
+    )
+    source_service = _OwnerTrackingSource()
+    source_service.prepared_commit = source_commit
+    persisted = {"transcription": {"default_provider": "remote-whisper"}}
+    write_started = threading.Event()
+    allow_write = threading.Event()
+    write_finished = threading.Event()
+
+    async def delayed_commit(values, *, after_write=None):
+        def write():
+            write_started.set()
+            allow_write.wait(timeout=2)
+            persisted.clear()
+            persisted.update(values)
+            if after_write is not None:
+                after_write()
+            write_finished.set()
+            return True
+
+        return await asyncio.get_running_loop().run_in_executor(None, write)
+
+    app_instance = SimpleNamespace(
+        app_config=persisted,
+        _parakeet_source_service=source_service,
+        _ensure_parakeet_source_service=lambda: source_service,
+    )
+    wizard = _wizard(app_instance=app_instance, commit_config=delayed_commit)
+    step = _step(wizard=wizard)
+    step._pending_external_selection = prepared
+    token = (1, id(step))
+    scope_id = "setup-speech-handoff"
+    step._external_selection_token = token
+    step._external_scope_ids[token] = scope_id
+    source_service.owners.add(scope_id)
+
+    task = asyncio.create_task(step.commit())
+    for _ in range(100):
+        if write_started.is_set():
+            break
+        await asyncio.sleep(0.01)
+    assert write_started.is_set()
+    task.cancel()
+    step.on_unmount()
+    owner_retained_while_writing = scope_id in source_service.owners
+    allow_write.set()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    for _ in range(100):
+        if write_finished.is_set():
+            break
+        await asyncio.sleep(0.01)
+
+    assert write_finished.is_set()
+    assert owner_retained_while_writing
+    assert source_service.accepted == [source_commit]
+    assert source_service.owners == set()
+    assert persisted != {"transcription": {"default_provider": "remote-whisper"}}
 
 
 @pytest.mark.asyncio
@@ -1780,6 +2014,13 @@ async def test_external_selection_persists_when_runtime_is_missing():
     source_service = MagicMock()
     source_service.prepare_config_commit.return_value = source_commit
     wizard = _wizard_with_source(source_service)
+
+    async def commit_config(values, *, after_write=None):
+        if after_write is not None:
+            after_write()
+        return True
+
+    wizard.commit_config.side_effect = commit_config
     step = _step(wizard=wizard, runtime_installed=lambda: False)
     step._pending_external_selection = prepared
 
@@ -1840,3 +2081,98 @@ def test_managed_activation_prefers_managed_only_after_activation_succeeds(monke
     SpeechSetupStep._activate_model.__wrapped__(step)
 
     assert events == ["activate", "prefer"]
+
+
+def test_managed_provision_failure_never_prefers_managed(monkeypatch, tmp_path):
+    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+
+    async def fail_provision(*args, **kwargs):
+        raise OSError("download failed")
+
+    monkeypatch.setattr(wizard_module, "run_parakeet_provision", fail_provision)
+    fake_app = _patch_app(monkeypatch)
+    fake_app.call_from_thread.side_effect = lambda fn, *args: fn(*args)
+    source_service = MagicMock()
+    step = _step(wizard=_wizard_with_source(source_service))
+    step._pending_report = _report(destination=tmp_path / "managed")
+    step.notify = MagicMock()
+    step._ensure_loaded = MagicMock()
+
+    SpeechSetupStep._provision_install.__wrapped__(step)
+
+    source_service.prefer_managed.assert_not_called()
+
+
+def test_managed_activation_failure_never_prefers_managed(monkeypatch):
+    fake_app = _patch_app(monkeypatch)
+    fake_app.call_from_thread.side_effect = lambda fn, *args: fn(*args)
+    managed_service = _FakeService()
+
+    def fail_activation(reference):
+        raise OSError("activation failed")
+
+    managed_service.activate = fail_activation
+    source_service = MagicMock()
+    step = SpeechSetupStep(
+        wizard=_wizard_with_source(source_service),
+        config=WizardStepConfig(id="speech", title="Speech", step_number=5),
+        service_factory=lambda: managed_service,
+        runtime_installed=lambda: True,
+    )
+    step.notify = MagicMock()
+    step._ensure_loaded = MagicMock()
+
+    SpeechSetupStep._activate_model.__wrapped__(step)
+
+    source_service.prefer_managed.assert_not_called()
+
+
+def test_managed_install_preference_failure_reports_partial_success(
+    monkeypatch,
+    tmp_path,
+):
+    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+
+    async def provision(*args, **kwargs):
+        return tmp_path / "managed" / "root"
+
+    monkeypatch.setattr(wizard_module, "run_parakeet_provision", provision)
+    fake_app = _patch_app(monkeypatch)
+    fake_app.call_from_thread.side_effect = lambda fn, *args: fn(*args)
+    source_service = MagicMock()
+    source_service.prefer_managed.side_effect = OSError("preference write failed")
+    step = _step(wizard=_wizard_with_source(source_service))
+    step._pending_report = _report(destination=tmp_path / "managed")
+    step.notify = MagicMock()
+    step._ensure_loaded = MagicMock()
+
+    SpeechSetupStep._provision_install.__wrapped__(step)
+
+    assert step._acted_this_run is True
+    message = str(step.notify.call_args.args[0]).lower()
+    assert "installed" in message and "preference" in message
+    assert "installation failed" not in message
+
+
+def test_managed_activation_preference_failure_reports_partial_success(monkeypatch):
+    fake_app = _patch_app(monkeypatch)
+    fake_app.call_from_thread.side_effect = lambda fn, *args: fn(*args)
+    managed_service = _FakeService()
+    source_service = MagicMock()
+    source_service.prefer_managed.side_effect = OSError("preference write failed")
+    step = SpeechSetupStep(
+        wizard=_wizard_with_source(source_service),
+        config=WizardStepConfig(id="speech", title="Speech", step_number=5),
+        service_factory=lambda: managed_service,
+        runtime_installed=lambda: True,
+    )
+    step._operation = "activate"
+    step.notify = MagicMock()
+    step._ensure_loaded = MagicMock()
+
+    SpeechSetupStep._activate_model.__wrapped__(step)
+
+    assert step._acted_this_run is True
+    message = str(step.notify.call_args.args[0]).lower()
+    assert "activated" in message and "preference" in message
+    assert "activation failed" not in message

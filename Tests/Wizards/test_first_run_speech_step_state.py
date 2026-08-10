@@ -147,7 +147,7 @@ class TestBuildSpeechTranscriptionCommit:
         self,
     ):
         """Task 8: the wizard owns the only write; the pure helper only merges."""
-        state = speech_state.SpeechSetupState(
+        state = speech_state.SpeechSelection(
             provider_id="parakeet-onnx",
             model_id="nemo-parakeet-tdt-0.6b-v3",
             language="fr",
@@ -186,6 +186,9 @@ class TestBuildSpeechTranscriptionCommit:
                 },
             }
         }
+
+    def test_state_module_does_not_duplicate_speech_selection_type(self):
+        assert not hasattr(speech_state, "SpeechSetupState")
 
 
 class TestResolveSpeechSelection:
