@@ -390,20 +390,39 @@ def test_library_note_footer_shortcut_contract_is_exact():
     """Keep screen-owned Notes copy stable without cross-test private imports."""
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
+    # task-4023 AC#5: the Notes workflow joins the shared footer grammar --
+    # per-key (key, label) pairs, lowercase keys, the same action
+    # vocabulary as the sibling canvases -- with a _COMPACT tier that only
+    # compresses labels (same keys/destinations) for the ≤100-col
+    # single-stage footer.
     assert LibraryScreen.LIBRARY_NOTES_NAVIGATOR_SHORTCUTS == (
-        ("Ctrl+N", "New · / Find · Esc Library"),
+        ("ctrl+n", "new note"),
+        ("/", "find note"),
+        ("esc", "focus rail"),
+    )
+    assert LibraryScreen.LIBRARY_NOTES_NAVIGATOR_SHORTCUTS_COMPACT == (
+        ("ctrl+n", "new"),
+        ("/", "find"),
+        ("esc", "rail"),
     )
     assert LibraryScreen.LIBRARY_NOTES_EDITOR_SHORTCUTS == (
-        ("Ctrl+S", "Save · Esc Notes"),
+        ("ctrl+s", "save note"),
+        ("esc", "back to notes"),
+    )
+    assert LibraryScreen.LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT == (
+        ("ctrl+s", "save"),
+        ("esc", "notes"),
     )
     assert LibraryScreen.LIBRARY_NOTES_PREVIEW_SHORTCUTS == (
-        ("Pg", "Scroll · Esc Notes"),
+        ("pgup/pgdn", "scroll"),
+        ("esc", "back to notes"),
     )
     assert LibraryScreen.LIBRARY_NOTES_CONTEXT_SHORTCUTS == (
-        ("Enter", "Act · Esc Note"),
+        ("enter", "run action"),
+        ("esc", "back to note"),
     )
     assert LibraryScreen.LIBRARY_NOTES_CONFLICT_SHORTCUTS == (
-        ("Enter", "Choose · Esc Locked"),
+        ("enter", "choose version"),
     )
 
 

@@ -13,11 +13,14 @@ from tldw_chatbook.Library.library_export_state import (
     DESTINATION_PLACEHOLDER_COPY,
     EXPORT_BUTTON_COPY,
     EXPORT_HEADER_COPY,
+    MEDIA_QUALITY_OPTIONS,
     LibraryExportFormState,
     export_button_tooltip,
     media_quality_helper_copy,
 )
 from tldw_chatbook.Library.library_shell_state import (
+    library_cycle_label,
+    library_cycle_tooltip,
     library_disabled_action_label,
 )
 
@@ -60,7 +63,7 @@ class LibraryExportCanvas(VerticalScroll):
     canvas clips content past the fold); every child is a stacked, full-
     width Button/Input/Static, mirroring ``LibraryIngestCanvas``. No
     ``Select`` -- the media-quality control is a cycle button (label
-    ``"quality: {value} ▸"``) like the media canvas's type filter,
+    ``"quality: {value} ⇄"``) like the media canvas's type filter,
     since a plain ``Select`` widget did not render reliably in the
     deployed TUI (see ``handle_library_media_type_filter_pressed``).
 
@@ -118,10 +121,13 @@ class LibraryExportCanvas(VerticalScroll):
         )
         if state.show_media_fields:
             yield Button(
-                f"quality: {state.media_quality} ▸",
+                library_cycle_label("quality", state.media_quality),
                 id="library-export-quality",
                 classes="library-canvas-action",
                 compact=True,
+                tooltip=library_cycle_tooltip(
+                    "media quality", MEDIA_QUALITY_OPTIONS
+                ),
             )
             yield Static(
                 media_quality_helper_copy(state.media_quality),

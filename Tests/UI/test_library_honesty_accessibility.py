@@ -500,6 +500,241 @@ def test_f1_title_names_the_current_surface():
 
 
 # ---------------------------------------------------------------------------
+# AC#5: one interaction grammar -- footer sets, marker vocabulary, cyclers.
+# ---------------------------------------------------------------------------
+
+
+def _all_library_footer_sets() -> dict[str, tuple[tuple[str, str], ...]]:
+    """Every footer shortcut set constant LibraryScreen declares."""
+    return {
+        name: value
+        for name, value in vars(LibraryScreen).items()
+        if name.startswith("LIBRARY_") and name.endswith(("_SHORTCUTS", "_COMPACT"))
+    }
+
+
+def test_library_footer_sets_share_one_grammar():
+    """AC#5: four footer dialects at HEAD -- the Notes workflow crammed
+    several keys into ONE (key, label) pair with '·' separators and
+    TitleCase key names ("Ctrl+N", "New · / Find · Esc Library") while
+    every sibling set rendered per-key pairs with lowercase keys. One
+    grammar: per-key pairs; keys lowercase (F-keys and the pgup/pgdn
+    range spelled as-is); labels are plain phrases with no embedded
+    separator."""
+    import re
+
+    sets = _all_library_footer_sets()
+    assert len(sets) >= 15  # every per-mode set is under this contract
+    for name, shortcuts in sets.items():
+        for key, label in shortcuts:
+            assert "·" not in label, f"{name} embeds a run-on separator: {label!r}"
+            assert (
+                key == key.lower() or re.fullmatch(r"F\d+", key)
+            ), f"{name} spells a key off-grammar: {key!r}"
+
+
+def test_notes_footer_states_use_per_key_grammar_and_never_advertise_dead_keys():
+    """The inline notes-workflow sets (confirm-delete, select, sort,
+    create, sync) follow the same grammar, and a state whose keys are all
+    locked advertises NOTHING instead of a dead 'Esc Locked' entry."""
+    fake = SimpleNamespace(
+        _library_notes_compact=False,
+        _library_notes_stage="notes",
+        _library_notes_workflow_active=lambda: True,
+        _library_note_session=SimpleNamespace(
+            snapshot=None, conflict_resolution_running=False
+        ),
+        _library_note_confirming_delete=True,
+        _library_notes_select_mode=False,
+        _library_notes_sort_choices_visible=False,
+        _library_note_create_running=False,
+        _library_notes_sync_active_token=None,
+        _library_notes_focus_region=lambda: "navigator",
+    )
+    from types import MethodType
+
+    fake._notes_footer_tier = MethodType(LibraryScreen._notes_footer_tier, fake)
+    for name in vars(LibraryScreen):
+        if name.startswith("LIBRARY_NOTES_"):
+            setattr(fake, name, getattr(LibraryScreen, name))
+    shortcuts = LibraryScreen._library_notes_footer_shortcuts(fake)
+    assert shortcuts == (("enter", "confirm delete"), ("esc", "cancel delete"))
+
+    # A running conflict resolution locks every key -> nothing advertised.
+    fake._library_note_confirming_delete = False
+    fake._library_note_session = SimpleNamespace(
+        snapshot=SimpleNamespace(in_conflict=True),
+        conflict_resolution_running=True,
+    )
+    assert LibraryScreen._library_notes_footer_shortcuts(fake) == ()
+
+    # Compact tier: same keys, compressed labels (the footer's own
+    # FULL/COMPACT global-tier idiom, not a second dialect).
+    fake._library_note_session = SimpleNamespace(
+        snapshot=None, conflict_resolution_running=False
+    )
+    fake._library_notes_compact = True
+    fake._library_notes_focus_region = lambda: "editor"
+    compact = LibraryScreen._library_notes_footer_shortcuts(fake)
+    assert compact == LibraryScreen.LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT
+    assert [key for key, _ in compact] == [
+        key for key, _ in LibraryScreen.LIBRARY_NOTES_EDITOR_SHORTCUTS
+    ]
+
+
+@pytest.mark.asyncio
+async def test_compact_notes_editor_footer_context_actually_displays_at_60_cols():
+    """The compact tier exists for the DISPLAYED footer: at 60 cols the
+    responsive ladder drops an over-wide context whole ("… F1 …" taught a
+    compact user nothing). The compressed editor context must survive in
+    the rendered footer text, not merely in the stored full string."""
+    from Tests.UI.test_library_shell import (
+        LibraryHarness,
+        _active_library_screen,
+        _build_test_app,
+        _open_note_editor,
+        _seed_conversations,
+        _two_conversations,
+        _two_notes,
+        _wait_for_library_notes_compact,
+        _wait_for_library_shell,
+    )
+    from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
+
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+    async with host.run_test(size=(60, 20)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_library_notes_compact(screen, pilot, True)
+        await _open_note_editor(screen, pilot)
+        footer = screen.query_one(AppFooterStatus)
+        for _ in range(300):
+            displayed = str(footer._shortcut_display.renderable)
+            if displayed.startswith("ctrl+s save | esc notes"):
+                break
+            await pilot.pause(0.01)
+        else:
+            raise AssertionError(
+                "Compact editor context was not DISPLAYED at 60 cols: "
+                f"{str(footer._shortcut_display.renderable)!r}"
+            )
+
+
+def test_cycle_controls_use_the_cycle_glyph_not_the_disclosure_glyph():
+    """AC#5: '▸' meant three things (selected row, collapsed disclosure,
+    silent value-cycler). Cycle controls now carry their own '⇄' glyph via
+    one shared builder, and the option set is enumerated at the control."""
+    from tldw_chatbook.Library.library_shell_state import (
+        LIBRARY_CYCLE_MARKER,
+        library_cycle_label,
+        library_cycle_tooltip,
+    )
+    from tldw_chatbook.Widgets.Library.library_skills_canvas import (
+        skill_context_toggle_label,
+        skill_disable_model_label,
+        skill_user_invocable_label,
+    )
+
+    assert library_cycle_label("type", "All") == f"type: All {LIBRARY_CYCLE_MARKER}"
+    assert library_cycle_tooltip("media type", ("All", "video")) == (
+        "Cycles media type: All → video."
+    )
+    for label in (
+        skill_user_invocable_label(True),
+        skill_disable_model_label(True),
+        skill_context_toggle_label("inline"),
+    ):
+        assert label.endswith(LIBRARY_CYCLE_MARKER), label
+        assert "▸" not in label, label
+
+
+def test_no_widget_module_still_builds_a_cycler_with_the_disclosure_glyph():
+    """Source-level sweep: no Library widget (or the screen's in-place
+    patchers) may build a '... ▸' cycle label again. Leading row markers
+    (`marker = "▸"`) and prose mentions are untouched by this pattern."""
+    widgets_dir = (
+        Path(__file__).resolve().parents[2] / "tldw_chatbook" / "Widgets" / "Library"
+    )
+    offenders = []
+    sources = list(widgets_dir.glob("*.py")) + [
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "UI"
+        / "Screens"
+        / "library_screen.py"
+    ]
+    for path in sources:
+        for lineno, line in enumerate(path.read_text().splitlines(), start=1):
+            if ' ▸"' in line and "marker" not in line and not line.lstrip().startswith(
+                "#"
+            ):
+                offenders.append(f"{path.name}:{lineno}: {line.strip()}")
+    assert not offenders, "\n".join(offenders)
+
+
+@pytest.mark.asyncio
+async def test_media_canvas_actions_share_one_toolbar_row():
+    """AC#5: three toolbar layouts -- Media stacked its actions vertically
+    (one full-width button per line) while Notes/Prompts/Skills use
+    horizontal ds-toolbar rows. Media's type filter, Export… and Select now
+    share one ds-toolbar Horizontal like its siblings."""
+    from textual.containers import Horizontal
+
+    async with _SelectModeApp(0).run_test() as pilot:
+        buttons = [
+            pilot.app.query_one(selector, Button)
+            for selector in (
+                "#library-media-type-filter",
+                "#library-media-export",
+                "#library-media-select-toggle",
+            )
+        ]
+        parents = {button.parent for button in buttons}
+        assert len(parents) == 1
+        (parent,) = parents
+        assert isinstance(parent, Horizontal)
+        assert parent.has_class("ds-toolbar")
+
+
+@pytest.mark.asyncio
+async def test_selected_collection_row_carries_the_selected_marker():
+    """AC#5: the selected Collections row was colour-only (`is-active`);
+    every other Library list marks its selected row with a leading '▸ '."""
+    import dataclasses
+
+    from tldw_chatbook.Library.library_collections_state import (
+        LibraryCollectionSummary,
+    )
+
+    def summary(collection_id: str, name: str, selected: bool):
+        return LibraryCollectionSummary(
+            collection_id=collection_id,
+            name=name,
+            description="",
+            item_count=2,
+            source_authority="local",
+            sync_status="local-only",
+            sync_status_detail="",
+            sync_status_label_override="",
+            created_at="",
+            updated_at="",
+            selected=selected,
+        )
+
+    rows = (summary("c-1", "Research", True), summary("c-2", "Queue", False))
+    state = dataclasses.replace(
+        _collections_state(create_enabled=True), status="ready", collections=rows
+    )
+    async with _CollectionsPanelApp(state).run_test() as pilot:
+        selected = pilot.app.query_one("#library-collection-select-0", Button)
+        unselected = pilot.app.query_one("#library-collection-select-1", Button)
+        assert str(selected.label).startswith("▸ ")
+        assert not str(unselected.label).startswith("▸")
+
+
+# ---------------------------------------------------------------------------
 # AC#1 follow-up (Task 2 review M-1): the IN-PLACE marker patchers had zero
 # automated coverage -- removing `_patch_library_disabled_marker_label` from
 # `_apply_library_row_toggle` (mutation C) or the collections patcher's label

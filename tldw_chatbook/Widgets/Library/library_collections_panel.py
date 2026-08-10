@@ -150,7 +150,14 @@ class LibraryCollectionsPanel(Vertical):
             with Vertical(id="library-collections-list"):
                 yield Static("Collections", classes="destination-section")
                 for index, collection in enumerate(self.state.collections):
-                    label = f"{collection.name} - {collection.item_count_label}"
+                    # task-4023 AC#5: the selected collection was marked by
+                    # colour alone (`is-active`); every other Library list
+                    # (rail, media, conversations) leads its selected row
+                    # with "▸ ". One marker vocabulary.
+                    marker = "▸" if collection.selected else " "
+                    label = (
+                        f"{marker} {collection.name} - {collection.item_count_label}"
+                    )
                     button = Button(
                         label,
                         id=f"library-collection-select-{index}",

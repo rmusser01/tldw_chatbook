@@ -62,7 +62,11 @@ class AppFooterStatus(Widget):
     #: only the screen's own (more specific) copy, never both.
     _GLOBAL_HINT_ITEMS_FULL = (
         ("f1", "F1 help"),
-        ("f6", "F6 panes"),
+        # task-4023 AC#5: "next pane" -- the same name the screens' own
+        # context sets use for this key (Library said "F6 next pane" while
+        # this cluster said "F6 panes" on the SAME footer line's other
+        # half, two names for one key).
+        ("f6", "F6 next pane"),
         ("ctrl+p", "Ctrl+P palette"),
         ("ctrl+q", "Ctrl+Q quit"),
     )

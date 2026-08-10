@@ -94,6 +94,52 @@ def library_disabled_action_label(label: str, disabled: bool) -> str:
     return f"{LIBRARY_DISABLED_ACTION_MARKER} {label}" if disabled else label
 
 
+# task-4023 AC#5: "▸" carried three meanings on one screen -- selected-row
+# prefix ("▸ Media"), collapsed-disclosure suffix ("Details ▸"), AND the
+# silent value-cycler suffix ("type: All ▸"), where it looked like a
+# disclosure but silently advanced a hidden option set. Cyclers now carry
+# their own glyph. Convention after this task: leading "▸ " marks the
+# selected row of a list; a trailing "▸/▾" pair on a section HEADER is
+# disclosure state; a trailing "⇄" is a cycle control (press to advance;
+# the tooltip enumerates the options).
+LIBRARY_CYCLE_MARKER = "⇄"
+
+
+def library_cycle_label(name: str, value: str) -> str:
+    """Build a cycle-control Button label: ``"{name}: {value} ⇄"``.
+
+    One source for every Library cycle control (media type filter, sort,
+    prompt collection, export quality, Search/RAG mode) so the glyph can
+    never fork per canvas again.
+
+    Args:
+        name: The control's lowercase subject (e.g. ``"type"``).
+        value: The currently active option, already display-safe.
+
+    Returns:
+        The cycle Button's label text.
+    """
+    return f"{name}: {value} {LIBRARY_CYCLE_MARKER}"
+
+
+def library_cycle_tooltip(subject: str, options: "tuple[str, ...] | list[str]") -> str:
+    """Build a cycle control's option-enumerating tooltip (AC#5/RC 'cycle
+    buttons hide their option space').
+
+    Args:
+        subject: What is being cycled, e.g. ``"media type"``.
+        options: The full option cycle, in press order.
+
+    Returns:
+        ``"Cycles {subject}: A → B → C."`` (or a generic line when the
+        option set is empty/unknown).
+    """
+    cycle = " → ".join(str(option) for option in options if str(option))
+    if not cycle:
+        return f"Cycles {subject}."
+    return f"Cycles {subject}: {cycle}."
+
+
 @dataclass(frozen=True)
 class LibraryRailRow:
     """One selectable row in the Library shell rail.

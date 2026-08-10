@@ -2003,7 +2003,7 @@ async def test_library_search_rag_rag_mode_renders_coverage_note_end_to_end() ->
         screen.query_one("#library-rag-mode-toggle", Button).press()
         for _ in range(150):
             toggles = list(screen.query("#library-rag-mode-toggle"))
-            if toggles and str(toggles[0].label) == "mode: RAG Answer ▸":
+            if toggles and str(toggles[0].label) == "mode: RAG Answer ⇄":
                 break
             await pilot.pause(0.02)
         else:
@@ -2787,7 +2787,7 @@ async def test_library_search_rag_run_query_renders_persistent_recovery_without_
         # label rather than assuming a fixed number of pauses is enough.
         for _ in range(150):
             toggles = list(screen.query("#library-rag-mode-toggle"))
-            if toggles and str(toggles[0].label) == "mode: RAG Answer ▸":
+            if toggles and str(toggles[0].label) == "mode: RAG Answer ⇄":
                 break
             await pilot.pause(0.02)
         else:
@@ -2976,7 +2976,7 @@ async def _switch_to_rag_mode(screen, pilot) -> None:
     screen.query_one("#library-rag-mode-toggle", Button).press()
     for _ in range(150):
         toggles = list(screen.query("#library-rag-mode-toggle"))
-        if toggles and str(toggles[0].label) == "mode: RAG Answer ▸":
+        if toggles and str(toggles[0].label) == "mode: RAG Answer ⇄":
             await pilot.pause()
             return
         await pilot.pause(0.02)

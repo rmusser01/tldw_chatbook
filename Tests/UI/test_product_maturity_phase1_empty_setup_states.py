@@ -405,7 +405,7 @@ async def test_library_rag_mode_dependency_missing_state_names_install_hint(
         # canvas mode, must keep returning real results -- it never
         # touches the RAG runtime the deps gate blocks.
         assert str(screen.query_one("#library-rag-mode-toggle", Button).label) == (
-            "mode: Search ▸"
+            "mode: Search ⇄"
         )
         screen.query_one("#library-rag-query-input", Input).value = query
         await _wait_for_library_rag_query_ready(screen, pilot, query)
@@ -419,7 +419,7 @@ async def test_library_rag_mode_dependency_missing_state_names_install_hint(
         screen.query_one("#library-rag-mode-toggle", Button).press()
         for _ in range(150):
             toggles = list(screen.query("#library-rag-mode-toggle"))
-            if toggles and str(toggles[0].label) == "mode: RAG Answer ▸":
+            if toggles and str(toggles[0].label) == "mode: RAG Answer ⇄":
                 break
             await pilot.pause(0.02)
         else:

@@ -254,6 +254,7 @@ from ...Library.library_shell_state import (
     LibraryShellInput,
     LibraryShellState,
     build_library_shell_state,
+    library_cycle_label,
     library_disabled_action_label,
 )
 from ...Local_Ingestion.parakeet_v2_artifact import (
@@ -1609,11 +1610,59 @@ class LibraryScreen(BaseAppScreen):
             ("library-hub-action-import", "library-ingest-path"),
         ),
     )
-    LIBRARY_NOTES_NAVIGATOR_SHORTCUTS = (("Ctrl+N", "New · / Find · Esc Library"),)
-    LIBRARY_NOTES_EDITOR_SHORTCUTS = (("Ctrl+S", "Save · Esc Notes"),)
-    LIBRARY_NOTES_PREVIEW_SHORTCUTS = (("Pg", "Scroll · Esc Notes"),)
-    LIBRARY_NOTES_CONTEXT_SHORTCUTS = (("Enter", "Act · Esc Note"),)
-    LIBRARY_NOTES_CONFLICT_SHORTCUTS = (("Enter", "Choose · Esc Locked"),)
+    #: task-4023 AC#5: the Notes workflow's footer sets used to be a second
+    #: dialect -- several keys crammed into ONE ``(key, label)`` pair with
+    #: "·" separators and TitleCase key names ("Ctrl+N", "New · / Find ·
+    #: Esc Library") while every sibling canvas rendered per-key pairs
+    #: ("/ focus search | esc focus rail"). One grammar now: per-key
+    #: pairs, lowercase key names, verb-phrase labels, and the SAME
+    #: action vocabulary as the shared sets ("focus rail", "back to
+    #: notes"). Each set has a ``_COMPACT`` sibling with shortened labels
+    #: for the ≤100-col single-stage presentation -- the same keys and
+    #: destinations, compressed the way the footer's own global cluster
+    #: already compresses ("F1 help" -> "F1") so the context still FITS
+    #: the 60-col displayed footer instead of being dropped whole by the
+    #: responsive ladder ("… F1 …" told a compact user nothing). A state
+    #: whose keys are all locked (create/sync/conflict-resolution
+    #: running) now advertises NOTHING instead of a dead "Esc Locked"
+    #: entry -- the footer falls back to the global cluster, matching the
+    #: honest-footer contract everywhere else on this screen.
+    LIBRARY_NOTES_NAVIGATOR_SHORTCUTS = (
+        ("ctrl+n", "new note"),
+        ("/", "find note"),
+        ("esc", "focus rail"),
+    )
+    LIBRARY_NOTES_NAVIGATOR_SHORTCUTS_COMPACT = (
+        ("ctrl+n", "new"),
+        ("/", "find"),
+        ("esc", "rail"),
+    )
+    LIBRARY_NOTES_EDITOR_SHORTCUTS = (
+        ("ctrl+s", "save note"),
+        ("esc", "back to notes"),
+    )
+    LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT = (
+        ("ctrl+s", "save"),
+        ("esc", "notes"),
+    )
+    LIBRARY_NOTES_PREVIEW_SHORTCUTS = (
+        ("pgup/pgdn", "scroll"),
+        ("esc", "back to notes"),
+    )
+    LIBRARY_NOTES_PREVIEW_SHORTCUTS_COMPACT = (
+        ("pgup/pgdn", "scroll"),
+        ("esc", "notes"),
+    )
+    LIBRARY_NOTES_CONTEXT_SHORTCUTS = (
+        ("enter", "run action"),
+        ("esc", "back to note"),
+    )
+    LIBRARY_NOTES_CONTEXT_SHORTCUTS_COMPACT = (
+        ("enter", "run action"),
+        ("esc", "note"),
+    )
+    LIBRARY_NOTES_CONFLICT_SHORTCUTS = (("enter", "choose version"),)
+    LIBRARY_NOTES_CONFLICT_SHORTCUTS_COMPACT = (("enter", "choose version"),)
 
     # Baseline workbench geometry so the screen renders correctly even without
     # the app stylesheet (e.g. harness tests). The agentic-terminal TCSS uses
@@ -4218,6 +4267,20 @@ class LibraryScreen(BaseAppScreen):
         del event
         self._mark_library_notes_user_interaction()
 
+    def _notes_footer_tier(
+        self,
+        wide: tuple[tuple[str, str], ...],
+        compact: tuple[tuple[str, str], ...],
+    ) -> tuple[tuple[str, str], ...]:
+        """Pick the width tier of one Notes footer set (task-4023 AC#5).
+
+        Same keys and destinations in both tiers; the compact tier only
+        compresses labels so the context still fits the ≤100-col displayed
+        footer -- mirroring ``AppFooterStatus``'s own FULL/COMPACT global
+        tiers rather than inventing a second dialect.
+        """
+        return compact if self._library_notes_compact else wide
+
     def _library_notes_footer_shortcuts(self) -> tuple[tuple[str, str], ...]:
         """Return exact one-row local help for the visible Notes state."""
         if not self._library_notes_workflow_active() or (
@@ -4229,33 +4292,63 @@ class LibraryScreen(BaseAppScreen):
             snapshot.in_conflict
             or self._library_note_session.conflict_resolution_running
         ):
-            return self.LIBRARY_NOTES_CONFLICT_SHORTCUTS
+            # A running resolution locks every key -- advertise nothing
+            # (globals only) rather than a dead entry (AC#5 honesty).
+            if self._library_note_session.conflict_resolution_running:
+                return ()
+            return self._notes_footer_tier(
+                self.LIBRARY_NOTES_CONFLICT_SHORTCUTS,
+                self.LIBRARY_NOTES_CONFLICT_SHORTCUTS_COMPACT,
+            )
         if self._library_note_confirming_delete:
-            return (("Enter", "Confirm · Esc Cancel"),)
+            return self._notes_footer_tier(
+                (("enter", "confirm delete"), ("esc", "cancel delete")),
+                (("enter", "confirm"), ("esc", "cancel")),
+            )
         region = self._library_notes_focus_region()
         if region == "navigator":
             if self._library_notes_select_mode:
-                return (("Enter", "Select · Esc Done"),)
+                return self._notes_footer_tier(
+                    (("enter", "select note"), ("esc", "done")),
+                    (("enter", "select"), ("esc", "done")),
+                )
             if self._library_notes_sort_choices_visible:
-                return (("Enter", "Choose · Esc Cancel"),)
-            return self.LIBRARY_NOTES_NAVIGATOR_SHORTCUTS
+                return self._notes_footer_tier(
+                    (("enter", "choose sort"), ("esc", "cancel")),
+                    (("enter", "choose sort"), ("esc", "cancel")),
+                )
+            return self._notes_footer_tier(
+                self.LIBRARY_NOTES_NAVIGATOR_SHORTCUTS,
+                self.LIBRARY_NOTES_NAVIGATOR_SHORTCUTS_COMPACT,
+            )
         if region == "preview":
-            return self.LIBRARY_NOTES_PREVIEW_SHORTCUTS
+            return self._notes_footer_tier(
+                self.LIBRARY_NOTES_PREVIEW_SHORTCUTS,
+                self.LIBRARY_NOTES_PREVIEW_SHORTCUTS_COMPACT,
+            )
         if region == "context":
-            return self.LIBRARY_NOTES_CONTEXT_SHORTCUTS
+            return self._notes_footer_tier(
+                self.LIBRARY_NOTES_CONTEXT_SHORTCUTS,
+                self.LIBRARY_NOTES_CONTEXT_SHORTCUTS_COMPACT,
+            )
         if region == "editor":
-            return self.LIBRARY_NOTES_EDITOR_SHORTCUTS
+            return self._notes_footer_tier(
+                self.LIBRARY_NOTES_EDITOR_SHORTCUTS,
+                self.LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT,
+            )
         if region == "create":
-            return (
-                (("Enter", "Create · Esc Locked"),)
-                if self._library_note_create_running
-                else (("Enter", "Create · Esc Notes"),)
+            if self._library_note_create_running:
+                return ()
+            return self._notes_footer_tier(
+                (("enter", "create note"), ("esc", "back to notes")),
+                (("enter", "create"), ("esc", "notes")),
             )
         if region == "sync":
-            return (
-                (("Enter", "Syncing · Esc Locked"),)
-                if self._library_notes_sync_active_token is not None
-                else (("Enter", "Act · Esc Notes"),)
+            if self._library_notes_sync_active_token is not None:
+                return ()
+            return self._notes_footer_tier(
+                (("enter", "run action"), ("esc", "back to notes")),
+                (("enter", "act"), ("esc", "notes")),
             )
         return self._library_footer_shortcuts_for_current_state()
 
@@ -8141,7 +8234,9 @@ class LibraryScreen(BaseAppScreen):
         label = self._library_prompt_collections_controller.collection_label(
             self._library_prompt_browse_controller.scope.collection_id
         )
-        button.label = f"collection: {escape_markup(label)} ▸"
+        # AC#5: the in-place patcher must build the SAME cycle label the
+        # canvas composes (recompose discipline).
+        button.label = library_cycle_label("collection", escape_markup(label))
 
     def _refresh_library_prompt_after_membership_apply(self) -> None:
         """Invalidate list data and refresh counts after membership Apply.

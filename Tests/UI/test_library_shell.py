@@ -1804,7 +1804,7 @@ async def test_library_shell_search_mode_toggle_cycles_mode():
         await _wait_for_selector(screen, pilot, "#library-rag-mode-toggle")
 
         toggle = screen.query_one("#library-rag-mode-toggle", Button)
-        assert str(toggle.label) == "mode: Search ▸"
+        assert str(toggle.label) == "mode: Search ⇄"
         assert toggle.tooltip == (
             "Cycle Search/RAG mode. Next: RAG Answer — calls a paid provider."
         )
@@ -1813,7 +1813,7 @@ async def test_library_shell_search_mode_toggle_cycles_mode():
         screen.query_one("#library-rag-mode-toggle", Button).press()
         for _ in range(120):
             toggles = list(screen.query("#library-rag-mode-toggle"))
-            if toggles and str(toggles[0].label) == "mode: RAG Answer ▸":
+            if toggles and str(toggles[0].label) == "mode: RAG Answer ⇄":
                 break
             await pilot.pause(0.02)
         else:
@@ -1825,7 +1825,7 @@ async def test_library_shell_search_mode_toggle_cycles_mode():
         screen.query_one("#library-rag-mode-toggle", Button).press()
         for _ in range(120):
             toggles = list(screen.query("#library-rag-mode-toggle"))
-            if toggles and str(toggles[0].label) == "mode: Search ▸":
+            if toggles and str(toggles[0].label) == "mode: Search ⇄":
                 break
             await pilot.pause(0.02)
         else:
@@ -1890,7 +1890,7 @@ async def test_library_shell_search_rag_mode_keeps_run_enabled_without_runtime(
         screen.query_one("#library-rag-mode-toggle", Button).press()
         for _ in range(120):
             toggles = list(screen.query("#library-rag-mode-toggle"))
-            if toggles and str(toggles[0].label) == "mode: RAG Answer ▸":
+            if toggles and str(toggles[0].label) == "mode: RAG Answer ⇄":
                 break
             await pilot.pause(0.02)
         else:
@@ -1933,7 +1933,7 @@ async def test_library_shell_search_rag_mode_blocks_run_without_a_ready_provider
         screen.query_one("#library-rag-mode-toggle", Button).press()
         for _ in range(120):
             toggles = list(screen.query("#library-rag-mode-toggle"))
-            if toggles and str(toggles[0].label) == "mode: RAG Answer ▸":
+            if toggles and str(toggles[0].label) == "mode: RAG Answer ⇄":
                 break
             await pilot.pause(0.02)
         else:
@@ -2000,7 +2000,7 @@ async def test_library_shell_search_rag_mode_blocks_run_when_endpoint_named_but_
         screen.query_one("#library-rag-mode-toggle", Button).press()
         for _ in range(120):
             toggles = list(screen.query("#library-rag-mode-toggle"))
-            if toggles and str(toggles[0].label) == "mode: RAG Answer ▸":
+            if toggles and str(toggles[0].label) == "mode: RAG Answer ⇄":
                 break
             await pilot.pause(0.02)
         else:
@@ -3076,7 +3076,7 @@ async def test_library_shell_browse_media_renders_canvas_with_rows_and_preview()
         assert title == "Media (2)"
 
         filter_button = screen.query_one("#library-media-type-filter", Button)
-        assert str(filter_button.label) == "type: All ▸"
+        assert str(filter_button.label) == "type: All ⇄"
 
         rows = list(screen.query(".library-media-row"))
         assert len(rows) == 2
@@ -3127,7 +3127,7 @@ async def test_library_shell_media_type_filter_narrows_list():
 
         assert screen._library_media_type_filter == "audio"
         filter_button = screen.query_one("#library-media-type-filter", Button)
-        assert str(filter_button.label) == "type: audio ▸"
+        assert str(filter_button.label) == "type: audio ⇄"
         rows = list(screen.query(".library-media-row"))
         assert len(rows) == 1
         assert "Interview Recording" in str(rows[0].label)
@@ -3141,7 +3141,7 @@ async def test_library_shell_media_type_filter_narrows_list():
 
         assert screen._library_media_type_filter == "video"
         filter_button = screen.query_one("#library-media-type-filter", Button)
-        assert str(filter_button.label) == "type: video ▸"
+        assert str(filter_button.label) == "type: video ⇄"
         rows = list(screen.query(".library-media-row"))
         assert len(rows) == 1
         assert "Product Demo Video" in str(rows[0].label)
@@ -3152,7 +3152,7 @@ async def test_library_shell_media_type_filter_narrows_list():
 
         assert screen._library_media_type_filter == "All"
         filter_button = screen.query_one("#library-media-type-filter", Button)
-        assert str(filter_button.label) == "type: All ▸"
+        assert str(filter_button.label) == "type: All ⇄"
         rows = list(screen.query(".library-media-row"))
         assert len(rows) == 2
 
@@ -16259,7 +16259,7 @@ async def test_library_shell_restored_media_type_filter_renders_on_first_paint()
 
         assert screen2._library_media_type_filter == active_type
         filter_button = screen2.query_one("#library-media-type-filter", Button)
-        assert str(filter_button.label) == f"type: {active_type} ▸"
+        assert str(filter_button.label) == f"type: {active_type} ⇄"
         rows = list(screen2.query(".library-media-row"))
         assert len(rows) == 1
 
@@ -21028,7 +21028,10 @@ async def test_library_note_footer_tracks_editor_states_and_ancillary_contents()
             # ingest arc's shared footer (task-3302, PR #1452, in the dev
             # base) appends a width-adaptive global suffix after " | "
             # ("F1 help · ... · Ctrl+Q quit") to every Library footer.
-            return text.split(" | ")[0]
+            # task-4023 AC#5: the context itself is now " | "-joined
+            # per-key pairs, so strip only the LAST segment (the
+            # "·"-joined global cluster).
+            return text.rsplit(" | ", 1)[0]
 
         async def wait_footer(expected: str) -> None:
             await _wait_for_condition(
@@ -21038,7 +21041,7 @@ async def test_library_note_footer_tracks_editor_states_and_ancillary_contents()
             )
 
         await _open_note_editor(screen, pilot)
-        await wait_footer("Ctrl+S Save · Esc Notes")
+        await wait_footer("ctrl+s save | esc notes")
         footer = screen.query_one(AppFooterStatus)
         footer.update_word_count(12)
         footer.update_token_count("Tokens: 34")
@@ -21055,9 +21058,9 @@ async def test_library_note_footer_tracks_editor_states_and_ancillary_contents()
         assert all(widget.display is False for widget in ancillary)
 
         screen.query_one("#library-note-preview").press()
-        await wait_footer("Pg Scroll · Esc Notes")
+        await wait_footer("pgup/pgdn scroll | esc notes")
         screen.query_one("#library-note-context").press()
-        await wait_footer("Enter Act · Esc Note")
+        await wait_footer("enter run action | esc note")
 
         await pilot.resize_terminal(170, 48)
         await _wait_for_library_notes_compact(screen, pilot, False)
@@ -21074,13 +21077,13 @@ async def test_library_note_footer_tracks_editor_states_and_ancillary_contents()
         await _wait_for_library_notes_compact(screen, pilot, True)
         screen.query_one("#library-note-context-delete").press()
         await _wait_for_display(screen, pilot, "#library-note-delete-confirmation")
-        await wait_footer("Enter Confirm · Esc Cancel")
+        await wait_footer("enter confirm | esc cancel")
         await pilot.press("escape")
-        await wait_footer("Enter Act · Esc Note")
+        await wait_footer("enter run action | esc note")
         await pilot.press("escape")
-        await wait_footer("Pg Scroll · Esc Notes")
+        await wait_footer("pgup/pgdn scroll | esc notes")
         screen.query_one("#library-note-preview").press()
-        await wait_footer("Ctrl+S Save · Esc Notes")
+        await wait_footer("ctrl+s save | esc notes")
 
         body = screen.query_one("#library-note-body", TextArea)
         body.text = "local conflict text"
@@ -21092,7 +21095,7 @@ async def test_library_note_footer_tracks_editor_states_and_ancillary_contents()
             lambda: screen._library_note_session.snapshot.in_conflict,
             message="Ctrl+S did not surface the expected conflict.",
         )
-        await wait_footer("Enter Choose · Esc Locked")
+        await wait_footer("enter choose version")
         await pilot.press("ctrl+s")
         await _wait_for_condition(
             pilot,
@@ -21109,7 +21112,7 @@ async def test_library_note_footer_tracks_editor_states_and_ancillary_contents()
             ),
             message="Reload did not resolve the conflict.",
         )
-        await wait_footer("Ctrl+S Save · Esc Notes")
+        await wait_footer("ctrl+s save | esc notes")
         assert screen._library_note_shortcut_status == ""
 
 
@@ -21132,7 +21135,10 @@ async def test_library_note_footer_covers_navigator_create_sync_and_exit() -> No
             # ingest arc's shared footer (task-3302, PR #1452, in the dev
             # base) appends a width-adaptive global suffix after " | "
             # ("F1 help · ... · Ctrl+Q quit") to every Library footer.
-            return text.split(" | ")[0]
+            # task-4023 AC#5: the context itself is now " | "-joined
+            # per-key pairs, so strip only the LAST segment (the
+            # "·"-joined global cluster).
+            return text.rsplit(" | ", 1)[0]
 
         async def wait_footer(expected: str) -> None:
             await _wait_for_condition(
@@ -21143,33 +21149,33 @@ async def test_library_note_footer_covers_navigator_create_sync_and_exit() -> No
 
         screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_NOTES}").press()
         await _wait_for_selector(screen, pilot, "#library-notes-filter")
-        await wait_footer("Ctrl+N New · / Find · Esc Library")
+        await wait_footer("ctrl+n new | / find | esc rail")
 
         screen.query_one("#library-notes-select-toggle").press()
         await _wait_for_selector(screen, pilot, "#library-notes-selection-actions")
-        await wait_footer("Enter Select · Esc Done")
+        await wait_footer("enter select | esc done")
         await pilot.press("escape")
-        await wait_footer("Ctrl+N New · / Find · Esc Library")
+        await wait_footer("ctrl+n new | / find | esc rail")
 
         screen.query_one("#library-notes-sort").press()
         await _wait_for_selector(screen, pilot, "#library-notes-sort-choices")
-        await wait_footer("Enter Choose · Esc Cancel")
+        await wait_footer("enter choose sort | esc cancel")
         await pilot.press("escape")
-        await wait_footer("Ctrl+N New · / Find · Esc Library")
+        await wait_footer("ctrl+n new | / find | esc rail")
 
         await pilot.press("ctrl+n")
         await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
-        await wait_footer("Enter Create · Esc Notes")
+        await wait_footer("enter create | esc notes")
         await pilot.press("escape")
         await _wait_for_selector(screen, pilot, "#library-notes-sync-open")
-        await wait_footer("Ctrl+N New · / Find · Esc Library")
+        await wait_footer("ctrl+n new | / find | esc rail")
 
         screen.query_one("#library-notes-sync-open").press()
         await _wait_for_selector(screen, pilot, "#library-notes-sync-run")
-        await wait_footer("Enter Act · Esc Notes")
+        await wait_footer("enter act | esc notes")
         await pilot.press("escape")
         await _wait_for_selector(screen, pilot, "#library-notes-filter")
-        await wait_footer("Ctrl+N New · / Find · Esc Library")
+        await wait_footer("ctrl+n new | / find | esc rail")
 
         await pilot.press("escape")
         await _wait_for_condition(
@@ -21189,8 +21195,8 @@ async def test_library_note_footer_covers_navigator_create_sync_and_exit() -> No
             # notes-local help and restore Library-level guidance.
             lambda: (
                 "focus search" in footer_shortcuts()
-                and "Esc Library" not in footer_shortcuts()
-                and "Ctrl+N New" not in footer_shortcuts()
+                and "esc rail" not in footer_shortcuts()
+                and "ctrl+n new" not in footer_shortcuts()
             ),
             message="Library footer guidance did not restore after Notes exit.",
         )

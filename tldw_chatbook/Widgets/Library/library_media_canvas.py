@@ -16,6 +16,8 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_TOOLTIP,
     LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP,
+    library_cycle_label,
+    library_cycle_tooltip,
     library_disabled_action_label,
 )
 from tldw_chatbook.Widgets.Library.library_rail import _visible_row_title
@@ -61,12 +63,6 @@ class LibraryMediaCanvas(RecomposeCaptureGuard, Vertical):
             f"Media ({self.canvas.count})",
             id="library-media-title",
         )
-        yield Button(
-            f"type: {self.canvas.active_type} ▸",
-            id="library-media-type-filter",
-            classes="library-canvas-action",
-            compact=True,
-        )
         select_mode = getattr(self.canvas, "select_mode", False)
         # Gate/label off the RENDERED rows, not ``canvas.count`` -- the latter
         # is the pre-filter total across ALL media types, so with a media-type
@@ -76,33 +72,54 @@ class LibraryMediaCanvas(RecomposeCaptureGuard, Vertical):
         # Also portable to the conversations canvas state, which has no
         # ``.count`` field.
         rendered_count = len(self.canvas.rows)
-        export_btn = Button(
-            "Export…",
-            id="library-media-export",
-            classes="library-canvas-action",
-            compact=True,
-        )
-        export_btn.display = not select_mode
-        yield export_btn
-        # Disable only when there's nothing to select AND we're not already in
-        # select mode -- in select mode the button is "Done" and must always be
-        # pressable so the user can exit even if the rows dropped to zero
-        # (e.g. a background snapshot refresh emptied the list).
-        select_disabled = rendered_count == 0 and not select_mode
-        select_btn = Button(
-            # task-4023 AC#1 (RC-07): disabled carries the non-colour "○"
-            # marker; the F-018 reason tooltip below says why.
-            library_disabled_action_label(
-                "Done" if select_mode else "Select", select_disabled
-            ),
-            id="library-media-select-toggle",
-            classes="library-canvas-action",
-            compact=True,
-        )
-        select_btn.disabled = select_disabled
-        if select_disabled:
-            select_btn.tooltip = LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP
-        yield select_btn
+        # task-4023 AC#5: one toolbar grammar across the list canvases --
+        # these three actions used to stack VERTICALLY (one full-width
+        # button per row) while Notes/Prompts/Skills lay theirs out in
+        # horizontal ``ds-toolbar`` rows. Same render-safe shape as those
+        # canvases: fixed-width compact Buttons only, never mixed with a
+        # 1fr sibling.
+        toolbar = Horizontal(classes="ds-toolbar")
+        toolbar.styles.height = "auto"
+        with toolbar:
+            yield Button(
+                library_cycle_label("type", self.canvas.active_type),
+                id="library-media-type-filter",
+                classes="library-canvas-action",
+                compact=True,
+                # AC#5/RC: the cycler's option set was undiscoverable --
+                # enumerate the full cycle at the control.
+                tooltip=library_cycle_tooltip(
+                    "media type", tuple(self.canvas.type_options)
+                ),
+            )
+            export_btn = Button(
+                "Export…",
+                id="library-media-export",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            export_btn.display = not select_mode
+            yield export_btn
+            # Disable only when there's nothing to select AND we're not
+            # already in select mode -- in select mode the button is "Done"
+            # and must always be pressable so the user can exit even if the
+            # rows dropped to zero (e.g. a background snapshot refresh
+            # emptied the list).
+            select_disabled = rendered_count == 0 and not select_mode
+            select_btn = Button(
+                # task-4023 AC#1 (RC-07): disabled carries the non-colour
+                # "○" marker; the F-018 reason tooltip below says why.
+                library_disabled_action_label(
+                    "Done" if select_mode else "Select", select_disabled
+                ),
+                id="library-media-select-toggle",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            select_btn.disabled = select_disabled
+            if select_disabled:
+                select_btn.tooltip = LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP
+            yield select_btn
         confirming_bulk_delete = getattr(self.canvas, "confirming_bulk_delete", False)
         if select_mode:
             if confirming_bulk_delete:
