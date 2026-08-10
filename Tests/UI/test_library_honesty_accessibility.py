@@ -735,6 +735,167 @@ async def test_selected_collection_row_carries_the_selected_marker():
 
 
 # ---------------------------------------------------------------------------
+# AC#6 (RC-08): search honesty -- results visible at the point of action,
+# one query value across BOTH mounted inputs, executed-only Recents.
+# (Enter-runs-the-search and executed-only history were already pinned by
+# test_library_shell's rail-submit/history tests -- dissolved at HEAD.)
+# ---------------------------------------------------------------------------
+
+
+def _search_canvas_harness():
+    from Tests.UI.test_library_shell import (
+        LibraryHarness,
+        _StaticLibraryRagSearchService,
+        _active_library_screen,
+        _build_test_app,
+        _seed_conversations,
+        _two_conversations,
+    )
+
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        notes=[{"title": "Tides research note", "id": "note-1"}],
+        media=[{"title": "Ocean survey transcript", "id": "media-1"}],
+    )
+    app.library_rag_search_service = _StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": f"Result {index}",
+                    "snippet": "A snippet about the tides research corpus.",
+                    "source_id": f"note-{index}",
+                    "chunk_id": f"chunk-{index}",
+                    "provenance": {"source_type": "note"},
+                }
+                for index in range(1, 6)
+            ]
+        }
+    )
+    return app, LibraryHarness(app), _active_library_screen
+
+
+@pytest.mark.asyncio
+async def test_typing_in_either_search_input_updates_the_other_in_place():
+    """RC-08: 'two search inputs are live with different values'. The STATE
+    was already single-source, but the sibling WIDGET only re-seeded on
+    recompose -- live at HEAD the canvas held 'terminals render' while the
+    rail box still showed 'terminals'. Typing in either now patches the
+    other mounted input in place, both directions."""
+    from textual.widgets import Input
+
+    from Tests.UI.test_library_shell import (
+        _wait_for_library_shell,
+        _wait_for_selector,
+    )
+
+    app, host, active_screen = _search_canvas_harness()
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = active_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-search").press()
+        await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+
+        canvas_input = screen.query_one("#library-rag-query-input", Input)
+        rail_input = screen.query_one("#library-search-input", Input)
+
+        canvas_input.value = "terminals render"
+        await pilot.pause()
+        assert rail_input.value == "terminals render"
+
+        rail_input.value = "tide charts"
+        await pilot.pause()
+        assert canvas_input.value == "tide charts"
+
+
+@pytest.mark.asyncio
+async def test_run_reveals_the_evidence_region_instead_of_leaving_the_fold_intact():
+    """RC-08: results landed ~30 rows below the fold behind the
+    configuration region -- pressing Run left the visible half of the
+    canvas pixel-identical. Running a query must scroll the panel so the
+    Evidence region is inside the panel's visible window."""
+    from textual.widgets import Input
+
+    from Tests.UI.test_library_shell import (
+        _wait_for_library_rag_query_ready,
+        _wait_for_library_shell,
+        _wait_for_selector,
+    )
+
+    app, host, active_screen = _search_canvas_harness()
+    # A short terminal keeps the Evidence region genuinely below the fold
+    # behind the query/scope regions, reproducing the observed geometry.
+    async with host.run_test(size=(170, 24)) as pilot:
+        screen = active_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-search").press()
+        await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+
+        panel = screen.query_one("#library-search-rag-panel")
+        # Precondition: the heading starts below the panel's visible window
+        # (screen-space regions; otherwise this test cannot fail
+        # meaningfully). Wait for layout to settle first.
+        for _ in range(300):
+            heading = screen.query_one("#library-rag-results-heading")
+            if heading.region.y > 0 and panel.region.height > 0:
+                break
+            await pilot.pause(0.01)
+        assert heading.region.y >= panel.region.bottom, (
+            "Evidence region was not below the fold at this size: "
+            f"heading={heading.region}, panel={panel.region}."
+        )
+
+        screen.query_one("#library-rag-query-input", Input).value = "tides"
+        await _wait_for_library_rag_query_ready(screen, pilot, "tides")
+        screen.query_one("#library-rag-run-query", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-result-card-0")
+
+        # Assert the SETTLED state, not a transient frame mid-scroll: wait
+        # for the panel's scroll offset to hold still across frames first
+        # (a mutation that drops the reveal still passed a frame-catching
+        # loop here -- an unrelated scroll passes THROUGH the visible
+        # window on its way to the bottom).
+        last_offset = None
+        stable = 0
+        for _ in range(300):
+            offset = panel.scroll_offset
+            stable = stable + 1 if offset == last_offset else 0
+            last_offset = offset
+            if stable >= 10:
+                break
+            await pilot.pause(0.01)
+        heading = screen.query_one("#library-rag-results-heading")
+        assert panel.region.y <= heading.region.y < panel.region.bottom, (
+            "Run did not reveal the Evidence region at settle: heading at "
+            f"{heading.region}, panel window {panel.region}, "
+            f"scroll {panel.scroll_offset}."
+        )
+
+
+@pytest.mark.asyncio
+async def test_blocked_run_records_nothing_in_recent_searches():
+    """RC-08: 'never-executed strings still enter Recent searches'. The
+    gate-blocked path (blank query) must leave history untouched."""
+    from Tests.UI.test_library_shell import (
+        _wait_for_library_shell,
+        _wait_for_selector,
+    )
+
+    app, host, active_screen = _search_canvas_harness()
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = active_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-search").press()
+        await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+
+        await screen._start_library_rag_query()  # blank query -> gate blocked
+        await pilot.pause()
+        assert screen._library_search_history == ()
+        assert not list(screen.query(".library-rag-history-row"))
+
+
+# ---------------------------------------------------------------------------
 # AC#1 follow-up (Task 2 review M-1): the IN-PLACE marker patchers had zero
 # automated coverage -- removing `_patch_library_disabled_marker_label` from
 # `_apply_library_row_toggle` (mutation C) or the collections patcher's label

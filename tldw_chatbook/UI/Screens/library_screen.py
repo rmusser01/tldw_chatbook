@@ -22883,6 +22883,28 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         self._library_rag_query = event.value
+        # task-4023 AC#6 (RC-08): mirror into the Search canvas's query box
+        # when it is mounted, so the two visible inputs can never disagree
+        # (the state is one; the widgets used to drift until a recompose).
+        self._patch_sibling_library_search_input(
+            "#library-rag-query-input", event.value
+        )
+
+    def _patch_sibling_library_search_input(self, selector: str, value: str) -> None:
+        """Keep the OTHER mounted search input showing the same query text.
+
+        The rail box and the Search canvas's query box share one state
+        field (``_library_rag_query``); this keeps the mounted WIDGETS in
+        lockstep as the user types in either. The programmatic assignment
+        fires the sibling's own ``Input.Changed``, whose value-equality
+        guard makes it a no-op -- no feedback loop.
+        """
+        try:
+            sibling = self.query_one(selector, Input)
+        except (NoMatches, QueryError):
+            return
+        if sibling.value != value:
+            sibling.value = value
 
     @on(Input.Submitted, "#library-search-input")
     async def handle_library_search_submitted(self, event: Input.Submitted) -> None:
@@ -23314,6 +23336,15 @@ class LibraryScreen(BaseAppScreen):
         if event.value == self._library_rag_query:
             return
         self._library_rag_query = event.value
+        # task-4023 AC#6 (RC-08): one query truth at the WIDGET level too.
+        # The STATE was already single-source, but the rail box only
+        # re-seeds on recompose, so typing here left the mounted rail
+        # widget visibly holding the older string (proven live: canvas
+        # "terminals render" beside rail "terminals"). Patch the sibling
+        # in place; its own Changed handler no-ops (value == state).
+        self._patch_sibling_library_search_input(
+            "#library-search-input", event.value
+        )
         self._reset_library_rag_in_flight_status()
         await self._refresh_search_rag_panel_state_widgets(
             include_results_and_history=False
@@ -23547,6 +23578,13 @@ class LibraryScreen(BaseAppScreen):
         # only tolerating the "panel not mounted yet" case it was meant for.
         if self.query("#library-search-rag-panel"):
             await self._refresh_search_rag_panel_state_widgets()
+            # task-4023 AC#6 (RC-08): results used to land ~30 rows below
+            # the fold behind the configuration region -- pressing Run left
+            # the visible half of the canvas pixel-identical. Reveal the
+            # Evidence region the moment a run starts (it already shows the
+            # in-flight "Searching…" line), so the action visibly did
+            # something at the point of action.
+            self.call_after_refresh(self._reveal_library_rag_results)
         self._execute_library_rag_search(request)
 
     @on(Button.Pressed, "#library-create-collection")
@@ -24111,6 +24149,24 @@ class LibraryScreen(BaseAppScreen):
         ):
             return
         await self._refresh_search_rag_panel_state_widgets(force_history_collapse=True)
+        # task-4023 AC#6 (RC-08): the landed evidence must be visible at
+        # the point of action, not below the fold.
+        self.call_after_refresh(self._reveal_library_rag_results)
+
+    def _reveal_library_rag_results(self) -> None:
+        """Scroll the Search/RAG panel so the Evidence region is on screen.
+
+        Mirrors the prompt-history idiom (``scroll_to_widget(..., top=True)``)
+        on the panel's own ``VerticalScroll``. Called after a run starts and
+        after its results land; a missing panel (user navigated away
+        mid-flight) is a silent no-op.
+        """
+        try:
+            panel = self.query_one("#library-search-rag-panel", LibrarySearchRagPanel)
+            heading = self.query_one("#library-rag-results-heading", Static)
+        except (NoMatches, QueryError):
+            return
+        panel.scroll_to_widget(heading, animate=False, top=True)
 
     def _start_library_rag_answer(
         self,
