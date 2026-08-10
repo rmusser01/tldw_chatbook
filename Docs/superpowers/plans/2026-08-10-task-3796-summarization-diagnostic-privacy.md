@@ -706,7 +706,7 @@ Run:
 ../../.venv/bin/python -B -m pytest --collect-only -q Tests/LLM_Calls/test_summarization_diagnostic_privacy.py -k runtime_sentinel_hides_private_value
 ```
 
-Expected: exactly these 12 nodes, with no deselection or duplicate ID:
+Expected: exactly these 12 selected nodes with no duplicate ID. Other tests in the file may be reported as deselected by the intentional `-k` filter:
 
 ```text
 Tests/LLM_Calls/test_summarization_diagnostic_privacy.py::test_runtime_sentinel_hides_private_value[local-input]
