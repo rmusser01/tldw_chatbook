@@ -360,7 +360,11 @@ class AgentService:
         | None = None,
         run_log_writer: "RunLogWriter | None" = None,
         fleet_coordinator: FleetCoordinator | None = None,
-        revoke_approvals: Callable[[str], None] | None = None,
+        # `-> object`, not `-> None`: the Console's implementation returns
+        # the number of rounds it revoked (which this service ignores), and
+        # a `Callable[[str], None]` annotation would make that a type error
+        # at the wiring site.
+        revoke_approvals: Callable[[str], object] | None = None,
     ) -> None:
         self.db = db
         self.registry = registry
@@ -610,44 +614,6 @@ class AgentService:
             )
 
         return call_model
-
-    def _review_calls_for_run(self, calls: list[ToolCall], run_id: str) -> dict:
-        """Run the injected review hook with THIS run bound as the context.
-
-        PR2a Task 5 hands the hook its ``run_id`` as a parameter, which is
-        all the hook itself needs to scope its gate writes. Task 7 adds
-        the second consumer: the approval bridge the hook calls (Console's
-        ``request_mcp_approvals``) has to record which run armed each
-        card, so a cancelled child's card can be revoked without touching
-        its live siblings' -- and it is reached through a callable whose
-        signature the hook builders do not control (a bound
-        ``functools.partial``, also used as ``MCPToolProvider``'s
-        single-call ``approval_callback``, which has no run id to pass at
-        all). Binding the SAME ``run_context`` ContextVar that
-        ``_make_invoke_tool`` already binds around tool execution covers
-        both arming paths through one mechanism, with no signature churn.
-
-        The binding is per-call and reset in ``use_run_id``'s own
-        ``finally``: the hook is called synchronously from
-        ``run_agent_loop``, on this run's own thread, so a concurrent
-        sibling on its own thread simply sets its own value and a nested
-        inline child unwinds LIFO.
-
-        Args:
-            calls: This turn's batch of tool calls, as the runtime parsed
-                them.
-            run_id: THIS run's id.
-
-        Returns:
-            The hook's verdict map, unchanged; ``{}`` (every call
-            proceeds, the runtime's own no-hook default) if the hook was
-            cleared after this closure was built.
-        """
-        hook = self.review_tool_calls
-        if hook is None:  # pragma: no cover -- guarded at the call site
-            return {}
-        with use_run_id(run_id):
-            return hook(calls, run_id)
 
     def _make_invoke_tool(
         self,
@@ -2164,8 +2130,12 @@ class AgentService:
             # ignorant of run ids); the service, which owns the run
             # identity, is what supplies it -- so the review hook can stamp
             # its verdicts against the run that will consume them.
+            # (PR2a Task 7 binds this run's id as the `run_context` for the
+            # whole loop below, so the approval bridge this hook calls can
+            # record which run armed each card -- see the `use_run_id`
+            # wrapper on `run_agent_loop`.)
             review_tool_calls=(
-                (lambda calls: self._review_calls_for_run(calls, run_id))
+                (lambda calls: self.review_tool_calls(calls, run_id))
                 if self.review_tool_calls is not None
                 else None
             ),
@@ -2210,7 +2180,36 @@ class AgentService:
             on_record=on_record,
         )
         try:
-            outcome = run_agent_loop(config, messages, active, deps)
+            # PR2a Task 7: bind THIS run as the dispatching run for the
+            # whole loop, on the loop's own thread.
+            #
+            # `_make_invoke_tool` already binds it around each provider
+            # tool call, but that binding is established on the per-call
+            # daemon thread and covers only what runs there. Two things
+            # that arm HUMAN APPROVAL CARDS run here, on the loop thread,
+            # instead:
+            #
+            #   1. `review_tool_calls` -- one batch-approval round trip
+            #      per turn (`ConsoleChatController.request_mcp_approvals`).
+            #   2. The in-loop runtime tools, of which `run_skill_script`
+            #      raises a confirm card of its own (see agent_runtime's
+            #      RUN_SKILL_SCRIPT dispatch: called straight from the
+            #      loop, never through `invoke_tool`).
+            #
+            # Both bridges record `current_run_id()` at arm time so a
+            # cancelled child's card can be revoked without touching a
+            # live sibling's -- and neither can be handed the id as a
+            # parameter (the approval bridge is a pre-bound partial shared
+            # with `MCPToolProvider.approval_callback`; the runtime-tool
+            # closures are built by the bridge, one layer below any run
+            # identity). One binding here covers both, and every future
+            # loop-thread consumer, with no signature churn.
+            #
+            # Nested inline sub-agent runs unwind LIFO (`use_run_id`
+            # resets in its own `finally`), and a threaded child simply
+            # sets its own value on its own thread.
+            with use_run_id(run_id):
+                outcome = run_agent_loop(config, messages, active, deps)
         except Exception as exc:  # noqa: BLE001 — a run never raises out
             from tldw_chatbook.Chat.provider_failures import describe_stream_failure
 

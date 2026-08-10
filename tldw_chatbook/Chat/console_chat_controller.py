@@ -3632,23 +3632,35 @@ class ConsoleChatController:
         session: session-keyed teardown could not tell a cancelled child's
         card from its live sibling's.
 
+        Covers BOTH card registries a cancelled child can be holding:
+        ``_pending_approval_rounds`` (tool-call approvals) and
+        ``_pending_skill_script_rounds`` (run_skill_script confirms). The
+        skill-script leg is the wider hazard of the two -- that tool is
+        all-agents scope, its schema is not filtered by
+        ``config.allowed_tools``, and ``console_agent_bridge``'s closure
+        runs the script on the very next line after the confirm returns
+        Allow, with no cancellation checkpoint in between. (Skill-INSTALL
+        confirms are deliberately not swept: ``install_skill`` is wired
+        for the primary agent only, so no sub-agent can arm one.)
+
         Each revoked round is (a) marked ``revoked`` so the waiting thread
-        returns "deny" for every name even if a click lands in its shared
-        decisions box afterwards, (b) filled with "deny" for every name it
-        was asked about, (c) removed from ``_pending_approval_rounds``, so
-        a late ``resolve_pending_approval`` finds nothing to resolve, (d)
+        fails closed even if a click lands in its shared decision box
+        afterwards, (b) pre-filled with the closed verdict, (c) removed
+        from its registry, so a late ``resolve_pending_approval``/
+        ``resolve_pending_skill_script`` finds nothing to resolve, (d)
         released via its Event, so the waiting thread returns immediately
-        rather than at its 120s auto-deny, (e) discarded from
+        rather than at its auto-deny deadline, (e) discarded from
         ``_pending_approvals`` so the session's NEEDS_APPROVAL badge
         clears once its last round is gone, and (f) taken off screen
-        through ``_clear_pending_approval_if_round_is_current`` -- the
-        SAME round-identity-guarded clear a resolved round's own teardown
-        uses, so a sibling round's card is never clobbered.
+        through the SAME round-identity-guarded clear that round's own
+        teardown uses, so a sibling round's card is never clobbered.
 
-        Thread-safe: the registry mutations happen under
-        ``_approval_state_lock``; ``discard_pending_round`` and the UI
-        clear take that same (non-reentrant) lock themselves and are
-        therefore deliberately called after it is released.
+        Thread-safe. Each registry is swept under its own lock, and the
+        two locks are taken SEQUENTIALLY, never nested -- the ordering
+        contract ``_clear_pending_skill_script_if_round_is_current``
+        already documents. ``discard_pending_round`` and both UI clears
+        take those (non-reentrant) locks themselves, so they are
+        deliberately called after every critical section is released.
 
         Args:
             run_id: The cancelled/abandoned run whose cards must die. A
@@ -3657,16 +3669,65 @@ class ConsoleChatController:
                 sweeping those would deny cards no run owns.
 
         Returns:
-            How many rounds were revoked (``0`` when the run had none).
+            How many rounds were revoked across both registries (``0``
+            when the run had none).
         """
         if not run_id:
             return 0
+        revoked = self._revoke_tool_approval_rounds(run_id)
+        script_revoked = self._revoke_skill_script_rounds(run_id)
+        for round_id, session_id in revoked:
+            if session_id is not None:
+                self.discard_pending_round(session_id, round_id)
+            try:
+                self._clear_pending_approval_if_round_is_current(
+                    round_id, session_id
+                )
+            except Exception:  # noqa: BLE001 -- a UI clear must never
+                # break the cancellation path that called us.
+                logger.opt(exception=True).debug(
+                    "Failed to marshal approval clear during revocation"
+                )
+        for request_id, session_id in script_revoked:
+            if session_id is not None:
+                self.discard_pending_round(session_id, request_id)
+            try:
+                self._clear_pending_skill_script_if_round_is_current(
+                    request_id, session_id
+                )
+            except Exception:  # noqa: BLE001 -- as above.
+                logger.opt(exception=True).debug(
+                    "Failed to clear skill-script confirm during revocation"
+                )
+        total = len(revoked) + len(script_revoked)
+        if total:
+            logger.info(
+                f"revoked {total} pending approval round(s) for "
+                f"cancelled run {run_id}"
+            )
+        return total
+
+    def _revoke_tool_approval_rounds(self, run_id: str) -> list[tuple[str, str | None]]:
+        """Fail this run's tool-approval rounds closed. Registry work only.
+
+        Args:
+            run_id: The cancelled/abandoned run.
+
+        Returns:
+            ``(round_id, session_id)`` for each revoked round, for the
+            caller's badge/card teardown (which must run outside the lock
+            held here).
+        """
         revoked: list[tuple[str, str | None]] = []
         with self._approval_state_lock:
             for round_id, state in list(self._pending_approval_rounds.items()):
                 if state.get("run_id") != run_id:
                     continue
                 state["revoked"] = True
+                # Defense in depth only: the post-wait `revoked` guard in
+                # `request_mcp_approvals` is the actual mechanism (it
+                # ignores this box entirely). Filling it keeps the box
+                # honest for anything that reads it directly.
                 decisions = state.get("decisions")
                 if isinstance(decisions, dict):
                     for name in state.get("names") or ():
@@ -3692,24 +3753,50 @@ class ConsoleChatController:
                     for state in self._pending_approval_rounds.values()
                 ):
                     self._parked_approval_payloads.pop(session_id, None)
-        for round_id, session_id in revoked:
-            if session_id is not None:
-                self.discard_pending_round(session_id, round_id)
-            try:
-                self._clear_pending_approval_if_round_is_current(
-                    round_id, session_id
-                )
-            except Exception:  # noqa: BLE001 -- a UI clear must never
-                # break the cancellation path that called us.
-                logger.opt(exception=True).debug(
-                    "Failed to marshal approval clear during revocation"
-                )
+        return revoked
+
+    def _revoke_skill_script_rounds(self, run_id: str) -> list[tuple[str, str | None]]:
+        """Fail this run's ``run_skill_script`` confirms closed.
+
+        Registry work only, under ``_pending_skill_script_lock`` and then
+        (sequentially, never nested -- see
+        ``_clear_pending_skill_script_if_round_is_current``)
+        ``_approval_state_lock`` for the retained-payload slot.
+
+        Args:
+            run_id: The cancelled/abandoned run.
+
+        Returns:
+            ``(request_id, session_id)`` for each revoked confirm.
+        """
+        revoked: list[tuple[str, str | None]] = []
+        with self._pending_skill_script_lock:
+            for request_id, state in list(self._pending_skill_script_rounds.items()):
+                if state.get("run_id") != run_id:
+                    continue
+                state["revoked"] = True
+                # Defense in depth -- the post-wait `revoked` guard in
+                # `request_skill_script_confirm` is what actually denies.
+                decision = state.get("decision")
+                if isinstance(decision, dict):
+                    decision["allow"] = False
+                    decision["remember"] = False
+                self._pending_skill_script_rounds.pop(request_id, None)
+                session_id = state.get("session_id") or None
+                revoked.append((request_id, session_id))
+                event = state.get("event")
+                if event is not None:
+                    event.set()
+            still_armed = {
+                state.get("session_id")
+                for state in self._pending_skill_script_rounds.values()
+            }
         if revoked:
-            logger.info(
-                f"revoked {len(revoked)} pending approval round(s) for "
-                f"cancelled run {run_id}"
-            )
-        return len(revoked)
+            with self._approval_state_lock:
+                for _request_id, session_id in revoked:
+                    if session_id is not None and session_id not in still_armed:
+                        self._parked_skill_script_payloads.pop(session_id, None)
+        return revoked
 
     # -- Skill-install confirm bridge (task-5, parked TASK-910) --------------
 
@@ -4056,12 +4143,27 @@ class ConsoleChatController:
         owning_session_id = session_id if session_id is not None else (
             self.store.active_session_id or ""
         )
+        # PR2a Task 7 (review M1): same run-ownership stamp
+        # `request_mcp_approvals` carries, and for a WIDER hazard --
+        # `run_skill_script` is all-agents scope (no agent_kind gate in
+        # `AgentService._run_one`) and runtime schemas are not filtered by
+        # `config.allowed_tools`, so a fleet child is offered it
+        # unconditionally; the bridge closure then runs the script as the
+        # very next statement after this confirm returns Allow, with no
+        # cancellation checkpoint in between. `current_run_id()` is bound
+        # for the whole loop by `AgentService` (this tool is dispatched
+        # IN-LOOP, not through `invoke_tool`'s per-call thread).
+        script_round_state: dict[str, Any] = {
+            "event": event,
+            "decision": decision,
+            "session_id": owning_session_id,
+            "run_id": current_run_id(),
+            # Re-read after the wait: a late Allow must not stick. See
+            # `revoke_approval_rounds_for_run`.
+            "revoked": False,
+        }
         with self._pending_skill_script_lock:
-            self._pending_skill_script_rounds[request_id] = {
-                "event": event,
-                "decision": decision,
-                "session_id": owning_session_id,
-            }
+            self._pending_skill_script_rounds[request_id] = script_round_state
 
         timeout_seconds = (
             self.skill_script_confirm_timeout_seconds()
@@ -4095,6 +4197,18 @@ class ConsoleChatController:
                     break
                 if time.monotonic() >= deadline:
                     break
+            # PR2a Task 7 (review M1): a revoked round denies
+            # unconditionally, without consulting `decision` at all --
+            # `resolve_pending_skill_script` writes into that shared box
+            # after snapshotting the round, so an Allow delivered just
+            # after the child was cancelled could otherwise reach the
+            # `asyncio.run(scope.run_skill_script(...))` call the bridge
+            # makes on the very next line. Mirrors `request_mcp_
+            # approvals`' identical post-wait guard.
+            with self._pending_skill_script_lock:
+                was_revoked = bool(script_round_state.get("revoked"))
+            if was_revoked:
+                return {"allow": False, "remember": False}
             return {
                 "allow": bool(decision.get("allow", False)),
                 "remember": bool(decision.get("remember", False)),

@@ -943,3 +943,209 @@ def test_confirm_payload_shows_the_canonical_skill_name_not_the_raw_one(
     result = env.closure("  DEMO-Skill ", "scripts/hello.py", [])
     assert result.ok is True
     assert env.confirm_calls[0]["skill_name"] == "demo-skill"
+
+
+# -- PR2a Task 7 (review M1): cancellation revokes skill-script confirms ----
+#
+# `run_skill_script` is all-agents scope (no agent_kind gate in
+# `_run_one`) and runtime schemas are not filtered by `config.allowed_
+# tools`, so a fleet CHILD is offered it unconditionally. The bridge
+# closure runs `scope.run_skill_script(...)` as the very next statement
+# after the confirm returns Allow, with no cancellation checkpoint in
+# between, and the confirm's only stop signal (`_is_session_cancelled`)
+# never fires for a fleet-internal cancel. A cancelled child's confirm
+# card, if clicked, therefore executed an arbitrary skill script for
+# real -- a wider blast radius than the tool-call hazard Task 7 closed
+# first. These pin the fix.
+
+RUN_A = "run-child-a"
+RUN_B = "run-child-b"
+
+
+def test_revoking_a_run_denies_its_skill_script_confirm_and_spares_a_sibling(
+    make_controller,
+):
+    """Two children of one turn share the console session; only run-A's
+    confirm is revoked, and run-B's stays armed and still decidable."""
+    from tldw_chatbook.Agents.run_context import use_run_id
+
+    controller = make_controller()
+    controller.skill_script_confirm_timeout_seconds = lambda: 30.0
+    session_id = controller.store.ensure_session().id
+    controller.store.switch_session(session_id)
+    results: dict[str, dict[str, bool]] = {}
+
+    def _worker(run_id: str, skill: str):
+        def _run() -> None:
+            with use_run_id(run_id):
+                results[run_id] = controller.request_skill_script_confirm(
+                    {"skill_name": skill, "script_path": "scripts/hello.py"},
+                    session_id=session_id,
+                )
+
+        thread = threading.Thread(target=_run)
+        thread.start()
+        return thread
+
+    worker_a = _worker(RUN_A, "alpha")
+    worker_b = _worker(RUN_B, "beta")
+    _wait_until(lambda: len(controller.pending_skill_script_ids()) == 2)
+
+    rounds = {
+        state["run_id"]: request_id
+        for request_id, state in controller._pending_skill_script_rounds.items()
+    }
+    assert set(rounds) == {RUN_A, RUN_B}
+    assert controller._pending_approvals[session_id] == {rounds[RUN_A], rounds[RUN_B]}
+
+    assert controller.revoke_approval_rounds_for_run(RUN_A) == 1
+
+    worker_a.join(timeout=5)
+    assert not worker_a.is_alive(), "the revoked confirm never released its thread"
+    assert results[RUN_A] == {"allow": False, "remember": False}
+
+    # The sibling child is untouched: armed, counted, still blocking.
+    assert controller.pending_skill_script_ids() == [rounds[RUN_B]]
+    assert controller._pending_approvals[session_id] == {rounds[RUN_B]}
+    assert worker_b.is_alive()
+
+    controller.resolve_pending_skill_script(True, False, request_id=rounds[RUN_B])
+    worker_b.join(timeout=5)
+    assert results[RUN_B] == {"allow": True, "remember": False}
+    assert session_id not in controller._pending_approvals
+
+
+def test_revoking_an_unknown_run_leaves_a_skill_script_confirm_armed(make_controller):
+    """The common case -- a cancelled child with no confirm outstanding --
+    must not disturb anyone else's card."""
+    from tldw_chatbook.Agents.run_context import use_run_id
+
+    controller = make_controller()
+    controller.skill_script_confirm_timeout_seconds = lambda: 30.0
+    session_id = controller.store.ensure_session().id
+    controller.store.switch_session(session_id)
+    result: dict[str, dict[str, bool]] = {}
+
+    def _run() -> None:
+        with use_run_id(RUN_A):
+            result["decision"] = controller.request_skill_script_confirm(
+                {"skill_name": "demo"}, session_id=session_id
+            )
+
+    thread = threading.Thread(target=_run)
+    thread.start()
+    _wait_until(lambda: bool(controller.pending_skill_script_ids()))
+    request_id = controller.pending_skill_script_ids()[0]
+
+    assert controller.revoke_approval_rounds_for_run("run-nobody") == 0
+    assert controller.revoke_approval_rounds_for_run("") == 0
+    assert controller.pending_skill_script_ids() == [request_id]
+    assert thread.is_alive()
+
+    controller.resolve_pending_skill_script(True, False, request_id=request_id)
+    thread.join(timeout=5)
+    assert result["decision"] == {"allow": True, "remember": False}
+
+
+def test_a_late_allow_after_a_revoke_cannot_run_the_script(tmp_path, monkeypatch):
+    """END TO END: the cancelled child's card is clicked Allow, and the
+    script still does not run.
+
+    Drives the REAL closure ``console_agent_bridge.run_reply`` builds (the
+    one that calls ``scope.run_skill_script`` with no cancellation
+    checkpoint after the confirm) against the REAL controller bridge. The
+    worker is parked inside its own mount callback so the ordering is
+    exact: revoke lands first, then the Allow arrives -- both by request
+    id AND written straight into the shared decision box a pre-revoke
+    snapshot would hold.
+
+    The observable is the fake scope service's ``run_calls``: empty means
+    nothing executed.
+    """
+    from tldw_chatbook.Agents.run_context import use_run_id
+
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=object())
+    controller.app = _FakeApp()
+    controller.skill_script_confirm_timeout_seconds = lambda: 30.0
+    session_id = store.ensure_session().id
+    store.switch_session(session_id)
+
+    mounted: list[dict[str, Any] | None] = []
+    release = threading.Event()
+
+    def _mount(payload):
+        mounted.append(payload)
+        if payload is not None:
+            # Hold the worker just before it enters its wait loop.
+            release.wait(5.0)
+
+    controller.set_pending_skill_script = _mount
+
+    run_calls: list[tuple[str, str, list[str]]] = []
+    trust_service = _FakeTrustService(granted=False)
+    scope = _FakeScopeService(
+        trust_service=trust_service,
+        enforce_side_effect=None,
+        describe_side_effect=None,
+        run_result=ScriptRunResult(
+            exit_code=0,
+            stdout="pwned",
+            stderr="",
+            timed_out=False,
+            output_capped=False,
+            duration_seconds=0.01,
+            truncated_stdout=False,
+            truncated_stderr=False,
+            sandbox_warnings=(),
+        ),
+        run_calls=run_calls,
+    )
+
+    import functools
+
+    closure = _capture_run_skill_script_tool(
+        tmp_path,
+        monkeypatch,
+        scope=scope,
+        request_skill_script_confirm=functools.partial(
+            controller.request_skill_script_confirm, session_id=session_id
+        ),
+    )
+    assert closure is not None
+
+    outcome: dict[str, Any] = {}
+
+    def _run_tool() -> None:
+        with use_run_id(RUN_A):
+            outcome["result"] = closure("demo", "scripts/hello.py", [])
+
+    worker = threading.Thread(target=_run_tool)
+    worker.start()
+    try:
+        _wait_until(lambda: bool(mounted) and mounted[0] is not None)
+        request_id = mounted[0]["request_id"]
+        decision_box = controller._pending_skill_script_rounds[request_id]["decision"]
+
+        # The fleet cancels/abandons this child.
+        assert controller.revoke_approval_rounds_for_run(RUN_A) == 1
+
+        # ... and the user presses Allow + Remember anyway.
+        controller.resolve_pending_skill_script(True, True, request_id=request_id)
+        decision_box["allow"] = True
+        decision_box["remember"] = True
+    finally:
+        release.set()
+
+    worker.join(timeout=5)
+    assert not worker.is_alive()
+
+    assert run_calls == [], (
+        "a revoked confirm executed the skill script for real"
+    )
+    assert trust_service.granted_names == [], (
+        "a revoked confirm persisted a standing script-execution grant"
+    )
+    result = outcome["result"]
+    assert result.ok is False
+    assert "declined" in result.error

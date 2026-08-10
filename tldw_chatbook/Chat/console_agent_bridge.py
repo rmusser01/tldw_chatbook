@@ -1545,7 +1545,7 @@ class ConsoleAgentBridge:
         # run that is already over. Forwarded straight to
         # `AgentService(revoke_approvals=...)`; `None` (a caller with no UI)
         # leaves cancellation exactly as it was.
-        revoke_approvals: Callable[[str], None] | None = None,
+        revoke_approvals: Callable[[str], object] | None = None,
     ) -> tuple[str, RunOutcome]:
         # Per-run tool registry + allow-list (Task 12, extended by P5-T6 for
         # MCP, by task-545/T6 for a per-run builtin_gate, and extended again

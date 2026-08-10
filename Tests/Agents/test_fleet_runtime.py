@@ -21,6 +21,7 @@ every assertion here is deterministic under real threads.
 
 import threading
 import time
+from collections import Counter
 
 import pytest
 
@@ -40,6 +41,7 @@ from tldw_chatbook.Agents.agent_models import (
 from tldw_chatbook.Agents.agent_models import (
     CHECK_AGENTS_TOOL_NAME,
     FENCE_TOOL_RESULT_PREFIX,
+    RUN_SKILL_SCRIPT_TOOL_NAME,
     RUNTIME_TOOL_NAMES,
     WAIT_AGENTS_TOOL_NAME,
 )
@@ -182,6 +184,7 @@ def make_fleet_service(
     providers=(),
     revoke_approvals=None,
     review_tool_calls=None,
+    run_skill_script_tool=None,
 ):
     """An AgentService wired for the fleet (explicit coordinator = opt in)."""
     registry = ToolCatalogRegistry()
@@ -197,6 +200,7 @@ def make_fleet_service(
         fleet_coordinator=coordinator,
         revoke_approvals=revoke_approvals,
         review_tool_calls=review_tool_calls,
+        run_skill_script_tool=run_skill_script_tool,
     )
     return service, chat, coordinator
 
@@ -1106,9 +1110,16 @@ def test_cancelling_and_abandoning_a_child_revokes_its_approval_cards(db):
         assert child_run_ids and all(child_run_ids), (
             "precondition: the child's run id reached its handle"
         )
-        # Revoked for exactly the children this turn stopped -- never for
-        # the parent, whose own card (if any) belongs to a live run.
-        assert set(revoked) == set(child_run_ids)
+        # Counted, not set-collapsed (review M2): the two revoke sites are
+        # SEPARATE moments and each must be pinned on its own. A set
+        # comparison stayed green when either one was deleted. This child
+        # is wedged, so it is revoked exactly twice -- once by
+        # `_cancel_fleet_handles`' cooperative cancel, once by
+        # `_settle_fleet`'s abandon of what the join could not reclaim.
+        assert Counter(revoked) == Counter({run: 2 for run in child_run_ids}), (
+            f"expected each stopped child revoked at both moments: {revoked}"
+        )
+        # Never the parent, whose own card (if any) belongs to a live run.
         assert _run_id not in revoked
     finally:
         never.set()
@@ -1410,6 +1421,62 @@ def test_child_tool_call_binds_the_childs_own_run_id(db):
     child = next(r for r in db.list_runs("c") if r["agent_kind"] == "subagent")
     assert probe.seen == [child["id"]]
     assert probe.seen[0] != ""
+
+
+def test_an_in_loop_runtime_tool_sees_its_own_runs_id(db):
+    """`run_skill_script` is dispatched IN-LOOP, and it arms a confirm card.
+
+    Review M1: unlike a provider tool, the runtime tools never go through
+    ``invoke_tool``'s per-call daemon thread -- ``run_agent_loop`` calls
+    them directly on the run's own thread. ``run_skill_script`` raises a
+    consent card whose round records ``current_run_id()`` so a cancelled
+    child's confirm can be revoked; if the loop thread had no binding,
+    that ownership would read ``""``, the revoke would silently match
+    nothing, and a clicked Allow would still execute the script.
+
+    The tool is all-agents scope, so the CHILD is the case that matters.
+    """
+    seen: list[str] = []
+
+    def run_skill_script_tool(skill_name, script_path, args):
+        seen.append(current_run_id())
+        return ToolResult(ok=True, content="exit_code: 0")
+
+    cfg = AgentConfig(
+        model="test-model",
+        system_prompt="You are helpful.",
+        allowed_tools=(SPAWN_TOOL_NAME,),
+        budget=RunBudget(max_steps=40, max_model_turns=40, max_subagents=2),
+    )
+    service, _chat, _coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "script task"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "done",
+        ],
+        {
+            "script task": [
+                fence(
+                    RUN_SKILL_SCRIPT_TOOL_NAME,
+                    {"skill_name": "demo", "script_path": "run.sh", "args": []},
+                ),
+                "child done",
+            ]
+        },
+        run_skill_script_tool=run_skill_script_tool,
+    )
+    _run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=cfg,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    child = next(r for r in db.list_runs("c") if r["agent_kind"] == "subagent")
+    assert seen == [child["id"]], (
+        f"the child's in-loop runtime tool ran unbound or as another run: {seen}"
+    )
 
 
 def test_the_review_hook_runs_with_its_own_runs_id_bound(db):
