@@ -8,6 +8,12 @@
 
 **Tech Stack:** Python 3.11+, `mcp-unified==0.2.1`, asyncio binary stdio, SQLite/FTS-backed Chatbook services, pytest/pytest-asyncio/Hypothesis, Ruff, mypy, Bandit, `build`, and isolated wheel/sdist virtual environments.
 
+**Post-rebase inventory correction (approved 2026-08-10):** TASK-4000 retired
+the dishonest `ingest_media` placeholder. Preserve exactly nine implemented
+standalone built-ins, keep `ingest_media` absent from discovery and refused by
+direct dispatch, and direct persistent ingestion to Library Import. Do not
+restore the placeholder or expand TASK-2512 into real ingestion.
+
 ---
 
 ## Governing documents and working rules
@@ -40,7 +46,7 @@
 
 ### Existing production files
 
-- `tldw_chatbook/MCP/server.py` — retain the ten existing nested handlers and AST authority; replace FastMCP construction/binding with `ChatbookGatewayRuntime`, strengthen schemas, compose optional local tools, and call `serve_stdio`.
+- `tldw_chatbook/MCP/server.py` — retain the nine implemented nested handlers and AST authority; replace FastMCP construction/binding with `ChatbookGatewayRuntime`, strengthen schemas, compose optional local tools, and call `serve_stdio`.
 - `tldw_chatbook/MCP/local_server_tools.py` — retain external-client provider composition, return canonical `ToolResult` objects to the adapter, remove FastMCP-only schema/copy workarounds, and stop interpolating raw exceptions.
 - `tldw_chatbook/MCP/prompts.py` — add the missing `await` in `search_and_synthesize_prompt`; no external role folding here.
 - `tldw_chatbook/MCP/client.py` — bounded cursor aggregation and exact resource `_meta` preservation.
@@ -169,11 +175,11 @@ Pin these behaviors by name:
 - `test_runtime_requires_one_handler_for_every_expected_builtin`
 - `test_runtime_rejects_duplicate_tool_names`
 - `test_runtime_rejects_handler_without_descriptor`
-- `test_all_ten_builtin_schemas_reject_additional_properties`
-- `test_all_ten_builtin_handlers_register_with_exact_names`
+- `test_all_nine_builtin_schemas_reject_additional_properties`
+- `test_all_nine_builtin_handlers_register_with_exact_names`
 - `test_standalone_tool_descriptors_exclude_library_tools`
 
-Use `_describe_local_tools()` as the expected descriptor source and assert the exact ten names from the specification. Mutation-test the guard by deleting one handler, duplicating one name, and setting one schema's `additionalProperties` back to `True`.
+Use `_describe_local_tools()` as the expected descriptor source and assert the exact nine names from the specification. Assert `ingest_media` is absent and preserve the direct-runtime refusal test. Mutation-test the guard by deleting one handler, duplicating one name, and setting one schema's `additionalProperties` back to `True`.
 
 - [ ] **Step 2: Run focused tests and capture RED**
 
@@ -286,7 +292,7 @@ Add a provider handler which raises `RuntimeError("SENTINEL /private/path API_KE
 
 - [ ] **Step 2: Write atomic-publication and event-loop RED tests**
 
-Cover a duplicate local name, collision with a built-in, invalid non-object schema, non-callable handler, and a mid-list invalid registration. After every failure, assert the tool catalog is exactly the original ten built-ins. Add a heartbeat task around a blocking fake provider invocation and assert the heartbeat advances while the handler runs in `asyncio.to_thread`.
+Cover a duplicate local name, collision with a built-in, invalid non-object schema, non-callable handler, and a mid-list invalid registration. After every failure, assert the tool catalog is exactly the original nine built-ins. Add a heartbeat task around a blocking fake provider invocation and assert the heartbeat advances while the handler runs in `asyncio.to_thread`.
 
 Using one already-running adapter/provider instance and a real temporary `MCPPermissionStore`, make two calls around each state transition: ask → grant (second call succeeds), grant → revoke/deny (second call refuses), kill switch off → on (second call refuses), and on → off with a still-valid grant (second call succeeds). These tests must fail if either effective permission state or the kill switch is cached at registration/server startup.
 
@@ -500,7 +506,7 @@ git commit -m "feat(mcp): map bounded prompt results"
 
 - [ ] **Step 1: Write construction and entrypoint RED tests**
 
-Assert `TldwMCPServer.mcp` is a finalized `ChatbookGatewayRuntime`, exact counts are 10 built-ins/5 templates/5 prompts with local exposure off, HTTP raises `NotImplementedError`, `run("stdio")` returns the injected `serve_stdio` integer, `main()` returns it, and `MCP/__main__.py` exits with it without mutating `sys.path` or writing human text to stdout.
+Assert `TldwMCPServer.mcp` is a finalized `ChatbookGatewayRuntime`, exact counts are 9 built-ins/5 templates/5 prompts with local exposure off, `ingest_media` is absent, HTTP raises `NotImplementedError`, `run("stdio")` returns the injected `serve_stdio` integer, `main()` returns it, and `MCP/__main__.py` exits with it without mutating `sys.path` or writing human text to stdout.
 
 - [ ] **Step 2: Write real protocol RED tests**
 
@@ -661,7 +667,7 @@ Expected: FAIL until the complete migration is packaged and the isolated server 
 
 - [ ] **Step 3: Add a site-packages-only protocol consumer**
 
-From the temporary working directory, launch that artifact venv's interpreter with `-I -m tldw_chatbook.MCP`; run initialize/catalog/call/read/get using deterministic temporary data; assert ten built-ins, five templates, five prompts, zero `library_*`, expected continuation metadata, fixed local refusal behavior when enabled, clean EOF, exit 0, JSON-only stdout, and no sentinel path/secret in stderr.
+From the temporary working directory, launch that artifact venv's interpreter with `-I -m tldw_chatbook.MCP`; run initialize/catalog/call/read/get using deterministic temporary data; assert nine implemented built-ins, no `ingest_media`, five templates, five prompts, zero `library_*`, expected continuation metadata, fixed local refusal behavior when enabled, clean EOF, exit 0, JSON-only stdout, and no sentinel path/secret in stderr.
 
 Run wheel and sdist as separate parameter cases so one cannot mask the other. Bound install/build/server waits and retain no process or venv after the test.
 
@@ -717,12 +723,149 @@ git commit -m "test(mcp): prove isolated standalone distributions"
 ### Task 9: Run final regression/security gates and close TASK-2512
 
 **Files:**
+- Modify: `Docs/superpowers/plans/2026-08-09-mcp-unified-standalone-server-migration.md`
+- Modify: `Docs/superpowers/specs/2026-08-09-mcp-unified-standalone-server-migration-design.md`
+- Modify: `backlog/decisions/053-mcp-unified-standalone-runtime-boundary.md`
 - Modify: `backlog/tasks/task-2512 - Migrate-MCP-server-from-FastMCP-to-tldw_servers-mcp-unified-package.md`
+- Modify: `Docs/Design/MCP.md`
+- Modify: `Docs/User_Guide/mcp.md`
+- Modify: `Docs/Development/release-recovery-setup.md`
+- Modify: `Docs/Development/Agent-Tools/local-library-tools.md`
+- Modify: `Tests/MCP/test_gateway_runtime_tools.py`
+- Modify: `Tests/MCP/test_mcp_unified_stdio.py`
+- Modify: `Tests/MCP/test_mcp_documentation_contract.py`
+- Modify: `Tests/Packaging/test_mcp_unified_distribution.py`
+- Modify: `Tests/UI/test_mcp_workbench.py`
 - Modify: `backlog/docs/lessons-testing-evidence.md`, `backlog/docs/lessons-live-verification.md`, or `backlog/docs/lessons-backlog-hygiene.md` only if this implementation produced a new evidence-backed reusable lesson
 
 - [ ] **Step 1: Rebase or merge the latest `origin/dev` before final evidence**
 
 Fetch, inspect the semantic delta, integrate without destructive reset, and rerun the in-flight TASK-2512 PR/branch search. If a conflict touches generated CSS or backlog filenames, follow the repository lessons rather than hand-merging or staging broadly.
+
+- [ ] **Step 1a: Reconcile the post-rebase inventory contract before behavior edits**
+
+Update TASK-2512, ADR-053, this specification, and this plan first to record
+TASK-4000's approved nine-tool contract, explicit `ingest_media`
+absence/refusal, and Library Import replacement path. Run the required
+plan/spec review gate and do not edit inventory tests or live docs until that
+review passes.
+
+After the review passes, commit only the governing correction:
+
+```bash
+git add \
+  'backlog/tasks/task-2512 - Migrate-MCP-server-from-FastMCP-to-tldw_servers-mcp-unified-package.md' \
+  backlog/decisions/053-mcp-unified-standalone-runtime-boundary.md \
+  Docs/superpowers/specs/2026-08-09-mcp-unified-standalone-server-migration-design.md \
+  Docs/superpowers/plans/2026-08-09-mcp-unified-standalone-server-migration.md
+git commit -m "docs(mcp): reconcile standalone inventory contract"
+```
+
+- [ ] **Step 1b: Capture the stale ten-tool expectations as RED**
+
+Run the focused failing inventory nodes before changing their expectations:
+
+```bash
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest \
+  Tests/MCP/test_gateway_runtime_tools.py::test_all_ten_builtin_handlers_register_with_exact_names \
+  Tests/MCP/test_gateway_runtime_tools.py::test_all_ten_builtin_schemas_reject_additional_properties \
+  Tests/MCP/test_mcp_unified_stdio.py::test_constructor_finalizes_the_exact_default_standalone_surface \
+  Tests/Packaging/test_mcp_unified_distribution.py -q
+```
+
+Expected RED: every failure reports the same 10-expected/9-actual inventory
+mismatch; wheel and sdist must reach their isolated server inventories under
+normal PyPI access rather than failing on dependency download.
+
+- [ ] **Step 1c: Write the corrected documentation contract and capture RED**
+
+Before editing live documentation, change/add assertions in
+`Tests/MCP/test_mcp_documentation_contract.py` for exactly nine implemented
+built-ins, explicit `ingest_media` absence, and the Library Import replacement
+path across its existing standalone-document set, including
+`Docs/Development/release-recovery-setup.md`.
+
+Add a separate targeted
+`test_local_library_tools_documentation_uses_current_standalone_inventory`
+which reads only `Docs/Development/Agent-Tools/local-library-tools.md` and
+requires its exact nine-tool, `ingest_media`-absent, Library Import sentence.
+Do not add this focused Library-boundary document to the global `DOCUMENTS`
+fixture or require it to carry the full standalone guide contract. First run
+the targeted test alone, then the complete documentation contract:
+
+```bash
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest \
+  Tests/MCP/test_mcp_documentation_contract.py::test_local_library_tools_documentation_uses_current_standalone_inventory -q
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest \
+  Tests/MCP/test_mcp_documentation_contract.py -q
+```
+
+Expected RED: the targeted test fails on the unchanged Agent Tools ten-tool
+claim, and the complete contract reports the unchanged standalone docs which
+still advertise ten tools and/or omit the explicit Library Import
+replacement. A collection error or unrelated failure does not count as RED.
+
+- [ ] **Step 1d: Make the minimum inventory/docs correction and prove GREEN**
+
+Change only stale standalone inventory constants, counts, protocol fixtures,
+and public documentation to nine implemented built-ins. Remove
+`ingest_media` call fixtures and placeholder-success copy, add/retain explicit
+absence assertions, preserve `Tests/MCP/test_library_tools.py`'s upstream
+absence/refusal coverage, and direct ingestion to Library Import. Do not
+change production dispatch. Correct the stale ten-tool claim in
+`Docs/Development/Agent-Tools/local-library-tools.md` and the obsolete
+"`ingest_media` is currently a stub" claim in
+`Tests/UI/test_mcp_workbench.py` without weakening that UI test's actual
+permission-classification assertion. Verify/update
+`Docs/Development/release-recovery-setup.md` within the same nine-tool,
+`ingest_media`-absent, Library Import contract. Run the targeted Agent Tools
+documentation test GREEN, then the complete focused suite:
+
+```bash
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest \
+  Tests/MCP/test_mcp_documentation_contract.py::test_local_library_tools_documentation_uses_current_standalone_inventory -q
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest \
+  Tests/MCP/test_gateway_runtime_tools.py \
+  Tests/MCP/test_mcp_unified_stdio.py \
+  Tests/MCP/test_mcp_documentation_contract.py \
+  Tests/MCP/test_library_tools.py \
+  Tests/Packaging/test_mcp_unified_distribution.py \
+  Tests/UI/test_mcp_workbench.py::test_is_permission_refusal_bare_permission_error_from_tool_body_is_not_a_refusal -q
+```
+
+Also run the stale-claim scan:
+
+```bash
+rg -n "ten legacy MCP tools|one file-shaped built-in.*ingest_media|ingest_media.*currently a stub|Built-in tools \(10\)" \
+  Docs/Design/MCP.md \
+  Docs/User_Guide/mcp.md \
+  Docs/Development/release-recovery-setup.md \
+  Docs/Development/Agent-Tools/local-library-tools.md \
+  Tests/UI/test_mcp_workbench.py
+```
+
+Expected: no matches.
+
+Expected GREEN: exact nine-tool source, wire, subprocess, wheel, and sdist
+inventories pass; `ingest_media` remains absent/refused and Library Import is
+the only documented persistent-ingestion path. Then rerun Steps 2-5 in full
+on the corrected tree.
+
+Commit only the reconciliation tests/docs after GREEN:
+
+```bash
+git add \
+  Docs/Design/MCP.md \
+  Docs/User_Guide/mcp.md \
+  Docs/Development/release-recovery-setup.md \
+  Docs/Development/Agent-Tools/local-library-tools.md \
+  Tests/MCP/test_gateway_runtime_tools.py \
+  Tests/MCP/test_mcp_unified_stdio.py \
+  Tests/MCP/test_mcp_documentation_contract.py \
+  Tests/Packaging/test_mcp_unified_distribution.py \
+  Tests/UI/test_mcp_workbench.py
+git commit -m "test(mcp): reconcile nine-tool standalone inventory"
+```
 
 - [ ] **Step 2: Run the complete scoped behavior suite**
 
@@ -752,25 +895,60 @@ This gate is not optional. If the environment prevents it from starting or compl
 
 - [ ] **Step 4: Run static, type, security, syntax, and diff gates**
 
+First run `git diff --name-only origin/dev...HEAD -- '*.py'` and verify every
+reported path is covered by the Ruff scopes below; verify every reported
+non-test path is also present in the mypy, Bandit, and compile scopes. The
+explicit scopes include all TASK-2512 Python changes plus the post-rebase UI
+test correction.
+
 Run:
 
 ```bash
 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff format --check \
-  tldw_chatbook/MCP Tests/MCP Tests/Packaging/test_mcp_unified_distribution.py
+  tldw_chatbook/MCP \
+  tldw_chatbook/RAG_Search/simplified/search_service.py \
+  tldw_chatbook/Utils/optional_deps.py \
+  Tests/MCP \
+  Tests/Packaging/test_mcp_unified_distribution.py \
+  Tests/Utils/test_optional_deps.py \
+  Tests/Utils/test_subscriptions_dependency_gate.py \
+  Tests/UI/test_mcp_workbench.py
 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff check \
-  tldw_chatbook/MCP Tests/MCP Tests/Packaging/test_mcp_unified_distribution.py
+  tldw_chatbook/MCP \
+  tldw_chatbook/RAG_Search/simplified/search_service.py \
+  tldw_chatbook/Utils/optional_deps.py \
+  Tests/MCP \
+  Tests/Packaging/test_mcp_unified_distribution.py \
+  Tests/Utils/test_optional_deps.py \
+  Tests/Utils/test_subscriptions_dependency_gate.py \
+  Tests/UI/test_mcp_workbench.py
 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m mypy \
+  tldw_chatbook/MCP/__init__.py \
+  tldw_chatbook/MCP/__main__.py \
   tldw_chatbook/MCP/gateway_runtime.py \
   tldw_chatbook/MCP/server.py \
   tldw_chatbook/MCP/client.py \
-  tldw_chatbook/MCP/local_server_tools.py
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m bandit -q \
-  tldw_chatbook/MCP/gateway_runtime.py \
-  tldw_chatbook/MCP/server.py \
-  tldw_chatbook/MCP/client.py \
+  tldw_chatbook/MCP/local_runtime_delegate.py \
   tldw_chatbook/MCP/local_server_tools.py \
-  tldw_chatbook/MCP/prompts.py
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m compileall -q tldw_chatbook/MCP
+  tldw_chatbook/MCP/prompts.py \
+  tldw_chatbook/RAG_Search/simplified/search_service.py \
+  tldw_chatbook/Utils/optional_deps.py
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m bandit -q \
+  tldw_chatbook/MCP/__init__.py \
+  tldw_chatbook/MCP/__main__.py \
+  tldw_chatbook/MCP/gateway_runtime.py \
+  tldw_chatbook/MCP/server.py \
+  tldw_chatbook/MCP/client.py \
+  tldw_chatbook/MCP/local_runtime_delegate.py \
+  tldw_chatbook/MCP/local_server_tools.py \
+  tldw_chatbook/MCP/prompts.py \
+  tldw_chatbook/RAG_Search/simplified/search_service.py \
+  tldw_chatbook/Utils/optional_deps.py
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m compileall -q \
+  tldw_chatbook/MCP \
+  tldw_chatbook/RAG_Search/simplified/search_service.py \
+  tldw_chatbook/Utils/optional_deps.py
+git diff --check origin/dev...HEAD
 git diff --check
 ```
 
@@ -795,10 +973,12 @@ Review every changed production line against ADR-053 and the spec. Re-run the de
 - [ ] **Step 6: Request final code review while TASK-2512 remains In Progress**
 
 Use `@superpowers:requesting-code-review` against the complete branch diff. The review must cover ADR/spec alignment, security/privacy, protocol revisions, cancellation/lifecycle, package isolation, and regression tests. Do not check acceptance criteria or mark the task Done before this review returns.
+Record the exact tested commit and require the review to target that commit
+with a clean worktree.
 
 - [ ] **Step 7: Address review findings and refresh evidence**
 
-For each verified Critical/Important/Minor finding, add a focused failing regression test before production changes, implement the minimal fix, and commit it separately. If review changes any tracked file, rerun Steps 2–4 in full on the final tree; if it changes no file, record the review pass against the exact tested commit.
+For each verified Critical/Important/Minor finding, add a focused failing regression test before production changes, implement the minimal fix, and commit it separately. If review changes any tracked file, rerun Steps 2–5 in full, commit the refreshed tree, and repeat Step 6 against that exact tested commit. Continue this loop until the final review returns Ready with no tracked-file change; only then record the review pass for closeout.
 
 - [ ] **Step 8: Update TASK-2512 truthfully after review**
 

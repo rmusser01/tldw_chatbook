@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-09
 
-**Status:** Approved for implementation
+**Status:** Approved for implementation; inventory amended 2026-08-10 after TASK-4000 integration
 
 **Task:** TASK-2512
 
@@ -24,8 +24,8 @@ Success means:
 
 - `python -m tldw_chatbook.MCP` launches a strict standalone stdio server from
   a fresh `tldw_chatbook[mcp]` installation.
-- The ten legacy built-in tools, five resource templates, dynamic resource
-  catalog, five prompts, and optionally exposed phase-4 local-agent tools are
+- The nine implemented legacy built-in tools, five resource templates,
+  dynamic resource catalog, five prompts, and optionally exposed phase-4 local-agent tools are
   present and callable through `mcp-unified`.
 - The server negotiates Chatbook's existing `2025-03-26` client and the
   package's current `2026-07-28` protocol behavior.
@@ -37,6 +37,14 @@ Success means:
   remain unchanged and are not published by the standalone stdio server.
 - No production import or declared optional dependency on FastMCP or the
   official `mcp` SDK remains.
+
+Post-rebase correction (approved 2026-08-10): TASK-4000 retired
+`ingest_media` because it returned a fabricated queued result without
+submitting work. The migration preserves that newer product contract:
+`ingest_media` is absent from standalone discovery and refused by direct
+in-process dispatch, while persistent ingestion remains available through
+Library Import. Restoring the placeholder or implementing real ingestion is
+outside TASK-2512.
 
 ## 2. Verified Upstream Contract
 
@@ -77,7 +85,7 @@ modules.
 
 The standalone adapter registers exactly these existing handlers:
 
-**Built-in tools (10)**
+**Built-in tools (9)**
 
 1. `chat_with_llm`
 2. `chat_with_character`
@@ -88,8 +96,6 @@ The standalone adapter registers exactly these existing handlers:
 7. `list_characters`
 8. `get_conversation_history`
 9. `export_conversation`
-10. `ingest_media`
-
 **Resource templates (5)**
 
 1. `conversation://{conversation_id}`
@@ -118,14 +124,14 @@ Console-session state.
 
 ### 3.2 Explicitly unchanged in-process Library surface
 
-`describe_local_mcp_capabilities()` currently combines the ten legacy
+`describe_local_mcp_capabilities()` currently combines the nine implemented legacy
 built-ins with eighteen descriptor-backed `library_*` tools. The latter are
 owned by ADR-030 and executed by `LocalMCPRuntimeDelegate` through
 `LocalLibraryToolService`. Raw in-app protocol `tools/call` remains refused;
 the Console executes only through its gated and logged local-tool action.
 
 The standalone adapter must never use that combined manifest as its dispatch
-catalog. It consumes `_describe_local_tools()` for the ten standalone
+catalog. It consumes `_describe_local_tools()` for the nine standalone
 built-ins and explicit registrations for phase-4 local tools. Tests must prove
 that:
 
@@ -142,7 +148,9 @@ that:
 - Replacing the hand-written external MCP client with the official SDK.
 - Adding HTTP, WebSocket, or network-listening transport.
 - Porting tldw_server application modules or its policy database.
-- Redesigning the ten legacy tool result contracts.
+- Redesigning the nine implemented legacy tool result contracts.
+- Restoring the retired `ingest_media` placeholder or implementing a real
+  ingestion submission path; use Library Import for persistent ingestion.
 - Adding semantic or embedding search to direct Library tools.
 - Claiming worker-thread cancellation reverses completed side effects.
 
@@ -545,7 +553,7 @@ Implementation follows strict red-green-refactor. Required coverage includes:
 ### 13.1 Pure adapter tests
 
 - duplicate/missing registrations fail construction;
-- ten built-in descriptors map to ten handlers;
+- nine built-in descriptors map bijectively to nine handlers;
 - real local-provider schemas appear unchanged in `tools/list`;
 - optional local registrations publish all-or-none, and a duplicate,
   built-in collision, invalid descriptor shape, or non-callable handler leaves
@@ -573,7 +581,8 @@ Implementation follows strict red-green-refactor. Required coverage includes:
 
 ### 13.2 Real handler tests
 
-- all ten built-in handlers remain registered;
+- all nine implemented built-in handlers remain registered and
+  `ingest_media` remains absent/refused;
 - representative read and write tools execute against temporary real SQLite
   databases and never the user's configured database;
 - all five resource handlers map through the adapter;

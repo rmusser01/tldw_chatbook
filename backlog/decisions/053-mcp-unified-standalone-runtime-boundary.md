@@ -2,6 +2,7 @@
 
 Status: Accepted
 Date: 2026-08-09
+Amended: 2026-08-10 (post-rebase inventory reconciliation with TASK-4000)
 Related Task: [TASK-2512 - Migrate MCP server from FastMCP to tldw_server's mcp-unified package](../tasks/task-2512%20-%20Migrate-MCP-server-from-FastMCP-to-tldw_servers-mcp-unified-package.md)
 Supersedes: N/A
 
@@ -18,9 +19,12 @@ result projection, URI-template routing, bounded resource continuation, and
 prompt argument validation. It does not import tldw_server's internal
 `BaseModule`, `ModuleRegistry`, policy, or application service graph.
 
-The standalone stdio catalog contains the ten legacy built-in tools plus the
-explicitly enabled phase-4 filesystem, git, and web tools. It does not consume
-the combined in-app capability manifest and does not expose the eighteen
+The standalone stdio catalog contains the nine implemented legacy built-in
+tools plus the explicitly enabled phase-4 filesystem, git, and web tools. The
+retired `ingest_media` placeholder remains absent: it fabricated a queued
+result without submitting ingestion work, so external clients must use
+Chatbook's Library Import flow for persistent URL/file ingestion. The server
+does not consume the combined in-app capability manifest and does not expose the eighteen
 `library_*` tools. Those Library tools remain owned by ADR-030's in-process
 descriptor-backed runtime, including its gated execution path and raw
 `tools/call` refusal.
@@ -94,8 +98,8 @@ Chatbook has two different local MCP surfaces whose distinction is
 security-significant:
 
 1. `TldwMCPServer` is a subprocess-launched external stdio server. It exposes
-   the ten legacy built-ins and, when configured, permission-gated local-agent
-   tools.
+   the nine implemented legacy built-ins and, when configured,
+   permission-gated local-agent tools.
 2. `LocalMCPRuntimeDelegate` is an in-process control-plane runtime. Its
    combined manifest also contains eighteen private Library tools, while raw
    protocol `tools/call` is refused and execution proceeds only through the
@@ -136,6 +140,7 @@ repository's architecture rules.
 | Relabel prompt `system` messages as `assistant` | That changes instruction authorship and semantics. Folding the leading instruction into the user request is protocol-valid and semantically closer. |
 | Raise gateway output limits for large resources | Large single-line responses increase memory and denial-of-service risk and discard the upstream bounded-default guarantee. |
 | Claim cancellation stops worker-thread side effects | Python cannot force-kill an arbitrary running thread safely. The honest contract is cancellation of the await/output path, with existing permission and timeout controls around side effects. |
+| Restore the old `ingest_media` entry to keep a ten-tool count | Its success response was fabricated and performed no ingestion. Preserving TASK-4000's absence/refusal contract is safer than advertising work that never happens; real ingestion remains a separate feature. |
 
 ## Consequences
 
@@ -159,8 +164,10 @@ repository's architecture rules.
 - Exact pinning requires an intentional dependency update for future
   `mcp-unified` releases.
 - Existing non-Library tool outputs that exceed the gateway's safe result
-  ceiling fail closed; this migration does not redesign all ten legacy tool
-  result contracts.
+  ceiling fail closed; this migration does not redesign the nine implemented
+  legacy tool result contracts.
+- Retired `ingest_media` remains unavailable over standalone and in-process
+  direct dispatch; persistent ingestion continues through Library Import.
 - Resource continuation adds an opaque query token to follow-up reads.
 - That token detects stale/mismatched state but is not authenticated; it does
   not add a separate authorization boundary beyond the resource read.
