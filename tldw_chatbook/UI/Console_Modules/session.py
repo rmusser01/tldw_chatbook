@@ -128,6 +128,10 @@ from ...Chat.console_chat_models import (
     DEFAULT_CONSOLE_SESSION_TITLE,
 )
 from ...Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from ...Chat.console_context_policy import (
+    ConsoleContextPolicyOverrides,
+    ContextPolicyError,
+)
 from ...Chat.console_roleplay_identity import (
     ChatDisplayNameError,
     effective_user_display_name,
@@ -1776,6 +1780,7 @@ class ConsoleSessionController:
             "settings": ConsoleSessionController._serialize_console_settings(
                 session.settings
             ),
+            "context_policy_overrides": session.context_policy_overrides.to_dict(),
             "updated_at": session.updated_at,
             "runtime_backend": session.runtime_backend,
             "assistant_kind": session.assistant_kind,
@@ -1829,6 +1834,17 @@ class ConsoleSessionController:
             settings=self._restore_console_settings(raw_session.get("settings")),
             draft=str(raw_session.get("draft") or ""),
         )
+        try:
+            session_kwargs["context_policy_overrides"] = (
+                ConsoleContextPolicyOverrides.from_mapping(
+                    raw_session.get("context_policy_overrides")
+                )
+            )
+        except ContextPolicyError:
+            session_kwargs["context_policy_overrides"] = (
+                ConsoleContextPolicyOverrides()
+            )
+            session_kwargs["context_policy_error"] = "invalid_screen_context_policy"
         # Legacy payloads saved before `updated_at` was serialized omit the
         # key entirely; keep the ConsoleChatSession factory default (now)
         # for those instead of forcing an empty/invalid timestamp.

@@ -99,6 +99,8 @@ def test_load_settings_exposes_console_defaults(tmp_path, monkeypatch):
     assert settings["console"]["collapse_large_pastes"] is True
     assert settings["console"]["paste_collapse_threshold"] == 50
     assert settings["console"]["stack_collapsed_rail_labels"] is False
+    assert settings["console"]["conversation_budget_mode"] == "automatic"
+    assert settings["console"]["compaction_mode"] == "ask"
 
 
 @pytest.mark.parametrize(
@@ -214,6 +216,23 @@ def test_config_template_enables_local_and_standard_web_tools():
     template = tomllib.loads(config_module.CONFIG_TOML_CONTENT)
 
     assert template["console"]["local_tools_enabled"] is True
+
+
+def test_config_template_exposes_conversation_memory_defaults():
+    template = tomllib.loads(config_module.CONFIG_TOML_CONTENT)
+    console = template["console"]
+
+    assert console["conversation_budget_mode"] == "automatic"
+    assert "conversation_budget_tokens" not in console
+    assert console["compaction_mode"] == "ask"
+    assert console["compaction_trigger_ratio"] == 0.80
+    assert console["compaction_target_ratio"] == 0.55
+    assert console["compaction_summary_max_tokens"] == 1024
+    assert console["compaction_failure_behavior"] == "stop_and_ask"
+    assert (
+        console["compaction_carry_forward_mode"]
+        == "memory_with_recent_turns"
+    )
 
 
 def test_console_local_tools_coerced(tmp_path, monkeypatch):

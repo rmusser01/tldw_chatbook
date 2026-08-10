@@ -47,7 +47,7 @@ def test_migration_adds_metadata_json_and_bumps_version(tmp_path, monkeypatch):
 
     db = CharactersRAGDB(db_path, client_id="migration-test")
     connection = db.get_connection()
-    assert _version(connection) == 32
+    assert _version(connection) == 33
     assert "metadata_json" in _message_columns(connection)
     db.close_connection()
 
@@ -154,7 +154,7 @@ def test_migration_is_idempotent_when_column_already_present(tmp_path, monkeypat
 
     db = CharactersRAGDB(db_path, client_id="migration-test")  # must not raise
     connection = db.get_connection()
-    assert _version(connection) == 32
+    assert _version(connection) == 33
     assert "metadata_json" in _message_columns(connection)
     # And the column is still usable, not left in some half-migrated state.
     conv_id = db.add_conversation({"title": "t"})

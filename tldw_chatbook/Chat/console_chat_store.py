@@ -33,6 +33,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     GenerationVariantMeta,
     MessageAttachment,
 )
+from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_roleplay_identity import (
     ConsolePresentationContext,
@@ -425,6 +426,14 @@ class ConsoleChatSession:
     id: str = field(default_factory=lambda: str(uuid4()))
     persisted_conversation_id: str | None = None
     settings: ConsoleSessionSettings | None = None
+    #: Sparse conversation-owned context policy. For an empty unsaved tab this
+    #: remains staged only in the session/screen snapshot and is flushed after
+    #: the first durable conversation row is created.
+    context_policy_overrides: ConsoleContextPolicyOverrides = field(
+        default_factory=ConsoleContextPolicyOverrides
+    )
+    #: Bounded persistence diagnostic for a corrupt/unreadable stored policy.
+    context_policy_error: str | None = None
     draft: str = ""
     updated_at: str = field(default_factory=_utc_now_iso)
     pending_attachments: list[PendingAttachment] = field(default_factory=list)
@@ -751,6 +760,7 @@ class ConsoleChatStore:
             character_name=character_name,
         )
         session.persisted_conversation_id = str(persisted_conversation_id)
+        self._resolve_context_policy_on_resume(session.id)
         self._ingest_full_tree(
             session.id,
             all_nodes,
@@ -976,6 +986,52 @@ class ConsoleChatStore:
     def session_settings(self, session_id: str) -> ConsoleSessionSettings | None:
         """Return in-memory settings for a native Console session."""
         return self._session_or_raise(session_id).settings
+
+    def session_context_policy_overrides(
+        self, session_id: str
+    ) -> ConsoleContextPolicyOverrides:
+        """Return sparse conversation-owned context-policy overrides."""
+        return self._session_or_raise(session_id).context_policy_overrides
+
+    def set_session_context_policy_overrides(
+        self,
+        session_id: str,
+        overrides: ConsoleContextPolicyOverrides,
+    ) -> tuple[ConsoleChatSession, bool]:
+        """Stage policy and write through only when a conversation exists.
+
+        Returns an honest ``(session, persisted)`` pair. Applying policy to an
+        empty tab never calls ``persist_session_if_needed`` and therefore
+        cannot create an empty conversation row.
+        """
+        if not isinstance(overrides, ConsoleContextPolicyOverrides):
+            raise TypeError("overrides must be ConsoleContextPolicyOverrides")
+        session = self._session_or_raise(session_id)
+        session.context_policy_overrides = overrides
+        session.context_policy_error = None
+        self._bump_payload_revision(session_id)
+        if session.persisted_conversation_id is None or self.persistence is None:
+            return session, True
+        writer = getattr(
+            self.persistence, "update_conversation_context_policy", None
+        )
+        if not callable(writer):
+            return session, False
+        try:
+            writer(
+                conversation_id=session.persisted_conversation_id,
+                overrides=overrides,
+            )
+        except Exception:
+            logger.bind(
+                session_id=session_id,
+                conversation_id=session.persisted_conversation_id,
+            ).exception(
+                "Failed to persist Console context policy; in-memory policy "
+                "keeps the applied value."
+            )
+            return session, False
+        return session, True
 
     def session_workspace_id(self, session_id: str) -> str:
         """Return the workspace id a native Console session is bound to.
@@ -3599,6 +3655,7 @@ class ConsoleChatStore:
                         session_id=session_id,
                         conversation_id=session.persisted_conversation_id,
                     ).exception("Failed to flush pinned prefill on first persist.")
+        self._flush_context_policy_on_first_persist(session)
         # task-9: flush a session-held RAG retrieval scope (unpersisted-
         # session lifecycle, ``SessionScopeHolder``) through to durable
         # storage now that the conversation row exists. ``flush_to`` itself
@@ -3659,6 +3716,65 @@ class ConsoleChatStore:
                 session.persisted_conversation_id,
             )
         return session.persisted_conversation_id
+
+    def _flush_context_policy_on_first_persist(
+        self, session: ConsoleChatSession
+    ) -> None:
+        """Write staged non-empty policy after the conversation row exists."""
+        if (
+            session.persisted_conversation_id is None
+            or session.context_policy_overrides.is_empty
+            or self.persistence is None
+        ):
+            return
+        writer = getattr(
+            self.persistence, "update_conversation_context_policy", None
+        )
+        if not callable(writer):
+            logger.bind(
+                session_id=session.id,
+                conversation_id=session.persisted_conversation_id,
+            ).warning(
+                "Skipped staged Console context-policy flush: persistence "
+                "adapter exposes no policy write seam."
+            )
+            return
+        try:
+            writer(
+                conversation_id=session.persisted_conversation_id,
+                overrides=session.context_policy_overrides,
+            )
+        except Exception:
+            logger.bind(
+                session_id=session.id,
+                conversation_id=session.persisted_conversation_id,
+            ).exception("Failed to flush Console context policy on first persist.")
+
+    def _resolve_context_policy_on_resume(self, session_id: str) -> None:
+        """Hydrate one persisted session's local policy without app-root state."""
+        session = self._session_or_raise(session_id)
+        if session.persisted_conversation_id is None or self.persistence is None:
+            return
+        reader = getattr(self.persistence, "get_conversation_context_policy", None)
+        if not callable(reader):
+            return
+        try:
+            result = reader(session.persisted_conversation_id)
+        except Exception:
+            session.context_policy_error = "context_policy_read_failed"
+            logger.bind(
+                session_id=session_id,
+                conversation_id=session.persisted_conversation_id,
+            ).exception("Failed to read Console context policy on resume.")
+            return
+        if isinstance(result, ConsoleContextPolicyOverrides):
+            session.context_policy_overrides = result
+            return
+        overrides = getattr(result, "overrides", None)
+        if isinstance(overrides, ConsoleContextPolicyOverrides):
+            session.context_policy_overrides = overrides
+        error = getattr(result, "error", None)
+        session.context_policy_error = error if isinstance(error, str) else None
 
     def promote_ephemeral_session(self, session_id: str) -> str | None:
         """Save a temporary conversation to durable storage, all or nothing.

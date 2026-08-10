@@ -1,6 +1,10 @@
 """Console-native widgets."""
 
 from .console_control_bar import ConsoleControlBar
+from .console_context_controls import (
+    ConsoleContextControlState,
+    build_console_context_control_state,
+)
 from .console_composer_bar import (
     ConsoleComposerBar,
     ConsoleComposerUndoHistory,
@@ -45,6 +49,7 @@ __all__ = [
     "ConsoleCitationSourceRow",
     "ConsoleCitationSourcesModal",
     "ConsoleControlBar",
+    "ConsoleContextControlState",
     "ConsoleEditMessageModal",
     "ConsoleEditResult",
     "ConsoleRailHandle",
@@ -67,4 +72,5 @@ __all__ = [
     "ConsoleWorkspaceSwitcherModal",
     "PromptBrowseResult",
     "build_console_citation_source_rows",
+    "build_console_context_control_state",
 ]

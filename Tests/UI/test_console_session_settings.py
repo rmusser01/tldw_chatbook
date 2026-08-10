@@ -1058,9 +1058,9 @@ async def test_console_settings_modal_save_returns_validated_settings() -> None:
         )
         app.screen.query_one("#console-settings-temperature", Input).value = "0.42"
         app.screen.query_one("#console-settings-top-p", Input).value = "0.88"
-        app.screen.query_one("#console-settings-user-display-name", Input).value = (
-            "  Captain Rowan  "
-        )
+        app.screen.query_one(
+            "#console-settings-user-display-name", Input
+        ).value = "  Captain Rowan  "
         await pilot.click("#console-settings-save")
 
     assert app.saved_settings is not None
@@ -1093,9 +1093,7 @@ async def test_console_settings_modal_renders_current_chat_identity() -> None:
         )
         await pilot.pause()
 
-        identity = app.screen.query_one(
-            "#console-settings-user-display-name", Input
-        )
+        identity = app.screen.query_one("#console-settings-user-display-name", Input)
         assert identity.value == "Captain Rowan"
         assert identity.placeholder == "Default Name"
         assert "Chat identity" in _visible_text(app)
@@ -1103,7 +1101,9 @@ async def test_console_settings_modal_renders_current_chat_identity() -> None:
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_blank_name_returns_separate_none_override() -> None:
+async def test_console_settings_modal_blank_name_returns_separate_none_override() -> (
+    None
+):
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
 
@@ -1147,9 +1147,9 @@ async def test_console_settings_modal_invalid_name_prevents_dismissal(
             _basic_modal(settings, app), callback=app.capture_saved_settings
         )
         await pilot.pause()
-        app.screen.query_one("#console-settings-user-display-name", Input).value = (
-            invalid_name
-        )
+        app.screen.query_one(
+            "#console-settings-user-display-name", Input
+        ).value = invalid_name
         await pilot.click("#console-settings-save")
         await pilot.pause()
 
@@ -3202,7 +3202,9 @@ async def test_console_left_rail_body_scrolls_below_fixed_header_without_setting
         left_rail = console.query_one("#console-left-rail")
         header = console.query_one(".console-rail-header")
         body = console.query_one("#console-left-rail-body")
-        session_body = console.query_one("#console-rail-section-body-session")
+        conversations_body = console.query_one(
+            "#console-rail-section-body-conversations"
+        )
         settings = console.query_one("#console-settings-summary")
         workspace_context = console.query_one("#console-workspace-context")
 
@@ -3210,11 +3212,11 @@ async def test_console_left_rail_body_scrolls_below_fixed_header_without_setting
         assert body.region.y >= header.region.y + header.region.height
         assert body.region.height <= left_rail.region.height - header.region.height
         assert settings.parent.id == "console-run-inspector"
-        # Phase 1 nests each tray inside its own rail-section body, which is
-        # itself a direct child of the scrolling rail body. (Task-400: the
-        # staged-context tray moved to the Inspector rail.)
-        assert workspace_context.parent is session_body
-        assert session_body.parent is body
+        # TASK-14810 keeps the durable conversation browser in its dedicated
+        # Conversations disclosure section while the whole section stack
+        # remains inside the fixed-header rail scroller.
+        assert workspace_context.parent is conversations_body
+        assert conversations_body.parent is body
         assert workspace_context.region.width <= body.region.width
         assert body.region.width - workspace_context.region.width <= 2
 
@@ -3331,7 +3333,9 @@ async def test_console_settings_modal_result_stays_bound_to_opening_session() ->
         assert store.session_settings(first.id) == ConsoleSessionSettings(
             provider="llama_cpp", model="model-a", system_prompt="First prompt"
         )
-        second = next(session for session in store.sessions() if session.id == second_id)
+        second = next(
+            session for session in store.sessions() if session.id == second_id
+        )
         assert store.session_settings(second_id) == ConsoleSessionSettings(
             provider="openai",
             model="gpt-4.1",
@@ -3342,7 +3346,9 @@ async def test_console_settings_modal_result_stays_bound_to_opening_session() ->
 
 
 @pytest.mark.asyncio
-async def test_console_settings_save_preserves_omitted_system_prompt_and_source() -> None:
+async def test_console_settings_save_preserves_omitted_system_prompt_and_source() -> (
+    None
+):
     """The real general-settings draft omits prompt ownership entirely."""
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
@@ -3665,9 +3671,7 @@ async def test_console_roleplay_refresh_serializes_blocked_b_then_c_without_stal
         def update_conversation_roleplay_context(self, **_kwargs):
             return True
 
-        def update_conversation_system_prompt(
-            self, *, conversation_id, system_prompt
-        ):
+        def update_conversation_system_prompt(self, *, conversation_id, system_prompt):
             self.writer_threads.append(threading.get_ident())
             if system_prompt == "Speak with Bravo.":
                 self.system_started.set()
@@ -3731,7 +3735,9 @@ async def test_console_roleplay_refresh_serializes_blocked_b_then_c_without_stal
     assert console._dispatch_active_console_roleplay_refresh() is True
     assert store.session_settings(session.id).system_prompt == "Speak with Bravo."
     assert store.get_message(greeting.id).content == "Hello Bravo."
-    provider_system = controller._provider_messages_for_session(session.id)[0]["content"]
+    provider_system = controller._provider_messages_for_session(session.id)[0][
+        "content"
+    ]
     assert provider_system.startswith("Speak with Bravo.")
     assert provider_system.endswith("Hello Bravo.")
     assert await asyncio.to_thread(persistence.system_started.wait, 5)
@@ -3750,7 +3756,9 @@ async def test_console_roleplay_refresh_serializes_blocked_b_then_c_without_stal
         "Speak with Commander 24."
     )
     assert store.get_message(greeting.id).content == "Hello Commander 24."
-    provider_system = controller._provider_messages_for_session(session.id)[0]["content"]
+    provider_system = controller._provider_messages_for_session(session.id)[0][
+        "content"
+    ]
     assert provider_system.startswith("Speak with Commander 24.")
     assert provider_system.endswith("Hello Commander 24.")
     assert queued == []
@@ -3758,7 +3766,9 @@ async def test_console_roleplay_refresh_serializes_blocked_b_then_c_without_stal
     assert drain is not None
     assert console._console_roleplay_active_plan is not None
     assert console._console_roleplay_pending_plan is not None
-    assert console._console_roleplay_pending_plan.generation == session.identity_revision
+    assert (
+        console._console_roleplay_pending_plan.generation == session.identity_revision
+    )
     assert persistence.durable_system == "Speak with User."
 
     persistence.release_system.set()
@@ -4093,8 +4103,7 @@ async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_res
                         0,
                     )
                     == 1
-                    and repair_persistence.durable_system
-                    == "Speak with Cecelia."
+                    and repair_persistence.durable_system == "Speak with Cecelia."
                     and repair_persistence.durable_greeting == "Hello Cecelia."
                 ):
                     break
@@ -4187,9 +4196,7 @@ def test_mounted_hung_roleplay_writer_does_not_delay_event_loop_close():
 
     try:
         asyncio.run(exercise())
-        state["close_elapsed"] = time.monotonic() - float(
-            state["shutdown_started_at"]
-        )
+        state["close_elapsed"] = time.monotonic() - float(state["shutdown_started_at"])
         for _ in range(50):
             gc.collect()
             screen_ref = state.get("screen_ref")
@@ -4371,7 +4378,9 @@ async def test_console_global_name_refresh_failure_notifies_once(monkeypatch) ->
     assert console._dispatch_active_console_roleplay_refresh() is False
     assert store.session_settings(session.id).system_prompt == "Protect Captain Rowan."
     assert store.get_message(greeting.id).content == "Hello Captain Rowan."
-    provider_system = controller._provider_messages_for_session(session.id)[0]["content"]
+    provider_system = controller._provider_messages_for_session(session.id)[0][
+        "content"
+    ]
     assert provider_system.startswith("Protect Captain Rowan.")
     assert provider_system.endswith("Hello Captain Rowan.")
     estimate_result = console._active_console_settings_context_estimate()
@@ -4389,7 +4398,9 @@ async def test_console_global_name_refresh_failure_notifies_once(monkeypatch) ->
     assert persistence.message_writes == ["Hello Captain Rowan."]
     assert store.session_settings(session.id).system_prompt == "Protect Captain Rowan."
     assert store.get_message(greeting.id).content == "Hello Captain Rowan."
-    provider_system = controller._provider_messages_for_session(session.id)[0]["content"]
+    provider_system = controller._provider_messages_for_session(session.id)[0][
+        "content"
+    ]
     assert provider_system.startswith("Protect Captain Rowan.")
     assert provider_system.endswith("Hello Captain Rowan.")
     assert store.active_session_id == session.id
@@ -4434,9 +4445,9 @@ async def test_system_prompt_editor_clears_character_template_source() -> None:
         )
         await pilot.pause(0.2)
         modal = host.screen_stack[-1]
-        modal.query_one(f"#{SYSTEM_PROMPT_TEXT_AREA_ID}", TextArea).text = (
-            "Manual prompt."
-        )
+        modal.query_one(
+            f"#{SYSTEM_PROMPT_TEXT_AREA_ID}", TextArea
+        ).text = "Manual prompt."
         modal.query_one(f"#{SYSTEM_PROMPT_APPLY_BUTTON_ID}", Button).press()
         await pilot.pause(0.2)
 
@@ -6033,9 +6044,9 @@ def test_console_stale_default_refresh_preserves_applied_system_prompt() -> None
 
     refreshed = console._session._ensure_active_console_session_settings()
 
-    assert refreshed.provider == "llama_cpp", (
-        "the provider/model default refresh must still happen"
-    )
+    assert (
+        refreshed.provider == "llama_cpp"
+    ), "the provider/model default refresh must still happen"
     assert refreshed.system_prompt == "Be concise."
     # The store itself must carry the preserved prompt forward too, not just
     # the returned snapshot.

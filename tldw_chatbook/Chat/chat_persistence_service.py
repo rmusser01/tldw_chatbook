@@ -4,6 +4,11 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, cast
 
 from loguru import logger as _logger
 
+from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.Chat.console_context_repository import (
+    ConsoleContextRepository,
+    ContextPolicyReadResult,
+)
 from tldw_chatbook.Chat.console_prefill import PINNED_PREFILL_METADATA_KEY
 from tldw_chatbook.Chat.console_roleplay_metadata import (
     ConsoleRoleplayContext,
@@ -32,6 +37,7 @@ class ChatPersistenceService:
         self.db = db
         self.workspace_registry = workspace_registry
         self.citation_repository = citation_repository
+        self.context_repository = ConsoleContextRepository(db)
 
     @property
     def canonical_citation_writes_ready(self) -> bool:
@@ -84,6 +90,21 @@ class ChatPersistenceService:
         ):
             return None
         return version
+
+    def get_conversation_context_policy(
+        self, conversation_id: str
+    ) -> ContextPolicyReadResult:
+        """Return local sparse context-policy overrides for one conversation."""
+        return self.context_repository.load_policy(conversation_id)
+
+    def update_conversation_context_policy(
+        self,
+        *,
+        conversation_id: str,
+        overrides: ConsoleContextPolicyOverrides,
+    ) -> int | None:
+        """Persist local sparse context-policy overrides without sync writes."""
+        return self.context_repository.save_policy(conversation_id, overrides)
 
     @staticmethod
     def derive_conversation_title(

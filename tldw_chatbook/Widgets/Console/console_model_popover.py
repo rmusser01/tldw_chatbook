@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any, Mapping, Sequence
 
 from textual import on
@@ -13,14 +13,30 @@ from textual.widgets import Button, Input, Select, Static
 
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
+    ConsoleSettingsContextEstimate,
     build_console_model_options,
     build_console_provider_options,
 )
+from tldw_chatbook.Chat.console_context_policy import ContextCompactionMode
 from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.Utils.input_validation import validate_text_input
+from .console_context_controls import (
+    ConsoleContextControlState,
+    build_console_context_control_state,
+    format_context_tokens,
+)
 from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker
 
 CONSOLE_POPOVER_OPEN_FULL_SETTINGS = "open-full-settings"
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleModelPopoverResult:
+    """Quick settings and policy edits owned by the current conversation."""
+
+    settings: ConsoleSessionSettings
+    compaction_mode: ContextCompactionMode
+
 
 # Mirrors ConsoleSettingsModal's temperature bounds (see
 # Chat/console_session_settings.validate_console_session_settings, which
@@ -45,7 +61,9 @@ def _temperature_in_range(value: float) -> bool:
     return _CONSOLE_POPOVER_TEMPERATURE_MIN <= value <= _CONSOLE_POPOVER_TEMPERATURE_MAX
 
 
-class ConsoleModelPopover(ModalScreen["ConsoleSessionSettings | str | None"]):
+class ConsoleModelPopover(
+    ModalScreen["ConsoleModelPopoverResult | ConsoleSessionSettings | str | None"]
+):
     """Quick provider/model/temperature/streaming switcher for the session."""
 
     DEFAULT_CSS = """
@@ -67,6 +85,11 @@ class ConsoleModelPopover(ModalScreen["ConsoleSessionSettings | str | None"]):
         margin: 1 0 0 0;
     }
 
+    .console-popover-context-row {
+        height: 1;
+        color: $text-muted;
+    }
+
     #console-popover-actions {
         height: 3;
         min-height: 3;
@@ -82,6 +105,7 @@ class ConsoleModelPopover(ModalScreen["ConsoleSessionSettings | str | None"]):
         *,
         settings: ConsoleSessionSettings,
         providers_models: Mapping[str, Sequence[str]],
+        context_state: ConsoleContextControlState | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the popover with the session's current settings.
@@ -96,6 +120,14 @@ class ConsoleModelPopover(ModalScreen["ConsoleSessionSettings | str | None"]):
         super().__init__(**kwargs)
         self._settings = settings
         self._providers_models = providers_models
+        self._context_state = context_state or build_console_context_control_state(
+            settings=settings,
+            estimate=ConsoleSettingsContextEstimate(
+                used_tokens=None,
+                token_limit=None,
+                label="Context: unavailable",
+            ),
+        )
         self._streaming = bool(settings.streaming)
         # TASK-364: the provider Select fires a mount-time Select.Changed for its
         # initial value; without this tracker `_provider_changed` would rebuild
@@ -159,9 +191,40 @@ class ConsoleModelPopover(ModalScreen["ConsoleSessionSettings | str | None"]):
                 id="console-popover-streaming",
                 compact=True,
             )
+            yield Static(
+                f"Request       {self._context_state.request_row}",
+                id="console-popover-request-usage",
+                classes="console-popover-context-row",
+                markup=False,
+            )
+            yield Static(
+                f"Conversation  {self._context_state.conversation_row}",
+                id="console-popover-conversation-usage",
+                classes="console-popover-context-row",
+                markup=False,
+            )
+            yield Static(
+                "Compaction    at "
+                f"{format_context_tokens(self._context_state.compaction_trigger_tokens)} tokens",
+                id="console-popover-compaction-threshold",
+                classes="console-popover-context-row",
+                markup=False,
+            )
+            yield Select(
+                [
+                    ("Ask", ContextCompactionMode.ASK.value),
+                    ("Automatic", ContextCompactionMode.AUTOMATIC.value),
+                    ("Off", ContextCompactionMode.OFF.value),
+                ],
+                value=self._context_state.resolved_policy.policy.compaction_mode.value,
+                id="console-popover-compaction-mode",
+                disabled=self._context_state.busy,
+            )
             with Horizontal(id="console-popover-actions"):
                 yield Button(
-                    "Full settings…", id="console-popover-full-settings", compact=True
+                    "Context & memory…",
+                    id="console-popover-full-settings",
+                    compact=True,
                 )
                 yield Button(
                     "Apply", id="console-popover-apply", variant="primary", compact=True
@@ -205,7 +268,9 @@ class ConsoleModelPopover(ModalScreen["ConsoleSessionSettings | str | None"]):
         model_select = self.query_one("#console-popover-model", Select)
         options = [
             (option.label, option.value)
-            for option in build_console_model_options(provider, self._providers_models, model_id)
+            for option in build_console_model_options(
+                provider, self._providers_models, model_id
+            )
         ]
         model_select.set_options(options)
         model_select.value = model_id
@@ -265,15 +330,20 @@ class ConsoleModelPopover(ModalScreen["ConsoleSessionSettings | str | None"]):
                 else:
                     if _temperature_in_range(candidate):
                         temperature = candidate
-        self.dismiss(
-            replace(
-                self._settings,
-                provider=str(provider_value),
-                model=None if model_value is None else str(model_value),
-                temperature=temperature,
-                streaming=self._streaming,
-            )
+        settings = replace(
+            self._settings,
+            provider=str(provider_value),
+            model=None if model_value in (None, Select.BLANK) else str(model_value),
+            temperature=temperature,
+            streaming=self._streaming,
         )
+        mode = ContextCompactionMode(
+            str(self.query_one("#console-popover-compaction-mode", Select).value)
+        )
+        if mode is self._context_state.resolved_policy.policy.compaction_mode:
+            self.dismiss(settings)
+            return
+        self.dismiss(ConsoleModelPopoverResult(settings=settings, compaction_mode=mode))
 
     def action_dismiss_popover(self) -> None:
         """Dismiss the popover with no result (Escape)."""

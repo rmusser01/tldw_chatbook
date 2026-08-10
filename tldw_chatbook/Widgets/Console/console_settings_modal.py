@@ -15,6 +15,15 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Select, Static
 
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
+from tldw_chatbook.Chat.console_context_policy import (
+    CompactionFailureBehavior,
+    ConsoleContextPolicyDefaults,
+    ConsoleContextPolicyOverrides,
+    ContextBudgetMode,
+    ContextCarryForwardMode,
+    ContextCompactionMode,
+    ContextPolicyError,
+)
 from tldw_chatbook.Chat.console_roleplay_identity import (
     ChatDisplayNameError,
     normalize_chat_display_name,
@@ -46,6 +55,11 @@ from tldw_chatbook.Chat.console_session_settings import (
 from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker
+from .console_context_controls import (
+    ConsoleContextControlState,
+    build_console_context_control_state,
+    format_context_tokens,
+)
 from rich.markup import escape as escape_markup
 
 
@@ -64,6 +78,10 @@ MODEL_DISCOVER_INVALID_URL_COPY = (
     "Enter a valid http(s) endpoint URL to discover models."
 )
 ModelProber = Callable[[str, str], Awaitable[LocalModelProbeResult]]
+CurrentMemoryResetter = Callable[[], tuple[str, int] | None]
+CurrentMemoryUndo = Callable[[str, int], bool]
+AllMemoryResetter = Callable[[], int]
+ContextCompactor = Callable[[], Awaitable[tuple[bool, str]]]
 STREAMING_TOGGLE_WIDTH = 12
 PROVIDER_CHOICE_INPUT_MAX_LENGTH = 64
 
@@ -74,6 +92,7 @@ class ConsoleSettingsResult:
 
     settings: ConsoleSessionSettings
     user_display_name_override: str | None
+    context_policy_overrides: ConsoleContextPolicyOverrides | None = None
 
 
 # (label, input id, accepted-values placeholder) - placeholders mirror the
@@ -100,7 +119,7 @@ STREAMING_ON_LABEL = "On"
 STREAMING_OFF_LABEL = "Off"
 CONSOLE_SETTINGS_SCOPE_COPY = (
     "Save applies to this session only. "
-    "Save as default also writes provider + streaming defaults to config."
+    "Save provider defaults also writes provider + streaming defaults to config."
 )
 CONSOLE_SETTINGS_SAVE_DEFAULT_FAILED_COPY = (
     "Could not write defaults to the config file; session values still apply."
@@ -232,6 +251,24 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
         height: {MODAL_CONTROL_HEIGHT};
         min-height: {MODAL_CONTROL_HEIGHT};
     }}
+
+    ConsoleSettingsModal #console-settings-view-tabs {{
+        height: 3;
+        min-height: 3;
+    }}
+
+    ConsoleSettingsModal #console-settings-memory-review {{
+        height: auto;
+        max-height: 12;
+        overflow-y: auto;
+        background: $surface;
+        padding: 0 1;
+    }}
+
+    ConsoleSettingsModal .console-context-action-row {{
+        height: auto;
+        min-height: 3;
+    }}
     """
 
     BINDINGS = [("escape", "dismiss", "Cancel")]
@@ -245,8 +282,14 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
         app_config: Mapping[str, object],
         providers_models: Mapping[str, list[str]],
         context_estimate: ConsoleSettingsContextEstimate,
+        context_state: ConsoleContextControlState | None = None,
         can_save: bool,
         focus_model: bool = False,
+        focus_context: bool = False,
+        reset_current_memory: CurrentMemoryResetter | None = None,
+        undo_current_memory_reset: CurrentMemoryUndo | None = None,
+        reset_all_memories: AllMemoryResetter | None = None,
+        compact_now: ContextCompactor | None = None,
         model_prober: ModelProber | None = None,
     ) -> None:
         super().__init__()
@@ -269,8 +312,20 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
         self._app_config = app_config
         self._providers_models = providers_models
         self._context_estimate = context_estimate
+        self._context_state = context_state or build_console_context_control_state(
+            settings=settings,
+            estimate=context_estimate,
+        )
         self._can_save = can_save
         self._focus_model = focus_model
+        self._active_view = "context" if focus_context else "model"
+        self._reset_current_memory = reset_current_memory
+        self._undo_current_memory_reset = undo_current_memory_reset
+        self._reset_all_memories = reset_all_memories
+        self._compact_now = compact_now
+        self._memory_reset_token: tuple[str, int] | None = None
+        self._confirm_reset_all = False
+        self._context_overrides_reset = False
         self._model_prober: ModelProber = model_prober or _default_model_prober
         self._discovered_model_ids: dict[str, tuple[str, ...]] = {}
         self._streaming_draft = bool(settings.streaming)
@@ -304,9 +359,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
         ]
         model_option_values = {value for _, value in model_options}
         model_select_value = (
-            selected_model
-            if selected_model in model_option_values
-            else Select.NULL
+            selected_model if selected_model in model_option_values else Select.NULL
         )
         has_model_options = bool(model_options)
         use_model_select = self._should_use_model_select(
@@ -320,6 +373,17 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
 
         with Vertical(id="console-settings-modal"):
             yield Static("Console Settings", classes="console-modal-header")
+            with Horizontal(id="console-settings-view-tabs"):
+                yield Button(
+                    "Model and generation",
+                    id="console-settings-view-model",
+                    variant="primary" if self._active_view == "model" else "default",
+                )
+                yield Button(
+                    "Context and memory",
+                    id="console-settings-view-context",
+                    variant="primary" if self._active_view == "context" else "default",
+                )
             yield Static(
                 self._readiness_detail(readiness.detail),
                 id="console-settings-readiness",
@@ -451,7 +515,9 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
                         base_url_input.display = uses_base_url
                         yield base_url_input
 
-                with Vertical(classes="console-settings-modal-section"):
+                with Vertical(
+                    classes="console-settings-modal-section console-settings-model-view"
+                ):
                     yield Static("Chat identity", classes="destination-section")
                     with Horizontal(classes="console-settings-modal-row"):
                         yield self._modal_label("Your name in this chat")
@@ -468,7 +534,9 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
                         markup=False,
                     )
 
-                with Vertical(classes="console-settings-modal-section"):
+                with Vertical(
+                    classes="console-settings-modal-section console-settings-model-view"
+                ):
                     yield Static("Sampling", classes="destination-section")
                     with Horizontal(classes="console-settings-modal-row"):
                         yield self._modal_label("Temperature")
@@ -540,7 +608,9 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
                         streaming_toggle.styles.max_width = STREAMING_TOGGLE_WIDTH
                         yield streaming_toggle
 
-                with Vertical(classes="console-settings-modal-section"):
+                with Vertical(
+                    classes="console-settings-modal-section console-settings-model-view"
+                ):
                     yield Static("Provider-specific", classes="destination-section")
                     with Horizontal(classes="console-settings-modal-row"):
                         yield self._modal_label("Reasoning")
@@ -592,8 +662,10 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
                             classes="console-settings-control",
                         )
 
-                with Vertical(classes="console-settings-modal-section"):
-                    yield Static("Context", classes="destination-section")
+                with Vertical(
+                    classes="console-settings-modal-section console-settings-model-view"
+                ):
+                    yield Static("Request preview", classes="destination-section")
                     yield Static(
                         f"Current         {self._context_label()}",
                         id="console-settings-context-current",
@@ -607,13 +679,16 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
                         markup=False,
                     )
                     yield Static(
-                        "Estimate only; no truncation changes in this version.",
+                        "Estimate only; no truncation changes in this version. "
+                        "Open Context and memory to manage the conversation budget.",
                         id="console-settings-context-note",
                         classes="console-settings-modal-row",
                         markup=False,
                     )
 
-                with Vertical(classes="console-settings-modal-section"):
+                with Vertical(
+                    classes="console-settings-modal-section console-settings-model-view"
+                ):
                     yield Static("Identity", classes="destination-section")
                     yield Static(
                         f"Current         {self._identity_current_label()}",
@@ -622,13 +697,247 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
                         markup=False,
                     )
 
+                with Vertical(
+                    id="console-settings-context-view",
+                    classes="console-settings-context-view",
+                ):
+                    with Vertical(classes="console-settings-modal-section"):
+                        yield Static("Model capacity", classes="destination-section")
+                        yield Static(
+                            "Model window        "
+                            f"{format_context_tokens(self._context_state.model_window_tokens)} tokens",
+                            id="console-context-model-window",
+                            classes="console-settings-modal-row",
+                            markup=False,
+                        )
+                        yield Static(
+                            "Response max        "
+                            f"{format_context_tokens(self._context_state.response_max_tokens)} tokens",
+                            id="console-context-response-max",
+                            classes="console-settings-modal-row",
+                            markup=False,
+                        )
+                        yield Static(
+                            "Safety margin       "
+                            f"{format_context_tokens(self._context_state.safety_margin_tokens)} tokens",
+                            id="console-context-safety-margin",
+                            classes="console-settings-modal-row",
+                            markup=False,
+                        )
+                        yield Static(
+                            "Safe input ceiling  "
+                            f"{format_context_tokens(self._context_state.safe_input_ceiling_tokens)} tokens",
+                            id="console-context-safe-input",
+                            classes="console-settings-modal-row",
+                            markup=False,
+                        )
+                        yield Static(
+                            self._context_validation_label(),
+                            id="console-context-capacity-status",
+                            classes="console-settings-modal-row",
+                            markup=False,
+                        )
+
+                    with Vertical(classes="console-settings-modal-section"):
+                        yield Static(
+                            "Conversation budget", classes="destination-section"
+                        )
+                        with Horizontal(classes="console-settings-modal-row"):
+                            yield self._modal_label("Budget mode")
+                            yield Select(
+                                [
+                                    ("Automatic", ContextBudgetMode.AUTOMATIC.value),
+                                    ("Custom", ContextBudgetMode.CUSTOM.value),
+                                ],
+                                value=self._context_state.resolved_policy.policy.budget_mode.value,
+                                id="console-context-budget-mode",
+                                classes="console-settings-control",
+                            )
+                        with Horizontal(classes="console-settings-modal-row"):
+                            yield self._modal_label("Custom tokens")
+                            yield ConsoleSettingsInput(
+                                value=self._format_value(
+                                    self._context_state.resolved_policy.policy.custom_budget_tokens
+                                ),
+                                placeholder="Required in Custom mode",
+                                id="console-context-custom-budget",
+                                classes="console-settings-control",
+                            )
+                        yield Static(
+                            "Effective           "
+                            f"{format_context_tokens(self._context_state.conversation_budget_tokens)} tokens",
+                            id="console-context-effective-budget",
+                            classes="console-settings-modal-row",
+                            markup=False,
+                        )
+                        yield Static(
+                            "Next request        "
+                            f"{format_context_tokens(self._context_state.request_tokens)} tokens",
+                            id="console-context-next-request",
+                            classes="console-settings-modal-row",
+                            markup=False,
+                        )
+                        yield Static(
+                            "Request overhead    "
+                            f"{format_context_tokens(self._context_state.request_overhead_tokens)} tokens",
+                            id="console-context-overhead",
+                            classes="console-settings-modal-row",
+                            markup=False,
+                        )
+
+                    with Vertical(classes="console-settings-modal-section"):
+                        yield Static("Compaction", classes="destination-section")
+                        with Horizontal(classes="console-settings-modal-row"):
+                            yield self._modal_label("Behavior")
+                            yield Select(
+                                [
+                                    ("Ask", ContextCompactionMode.ASK.value),
+                                    (
+                                        "Automatic",
+                                        ContextCompactionMode.AUTOMATIC.value,
+                                    ),
+                                    ("Off", ContextCompactionMode.OFF.value),
+                                ],
+                                value=self._context_state.resolved_policy.policy.compaction_mode.value,
+                                id="console-context-compaction-mode",
+                                classes="console-settings-control",
+                            )
+                        with Horizontal(classes="console-settings-modal-row"):
+                            yield self._modal_label("Trigger at %")
+                            yield ConsoleSettingsInput(
+                                value=self._format_percent(
+                                    self._context_state.resolved_policy.policy.trigger_ratio
+                                ),
+                                id="console-context-trigger-percent",
+                                classes="console-settings-control",
+                            )
+                        with Horizontal(classes="console-settings-modal-row"):
+                            yield self._modal_label("Compact toward %")
+                            yield ConsoleSettingsInput(
+                                value=self._format_percent(
+                                    self._context_state.resolved_policy.policy.target_ratio
+                                ),
+                                id="console-context-target-percent",
+                                classes="console-settings-control",
+                            )
+                        with Horizontal(classes="console-settings-modal-row"):
+                            yield self._modal_label("Summary max")
+                            yield ConsoleSettingsInput(
+                                value=str(
+                                    self._context_state.resolved_policy.policy.summary_max_tokens
+                                ),
+                                id="console-context-summary-max",
+                                classes="console-settings-control",
+                            )
+                        with Horizontal(classes="console-settings-modal-row"):
+                            yield self._modal_label("On failure")
+                            yield Select(
+                                [
+                                    (
+                                        "Stop and ask",
+                                        CompactionFailureBehavior.STOP_AND_ASK.value,
+                                    ),
+                                    (
+                                        "Omit older context",
+                                        CompactionFailureBehavior.OMIT_OLDER_CONTEXT.value,
+                                    ),
+                                ],
+                                value=self._context_state.resolved_policy.policy.failure_behavior.value,
+                                id="console-context-failure-behavior",
+                                classes="console-settings-control",
+                            )
+                        with Horizontal(classes="console-settings-modal-row"):
+                            yield self._modal_label("Carry forward")
+                            yield Select(
+                                [
+                                    (
+                                        "Memory with recent turns",
+                                        ContextCarryForwardMode.MEMORY_WITH_RECENT_TURNS.value,
+                                    ),
+                                    (
+                                        "Memory with latest exchange",
+                                        ContextCarryForwardMode.MEMORY_WITH_LATEST_EXCHANGE.value,
+                                    ),
+                                ],
+                                value=self._context_state.resolved_policy.policy.carry_forward_mode.value,
+                                id="console-context-carry-forward",
+                                classes="console-settings-control",
+                            )
+                        yield Static(
+                            self._context_policy_provenance_label(),
+                            id="console-context-policy-provenance",
+                            classes="console-settings-modal-row",
+                            markup=False,
+                        )
+
+                    with Vertical(classes="console-settings-modal-section"):
+                        yield Static("Current memory", classes="destination-section")
+                        yield Static(
+                            self._memory_metadata_label(),
+                            id="console-context-memory-metadata",
+                            classes="console-settings-modal-row",
+                            markup=False,
+                        )
+                        yield Static(
+                            self._memory_review_text(),
+                            id="console-settings-memory-review",
+                            markup=False,
+                        )
+                        yield Static(
+                            "",
+                            id="console-context-action-status",
+                            classes="console-settings-modal-row",
+                            markup=False,
+                        )
+                        with Horizontal(classes="console-context-action-row"):
+                            yield Button(
+                                "Compact now",
+                                id="console-context-compact-now",
+                                disabled=(
+                                    self._context_state.busy
+                                    or self._compact_now is None
+                                ),
+                            )
+                            yield Button(
+                                "Reset current branch memory",
+                                id="console-context-reset-current",
+                                disabled=(
+                                    self._context_state.active_memory is None
+                                    or self._reset_current_memory is None
+                                ),
+                            )
+                            undo = Button(
+                                "Undo reset",
+                                id="console-context-undo-reset",
+                                disabled=True,
+                            )
+                            undo.display = False
+                            yield undo
+                        with Horizontal(classes="console-context-action-row"):
+                            yield Button(
+                                "Reset overrides",
+                                id="console-context-reset-overrides",
+                            )
+                            yield Button(
+                                "Reset all conversation memory…",
+                                id="console-context-reset-all",
+                                disabled=self._reset_all_memories is None,
+                            )
+                            confirm = Button(
+                                "Confirm reset all branches",
+                                id="console-context-confirm-reset-all",
+                                variant="error",
+                            )
+                            confirm.display = False
+                            yield confirm
+
             with Horizontal(
                 id="console-settings-actions",
                 classes="console-settings-modal-row console-settings-modal-actions",
             ):
                 yield Button("Cancel", id="console-settings-cancel")
                 save_default = Button(
-                    "Save as default",
+                    "Save provider defaults",
                     id="console-settings-save-default",
                     disabled=not self._can_save,
                 )
@@ -640,8 +949,8 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
                 # from id-scoped app CSS this button's id does not inherit).
                 save_default.styles.height = 1
                 save_default.styles.min_height = 1
-                save_default.styles.width = 17
-                save_default.styles.min_width = 17
+                save_default.styles.width = 24
+                save_default.styles.min_width = 24
                 yield save_default
                 yield Button(
                     "Save",
@@ -651,8 +960,36 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
                 )
 
     def on_mount(self) -> None:
+        self._show_settings_view(self._active_view)
         if self._focus_model:
             self._focus_model_control()
+
+    def _show_settings_view(self, view: str) -> None:
+        """Switch between the two stable in-modal destinations."""
+        self._active_view = "context" if view == "context" else "model"
+        show_model = self._active_view == "model"
+        for section in self.query(".console-settings-model-view"):
+            section.display = show_model
+        self.query_one(
+            "#console-settings-context-view", Vertical
+        ).display = not show_model
+        self.query_one("#console-settings-view-model", Button).variant = (
+            "primary" if show_model else "default"
+        )
+        self.query_one("#console-settings-view-context", Button).variant = (
+            "default" if show_model else "primary"
+        )
+
+    @on(Button.Pressed, "#console-settings-view-model")
+    def _show_model_view(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._show_settings_view("model")
+
+    @on(Button.Pressed, "#console-settings-view-context")
+    def _show_context_view(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._show_settings_view("context")
+        self.query_one("#console-context-budget-mode", Select).focus()
 
     def on_click(self, event: events.Click) -> None:
         """Recover select clicks redirected through focused Textual Web inputs.
@@ -731,7 +1068,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
         return normalized in {"", "ready."} or " is ready" in normalized
 
     def _provider_model_section_classes(self) -> str:
-        classes = "console-settings-modal-section"
+        classes = "console-settings-modal-section console-settings-model-view"
         if self._is_model_setup_mode():
             classes += " console-settings-primary-section"
         return classes
@@ -779,6 +1116,159 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
             return
         self.dismiss(result)
 
+    @on(Button.Pressed, "#console-context-reset-overrides")
+    def _reset_policy_overrides(self, event: Button.Pressed) -> None:
+        """Restore the inherited policy draft without writing until Save."""
+        event.stop()
+        self._context_overrides_reset = True
+        policy = self._context_state.inherited_policy
+        self.query_one(
+            "#console-context-budget-mode", Select
+        ).value = policy.budget_mode.value
+        self.query_one(
+            "#console-context-custom-budget", Input
+        ).value = self._format_value(policy.custom_budget_tokens)
+        self.query_one(
+            "#console-context-compaction-mode", Select
+        ).value = policy.compaction_mode.value
+        self.query_one("#console-context-trigger-percent", Input).value = str(
+            self._format_percent(policy.trigger_ratio)
+        )
+        self.query_one("#console-context-target-percent", Input).value = str(
+            self._format_percent(policy.target_ratio)
+        )
+        self.query_one("#console-context-summary-max", Input).value = str(
+            policy.summary_max_tokens
+        )
+        self.query_one(
+            "#console-context-failure-behavior", Select
+        ).value = policy.failure_behavior.value
+        self.query_one(
+            "#console-context-carry-forward", Select
+        ).value = policy.carry_forward_mode.value
+        self.query_one("#console-context-policy-provenance", Static).update(
+            "Inheriting Console Behavior defaults after Save."
+        )
+
+    @on(Button.Pressed, "#console-context-reset-current")
+    def _reset_current_branch_memory(self, event: Button.Pressed) -> None:
+        """Deactivate only the selected branch-valid memory revision."""
+        event.stop()
+        if self._reset_current_memory is None:
+            return
+        token = self._reset_current_memory()
+        status = self.query_one("#console-context-action-status", Static)
+        if token is None:
+            status.update("Memory changed before it could be reset.")
+            return
+        self._memory_reset_token = token
+        self.query_one("#console-settings-memory-review", Static).update(
+            "No generated memory is active on this branch."
+        )
+        self.query_one("#console-context-memory-metadata", Static).update(
+            "Current branch memory reset; transcript unchanged."
+        )
+        self.query_one("#console-context-reset-current", Button).display = False
+        undo = self.query_one("#console-context-undo-reset", Button)
+        undo.display = True
+        undo.disabled = False
+        status.update("Current branch memory reset. Undo is available.")
+
+    @on(Button.Pressed, "#console-context-compact-now")
+    def _compact_context_now(self, event: Button.Pressed) -> None:
+        """Start one explicit auxiliary compaction call without sending chat."""
+        event.stop()
+        if self._compact_now is None:
+            return
+        event.button.disabled = True
+        self.query_one("#console-context-action-status", Static).update(
+            "Compacting… one additional model call may be billed."
+        )
+        self.run_worker(self._compact_context_now_worker(), exclusive=True)
+
+    async def _compact_context_now_worker(self) -> None:
+        """Run the supplied controller action and restore the modal controls."""
+        if self._compact_now is None:
+            return
+        try:
+            succeeded, message = await self._compact_now()
+        except Exception:
+            succeeded = False
+            message = "Conversation compaction failed before memory was updated."
+        if not self.is_mounted:
+            return
+        self.query_one("#console-context-action-status", Static).update(message)
+        button = self.query_one("#console-context-compact-now", Button)
+        button.disabled = False
+        if succeeded:
+            self.query_one("#console-context-memory-metadata", Static).update(
+                "Generated memory updated; transcript unchanged. Reopen to review provenance."
+            )
+
+    @on(Button.Pressed, "#console-context-undo-reset")
+    def _undo_current_branch_memory_reset(self, event: Button.Pressed) -> None:
+        """Reactivate the exact reset revision when it has not changed again."""
+        event.stop()
+        token = self._memory_reset_token
+        if token is None or self._undo_current_memory_reset is None:
+            return
+        restored = self._undo_current_memory_reset(*token)
+        status = self.query_one("#console-context-action-status", Static)
+        if not restored:
+            status.update("Undo expired because conversation memory changed.")
+            return
+        self._memory_reset_token = None
+        self.query_one("#console-settings-memory-review", Static).update(
+            self._memory_review_text()
+        )
+        self.query_one("#console-context-memory-metadata", Static).update(
+            self._memory_metadata_label()
+        )
+        reset = self.query_one("#console-context-reset-current", Button)
+        reset.display = True
+        reset.disabled = False
+        event.button.display = False
+        event.button.disabled = True
+        status.update("Current branch memory restored; transcript was unchanged.")
+
+    @on(Button.Pressed, "#console-context-reset-all")
+    def _request_reset_all_memories(self, event: Button.Pressed) -> None:
+        """Reveal a separate cross-branch confirmation action."""
+        event.stop()
+        self._confirm_reset_all = True
+        event.button.display = False
+        confirm = self.query_one("#console-context-confirm-reset-all", Button)
+        confirm.display = True
+        confirm.focus()
+        self.query_one("#console-context-action-status", Static).update(
+            "This resets generated memory on every branch of this conversation. "
+            "Transcript messages will not change."
+        )
+
+    @on(Button.Pressed, "#console-context-confirm-reset-all")
+    def _confirm_reset_all_context_memories(self, event: Button.Pressed) -> None:
+        """Apply the separately confirmed all-branch memory reset."""
+        event.stop()
+        if not self._confirm_reset_all or self._reset_all_memories is None:
+            return
+        count = self._reset_all_memories()
+        self._confirm_reset_all = False
+        self._memory_reset_token = None
+        event.button.display = False
+        self.query_one("#console-context-reset-all", Button).display = True
+        undo = self.query_one("#console-context-undo-reset", Button)
+        undo.display = False
+        undo.disabled = True
+        self.query_one("#console-settings-memory-review", Static).update(
+            "No generated conversation memory is active."
+        )
+        self.query_one("#console-context-memory-metadata", Static).update(
+            f"Reset {count} branch memory record(s); transcript unchanged."
+        )
+        self.query_one("#console-context-action-status", Static).update(
+            f"Reset {count} memory record(s) across all branches."
+        )
+
     def _validated_result_or_show_errors(self) -> ConsoleSettingsResult | None:
         """Build the result, surfacing validation errors without dismissing."""
         draft = self._build_draft()
@@ -791,8 +1281,15 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
         except ChatDisplayNameError as exc:
             user_display_name_override = None
             identity_errors.append(str(exc))
+        try:
+            context_overrides = self._build_context_policy_overrides()
+            context_errors: list[str] = []
+        except (ContextPolicyError, ValueError) as exc:
+            context_overrides = self._context_state.overrides
+            context_errors = [str(exc)]
         errors = [
             *identity_errors,
+            *context_errors,
             *self._required_sampling_errors(),
             *self._provider_choice_input_errors(),
             *validate_console_session_settings(draft, app_config=self._app_config),
@@ -808,6 +1305,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
         return ConsoleSettingsResult(
             settings=draft,
             user_display_name_override=user_display_name_override,
+            context_policy_overrides=context_overrides,
         )
 
     def _default_persist_sections(
@@ -1231,9 +1729,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
             return
 
         model_input.value = (
-            normalize_console_model_value(
-                self._select_value_text(model_select.value)
-            )
+            normalize_console_model_value(self._select_value_text(model_select.value))
             or ""
         )
         model_select.display = False
@@ -1543,6 +2039,151 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
         label = self._context_estimate.label.strip() or "unknown"
         return label if "token" in label.lower() else f"{label} tokens"
 
+    def _build_context_policy_overrides(self) -> ConsoleContextPolicyOverrides:
+        """Build sparse per-conversation overrides from the context draft."""
+        if self._context_overrides_reset:
+            return ConsoleContextPolicyOverrides()
+        inherited = self._context_state.inherited_policy
+        budget_mode = ContextBudgetMode(
+            self._select_value_text(
+                self.query_one("#console-context-budget-mode", Select).value
+            )
+        )
+        custom_text = self.query_one(
+            "#console-context-custom-budget", Input
+        ).value.strip()
+        custom_budget = int(custom_text) if custom_text else None
+        if budget_mode is ContextBudgetMode.CUSTOM and custom_budget is None:
+            raise ContextPolicyError(
+                "Custom conversation budget requires a positive token value."
+            )
+        if custom_budget is not None and custom_budget <= 0:
+            raise ContextPolicyError(
+                "Custom conversation budget must be a positive token value."
+            )
+        compaction_mode = ContextCompactionMode(
+            self._select_value_text(
+                self.query_one("#console-context-compaction-mode", Select).value
+            )
+        )
+        trigger_ratio = self._context_percent_ratio(
+            "console-context-trigger-percent", "Trigger"
+        )
+        target_ratio = self._context_percent_ratio(
+            "console-context-target-percent", "Compact-toward target"
+        )
+        summary_max = self._positive_context_int(
+            "console-context-summary-max", "Summary max tokens"
+        )
+        failure_behavior = CompactionFailureBehavior(
+            self._select_value_text(
+                self.query_one("#console-context-failure-behavior", Select).value
+            )
+        )
+        carry_forward = ContextCarryForwardMode(
+            self._select_value_text(
+                self.query_one("#console-context-carry-forward", Select).value
+            )
+        )
+        # Validate the complete draft even when only one side of a pair will
+        # be persisted as a sparse override.
+        ConsoleContextPolicyDefaults(
+            budget_mode=budget_mode,
+            custom_budget_tokens=custom_budget,
+            compaction_mode=compaction_mode,
+            trigger_ratio=trigger_ratio,
+            target_ratio=target_ratio,
+            summary_max_tokens=summary_max,
+            failure_behavior=failure_behavior,
+            carry_forward_mode=carry_forward,
+        )
+
+        def changed(value: object, inherited_value: object) -> object | None:
+            return None if value == inherited_value else value
+
+        return ConsoleContextPolicyOverrides(
+            budget_mode=changed(budget_mode, inherited.budget_mode),  # type: ignore[arg-type]
+            custom_budget_tokens=changed(  # type: ignore[arg-type]
+                custom_budget, inherited.custom_budget_tokens
+            ),
+            compaction_mode=changed(  # type: ignore[arg-type]
+                compaction_mode, inherited.compaction_mode
+            ),
+            trigger_ratio=changed(trigger_ratio, inherited.trigger_ratio),  # type: ignore[arg-type]
+            target_ratio=changed(target_ratio, inherited.target_ratio),  # type: ignore[arg-type]
+            summary_max_tokens=changed(  # type: ignore[arg-type]
+                summary_max, inherited.summary_max_tokens
+            ),
+            failure_behavior=changed(  # type: ignore[arg-type]
+                failure_behavior, inherited.failure_behavior
+            ),
+            carry_forward_mode=changed(  # type: ignore[arg-type]
+                carry_forward, inherited.carry_forward_mode
+            ),
+        )
+
+    def _context_percent_ratio(self, input_id: str, label: str) -> float:
+        text = self.query_one(f"#{input_id}", Input).value.strip()
+        try:
+            value = float(text)
+        except ValueError as exc:
+            raise ContextPolicyError(f"{label} must be a percentage.") from exc
+        if value <= 0 or value >= 100:
+            raise ContextPolicyError(f"{label} must be between 0 and 100.")
+        return value / 100.0
+
+    def _positive_context_int(self, input_id: str, label: str) -> int:
+        text = self.query_one(f"#{input_id}", Input).value.strip()
+        try:
+            value = int(text)
+        except ValueError as exc:
+            raise ContextPolicyError(f"{label} must be a positive integer.") from exc
+        if value <= 0:
+            raise ContextPolicyError(f"{label} must be a positive integer.")
+        return value
+
+    def _context_policy_provenance_label(self) -> str:
+        override_names = tuple(self._context_state.overrides.to_dict())
+        if not override_names:
+            return "Inherited from Console Behavior defaults."
+        labels = {
+            "budget_mode": "budget mode",
+            "custom_budget_tokens": "custom tokens",
+            "compaction_mode": "compaction",
+            "trigger_ratio": "trigger",
+            "target_ratio": "target",
+            "summary_max_tokens": "summary max",
+            "failure_behavior": "failure behavior",
+            "carry_forward_mode": "carry forward",
+        }
+        fields = ", ".join(labels[name] for name in override_names)
+        return f"Conversation overrides: {fields}. Other values are inherited."
+
+    def _context_validation_label(self) -> str:
+        resolved = self._context_state.resolved_policy
+        messages = (*resolved.validation_errors, *resolved.warnings)
+        if messages:
+            return " ".join(messages)
+        if resolved.safety_verified:
+            return "Capacity is verified for the selected model."
+        return "Model limit unknown; automatic safety cannot be verified."
+
+    def _memory_metadata_label(self) -> str:
+        memory = self._context_state.active_memory
+        if memory is None:
+            return "No branch-valid generated memory. Transcript remains authoritative."
+        return (
+            f"Boundary {memory.boundary_message_id} · {memory.created_at} · "
+            f"{memory.provider}/{memory.model} · prompt r{memory.prompt_revision} · "
+            f"{memory.before_tokens:,} → {memory.after_tokens:,} tokens"
+        )
+
+    def _memory_review_text(self) -> str:
+        memory = self._context_state.active_memory
+        if memory is None:
+            return "No generated memory is active on this branch."
+        return memory.summary_text
+
     def _sources_label(self) -> str:
         if self._context_estimate.staged_context_summary.strip():
             return self._context_estimate.staged_context_summary.strip()
@@ -1555,6 +2196,11 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
     @staticmethod
     def _format_value(value: object) -> str:
         return "" if value is None else str(value)
+
+    @staticmethod
+    def _format_percent(ratio: float) -> str:
+        """Round-trip a stored ratio as a human percentage draft."""
+        return f"{ratio * 100:.12g}"
 
     def _parse_float_input(self, input_id: str, fallback: float) -> object:
         raw_value = self.query_one(f"#{input_id}", Input).value.strip()

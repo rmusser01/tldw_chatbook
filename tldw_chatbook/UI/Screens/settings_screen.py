@@ -46,6 +46,12 @@ from textual.widgets import (
 from tldw_chatbook.Utils.about_text import ABOUT_MARKDOWN, get_app_version
 
 from ...Chat.console_chat_models import CONSOLE_DEFAULT_MAX_PARALLEL_RUNS
+from ...Chat.console_context_policy import (
+    CompactionFailureBehavior,
+    ContextBudgetMode,
+    ContextCarryForwardMode,
+    ContextCompactionMode,
+)
 from ...Chat.console_roleplay_identity import (
     ChatDisplayNameError,
     normalize_chat_display_name,
@@ -133,6 +139,19 @@ from .provider_model_resolution import (
     resolve_effective_provider_model,
 )
 from .settings_config_adapter import SettingsConfigAdapter, redact_secret_text
+from .settings_context_memory import (
+    CONTEXT_MEMORY_CONFIG_KEYS,
+    SUMMARY_PROMPT_ID,
+    format_ratio_percent,
+    load_context_memory_values,
+    model_context_window_reset_entry,
+    model_context_window_save_entry,
+    model_context_window_state,
+    normalize_context_memory_values,
+    ratio_from_percent,
+    resolve_model_context_window,
+)
+from ...model_capabilities import reload_capabilities
 from .settings_endpoint_probe import probe_settings_endpoint
 from .settings_config_models import (
     SettingsCategoryId,
@@ -397,6 +416,7 @@ CONSOLE_BEHAVIOR_CONSOLE_KEYS = frozenset(
         "paste_collapse_threshold",
         "max_parallel_runs",
         "tool_result_display_chars",
+        *CONTEXT_MEMORY_CONFIG_KEYS,
     }
 )
 # Parallel-agents spec S4 (task-5): user-adjustable global cap on
@@ -464,6 +484,7 @@ CONSOLE_BEHAVIOR_SAVE_ORDER = (
     "paste_collapse_threshold",
     "max_parallel_runs",
     "tool_result_display_chars",
+    *CONTEXT_MEMORY_CONFIG_KEYS,
     "user_display_name",
     "streaming",
     "temperature",
@@ -925,6 +946,23 @@ def _build_field_search_index() -> None:
                 ("settings-console-paste-collapse-threshold", "Threshold (chars)"),
                 ("settings-console-max-parallel-runs", "Max parallel agent runs"),
                 ("settings-console-tool-result-display-chars", "Display cap (chars)"),
+                (
+                    "settings-console-context-budget-mode",
+                    "Conversation budget strategy",
+                ),
+                ("settings-console-context-budget-tokens", "Conversation token budget"),
+                ("settings-console-context-compaction-mode", "Auto compaction mode"),
+                (
+                    "settings-console-context-trigger-percent",
+                    "Compaction trigger percent",
+                ),
+                ("settings-console-context-target-percent", "Compact toward percent"),
+                ("settings-console-context-summary-max-tokens", "Summary max tokens"),
+                (
+                    "settings-console-context-failure-behavior",
+                    "Compaction failure behavior",
+                ),
+                ("settings-console-context-carry-forward-mode", "Carry forward memory"),
             ),
             SettingsCategoryId.APPEARANCE: (
                 ("settings-appearance-theme", "Theme"),
@@ -940,6 +978,7 @@ def _build_field_search_index() -> None:
                 ("settings-provider-endpoint-value", "Endpoint"),
                 ("settings-provider-api-key", "API key"),
                 ("settings-provider-credential-env-var", "Credential env var"),
+                ("settings-model-context-window", "Model context window tokens"),
             ),
             SettingsCategoryId.SPEECH_TTS: (
                 ("settings-speech-default-provider", "Default TTS Provider"),
@@ -1330,9 +1369,18 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
         ),
     ),
     SettingsCategoryId.AGENTS: (
-        ("Affected config", "agent_definitions table in agent_runs.db (DB, not config.toml)"),
-        ("Recovery", "definitions are soft-deleted; re-create or re-enable from this screen"),
-        ("Boundary", "definitions only narrow a sub-agent's tools — [tools] gates and permission cards still apply"),
+        (
+            "Affected config",
+            "agent_definitions table in agent_runs.db (DB, not config.toml)",
+        ),
+        (
+            "Recovery",
+            "definitions are soft-deleted; re-create or re-enable from this screen",
+        ),
+        (
+            "Boundary",
+            "definitions only narrow a sub-agent's tools — [tools] gates and permission cards still apply",
+        ),
     ),
 }
 # Generic guidance for a category with no explicit entry. Kept as a runtime
@@ -1903,7 +1951,9 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_console_paste_toggle = False
         self._syncing_console_rail_label_style = False
         self._syncing_console_defaults = False
+        self._syncing_console_context_memory = False
         self._syncing_console_background_effects = False
+        self._syncing_provider_context_window = False
         self._syncing_library_rag_defaults = False
         #: A profile id set by the "Save then switch" branch of the unsaved-
         #: changes prompt (RagProfileSwitchConfirmModal): remembered here so
@@ -2433,7 +2483,7 @@ class SettingsScreen(BaseAppScreen):
             SettingsCategorySummary(
                 SettingsCategoryId.PROVIDERS_MODELS,
                 "Providers & Models",
-                "Default provider, model, and readiness shared with Console.",
+                "Default provider, model, context window, and readiness shared with Console.",
                 "Shared",
             ),
             SettingsCategorySummary(
@@ -2482,7 +2532,7 @@ class SettingsScreen(BaseAppScreen):
             SettingsCategorySummary(
                 SettingsCategoryId.CONSOLE_BEHAVIOR,
                 "Console Behavior",
-                "Rail presentation, composer behavior, and chat-flow defaults.",
+                "Rail, composer, conversation memory, compaction, and chat-flow defaults.",
                 "Console",
             ),
             SettingsCategorySummary(
@@ -2797,6 +2847,7 @@ class SettingsScreen(BaseAppScreen):
                     "api_settings.<provider>.api_key",
                     "api_settings.<provider>.api_key_env_var",
                     "api_settings.<provider>.model_defaults.<model>",
+                    "model_capabilities.models.<model>.context_window",
                 ),
                 reads_runtime_state_from=("Console provider readiness",),
                 writes_allowed=True,
@@ -2950,6 +3001,8 @@ class SettingsScreen(BaseAppScreen):
                     "console.paste_collapse_threshold",
                     "console.max_parallel_runs",
                     "console.background_effects.*",
+                    "console.conversation_budget_*",
+                    "console.compaction_*",
                     "chat_defaults.streaming",
                     "chat_defaults.temperature",
                     "chat_defaults.top_p",
@@ -3258,7 +3311,7 @@ class SettingsScreen(BaseAppScreen):
         return coerced if minimum <= coerced else ""
 
     def _console_behavior_loaded_values(self) -> dict[str, object]:
-        return {
+        values = {
             "collapse_large_pastes": self._loaded_collapse_large_pastes_enabled(),
             "stack_collapsed_rail_labels": self._loaded_stack_collapsed_rail_labels(),
             "paste_collapse_threshold": self._loaded_paste_collapse_threshold(),
@@ -3292,6 +3345,8 @@ class SettingsScreen(BaseAppScreen):
             ),
             "thinking_budget_tokens": self._loaded_console_default_thinking_budget_tokens(),
         }
+        values.update(load_context_memory_values(self._console_settings()).to_mapping())
+        return values
 
     def _loaded_console_background_effects(self) -> dict[str, object]:
         return normalize_console_background_effects(
@@ -4301,7 +4356,9 @@ class SettingsScreen(BaseAppScreen):
         effective = overlay.get("default_backend", cfg.default_backend)
         return effective if effective in VIDEO_GEN_BACKEND_IDS else Select.NULL
 
-    def _queue_video_gen_select_suppression(self, overlay: Mapping[str, object]) -> None:
+    def _queue_video_gen_select_suppression(
+        self, overlay: Mapping[str, object]
+    ) -> None:
         """Record the value the about-to-(re)compose default-backend Select
         will mount with (a fresh Select refires Changed on mount with a
         non-NULL value) -- the image block's exact idiom."""
@@ -4335,7 +4392,9 @@ class SettingsScreen(BaseAppScreen):
         if not draft.is_dirty:
             self._settings_drafts.pop(category, None)
 
-    def _stage_video_gen_field(self, backend_id: str, toml_key: str, raw_value: str) -> None:
+    def _stage_video_gen_field(
+        self, backend_id: str, toml_key: str, raw_value: str
+    ) -> None:
         raw_backend = self._video_gen_raw_section().get(backend_id) or {}
         original = (
             raw_backend.get(toml_key) if isinstance(raw_backend, Mapping) else None
@@ -4348,7 +4407,9 @@ class SettingsScreen(BaseAppScreen):
         self._video_gen_unstage(f"cleared::{backend_id}::{toml_key}")
         self._update_draft_status_widgets(SettingsCategoryId.VIDEO_GENERATION)
 
-    def _refresh_video_gen_default_markers(self, effective_default_backend: str) -> None:
+    def _refresh_video_gen_default_markers(
+        self, effective_default_backend: str
+    ) -> None:
         for backend_id in VIDEO_GEN_BACKEND_IDS:
             try:
                 marker = self.query_one(
@@ -4396,9 +4457,7 @@ class SettingsScreen(BaseAppScreen):
             "#settings-videogen-retention", Select
         ).value
         retention = (
-            retention_widget_value
-            if isinstance(retention_widget_value, str)
-            else None
+            retention_widget_value if isinstance(retention_widget_value, str) else None
         )
         confirm_cost_estimate = bool(
             panel.query_one("#settings-videogen-confirm_cost_estimate", Checkbox).value
@@ -4458,9 +4517,7 @@ class SettingsScreen(BaseAppScreen):
         event.stop()
         if checkbox_id == "settings-videogen-confirm_cost_estimate":
             original = self._video_gen_raw_section().get("confirm_cost_estimate")
-            self._video_gen_stage(
-                "confirm_cost_estimate", original, bool(event.value)
-            )
+            self._video_gen_stage("confirm_cost_estimate", original, bool(event.value))
             return
         prefix = "settings-videogen-enabled-"
         if checkbox_id.startswith(prefix):
@@ -4468,7 +4525,9 @@ class SettingsScreen(BaseAppScreen):
             if backend_id not in VIDEO_GEN_BACKEND_IDS:
                 return
             try:
-                panel = self.query_one("#settings-videogen-panel", VideoGenSettingsPanel)
+                panel = self.query_one(
+                    "#settings-videogen-panel", VideoGenSettingsPanel
+                )
             except QueryError:
                 return
             enabled_backends = [
@@ -4479,9 +4538,7 @@ class SettingsScreen(BaseAppScreen):
             checkbox = panel.query_one(
                 f"#settings-videogen-enabled-{backend_id}", Checkbox
             )
-            checkbox.label = (
-                "On" if checkbox.value else "Off"
-            )
+            checkbox.label = "On" if checkbox.value else "Off"
             original = self._video_gen_raw_section().get("enabled_backends")
             self._video_gen_stage("enabled_backends", original, enabled_backends)
             return
@@ -5381,6 +5438,11 @@ class SettingsScreen(BaseAppScreen):
         if not draft.is_dirty:
             self._settings_drafts.pop(category, None)
 
+    def _current_context_memory_values(self) -> dict[str, object]:
+        return {
+            key: self._console_behavior_value(key) for key in CONTEXT_MEMORY_CONFIG_KEYS
+        }
+
     def _normalise_paste_collapse_threshold(self, value: object) -> int:
         text_value = str(value).strip()
         if not text_value or not text_value.isdigit():
@@ -5486,6 +5548,24 @@ class SettingsScreen(BaseAppScreen):
         fallback rows render only while no field owns focus, so the
         "Focus a field for guidance" promise is kept.
         """
+        if (self._active_settings_field_id or "").startswith(
+            "settings-console-context-"
+        ):
+            return (
+                (
+                    "Purpose",
+                    "Controls global conversation-memory defaults inherited by Console chats.",
+                ),
+                (
+                    "Consequences",
+                    "Compaction may make one extra model call; transcript rows remain stored.",
+                ),
+                ("Saved as", "console.conversation_budget_* / console.compaction_*"),
+                (
+                    "Safety",
+                    "Off never disables mandatory provider input trimming.",
+                ),
+            )
         if (
             self._active_settings_field_id
             == "settings-console-default-user-display-name"
@@ -7424,6 +7504,8 @@ class SettingsScreen(BaseAppScreen):
             "endpoint": self._provider_endpoint_value(provider),
             "api_key": "",
             "credential_env_var": self._provider_credential_env_var(provider),
+            "model_context_window": self._provider_model_context_window(provider, model)
+            or "",
             "model_profile_temperature": profile.get("temperature", ""),
             "model_profile_top_p": profile.get("top_p", ""),
             "model_profile_min_p": profile.get("min_p", ""),
@@ -7472,6 +7554,10 @@ class SettingsScreen(BaseAppScreen):
                 "endpoint": self._provider_endpoint_value(provider),
                 "api_key": "",
                 "credential_env_var": self._provider_credential_env_var(provider),
+                "model_context_window": self._provider_model_context_window(
+                    provider, model
+                )
+                or "",
                 "model_profile_temperature": profile.get("temperature", ""),
                 "model_profile_top_p": profile.get("top_p", ""),
                 "model_profile_min_p": profile.get("min_p", ""),
@@ -7491,6 +7577,50 @@ class SettingsScreen(BaseAppScreen):
             }
         )
         return display_values
+
+    def _provider_model_context_window(self, provider: str, model: str) -> int | None:
+        """Resolve TASK-320's effective context-window capability."""
+
+        return resolve_model_context_window(
+            self._app_config_mapping(),
+            str(provider or "").strip(),
+            str(model or "").strip(),
+        )
+
+    def _provider_model_context_window_status(
+        self, provider: str, model: str, value: object | None = None
+    ) -> str:
+        model_id = str(model or "").strip()
+        if not model_id:
+            return "Choose a model to inspect its context window."
+        state = model_context_window_state(
+            self._app_config_mapping(), provider, model_id
+        )
+        window = state.effective_tokens if value is None else value
+        try:
+            tokens = int(str(window).strip())
+        except (TypeError, ValueError):
+            tokens = 0
+        if tokens <= 0:
+            return (
+                "Context window unknown. Enter the provider's documented token "
+                "limit so Automatic conversation budgets can be verified."
+            )
+        if value is not None and tokens != state.effective_tokens:
+            detected = (
+                f"{state.detected_tokens:,}"
+                if state.detected_tokens is not None
+                else "unknown"
+            )
+            return f"Override staged: {tokens:,} tokens. Detected: {detected}."
+        if state.has_configured_override:
+            detected = (
+                f"{state.detected_tokens:,}"
+                if state.detected_tokens is not None
+                else "unknown"
+            )
+            return f"Configured override: {tokens:,} tokens. Detected: {detected}."
+        return f"Detected context window: {tokens:,} tokens."
 
     def _clear_navigation_provider_context(self) -> None:
         self._navigation_provider = None
@@ -7558,6 +7688,11 @@ class SettingsScreen(BaseAppScreen):
 
     def _normalise_model_profile_max_tokens(self, value: object) -> int | str:
         return self._normalise_optional_int(value, min_value=1, label="Max tokens")
+
+    def _normalise_model_context_window(self, value: object) -> int | str:
+        return self._normalise_optional_int(
+            value, min_value=1, label="Model context window"
+        )
 
     def _normalise_model_profile_seed(self, value: object) -> int | str:
         return self._normalise_optional_int(value, min_value=0, label="Seed")
@@ -7745,6 +7880,9 @@ class SettingsScreen(BaseAppScreen):
             "#settings-provider-credential-env-var",
             Input,
         ).value.strip()
+        model_context_window = self._normalise_model_context_window(
+            self.query_one("#settings-model-context-window", Input).value
+        )
         model_profile_temperature = self._normalise_model_profile_temperature(
             self.query_one("#settings-model-profile-temperature", Input).value
         )
@@ -7818,6 +7956,7 @@ class SettingsScreen(BaseAppScreen):
             "endpoint": endpoint,
             "api_key": api_key,
             "credential_env_var": credential_env_var,
+            "model_context_window": model_context_window,
             "model_profile_temperature": model_profile_temperature,
             "model_profile_top_p": model_profile_top_p,
             "model_profile_min_p": model_profile_min_p,
@@ -8165,6 +8304,8 @@ class SettingsScreen(BaseAppScreen):
             "endpoint",
             "api_key",
             "credential_env_var",
+            "model_context_window",
+            "model_context_window_reset",
             *PROVIDER_MODEL_PROFILE_FIELD_KEYS,
         ):
             draft.values.pop(key, None)
@@ -8176,7 +8317,11 @@ class SettingsScreen(BaseAppScreen):
         draft = self._provider_draft()
         if draft is None:
             return
-        for key in PROVIDER_MODEL_PROFILE_FIELD_KEYS:
+        for key in (
+            *PROVIDER_MODEL_PROFILE_FIELD_KEYS,
+            "model_context_window",
+            "model_context_window_reset",
+        ):
             draft.values.pop(key, None)
             draft.originals.pop(key, None)
         if not draft.is_dirty:
@@ -8280,7 +8425,32 @@ class SettingsScreen(BaseAppScreen):
                 row.set_class(not supported, "settings-gated-profile-hidden")
         finally:
             self._syncing_provider_model_profile = False
+        self._sync_provider_context_window_widget(provider, model)
         self._refresh_generation_support_summary(provider)
+
+    def _sync_provider_context_window_widget(self, provider: str, model: str) -> None:
+        state = model_context_window_state(self._app_config_mapping(), provider, model)
+        value = state.effective_tokens or ""
+        self._syncing_provider_context_window = True
+        try:
+            try:
+                self.query_one(
+                    "#settings-model-context-window", Input
+                ).value = self._profile_input_value(value)
+            except QueryError:
+                pass
+        finally:
+            self._syncing_provider_context_window = False
+        self._set_static_text(
+            "#settings-model-context-window-status",
+            self._provider_model_context_window_status(provider, model, value),
+        )
+        try:
+            self.query_one(
+                "#settings-model-context-window-reset", Button
+            ).disabled = not state.has_configured_override
+        except QueryError:
+            pass
 
     def _refresh_generation_support_summary(self, provider: str) -> None:
         """Update the one-line gated-controls summary and its visibility."""
@@ -9290,6 +9460,19 @@ class SettingsScreen(BaseAppScreen):
                     "model name is required before provider-backed generation can run",
                 ),
             )
+        if field_id == "settings-model-context-window":
+            return (
+                ("Focused setting", "Model context window"),
+                (
+                    "Purpose",
+                    "Defines the model's total token capacity for request safety.",
+                ),
+                ("Saved as", "model_capabilities.models.<model>.context_window"),
+                (
+                    "Validation",
+                    "positive whole tokens from the provider's model documentation",
+                ),
+            )
         if field_id == "settings-provider-endpoint-value":
             return (
                 ("Focused setting", "Endpoint"),
@@ -9975,6 +10158,9 @@ class SettingsScreen(BaseAppScreen):
         resolved = self._resolve_provider_model_for_settings()
         values = self._provider_display_setting_values()
         provider = str(values["provider"])
+        context_window_state = model_context_window_state(
+            self._app_config_mapping(), provider, str(values["model"])
+        )
         yield Static(
             "Providers & Models", classes="destination-section settings-column-title"
         )
@@ -10132,6 +10318,45 @@ class SettingsScreen(BaseAppScreen):
             yield Static(
                 self._provider_key_status(str(values["provider"])),
                 id="settings-provider-key-status",
+            )
+            yield Static("Context capacity", classes="destination-section")
+            yield Static(
+                self._provider_model_context_window_status(
+                    provider,
+                    str(values["model"]),
+                    values.get("model_context_window"),
+                ),
+                id="settings-model-context-window-status",
+                classes="settings-status-row",
+            )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Context window", classes="settings-input-label")
+                yield Input(
+                    value=self._profile_input_value(
+                        values.get("model_context_window", "")
+                    ),
+                    id="settings-model-context-window",
+                    classes="settings-compact-input",
+                    placeholder="tokens (required when unknown)",
+                    restrict=r"^[0-9]*$",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("", classes="settings-input-label")
+                yield Button(
+                    "Reset to detected",
+                    id="settings-model-context-window-reset",
+                    disabled=not context_window_state.has_configured_override,
+                    tooltip=(
+                        "Remove only the configured context-window override and "
+                        "return to the detected capability value."
+                    ),
+                )
+            yield Static(
+                "This is the model's total token capacity, not a conversation "
+                "length preference. Repairs update the existing model-capability "
+                "registry used by request safety checks.",
+                id="settings-model-context-window-help",
+                classes="settings-detail-row",
             )
             yield Static("Model discovery", classes="destination-section")
             yield Static(
@@ -10569,6 +10794,133 @@ class SettingsScreen(BaseAppScreen):
                 'itself saw. Open a run\'s "View full log" (Agent rail) to read '
                 "everything beyond this cap.",
                 id="settings-console-tool-result-display-chars-help",
+                classes="settings-detail-row",
+            )
+            yield Static("Conversation memory", classes="destination-section")
+            yield Static(
+                "Global defaults for new and inherited conversations. Current-conversation "
+                "overrides remain in the Console's Context & memory view.",
+                id="settings-console-context-memory-help",
+                classes="settings-detail-row",
+            )
+            with Horizontal(classes="settings-input-row settings-select-row"):
+                yield Static("Budget strategy", classes="settings-input-label")
+                yield Select(
+                    [
+                        ("Automatic", ContextBudgetMode.AUTOMATIC.value),
+                        ("Custom", ContextBudgetMode.CUSTOM.value),
+                    ],
+                    value=str(self._console_behavior_value("conversation_budget_mode")),
+                    id="settings-console-context-budget-mode",
+                    classes="settings-compact-select",
+                    allow_blank=False,
+                    compact=True,
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Custom budget", classes="settings-input-label")
+                yield Input(
+                    value=self._console_input_value(
+                        self._console_behavior_value("conversation_budget_tokens")
+                    ),
+                    id="settings-console-context-budget-tokens",
+                    classes="settings-compact-input",
+                    placeholder="tokens (used in Custom mode)",
+                    restrict=r"^[0-9]*$",
+                )
+            with Horizontal(classes="settings-input-row settings-select-row"):
+                yield Static("Compaction", classes="settings-input-label")
+                yield Select(
+                    [
+                        ("Ask", ContextCompactionMode.ASK.value),
+                        ("Automatic", ContextCompactionMode.AUTOMATIC.value),
+                        ("Off", ContextCompactionMode.OFF.value),
+                    ],
+                    value=str(self._console_behavior_value("compaction_mode")),
+                    id="settings-console-context-compaction-mode",
+                    classes="settings-compact-select",
+                    allow_blank=False,
+                    compact=True,
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Trigger (%)", classes="settings-input-label")
+                yield Input(
+                    value=format_ratio_percent(
+                        self._console_behavior_value("compaction_trigger_ratio")
+                    ),
+                    id="settings-console-context-trigger-percent",
+                    classes="settings-compact-input",
+                    placeholder="80",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Compact toward (%)", classes="settings-input-label")
+                yield Input(
+                    value=format_ratio_percent(
+                        self._console_behavior_value("compaction_target_ratio")
+                    ),
+                    id="settings-console-context-target-percent",
+                    classes="settings-compact-input",
+                    placeholder="55",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Summary max", classes="settings-input-label")
+                yield Input(
+                    value=self._console_input_value(
+                        self._console_behavior_value("compaction_summary_max_tokens")
+                    ),
+                    id="settings-console-context-summary-max-tokens",
+                    classes="settings-compact-input",
+                    placeholder="1024 tokens",
+                    restrict=r"^[0-9]*$",
+                )
+            with Horizontal(classes="settings-input-row settings-select-row"):
+                yield Static("On failure", classes="settings-input-label")
+                yield Select(
+                    [
+                        ("Stop and ask", CompactionFailureBehavior.STOP_AND_ASK.value),
+                        (
+                            "Omit older context",
+                            CompactionFailureBehavior.OMIT_OLDER_CONTEXT.value,
+                        ),
+                    ],
+                    value=str(
+                        self._console_behavior_value("compaction_failure_behavior")
+                    ),
+                    id="settings-console-context-failure-behavior",
+                    classes="settings-compact-select",
+                    allow_blank=False,
+                    compact=True,
+                )
+            with Horizontal(classes="settings-input-row settings-select-row"):
+                yield Static("Carry forward", classes="settings-input-label")
+                yield Select(
+                    [
+                        (
+                            "Memory + recent turns",
+                            ContextCarryForwardMode.MEMORY_WITH_RECENT_TURNS.value,
+                        ),
+                        (
+                            "Memory + latest exchange",
+                            ContextCarryForwardMode.MEMORY_WITH_LATEST_EXCHANGE.value,
+                        ),
+                    ],
+                    value=str(
+                        self._console_behavior_value("compaction_carry_forward_mode")
+                    ),
+                    id="settings-console-context-carry-forward-mode",
+                    classes="settings-compact-select",
+                    allow_blank=False,
+                    compact=True,
+                )
+            yield Button(
+                "Edit summary prompt…",
+                id="settings-console-context-edit-summary-prompt",
+                tooltip="Open the existing Internal Prompts editor filtered to the Console summary prompt.",
+            )
+            yield Static(
+                "Compaction makes one extra model call and stores generated memory with "
+                "provenance; original transcript messages remain stored. Off disables "
+                "optional compaction only—mandatory provider safety trimming still applies.",
+                id="settings-console-context-safety-copy",
                 classes="settings-detail-row",
             )
             yield Static("Global fallback defaults", classes="destination-section")
@@ -12958,9 +13310,7 @@ class SettingsScreen(BaseAppScreen):
                 )
         elif category is SettingsCategoryId.AGENTS:
             yield Static("Agents", classes="destination-section settings-column-title")
-            yield AgentsSettingsPanel(
-                self.app_instance, id="settings-agents-panel"
-            )
+            yield AgentsSettingsPanel(self.app_instance, id="settings-agents-panel")
         elif category in DOMAIN_SETTINGS_CATEGORY_IDS:
             yield from self._render_domain_category_detail(category)
         else:
@@ -14304,9 +14654,7 @@ class SettingsScreen(BaseAppScreen):
         self._mark_appearance_settings_staged()
 
     @on(Button.Pressed, "#settings-appearance-smooth-scrolling")
-    def handle_appearance_smooth_scrolling_changed(
-        self, event: Button.Pressed
-    ) -> None:
+    def handle_appearance_smooth_scrolling_changed(self, event: Button.Pressed) -> None:
         """Stage the smooth-scrolling toggle and refresh its label.
 
         Args:
@@ -14883,9 +15231,7 @@ class SettingsScreen(BaseAppScreen):
         self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
 
     @on(Checkbox.Changed, "#settings-console-stack-collapsed-rail-labels")
-    def handle_console_rail_label_style_changed(
-        self, event: Checkbox.Changed
-    ) -> None:
+    def handle_console_rail_label_style_changed(self, event: Checkbox.Changed) -> None:
         """Stage the collapsed Console rail presentation preference."""
         event.stop()
         if self._syncing_console_rail_label_style:
@@ -14953,6 +15299,80 @@ class SettingsScreen(BaseAppScreen):
             "#settings-console-behavior-result", self._console_behavior_result_text()
         )
         self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
+
+    @on(Select.Changed, "#settings-console-context-budget-mode")
+    @on(Select.Changed, "#settings-console-context-compaction-mode")
+    @on(Select.Changed, "#settings-console-context-failure-behavior")
+    @on(Select.Changed, "#settings-console-context-carry-forward-mode")
+    def handle_console_context_select_changed(self, event: Select.Changed) -> None:
+        event.stop()
+        if self._syncing_console_context_memory:
+            return
+        key_by_id = {
+            "settings-console-context-budget-mode": "conversation_budget_mode",
+            "settings-console-context-compaction-mode": "compaction_mode",
+            "settings-console-context-failure-behavior": "compaction_failure_behavior",
+            "settings-console-context-carry-forward-mode": "compaction_carry_forward_mode",
+        }
+        key = key_by_id.get(event.select.id or "")
+        if key is None:
+            return
+        self._stage_console_default_value(key, str(event.value))
+        self._mark_console_behavior_settings_staged()
+
+    @on(Input.Changed, "#settings-console-context-budget-tokens")
+    @on(Input.Changed, "#settings-console-context-summary-max-tokens")
+    def handle_console_context_token_value_changed(self, event: Input.Changed) -> None:
+        if self._syncing_console_context_memory:
+            return
+        key_by_id = {
+            "settings-console-context-budget-tokens": "conversation_budget_tokens",
+            "settings-console-context-summary-max-tokens": (
+                "compaction_summary_max_tokens"
+            ),
+        }
+        key = key_by_id.get(event.input.id or "")
+        if key is None:
+            return
+        value: object = int(event.value) if event.value.isdecimal() else event.value
+        self._stage_console_default_value(key, value)
+        self._mark_console_behavior_settings_staged()
+
+    @on(Input.Changed, "#settings-console-context-trigger-percent")
+    @on(Input.Changed, "#settings-console-context-target-percent")
+    def handle_console_context_percent_changed(self, event: Input.Changed) -> None:
+        if self._syncing_console_context_memory:
+            return
+        key = (
+            "compaction_trigger_ratio"
+            if event.input.id == "settings-console-context-trigger-percent"
+            else "compaction_target_ratio"
+        )
+        self._stage_console_default_value(key, ratio_from_percent(event.value))
+        self._mark_console_behavior_settings_staged()
+
+    @on(Button.Pressed, "#settings-console-context-edit-summary-prompt")
+    def handle_console_context_edit_summary_prompt(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._select_category(SettingsCategoryId.INTERNAL_PROMPTS.value)
+
+        def _focus_summary_prompt() -> None:
+            try:
+                panel = self.query_one(
+                    "#settings-internal-prompts-panel", InternalPromptsPanel
+                )
+            except QueryError:
+                self.app.notify(
+                    "Internal Prompts is not available.", severity="warning"
+                )
+                return
+            if not panel.focus_prompt(SUMMARY_PROMPT_ID):
+                self.app.notify(
+                    "The Console summary prompt is not registered.",
+                    severity="warning",
+                )
+
+        self.call_after_refresh(_focus_summary_prompt)
 
     @on(Input.Changed, "#settings-console-default-user-display-name")
     def handle_console_default_user_display_name_changed(
@@ -16067,6 +16487,68 @@ class SettingsScreen(BaseAppScreen):
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
+    @on(Input.Changed, "#settings-model-context-window")
+    def handle_model_context_window_changed(self, event: Input.Changed) -> None:
+        if self._syncing_provider_context_window:
+            return
+        try:
+            value: object = self._normalise_model_context_window(event.value)
+        except ValueError:
+            value = event.value
+        draft = self._provider_draft()
+        if draft is not None:
+            # Assigning the detected value in the reset handler queues an
+            # Input.Changed message. Keep that programmatic echo from turning
+            # the reset back into a new override after the sync guard drops.
+            if draft.values.get(
+                "model_context_window_reset"
+            ) and value == draft.values.get("model_context_window"):
+                return
+            draft.values.pop("model_context_window_reset", None)
+            draft.originals.pop("model_context_window_reset", None)
+        self._stage_provider_value("model_context_window", value)
+        values = self._provider_setting_values_mapping()
+        self._set_static_text(
+            "#settings-model-context-window-status",
+            self._provider_model_context_window_status(
+                str(values.get("provider") or ""),
+                str(values.get("model") or ""),
+                value,
+            ),
+        )
+        self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+
+    @on(Button.Pressed, "#settings-model-context-window-reset")
+    def handle_model_context_window_reset(self, event: Button.Pressed) -> None:
+        event.stop()
+        values = self._provider_setting_values_mapping()
+        provider = str(values.get("provider") or "")
+        model = str(values.get("model") or "")
+        state = model_context_window_state(self._app_config_mapping(), provider, model)
+        if not state.has_configured_override:
+            return
+        detected: object = state.detected_tokens or ""
+        self._stage_provider_value("model_context_window", detected)
+        self._stage_provider_value("model_context_window_reset", True)
+        self._syncing_provider_context_window = True
+        try:
+            self.query_one("#settings-model-context-window", Input).value = str(
+                detected
+            )
+        finally:
+            self._syncing_provider_context_window = False
+        event.button.disabled = True
+        detected_copy = (
+            f"{state.detected_tokens:,} tokens"
+            if state.detected_tokens is not None
+            else "unknown"
+        )
+        self._set_static_text(
+            "#settings-model-context-window-status",
+            f"Reset staged. Detected context window: {detected_copy}.",
+        )
+        self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+
     @on(Input.Changed, "#settings-provider-endpoint-value")
     def handle_provider_endpoint_changed(self, event: Input.Changed) -> None:
         if self._syncing_provider_endpoint:
@@ -16528,6 +17010,16 @@ class SettingsScreen(BaseAppScreen):
                 and values.get(key, "") != selected_profile.get(profile_key, "")
                 for key, profile_key in PROVIDER_MODEL_PROFILE_FIELD_KEYS.items()
             )
+            context_window_dirty = (
+                draft is not None
+                and "model_context_window" in dirty_keys
+                and values.get("model_context_window", "")
+                != loaded_values.get("model_context_window", "")
+            )
+            context_window_reset = bool(
+                draft is not None and draft.values.get("model_context_window_reset")
+            )
+            context_window_dirty = context_window_dirty or context_window_reset
             provider_key = provider_config_key(provider)
             provider_section_key, _provider_config = self._provider_config_entry(
                 provider
@@ -16573,6 +17065,28 @@ class SettingsScreen(BaseAppScreen):
                 )
                 self.app.notify(self._provider_save_result, severity="error")
                 return
+            if context_window_dirty and not model:
+                self._provider_save_result = (
+                    "Model is required before saving its context window."
+                )
+                self._set_static_text(
+                    "#settings-provider-save-result", self._provider_save_result
+                )
+                self.app.notify(self._provider_save_result, severity="error")
+                return
+            if (
+                context_window_dirty
+                and not context_window_reset
+                and not values.get("model_context_window")
+            ):
+                self._provider_save_result = (
+                    "Model context window must be a positive whole number."
+                )
+                self._set_static_text(
+                    "#settings-provider-save-result", self._provider_save_result
+                )
+                self.app.notify(self._provider_save_result, severity="error")
+                return
             if model_profile_dirty and not provider_key:
                 self._provider_save_result = (
                     "Provider is required before saving a model default profile."
@@ -16588,6 +17102,7 @@ class SettingsScreen(BaseAppScreen):
                 and not credential_dirty
                 and not api_key_dirty
                 and not model_profile_dirty
+                and not context_window_dirty
             ):
                 self._settings_drafts.pop(category, None)
                 self._update_provider_dynamic_widgets()
@@ -16631,6 +17146,44 @@ class SettingsScreen(BaseAppScreen):
                     {"model_defaults": next_model_defaults},
                 )
                 saved = saved and profile_saved
+            next_model_capabilities = None
+            delete_model_capabilities_entry = False
+            if context_window_dirty and model:
+                if context_window_reset:
+                    next_model_capabilities = model_context_window_reset_entry(
+                        self._app_config_mapping(), model
+                    )
+                    if next_model_capabilities is None:
+                        capability_saved = SettingsConfigAdapter().delete_values(
+                            "model_capabilities.models", [model]
+                        )
+                        delete_model_capabilities_entry = True
+                    else:
+                        capability_saved = SettingsConfigAdapter().save_values(
+                            "model_capabilities.models",
+                            {model: next_model_capabilities},
+                        )
+                else:
+                    try:
+                        next_model_capabilities = model_context_window_save_entry(
+                            self._app_config_mapping(),
+                            provider,
+                            model,
+                            values["model_context_window"],
+                        )
+                    except ValueError as exc:
+                        self._provider_save_result = str(exc)
+                        self._set_static_text(
+                            "#settings-provider-save-result",
+                            self._provider_save_result,
+                        )
+                        self.app.notify(self._provider_save_result, severity="error")
+                        return
+                    capability_saved = SettingsConfigAdapter().save_values(
+                        "model_capabilities.models",
+                        {model: next_model_capabilities},
+                    )
+                saved = saved and capability_saved
             if saved:
                 defaults = self._chat_defaults()
                 defaults.update(dirty_values)
@@ -16656,6 +17209,26 @@ class SettingsScreen(BaseAppScreen):
                     provider_settings.update(provider_settings_values)
                     if next_model_defaults is not None:
                         provider_settings["model_defaults"] = next_model_defaults
+                if (
+                    next_model_capabilities is not None
+                    or delete_model_capabilities_entry
+                ):
+                    app_config = self._app_config_update_target()
+                    capabilities_section = app_config.setdefault(
+                        "model_capabilities", {}
+                    )
+                    if not isinstance(capabilities_section, dict):
+                        capabilities_section = {}
+                        app_config["model_capabilities"] = capabilities_section
+                    model_entries = capabilities_section.setdefault("models", {})
+                    if not isinstance(model_entries, dict):
+                        model_entries = {}
+                        capabilities_section["models"] = model_entries
+                    if delete_model_capabilities_entry:
+                        model_entries.pop(model, None)
+                    elif next_model_capabilities is not None:
+                        model_entries[model] = dict(next_model_capabilities)
+                    reload_capabilities()
                 self._settings_drafts.pop(category, None)
                 self._provider_save_result = "Provider settings saved."
                 self._set_static_text(
@@ -16665,6 +17238,7 @@ class SettingsScreen(BaseAppScreen):
                 # don't let a stale ready/blocked line persist after saving.
                 self._mark_provider_test_result_stale()
                 self._sync_provider_credential_widget(provider)
+                self._sync_provider_context_window_widget(provider, model)
                 self._update_provider_dynamic_widgets()
                 self._update_draft_status_widgets(category)
                 self.app.notify(
@@ -16817,6 +17391,13 @@ class SettingsScreen(BaseAppScreen):
                             dirty_values["tool_result_display_chars"]
                         )
                     )
+                if any(key in dirty_values for key in CONTEXT_MEMORY_CONFIG_KEYS):
+                    normalized_context = normalize_context_memory_values(
+                        self._current_context_memory_values()
+                    ).to_mapping()
+                    for key in CONTEXT_MEMORY_CONFIG_KEYS:
+                        if key in dirty_values:
+                            dirty_values[key] = normalized_context[key]
                 if "streaming" in dirty_values:
                     dirty_values["streaming"] = (
                         self._normalise_console_default_streaming(
@@ -17129,6 +17710,9 @@ class SettingsScreen(BaseAppScreen):
                             selector,
                             Input,
                         ).value = self._profile_input_value(profile_value)
+                self._sync_provider_context_window_widget(
+                    provider, str(values["model"])
+                )
             except QueryError:
                 pass
             self._provider_save_result = (
@@ -17810,6 +18394,46 @@ class SettingsScreen(BaseAppScreen):
                 self._syncing_console_tool_result_display_chars = False
         except QueryError:
             pass
+        self._syncing_console_context_memory = True
+        try:
+            context_selects = {
+                "#settings-console-context-budget-mode": "conversation_budget_mode",
+                "#settings-console-context-compaction-mode": "compaction_mode",
+                "#settings-console-context-failure-behavior": (
+                    "compaction_failure_behavior"
+                ),
+                "#settings-console-context-carry-forward-mode": (
+                    "compaction_carry_forward_mode"
+                ),
+            }
+            for selector, key in context_selects.items():
+                try:
+                    self.query_one(selector, Select).value = str(
+                        self._console_behavior_value(key)
+                    )
+                except QueryError:
+                    pass
+            context_inputs = {
+                "#settings-console-context-budget-tokens": self._console_input_value(
+                    self._console_behavior_value("conversation_budget_tokens")
+                ),
+                "#settings-console-context-trigger-percent": format_ratio_percent(
+                    self._console_behavior_value("compaction_trigger_ratio")
+                ),
+                "#settings-console-context-target-percent": format_ratio_percent(
+                    self._console_behavior_value("compaction_target_ratio")
+                ),
+                "#settings-console-context-summary-max-tokens": self._console_input_value(
+                    self._console_behavior_value("compaction_summary_max_tokens")
+                ),
+            }
+            for selector, value in context_inputs.items():
+                try:
+                    self.query_one(selector, Input).value = value
+                except QueryError:
+                    pass
+        finally:
+            self._syncing_console_context_memory = False
         input_values = {
             "#settings-console-default-user-display-name": (
                 self._console_behavior_value("user_display_name")

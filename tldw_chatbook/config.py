@@ -2590,6 +2590,16 @@ collapse_large_pastes = true  # Display large pasted chunks compactly in Console
 stack_collapsed_rail_labels = false  # Use compact stacked labels on collapsed Console rails
 paste_collapse_threshold = 50  # Collapse pasted/inserted chunks only when longer than this many characters
 local_tools_enabled = true      # standard web + workspace agent tools; every call still uses MCP Ask/Allow/Off permissions
+# Conversation-memory defaults (ADR-052). Model capacity remains capability data,
+# not a persisted policy value.
+conversation_budget_mode = "automatic"  # automatic, custom
+# conversation_budget_tokens = 32000     # required only when mode = custom
+compaction_mode = "ask"                  # ask, automatic, off
+compaction_trigger_ratio = 0.80
+compaction_target_ratio = 0.55
+compaction_summary_max_tokens = 1024
+compaction_failure_behavior = "stop_and_ask"  # stop_and_ask, omit_older_context
+compaction_carry_forward_mode = "memory_with_recent_turns"  # memory_with_recent_turns, memory_with_latest_exchange
 # workspace_root = ""           # confinement root for fs_* tools; empty = app cwd at startup
 
 [console.background_effects]

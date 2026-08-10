@@ -5,13 +5,14 @@ from __future__ import annotations
 import asyncio
 import copy
 import functools
+import hashlib
 import os
 import re
 import threading
 import time
 from collections import OrderedDict
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Protocol
@@ -67,6 +68,35 @@ from tldw_chatbook.Chat.console_history_budget import (
     DEFAULT_RESPONSE_RESERVATION,
     bound_messages_to_window,
     count_console_messages_tokens,
+)
+from tldw_chatbook.Chat.console_context_compaction import (
+    CompactionAdmission,
+    CompactionDecision,
+    CompactionPromptSnapshot,
+    CompactionTerminal,
+    ConsoleCompactionService,
+    DurableMessageSnapshot,
+    compactable_units_after,
+    decide_compaction,
+    plan_compaction,
+    prefix_digest,
+    select_valid_memory,
+)
+from tldw_chatbook.Chat.console_context_policy import (
+    CompactionFailureBehavior,
+    ConsoleContextCapacity,
+    ConsoleContextPolicyOverrides,
+    context_policy_overrides_from_console_config,
+    resolve_context_policy,
+)
+from tldw_chatbook.Chat.console_context_repository import (
+    ConsoleContextRepository,
+    ConsoleMemoryRecord,
+)
+from tldw_chatbook.Chat.console_prepared_request import (
+    PreparedConsoleRequest,
+    build_console_request,
+    tagged_memory_message,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_roleplay_identity import (
@@ -1046,6 +1076,7 @@ class ConsoleChatController:
         default_session_settings: "Callable[[], ConsoleSessionSettings] | None" = None,
         library_provider_factory: "Callable[[], Any | None] | None" = None,
         global_user_display_name: Callable[[], str] | None = None,
+        context_repository: ConsoleContextRepository | None = None,
     ) -> None:
         self.store = store
         self.provider_gateway = provider_gateway
@@ -1100,6 +1131,19 @@ class ConsoleChatController:
         #: default) means no Library tools are offered at all.
         self._library_provider_factory = library_provider_factory
         self._global_user_display_name = global_user_display_name or (lambda: "User")
+        persistence_db = getattr(getattr(store, "persistence", None), "db", None)
+        self._context_repository = context_repository
+        if self._context_repository is None and persistence_db is not None:
+            try:
+                self._context_repository = ConsoleContextRepository(persistence_db)
+            except Exception:
+                self._context_repository = None
+        self._compaction_service = (
+            ConsoleCompactionService(self._context_repository, provider_gateway)
+            if self._context_repository is not None
+            and callable(getattr(provider_gateway, "complete_auxiliary", None))
+            else None
+        )
         # Parallel-agents spec §2: run state is a PER-SESSION map, not a
         # single global slot -- two sessions can each have their own
         # in-flight/terminal run without stamping each other. `run_state`/
@@ -1436,7 +1480,9 @@ class ConsoleChatController:
         """
         return dict(self._run_states)
 
-    def payload_fingerprint_baseline(self, session_id: str) -> PayloadFingerprint | None:
+    def payload_fingerprint_baseline(
+        self, session_id: str
+    ) -> PayloadFingerprint | None:
         """Return the fingerprint of the last payload actually sent for a session.
 
         Recorded at dispatch time by ``_stream_assistant_response_inner``,
@@ -3016,9 +3062,7 @@ class ConsoleChatController:
             # thread's own execution of the enqueued callable -- see its
             # docstring for the full race analysis.
             try:
-                self._clear_pending_approval_if_round_is_current(
-                    round_id, session_id
-                )
+                self._clear_pending_approval_if_round_is_current(round_id, session_id)
             except Exception:  # noqa: BLE001 -- suppress teardown-time errors
                 logger.opt(exception=True).debug(
                     "Failed to marshal approval clear during teardown"
@@ -3515,9 +3559,7 @@ class ConsoleChatController:
         bridge = self._agent_bridge
         if bridge is None:
             return {}
-        session = next(
-            (s for s in self.store.sessions() if s.id == session_id), None
-        )
+        session = next((s for s in self.store.sessions() if s.id == session_id), None)
         if session is None:
             return {}
 
@@ -3851,8 +3893,10 @@ class ConsoleChatController:
         event = threading.Event()
         decision: dict[str, bool] = {}
         request_id = str(uuid4())
-        owning_session_id = session_id if session_id is not None else (
-            self.store.active_session_id or ""
+        owning_session_id = (
+            session_id
+            if session_id is not None
+            else (self.store.active_session_id or "")
         )
         with self._pending_skill_install_lock:
             self._pending_skill_install_rounds[request_id] = {
@@ -3877,9 +3921,8 @@ class ConsoleChatController:
         # DIFFERENT, background session -- mirrors `request_mcp_approvals`'
         # identical `is_parked` gate. `session_id is None` (a legacy caller
         # with no session context) always mounts.
-        is_parked = (
-            session_id is not None
-            and session_id != (self.store.active_session_id or "")
+        is_parked = session_id is not None and session_id != (
+            self.store.active_session_id or ""
         )
         if session_id is not None:
             # TASK-1050 (Defect A): round-keyed, not a plain boolean -- see
@@ -4140,8 +4183,10 @@ class ConsoleChatController:
         event = threading.Event()
         decision: dict[str, bool] = {}
         request_id = str(uuid4())
-        owning_session_id = session_id if session_id is not None else (
-            self.store.active_session_id or ""
+        owning_session_id = (
+            session_id
+            if session_id is not None
+            else (self.store.active_session_id or "")
         )
         # PR2a Task 7 (review M1): same run-ownership stamp
         # `request_mcp_approvals` carries, and for a WIDER hazard --
@@ -4175,9 +4220,8 @@ class ConsoleChatController:
         card_payload["timeout_seconds"] = timeout_seconds
         card_payload["request_id"] = request_id
         card_payload["session_id"] = owning_session_id
-        is_parked = (
-            session_id is not None
-            and session_id != (self.store.active_session_id or "")
+        is_parked = session_id is not None and session_id != (
+            self.store.active_session_id or ""
         )
         if session_id is not None:
             # TASK-1050 (Defect A): round-keyed, not a plain boolean -- see
@@ -5034,9 +5078,7 @@ class ConsoleChatController:
             body = assemble(rows)
         return body
 
-    async def impersonate_user_reply(
-        self, session_id: str
-    ) -> "ImpersonateResult":
+    async def impersonate_user_reply(self, session_id: str) -> "ImpersonateResult":
         """Draft the USER's next message with the session's current model.
 
         task-1683: "Impersonate" writes a candidate reply *as the user*,
@@ -5066,9 +5108,7 @@ class ConsoleChatController:
             return ImpersonateResult(
                 "",
                 "provider-not-ready",
-                self._blocked_visible_copy(
-                    getattr(resolution, "visible_copy", "")
-                ),
+                self._blocked_visible_copy(getattr(resolution, "visible_copy", "")),
             )
         session_messages = self.store.messages_for_session(session_id)
         # Mirror _provider_message_payloads' rules exactly (cubic PR #1160):
@@ -6683,6 +6723,592 @@ class ConsoleChatController:
             # Session vanished mid-send; the dispatched payload was still bounded.
             pass
 
+    def _durable_context_snapshots(
+        self, session_id: str
+    ) -> tuple[DurableMessageSnapshot, ...] | None:
+        """Capture the active durable lineage without leaking content to logs."""
+        persistence = getattr(self.store, "persistence", None)
+        version_reader = getattr(persistence, "get_message_version", None)
+        if not callable(version_reader):
+            return None
+        try:
+            active_ids = self.store.active_path_message_ids(session_id)
+            messages = {
+                message.id: message
+                for message in self.store.messages_for_session(session_id)
+            }
+        except KeyError:
+            return None
+        snapshots: list[DurableMessageSnapshot] = []
+        for native_id in active_ids:
+            message = messages.get(native_id)
+            if message is None:
+                return None
+            persisted_id = message.persisted_message_id
+            if not persisted_id:
+                # The just-created assistant placeholder is not part of the
+                # request and has no durable content to summarize.
+                if (
+                    message.role is ConsoleMessageRole.ASSISTANT
+                    and message.status != "complete"
+                ):
+                    continue
+                if message.role is ConsoleMessageRole.SYSTEM:
+                    continue
+                return None
+            try:
+                version = version_reader(persisted_id)
+            except Exception:
+                return None
+            if type(version) is not int or version < 1:
+                return None
+            variant_id: str | None = None
+            variant_index: int | None = None
+            if message.variants is not None:
+                try:
+                    variant_id = message.variants.current.id
+                    variant_index = message.variants.selected_index
+                except (AttributeError, IndexError):
+                    return None
+            attachment_digests: list[str] = []
+            for attachment in message.attachments:
+                data_digest = (
+                    hashlib.sha256(attachment.data).hexdigest()
+                    if attachment.data is not None
+                    else "unavailable"
+                )
+                attachment_digests.append(
+                    hashlib.sha256(
+                        (
+                            f"{attachment.position}\0{attachment.mime_type}\0"
+                            f"{attachment.display_name}\0{data_digest}"
+                        ).encode("utf-8")
+                    ).hexdigest()
+                )
+            if not message.attachments and message.image_data is not None:
+                attachment_digests.append(
+                    hashlib.sha256(
+                        (message.image_mime_type or "image/unknown").encode("utf-8")
+                        + b"\0"
+                        + message.image_data
+                    ).hexdigest()
+                )
+            snapshots.append(
+                DurableMessageSnapshot(
+                    message_id=persisted_id,
+                    version=version,
+                    role=message.role.value,
+                    content=message.content,
+                    selected_variant_id=variant_id,
+                    selected_variant_index=variant_index,
+                    attachment_digests=tuple(attachment_digests),
+                )
+            )
+        return tuple(snapshots)
+
+    @staticmethod
+    def _messages_after_memory_boundary(
+        provider_messages: list[dict[str, Any]],
+        boundary_native_id: str,
+    ) -> list[dict[str, Any]] | None:
+        """Retain the system prefix and only transcript rows after a memory boundary."""
+        leading_end = 0
+        while (
+            leading_end < len(provider_messages)
+            and provider_messages[leading_end].get("role") == "system"
+        ):
+            leading_end += 1
+        boundary_index = next(
+            (
+                index
+                for index, row in enumerate(provider_messages)
+                if row.get(NATIVE_MESSAGE_ID_KEY) == boundary_native_id
+            ),
+            None,
+        )
+        if boundary_index is None or boundary_index < leading_end:
+            return None
+        return [
+            *provider_messages[:leading_end],
+            *provider_messages[boundary_index + 1 :],
+        ]
+
+    def _global_context_policy_overrides(self):
+        keys = (
+            "conversation_budget_mode",
+            "conversation_budget_tokens",
+            "compaction_mode",
+            "compaction_trigger_ratio",
+            "compaction_target_ratio",
+            "compaction_summary_max_tokens",
+            "compaction_failure_behavior",
+            "compaction_carry_forward_mode",
+        )
+        values = {key: get_cli_setting("console", key, None) for key in keys}
+        return context_policy_overrides_from_console_config(values)
+
+    def context_control_inputs(
+        self, session_id: str
+    ) -> tuple[
+        ConsoleContextPolicyOverrides,
+        ConsoleContextPolicyOverrides | None,
+        ConsoleMemoryRecord | None,
+    ]:
+        """Return policy and branch-valid memory inputs for settings UI.
+
+        This read-only seam keeps widgets away from the repository and from
+        the active-lineage validation rules used by provider dispatch.
+        """
+        owner = next(
+            (item for item in self.store.sessions() if item.id == session_id), None
+        )
+        if owner is None:
+            raise KeyError(session_id)
+        try:
+            global_overrides = self._global_context_policy_overrides()
+        except Exception:
+            global_overrides = None
+        memory = None
+        if (
+            self._context_repository is not None
+            and owner.persisted_conversation_id is not None
+        ):
+            memory = select_valid_memory(
+                self._context_repository.list_active_memories(
+                    owner.persisted_conversation_id
+                ),
+                self._durable_context_snapshots(session_id),
+            )
+        return owner.context_policy_overrides, global_overrides, memory
+
+    def reset_active_context_memory(self, session_id: str) -> tuple[str, int] | None:
+        """Deactivate only the branch-valid memory and return its undo token."""
+        owner = next(
+            (item for item in self.store.sessions() if item.id == session_id), None
+        )
+        repository = self._context_repository
+        if (
+            owner is None
+            or repository is None
+            or owner.persisted_conversation_id is None
+        ):
+            return None
+        memory = select_valid_memory(
+            repository.list_active_memories(owner.persisted_conversation_id),
+            self._durable_context_snapshots(session_id),
+        )
+        if memory is None:
+            return None
+        reset_at = datetime.now(UTC).isoformat()
+        if not repository.deactivate_memory(
+            memory.memory_id,
+            expected_revision=memory.revision,
+            reset_at=reset_at,
+        ):
+            return None
+        return memory.memory_id, memory.revision + 1
+
+    def undo_context_memory_reset(
+        self,
+        memory_id: str,
+        expected_revision: int,
+    ) -> bool:
+        """Undo a current-branch reset if its exact revision is still inactive."""
+        repository = self._context_repository
+        if repository is None:
+            return False
+        return repository.reactivate_memory(
+            memory_id,
+            expected_revision=expected_revision,
+        )
+
+    def reset_all_context_memories(self, session_id: str) -> int:
+        """Deactivate every branch memory for one durable conversation."""
+        owner = next(
+            (item for item in self.store.sessions() if item.id == session_id), None
+        )
+        repository = self._context_repository
+        if (
+            owner is None
+            or repository is None
+            or owner.persisted_conversation_id is None
+        ):
+            return 0
+        return repository.deactivate_all_memories(
+            owner.persisted_conversation_id,
+            reset_at=datetime.now(UTC).isoformat(),
+        )
+
+    async def compact_context_now(self, session_id: str) -> tuple[bool, str]:
+        """Run one user-initiated bounded compaction without sending a turn."""
+        if not self.run_state_for(session_id).is_send_allowed:
+            return False, "Wait for the active run to finish before compacting."
+        owner = next(
+            (item for item in self.store.sessions() if item.id == session_id), None
+        )
+        if owner is None or owner.persisted_conversation_id is None:
+            return False, "Send or save this conversation before compacting it."
+        try:
+            resolution = await self.provider_gateway.resolve_for_send(
+                self._provider_selection()
+            )
+        except Exception:
+            return False, "The active provider could not be prepared for compaction."
+        if not getattr(resolution, "ready", False):
+            return False, self._blocked_visible_copy(
+                getattr(resolution, "visible_copy", "")
+            )
+        _overrides, _global, before_memory = self.context_control_inputs(session_id)
+        _messages, blocked_result = await self._apply_conversation_memory_preflight(
+            session_id=session_id,
+            resolution=resolution,
+            provider_messages=self._provider_messages_for_session(
+                session_id, annotate_ids=True
+            ),
+            assistant_message_id="",
+            agent_tools_enabled=False,
+            force_compaction=True,
+            manual_action=True,
+        )
+        if blocked_result is not None:
+            return False, blocked_result.visible_copy
+        _overrides, _global, after_memory = self.context_control_inputs(session_id)
+        if after_memory is None or (
+            before_memory is not None
+            and after_memory.memory_id == before_memory.memory_id
+        ):
+            return False, "There are not enough older complete turns to compact yet."
+        return True, "Conversation memory updated; transcript messages were unchanged."
+
+    def _compaction_admission(
+        self,
+        *,
+        session_id: str,
+        resolution: ConsoleProviderResolution,
+        prompt: CompactionPromptSnapshot,
+    ) -> CompactionAdmission | None:
+        repository = self._context_repository
+        if repository is None:
+            return None
+        owner = next(
+            (item for item in self.store.sessions() if item.id == session_id), None
+        )
+        if owner is None or owner.persisted_conversation_id is None:
+            return None
+        snapshots = self._durable_context_snapshots(session_id)
+        if not snapshots:
+            return None
+        policy_read = repository.load_policy(owner.persisted_conversation_id)
+        memory = select_valid_memory(
+            repository.list_active_memories(owner.persisted_conversation_id),
+            snapshots,
+        )
+        return CompactionAdmission(
+            conversation_id=owner.persisted_conversation_id,
+            captured_leaf_message_id=snapshots[-1].message_id,
+            lineage=tuple(message.message_id for message in snapshots),
+            payload_revision=self.store.payload_revision(session_id),
+            identity_revision=owner.identity_revision,
+            policy_revision=policy_read.revision,
+            active_memory_id=memory.memory_id if memory is not None else None,
+            active_memory_revision=memory.revision if memory is not None else None,
+            provider=resolution.provider,
+            model=resolution.model or "",
+            prompt_digest=prompt.digest,
+            prefix_digest=prefix_digest(snapshots),
+        )
+
+    def _block_context_preflight(
+        self,
+        *,
+        session_id: str,
+        assistant_message_id: str,
+        visible_copy: str,
+    ) -> ConsoleSubmitResult:
+        try:
+            self.store.mark_message_failed(assistant_message_id)
+        except (KeyError, ValueError):
+            pass
+        self._append_failure_system_row(session_id, visible_copy)
+        self._set_run_state(
+            ConsoleRunState.blocked(visible_copy), session_id=session_id
+        )
+        return ConsoleSubmitResult(True, True, visible_copy)
+
+    async def _apply_conversation_memory_preflight(
+        self,
+        *,
+        session_id: str,
+        resolution: ConsoleProviderResolution,
+        provider_messages: list[dict[str, Any]],
+        assistant_message_id: str,
+        agent_tools_enabled: bool,
+        force_compaction: bool = False,
+        manual_action: bool = False,
+    ) -> tuple[list[dict[str, Any]], ConsoleSubmitResult | None]:
+        """Revalidate memory and optionally run one automatic summary call."""
+
+        def blocked(visible_copy: str) -> ConsoleSubmitResult:
+            if manual_action:
+                return ConsoleSubmitResult(False, True, visible_copy)
+            return self._block_context_preflight(
+                session_id=session_id,
+                assistant_message_id=assistant_message_id,
+                visible_copy=visible_copy,
+            )
+
+        repository = self._context_repository
+        service = self._compaction_service
+        prepare = getattr(self.provider_gateway, "prepare_chat_request", None)
+        owner = next(
+            (item for item in self.store.sessions() if item.id == session_id), None
+        )
+        if (
+            repository is None
+            or service is None
+            or not callable(prepare)
+            or owner is None
+            or owner.persisted_conversation_id is None
+        ):
+            return provider_messages, None
+        snapshots = self._durable_context_snapshots(session_id)
+        if not snapshots:
+            return provider_messages, None
+        conversation_id = owner.persisted_conversation_id
+        memory = select_valid_memory(
+            repository.list_active_memories(conversation_id), snapshots
+        )
+        retained_messages = provider_messages
+        memory_rows: tuple[Mapping[str, Any], ...] = ()
+        if memory is not None:
+            boundary_native_id = next(
+                (
+                    message.id
+                    for message in self.store.messages_for_session(session_id)
+                    if message.persisted_message_id == memory.boundary_message_id
+                ),
+                None,
+            )
+            retained = self._messages_after_memory_boundary(
+                provider_messages, boundary_native_id or ""
+            )
+            if retained is None:
+                memory = None
+            else:
+                retained_messages = retained
+                memory_rows = (tagged_memory_message(memory.summary_text),)
+
+        tools: list[Mapping[str, Any]] = []
+        if agent_tools_enabled and self._agent_bridge is not None:
+            preview = getattr(self._agent_bridge, "preview_tool_schemas", None)
+            if callable(preview):
+                try:
+                    tools = list(preview())
+                except Exception:
+                    tools = []
+        semantic = build_console_request(
+            retained_messages,
+            memory=memory_rows,
+            tools=tools,
+        )
+        prepared_before = prepare(
+            resolution,
+            semantic,
+            apply_safety_window=False,
+        )
+        capacity = prepared_before.capacity
+        mandatory_tokens = (
+            prepared_before.accounting.non_compactable_tokens
+            - prepared_before.accounting.memory_tokens
+        )
+        try:
+            global_overrides = self._global_context_policy_overrides()
+        except Exception:
+            global_overrides = None
+        resolved = resolve_context_policy(
+            capacity=ConsoleContextCapacity(
+                model_context_window_tokens=capacity.context_window_tokens,
+                provider_input_cap_tokens=capacity.provider_input_cap_tokens,
+                response_reservation_tokens=capacity.effective_response_tokens,
+                safety_margin_tokens=capacity.safety_margin_tokens,
+                mandatory_input_tokens=mandatory_tokens,
+            ),
+            global_overrides=global_overrides,
+            conversation_overrides=owner.context_policy_overrides,
+        )
+        units = compactable_units_after(
+            snapshots,
+            boundary_message_id=(
+                memory.boundary_message_id if memory is not None else None
+            ),
+        )
+        decision = decide_compaction(
+            resolved,
+            conversation_tokens=(
+                prepared_before.accounting.memory_tokens
+                + prepared_before.accounting.compactable_tokens
+            ),
+            compactable_units=len(units),
+        )
+        if force_compaction and units:
+            decision = CompactionDecision.AUTOMATIC
+        logger.bind(
+            conversation_id=conversation_id,
+            provider=resolution.provider,
+            model=resolution.model or "",
+            decision=decision.value,
+            forced=force_compaction,
+            model_limit_source=capacity.limit_source,
+            model_context_window_tokens=capacity.context_window_tokens,
+            effective_input_ceiling_tokens=capacity.effective_input_ceiling_tokens,
+            effective_conversation_budget_tokens=(
+                resolved.effective_conversation_budget_tokens
+            ),
+            total_input_tokens=prepared_before.accounting.total_input_tokens,
+            conversation_tokens=(
+                prepared_before.accounting.memory_tokens
+                + prepared_before.accounting.compactable_tokens
+            ),
+            mandatory_tokens=mandatory_tokens,
+            compactable_unit_count=len(units),
+            active_memory_revision=(memory.revision if memory is not None else None),
+            memory_source=(memory.source_kind if memory is not None else None),
+            conversation_override_fields=tuple(
+                sorted(owner.context_policy_overrides.to_dict())
+            ),
+            global_override_fields=tuple(
+                sorted(global_overrides.to_dict())
+                if global_overrides is not None
+                else ()
+            ),
+            validation_error_codes=tuple(
+                "context_policy_validation_error" for _ in resolved.validation_errors
+            ),
+        ).info("console_context_policy_decision")
+        if decision in {CompactionDecision.OFF, CompactionDecision.BELOW_TRIGGER}:
+            return [dict(row) for row in semantic.flattened_messages()], None
+        if decision is CompactionDecision.ASK:
+            result = blocked(
+                (
+                    "Conversation context reached its compaction threshold. "
+                    "Review and approve summarization before sending again."
+                )
+            )
+            return provider_messages, result
+        if decision in {
+            CompactionDecision.UNKNOWN_WINDOW,
+            CompactionDecision.NON_COMPACTABLE,
+        }:
+            if (
+                resolved.policy.failure_behavior
+                is CompactionFailureBehavior.OMIT_OLDER_CONTEXT
+            ):
+                return [dict(row) for row in semantic.flattened_messages()], None
+            result = blocked(
+                (
+                    "Conversation compaction cannot run safely for this request. "
+                    "Choose a bounded context limit, reduce mandatory context, "
+                    "or allow older turns to be omitted."
+                )
+            )
+            return provider_messages, result
+
+        prompt = CompactionPromptSnapshot(
+            get_internal_prompt("console.rewind_summarize")
+        )
+
+        def prepare_main(request: PreparedConsoleRequest):
+            return prepare(
+                resolution,
+                request,
+                apply_safety_window=False,
+            )
+
+        def prepare_auxiliary(messages, output_cap):
+            return prepare(
+                replace(
+                    resolution,
+                    streaming=False,
+                    max_tokens=output_cap,
+                ),
+                list(messages),
+                apply_safety_window=False,
+            )
+
+        planned = plan_compaction(
+            semantic=semantic,
+            prepared_before=prepared_before,
+            durable_units=units,
+            resolved_policy=resolved,
+            prompt=prompt,
+            prior_memory=memory,
+            prepare_main=prepare_main,
+            prepare_auxiliary=prepare_auxiliary,
+        )
+        if planned.plan is None:
+            if (
+                resolved.policy.failure_behavior
+                is CompactionFailureBehavior.OMIT_OLDER_CONTEXT
+            ):
+                return [dict(row) for row in semantic.flattened_messages()], None
+            result = blocked(
+                (
+                    "Conversation compaction could not reach the configured "
+                    "target in one bounded summary call."
+                )
+            )
+            return provider_messages, result
+
+        admission = self._compaction_admission(
+            session_id=session_id,
+            resolution=resolution,
+            prompt=prompt,
+        )
+        if admission is None:
+            return provider_messages, blocked(
+                "Conversation changed before compaction could start."
+            )
+        boundary_index = next(
+            index
+            for index, snapshot in enumerate(snapshots)
+            if snapshot.message_id == planned.plan.boundary_message_id
+        )
+        transaction = await service.compact(
+            admission=admission,
+            plan=planned.plan,
+            resolution=resolution,
+            prompt=prompt,
+            current_admission=lambda: self._compaction_admission(
+                session_id=session_id,
+                resolution=resolution,
+                prompt=prompt,
+            ),
+            prepare_main=prepare_main,
+            prefix_messages=snapshots[: boundary_index + 1],
+        )
+        if transaction.terminal is CompactionTerminal.SUCCEEDED:
+            after = PreparedConsoleRequest(
+                system=planned.plan.remaining_semantic.system,
+                memory=(tagged_memory_message(transaction.memory.summary_text),),
+                mandatory=planned.plan.remaining_semantic.mandatory,
+                compactable=planned.plan.remaining_semantic.compactable,
+                active_request=planned.plan.remaining_semantic.active_request,
+                tools=planned.plan.remaining_semantic.tools,
+            )
+            return [dict(row) for row in after.flattened_messages()], None
+        if (
+            resolved.policy.failure_behavior
+            is CompactionFailureBehavior.OMIT_OLDER_CONTEXT
+        ):
+            return [dict(row) for row in semantic.flattened_messages()], None
+        result = blocked(
+            (
+                "Conversation compaction did not complete; the provider request "
+                "was not sent."
+            )
+        )
+        return provider_messages, result
+
     async def _stream_assistant_response(
         self,
         *,
@@ -6809,21 +7435,46 @@ class ConsoleChatController:
         provider_messages = self._apply_context_summary_compaction(
             owner_id, provider_messages
         )
-        # task-322: bound the dispatched history by real tokens before the
-        # agent-vs-direct branch below, so both paths send a windowed payload.
-        # Budget against the captured `resolution` -- the same model/provider/
-        # max_tokens the dispatch below actually sends -- not the controller's
-        # mutable self.* fields, which a provider/model switch racing the awaits
-        # between resolve_for_send and here could have changed underneath us.
-        bound = bound_messages_to_window(
-            provider_messages,
-            model=getattr(resolution, "model", None) or "",
-            provider=getattr(resolution, "provider", "") or "",
-            response_reservation=(
-                getattr(resolution, "max_tokens", None) or DEFAULT_RESPONSE_RESERVATION
-            ),
+        if isinstance(resolution, ConsoleProviderResolution):
+            (
+                provider_messages,
+                context_block,
+            ) = await self._apply_conversation_memory_preflight(
+                session_id=owner_id,
+                resolution=resolution,
+                provider_messages=provider_messages,
+                assistant_message_id=assistant_message_id,
+                agent_tools_enabled=(
+                    self._agent_runtime_enabled
+                    and self._agent_bridge is not None
+                    and not prefill
+                    and not force_plain
+                ),
+            )
+            if context_block is not None:
+                return context_block
+        # TASK-14811.2: the real gateway now owns exact capacity resolution,
+        # whole-unit windowing, provider serialization, accounting, and
+        # dispatch as one immutable artifact. Do not pre-trim production
+        # payloads here: doing so used a parallel estimate and the historical
+        # hidden half-window response clamp. Older gateway fakes retain the
+        # legacy path so their established two-argument contract remains a
+        # useful isolated controller seam.
+        exact_preparation = callable(
+            getattr(self.provider_gateway, "prepare_chat_request", None)
         )
-        provider_messages = bound.messages
+        bound = None
+        if not exact_preparation:
+            bound = bound_messages_to_window(
+                provider_messages,
+                model=getattr(resolution, "model", None) or "",
+                provider=getattr(resolution, "provider", "") or "",
+                response_reservation=(
+                    getattr(resolution, "max_tokens", None)
+                    or DEFAULT_RESPONSE_RESERVATION
+                ),
+            )
+            provider_messages = bound.messages
         # Strip the private id-threading key from every row before dispatch:
         # it existed solely so the compaction above could anchor the boundary
         # by identity (see NATIVE_MESSAGE_ID_KEY). This is the single latest
@@ -6836,7 +7487,7 @@ class ConsoleChatController:
             {k: v for k, v in row.items() if k != NATIVE_MESSAGE_ID_KEY}
             for row in provider_messages
         ]
-        if bound.dropped_count:
+        if bound is not None and bound.dropped_count:
             # Reuse the guarded owner_id resolved above; the note helper
             # swallows a store-close race that happens during the append.
             self._append_history_trimmed_note(owner_id, bound.dropped_count)
@@ -6965,9 +7616,9 @@ class ConsoleChatController:
             # "never fail a send" contract this method promises. Swallow and
             # log instead; a dropped usage attach is a missing cost figure,
             # not a broken turn.
-            logger.bind(
-                message_id=assistant_message_id, error=repr(exc)
-            ).warning("usage_attach_failed")
+            logger.bind(message_id=assistant_message_id, error=repr(exc)).warning(
+                "usage_attach_failed"
+            )
         if not attached:
             return
         # Cost-ticker PR3: cache-TTL ground truth, Anthropic prompt-caching
@@ -6976,9 +7627,8 @@ class ConsoleChatController:
         # stamp. Same never-fail posture as the attach above: this is
         # read by the chip, never by send control flow.
         try:
-            if (
-                provider_config_key(provider) == "anthropic"
-                and getattr(resolution, "prompt_caching", None)
+            if provider_config_key(provider) == "anthropic" and getattr(
+                resolution, "prompt_caching", None
             ):
                 sid = self.store.session_id_for_message(assistant_message_id)
                 had_cache_activity = (total.cache_read + total.cache_write) > 0
@@ -6986,9 +7636,9 @@ class ConsoleChatController:
                 if had_cache_activity:
                     self._cache_warm_until[sid] = time.monotonic() + 300.0
         except Exception as exc:
-            logger.bind(
-                message_id=assistant_message_id, error=repr(exc)
-            ).warning("cost_cache_ttl_record_failed")
+            logger.bind(message_id=assistant_message_id, error=repr(exc)).warning(
+                "cost_cache_ttl_record_failed"
+            )
 
     async def _run_direct_provider_reply(
         self,
@@ -7024,6 +7674,15 @@ class ConsoleChatController:
                     "content": prefill,
                 },
             ]
+        dispatch_request: Any = provider_messages
+        prepare_request = getattr(self.provider_gateway, "prepare_chat_request", None)
+        if callable(prepare_request):
+            dispatch_request = prepare_request(resolution, provider_messages)
+            dropped_messages = int(
+                getattr(dispatch_request, "dropped_messages", 0) or 0
+            )
+            if dropped_messages:
+                self._append_history_trimmed_note(owner_id, dropped_messages)
         # Fix round 1 (Critical 1): a per-session cancel signal for this
         # direct/legacy stream path too, mirroring `_run_agent_reply`'s own
         # `cancel_event` -- the shared `_stop_requested` flag below is
@@ -7060,7 +7719,7 @@ class ConsoleChatController:
         try:
             provider_stream = self.provider_gateway.stream_chat(
                 resolution,
-                provider_messages,
+                dispatch_request,
                 signals=stream_signals,
             )
             async for chunk in provider_stream:
@@ -7626,9 +8285,7 @@ class ConsoleChatController:
         # outside this task's file scope, so keeping that function
         # byte-identical and building the run-level hook separately here
         # is the lower-blast-radius choice.
-        mcp_provider = await self._compose_mcp_provider(
-            session_id
-        )
+        mcp_provider = await self._compose_mcp_provider(session_id)
         self._mcp_provider = mcp_provider
 
         # task-545/T6: build THIS run's built-in permission gate and hand
@@ -7689,9 +8346,7 @@ class ConsoleChatController:
             session_id=session_id
         )
         if local_review_hook is not None:
-            review_hook = build_combined_review_hook(
-                [review_hook, local_review_hook]
-            )
+            review_hook = build_combined_review_hook([review_hook, local_review_hook])
 
         # task-1337: THIS run's Library retrieval provider (direct tools or
         # the bounded RAG fallback), resolved ONCE here on the main loop via

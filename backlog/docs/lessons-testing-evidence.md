@@ -2013,3 +2013,45 @@ encoding, normally `encoding="utf-8"`, and must treat decode failures as visible
 evidence rather than silently interpreting them as a clean file. When an
 inventory entry becomes "stale" while the named code is visibly still present,
 inspect the scanner's input and exception path before deleting the baseline.
+
+---
+
+## Windows device names still capture filenames with extensions
+
+**task-14811.1, 2026-08-10.** A new auxiliary-attempt migration test named its
+SQLite fixture `aux.db`. The preceding 16 focused cases passed, but Windows
+resolved that basename as the reserved `AUX` device (`\\.\aux`) even with the
+`.db` suffix. The private-SQLite directory verifier then correctly rejected the
+device path as a missing/non-directory parent, producing a long security-stack
+trace that initially looked like a database privacy regression. Renaming the
+fixture to `attempts.db` made the unchanged production path pass; 18 focused
+tests then completed green.
+
+**What to do.** Keep temporary and fixture basenames away from Windows reserved
+devices (`CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`, `LPT1`-`LPT9`), including
+when an extension is present. When a Windows path unexpectedly canonicalizes to
+`\\.\<name>`, inspect the basename before weakening private-path validation.
+
+---
+
+## Credential-presence probes must never print regex captures, and live config reads still need an isolated home
+
+**task-14811.5, 2026-08-10.** A PowerShell probe intended to print only the
+names of configured providers reused the automatic `$Matches` variable across
+regex operations. The later operation replaced the expected provider-name
+capture, so the script printed three credential values instead. In the same
+verification pass, a helper that did not instantiate the application database
+still imported configuration code that ensured a chat-dictionaries directory
+under the real user profile. Neither behavior was required to prove the
+feature, and the exposed credentials had to be treated as compromised and
+rotated.
+
+**What to do.** A credential-presence probe should emit a fixed provider label
+only after testing whether a value is non-empty; never print, interpolate, or
+retain the matched credential and never depend on PowerShell's process-global
+`$Matches` state for the label. For a real-provider smoke, point
+`TLDW_CONFIG_PATH` at the existing config only for read access, set `HOME` to a
+validated scratch directory before Python imports the application, use an
+explicit in-memory or scratch database, hash the real config before and after,
+and remove the verified scratch path on exit. A helper that can make billable
+requests must also require an explicit confirmation flag.
