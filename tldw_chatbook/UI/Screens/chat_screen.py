@@ -190,13 +190,18 @@ from ...Chat.console_generate_image import (
 )
 from ...Chat.console_generate_video import (
     GENERATE_VIDEO_USAGE_TEXT,
+    PendingVideoArtifact,
     estimate_video_cost_text,
     is_paid_backend,
     parse_generate_video_args,
     run_video_generation,
 )
 from ...Video_Generation.config import get_video_generation_config
-from ...Video_Generation.video_store import VideoStore
+from ...Video_Generation.video_store import (
+    VideoCapacityExceeded,
+    VideoStore,
+    VideoStoreSaveError,
+)
 from ...Image_Generation.config import get_image_generation_config
 from ...Image_Generation.listing import list_image_models_for_catalog
 from ...Chat.console_skill_resolver import (
@@ -485,6 +490,9 @@ from ...Widgets.Console.console_generation_card import (
 from ...Widgets.Console.console_video_card import (
     ConsoleVideoCardSpec,
     video_card_signature,
+)
+from ...Widgets.Console.console_video_capacity_modal import (
+    ConsoleVideoCapacityModal,
 )
 from ...Widgets.Console.console_rag_settings_modal import (
     CONSOLE_RAG_DEFAULT_SOURCE_TYPES,
@@ -14421,6 +14429,7 @@ class ChatScreen(BaseAppScreen):
 
     async def on_unmount(self) -> None:
         """Release Console-native resources owned by this screen."""
+        self._drain_pending_console_videos()
         self._stop_console_transcript_sync_timer()
         self._stop_console_cost_ttl_timer()
         await self._teardown_console_roleplay_persistence()
@@ -16799,6 +16808,371 @@ class ChatScreen(BaseAppScreen):
         """Return the durable key used by the ephemeral video store."""
         return message.persisted_message_id or message.id
 
+    def _pending_console_video_artifacts(
+        self,
+    ) -> dict[str, PendingVideoArtifact]:
+        """Return the lazily owned pending-video registry for this screen."""
+        artifacts = getattr(self, "_pending_video_artifacts", None)
+        if artifacts is None:
+            artifacts = {}
+            self._pending_video_artifacts = artifacts
+        return artifacts
+
+    def _owns_pending_console_video(self, artifact: PendingVideoArtifact) -> bool:
+        """Whether this mounted screen still owns this exact staged result."""
+        return (
+            self._pending_console_video_artifacts().get(artifact.message_id)
+            is artifact
+        )
+
+    def _drain_pending_console_videos(self) -> None:
+        """Atomically detach and close every staged video owned by the screen."""
+        artifacts = getattr(self, "_pending_video_artifacts", None)
+        self._pending_video_artifacts = {}
+        if not artifacts:
+            return
+        for artifact in artifacts.values():
+            artifact.close()
+
+    async def _wait_for_console_screen_result(self, screen) -> Any:
+        """Wait for a Console modal through a non-exclusive Textual worker."""
+        worker = self.run_worker(
+            self.app_instance.push_screen_wait(screen),
+            exclusive=False,
+            exit_on_error=False,
+        )
+        return await worker.wait()
+
+    @staticmethod
+    def _external_video_target_identity(path: Path) -> tuple[int, int, int, int, int]:
+        """Capture one target's non-following identity for overwrite consent."""
+        metadata = path.lstat()
+        return (
+            metadata.st_dev,
+            metadata.st_ino,
+            metadata.st_size,
+            metadata.st_mtime_ns,
+            metadata.st_mode,
+        )
+
+    @staticmethod
+    def _copy_pending_video_external(
+        artifact: PendingVideoArtifact,
+        target: Path,
+        confirmed_identity: tuple[int, int, int, int, int] | None,
+    ) -> Literal["saved", "confirm"]:
+        """Copy to a complete sibling, then commit without silent overwrite.
+
+        ``confirmed_identity`` is ``None`` for a target believed absent. That
+        path uses a hard-link commit, whose create-if-absent property prevents
+        a concurrent creator from being overwritten. A confirmed replacement
+        is revalidated immediately before ``os.replace``.
+        """
+        import shutil
+        import tempfile
+
+        sibling: Path | None = None
+        try:
+            target.parent.mkdir(parents=False, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                mode="w+b",
+                delete=False,
+                dir=target.parent,
+                prefix=f".{target.name}.",
+                suffix=".tmp",
+            ) as staged:
+                sibling = Path(staged.name)
+                artifact.rewind()
+                shutil.copyfileobj(artifact.stream, staged)
+                staged.flush()
+                os.fsync(staged.fileno())
+                if os.fstat(staged.fileno()).st_size != artifact.size_bytes:
+                    raise OSError("generated video payload size changed")
+
+            if confirmed_identity is None:
+                try:
+                    os.link(sibling, target, follow_symlinks=False)
+                except FileExistsError:
+                    return "confirm"
+                sibling.unlink()
+                sibling = None
+                return "saved"
+
+            try:
+                current_identity = ChatScreen._external_video_target_identity(target)
+            except FileNotFoundError:
+                return "confirm"
+            if current_identity != confirmed_identity:
+                return "confirm"
+            os.replace(sibling, target)
+            sibling = None
+            return "saved"
+        finally:
+            try:
+                artifact.rewind()
+            except (OSError, ValueError):
+                pass
+            if sibling is not None:
+                try:
+                    sibling.unlink(missing_ok=True)
+                except OSError:
+                    logger.warning(
+                        "Console video operation={} failed error_type={}",
+                        "external_stage_cleanup",
+                        "OSError",
+                    )
+
+    def _retry_pending_console_video(self, artifact: PendingVideoArtifact) -> Path:
+        """Retry a failed ordinary managed save from the retained payload."""
+        artifact.rewind()
+        content = artifact.stream.read()
+        artifact.rewind()
+        if len(content) != artifact.size_bytes:
+            raise VideoStoreSaveError("pending video payload size changed")
+        outcome = self._ensure_console_video_store().save(
+            artifact.message_id,
+            artifact.slug,
+            content,
+            extension=artifact.extension,
+        )
+        if isinstance(outcome, VideoCapacityExceeded):
+            raise VideoStoreSaveError("pending video no longer fits managed storage")
+        return outcome
+
+    async def _save_pending_console_video_external(
+        self, artifact: PendingVideoArtifact
+    ) -> Path | Literal[False] | None:
+        """Choose and atomically write an external path, retaining on failure."""
+        from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileSave
+
+        while self._owns_pending_console_video(artifact):
+            selected = await self._wait_for_console_screen_result(
+                EnhancedFileSave(
+                    title="Save generated video",
+                    default_filename=f"{artifact.slug}.mp4",
+                )
+            )
+            if not self._owns_pending_console_video(artifact) or not selected:
+                return None
+            target = Path(selected).expanduser()
+            confirmed_identity = None
+
+            while self._owns_pending_console_video(artifact):
+                try:
+                    identity = await asyncio.to_thread(
+                        self._external_video_target_identity, target
+                    )
+                except FileNotFoundError:
+                    identity = None
+                except (OSError, ValueError) as exc:
+                    if not self._owns_pending_console_video(artifact):
+                        return None
+                    logger.warning(
+                        "Console video operation={} failed error_type={}",
+                        "external_target_inspect",
+                        type(exc).__name__,
+                    )
+                    self.app_instance.notify(
+                        "Could not inspect the selected video destination. "
+                        "Choose another location or discard the result.",
+                        severity="error",
+                    )
+                    return False
+
+                if identity is not None and identity != confirmed_identity:
+                    confirmed = await self._wait_for_console_screen_result(
+                        ConfirmationDialog(
+                            title="Replace existing file?",
+                            message=(
+                                "A file already exists at "
+                                f"{escape_markup(str(target))}. Replace it?"
+                            ),
+                            confirm_label="Replace",
+                            cancel_label="Choose another",
+                        )
+                    )
+                    if not self._owns_pending_console_video(artifact):
+                        return None
+                    if not confirmed:
+                        break
+                    confirmed_identity = identity
+                elif identity is None:
+                    confirmed_identity = None
+
+                if not self._owns_pending_console_video(artifact):
+                    return None
+                try:
+                    result = await asyncio.to_thread(
+                        self._copy_pending_video_external,
+                        artifact,
+                        target,
+                        confirmed_identity,
+                    )
+                except (OSError, ValueError) as exc:
+                    if not self._owns_pending_console_video(artifact):
+                        return None
+                    logger.warning(
+                        "Console video operation={} failed error_type={}",
+                        "external_copy",
+                        type(exc).__name__,
+                    )
+                    self.app_instance.notify(
+                        "Could not save the generated video to "
+                        f"{escape_markup(str(target))}. You can try again or "
+                        "choose another outcome.",
+                        severity="error",
+                    )
+                    return False
+                if not self._owns_pending_console_video(artifact):
+                    return None
+                if result == "saved":
+                    return target
+                confirmed_identity = None
+            # Replacement declined: return to the picker with the stage live.
+        return None
+
+    @staticmethod
+    def _open_video_with_os(path: Path) -> None:
+        """Launch a video path with the platform default player."""
+        import subprocess
+        import sys
+
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", str(path)])  # nosec B603
+        elif sys.platform.startswith("win"):
+            os.startfile(str(path))  # type: ignore[attr-defined]  # nosec B606
+        else:
+            subprocess.Popen(["xdg-open", str(path)])  # nosec B603
+
+    async def _resolve_generated_video_outcome(
+        self,
+        outcome: tuple[Any, Path] | PendingVideoArtifact,
+        *,
+        session_id: str,
+        message_id: str,
+    ) -> None:
+        """Resolve one normal or staged generation result for either caller."""
+        chat_store = self._ensure_console_chat_store()
+        if not isinstance(outcome, PendingVideoArtifact):
+            metadata, _managed_path = outcome
+            chat_store.append_video_message(
+                session_id,
+                video_metadata=metadata,
+                persist=True,
+                message_id=message_id,
+            )
+            await self._sync_native_console_chat_ui()
+            return
+
+        artifact = outcome
+        if artifact.message_id != message_id:
+            artifact.close()
+            return
+        artifacts = self._pending_console_video_artifacts()
+        displaced = artifacts.get(message_id)
+        if displaced is not None and displaced is not artifact:
+            displaced.close()
+        artifacts[message_id] = artifact
+        try:
+            while self._owns_pending_console_video(artifact):
+                choice = await self._wait_for_console_screen_result(
+                    ConsoleVideoCapacityModal(
+                        reason=artifact.reason,
+                        size_bytes=artifact.size_bytes,
+                        max_bytes=artifact.max_bytes,
+                    )
+                )
+                if not self._owns_pending_console_video(artifact):
+                    return
+                if choice != "keep" and choice != "save_external":
+                    return
+                if choice == "save_external":
+                    external_path = await self._save_pending_console_video_external(
+                        artifact
+                    )
+                    if not self._owns_pending_console_video(artifact):
+                        return
+                    if external_path is None:
+                        return
+                    if external_path is False:
+                        continue
+                    try:
+                        self._open_video_with_os(external_path)
+                    except Exception as exc:  # noqa: BLE001 - OS launcher boundary
+                        logger.warning(
+                            "Console video operation={} failed error_type={}",
+                            "external_open",
+                            type(exc).__name__,
+                        )
+                        self.app_instance.notify(
+                            "Video saved, but could not open it automatically: "
+                            f"{escape_markup(str(external_path))}",
+                            severity="warning",
+                        )
+                    return
+
+                if not self._owns_pending_console_video(artifact):
+                    return
+                try:
+                    video_store = self._ensure_console_video_store()
+                    if artifact.reason == "over_capacity":
+                        managed_path = await asyncio.to_thread(
+                            video_store.adopt_oversized,
+                            artifact.message_id,
+                            artifact.slug,
+                            artifact.stream,
+                            artifact.size_bytes,
+                            extension=artifact.extension,
+                        )
+                    else:
+                        managed_path = await asyncio.to_thread(
+                            self._retry_pending_console_video, artifact
+                        )
+                except Exception as exc:  # noqa: BLE001 - recoverable store boundary
+                    if not self._owns_pending_console_video(artifact):
+                        return
+                    logger.warning(
+                        "Console video operation={} failed error_type={}",
+                        "managed_resolution",
+                        type(exc).__name__,
+                    )
+                    self.app_instance.notify(
+                        "The generated video could not be stored. You can try "
+                        "again, save it to disk, or discard it.",
+                        severity="error",
+                    )
+                    continue
+                if not self._owns_pending_console_video(artifact):
+                    return
+                resolved_path = await asyncio.to_thread(
+                    video_store.resolve,
+                    artifact.message_id,
+                    artifact.slug,
+                    extension=artifact.extension,
+                )
+                if not self._owns_pending_console_video(artifact):
+                    return
+                if resolved_path is None or Path(resolved_path) != Path(managed_path):
+                    self.app_instance.notify(
+                        "The generated video was not available after storage. "
+                        "Choose another outcome.",
+                        severity="error",
+                    )
+                    continue
+                chat_store.append_video_message(
+                    session_id,
+                    video_metadata=artifact.metadata,
+                    persist=True,
+                    message_id=artifact.message_id,
+                )
+                await self._sync_native_console_chat_ui()
+                return
+        finally:
+            current = self._pending_console_video_artifacts()
+            if current.get(message_id) is artifact:
+                current.pop(message_id, None)
+            artifact.close()
+
     async def _console_command_generate_video(self, parse: CommandParse) -> None:
         """Resolve and run one ``/generate-video`` generation (task-3401.5).
 
@@ -16874,7 +17248,7 @@ class ChatScreen(BaseAppScreen):
                 CancelConfirmationDialog,
             )
 
-            confirmed = await self.push_screen_wait(
+            confirmed = await self._wait_for_console_screen_result(
                 CancelConfirmationDialog(
                     title="Generate video?",
                     message=estimate_video_cost_text(
@@ -16906,7 +17280,7 @@ class ChatScreen(BaseAppScreen):
             session_id=session.id,
         )
         try:
-            meta, _path = await asyncio.to_thread(
+            outcome = await asyncio.to_thread(
                 run_video_generation,
                 backend=backend,
                 prompt=prompt_text,
@@ -16919,20 +17293,24 @@ class ChatScreen(BaseAppScreen):
                 cancel_event=cancel_event,
                 video_store=self._ensure_console_video_store(),
             )
-            store.append_video_message(
-                session.id,
-                video_metadata=meta,
-                persist=True,
+            await ChatScreen._resolve_generated_video_outcome(
+                self,
+                outcome,
+                session_id=session.id,
                 message_id=message_id,
             )
-            await self._sync_native_console_chat_ui()
         except Exception as exc:  # noqa: BLE001 - reported to the user, never a bare crash
             if composer is not None and saved_draft:
                 composer.clear_draft()
                 composer.insert_text_as_paste(saved_draft)
-            logger.error("Video generation raised (error_type={})", type(exc).__name__)
+            logger.error(
+                "Console video operation={} failed error_type={}",
+                "generation",
+                type(exc).__name__,
+            )
             await self._append_native_console_system_message(
-                f"Video generation failed: {exc}", session_id=session.id
+                f"Video generation failed ({type(exc).__name__}).",
+                session_id=session.id,
             )
         finally:
             inflight.discard(session.id)
@@ -16945,9 +17323,6 @@ class ChatScreen(BaseAppScreen):
         honest playback path is the system player. A missing file (tombstone)
         re-syncs so the card renders expired, then reports.
         """
-        import subprocess
-        import sys
-
         store = self._ensure_console_chat_store()
         try:
             message = store.get_message(message_id)
@@ -16984,18 +17359,15 @@ class ChatScreen(BaseAppScreen):
             return
         self.app_instance.notify(guidance, severity="information")
         try:
-            if sys.platform == "darwin":
-                subprocess.Popen(["open", str(path)])  # nosec B603 - app-generated path
-            elif sys.platform.startswith("win"):
-                os.startfile(str(path))  # type: ignore[attr-defined]  # nosec B606
-            else:
-                subprocess.Popen(["xdg-open", str(path)])  # nosec B603
+            self._open_video_with_os(path)
         except Exception as exc:
             logger.warning(
-                "Console video play failed (error_type={})", type(exc).__name__
+                "Console video operation={} failed error_type={}",
+                "managed_open",
+                type(exc).__name__,
             )
             self.app_instance.notify(
-                f"Could not open the video: {exc}", severity="error"
+                "Could not open the video with the system player.", severity="error"
             )
 
     async def _save_console_video_copy(self, message_id: str) -> None:
@@ -17093,7 +17465,7 @@ class ChatScreen(BaseAppScreen):
         self._console_videogen_cancel_events()[session_id] = cancel_event
         new_message_id = str(uuid4())
         try:
-            new_meta, _path = await asyncio.to_thread(
+            outcome = await asyncio.to_thread(
                 run_video_generation,
                 backend=meta.backend,
                 prompt=meta.prompt,
@@ -17111,19 +17483,21 @@ class ChatScreen(BaseAppScreen):
                 cancel_event=cancel_event,
                 video_store=self._ensure_console_video_store(),
             )
-            store.append_video_message(
-                session_id,
-                video_metadata=new_meta,
-                persist=True,
+            await ChatScreen._resolve_generated_video_outcome(
+                self,
+                outcome,
+                session_id=session_id,
                 message_id=new_message_id,
             )
-            await self._sync_native_console_chat_ui()
         except Exception as exc:  # noqa: BLE001 - reported, never a bare crash
             logger.error(
-                "Video regeneration raised (error_type={})", type(exc).__name__
+                "Console video operation={} failed error_type={}",
+                "regeneration",
+                type(exc).__name__,
             )
             await self._append_native_console_system_message(
-                f"Video regeneration failed: {exc}", session_id=session_id
+                f"Video regeneration failed ({type(exc).__name__}).",
+                session_id=session_id,
             )
         finally:
             inflight.discard(session_id)
