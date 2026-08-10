@@ -953,6 +953,177 @@ def test_external_fdopen_failure_closes_stage_fd_and_cleans_sibling(
         artifact.close()
 
 
+@pytest.mark.parametrize("existing_destination", [False, True])
+def test_external_first_stage_fstat_failure_closes_raw_fd_and_owned_sibling(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    existing_destination: bool,
+) -> None:
+    artifact = _artifact(b"retained after initial fstat")
+    target = tmp_path / "initial-fstat.mp4"
+    original_destination = b"existing destination"
+    confirmed_identity = None
+    if existing_destination:
+        target.write_bytes(original_destination)
+        confirmed_identity = ChatScreen._external_video_target_identity(target)
+    real_open = os.open
+    real_close = os.close
+    real_fstat = os.fstat
+    staged_fds: list[int] = []
+    staged_closes: list[int] = []
+    staged_fstat_calls: dict[int, int] = {}
+    logged: list[str] = []
+
+    def tracking_open(path, *args, **kwargs):
+        fd = real_open(path, *args, **kwargs)
+        if kwargs.get("dir_fd") is not None:
+            staged_fds.append(fd)
+        return fd
+
+    def fail_first_stage_fstat(fd):
+        if fd in staged_fds:
+            call_count = staged_fstat_calls.get(fd, 0) + 1
+            staged_fstat_calls[fd] = call_count
+            if call_count == 1:
+                raise OSError("PRIVATE-FIRST-STAGE-FSTAT")
+        return real_fstat(fd)
+
+    def tracking_close(fd):
+        if fd in staged_fds:
+            staged_closes.append(fd)
+        return real_close(fd)
+
+    monkeypatch.setattr(os, "open", tracking_open)
+    monkeypatch.setattr(
+        os, "supports_dir_fd", set(os.supports_dir_fd) | {tracking_open}
+    )
+    monkeypatch.setattr(os, "fstat", fail_first_stage_fstat)
+    monkeypatch.setattr(os, "close", tracking_close)
+    sink_id = __import__("loguru").logger.add(logged.append, format="{message}")
+    try:
+        with pytest.raises(OSError, match="PRIVATE-FIRST-STAGE-FSTAT"):
+            ChatScreen._copy_pending_video_external(
+                artifact, target, confirmed_identity
+            )
+    finally:
+        __import__("loguru").logger.remove(sink_id)
+
+    assert len(staged_fds) == 1
+    assert staged_fstat_calls == {staged_fds[0]: 2}
+    assert staged_closes == staged_fds
+    with pytest.raises(OSError):
+        real_fstat(staged_fds[0])
+    assert not list(tmp_path.glob(".*.tmp"))
+    if existing_destination:
+        assert target.read_bytes() == original_destination
+    else:
+        assert not target.exists()
+    artifact.rewind()
+    assert artifact.stream.read() == b"retained after initial fstat"
+    assert all("PRIVATE-FIRST-STAGE-FSTAT" not in message for message in logged)
+    artifact.close()
+
+
+@pytest.mark.parametrize("existing_destination", [False, True])
+def test_external_partial_copy_failure_removes_owned_sibling(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    existing_destination: bool,
+) -> None:
+    artifact = _artifact(b"complete retained payload")
+    target = tmp_path / "partial-copy.mp4"
+    original_destination = b"existing destination"
+    confirmed_identity = None
+    if existing_destination:
+        target.write_bytes(original_destination)
+        confirmed_identity = ChatScreen._external_video_target_identity(target)
+    logged: list[str] = []
+
+    def fail_after_partial_copy(_source, destination, *_args, **_kwargs):
+        destination.write(b"partial")
+        destination.flush()
+        raise OSError("PRIVATE-PARTIAL-COPY")
+
+    monkeypatch.setattr(shutil, "copyfileobj", fail_after_partial_copy)
+    sink_id = __import__("loguru").logger.add(logged.append, format="{message}")
+    try:
+        with pytest.raises(OSError, match="PRIVATE-PARTIAL-COPY"):
+            ChatScreen._copy_pending_video_external(
+                artifact, target, confirmed_identity
+            )
+    finally:
+        __import__("loguru").logger.remove(sink_id)
+
+    assert not list(tmp_path.glob(".*.tmp"))
+    if existing_destination:
+        assert target.read_bytes() == original_destination
+    else:
+        assert not target.exists()
+    artifact.rewind()
+    assert artifact.stream.read() == b"complete retained payload"
+    assert all("PRIVATE-PARTIAL-COPY" not in message for message in logged)
+    artifact.close()
+
+
+@pytest.mark.parametrize("existing_destination", [False, True])
+def test_external_post_write_fstat_failure_removes_owned_sibling(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    existing_destination: bool,
+) -> None:
+    artifact = _artifact(b"retained after write")
+    target = tmp_path / "post-write-fstat.mp4"
+    original_destination = b"existing destination"
+    confirmed_identity = None
+    if existing_destination:
+        target.write_bytes(original_destination)
+        confirmed_identity = ChatScreen._external_video_target_identity(target)
+    real_open = os.open
+    real_fstat = os.fstat
+    staged_fds: list[int] = []
+    staged_fstat_calls: dict[int, int] = {}
+    logged: list[str] = []
+
+    def tracking_open(path, *args, **kwargs):
+        fd = real_open(path, *args, **kwargs)
+        if kwargs.get("dir_fd") is not None:
+            staged_fds.append(fd)
+        return fd
+
+    def fail_post_write_fstat(fd):
+        if fd in staged_fds:
+            call_count = staged_fstat_calls.get(fd, 0) + 1
+            staged_fstat_calls[fd] = call_count
+            if call_count == 2:
+                raise OSError("PRIVATE-POST-WRITE-FSTAT")
+        return real_fstat(fd)
+
+    monkeypatch.setattr(os, "open", tracking_open)
+    monkeypatch.setattr(
+        os, "supports_dir_fd", set(os.supports_dir_fd) | {tracking_open}
+    )
+    monkeypatch.setattr(os, "fstat", fail_post_write_fstat)
+    sink_id = __import__("loguru").logger.add(logged.append, format="{message}")
+    try:
+        with pytest.raises(OSError, match="PRIVATE-POST-WRITE-FSTAT"):
+            ChatScreen._copy_pending_video_external(
+                artifact, target, confirmed_identity
+            )
+    finally:
+        __import__("loguru").logger.remove(sink_id)
+
+    assert staged_fstat_calls == {staged_fds[0]: 2}
+    assert not list(tmp_path.glob(".*.tmp"))
+    if existing_destination:
+        assert target.read_bytes() == original_destination
+    else:
+        assert not target.exists()
+    artifact.rewind()
+    assert artifact.stream.read() == b"retained after write"
+    assert all("PRIVATE-POST-WRITE-FSTAT" not in message for message in logged)
+    artifact.close()
+
+
 def test_external_parent_fd_close_failure_does_not_mask_saved_outcome(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

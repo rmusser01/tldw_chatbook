@@ -17003,6 +17003,11 @@ class ChatScreen(BaseAppScreen):
         )
 
     @staticmethod
+    def _external_video_cleanup_identity(metadata) -> tuple[int, int, int]:
+        """Return immutable fields used to identify an app-owned sibling."""
+        return (metadata.st_dev, metadata.st_ino, metadata.st_mode)
+
+    @staticmethod
     def _external_video_parent_identity(
         parent: Path,
     ) -> tuple[int, int, int]:
@@ -17091,8 +17096,10 @@ class ChatScreen(BaseAppScreen):
         parent_identity = ChatScreen._external_video_parent_identity(target.parent)
         directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
         parent_fd: int | None = None
+        staged_fd: int | None = None
         sibling_name: str | None = None
-        sibling_identity: tuple[int, int, int, int, int] | None = None
+        sibling_cleanup_identity: tuple[int, int, int] | None = None
+        sibling_complete_identity: tuple[int, int, int, int, int] | None = None
         try:
             parent_fd = os.open(target.parent, directory_flags)
             pinned_metadata = os.fstat(parent_fd)
@@ -17115,24 +17122,16 @@ class ChatScreen(BaseAppScreen):
                 except FileExistsError:
                     continue
                 sibling_name = candidate
-                sibling_identity = ChatScreen._external_video_stat_identity(
-                    os.fstat(staged_fd)
+                sibling_cleanup_identity = (
+                    ChatScreen._external_video_cleanup_identity(
+                        os.fstat(staged_fd)
+                    )
                 )
                 break
             else:
                 raise OSError("could not allocate external video sibling")
-            try:
-                staged_context = os.fdopen(staged_fd, "w+b")
-            except Exception:
-                try:
-                    os.close(staged_fd)
-                except OSError as exc:
-                    logger.warning(
-                        "Console video operation={} failed error_type={}",
-                        "external_stage_fd_close",
-                        type(exc).__name__,
-                    )
-                raise
+            staged_context = os.fdopen(staged_fd, "w+b")
+            staged_fd = None
 
             with staged_context as staged:
                 artifact.rewind()
@@ -17141,8 +17140,10 @@ class ChatScreen(BaseAppScreen):
                 os.fsync(staged.fileno())
                 if os.fstat(staged.fileno()).st_size != artifact.size_bytes:
                     raise OSError("generated video payload size changed")
-                sibling_identity = ChatScreen._external_video_stat_identity(
-                    os.fstat(staged.fileno())
+                sibling_complete_identity = (
+                    ChatScreen._external_video_stat_identity(
+                        os.fstat(staged.fileno())
+                    )
                 )
 
             sibling = sibling_name
@@ -17153,7 +17154,7 @@ class ChatScreen(BaseAppScreen):
                 parent_fd,
                 parent_identity,
                 sibling,
-                sibling_identity,
+                sibling_complete_identity,
             )
             claim = (
                 publication_gate.claim_publication()
@@ -17168,7 +17169,7 @@ class ChatScreen(BaseAppScreen):
                     parent_fd,
                     parent_identity,
                     sibling,
-                    sibling_identity,
+                    sibling_complete_identity,
                 )
                 if confirmed_identity is None:
                     try:
@@ -17212,7 +17213,13 @@ class ChatScreen(BaseAppScreen):
                 pass
             if sibling_name is not None and parent_fd is not None:
                 try:
-                    current_sibling = ChatScreen._external_video_stat_identity(
+                    if sibling_cleanup_identity is None and staged_fd is not None:
+                        sibling_cleanup_identity = (
+                            ChatScreen._external_video_cleanup_identity(
+                                os.fstat(staged_fd)
+                            )
+                        )
+                    current_sibling = ChatScreen._external_video_cleanup_identity(
                         os.stat(
                             sibling_name,
                             dir_fd=parent_fd,
@@ -17220,8 +17227,8 @@ class ChatScreen(BaseAppScreen):
                         )
                     )
                     if (
-                        sibling_identity is not None
-                        and current_sibling == sibling_identity
+                        sibling_cleanup_identity is not None
+                        and current_sibling == sibling_cleanup_identity
                     ):
                         os.unlink(sibling_name, dir_fd=parent_fd)
                 except FileNotFoundError:
@@ -17231,6 +17238,15 @@ class ChatScreen(BaseAppScreen):
                         "Console video operation={} failed error_type={}",
                         "external_stage_cleanup",
                         "OSError",
+                    )
+            if staged_fd is not None:
+                try:
+                    os.close(staged_fd)
+                except OSError as exc:
+                    logger.warning(
+                        "Console video operation={} failed error_type={}",
+                        "external_stage_fd_close",
+                        type(exc).__name__,
                     )
             if parent_fd is not None:
                 try:
