@@ -220,6 +220,40 @@ class VideoStore:
             raise ValueError(f"path escapes store root: {candidate}")
         return candidate
 
+    def _ensure_safe_root(self, *, create: bool = False) -> Path | None:
+        """Return the resolved real root, rejecting root links/reparse points."""
+        if create:
+            try:
+                self._root.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                raise VideoStoreSaveError("managed store root setup failed") from exc
+        try:
+            metadata = self._root.lstat()
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            raise VideoStoreSaveError("managed store root validation failed") from exc
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or stat.S_ISLNK(metadata.st_mode)
+            or self._is_reparse(metadata)
+        ):
+            raise VideoStoreSaveError("managed store root is unsafe")
+        try:
+            return self._root.resolve(strict=True)
+        except OSError as exc:
+            raise VideoStoreSaveError("managed store root validation failed") from exc
+
+    @staticmethod
+    def _ensure_target_absent(target: Path) -> None:
+        try:
+            target.lstat()
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            raise VideoStoreSaveError("managed video target validation failed") from exc
+        raise VideoStoreSaveError("managed video target already exists")
+
     # -- write/resolve ----------------------------------------------------
 
     def allocate_slug(self, message_id: str, prompt: str) -> str:
@@ -260,6 +294,8 @@ class VideoStore:
 
         with self._transaction_lock:
             with self._root_lease():
+                self._ensure_safe_root(create=True)
+                self._ensure_target_absent(path)
                 try:
                     self._atomic_publish(content, path, expected_size=size_bytes)
                 except (OSError, VideoStoreSaveError) as exc:
@@ -303,6 +339,8 @@ class VideoStore:
         try:
             with self._transaction_lock:
                 with self._root_lease():
+                    self._ensure_safe_root(create=True)
+                    self._ensure_target_absent(path)
                     try:
                         self._atomic_publish(stream, path, expected_size=size_bytes)
                     except Exception as exc:
@@ -369,20 +407,9 @@ class VideoStore:
 
     def _snapshot(self) -> tuple[StoredVideo, ...]:
         """Build a complete managed-file inventory without following links."""
-        try:
-            root_metadata = self._root.lstat()
-        except FileNotFoundError:
+        resolved_root = self._ensure_safe_root()
+        if resolved_root is None:
             return ()
-        except OSError as exc:
-            raise VideoStoreSaveError("managed store inventory failed") from exc
-        if (
-            not stat.S_ISDIR(root_metadata.st_mode)
-            or stat.S_ISLNK(root_metadata.st_mode)
-            or self._is_reparse(root_metadata)
-        ):
-            return ()
-
-        resolved_root = self._root.resolve()
         videos: list[StoredVideo] = []
         try:
             with os.scandir(self._root) as entries:
@@ -446,11 +473,13 @@ class VideoStore:
 
     def _is_safe_regular_file(self, path: Path) -> bool:
         try:
+            resolved_root = self._ensure_safe_root()
+            if resolved_root is None:
+                return False
             metadata = path.lstat()
             parent_metadata = path.parent.lstat()
-            resolved_root = self._root.resolve()
             resolved_parent = path.parent.resolve(strict=True)
-        except OSError:
+        except (OSError, VideoStoreSaveError):
             return False
         return (
             bool(_SAFE_COMPONENT.fullmatch(path.parent.name))
@@ -475,6 +504,9 @@ class VideoStore:
         *,
         expected_size: int,
     ) -> None:
+        resolved_root = self._ensure_safe_root(create=True)
+        if resolved_root is None:  # pragma: no cover - create=True guarantees it
+            raise VideoStoreSaveError("managed store root setup failed")
         target.parent.mkdir(parents=True, exist_ok=True)
         try:
             parent_metadata = target.parent.lstat()
@@ -482,7 +514,7 @@ class VideoStore:
                 stat.S_ISDIR(parent_metadata.st_mode)
                 and not stat.S_ISLNK(parent_metadata.st_mode)
                 and not self._is_reparse(parent_metadata)
-                and target.parent.resolve(strict=True).parent == self._root.resolve()
+                and target.parent.resolve(strict=True).parent == resolved_root
             )
         except OSError as exc:
             raise VideoStoreSaveError("managed video directory is unsafe") from exc
@@ -650,11 +682,8 @@ class VideoStore:
 
     def _prune_empty_dirs_unlocked(self) -> None:
         """Remove now-empty per-message directories (and the root's husk)."""
-        try:
-            root_metadata = self._root.lstat()
-        except OSError:
-            return
-        if not stat.S_ISDIR(root_metadata.st_mode) or self._is_reparse(root_metadata):
+        resolved_root = self._ensure_safe_root()
+        if resolved_root is None:
             return
         try:
             with os.scandir(self._root) as root_entries:
@@ -678,9 +707,7 @@ class VideoStore:
         """Remove the entire store (test teardown / explicit user wipe)."""
         with self._transaction_lock:
             with self._root_lease():
-                try:
-                    metadata = self._root.lstat()
-                except OSError:
+                resolved_root = self._ensure_safe_root()
+                if resolved_root is None:
                     return
-                if stat.S_ISDIR(metadata.st_mode) and not self._is_reparse(metadata):
-                    shutil.rmtree(self._root, ignore_errors=True)
+                shutil.rmtree(self._root, ignore_errors=True)

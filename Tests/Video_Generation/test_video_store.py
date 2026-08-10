@@ -55,6 +55,69 @@ def _spawn_capacity_save(
         outcomes.put(type(exc).__name__)
 
 
+def _call_while_root_lease_is_held(root, monkeypatch, operation) -> None:
+    """Assert one operation times out against a real spawned-process lease."""
+    ctx = multiprocessing.get_context("spawn")
+    ready = ctx.Event()
+    release = ctx.Event()
+    outcomes = ctx.Queue()
+    holder = ctx.Process(
+        target=_spawn_hold_video_store_lease,
+        args=(str(root), ready, release, outcomes),
+    )
+    holder.start()
+    assert ready.wait(10)
+    monkeypatch.setattr(video_store_module, "_ROOT_LEASE_TIMEOUT_SECONDS", 0.15)
+    started = time.monotonic()
+    try:
+        with pytest.raises(video_store_module.VideoStoreBusyError):
+            operation()
+        assert time.monotonic() - started < 2
+    finally:
+        release.set()
+        holder.join(10)
+        if holder.is_alive():
+            holder.terminate()
+            holder.join(5)
+    assert holder.exitcode == 0
+    assert outcomes.get(timeout=2) == "released"
+
+
+def _call_while_instance_rlock_is_held(store, operation, assert_still_blocked) -> None:
+    """Assert one operation cannot cross a same-store held instance RLock."""
+    held = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    errors = []
+
+    def hold_lock():
+        with store._transaction_lock:
+            held.set()
+            assert release.wait(5)
+
+    def call_operation():
+        try:
+            operation()
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+        finally:
+            finished.set()
+
+    holder = threading.Thread(target=hold_lock, daemon=True)
+    caller = threading.Thread(target=call_operation, daemon=True)
+    holder.start()
+    assert held.wait(5)
+    caller.start()
+    assert not finished.wait(0.25)
+    assert assert_still_blocked() is not False
+    release.set()
+    holder.join(5)
+    caller.join(5)
+    assert not holder.is_alive() and not caller.is_alive()
+    assert finished.is_set()
+    assert errors == []
+
+
 @pytest.fixture
 def store(tmp_path):
     return VideoStore(root=tmp_path / "generated_videos")
@@ -338,6 +401,168 @@ def test_ordinary_save_evicts_sole_oversized_exception_before_success(tmp_path):
     assert sum(item.size_bytes for item in store.iter_stored()) <= store.capacity_bytes
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX symlinked-root containment case")
+def test_symlinked_store_root_blocks_save_before_external_publication(
+    tmp_path, monkeypatch
+):
+    external = tmp_path / "private"
+    external.mkdir()
+    sentinel = external / "PRIVATE-SENTINEL"
+    sentinel.write_bytes(b"PRIVATE-SENTINEL")
+    linked_root = tmp_path / "gv"
+    linked_root.symlink_to(external, target_is_directory=True)
+    store = VideoStore(root=linked_root, config=_config(retention="ttl", max_store_mb=1))
+    committed = False
+    original_commit = store._commit_sibling
+
+    def observe_commit(sibling, target):
+        nonlocal committed
+        committed = True
+        original_commit(sibling, target)
+
+    monkeypatch.setattr(store, "_commit_sibling", observe_commit)
+    with pytest.raises(video_store_module.VideoStoreSaveError) as raised:
+        store.save("new", "clip", b"new-bytes")
+
+    assert not committed
+    assert "private" not in str(raised.value).lower()
+    assert sentinel.read_bytes() == b"PRIVATE-SENTINEL"
+    assert not (external / "new").exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX symlinked-root containment case")
+def test_symlinked_store_root_never_resolves_external_video(tmp_path):
+    external = tmp_path / "private"
+    external_target = external / "msg" / "clip.mp4"
+    external_target.parent.mkdir(parents=True)
+    external_target.write_bytes(b"PRIVATE-SENTINEL")
+    linked_root = tmp_path / "gv"
+    linked_root.symlink_to(external, target_is_directory=True)
+    store = VideoStore(root=linked_root, config=_config(retention="ttl", max_store_mb=1))
+
+    assert store.resolve("msg", "clip") is None
+    assert external_target.read_bytes() == b"PRIVATE-SENTINEL"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX symlinked-root containment case")
+def test_symlinked_store_root_blocks_startup_retention(tmp_path):
+    external = tmp_path / "private"
+    sentinel = external / "msg" / "clip.mp4"
+    sentinel.parent.mkdir(parents=True)
+    sentinel.write_bytes(b"PRIVATE-SENTINEL")
+    linked_root = tmp_path / "gv"
+    linked_root.symlink_to(external, target_is_directory=True)
+    store = VideoStore(root=linked_root, config=_config(retention="session", max_store_mb=1))
+
+    with pytest.raises(video_store_module.VideoStoreSaveError) as raised:
+        store.enforce_retention()
+
+    assert "private" not in str(raised.value).lower()
+    assert sentinel.read_bytes() == b"PRIVATE-SENTINEL"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX symlinked-root containment case")
+def test_symlinked_store_root_blocks_oversized_adoption_before_external_publication(
+    tmp_path, monkeypatch
+):
+    external = tmp_path / "private"
+    external.mkdir()
+    sentinel = external / "PRIVATE-SENTINEL"
+    sentinel.write_bytes(b"PRIVATE-SENTINEL")
+    linked_root = tmp_path / "gv"
+    linked_root.symlink_to(external, target_is_directory=True)
+    store = VideoStore(root=linked_root, config=_config(retention="ttl", max_store_mb=1))
+    stream = io.BytesIO(b"z" * (1024 * 1024 + 1))
+    committed = False
+    original_commit = store._commit_sibling
+
+    def observe_commit(sibling, target):
+        nonlocal committed
+        committed = True
+        original_commit(sibling, target)
+
+    monkeypatch.setattr(store, "_commit_sibling", observe_commit)
+    with pytest.raises(video_store_module.VideoStoreSaveError) as raised:
+        store.adopt_oversized(
+            "new", "large", stream, size_bytes=1024 * 1024 + 1
+        )
+
+    assert not committed
+    assert "private" not in str(raised.value).lower()
+    assert sentinel.read_bytes() == b"PRIVATE-SENTINEL"
+    assert not (external / "new").exists()
+    assert stream.tell() == 0
+    assert not stream.closed
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX symlinked-root containment case")
+def test_symlinked_store_root_blocks_clear_all(tmp_path):
+    external = tmp_path / "private"
+    sentinel = external / "msg" / "clip.mp4"
+    sentinel.parent.mkdir(parents=True)
+    sentinel.write_bytes(b"PRIVATE-SENTINEL")
+    linked_root = tmp_path / "gv"
+    linked_root.symlink_to(external, target_is_directory=True)
+    store = VideoStore(root=linked_root, config=_config(retention="ttl", max_store_mb=1))
+
+    with pytest.raises(video_store_module.VideoStoreSaveError) as raised:
+        store.clear_all()
+
+    assert "private" not in str(raised.value).lower()
+    assert sentinel.read_bytes() == b"PRIVATE-SENTINEL"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows reparse-root containment case")
+def test_windows_reparse_store_root_blocks_startup_retention(tmp_path):
+    external = tmp_path / "private"
+    sentinel = external / "msg" / "clip.mp4"
+    sentinel.parent.mkdir(parents=True)
+    sentinel.write_bytes(b"PRIVATE-SENTINEL")
+    junction = tmp_path / "gv"
+    completed = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(junction), str(external)],
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode:
+        pytest.skip("host cannot construct a test root junction")
+    store = VideoStore(root=junction, config=_config(retention="session", max_store_mb=1))
+
+    with pytest.raises(video_store_module.VideoStoreSaveError):
+        store.enforce_retention()
+
+    assert sentinel.read_bytes() == b"PRIVATE-SENTINEL"
+
+
+def test_save_refuses_existing_target_without_changing_old_bytes(tmp_path):
+    store = VideoStore(root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1))
+    existing = store.save("msg", "clip", b"old-bytes")
+
+    with pytest.raises(video_store_module.VideoStoreSaveError):
+        store.save("msg", "clip", b"new-bytes")
+
+    assert existing.read_bytes() == b"old-bytes"
+    assert not list(store.root.rglob(".video-stage-*"))
+
+
+def test_adoption_refuses_existing_target_without_changing_old_bytes(tmp_path):
+    store = VideoStore(root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1))
+    existing = store.save("msg", "clip", b"old-bytes")
+    unrelated = store.save("other", "clip", b"unrelated-bytes")
+    stream = io.BytesIO(b"z" * (1024 * 1024 + 1))
+
+    with pytest.raises(video_store_module.VideoStoreSaveError):
+        store.adopt_oversized(
+            "msg", "clip", stream, size_bytes=1024 * 1024 + 1
+        )
+
+    assert existing.read_bytes() == b"old-bytes"
+    assert unrelated.read_bytes() == b"unrelated-bytes"
+    assert stream.tell() == 0
+    assert not stream.closed
+    assert not list(store.root.rglob(".video-stage-*"))
+
+
 @pytest.mark.skipif(os.name == "nt", reason="POSIX symlink containment case")
 def test_capacity_operations_never_follow_symlinked_directories_or_files(
     tmp_path,
@@ -454,6 +679,57 @@ def test_instance_rlock_prevents_thread_transaction_overlap(tmp_path, monkeypatc
     assert errors == []
 
 
+def test_adopt_oversized_takes_instance_rlock(tmp_path):
+    store = VideoStore(root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1))
+    stream = io.BytesIO(b"z" * (1024 * 1024 + 1))
+    stream.seek(7)
+    result = []
+
+    def operation():
+        result.append(
+            store.adopt_oversized(
+                "new", "large", stream, size_bytes=1024 * 1024 + 1
+            )
+        )
+
+    def assert_blocked():
+        assert result == []
+        assert stream.tell() == 0
+        assert store.resolve("new", "large") is None
+
+    _call_while_instance_rlock_is_held(store, operation, assert_blocked)
+
+    assert result[0].read_bytes() == b"z" * (1024 * 1024 + 1)
+    assert stream.tell() == 0
+    assert not stream.closed
+
+
+def test_enforce_retention_takes_instance_rlock(tmp_path):
+    store = VideoStore(root=tmp_path / "gv", config=_config(retention="session", max_store_mb=1))
+    existing = store.save("old", "clip", b"old-bytes")
+
+    _call_while_instance_rlock_is_held(
+        store,
+        store.enforce_retention,
+        lambda: existing.read_bytes() == b"old-bytes",
+    )
+
+    assert not existing.exists()
+
+
+def test_clear_all_takes_instance_rlock(tmp_path):
+    store = VideoStore(root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1))
+    existing = store.save("old", "clip", b"old-bytes")
+
+    _call_while_instance_rlock_is_held(
+        store,
+        store.clear_all,
+        lambda: existing.read_bytes() == b"old-bytes",
+    )
+
+    assert not store.root.exists()
+
+
 def test_two_store_instances_serialize_through_root_lease(tmp_path, monkeypatch):
     root = tmp_path / "gv"
     first_store = VideoStore(root=root, config=_config(max_store_mb=1))
@@ -525,6 +801,46 @@ def test_spawned_lease_holder_causes_bounded_busy_error(tmp_path, monkeypatch):
             holder.join(5)
     assert holder.exitcode == 0
     assert outcomes.get(timeout=2) == "released"
+
+
+def test_adopt_oversized_takes_root_lease(tmp_path, monkeypatch):
+    root = tmp_path / "gv"
+    store = VideoStore(root=root, config=_config(retention="ttl", max_store_mb=1))
+    stream = io.BytesIO(b"z" * (1024 * 1024 + 1))
+    stream.seek(9)
+
+    _call_while_root_lease_is_held(
+        root,
+        monkeypatch,
+        lambda: store.adopt_oversized(
+            "new", "large", stream, size_bytes=1024 * 1024 + 1
+        ),
+    )
+
+    assert store.resolve("new", "large") is None
+    assert stream.tell() == 0
+    assert not stream.closed
+    assert stream.read(16) == b"z" * 16
+
+
+def test_enforce_retention_takes_root_lease(tmp_path, monkeypatch):
+    root = tmp_path / "gv"
+    store = VideoStore(root=root, config=_config(retention="session", max_store_mb=1))
+    existing = store.save("old", "clip", b"old-bytes")
+
+    _call_while_root_lease_is_held(root, monkeypatch, store.enforce_retention)
+
+    assert existing.read_bytes() == b"old-bytes"
+
+
+def test_clear_all_takes_root_lease(tmp_path, monkeypatch):
+    root = tmp_path / "gv"
+    store = VideoStore(root=root, config=_config(retention="ttl", max_store_mb=1))
+    existing = store.save("old", "clip", b"old-bytes")
+
+    _call_while_root_lease_is_held(root, monkeypatch, store.clear_all)
+
+    assert existing.read_bytes() == b"old-bytes"
 
 
 def test_spawned_saves_leave_actual_store_within_capacity(tmp_path):
