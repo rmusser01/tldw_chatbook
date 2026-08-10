@@ -13,7 +13,7 @@ import re
 from collections.abc import Awaitable, Callable, Iterable
 from binascii import Error as Base64Error
 from typing import TYPE_CHECKING, Any, NoReturn, overload
-from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, unquote, urlencode, urlsplit, urlunsplit
 
 from jsonschema import Draft7Validator, Draft202012Validator
 from jsonschema.exceptions import SchemaError
@@ -54,12 +54,19 @@ _MAX_RESOURCE_URI_CHARS = 2_048
 _BAD_PERCENT_ENCODING = re.compile(r"%(?![0-9A-Fa-f]{2})")
 _CONTINUATION_TOKEN = re.compile(r"[A-Za-z0-9_-]{1,512}\Z")
 _SHA256_HEX = re.compile(r"[0-9a-f]{64}\Z")
+_URI_UNRESERVED = "-._~"
 _RESOURCE_TEMPLATE_VARIABLES = {
     "conversation://{conversation_id}": "conversation_id",
     "note://{note_id}": "note_id",
     "character://{character_id}": "character_id",
     "media://{media_id}": "media_id",
     "rag-chunk://{chunk_uuid}": "chunk_uuid",
+}
+_RESOURCE_TEMPLATE_MATCHERS = {
+    template: re.compile(
+        rf"{re.escape(template.split(':', 1)[0])}://(?P<{variable}>[^/?#]+)\Z"
+    )
+    for template, variable in _RESOURCE_TEMPLATE_VARIABLES.items()
 }
 
 _OPERATOR_APPROVAL_ERROR = (
@@ -296,8 +303,7 @@ class ChatbookGatewayRuntime:
             raise ValueError("resource template is not supported")
         if template in self._resource_handlers:
             raise ValueError("duplicate resource template")
-        scheme = template.split(":", 1)[0]
-        matcher = re.compile(rf"{re.escape(scheme)}://(?P<{variable}>[^/?#]+)\Z")
+        matcher = _RESOURCE_TEMPLATE_MATCHERS[template]
 
         def decorator(handler: _ResourceHandler) -> _ResourceHandler:
             if self._finalized:
@@ -393,22 +399,55 @@ class ChatbookGatewayRuntime:
         """Route and map one bounded canonical resource chunk."""
         self._require_finalized()
         base_uri, token = self._parse_resource_uri(uri)
-        variable, handler, identifier = self._match_resource(base_uri)
+        variable, handler, identifier, canonical_base_uri = self._match_resource(
+            base_uri
+        )
         state = self._decode_continuation(token) if token is not None else None
-        base_digest = self._digest(base_uri)
+        base_digest = self._digest(canonical_base_uri)
         if state is not None and state["b"] != base_digest:
             self._raise_invalid_resource_uri()
 
         raw_result = await handler(**{variable: identifier})
-        content, mime_type, metadata = self._canonical_resource_result(raw_result)
+        return await asyncio.to_thread(
+            self._project_resource_result,
+            raw_result,
+            canonical_base_uri,
+            base_digest,
+            state,
+        )
+
+    @classmethod
+    def _project_resource_result(
+        cls,
+        raw_result: object,
+        canonical_base_uri: str,
+        base_digest: str,
+        state: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Build one result without monopolizing the event loop.
+
+        Continuations intentionally remain stateless: every read rematerializes and
+        scans O(total content) in bounded slices so changed content cannot be hidden
+        by a stale cache.
+        """
+        content, mime_type, metadata = cls._canonical_resource_result(
+            raw_result, expected_uri=canonical_base_uri
+        )
+        content_digest = hashlib.sha256()
+        total_bytes = 0
         try:
-            content_bytes = content.encode("utf-8")
+            for position in range(0, len(content), MAX_RESOURCE_CHUNK_BYTES):
+                encoded = content[
+                    position : min(position + MAX_RESOURCE_CHUNK_BYTES, len(content))
+                ].encode("utf-8")
+                content_digest.update(encoded)
+                total_bytes += len(encoded)
         except UnicodeEncodeError:
-            self._raise_invalid_resource_result()
-        content_digest = hashlib.sha256(content_bytes).hexdigest()
+            cls._raise_invalid_resource_result()
+        content_digest_hex = content_digest.hexdigest()
         start = 0
         if state is not None:
-            if state["c"] != content_digest:
+            if state["c"] != content_digest_hex:
                 raise GatewayApplicationError(
                     "Resource changed; restart from the base URI.",
                     reason_code="resource_changed",
@@ -416,33 +455,101 @@ class ChatbookGatewayRuntime:
                 ) from None
             start = state["o"]
             if start <= 0 or start >= len(content):
-                self._raise_invalid_resource_uri()
+                cls._raise_invalid_resource_uri()
 
-        chunk = (
-            content[start:]
-            .encode("utf-8")[:MAX_RESOURCE_CHUNK_BYTES]
-            .decode("utf-8", errors="ignore")
+        window_end = min(start + MAX_RESOURCE_CHUNK_BYTES, len(content))
+        try:
+            raw_window = content[start:window_end].encode("utf-8")
+            chunk = raw_window[:MAX_RESOURCE_CHUNK_BYTES].decode(
+                "utf-8", errors="ignore"
+            )
+        except UnicodeEncodeError:
+            cls._raise_invalid_resource_result()
+        maximum_end = start + len(chunk)
+
+        maximum_result = cls._build_resource_result(
+            content=content,
+            mime_type=mime_type,
+            metadata=metadata,
+            base_uri=canonical_base_uri,
+            base_digest=base_digest,
+            content_digest=content_digest_hex,
+            start=start,
+            end=maximum_end,
+            total_bytes=total_bytes,
         )
-        end = start + len(chunk)
+        if (
+            cls._serialized_result_size(maximum_result)
+            <= _GATEWAY_LIMITS.max_result_bytes
+        ):
+            return maximum_result
+
+        low = start + 1
+        high = maximum_end - 1
+        best: dict[str, Any] | None = None
+        while low <= high:
+            end = (low + high) // 2
+            candidate = cls._build_resource_result(
+                content=content,
+                mime_type=mime_type,
+                metadata=metadata,
+                base_uri=canonical_base_uri,
+                base_digest=base_digest,
+                content_digest=content_digest_hex,
+                start=start,
+                end=end,
+                total_bytes=total_bytes,
+            )
+            if (
+                cls._serialized_result_size(candidate)
+                <= _GATEWAY_LIMITS.max_result_bytes
+            ):
+                best = candidate
+                low = end + 1
+            else:
+                high = end - 1
+        if best is None:
+            cls._raise_invalid_resource_result()
+        return best
+
+    @classmethod
+    def _build_resource_result(
+        cls,
+        *,
+        content: str,
+        mime_type: str,
+        metadata: dict[str, Any] | None,
+        base_uri: str,
+        base_digest: str,
+        content_digest: str,
+        start: int,
+        end: int,
+        total_bytes: int,
+    ) -> dict[str, Any]:
+        chunk = content[start:end]
+        try:
+            returned_bytes = len(chunk.encode("utf-8"))
+        except UnicodeEncodeError:
+            cls._raise_invalid_resource_result()
         has_more = end < len(content)
         next_uri = None
         if has_more:
-            next_token = self._encode_continuation(
+            next_token = cls._encode_continuation(
                 offset=end,
                 base_digest=base_digest,
                 content_digest=content_digest,
             )
             next_uri = f"{base_uri}?{urlencode({CONTINUATION_QUERY_KEY: next_token})}"
             if len(next_uri) > _MAX_RESOURCE_URI_CHARS:
-                self._raise_invalid_resource_result()
+                cls._raise_invalid_resource_result()
 
         result_meta: dict[str, Any] = {
             "tldw.chatbook/continuation": {
                 "startChar": start,
                 "endChar": end,
                 "totalChars": len(content),
-                "totalBytes": len(content_bytes),
-                "returnedBytes": len(chunk.encode("utf-8")),
+                "totalBytes": total_bytes,
+                "returnedBytes": returned_bytes,
                 "hasMore": has_more,
                 "nextUri": next_uri,
             }
@@ -450,15 +557,24 @@ class ChatbookGatewayRuntime:
         if metadata:
             result_meta["tldw.chatbook/resource"] = metadata
         return {
-            "contents": [
-                {
-                    "uri": base_uri,
-                    "mimeType": mime_type,
-                    "text": chunk,
-                }
-            ],
+            "contents": [{"uri": base_uri, "mimeType": mime_type, "text": chunk}],
             "_meta": result_meta,
         }
+
+    @staticmethod
+    def _serialized_result_size(result: dict[str, Any]) -> int:
+        try:
+            return len(
+                json.dumps(
+                    result,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    allow_nan=False,
+                ).encode("utf-8")
+            )
+        except (RecursionError, TypeError, ValueError, UnicodeEncodeError):
+            ChatbookGatewayRuntime._raise_invalid_resource_result()
 
     @staticmethod
     def _canonical_resource_descriptor(descriptor: object) -> dict[str, Any]:
@@ -491,6 +607,8 @@ class ChatbookGatewayRuntime:
     @staticmethod
     def _canonical_resource_result(
         result: object,
+        *,
+        expected_uri: str,
     ) -> tuple[str, str, dict[str, Any] | None]:
         if not isinstance(result, dict):
             ChatbookGatewayRuntime._raise_invalid_resource_result()
@@ -510,6 +628,11 @@ class ChatbookGatewayRuntime:
             or len(mime_type) > 255
             or not isinstance(content, str)
         ):
+            ChatbookGatewayRuntime._raise_invalid_resource_result()
+        canonical_result_uri = ChatbookGatewayRuntime._canonical_resource_uri(
+            result_uri
+        )
+        if canonical_result_uri != expected_uri:
             ChatbookGatewayRuntime._raise_invalid_resource_result()
         if "metadata" not in result:
             return content, mime_type, None
@@ -577,7 +700,7 @@ class ChatbookGatewayRuntime:
         )
         return base_uri, token
 
-    def _match_resource(self, base_uri: str) -> tuple[str, _ResourceHandler, str]:
+    def _match_resource(self, base_uri: str) -> tuple[str, _ResourceHandler, str, str]:
         for template in _RESOURCE_TEMPLATE_VARIABLES:
             registration = self._resource_handlers.get(template)
             if registration is None:
@@ -592,8 +715,51 @@ class ChatbookGatewayRuntime:
                 self._raise_invalid_resource_uri()
             if not identifier:
                 self._raise_invalid_resource_uri()
-            return variable, handler, identifier
+            try:
+                canonical_identifier = quote(identifier, safe=_URI_UNRESERVED)
+            except UnicodeEncodeError:
+                self._raise_invalid_resource_uri()
+            canonical_base_uri = f"{base_uri.split(':', 1)[0]}://{canonical_identifier}"
+            return variable, handler, identifier, canonical_base_uri
         self._raise_invalid_resource_uri()
+
+    @staticmethod
+    def _canonical_resource_uri(uri: object) -> str:
+        if (
+            not isinstance(uri, str)
+            or not uri
+            or len(uri) > _MAX_RESOURCE_URI_CHARS
+            or any(character.isspace() or ord(character) < 32 for character in uri)
+            or _BAD_PERCENT_ENCODING.search(uri) is not None
+            or "?" in uri
+            or "#" in uri
+        ):
+            ChatbookGatewayRuntime._raise_invalid_resource_result()
+        try:
+            parsed = urlsplit(uri)
+        except ValueError:
+            ChatbookGatewayRuntime._raise_invalid_resource_result()
+        base_uri = urlunsplit(
+            (parsed.scheme.lower(), parsed.netloc, parsed.path, "", "")
+        )
+        for template, matcher in _RESOURCE_TEMPLATE_MATCHERS.items():
+            variable = _RESOURCE_TEMPLATE_VARIABLES[template]
+            scheme = template.split(":", 1)[0]
+            matched = matcher.fullmatch(base_uri)
+            if matched is None:
+                continue
+            try:
+                identifier = unquote(matched.group(variable), errors="strict")
+            except UnicodeDecodeError:
+                ChatbookGatewayRuntime._raise_invalid_resource_result()
+            if not identifier:
+                ChatbookGatewayRuntime._raise_invalid_resource_result()
+            try:
+                canonical_identifier = quote(identifier, safe=_URI_UNRESERVED)
+            except UnicodeEncodeError:
+                ChatbookGatewayRuntime._raise_invalid_resource_result()
+            return f"{scheme}://{canonical_identifier}"
+        ChatbookGatewayRuntime._raise_invalid_resource_result()
 
     @staticmethod
     def _digest(value: str) -> str:

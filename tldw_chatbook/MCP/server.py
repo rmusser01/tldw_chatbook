@@ -686,9 +686,12 @@ class TldwMCPServer:
 
     def _register_resources(self):
         """Register MCP resources."""
+        from urllib.parse import quote
 
-        def json_metadata(resource: Dict[str, Any]) -> Dict[str, Any]:
-            """Normalize SQLite datetime metadata before gateway validation."""
+        def json_metadata(
+            resource: Dict[str, Any], scheme: str, identifier: str
+        ) -> Dict[str, Any]:
+            """Normalize trusted legacy URI spelling and SQLite metadata."""
 
             def normalize(value: Any) -> Any:
                 if isinstance(value, datetime):
@@ -699,6 +702,16 @@ class TldwMCPServer:
                     return [normalize(item) for item in value]
                 return value
 
+            expected_legacy_uri = f"{scheme}://{identifier}"
+            if resource.get("uri") == expected_legacy_uri:
+                canonical_identifier = quote(
+                    identifier,
+                    safe="-._~",
+                )
+                resource = {
+                    **resource,
+                    "uri": f"{scheme}://{canonical_identifier}",
+                }
             metadata = resource.get("metadata")
             return (
                 {**resource, "metadata": normalize(metadata)}
@@ -710,25 +723,33 @@ class TldwMCPServer:
         async def get_conversation(conversation_id: str) -> Dict[str, Any]:
             """Get a conversation by ID."""
             return json_metadata(
-                await self.resources.get_conversation_resource(conversation_id)
+                await self.resources.get_conversation_resource(conversation_id),
+                "conversation",
+                conversation_id,
             )
 
         @self.mcp.resource("note://{note_id}")
         async def get_note(note_id: str) -> Dict[str, Any]:
             """Get a note by ID."""
-            return json_metadata(await self.resources.get_note_resource(note_id))
+            return json_metadata(
+                await self.resources.get_note_resource(note_id), "note", note_id
+            )
 
         @self.mcp.resource("character://{character_id}")
         async def get_character(character_id: str) -> Dict[str, Any]:
             """Get a character profile by ID."""
             return json_metadata(
-                await self.resources.get_character_resource(character_id)
+                await self.resources.get_character_resource(character_id),
+                "character",
+                character_id,
             )
 
         @self.mcp.resource("media://{media_id}")
         async def get_media(media_id: str) -> Dict[str, Any]:
             """Get media content by ID."""
-            return json_metadata(await self.resources.get_media_resource(media_id))
+            return json_metadata(
+                await self.resources.get_media_resource(media_id), "media", media_id
+            )
 
         @self.mcp.resource("rag-chunk://{chunk_uuid}")
         async def get_rag_chunk(chunk_uuid: str) -> Dict[str, Any]:
@@ -739,7 +760,9 @@ class TldwMCPServer:
             why (TASK-985).
             """
             return json_metadata(
-                await self.resources.get_rag_chunk_resource(chunk_uuid)
+                await self.resources.get_rag_chunk_resource(chunk_uuid),
+                "rag-chunk",
+                chunk_uuid,
             )
 
         # List resources

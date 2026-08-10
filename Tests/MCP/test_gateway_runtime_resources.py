@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import copy
 import json
 import re
+import threading
 from typing import Any
-from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qs, quote, urlencode, urlsplit, urlunsplit
 
 import pytest
 
@@ -15,6 +17,7 @@ gateway = pytest.importorskip(
     "mcp_unified.gateway", reason="mcp-unified extra not installed"
 )
 GatewayApplicationError = gateway.GatewayApplicationError
+GatewayLimits = gateway.GatewayLimits
 GatewayRequestContext = gateway.GatewayRequestContext
 
 from tldw_chatbook.MCP.gateway_runtime import (  # noqa: E402
@@ -41,10 +44,10 @@ def _resource_result(
     identifier: str,
     content: str,
     metadata: object | None,
+    result_uri: str | None = None,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {
-        # The existing real handlers interpolate the decoded identifier.
-        "uri": f"{scheme}://{identifier}",
+        "uri": result_uri or f"{scheme}://{quote(identifier, safe='-._~')}",
         "name": f"{scheme} resource",
         "mimeType": "text/plain",
         "content": content,
@@ -60,9 +63,11 @@ def _register_resources(
     content: dict[str, str] | None = None,
     metadata: dict[str, object | None] | None = None,
     calls: list[tuple[str, str]] | None = None,
+    result_uris: dict[str, str] | None = None,
 ) -> None:
     texts = content if content is not None else {}
     metadata_by_scheme = metadata if metadata is not None else {}
+    uri_by_scheme = result_uris if result_uris is not None else {}
 
     def result(scheme: str, identifier: str) -> dict[str, Any]:
         if calls is not None:
@@ -72,6 +77,7 @@ def _register_resources(
             identifier,
             texts.get(scheme, f"{scheme}:{identifier}"),
             metadata_by_scheme.get(scheme),
+            uri_by_scheme.get(scheme),
         )
 
     @runtime.resource("conversation://{conversation_id}")
@@ -105,9 +111,16 @@ def _ready_runtime(
     content: dict[str, str] | None = None,
     metadata: dict[str, object | None] | None = None,
     calls: list[tuple[str, str]] | None = None,
+    result_uris: dict[str, str] | None = None,
 ) -> ChatbookGatewayRuntime:
     runtime = _runtime()
-    _register_resources(runtime, content=content, metadata=metadata, calls=calls)
+    _register_resources(
+        runtime,
+        content=content,
+        metadata=metadata,
+        calls=calls,
+        result_uris=result_uris,
+    )
 
     @runtime.list_resources()
     async def list_resources() -> list[dict[str, Any]]:
@@ -137,6 +150,55 @@ def _encode_token(payload: dict[str, Any]) -> str:
 def _with_token(base_uri: str, token: str) -> str:
     parsed = urlsplit(base_uri)
     return urlunsplit(parsed._replace(query=urlencode({CONTINUATION_QUERY_KEY: token})))
+
+
+def _serialized_result_bytes(result: dict[str, Any]) -> int:
+    return len(
+        json.dumps(
+            result,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    )
+
+
+async def _assert_bounded_reconstruction(
+    runtime: ChatbookGatewayRuntime,
+    uri: str,
+    expected_uri: str,
+    text: str,
+) -> int:
+    chunks: list[str] = []
+    next_uri: str | None = uri
+    expected_start = 0
+    reads = 0
+    while next_uri is not None:
+        result = await runtime.read_resource(next_uri, _context())
+        assert _serialized_result_bytes(result) <= GatewayLimits().max_result_bytes
+        assert len(result["contents"]) == 1
+        block = result["contents"][0]
+        chunk = block["text"]
+        assert block["uri"] == expected_uri
+        assert len(chunk.encode("utf-8")) <= MAX_RESOURCE_CHUNK_BYTES
+
+        continuation = result["_meta"]["tldw.chatbook/continuation"]
+        assert continuation["startChar"] == expected_start
+        assert continuation["endChar"] == expected_start + len(chunk)
+        assert continuation["totalChars"] == len(text)
+        assert continuation["totalBytes"] == len(text.encode("utf-8"))
+        assert continuation["returnedBytes"] == len(chunk.encode("utf-8"))
+        assert chunk == text[expected_start : continuation["endChar"]]
+        assert continuation["hasMore"] is (continuation["endChar"] < len(text))
+
+        chunks.append(chunk)
+        expected_start = continuation["endChar"]
+        next_uri = continuation["nextUri"]
+        reads += 1
+
+    assert "".join(chunks) == text
+    return reads
 
 
 @pytest.mark.asyncio
@@ -266,6 +328,7 @@ def test_dynamic_catalog_without_resource_templates_fails_finalization() -> None
         pytest.param("conversation://value%", id="trailing-percent"),
         pytest.param("conversation://value%2", id="short-percent"),
         pytest.param("conversation://value%GG", id="nonhex-percent"),
+        pytest.param("conversation://%FF", id="non-utf8-percent"),
         pytest.param("conversation://value?unknown=1", id="unknown-query"),
         pytest.param(
             "conversation://value?tldw_continue=a&tldw_continue=b",
@@ -286,6 +349,42 @@ async def test_invalid_uri_is_rejected_before_handler_invocation(uri: str) -> No
     assert len(exc_info.value.public_message) <= 512
     assert uri not in exc_info.value.public_message
     assert calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "result_uri",
+    [
+        pytest.param("note://right", id="wrong-resource"),
+        pytest.param("unknown://right", id="wrong-scheme"),
+        pytest.param("conversation://wrong", id="wrong-identifier"),
+        pytest.param("conversation://right/extra", id="extra-path"),
+        pytest.param("conversation://right?query=1", id="query"),
+        pytest.param("conversation://right#fragment", id="fragment"),
+    ],
+)
+async def test_handler_result_uri_must_semantically_match_route(
+    result_uri: str,
+) -> None:
+    runtime = _ready_runtime(result_uris={"conversation": result_uri})
+
+    with pytest.raises(GatewayApplicationError) as exc_info:
+        await runtime.read_resource("conversation://right", _context())
+
+    assert exc_info.value.reason_code == "invalid_resource_result"
+    assert (
+        exc_info.value.public_message == "Resource handler returned an invalid result."
+    )
+    assert result_uri not in exc_info.value.public_message
+
+
+@pytest.mark.asyncio
+async def test_handler_result_uri_accepts_equivalent_canonical_spelling() -> None:
+    runtime = _ready_runtime(result_uris={"conversation": "CONVERSATION://%7e"})
+
+    result = await runtime.read_resource("conversation://~", _context())
+
+    assert result["contents"][0]["uri"] == "conversation://~"
 
 
 @pytest.mark.asyncio
@@ -408,6 +507,105 @@ async def test_resource_result_is_one_bounded_text_block_with_exact_counts(
         assert continuation["nextUri"].startswith(
             f"conversation://one?{CONTINUATION_QUERY_KEY}="
         )
+
+
+@pytest.mark.asyncio
+async def test_control_characters_fit_each_final_result_budget_and_reconstruct() -> (
+    None
+):
+    text = ("\0é😀" * 70_000) + "end"
+    runtime = _ready_runtime(content={"conversation": text})
+
+    reads = await _assert_bounded_reconstruction(
+        runtime,
+        "conversation://control",
+        "conversation://control",
+        text,
+    )
+
+    assert reads >= 2
+
+
+@pytest.mark.asyncio
+async def test_metadata_overhead_fits_each_final_result_budget_and_reconstructs() -> (
+    None
+):
+    text = ("metadata payload é😀\n" * 30_000) + "end"
+    metadata = {"padding": "m" * 650_000, "message_count": 30_000}
+    runtime = _ready_runtime(
+        content={"conversation": text},
+        metadata={"conversation": metadata},
+    )
+
+    reads = await _assert_bounded_reconstruction(
+        runtime,
+        "conversation://metadata",
+        "conversation://metadata",
+        text,
+    )
+
+    assert reads >= 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("first_uri", "equivalent_uri", "canonical_uri", "decoded_identifier"),
+    [
+        pytest.param(
+            "CONVERSATION://%7e",
+            "conversation://~",
+            "conversation://~",
+            "~",
+            id="scheme-unreserved-and-percent-case",
+        ),
+        pytest.param(
+            "note://café",
+            "NOTE://caf%c3%a9",
+            "note://caf%C3%A9",
+            "café",
+            id="raw-and-encoded-unicode",
+        ),
+        pytest.param(
+            "rag-chunk://a%2fb%3fq%23f",
+            "RAG-CHUNK://a%2Fb%3Fq%23f",
+            "rag-chunk://a%2Fb%3Fq%23f",
+            "a/b?q#f",
+            id="encoded-reserved-delimiters",
+        ),
+    ],
+)
+async def test_equivalent_uri_spellings_share_canonical_cursor_identity(
+    first_uri: str,
+    equivalent_uri: str,
+    canonical_uri: str,
+    decoded_identifier: str,
+) -> None:
+    scheme = canonical_uri.split(":", 1)[0]
+    text = "canonical cursor text 😀" * 20_000
+    calls: list[tuple[str, str]] = []
+    runtime = _ready_runtime(content={scheme: text}, calls=calls)
+
+    first = await runtime.read_resource(first_uri, _context())
+    equivalent = await runtime.read_resource(equivalent_uri, _context())
+
+    assert first["contents"][0]["uri"] == canonical_uri
+    assert equivalent["contents"][0]["uri"] == canonical_uri
+    first_next_uri = first["_meta"]["tldw.chatbook/continuation"]["nextUri"]
+    equivalent_next_uri = equivalent["_meta"]["tldw.chatbook/continuation"]["nextUri"]
+    assert first_next_uri == equivalent_next_uri
+    assert first_next_uri.startswith(f"{canonical_uri}?{CONTINUATION_QUERY_KEY}=")
+
+    replay = await runtime.read_resource(
+        _with_token(equivalent_uri, _token(first_next_uri)), _context()
+    )
+    assert replay["contents"][0]["uri"] == canonical_uri
+    assert replay["_meta"]["tldw.chatbook/continuation"]["startChar"] > 0
+    assert calls == [(scheme, decoded_identifier)] * 3
+
+    parsed_canonical = urlsplit(canonical_uri)
+    assert parsed_canonical.path == ""
+    assert parsed_canonical.query == ""
+    assert parsed_canonical.fragment == ""
 
 
 @pytest.mark.asyncio
@@ -620,6 +818,89 @@ def _deep_metadata() -> dict[str, Any]:
         current["next"] = child
         current = child
     return root
+
+
+class _BoundedEncodingText(str):
+    """Fail if projection encodes the full content or an unbounded tail."""
+
+    def __new__(cls, value: str, encode_threads: list[int]) -> _BoundedEncodingText:
+        instance = super().__new__(cls, value)
+        instance.encode_threads = encode_threads
+        return instance
+
+    def __getitem__(self, key: int | slice) -> str:
+        value = super().__getitem__(key)
+        if not isinstance(key, slice):
+            return value
+        if key.stop is None:
+            raise AssertionError("projection sliced an unbounded remaining tail")
+        start = key.start or 0
+        if key.stop - start > MAX_RESOURCE_CHUNK_BYTES:
+            raise AssertionError("projection exceeded its bounded character window")
+        return type(self)(value, self.encode_threads)
+
+    def encode(self, *args: Any, **kwargs: Any) -> bytes:
+        self.encode_threads.append(threading.get_ident())
+        if len(self) > MAX_RESOURCE_CHUNK_BYTES:
+            raise AssertionError("projection encoded the full resource text")
+        return super().encode(*args, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_large_projection_uses_bounded_windows_off_the_event_loop() -> None:
+    encode_threads: list[int] = []
+    text = _BoundedEncodingText(
+        ("bounded 😀" * (MAX_RESOURCE_CHUNK_BYTES // 4)) + "end",
+        encode_threads,
+    )
+    runtime = _ready_runtime(content={"conversation": text})
+    event_loop_thread = threading.get_ident()
+
+    result = await runtime.read_resource("conversation://bounded", _context())
+
+    assert result["contents"][0]["text"]
+    assert encode_threads
+    assert event_loop_thread not in encode_threads
+
+
+@pytest.mark.asyncio
+async def test_projection_keeps_heartbeat_live_and_cancels_while_worker_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _ready_runtime(content={"conversation": "x" * 300_000})
+    original = runtime._project_resource_result
+    started = threading.Event()
+    release = threading.Event()
+    projection_threads: list[int] = []
+
+    def blocking_projection(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        projection_threads.append(threading.get_ident())
+        started.set()
+        release.wait(timeout=1.0)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(runtime, "_project_resource_result", blocking_projection)
+    read_task = asyncio.create_task(
+        runtime.read_resource("conversation://cancel", _context())
+    )
+
+    assert await asyncio.wait_for(asyncio.to_thread(started.wait, 1.0), timeout=1.5)
+    heartbeat = asyncio.Event()
+
+    async def pulse() -> None:
+        await asyncio.sleep(0)
+        heartbeat.set()
+
+    await asyncio.wait_for(pulse(), timeout=0.1)
+    assert heartbeat.is_set()
+    assert threading.get_ident() not in projection_threads
+
+    read_task.cancel()
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(read_task, timeout=0.2)
+    finally:
+        release.set()
 
 
 @pytest.mark.asyncio

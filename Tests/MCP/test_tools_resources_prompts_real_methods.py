@@ -430,7 +430,8 @@ def test_gateway_runtime_maps_all_real_resources_and_continues_large_text(tmp_pa
         title="Large Media", media_type="video", content="fallback content"
     )
     _seed_transcript(media_db, media_id, media_text)
-    chunk_uuid = "gateway-real-chunk"
+    chunk_uuid = "gateway/real?chunk#é"
+    canonical_chunk_uri = "rag-chunk://gateway%2Freal%3Fchunk%23%C3%A9"
     _seed_chunk(
         media_db,
         media_id,
@@ -461,9 +462,7 @@ def test_gateway_runtime_maps_all_real_resources_and_continues_large_text(tmp_pa
                 str(character_id)
             ),
             f"media://{media_id}": await resources.get_media_resource(str(media_id)),
-            f"rag-chunk://{chunk_uuid}": await resources.get_rag_chunk_resource(
-                chunk_uuid
-            ),
+            canonical_chunk_uri: await resources.get_rag_chunk_resource(chunk_uuid),
         }
         read_counts: dict[str, int] = {}
 
@@ -474,7 +473,7 @@ def test_gateway_runtime_maps_all_real_resources_and_continues_large_text(tmp_pa
             while uri is not None:
                 result = await runtime.read_resource(uri, context)
                 assert len(result["contents"]) == 1
-                assert result["contents"][0]["uri"] == expected["uri"]
+                assert result["contents"][0]["uri"] == base_uri
                 assert result["contents"][0]["mimeType"] == expected["mimeType"]
                 chunks.append(result["contents"][0]["text"])
                 reads += 1
