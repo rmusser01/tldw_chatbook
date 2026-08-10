@@ -52,6 +52,7 @@ from tldw_chatbook.Agents.agent_models import (
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 from tldw_chatbook.Agents import agent_service
 from tldw_chatbook.Agents.agent_service import AgentService
+from tldw_chatbook.Agents.fleet_coordinator import FleetHandle
 from tldw_chatbook.Agents.run_context import current_run_id
 from tldw_chatbook.Agents.tool_catalog import (
     SkillToolProvider,
@@ -3796,3 +3797,79 @@ def test_fleet_snapshot_reflects_two_live_handles_in_flight_then_empty_after_run
     assert result["outcome"].status == "done"
     assert result["outcome"].final_text == "parent final"
     assert bridge.fleet_snapshot("conv-fleet-peek") == []
+
+
+class _FakeFleetService:
+    """Stands in for `AgentService` for `_teardown_fleet_service` tests --
+    only needs to be a distinct object (for `is` identity) with a
+    `fleet_snapshot()` method (what `ConsoleAgentBridge.fleet_snapshot`
+    actually calls)."""
+
+    def __init__(self, handles):
+        self._handles = list(handles)
+
+    def fleet_snapshot(self):
+        return list(self._handles)
+
+
+def test_fleet_teardown_pop_is_identity_checked_not_blind(tmp_path):
+    """Review fix (Task 1): `run_reply`'s `finally` teardown must delete
+    ONLY the `_fleet_services` entry it itself published, never whatever
+    happens to be at that key.
+
+    Concretely reachable path this pins against: Stop a hung run (`stop_
+    active_run` -> `_mark_stream_stopped` sets the session STOPPED, and
+    `console_chat_models.is_send_allowed` immediately permits a new Send
+    from STOPPED) -> the user resends on the SAME conversation while the
+    first (hung) run's own `run_reply` is still stuck -- `asyncio.
+    to_thread` does not interrupt a stuck synchronous call, per this
+    file's/`console_chat_controller.py`'s own comments -- so run B
+    publishes its OWN service over run A's entry in `_fleet_services`
+    before A's `finally` ever runs. Unlike `self._live`/`self.
+    _historical_cache` (overwrite-only: a stray late write there is just
+    transient staleness the NEXT write silently corrects), this dict's
+    teardown DELETES -- so a blind `.pop(conversation_id, None)` at that
+    point would delete B's still-live entry instead of A's stale one, and
+    nothing ever re-publishes it: `fleet_snapshot` would report `[]` for
+    a conversation with a genuinely running fleet, permanently.
+
+    Simulates the interleaving directly against `_fleet_services` (rather
+    than driving two overlapping `run_reply` threads, which is what the
+    scenario above actually looks like end-to-end but is unnecessary
+    complexity to pin this one dict operation) and asserts B's live
+    handle survives A's late, stale teardown call.
+    """
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=None)
+
+    live_handle = FleetHandle(
+        handle_id="h-b",
+        run_id="run-b",
+        agent=None,
+        task="still going",
+        status="running",
+    )
+    service_a = _FakeFleetService([])  # run A: hung, now stale
+    service_b = _FakeFleetService([live_handle])  # run B: the resend, live
+
+    # Run A publishes first -- exactly `run_reply`'s
+    # `self._fleet_services[conversation_id] = service` line.
+    bridge._fleet_services["conv-resend"] = service_a
+    # Run B resends on the SAME conversation id and publishes its OWN
+    # service over A's entry, before A's hung `run_reply` ever reaches
+    # its own teardown.
+    bridge._fleet_services["conv-resend"] = service_b
+
+    # A's own orphaned `finally` now runs -- with A's OWN `service`
+    # object, never B's, exactly what `run_reply`'s `finally` closes over.
+    bridge._teardown_fleet_service("conv-resend", service_a)
+
+    # B's still-live entry must have survived A's late, stale teardown --
+    # not silently deleted by a blind pop-by-key.
+    assert bridge.fleet_snapshot("conv-resend") == [live_handle]
+    assert bridge._fleet_services.get("conv-resend") is service_b
+
+    # And B's OWN (later) teardown still works normally.
+    bridge._teardown_fleet_service("conv-resend", service_b)
+    assert bridge.fleet_snapshot("conv-resend") == []

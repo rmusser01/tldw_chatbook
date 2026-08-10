@@ -2478,3 +2478,18 @@ class AgentService:
         )
         self.run_log_writer.close()
         return run_id, outcome
+
+    def fleet_snapshot(self) -> list[FleetHandle]:
+        """Read-only view of THIS service's live fleet, if any.
+
+        PR2b Task 1 review fix: a small public seam so a caller outside
+        this module (`ConsoleAgentBridge.fleet_snapshot`) doesn't have to
+        reach into the private `self._fleet` attribute directly. Degrades
+        to `[]` when there is no coordinator -- either `run_turn` hasn't
+        been called yet, or it has and `[agents] max_live_subagents <= 1`
+        turned the fleet off for this run -- exactly `_fleet`'s own two
+        "no fleet" states, collapsed into one return here rather than
+        pushed onto every caller.
+        """
+        fleet = self._fleet
+        return fleet.snapshot() if fleet is not None else []

@@ -1548,10 +1548,11 @@ class ConsoleAgentBridge:
         # `FleetCoordinator` on `service._fleet` as literally its first
         # act, and does not return until every fleet child has settled --
         # so a reader here always sees either "no coordinator (yet or at
-        # all)" or the real, in-flight one. `fleet_snapshot` reads
-        # `service._fleet` fresh on every call rather than caching it,
-        # since the attribute itself is set once per `run_turn` but this
-        # dict entry spans the whole call.
+        # all)" or the real, in-flight one. `fleet_snapshot` delegates to
+        # `AgentService.fleet_snapshot()`, which reads `self._fleet` fresh
+        # on every call rather than caching it, since that attribute is
+        # set once per `run_turn` but this dict entry spans the whole
+        # call.
         #
         # Thread-safety: written here on the run's own worker thread,
         # read from the UI thread by `fleet_snapshot` -- no lock. Same
@@ -1566,6 +1567,34 @@ class ConsoleAgentBridge:
         # GIL-atomic), and `FleetCoordinator.snapshot()` is separately
         # lock-guarded for its own multi-field reads -- so no additional
         # lock is needed on top of either.
+        #
+        # BUT: unlike `_live`/`_historical_cache`, this dict's `run_reply`
+        # teardown DELETES a key, not just overwrites it -- and that makes
+        # it a genuinely different case, not just "the same pattern with
+        # one more dict". `_live`/`_historical_cache` are overwrite-ONLY:
+        # a stray late write from an orphaned run is at worst transient
+        # staleness that the NEXT write silently corrects. A delete has no
+        # such self-healing write coming -- popping the wrong entry is
+        # permanent until some other run happens to start on that same
+        # conversation id. And "the wrong entry" is concretely reachable
+        # here, not hypothetical: a Stop on a hung run
+        # (`stop_active_run`/`_mark_stream_stopped`) sets the session to
+        # STOPPED, which `console_chat_models.is_send_allowed` immediately
+        # permits a new Send from, while the *hung* run's own
+        # `asyncio.to_thread`-wrapped `run_reply` call (see
+        # `console_chat_controller.py`'s own comments on why a stuck
+        # provider call survives cancellation) can still be sitting in
+        # this exact `finally` block, minutes later, well after a second
+        # run for the SAME conversation id has already published its own
+        # entry here. A blind `.pop(conversation_id, None)` at that point
+        # deletes the SECOND run's live entry, not the first's stale one
+        # -- `fleet_snapshot` then reports `[]` for a conversation with a
+        # genuinely running fleet, permanently (nothing else ever
+        # re-publishes it). The `finally` block's pop is therefore
+        # identity-checked (`is`, not `==`) against the specific `service`
+        # object THIS `run_reply` call published, not a blind pop by key
+        # -- see that `finally` block's own comment and
+        # `test_fleet_teardown_pop_is_identity_checked_not_blind`.
         self._fleet_services: dict[str, AgentService] = {}
 
     def native_tool_schemas(self) -> list[dict[str, Any]]:
@@ -2292,12 +2321,14 @@ class ConsoleAgentBridge:
             # PR2b Task 1: clear the published service in the SAME
             # teardown path that already tears this run down -- not a
             # second one. From this point `fleet_snapshot` reverts to `[]`
-            # for this conversation, even on a raised/cancelled run (this
-            # `finally` always runs). Pinned choice: a completed run's
-            # snapshot goes back to `[]`, not the run's terminal handles
-            # (see `test_fleet_snapshot_reflects_two_live_handles_in_
-            # flight_then_empty_after_run_completes`).
-            self._fleet_services.pop(conversation_id, None)
+            # for this conversation (unless a newer run has already
+            # published over this one -- see `_teardown_fleet_service`),
+            # even on a raised/cancelled run (this `finally` always runs).
+            # Pinned choice: a completed run's snapshot goes back to `[]`,
+            # not the run's terminal handles (see
+            # `test_fleet_snapshot_reflects_two_live_handles_in_flight_
+            # then_empty_after_run_completes`).
+            self._teardown_fleet_service(conversation_id, service)
             # PR2a Task 6.5: stop the driver thread before closing, and
             # join it -- `close()` on a still-running loop raises, and a
             # loop closed out from under its own thread is undefined. By
@@ -2401,6 +2432,46 @@ class ConsoleAgentBridge:
         self._historical_cache.pop(conversation_id, None)
         return run_id, outcome
 
+    def _teardown_fleet_service(
+        self, conversation_id: str, service: AgentService
+    ) -> None:
+        """Undo the ``self._fleet_services[conversation_id] = service``
+        publish from the top of this ``run_reply`` call -- called from its
+        ``finally`` block, always, on every terminal path.
+
+        Review fix (identity-checked, not a blind pop by key): a run for
+        THIS ``conversation_id`` can start again before this call runs --
+        ``stop_active_run`` -> ``_mark_stream_stopped`` sets the session
+        STOPPED, which ``console_chat_models.is_send_allowed`` immediately
+        permits a new Send from, while this class's own ``asyncio.
+        to_thread``-wrapped ``run_reply`` (see ``console_chat_controller.
+        py``'s own comments on why a hung provider call survives
+        cancellation) can still be sitting here, mid-teardown, well after
+        a second run for the same conversation id has already published
+        its OWN service under this key. A blind ``self._fleet_services.
+        pop(conversation_id, None)`` would then delete THAT second run's
+        live entry instead of this (stale) one, leaving ``fleet_snapshot``
+        permanently reporting ``[]`` for a genuinely running fleet --
+        nothing else ever re-publishes it. Popping only when the stored
+        value IS this call's own ``service`` object (identity, not
+        equality) makes the delete target "the entry THIS call published,"
+        never "whatever happens to be at the key" -- see
+        ``test_fleet_teardown_pop_is_identity_checked_not_blind``.
+
+        Unlike a single blind pop, this is two separate atomic dict
+        operations (``.get`` then, only on a match, ``.pop``) rather than
+        one -- the no-lock reasoning on ``self._fleet_services`` (see its
+        own docstring in ``__init__``) still applies to each operation
+        individually; it does not claim the two together are atomic as a
+        pair. The gap between them is a handful of bytecode instructions
+        with no I/O or function call in between, so closing it fully would
+        need a lock for a window this narrow only a contrived test could
+        ever hit -- not the concretely reachable (stop-then-resend) race
+        this fix targets.
+        """
+        if self._fleet_services.get(conversation_id) is service:
+            self._fleet_services.pop(conversation_id, None)
+
     # -- rail reads -----------------------------------------------------
 
     def live_snapshot(self, conversation_id: str) -> AgentLiveSnapshot:
@@ -2422,20 +2493,24 @@ class ConsoleAgentBridge:
         currently published (never run, no run in flight right now, the
         run's own fleet is off at ``[agents] max_live_subagents <= 1``, or
         the published run simply hasn't spawned anything yet). Returns
-        copies (``FleetCoordinator.snapshot()``'s own contract): the
-        coordinator itself is never exposed, so a caller can read but never
-        mutate live fleet state -- confirmed by
+        copies (``FleetCoordinator.snapshot()``'s own contract, via
+        ``AgentService.fleet_snapshot()``): the coordinator itself is never
+        exposed, so a caller can read but never mutate live fleet state --
+        confirmed by
         ``test_fleet_snapshot_reflects_two_live_handles_in_flight_then_
         empty_after_run_completes``, which mutates a returned handle and
         asserts the change never reaches a second read.
+
+        Review fix: delegates to ``AgentService.fleet_snapshot()`` rather
+        than reading the private ``service._fleet`` attribute directly --
+        that seam is the only thing this method (or any other caller
+        outside ``agent_service.py``) touches on ``AgentService`` for this
+        purpose.
         """
         service = self._fleet_services.get(conversation_id)
         if service is None:
             return []
-        coordinator = service._fleet
-        if coordinator is None:
-            return []
-        return coordinator.snapshot()
+        return service.fleet_snapshot()
 
     def historical_snapshot(self, conversation_id: str) -> AgentLiveSnapshot:
         """Rail summary derived from ``AgentRunsDB`` for a conversation this
