@@ -1243,41 +1243,32 @@ async def test_external_transient_sibling_unlink_failure_still_reports_saved(
         actions=["save_external", target, "discard"], video_store=object()
     )
     real_unlink = os.unlink
-    real_cleanup_identity = ChatScreen._external_video_cleanup_identity
     sibling_unlinks = 0
-    cleanup_identity_calls = 0
-
-    def track_cleanup_identity(metadata):
-        nonlocal cleanup_identity_calls
-        cleanup_identity_calls += 1
-        return real_cleanup_identity(metadata)
+    logged: list[str] = []
 
     def fail_first_sibling_unlink(path, *args, **kwargs):
         nonlocal sibling_unlinks
         if str(path).startswith(".") and str(path).endswith(".tmp"):
             sibling_unlinks += 1
-            if cleanup_identity_calls < 2:
+            if sibling_unlinks == 1:
                 raise OSError("PRIVATE-TRANSIENT-UNLINK")
         return real_unlink(path, *args, **kwargs)
 
-    monkeypatch.setattr(
-        ChatScreen,
-        "_external_video_cleanup_identity",
-        staticmethod(track_cleanup_identity),
-    )
     monkeypatch.setattr(os, "unlink", fail_first_sibling_unlink)
     monkeypatch.setattr(
         os,
         "supports_dir_fd",
         set(os.supports_dir_fd) | {fail_first_sibling_unlink},
     )
+    sink_id = __import__("loguru").logger.add(logged.append, format="{message}")
+    try:
+        await harness._resolve_generated_video_outcome(
+            artifact, session_id="session", message_id=artifact.message_id
+        )
+    finally:
+        __import__("loguru").logger.remove(sink_id)
 
-    await harness._resolve_generated_video_outcome(
-        artifact, session_id="session", message_id=artifact.message_id
-    )
-
-    assert cleanup_identity_calls == 2
-    assert sibling_unlinks == 1
+    assert sibling_unlinks == 2
     assert target.read_bytes() == b"committed external bytes"
     assert not list(tmp_path.glob(".*.tmp"))
     assert len(harness.waited_screens) == 2
@@ -1287,6 +1278,8 @@ async def test_external_transient_sibling_unlink_failure_still_reports_saved(
     assert harness.notifications == []
     assert artifact.stream.closed
     assert cast(_TrackingStream, artifact.stream).close_calls == 1
+    assert all("external_stage_cleanup" not in message for message in logged)
+    assert all("PRIVATE-TRANSIENT-UNLINK" not in message for message in logged)
 
 
 @pytest.mark.asyncio
@@ -1323,7 +1316,7 @@ async def test_external_ultimate_sibling_unlink_failure_keeps_saved_outcome(
     finally:
         __import__("loguru").logger.remove(sink_id)
 
-    assert sibling_unlinks >= 1
+    assert sibling_unlinks == 2
     assert target.read_bytes() == b"committed despite cleanup"
     assert len(list(tmp_path.glob(".*.tmp"))) == 1
     assert len(harness.waited_screens) == 2
@@ -1333,8 +1326,11 @@ async def test_external_ultimate_sibling_unlink_failure_keeps_saved_outcome(
     assert harness.notifications == []
     assert artifact.stream.closed
     assert cast(_TrackingStream, artifact.stream).close_calls == 1
-    assert any("external_stage_cleanup" in message for message in logged)
-    assert any("OSError" in message for message in logged)
+    cleanup_logs = [
+        message for message in logged if "external_stage_cleanup" in message
+    ]
+    assert len(cleanup_logs) == 1
+    assert "OSError" in cleanup_logs[0]
     assert all("PRIVATE-ULTIMATE-UNLINK" not in message for message in logged)
 
 
