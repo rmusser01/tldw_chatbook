@@ -30,6 +30,7 @@ from tldw_chatbook.TTS.adapter_types import (
     ProviderHealth,
     TTSAudioResponse,
     TTSModelInfo,
+    TTSOperationError,
     TTSProviderCatalog,
     TTSProviderDescriptor,
     TTSProviderSpec,
@@ -74,6 +75,20 @@ _WAV_CHUNKS = (
     b"\x44\xac\x00\x00\x88\x58\x01\x00\x02\x00\x10\x00data\x40\x00\x00\x00"
     + bytes((i * 7 + 3) % 256 for i in range(64)),
 )
+
+
+def test_cleanup_failure_uses_non_retrying_console_recovery_copy() -> None:
+    error = TTSOperationError(
+        code="cleanup_failed",
+        message="Managed audio.cpp cleanup did not complete",
+        retryable=False,
+        operation_id="audio_cpp_managed",
+        recovery_action="open_diagnostics",
+    )
+
+    assert TTSEventHandler._tts_error_copy(error) == (
+        "TTS cleanup did not complete; restart Chatbook before retrying"
+    )
 
 
 def _valid_wav_body(

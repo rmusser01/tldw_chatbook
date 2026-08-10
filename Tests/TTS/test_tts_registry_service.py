@@ -1911,16 +1911,47 @@ def test_audio_cpp_provider_spec_owns_its_effective_configuration() -> None:
     from tldw_chatbook.TTS.adapter_bootstrap import audio_cpp_provider_spec
 
     raw_config = {
+        "mode": "managed",
         "base_url": "https://snapshot.example.test",
+        "managed_setup_source": "guided",
+        "guided_binary_path": "/opt/audio.cpp/audiocpp_server",
+        "guided_packages": [
+            {
+                "package_uuid": "d3f6d610-6fd9-4cde-9ea7-cc5175ca445b",
+                "recipe_id": "audio-cpp-0.5.1.supertonic.supertonic_3_orig",
+                "recipe_revision": 1,
+                "package_variant": "supertonic_3_orig",
+                "public_model_id": "supertonic-3-orig",
+                "canonical_root": "/models/Supertonic-3-GGUF",
+                "canonical_root_identity": "1" * 64,
+                "configuration_identity": "2" * 64,
+                "weight_identity": "3" * 64,
+                "projection": {
+                    "family": "supertonic",
+                    "task": "tts",
+                    "mode": "offline",
+                    "model_relative_path": "supertonic-3-orig.gguf",
+                },
+            }
+        ],
+        "guided_default_model_id": "supertonic-3-orig",
         "max_input_characters": 123,
     }
     source = {"COMPREHENSIVE_CONFIG_RAW": {"app_tts": {"audio_cpp": raw_config}}}
 
     spec = audio_cpp_provider_spec(source)
     raw_config["base_url"] = "https://mutated.example.test"
+    raw_config["guided_packages"][0]["public_model_id"] = "mutated"
     raw_config["max_input_characters"] = 999
 
     assert spec.initial_config["base_url"] == "https://snapshot.example.test"
+    assert spec.initial_config["managed_setup_source"] == "guided"
+    assert spec.initial_config["guided_binary_path"] == (
+        "/opt/audio.cpp/audiocpp_server"
+    )
+    assert spec.initial_config["guided_packages"][0]["public_model_id"] == (
+        "supertonic-3-orig"
+    )
     assert spec.initial_config["max_input_characters"] == 123
 
 
@@ -1963,7 +1994,10 @@ def test_audio_cpp_factory_reconstructs_and_validates_immutable_config(
 
     assert isinstance(adapter, FakeAudioCppAdapter)
     assert len(captured) == 1
-    assert captured[0].to_mapping() == dict(spec.initial_config)
+    assert (
+        captured[0].to_mapping()
+        == AudioCppConfig.from_mapping(spec.initial_config).to_mapping()
+    )
 
 
 @pytest.mark.asyncio

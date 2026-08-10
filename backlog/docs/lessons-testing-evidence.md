@@ -1954,3 +1954,24 @@ under the governing ADR, extend the guard for newly observed syntax such as
 dynamic `exception=` values, stdlib exception/stack capture, chained
 `bind(...)` fields, and direct keyword-format values, then regenerate. Passing
 the generator proves consistency, not policy compliance.
+
+---
+
+## An aggregate scanner label must not erase an explicitly accepted candidate identity (TASK-13201, 2026-08-09)
+
+**What happened.** Guided audio.cpp launch tests placed Supertonic and PocketTTS
+in separate temporary roots, so each rescan returned discovery state `exact`.
+The real user package directory held both reviewed GGUF files. The scanner
+correctly returned one `ambiguous` discovery containing two exact candidates,
+and both candidates had been explicitly accepted with their recipe, root,
+configuration, and weight identities. Launch revalidation nevertheless required
+the aggregate discovery state to be `exact`, so it rejected the otherwise
+unchanged two-model setup before creating the generated configuration.
+
+**What to do.** Keep unresolved discovery ambiguity and accepted-candidate
+identity as separate concepts. Never silently choose from an ambiguous result,
+but once the user has explicitly accepted a candidate, revalidate that exact
+candidate and require one matching identity; do not reapply the aggregate label
+as if no choice had been made. Multi-model integration fixtures must include the
+common real layout where several supported packages share one selected root,
+not only the tidier one-directory-per-model arrangement.

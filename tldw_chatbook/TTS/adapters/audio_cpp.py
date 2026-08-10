@@ -31,8 +31,17 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSVoiceDiscoveryResult,
 )
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
+from tldw_chatbook.TTS.audio_cpp_guided_config import (
+    AudioCppManagedSetupSource,
+    AudioCppSettingsConfig,
+)
+from tldw_chatbook.TTS.audio_cpp_guided_launch import (
+    AudioCppGuidedLaunchError,
+    materialize_audio_cpp_guided_launch,
+)
 from tldw_chatbook.TTS.audio_cpp_contract import (
     AudioCppContractError,
+    AudioCppModel,
     Pcm16WavInfo,
     TimingMetadata,
     parse_health_response,
@@ -43,6 +52,7 @@ from tldw_chatbook.TTS.audio_cpp_contract import (
     validate_pcm16_wav,
 )
 from tldw_chatbook.TTS.audio_cpp_managed_config import (
+    AudioCppExpectedModel,
     AudioCppManagedLaunchConfig,
     validate_audio_cpp_managed_launch,
 )
@@ -199,6 +209,18 @@ _MANAGED_CONFIGURATION_INVALID = _OperationFailure(
     retryable=False,
     recovery_action="open_settings",
 )
+_MANAGED_PORT_UNAVAILABLE = _OperationFailure(
+    code="port_in_use",
+    message="A private audio.cpp loopback port is unavailable",
+    retryable=True,
+    recovery_action="retry",
+)
+_MANAGED_ARTIFACT_FAILURE = _OperationFailure(
+    code="process_spawn_failed",
+    message="The audio.cpp server could not be started",
+    retryable=True,
+    recovery_action="retry",
+)
 _MANAGED_CLEANUP_FAILURE_MESSAGE = "audio.cpp generation cleanup failed"
 
 
@@ -223,6 +245,7 @@ class _ManagedGenerationBundle:
     process_generation: int
     request_client: httpx.AsyncClient
     health_client: httpx.AsyncClient
+    expected_models: tuple[AudioCppExpectedModel, ...] = ()
     cleanup_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     request_client_closed: bool = False
     health_client_closed: bool = False
@@ -309,6 +332,7 @@ class AudioCppAdapter:
         config: Validated immutable audio.cpp configuration.
         transport: Optional fake HTTP transport for deterministic tests.
         supervisor: App-scoped managed process owner. External mode ignores it.
+        guided_settings: Complete structured Managed settings for lazy launch.
     """
 
     def __init__(
@@ -317,8 +341,10 @@ class AudioCppAdapter:
         *,
         transport: httpx.AsyncBaseTransport | None = None,
         supervisor: AudioCppSupervisor | None = None,
+        guided_settings: AudioCppSettingsConfig | None = None,
     ) -> None:
         self._config = config
+        self._guided_settings = guided_settings
         self._transport = transport
         self._supervisor = supervisor
         self._client: httpx.AsyncClient | None = (
@@ -328,6 +354,7 @@ class AudioCppAdapter:
         )
         self._managed_bundle: _ManagedGenerationBundle | None = None
         self._managed_launch: AudioCppManagedLaunchConfig | None = None
+        self._managed_preparation_lock = asyncio.Lock()
         self._managed_process_generation: int | None = None
         self._managed_catalog_process_generation: int | None = None
         self._managed_catalog_observation_version: int | None = None
@@ -936,6 +963,7 @@ class AudioCppAdapter:
                 ),
                 process_generation=endpoint.process_generation,
                 raise_on_failure=False,
+                expected_models=bundle.expected_models,
             )
             if (
                 capability in {"available", "not_configured"}
@@ -972,6 +1000,7 @@ class AudioCppAdapter:
         force: bool,
         process_generation: int | None,
         raise_on_failure: bool,
+        expected_models: tuple[AudioCppExpectedModel, ...] = (),
     ) -> AudioCppTTSCapability:
         started_generation = self._refresh_generation
         async with self._refresh_lock:
@@ -998,7 +1027,7 @@ class AudioCppAdapter:
             try:
                 async with asyncio.timeout(self._config.connect_timeout_seconds):
                     health_body = await self._safe_get("/health", client=client)
-                    parse_health_response(
+                    upstream_health = parse_health_response(
                         health_body,
                         max_metadata_bytes=self._config.max_metadata_bytes,
                         max_identifier_characters=(
@@ -1014,7 +1043,18 @@ class AudioCppAdapter:
                             self._config.max_identifier_characters
                         ),
                         max_models=self._config.max_catalog_models,
+                        require_speech_tasks=bool(expected_models),
                     )
+                    if expected_models and upstream_health.models != len(
+                        expected_models
+                    ):
+                        raise _HttpContractFailure
+                    generated_capabilities = self._generated_catalog_capabilities(
+                        upstream_models,
+                        expected_models,
+                    )
+                    if generated_capabilities is None:
+                        raise _HttpContractFailure
             except asyncio.CancelledError:
                 raise
             except (TimeoutError, _TransientHttpFailure):
@@ -1068,6 +1108,11 @@ class AudioCppAdapter:
                     formats=("wav",),
                     voices=(),
                     supports_speed=False,
+                    speech_capabilities=(
+                        (model.task,)
+                        if not expected_models
+                        else generated_capabilities[model.model_id]
+                    ),
                     supports_options=(),
                     omit_voice_uses_server_default=True,
                 )
@@ -1086,7 +1131,47 @@ class AudioCppAdapter:
             self._clear_voice_state()
             return "available" if models else "not_configured"
 
+    @staticmethod
+    def _generated_catalog_capabilities(
+        upstream_models: tuple[AudioCppModel, ...],
+        expected_models: tuple[AudioCppExpectedModel, ...],
+    ) -> dict[str, tuple[Literal["tts", "clone"], ...]] | None:
+        if not expected_models:
+            return {}
+        expected_by_id = {model.model_id: model for model in expected_models}
+        if (
+            len(expected_by_id) != len(expected_models)
+            or {model.model_id for model in upstream_models} != expected_by_id.keys()
+        ):
+            return None
+        capabilities: dict[str, tuple[Literal["tts", "clone"], ...]] = {}
+        for model in upstream_models:
+            expected = expected_by_id[model.model_id]
+            if (
+                model.family != expected.family
+                or model.task != expected.task
+                or model.mode != expected.mode
+            ):
+                return None
+            capabilities[model.model_id] = expected.speech_capabilities
+        return capabilities
+
     async def _ensure_managed_running(self) -> AudioCppReadyEndpoint:
+        if self._uses_guided_launch():
+            async with self._managed_preparation_lock:
+                return await self._ensure_managed_running_unlocked()
+        return await self._ensure_managed_running_unlocked()
+
+    def _uses_guided_launch(self) -> bool:
+        settings = self._guided_settings
+        return (
+            settings is not None
+            and self._config.mode == "managed"
+            and settings.mode == "managed"
+            and settings.managed_setup_source is AudioCppManagedSetupSource.GUIDED
+        )
+
+    async def _ensure_managed_running_unlocked(self) -> AudioCppReadyEndpoint:
         supervisor = self._supervisor
         if supervisor is None:
             raise self._operation_error(
@@ -1104,10 +1189,29 @@ class AudioCppAdapter:
         invalid_launch = False
         if not reuse_launch:
             self._managed_launch = None
-            try:
-                launch = validate_audio_cpp_managed_launch(self._config)
-            except (TypeError, ValueError):
-                invalid_launch = True
+            guided_failure: _OperationFailure | None = None
+            if self._uses_guided_launch():
+                settings = self._guided_settings
+                assert settings is not None
+                try:
+                    launch = await materialize_audio_cpp_guided_launch(settings)
+                except AudioCppGuidedLaunchError as error:
+                    if error.code == "port_unavailable":
+                        guided_failure = _MANAGED_PORT_UNAVAILABLE
+                    elif error.code == "artifact_create_failed":
+                        guided_failure = _MANAGED_ARTIFACT_FAILURE
+                    else:
+                        guided_failure = _MANAGED_CONFIGURATION_INVALID
+                if guided_failure is not None:
+                    raise self._operation_error(
+                        guided_failure,
+                        uuid4().hex,
+                    ) from None
+            else:
+                try:
+                    launch = validate_audio_cpp_managed_launch(self._config)
+                except (TypeError, ValueError):
+                    invalid_launch = True
             if not invalid_launch:
                 self._managed_launch = launch
         if invalid_launch:
@@ -1125,11 +1229,16 @@ class AudioCppAdapter:
                 process_generation,
             )
 
-        endpoint = await supervisor.ensure_running(
-            launch,
-            generation_hooks_factory=generation_hooks_factory,
-            require_existing=self._managed_required_admission.get(),
-        )
+        try:
+            endpoint = await supervisor.ensure_running(
+                launch,
+                generation_hooks_factory=generation_hooks_factory,
+                require_existing=self._managed_required_admission.get(),
+            )
+        except TTSOperationError:
+            if self._uses_guided_launch():
+                self._managed_launch = None
+            raise
         bundle = self._managed_bundle
         if bundle is None or bundle.process_generation != endpoint.process_generation:
             raise self._operation_error(
@@ -1168,6 +1277,7 @@ class AudioCppAdapter:
             process_generation=process_generation,
             request_client=request_client,
             health_client=health_client,
+            expected_models=launch.expected_models,
         )
         previous = self._managed_bundle
         if previous is not None and previous.process_generation != process_generation:
@@ -1203,6 +1313,7 @@ class AudioCppAdapter:
                 force=True,
                 process_generation=process_generation,
                 raise_on_failure=True,
+                expected_models=launch.expected_models,
             )
 
         def generation_invalidate() -> None:

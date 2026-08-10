@@ -13,6 +13,7 @@ import httpx
 import pytest
 
 from Tests.TTS.fixtures.fake_audiocpp_server import write_executable_wrapper
+from tldw_chatbook.TTS.adapters import audio_cpp as audio_cpp_adapter_module
 from tldw_chatbook.TTS import audio_cpp_supervisor as supervisor_module
 from tldw_chatbook.TTS.adapter_registry import TTSAdapterRegistry
 from tldw_chatbook.TTS._async_lifecycle import current_shutdown_deadline
@@ -27,6 +28,13 @@ from tldw_chatbook.TTS.adapter_types import (
 )
 from tldw_chatbook.TTS.adapters.audio_cpp import AudioCppAdapter
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
+from tldw_chatbook.TTS.audio_cpp_guided_config import AudioCppSettingsConfig
+from tldw_chatbook.TTS.audio_cpp_package_scanner import (
+    scan_audio_cpp_package_root,
+)
+from tldw_chatbook.TTS.audio_cpp_guided_launch import (
+    materialize_audio_cpp_guided_launch,
+)
 from tldw_chatbook.TTS.audio_cpp_supervisor import (
     AudioCppGenerationHooks,
     AudioCppProcessAdmissionSnapshot,
@@ -308,10 +316,12 @@ class _LifecycleProcess:
         self.stderr = _LifecycleReader()
         self.terminate_calls = 0
         self.kill_calls = 0
+        self.wait_calls = 0
         self._exit_on_terminate = exit_on_terminate
         self._exited = asyncio.Event()
 
     async def wait(self) -> int:
+        self.wait_calls += 1
         await self._exited.wait()
         assert self.returncode is not None
         return self.returncode
@@ -395,6 +405,95 @@ def _managed_config(tmp_path: Path, label: str, port: int) -> dict[str, Any]:
     ).to_mapping()
 
 
+def _guided_settings(
+    tmp_path: Path,
+    *,
+    filename: str = "supertonic-3-orig.gguf",
+    package_variant: str = "supertonic_3_orig",
+    public_model_id: str = "model",
+) -> AudioCppSettingsConfig:
+    accepted = _accepted_guided_package(
+        tmp_path / "guided-model",
+        filename=filename,
+        package_variant=package_variant,
+        public_model_id=public_model_id,
+    )
+    binary = tmp_path / "audiocpp_server"
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    binary.chmod(0o700)
+    return AudioCppSettingsConfig.from_mapping(
+        {
+            "mode": "managed",
+            "managed_setup_source": "guided",
+            "guided_binary_path": str(binary),
+            "guided_packages": [accepted.model_dump(mode="json")],
+            "guided_default_model_id": public_model_id,
+        }
+    )
+
+
+def _accepted_guided_package(
+    root: Path,
+    *,
+    filename: str,
+    package_variant: str,
+    public_model_id: str,
+) -> Any:
+    root.mkdir(parents=True)
+    (root / filename).write_bytes(b"GGUF" + (3).to_bytes(4, "little"))
+    scan = scan_audio_cpp_package_root(root)
+    candidates = tuple(
+        candidate
+        for discovery in scan.discoveries
+        for candidate in discovery.match.candidates
+        if candidate.recipe.package_variant == package_variant
+    )
+    assert len(candidates) == 1
+    return candidates[0].accept(public_model_id=public_model_id)
+
+
+def _guided_handler(request: httpx.Request) -> httpx.Response:
+    if request.url.path == "/health":
+        return _response(b'{"status":"ok","backend":"cpu","models":1}')
+    if request.url.path == "/v1/models":
+        return _response(
+            b'{"object":"list","data":[{"id":"model","object":"model",'
+            b'"owned_by":"engine","family":"supertonic","task":"tts",'
+            b'"mode":"offline"}]}'
+        )
+    raise AssertionError(f"unexpected path: {request.url.path}")
+
+
+def _guided_models_handler(
+    models: list[dict[str, str]],
+) -> Callable[[httpx.Request], httpx.Response]:
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return _response(
+                json.dumps(
+                    {"status": "ok", "backend": "cpu", "models": len(models)}
+                ).encode()
+            )
+        if request.url.path == "/v1/models":
+            return _response(json.dumps({"object": "list", "data": models}).encode())
+        raise AssertionError(f"unexpected path: {request.url.path}")
+
+    return respond
+
+
+def _upstream_model(**updates: str) -> dict[str, str]:
+    model = {
+        "id": "model",
+        "object": "model",
+        "owned_by": "engine",
+        "family": "supertonic",
+        "task": "tts",
+        "mode": "offline",
+    }
+    model.update(updates)
+    return model
+
+
 def _preferences() -> TTSPreferencesSnapshot:
     return TTSPreferencesSnapshot(
         provider_id="audio_cpp",
@@ -419,18 +518,29 @@ def _request() -> TTSRequest:
 
 def _service(
     initial_config: Mapping[str, Any],
-    supervisor: _PreparationSupervisor,
+    supervisor: Any,
     *,
     shutdown_timeout_seconds: float = 10.0,
-    transport_handler: Callable[[httpx.Request], httpx.Response] = _handler,
+    transport_handler: Callable[[httpx.Request], httpx.Response] | None = _handler,
 ) -> tuple[TTSService, list[dict[str, Any]]]:
     factory_configs: list[dict[str, Any]] = []
 
     def factory(config: Mapping[str, Any]) -> AudioCppAdapter:
         factory_configs.append(dict(config))
+        settings = AudioCppSettingsConfig.from_mapping(config)
         return AudioCppAdapter(
             AudioCppConfig.from_mapping(config),
-            transport=httpx.MockTransport(transport_handler),
+            guided_settings=(
+                settings
+                if settings.mode == "managed"
+                and settings.managed_setup_source.value == "guided"
+                else None
+            ),
+            transport=(
+                httpx.MockTransport(transport_handler)
+                if transport_handler is not None
+                else None
+            ),
             supervisor=supervisor,  # type: ignore[arg-type]
         )
 
@@ -1025,6 +1135,334 @@ async def test_concurrent_preparation_applies_one_latest_generation(
     finally:
         await service.close()
         await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_guided_first_use_materializes_and_launches_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _guided_settings(tmp_path)
+    runtime_root = tmp_path / "guided-runtime"
+    materialize_calls = 0
+
+    async def deterministic_materialize(current: AudioCppSettingsConfig):
+        nonlocal materialize_calls
+        materialize_calls += 1
+        return await materialize_audio_cpp_guided_launch(
+            current,
+            artifact_root=runtime_root,
+            port_selector=lambda: 54_330,
+            system="darwin",
+            architecture="arm64",
+        )
+
+    monkeypatch.setattr(
+        audio_cpp_adapter_module,
+        "materialize_audio_cpp_guided_launch",
+        deterministic_materialize,
+    )
+    process = _LifecycleProcess()
+    launcher = _LifecycleLauncher([process])
+    supervisor = AudioCppSupervisor(
+        source_environment={},
+        process_launcher=launcher,
+        port_preflight=_available_port,
+    )
+    adapter = AudioCppAdapter(
+        AudioCppConfig.from_mapping(settings.to_mapping()),
+        guided_settings=settings,
+        transport=httpx.MockTransport(_guided_handler),
+        supervisor=supervisor,
+    )
+
+    try:
+        catalogs = await asyncio.gather(
+            adapter.get_catalog(refresh=True),
+            adapter.get_catalog(refresh=True),
+        )
+
+        assert materialize_calls == 1
+        assert launcher.calls == 1
+        assert all(catalog.models[0].model_id == "model" for catalog in catalogs)
+        assert catalogs[0].models[0].speech_capabilities == ("tts",)
+    finally:
+        await adapter.close()
+        await supervisor.close()
+        await supervisor.wait_closed()
+
+    assert process.wait_calls == 1
+    assert runtime_root.exists()
+    assert tuple(runtime_root.iterdir()) == ()
+
+
+@pytest.mark.asyncio
+async def test_guided_catalog_preserves_recipe_declared_clone_capability(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _guided_settings(
+        tmp_path,
+        filename="pocket-tts-english-q8_0.gguf",
+        package_variant="pocket_tts_english_q8_0",
+    )
+    runtime_root = tmp_path / "guided-runtime"
+
+    async def deterministic_materialize(current: AudioCppSettingsConfig):
+        return await materialize_audio_cpp_guided_launch(
+            current,
+            artifact_root=runtime_root,
+            port_selector=lambda: 54_331,
+            system="darwin",
+            architecture="arm64",
+        )
+
+    monkeypatch.setattr(
+        audio_cpp_adapter_module,
+        "materialize_audio_cpp_guided_launch",
+        deterministic_materialize,
+    )
+    process = _LifecycleProcess()
+    supervisor = AudioCppSupervisor(
+        source_environment={},
+        process_launcher=_LifecycleLauncher([process]),
+        port_preflight=_available_port,
+    )
+    adapter = AudioCppAdapter(
+        AudioCppConfig.from_mapping(settings.to_mapping()),
+        guided_settings=settings,
+        transport=httpx.MockTransport(
+            _guided_models_handler([_upstream_model(family="pocket_tts")])
+        ),
+        supervisor=supervisor,
+    )
+
+    try:
+        catalog = await adapter.get_catalog(refresh=True)
+
+        assert catalog.models[0].speech_capabilities == ("tts", "clone")
+    finally:
+        await adapter.close()
+        await supervisor.close()
+        await supervisor.wait_closed()
+
+    assert process.wait_calls == 1
+    assert tuple(runtime_root.iterdir()) == ()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "models",
+    [
+        [],
+        [_upstream_model(), _upstream_model(id="unexpected")],
+        [_upstream_model(family="pocket_tts")],
+        [_upstream_model(task="clone")],
+        [_upstream_model(mode="online")],
+        [_upstream_model(), _upstream_model(id="asr", task="asr")],
+    ],
+    ids=(
+        "missing",
+        "extra-speech",
+        "wrong-family",
+        "wrong-task",
+        "wrong-mode",
+        "extra-non-speech",
+    ),
+)
+async def test_guided_catalog_requires_exact_generated_model_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    models: list[dict[str, str]],
+) -> None:
+    settings = _guided_settings(tmp_path)
+    runtime_root = tmp_path / "guided-runtime"
+
+    async def deterministic_materialize(current: AudioCppSettingsConfig):
+        return await materialize_audio_cpp_guided_launch(
+            current,
+            artifact_root=runtime_root,
+            port_selector=lambda: 54_332,
+            system="darwin",
+            architecture="arm64",
+        )
+
+    monkeypatch.setattr(
+        audio_cpp_adapter_module,
+        "materialize_audio_cpp_guided_launch",
+        deterministic_materialize,
+    )
+    process = _LifecycleProcess()
+    supervisor = AudioCppSupervisor(
+        source_environment={},
+        process_launcher=_LifecycleLauncher([process]),
+        port_preflight=_available_port,
+    )
+    adapter = AudioCppAdapter(
+        AudioCppConfig.from_mapping(settings.to_mapping()),
+        guided_settings=settings,
+        transport=httpx.MockTransport(_guided_models_handler(models)),
+        supervisor=supervisor,
+    )
+
+    try:
+        with pytest.raises(TTSOperationError) as caught:
+            await adapter.get_catalog(refresh=True)
+
+        assert caught.value.code == "contract_incompatible"
+        assert caught.value.__cause__ is None
+        assert caught.value.__context__ is None
+    finally:
+        await adapter.close()
+        await supervisor.close()
+        await supervisor.wait_closed()
+
+    assert process.wait_calls == 1
+    assert runtime_root.exists()
+    assert tuple(runtime_root.iterdir()) == ()
+
+
+@pytest.mark.asyncio
+async def test_running_guided_generation_keeps_snapshot_and_next_start_revalidates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _guided_settings(tmp_path)
+    runtime_root = tmp_path / "guided-runtime"
+    materialize_calls = 0
+
+    async def deterministic_materialize(current: AudioCppSettingsConfig):
+        nonlocal materialize_calls
+        materialize_calls += 1
+        return await materialize_audio_cpp_guided_launch(
+            current,
+            artifact_root=runtime_root,
+            port_selector=lambda: 54_333,
+            system="darwin",
+            architecture="arm64",
+        )
+
+    monkeypatch.setattr(
+        audio_cpp_adapter_module,
+        "materialize_audio_cpp_guided_launch",
+        deterministic_materialize,
+    )
+    process = _LifecycleProcess()
+    launcher = _LifecycleLauncher([process])
+    supervisor = AudioCppSupervisor(
+        source_environment={},
+        process_launcher=launcher,
+        port_preflight=_available_port,
+    )
+    adapter = AudioCppAdapter(
+        AudioCppConfig.from_mapping(settings.to_mapping()),
+        guided_settings=settings,
+        transport=httpx.MockTransport(_guided_handler),
+        supervisor=supervisor,
+    )
+
+    try:
+        await adapter.get_catalog(refresh=True)
+        model_path = (
+            Path(settings.guided_packages[0].canonical_root) / "supertonic-3-orig.gguf"
+        )
+        model_path.write_bytes(b"changed after launch")
+
+        still_running = await adapter.get_catalog(refresh=True)
+        assert still_running.models[0].model_id == "model"
+        assert materialize_calls == 1
+        assert launcher.calls == 1
+
+        await supervisor.stop()
+        with pytest.raises(TTSOperationError) as caught:
+            await adapter.get_catalog(refresh=True)
+
+        assert caught.value.code == "configuration_invalid"
+        assert caught.value.__cause__ is None
+        assert caught.value.__context__ is None
+        assert materialize_calls == 2
+        assert launcher.calls == 1
+    finally:
+        await adapter.close()
+        await supervisor.close()
+        await supervisor.wait_closed()
+
+    assert process.wait_calls == 1
+    assert runtime_root.exists()
+    assert tuple(runtime_root.iterdir()) == ()
+
+
+@pytest.mark.asyncio
+async def test_saved_guided_settings_stage_until_explicit_restart_replacement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_settings = _guided_settings(tmp_path / "first")
+    second_settings = _guided_settings(tmp_path / "second")
+    runtime_root = tmp_path / "guided-runtime"
+    materialized_roots: list[str] = []
+
+    async def deterministic_materialize(current: AudioCppSettingsConfig):
+        port = 54_340 + len(materialized_roots)
+        materialized_roots.append(current.guided_packages[0].canonical_root)
+        return await materialize_audio_cpp_guided_launch(
+            current,
+            artifact_root=runtime_root,
+            port_selector=lambda: port,
+            system="darwin",
+            architecture="arm64",
+        )
+
+    monkeypatch.setattr(
+        audio_cpp_adapter_module,
+        "materialize_audio_cpp_guided_launch",
+        deterministic_materialize,
+    )
+    first_process = _LifecycleProcess()
+    second_process = _LifecycleProcess()
+    launcher = _LifecycleLauncher([first_process, second_process])
+    supervisor = AudioCppSupervisor(
+        source_environment={},
+        process_launcher=launcher,
+        port_preflight=_available_port,
+    )
+    service, factory_configs = _service(
+        first_settings.to_mapping(),
+        supervisor,
+        transport_handler=_guided_handler,
+    )
+
+    try:
+        await service.start_and_test_audio_cpp()
+        assert len(materialized_roots) == 1
+        assert len(tuple(runtime_root.iterdir())) == 1
+
+        await _stage(service, second_settings.to_mapping(), generation=1)
+        assert len(materialized_roots) == 1
+        assert launcher.calls == 1
+        assert len(tuple(runtime_root.iterdir())) == 1
+
+        catalog = await service.restart_audio_cpp()
+
+        assert catalog is not None
+        assert catalog.models[0].model_id == "model"
+        assert materialized_roots == [
+            first_settings.guided_packages[0].canonical_root,
+            second_settings.guided_packages[0].canonical_root,
+        ]
+        assert launcher.calls == 2
+        assert first_process.wait_calls == 1
+        assert len(tuple(runtime_root.iterdir())) == 1
+        assert factory_configs == [
+            first_settings.to_mapping(),
+            second_settings.to_mapping(),
+        ]
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+    assert second_process.wait_calls == 1
+    assert tuple(runtime_root.iterdir()) == ()
 
 
 @pytest.mark.asyncio
@@ -2212,3 +2650,266 @@ async def test_real_child_argv_cwd_environment_readiness_and_cleanup(
     assert supervisor._generation is None
     assert supervisor._startup_task is None
     assert supervisor._stop_task is None
+
+
+@pytest.mark.asyncio
+async def test_real_child_uses_generated_multi_model_config_and_cleans_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if os.name != "posix":
+        pytest.skip("direct executable shebang wrappers require a POSIX host")
+    wrapper = write_executable_wrapper(tmp_path / "fake_audiocpp_server")
+    packages = [
+        _accepted_guided_package(
+            tmp_path / "models" / "supertonic",
+            filename="supertonic-3-orig.gguf",
+            package_variant="supertonic_3_orig",
+            public_model_id="narrator",
+        ),
+        _accepted_guided_package(
+            tmp_path / "models" / "pocket",
+            filename="pocket-tts-english-q8_0.gguf",
+            package_variant="pocket_tts_english_q8_0",
+            public_model_id="clone-voice",
+        ),
+    ]
+    settings = AudioCppSettingsConfig.from_mapping(
+        {
+            "mode": "managed",
+            "managed_setup_source": "guided",
+            "guided_binary_path": str(wrapper),
+            "guided_packages": [
+                package.model_dump(mode="json") for package in packages
+            ],
+            "guided_default_model_id": "narrator",
+            "managed_startup_timeout_seconds": 10.0,
+            "managed_health_check_interval_seconds": 2.0,
+            "managed_termination_grace_seconds": 0.1,
+        }
+    )
+    runtime_root = tmp_path / "generated"
+
+    async def deterministic_materialize(current: AudioCppSettingsConfig):
+        return await materialize_audio_cpp_guided_launch(
+            current,
+            artifact_root=runtime_root,
+        )
+
+    monkeypatch.setattr(
+        audio_cpp_adapter_module,
+        "materialize_audio_cpp_guided_launch",
+        deterministic_materialize,
+    )
+    launched: list[asyncio.subprocess.Process] = []
+    launches: list[Any] = []
+
+    async def capture_launch(launch: Any, environment: dict[str, str]) -> Any:
+        owned = await supervisor_module._default_process_launcher(
+            launch,
+            environment,
+        )
+        launches.append(launch)
+        launched.append(owned.process)
+        return owned
+
+    supervisor = AudioCppSupervisor(
+        source_environment={"PATH": os.environ.get("PATH", "")},
+        process_launcher=capture_launch,
+    )
+    adapter = AudioCppAdapter(
+        AudioCppConfig.from_mapping(settings.to_mapping()),
+        guided_settings=settings,
+        supervisor=supervisor,
+    )
+    artifact_directory: Path | None = None
+
+    try:
+        catalog = await adapter.get_catalog(refresh=True)
+        snapshot = supervisor.snapshot()
+        assert snapshot.endpoint is not None
+        artifact_directory = launches[0].working_directory
+        document = json.loads(launches[0].server_json_path.read_text())
+        async with httpx.AsyncClient(
+            base_url=snapshot.endpoint,
+            trust_env=False,
+            follow_redirects=False,
+            timeout=1.0,
+        ) as client:
+            state_response = await client.get("/test/state")
+            state_response.raise_for_status()
+            state = state_response.json()
+
+        response = await adapter.synthesize(
+            TTSRequest(
+                provider_id="audio_cpp",
+                model_id="narrator",
+                text="character roleplay response",
+                voice=None,
+                response_format="wav",
+            )
+        )
+        audio = [chunk async for chunk in response.byte_stream]
+        await response.aclose()
+
+        assert [model.model_id for model in catalog.models] == [
+            "narrator",
+            "clone-voice",
+        ]
+        assert [model.speech_capabilities for model in catalog.models] == [
+            ("tts",),
+            ("tts", "clone"),
+        ]
+        assert audio == [_wav()]
+        assert state["pid"] == launched[0].pid
+        assert state["argv"] == [
+            str(wrapper),
+            "--config",
+            str(launches[0].server_json_path),
+        ]
+        assert state["cwd"] == str(artifact_directory)
+        assert "test_behavior" not in document
+        assert len(tuple(runtime_root.iterdir())) == 1
+    finally:
+        try:
+            await adapter.close()
+        finally:
+            await supervisor.close()
+            await supervisor.wait_closed()
+            for process in launched:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+
+    assert len(launched) == 1
+    assert launched[0].returncode is not None
+    with pytest.raises(ProcessLookupError):
+        os.kill(launched[0].pid, 0)
+    assert artifact_directory is not None
+    assert not artifact_directory.exists()
+    assert runtime_root.exists()
+    assert tuple(runtime_root.iterdir()) == ()
+
+
+@pytest.mark.asyncio
+async def test_real_generated_child_replaces_recovers_and_leaves_no_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if os.name != "posix":
+        pytest.skip("direct executable shebang wrappers require a POSIX host")
+    wrapper = write_executable_wrapper(tmp_path / "fake_audiocpp_server")
+    first = _guided_settings(
+        tmp_path / "first",
+        public_model_id="first-model",
+    )
+    second = _guided_settings(
+        tmp_path / "second",
+        filename="pocket-tts-english-q8_0.gguf",
+        package_variant="pocket_tts_english_q8_0",
+        public_model_id="second-model",
+    )
+    first = AudioCppSettingsConfig.from_mapping(
+        {
+            **first.to_mapping(),
+            "guided_binary_path": str(wrapper),
+            "managed_startup_timeout_seconds": 10.0,
+            "managed_termination_grace_seconds": 0.1,
+        }
+    )
+    second = AudioCppSettingsConfig.from_mapping(
+        {
+            **second.to_mapping(),
+            "guided_binary_path": str(wrapper),
+            "managed_startup_timeout_seconds": 10.0,
+            "managed_termination_grace_seconds": 0.1,
+        }
+    )
+    runtime_root = tmp_path / "generated"
+
+    async def deterministic_materialize(current: AudioCppSettingsConfig):
+        return await materialize_audio_cpp_guided_launch(
+            current,
+            artifact_root=runtime_root,
+        )
+
+    monkeypatch.setattr(
+        audio_cpp_adapter_module,
+        "materialize_audio_cpp_guided_launch",
+        deterministic_materialize,
+    )
+    launched: list[asyncio.subprocess.Process] = []
+    launches: list[Any] = []
+
+    async def capture_launch(launch: Any, environment: dict[str, str]) -> Any:
+        owned = await supervisor_module._default_process_launcher(
+            launch,
+            environment,
+        )
+        launches.append(launch)
+        launched.append(owned.process)
+        return owned
+
+    supervisor = AudioCppSupervisor(
+        source_environment={"PATH": os.environ.get("PATH", "")},
+        process_launcher=capture_launch,
+    )
+    service, _factory_configs = _service(
+        first.to_mapping(),
+        supervisor,
+        transport_handler=None,
+    )
+
+    try:
+        initial = await service.start_and_test_audio_cpp()
+        assert [model.model_id for model in initial.models] == ["first-model"]
+        first_artifact = launches[0].working_directory
+
+        await _stage(service, second.to_mapping(), generation=1)
+        replacement = await service.restart_audio_cpp()
+        assert replacement is not None
+        assert [model.model_id for model in replacement.models] == ["second-model"]
+        assert replacement.models[0].speech_capabilities == ("tts", "clone")
+        second_artifact = launches[1].working_directory
+        assert launched[0].returncode is not None
+        assert not first_artifact.exists()
+        assert second_artifact.exists()
+        assert len(tuple(runtime_root.iterdir())) == 1
+
+        launched[1].kill()
+        async with asyncio.timeout(3.0):
+            while supervisor._generation is not None:
+                await asyncio.sleep(0.01)
+        assert supervisor.snapshot().state == "unavailable"
+        assert not second_artifact.exists()
+        assert tuple(runtime_root.iterdir()) == ()
+
+        recovered = await service.start_and_test_audio_cpp()
+        assert [model.model_id for model in recovered.models] == ["second-model"]
+        third_artifact = launches[2].working_directory
+        assert third_artifact.exists()
+
+        await service.shutdown_audio_cpp()
+        assert launched[2].returncode is not None
+        assert not third_artifact.exists()
+        assert tuple(runtime_root.iterdir()) == ()
+    finally:
+        try:
+            await service.close()
+            await service.wait_closed()
+        finally:
+            for process in launched:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+
+    assert len(launched) == 3
+    assert all(process.returncode is not None for process in launched)
+    for process in launched:
+        with pytest.raises(ProcessLookupError):
+            os.kill(process.pid, 0)
+    assert supervisor._generation is None
+    assert supervisor._startup_task is None
+    assert supervisor._stop_task is None
+    assert runtime_root.exists()
+    assert tuple(runtime_root.iterdir()) == ()

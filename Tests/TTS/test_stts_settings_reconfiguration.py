@@ -19,11 +19,14 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSEventHandler,
     STTSSettingsSaveEvent,
     STTSSettingsSaveResult,
+    _effective_provider_config,
 )
 from tldw_chatbook.TTS.adapter_registry import ReconfigureResult, TTSAdapterRegistry
 from tldw_chatbook.TTS.audio_cpp_config import (
     AudioCppConfig,
-    project_audio_cpp_config,
+)
+from tldw_chatbook.TTS.audio_cpp_guided_config import (
+    project_audio_cpp_settings_config,
 )
 from tldw_chatbook.TTS.legacy_bridge import (
     legacy_provider_config,
@@ -167,6 +170,40 @@ def _managed_audio_cpp_config(label: str) -> dict[str, Any]:
         managed_binary_path=f"/private/tmp/{label}/audiocpp_server",
         managed_server_json_path=f"/private/tmp/{label}/server.json",
     ).to_mapping()
+
+
+def test_audio_cpp_effective_config_retains_guided_settings_for_publication() -> None:
+    package = {
+        "package_uuid": "d3f6d610-6fd9-4cde-9ea7-cc5175ca445b",
+        "recipe_id": "audio-cpp-0.5.1.supertonic.supertonic_3_orig",
+        "recipe_revision": 1,
+        "package_variant": "supertonic_3_orig",
+        "public_model_id": "supertonic-3-orig",
+        "canonical_root": "/models/Supertonic-3-GGUF",
+        "canonical_root_identity": "1" * 64,
+        "configuration_identity": "2" * 64,
+        "weight_identity": "3" * 64,
+        "projection": {
+            "family": "supertonic",
+            "task": "tts",
+            "mode": "offline",
+            "model_relative_path": "supertonic-3-orig.gguf",
+        },
+    }
+    raw = {
+        "mode": "managed",
+        "managed_setup_source": "guided",
+        "guided_binary_path": "/opt/audio.cpp/audiocpp_server",
+        "guided_packages": [package],
+        "guided_default_model_id": "supertonic-3-orig",
+    }
+    settings = {"COMPREHENSIVE_CONFIG_RAW": {"app_tts": {"audio_cpp": raw}}}
+
+    projected = _effective_provider_config("audio_cpp", settings)
+    raw["guided_packages"][0]["public_model_id"] = "mutated"
+
+    assert projected["managed_setup_source"] == "guided"
+    assert projected["guided_packages"][0]["public_model_id"] == ("supertonic-3-orig")
 
 
 async def _publish_audio_cpp_config(
@@ -1068,7 +1105,7 @@ async def test_audio_cpp_save_persists_nested_plain_mapping_without_discovery(
     assert saved_batches[0]["app_tts"]["default_model_mode"] == "exact"
     reconfigure_provider.assert_awaited_once_with(
         "audio_cpp",
-        project_audio_cpp_config(effective).to_mapping(),
+        project_audio_cpp_settings_config(effective).to_mapping(),
     )
     service.get_catalog.assert_not_awaited()
     service.get_voices.assert_not_awaited()

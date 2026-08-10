@@ -10,7 +10,7 @@ import unicodedata
 from collections import deque
 from collections.abc import Awaitable, Callable, Mapping, Set as AbstractSet
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal, TypeVar
 from urllib.parse import urlsplit
@@ -35,6 +35,11 @@ from tldw_chatbook.TTS.audio_cpp_managed_config import (
 )
 
 _DiagnosticStream = Literal["stdout", "stderr"]
+_InternalDiagnosticPhase = Literal[
+    "launch_revalidation",
+    "generation_cleanup",
+    "artifact_cleanup",
+]
 _MAX_DIAGNOSTIC_LINES = 200
 _MAX_DIAGNOSTIC_BYTES = 65_536
 _MAX_DIAGNOSTIC_LINE_BYTES = 4_096
@@ -375,6 +380,12 @@ _RUNTIME_UNHEALTHY_FAILURE = _FailureSpec(
     True,
     "restart_managed",
 )
+_CLEANUP_FAILURE = _FailureSpec(
+    "cleanup_failed",
+    "Managed audio.cpp cleanup did not complete",
+    False,
+    "open_diagnostics",
+)
 _OPERATION_ID = "audio_cpp_managed"
 
 
@@ -400,6 +411,7 @@ class _ProcessGeneration:
     cleanup_deadline_changed: asyncio.Event = field(default_factory=asyncio.Event)
     invalidation_called: bool = False
     cleanup_called: bool = False
+    cleanup_failure: AudioCppProcessFailure | None = None
     parent_pipes_closed: bool = False
 
 
@@ -518,6 +530,7 @@ class AudioCppSupervisor:
         self._tts_capability: AudioCppTTSCapability = "unknown"
         self._consecutive_health_failures = 0
         self._last_failure: AudioCppProcessFailure | None = None
+        self._blocked_cleanup_failure: AudioCppProcessFailure | None = None
         self._diagnostics = _AudioCppDiagnosticRing()
         self._generation: _ProcessGeneration | None = None
         self._startup_task: asyncio.Task[AudioCppReadyEndpoint] | None = None
@@ -541,6 +554,25 @@ class AudioCppSupervisor:
             dropped_diagnostic_lines=dropped,
         )
 
+    def _record_internal_diagnostic(
+        self,
+        phase: _InternalDiagnosticPhase,
+        error: Exception,
+    ) -> None:
+        if isinstance(error, AssertionError):
+            category = "assertion_error"
+        elif isinstance(error, RuntimeError):
+            category = "runtime_error"
+        else:
+            category = "unexpected_exception"
+        self._diagnostics.feed(
+            "stderr",
+            (
+                "Chatbook internal supervisor failure "
+                f"(phase={phase}, category={category}).\n"
+            ).encode("ascii"),
+        )
+
     def admission_snapshot(self) -> AudioCppProcessAdmissionSnapshot:
         """Return the generation fence and staged-application eligibility."""
         eligible = (
@@ -551,6 +583,7 @@ class AudioCppSupervisor:
             and self._close_task is None
             and not self._shutdown_started
             and not self._closed
+            and self._blocked_cleanup_failure is None
         )
         return AudioCppProcessAdmissionSnapshot(
             lifecycle_epoch=self._lifecycle_epoch,
@@ -573,6 +606,8 @@ class AudioCppSupervisor:
                 raise _operation_error(
                     _failure_for(_PROCESS_EXITED_FAILURE, self._process_generation)
                 )
+            if self._blocked_cleanup_failure is not None:
+                raise _operation_error(self._blocked_cleanup_failure)
             active_generation = self._generation
             if (
                 active_generation is not None
@@ -667,6 +702,8 @@ class AudioCppSupervisor:
     ) -> None:
         """Stop only the accepted exact owned generation and join cleanup."""
         async with self._lock:
+            if self._blocked_cleanup_failure is not None and self._generation is None:
+                raise _operation_error(self._blocked_cleanup_failure)
             self._adopt_cleanup_deadline_locked(
                 self._generation,
                 current_shutdown_deadline(),
@@ -712,6 +749,8 @@ class AudioCppSupervisor:
         """Wait for temporary Stopped/Unavailable cleanup ownership to settle."""
         while True:
             async with self._lock:
+                if self._blocked_cleanup_failure is not None:
+                    raise _operation_error(self._blocked_cleanup_failure)
                 if self._state not in {"stopped", "unavailable"}:
                     return
                 tasks = tuple(
@@ -1001,6 +1040,9 @@ class AudioCppSupervisor:
                 await self._publish_pre_spawn_failure(epoch, error)
             raise
         finally:
+            if record is None:
+                if not await self._cleanup_launch_artifact(launch):
+                    await self._publish_cleanup_failure(None)
             current = asyncio.current_task()
             async with self._lock:
                 if self._startup_task is current:
@@ -1010,7 +1052,10 @@ class AudioCppSupervisor:
         self, launch: AudioCppManagedLaunchConfig
     ) -> AudioCppManagedLaunchConfig:
         invalid = False
+        artifact = launch.generated_artifact
         try:
+            if artifact is not None:
+                artifact.validate()
             config = AudioCppConfig.from_mapping(
                 {
                     "mode": "managed",
@@ -1026,11 +1071,18 @@ class AudioCppSupervisor:
                 }
             )
             validated = validate_audio_cpp_managed_launch(config)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OSError):
+            invalid = True
+        except Exception as error:
+            self._record_internal_diagnostic("launch_revalidation", error)
             invalid = True
         if invalid:
             raise _operation_error(_failure_for(_CONFIGURATION_FAILURE, None))
-        return validated
+        return replace(
+            validated,
+            expected_models=launch.expected_models,
+            generated_artifact=artifact,
+        )
 
     async def _assert_start_epoch(self, epoch: int) -> None:
         async with self._lock:
@@ -1138,6 +1190,21 @@ class AudioCppSupervisor:
             )
             self._observation_version += 1
 
+    async def _publish_cleanup_failure(
+        self,
+        process_generation: int | None,
+    ) -> AudioCppProcessFailure:
+        failure = _failure_for(_CLEANUP_FAILURE, process_generation)
+        async with self._lock:
+            self._blocked_cleanup_failure = failure
+            self._state = "unavailable"
+            self._endpoint = None
+            self._tts_capability = "unknown"
+            self._consecutive_health_failures = 0
+            self._last_failure = failure
+            self._observation_version += 1
+        return failure
+
     async def _rollback_generation(
         self,
         record: _ProcessGeneration,
@@ -1236,6 +1303,8 @@ class AudioCppSupervisor:
         monitor = record.exit_monitor
         if monitor is not None:
             await asyncio.shield(monitor)
+        if record.cleanup_failure is not None:
+            raise _operation_error(record.cleanup_failure) from None
 
     async def _drain_output(
         self,
@@ -1275,8 +1344,18 @@ class AudioCppSupervisor:
             self._observation_version += 1
             self._invalidate_generation(record)
             record.output_failure_cleanup = asyncio.create_task(
-                self._terminate_and_join(record)
+                self._terminate_after_output_failure(record)
             )
+
+    async def _terminate_after_output_failure(
+        self,
+        record: _ProcessGeneration,
+    ) -> None:
+        try:
+            await self._terminate_and_join(record)
+        except TTSOperationError as error:
+            if error.code != "cleanup_failed":
+                raise
 
     async def _monitor_exit(self, record: _ProcessGeneration) -> None:
         await self._await_owned_process_exit(record)
@@ -1314,13 +1393,24 @@ class AudioCppSupervisor:
 
         await self._join_output_drains(record)
         self._close_parent_pipes(record)
-        await self._cleanup_generation(record)
+        cleanup_succeeded = await self._cleanup_generation(record)
 
         async with self._lock:
             if self._generation is not record:
                 return
             self._generation = None
-            if record.expected_exit:
+            if not cleanup_succeeded:
+                cleanup_failure = _failure_for(
+                    _CLEANUP_FAILURE,
+                    record.generation,
+                )
+                record.cleanup_failure = cleanup_failure
+                record.terminal_state = "unavailable"
+                record.failure = cleanup_failure
+                self._blocked_cleanup_failure = cleanup_failure
+                self._state = "unavailable"
+                self._last_failure = cleanup_failure
+            elif record.expected_exit:
                 self._state = record.terminal_state
                 self._last_failure = record.failure
             self._observation_version += 1
@@ -1379,15 +1469,36 @@ class AudioCppSupervisor:
         except BaseException:
             pass
 
-    async def _cleanup_generation(self, record: _ProcessGeneration) -> None:
+    async def _cleanup_generation(self, record: _ProcessGeneration) -> bool:
         self._invalidate_generation(record)
-        if record.cleanup_called or record.hooks is None:
-            return
+        if record.cleanup_called:
+            return record.cleanup_failure is None
         record.cleanup_called = True
+        succeeded = True
+        if record.hooks is not None:
+            try:
+                await record.hooks.cleanup()
+            except Exception as error:
+                self._record_internal_diagnostic("generation_cleanup", error)
+                succeeded = False
+        artifact_succeeded = await self._cleanup_launch_artifact(record.launch)
+        return succeeded and artifact_succeeded
+
+    async def _cleanup_launch_artifact(
+        self,
+        launch: AudioCppManagedLaunchConfig,
+    ) -> bool:
+        artifact = launch.generated_artifact
+        if artifact is None:
+            return True
         try:
-            await record.hooks.cleanup()
-        except BaseException:
-            pass
+            await asyncio.to_thread(artifact.cleanup)
+        except (TypeError, ValueError, OSError):
+            return False
+        except Exception as error:
+            self._record_internal_diagnostic("artifact_cleanup", error)
+            return False
+        return True
 
     @staticmethod
     def _invalidate_generation(record: _ProcessGeneration) -> None:
@@ -1572,6 +1683,7 @@ class AudioCppSupervisor:
                 self._closed = True
                 self._diagnostics.clear()
                 self._last_failure = None
+                self._blocked_cleanup_failure = None
                 self._generation = None
                 self._startup_task = None
                 self._stop_task = None

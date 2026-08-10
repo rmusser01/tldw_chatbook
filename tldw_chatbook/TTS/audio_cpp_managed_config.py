@@ -6,7 +6,7 @@ import re
 from collections.abc import Mapping, Set as AbstractSet
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Any, Literal, NoReturn
+from typing import Annotated, Any, Literal, NoReturn, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -102,6 +102,27 @@ _SECRET_ENV_NAME_FRAGMENTS = (
 
 
 @dataclass(frozen=True, slots=True)
+class AudioCppExpectedModel:
+    """Exact generated model evidence retained with a managed launch."""
+
+    model_id: str
+    family: str
+    task: Literal["tts", "clone"]
+    mode: str
+    speech_capabilities: tuple[Literal["tts", "clone"], ...]
+
+
+class AudioCppLaunchArtifact(Protocol):
+    """Exact private artifact ownership retained by a generated launch."""
+
+    def validate(self) -> None:
+        """Raise a stable error unless the exact artifact is unchanged."""
+
+    def cleanup(self) -> None:
+        """Remove only the exact owned artifact and release ownership."""
+
+
+@dataclass(frozen=True, slots=True)
 class AudioCppManagedLaunchConfig:
     """Validated immutable inputs for one managed audio.cpp launch."""
 
@@ -112,6 +133,8 @@ class AudioCppManagedLaunchConfig:
     startup_timeout_seconds: float
     health_check_interval_seconds: float
     termination_grace_seconds: float
+    expected_models: tuple[AudioCppExpectedModel, ...] = ()
+    generated_artifact: AudioCppLaunchArtifact | None = None
 
 
 class _StrictJSONError(ValueError):

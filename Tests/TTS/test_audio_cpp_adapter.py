@@ -470,16 +470,23 @@ async def test_construction_is_lazy_and_first_readiness_uses_required_order() ->
 
 
 @pytest.mark.asyncio
-async def test_catalog_maps_only_tts_models_and_caches_until_forced_refresh() -> None:
+async def test_catalog_maps_exact_native_speech_tasks_with_typed_capabilities() -> None:
     requests: list[httpx.Request] = []
 
     def respond(request: httpx.Request) -> httpx.Response:
         requests.append(request)
         if request.url.path == "/health":
-            return _streaming_response(_health_body(2))
+            return _streaming_response(_health_body(4))
         return _streaming_response(
             _models_body(
                 _model("speech", family="pocket_tts", mode="native"),
+                _model(
+                    "clone-only",
+                    family="pocket_tts",
+                    task="clone",
+                    mode="native",
+                ),
+                _model("uppercase", family="pocket_tts", task="TTS"),
                 _model("transcriber", family="whisper", task="stt"),
             ),
         )
@@ -501,6 +508,19 @@ async def test_catalog_maps_only_tts_models_and_caches_until_forced_refresh() ->
                 formats=("wav",),
                 voices=(),
                 supports_speed=False,
+                speech_capabilities=("tts",),
+                supports_options=(),
+                omit_voice_uses_server_default=True,
+            ),
+            TTSModelInfo(
+                model_id="clone-only",
+                display_name="clone-only",
+                family="pocket_tts",
+                upstream_mode="native",
+                formats=("wav",),
+                voices=(),
+                supports_speed=False,
+                speech_capabilities=("clone",),
                 supports_options=(),
                 omit_voice_uses_server_default=True,
             ),

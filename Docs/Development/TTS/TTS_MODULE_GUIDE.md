@@ -36,6 +36,10 @@ tldw_chatbook/TTS/
 ├── adapter_bootstrap.py     # Application service construction
 ├── legacy_bridge.py         # Temporary provider-scoped compatibility adapters
 ├── audio_cpp_config.py      # Immutable active-mode audio.cpp configuration
+├── audio_cpp_guided_config.py # Full guided/user-JSON/external Settings state
+├── audio_cpp_recipes.py     # Sealed release-0.5.1 package recipes
+├── audio_cpp_package_scanner.py # Bounded explicit-root package discovery
+├── audio_cpp_guided_launch.py # Private generated POSIX launch snapshot
 ├── audio_cpp_managed_config.py # Managed launch validation and child environment
 ├── audio_cpp_supervisor.py  # One app-scoped managed audio.cpp child
 ├── audio_cpp_contract.py    # Pinned JSON and PCM16 WAV validation
@@ -442,10 +446,12 @@ The immutable process snapshot reports `stopped`, `starting`, `running`,
 `unhealthy`, `draining`, `stopping`, or `unavailable`, along with safe failure
 metadata. Stable managed failure codes are `configuration_invalid`,
 `port_in_use`, `process_spawn_failed`, `process_startup_timeout`,
-`process_exited`, `contract_incompatible`, and `runtime_unhealthy`. Health or
-exit failure never triggers a restart. A later deliberate operation may retry
-from the latest eligible saved mode, and a successful replacement clears the
-sealed Unavailable failure.
+`process_exited`, `contract_incompatible`, `runtime_unhealthy`, and
+`cleanup_failed`. Health or exit failure never triggers a restart. Cleanup
+uncertainty seals further launches when exact generated-artifact retirement
+cannot be proved. A later deliberate operation may retry from the latest
+eligible saved mode after ordinary runtime failure, and a successful
+replacement clears the sealed Unavailable failure.
 
 Stdout and stderr are continuously drained into a memory-only ring bounded by
 line count, retained bytes, and bytes per line. ANSI/control sequences and
@@ -484,6 +490,50 @@ direct execution of a user-supplied binary, graceful termination and
 force-kill, sole child reaping, and bounded parent-pipe closure. External
 audio.cpp remains available on Windows, and injected supervisor coverage
 remains mandatory on every platform.
+
+### Guided Managed audio.cpp launch (POSIX)
+
+Guided setup is a structured Managed source alongside the existing advanced
+user-provided `server.json` source. The current reviewed package subset is
+audio.cpp release 0.5.1 Supertonic 3 and PocketTTS: four Supertonic package
+variants and eleven PocketTTS package variants. Each accepted package freezes
+its recipe revision, canonical root and file identities, safe model projection,
+public model ID, speech capabilities, and backend posture. A scan that finds
+multiple exact candidates never chooses one silently; explicitly reviewed
+candidates remain individually identifiable even when they share one selected
+root.
+
+Saving Guided Settings remains passive. The first deliberate Test, Start,
+Restart & Apply, catalog refresh, voice refresh, or synthesis revalidates the
+exact accepted package identities off the event loop, validates the selected
+binary, resolves only a backend tuple carried by every recipe, selects a
+bounded private loopback port, and creates one owner-private generation-local
+`server.json`. `Auto` currently resolves to the reviewed CPU baseline on POSIX;
+an accelerated backend is not inferred from installation or hardware alone.
+
+Generated JSON is an immutable launch artifact, not another settings file. It
+contains only the reviewed top-level and per-model fields: loopback host and
+selected port, backend/device/thread limits, lazy loading, disabled request-body
+logging, bounded body/busy limits, and absolute model paths plus recipe-owned
+options. It omits CORS and arbitrary extensions. The supervisor launches the
+same direct no-shell `audiocpp_server --config <generated server.json>` argv and
+owns the artifact with the exact process generation.
+
+All accepted models share that one child. The native catalog admits only exact
+lowercase upstream `tts` and `clone` tasks, cross-checks the complete returned
+model set against the generation snapshot, and preserves typed capabilities
+such as PocketTTS `("tts", "clone")`. Unrelated ASR, voice-conversion, music,
+and other task types cannot enter the TTS catalog. The Running generation keeps
+its immutable launch snapshot if source files later change; the next deliberate
+replacement must revalidate before stopping or replacing it.
+
+Pre-spawn failure, failed startup, unexpected exit, replacement, explicit
+shutdown, and app close all retire the exact generated artifact after owned
+generation clients and tasks. Artifact identity or cleanup uncertainty fails
+closed with sanitized, path-independent errors. The user-provided JSON source
+retains its existing JSON-parent working directory and ownership semantics.
+Windows guided launch remains out of scope until native handle, ACL, lifecycle,
+and real-process parity are implemented and evidenced.
 
 ### Catalog-driven STTS Playground (Slice 3)
 

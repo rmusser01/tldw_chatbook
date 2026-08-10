@@ -12,7 +12,11 @@ from tldw_chatbook.TTS.adapter_types import (
 )
 from tldw_chatbook.TTS.audio_cpp_config import (
     AudioCppConfig,
-    project_audio_cpp_config,
+)
+from tldw_chatbook.TTS.audio_cpp_guided_config import (
+    AudioCppManagedSetupSource,
+    AudioCppSettingsConfig,
+    project_audio_cpp_settings_config,
 )
 from tldw_chatbook.TTS.audio_cpp_managed_config import (
     collect_provider_credential_environment_names,
@@ -32,14 +36,21 @@ def _create_audio_cpp_adapter(
     supervisor: AudioCppSupervisor | None,
 ) -> TTSAdapter:
     validated_config = AudioCppConfig.from_mapping(config)
+    settings_config = AudioCppSettingsConfig.from_mapping(config)
     adapter_module = import_module("tldw_chatbook.TTS.adapters.audio_cpp")
     adapter_factory = cast(
         Callable[..., TTSAdapter],
         adapter_module.AudioCppAdapter,
     )
-    if supervisor is None:
-        return adapter_factory(validated_config)
-    return adapter_factory(validated_config, supervisor=supervisor)
+    kwargs: dict[str, object] = {}
+    if (
+        settings_config.mode == "managed"
+        and settings_config.managed_setup_source is AudioCppManagedSetupSource.GUIDED
+    ):
+        kwargs["guided_settings"] = settings_config
+    if supervisor is not None:
+        kwargs["supervisor"] = supervisor
+    return adapter_factory(validated_config, **kwargs)
 
 
 def audio_cpp_provider_spec(
@@ -55,7 +66,7 @@ def audio_cpp_provider_spec(
     Returns:
         A native exclusive provider spec with an independent config snapshot.
     """
-    config = project_audio_cpp_config(app_config)
+    config = project_audio_cpp_settings_config(app_config)
     return TTSProviderSpec(
         descriptor=TTSProviderDescriptor(
             provider_id="audio_cpp",
