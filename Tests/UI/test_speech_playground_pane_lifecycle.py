@@ -1635,6 +1635,75 @@ async def test_guided_sample_completion_is_fenced_after_provider_switch_round_tr
 
 
 @pytest.mark.asyncio
+async def test_late_guided_sample_result_cannot_overwrite_shutdown_busy_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    running = _guided_runtime_observation(
+        process_state="running",
+        process_generation=1,
+        catalog_fresh=True,
+    )
+    service = _RuntimeObservationService(running)
+    service.lifecycle_gate = asyncio.Event()
+    service.lifecycle_result_observation = _guided_runtime_observation()
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_tts_service_factory",
+        lambda self: _resolved(service),
+    )
+    app = _PaneHost(provider="audio_cpp")
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        shutdown = app.query_one("#audio-cpp-runtime-shutdown", Button)
+        await _wait_until(pilot, lambda: not shutdown.disabled)
+        pane = app.query_one(SpeechPlaygroundPane)
+        pane._audio_cpp_sample_state = "generating"
+        pane._audio_cpp_sample_focus_target = "#audio-play-btn"
+        pane._render_current_audio_cpp_observation()
+        primary = app.query_one("#tts-test-connection-btn", Button)
+        assert str(primary.label) == "Generating Sample…"
+
+        shutdown.press()
+        await _wait_until(pilot, lambda: service.lifecycle_calls == ["shutdown"])
+        assert str(primary.label) == "Shutting down…"
+        assert primary.disabled is True
+
+        path = tmp_path / "sample.wav"
+        path.write_bytes(b"RIFF")
+        artifact = STTSGeneratedAudio(
+            path=path,
+            provider_id="audio_cpp",
+            model_id="model-a",
+            voice_id=None,
+            source_text="sample",
+            operation_id="sample-operation",
+            audio_format="wav",
+            content_type="audio/wav",
+        )
+        try:
+            pane._on_generation_result(artifact)
+            await pilot.pause()
+
+            assert pane._audio_cpp_lifecycle_busy == "shutdown"
+            assert str(primary.label) == "Shutting down…"
+            for selector in (
+                "#tts-test-connection-btn",
+                "#tts-refresh-catalog-btn",
+                "#tts-generate-btn",
+                "#audio-cpp-runtime-restart",
+                "#audio-cpp-runtime-shutdown",
+            ):
+                action = app.query_one(selector, Button)
+                assert action.disabled is True
+                assert "operation is in progress" in str(action.tooltip).lower()
+            assert app.focused is not app.query_one("#audio-play-btn", Button)
+        finally:
+            service.lifecycle_gate.set()
+        await app.workers.wait_for_complete()
+
+
+@pytest.mark.asyncio
 async def test_guided_primary_click_executes_visible_immutable_action(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

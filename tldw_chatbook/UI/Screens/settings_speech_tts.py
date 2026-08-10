@@ -28,6 +28,9 @@ from tldw_chatbook.TTS.audio_cpp_guided_config import (
     AudioCppManagedSetupSource,
     AudioCppSettingsConfig,
 )
+from tldw_chatbook.TTS.audio_cpp_guided_launch import (
+    select_audio_cpp_guided_backend,
+)
 from tldw_chatbook.TTS.audio_cpp_managed_config import (
     validate_audio_cpp_managed_launch,
 )
@@ -1116,13 +1119,28 @@ def validate_audio_cpp_managed_settings(values: Mapping[str, object]) -> None:
                 "Choose the default model for Guided audio.cpp speech.",
             ) from None
         try:
-            for package in config.guided_packages:
+            recipes = tuple(
                 AUDIO_CPP_RECIPE_REGISTRY.validate_accepted(package)
+                for package in config.guided_packages
+            )
         except ValueError:
             raise GlobalSpeechTTSValidationError(
                 "audio_cpp",
                 "guided_packages",
                 "One or more model packages require review.",
+            ) from None
+        if (
+            select_audio_cpp_guided_backend(
+                config.guided_backend_preference,
+                recipes,
+            )
+            is None
+        ):
+            raise GlobalSpeechTTSValidationError(
+                "audio_cpp",
+                "guided_backend_preference",
+                "Choose Auto or a backend supported by every reviewed package "
+                "on this host.",
             ) from None
         return
 

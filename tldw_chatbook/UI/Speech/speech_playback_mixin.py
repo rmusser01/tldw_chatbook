@@ -345,7 +345,7 @@ class SpeechPlaybackMixin:
         stop = self.query_one("#stop-audio-btn", Button)
         play.disabled = not has_result
         play.tooltip = (
-            "Play the current result (Ctrl+P)"
+            "Play the current result"
             if has_result
             else "Generate audio before playing the current result"
         )
@@ -376,7 +376,7 @@ class SpeechPlaybackMixin:
             "Resume playback" if str(pause.label) == "Resume" else "Pause playback"
         )
         stop.disabled = False
-        stop.tooltip = "Stop playback (Ctrl+S)"
+        stop.tooltip = "Stop playback"
 
     @staticmethod
     def _artifact_duration_seconds(

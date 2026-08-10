@@ -243,17 +243,11 @@ class SpeechPlaygroundPane(
 
     _tts_service: Any
 
-    #: The legacy widget's shortcuts, carried over verbatim. Deleting it
-    #: took its BINDINGS with it while the `action_*` methods survived in
-    #: `SpeechPlaybackMixin` -- five shortcuts silently stopped working, and
-    #: the screen still advertised them. Nothing in the per-view tests could
-    #: have noticed: the methods were all still there and still callable.
+    #: Pane-local accelerators that do not shadow ADR-031 global or terminal
+    #: keys. The containing STTS screen owns its plain single-letter actions.
     BINDINGS = [
         Binding("ctrl+g", "generate_tts", "Generate Speech"),
-        Binding("ctrl+r", "random_text", "Sample Text"),
         Binding("ctrl+l", "clear_text", "Clear Text"),
-        Binding("ctrl+p", "play_audio", "Play Audio"),
-        Binding("ctrl+s", "stop_audio", "Stop Audio"),
     ]
 
     def __init__(
@@ -1760,7 +1754,11 @@ class SpeechPlaygroundPane(
 
     def _render_current_audio_cpp_observation(self) -> None:
         observation = self._audio_cpp_runtime_observation
-        if observation is None or self._selected_runtime_provider() != "audio_cpp":
+        if (
+            observation is None
+            or self._selected_runtime_provider() != "audio_cpp"
+            or self._audio_cpp_lifecycle_busy is not None
+        ):
             return
         card_observation = self._audio_cpp_card_observation(observation)
         try:
@@ -1798,7 +1796,11 @@ class SpeechPlaygroundPane(
         self._audio_cpp_sample_focus_target = None
         self._audio_cpp_sample_state = "ready" if succeeded else "failed"
         self._render_current_audio_cpp_observation()
-        if succeeded and focus_target is not None:
+        if (
+            succeeded
+            and focus_target is not None
+            and self._audio_cpp_lifecycle_busy is None
+        ):
             self.call_after_refresh(
                 self._focus_audio_cpp_action_target,
                 focus_target,

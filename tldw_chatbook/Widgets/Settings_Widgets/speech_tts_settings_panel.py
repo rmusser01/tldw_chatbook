@@ -257,6 +257,7 @@ class _RealtimeSavePayload:
 
     section_values: dict[str, dict[str, Any]]
     delete_keys: dict[str, tuple[str, ...]]
+    persisted_draft: _RealtimeSettingsDraft
 
 
 def _read_realtime_settings_draft() -> _RealtimeSettingsDraft:
@@ -2841,7 +2842,7 @@ class SpeechTTSSettingsPanel(Vertical):
                     severity="error",
                 )
                 return None
-            self._realtime_original = replace(self._realtime_draft)
+            self._realtime_original = replace(realtime_payload.persisted_draft)
 
         if not provider_save_required:
             # Only the realtime/dictation block changed; already persisted
@@ -2947,7 +2948,7 @@ class SpeechTTSSettingsPanel(Vertical):
                     "Realtime engine settings were not saved.",
                 )
                 return
-            self._realtime_original = replace(self._realtime_draft)
+            self._realtime_original = replace(realtime_payload.persisted_draft)
         self._post_settings_save(request_id, proposal)
 
     def _abort_pending_save(
@@ -3068,6 +3069,7 @@ class SpeechTTSSettingsPanel(Vertical):
                 "dictation": dictation_section,
             },
             delete_keys=delete_keys,
+            persisted_draft=replace(self._realtime_draft),
         )
 
     @staticmethod

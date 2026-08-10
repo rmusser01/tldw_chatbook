@@ -377,6 +377,34 @@ def _select_backend(
     return next((candidate for candidate in order if candidate in eligible), None)
 
 
+def select_audio_cpp_guided_backend(
+    preference: AudioCppBackendPreference,
+    recipes: tuple[AudioCppPackageRecipe, ...],
+    *,
+    system: str | None = None,
+    architecture: str | None = None,
+) -> AudioCppBackendPreference | None:
+    """Resolve one evidenced backend for the exact recipes and host.
+
+    This pure selection seam is shared by passive Settings validation and
+    deliberate launch so Save cannot promise a tuple that launch will reject.
+    """
+
+    host_system = (platform.system() if system is None else system).casefold()
+    if host_system not in {"darwin", "linux"}:
+        return None
+    host_architecture = _normalize_architecture(
+        platform.machine() if architecture is None else architecture,
+        system=host_system,
+    )
+    return _select_backend(
+        preference,
+        recipes,
+        system=host_system,
+        architecture=host_architecture,
+    )
+
+
 def _default_port_selector() -> int:
     span = _PRIVATE_PORT_MAX - _PRIVATE_PORT_MIN + 1
     for _ in range(_PORT_ATTEMPTS):
@@ -642,17 +670,13 @@ async def materialize_audio_cpp_guided_launch(
     recipes = await revalidate_audio_cpp_guided_packages(settings.guided_packages)
 
     host_system = (platform.system() if system is None else system).casefold()
-    host_architecture = _normalize_architecture(
-        platform.machine() if architecture is None else architecture,
-        system=host_system,
-    )
     if os.name != "posix" or host_system not in {"darwin", "linux"}:
         raise AudioCppGuidedLaunchError("backend_unsupported") from None
-    backend = _select_backend(
+    backend = select_audio_cpp_guided_backend(
         settings.guided_backend_preference,
         recipes,
         system=host_system,
-        architecture=host_architecture,
+        architecture=architecture,
     )
     if backend is None:
         raise AudioCppGuidedLaunchError("backend_unsupported") from None
@@ -712,4 +736,5 @@ __all__ = (
     "AudioCppGuidedLaunchErrorCode",
     "materialize_audio_cpp_guided_launch",
     "revalidate_audio_cpp_guided_packages",
+    "select_audio_cpp_guided_backend",
 )

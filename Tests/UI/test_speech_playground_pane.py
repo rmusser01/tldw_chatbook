@@ -521,6 +521,10 @@ async def test_complete_wav_result_has_safe_provenance_and_repeat_save_actions(
         assert repeat.disabled is False
         assert str(save.label) == "Save WAV as…"
         assert save.disabled is False
+        play = app.query_one("#audio-play-btn", Button)
+        assert "Ctrl+" not in str(play.tooltip)
+        pane._sync_active_transport_actions()
+        assert "Ctrl+" not in str(app.query_one("#stop-audio-btn", Button).tooltip)
 
         repeat.press()
         await pilot.pause()

@@ -6,6 +6,7 @@ import os
 
 import pytest
 
+from tldw_chatbook.TTS import audio_cpp_guided_launch as guided_launch_module
 from tldw_chatbook.UI.Screens import settings_speech_tts as settings_model
 from tldw_chatbook.TTS.adapter_types import (
     ProviderHealth,
@@ -123,6 +124,35 @@ def test_guided_settings_load_save_and_reload_preserve_all_dormant_sources(
         "/manual/server.json"
     )
     assert manual_validator_calls == []
+
+
+def test_guided_save_rejects_backend_without_host_recipe_evidence(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    binary = tmp_path / "audiocpp_server"
+    binary.write_bytes(b"synthetic-binary")
+    binary.chmod(0o700)
+    package = _guided_package(str(tmp_path))
+    values = AudioCppSettingsConfig(
+        mode="managed",
+        managed_setup_source="guided",
+        guided_binary_path=str(binary),
+        guided_packages=(package,),
+        guided_default_model_id="narrator",
+        guided_backend_preference="cuda",
+    ).to_mapping()
+    monkeypatch.setattr(guided_launch_module.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(guided_launch_module.platform, "machine", lambda: "arm64")
+
+    with pytest.raises(GlobalSpeechTTSValidationError) as error:
+        settings_model.validate_audio_cpp_managed_settings(values)
+
+    assert error.value.field_id == "guided_backend_preference"
+    assert str(error.value) == (
+        "Choose Auto or a backend supported by every reviewed package on this host."
+    )
+    assert str(tmp_path) not in str(error.value)
 
 
 def test_managed_load_retains_the_dormant_external_origin() -> None:

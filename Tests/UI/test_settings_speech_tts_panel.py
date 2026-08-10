@@ -3248,6 +3248,80 @@ async def test_realtime_and_tts_changes_save_together_in_one_click(
 
 
 @pytest.mark.asyncio
+async def test_guided_save_keeps_later_realtime_edits_dirty(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    binary = tmp_path / "audiocpp_server"
+    binary.write_bytes(b"synthetic-binary")
+    binary.chmod(0o700)
+    package_root = tmp_path / "Supertonic-3-GGUF"
+    package_root.mkdir()
+    (package_root / "supertonic-3-orig.gguf").write_bytes(
+        b"GGUF" + struct.pack("<I", 3)
+    )
+    validation_started = asyncio.Event()
+    release_validation = asyncio.Event()
+    persisted: list[tuple[tuple, dict]] = []
+
+    async def block_revalidation(_packages: object) -> tuple[()]:
+        validation_started.set()
+        await release_validation.wait()
+        return ()
+
+    monkeypatch.setattr(
+        speech_tts_settings_panel_module,
+        "revalidate_audio_cpp_guided_packages",
+        block_revalidation,
+    )
+    monkeypatch.setattr(
+        speech_tts_settings_panel_module,
+        "save_settings_to_cli_config",
+        lambda *args, **kwargs: (persisted.append((args, kwargs)), True)[1],
+    )
+    app = _PanelHarness(configure_provider="audio_cpp")
+
+    async with app.run_test(size=(170, 80)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        app.query_one("#settings-speech-audio_cpp-mode", Select).value = "managed"
+        await pilot.pause()
+        app.query_one(
+            "#settings-speech-audio_cpp-guided-binary-path", Input
+        ).value = str(binary)
+        panel._audio_cpp_package_picker_result(package_root)
+        await _settle(pilot)
+
+        realtime_model = app.query_one("#settings-speech-realtime-model", Input)
+        realtime_model.value = "snapshot-a"
+        await pilot.pause()
+        await pilot.click("#settings-speech-save")
+        await asyncio.wait_for(validation_started.wait(), timeout=2.0)
+
+        realtime_model.value = "later-edit-b"
+        await pilot.pause()
+        release_validation.set()
+        await _settle(pilot)
+
+        assert persisted[0][0][0]["realtime"]["model"] == "snapshot-a"
+        assert len(app.events) == 1
+        panel.receive_stts_settings_save_result(
+            STTSSettingsSaveResult(
+                request_id=app.events[0].request_id or 0,
+                persisted=True,
+                provider_statuses={"audio_cpp": "pending"},
+                provider_configuration_revisions={"audio_cpp": 1},
+                provider_runtime_revisions={"audio_cpp": 0},
+                staged_provider_ids=frozenset({"audio_cpp"}),
+            )
+        )
+        await pilot.pause()
+
+        assert panel._realtime_original.model == "snapshot-a"
+        assert panel._realtime_draft.model == "later-edit-b"
+        assert panel.has_unsaved_changes() is True
+
+
+@pytest.mark.asyncio
 async def test_selecting_a_default_voice_profile_saves_its_id() -> None:
     app = _PanelHarness(configure_provider="openai")
     async with app.run_test(size=(150, 60)) as pilot:
