@@ -117,15 +117,33 @@ candidates over the golden set, and ships the winner with its numbers.
   slim always-on regression pin, not a combinatorial test suite. The runner
   itself stays (gated) for future retunes — it is small and rides P1's
   existing runtime.
-- Decision rule, stated before measuring (no post-hoc goalpost moves): the
-  winner must (a) rescue `kw-plant-maintenance-record` into hybrid's top-k
-  (AC#3's cell moves miss → hit), (b) not regress any per-category
-  recall/MRR/NDCG cell by more than the gate's warn band (0.02) on the
-  fixture corpus, (c) prefer the smallest deviation from server parity that
-  achieves (a) and (b) — tie-break order: pool widening, rrf_k, quota,
-  alpha. Precision cells are expected to move mechanically with row-count
-  changes (the fusion cluster's lesson) and are reported but not
-  disqualifying, with the mechanical share explained.
+- Decision rule, stated before measuring (no post-hoc goalpost moves).
+  Two distinct rescue senses, both required (self-review catch — the
+  fixture doc is vector-POOR, at vector rank ~22 below the 2k cutoff, not
+  vector-ABSENT, so pool widening alone would move AC#3's cell while
+  leaving AC#4 structurally unsatisfiable):
+  - **AC#4's structural guarantee** — an FTS-only row outranks at least one
+    vector-only row under the SHIPPED defaults — is satisfiable only by a
+    weighting change (rrf_k, quota, or an alpha combination). The winner
+    MUST include one; pool widening is a companion candidate, never the
+    sole winner.
+  - **AC#3's fixture outcome** — `kw-plant-maintenance-record` miss → hit —
+    may be achieved by the weighting change, the widened pool (merge-rescue
+    at vector rank 22), or both; the PR states which mechanism did it.
+  The winner must also (b) not regress any per-category recall/MRR/NDCG
+  cell by more than the gate's warn band (0.02), and (c) among qualifying
+  strategies prefer the smallest deviation — tie-break order among
+  weighting levers: rrf_k, quota, alpha-combo; pool widening added when it
+  independently earns its keep. Precision cells are expected to move
+  mechanically with row-count changes (the fusion cluster's lesson) and are
+  reported but not disqualifying, with the mechanical share explained.
+- **ADR-005 note:** the k=60/α=0.7 defaults came from the server-parity
+  commitment (`backlog/decisions/005-invest-in-local-rag-mirroring-tldw-
+  server.md`). The server's constants are calibrated for candidate pools of
+  thousands; chatbook's pools are ~20. Deviating is a conscious,
+  measurement-backed refinement of that ADR's intent (mirror the DESIGN,
+  not constants tuned for a different regime) — the PR says so, and the
+  ADR gets a one-line addendum rather than silent divergence.
 - If NO strategy satisfies (a)+(b): STOP; report the matrix; the owner
   chooses the trade-off. That is a finding, not a failure.
 
