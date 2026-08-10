@@ -1849,3 +1849,7 @@ def test_local_core_kobold_stream_fully_consumed_without_private_diagnostics(
 
     assert result == ([], None)
     assert LOCAL_RESPONSE_CANARY not in captured.text
+    assert (
+        "Kobold: Failed to decode streamed JSON; exception_type=JSONDecodeError"
+        in captured.text
+    )
