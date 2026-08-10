@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 import re
 import threading
-from typing import Any
+from typing import Any, TypeGuard
 
 from ...runtime_policy.types import RuntimeSourceState
 
@@ -236,7 +236,7 @@ class ScreenStateStore:
         *,
         canonical_route: str,
         runtime_identity: RuntimeIdentity,
-    ) -> bool:
+    ) -> TypeGuard[_SnapshotEnvelope]:
         return (
             isinstance(envelope, _SnapshotEnvelope)
             and envelope.canonical_route == canonical_route
