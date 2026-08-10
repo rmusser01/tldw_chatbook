@@ -360,6 +360,7 @@ class AgentService:
         | None = None,
         run_log_writer: "RunLogWriter | None" = None,
         fleet_coordinator: FleetCoordinator | None = None,
+        revoke_approvals: Callable[[str], None] | None = None,
     ) -> None:
         self.db = db
         self.registry = registry
@@ -467,6 +468,19 @@ class AgentService:
         # behaviour, which is this PR's stated acceptance criterion and
         # what keeps the pre-existing spawn suites passing unmodified.
         self._injected_fleet_coordinator = fleet_coordinator
+        # PR2a Task 7 -- the cancellation half of the approval gate.
+        #
+        # An optional seam (same injected-callable convention as
+        # `review_tool_calls`/`on_step`) called with the run id of every
+        # child this service cancels or abandons, so whatever surface is
+        # holding that child's pending approval card can take it down and
+        # fail it closed. The Console bridge wires `ConsoleChatController.
+        # revoke_approval_rounds_for_run`; `None` -- every caller before
+        # this task, and every headless/test caller -- simply means no
+        # cards exist to revoke, so cancellation behaves exactly as
+        # before. Never load-bearing for the run itself: a raise here is
+        # logged and swallowed (see `_revoke_run_approvals`).
+        self._revoke_approvals = revoke_approvals
         # Per-TURN fleet state, all owned by the primary run's thread (a
         # child never spawns -- clamp_child_budget zeroes max_subagents),
         # so no lock is needed on these three. Reset at the top of every
@@ -597,6 +611,44 @@ class AgentService:
 
         return call_model
 
+    def _review_calls_for_run(self, calls: list[ToolCall], run_id: str) -> dict:
+        """Run the injected review hook with THIS run bound as the context.
+
+        PR2a Task 5 hands the hook its ``run_id`` as a parameter, which is
+        all the hook itself needs to scope its gate writes. Task 7 adds
+        the second consumer: the approval bridge the hook calls (Console's
+        ``request_mcp_approvals``) has to record which run armed each
+        card, so a cancelled child's card can be revoked without touching
+        its live siblings' -- and it is reached through a callable whose
+        signature the hook builders do not control (a bound
+        ``functools.partial``, also used as ``MCPToolProvider``'s
+        single-call ``approval_callback``, which has no run id to pass at
+        all). Binding the SAME ``run_context`` ContextVar that
+        ``_make_invoke_tool`` already binds around tool execution covers
+        both arming paths through one mechanism, with no signature churn.
+
+        The binding is per-call and reset in ``use_run_id``'s own
+        ``finally``: the hook is called synchronously from
+        ``run_agent_loop``, on this run's own thread, so a concurrent
+        sibling on its own thread simply sets its own value and a nested
+        inline child unwinds LIFO.
+
+        Args:
+            calls: This turn's batch of tool calls, as the runtime parsed
+                them.
+            run_id: THIS run's id.
+
+        Returns:
+            The hook's verdict map, unchanged; ``{}`` (every call
+            proceeds, the runtime's own no-hook default) if the hook was
+            cleared after this closure was built.
+        """
+        hook = self.review_tool_calls
+        if hook is None:  # pragma: no cover -- guarded at the call site
+            return {}
+        with use_run_id(run_id):
+            return hook(calls, run_id)
+
     def _make_invoke_tool(
         self,
         config: AgentConfig,
@@ -691,6 +743,51 @@ class AgentService:
             event = self._fleet_cancels.get(handle_id)
             if event is not None:
                 event.set()
+        # PR2a Task 7: the cancel Event alone does not reach a child that
+        # is BLOCKED on a human approval -- that wait sits on the child's
+        # own per-call daemon thread with a card still on screen, and the
+        # user could approve it (executing the tool for real) long after
+        # this cancel. Revoking here both fails those cards closed and
+        # releases the wait immediately, which is also what lets the join
+        # below succeed instead of abandoning. Cancel first, revoke
+        # second: the child then sees the cancellation at the very next
+        # checkpoint rather than burning a model turn on the denials.
+        self._revoke_handle_approvals(handle_ids)
+
+    def _revoke_handle_approvals(self, handle_ids: list[str]) -> None:
+        """Revoke any pending approval card belonging to these children.
+
+        Args:
+            handle_ids: Handles whose runs are being stopped. A handle
+                with no run id yet (spawned, but not past ``create_run``)
+                cannot have armed a card, so it is skipped.
+        """
+        fleet = self._fleet
+        if self._revoke_approvals is None or fleet is None:
+            return
+        for handle_id in handle_ids:
+            handle = fleet.get(handle_id)
+            run_id = getattr(handle, "run_id", None) if handle is not None else None
+            if run_id:
+                self._revoke_run_approvals(run_id)
+
+    def _revoke_run_approvals(self, run_id: str) -> None:
+        """Fail this run's outstanding approval cards closed. Never raises.
+
+        Args:
+            run_id: The cancelled/abandoned run.
+        """
+        revoke = self._revoke_approvals
+        if revoke is None or not run_id:
+            return
+        try:
+            revoke(run_id)
+        except Exception:  # noqa: BLE001 — a UI-side failure must not take
+            # down the cancellation path; the card's own approval timeout
+            # remains the backstop.
+            logger.opt(exception=True).warning(
+                f"could not revoke pending approvals for run {run_id}"
+            )
 
     def _drain_fleet_handles(
         self, fleet: FleetCoordinator, handle_ids: list[str]
@@ -852,6 +949,14 @@ class AgentService:
             )
             if not handle.run_id:
                 continue
+            # PR2a Task 7: an abandoned child's thread is still alive and
+            # still holds whatever it was blocked on. If that is a human
+            # approval, the card is STILL on screen for a run that now
+            # reads `cancelled` -- revoke it again here (the cancel pass
+            # above already tried, but a card can be armed in the window
+            # between the two, and this is the last moment anyone looks
+            # at this child).
+            self._revoke_run_approvals(handle.run_id)
             try:
                 self.db.set_status(handle.run_id, RUN_CANCELLED)
             except Exception:  # noqa: BLE001 — a DB failure here must not
@@ -2060,7 +2165,7 @@ class AgentService:
             # identity, is what supplies it -- so the review hook can stamp
             # its verdicts against the run that will consume them.
             review_tool_calls=(
-                (lambda calls: self.review_tool_calls(calls, run_id))
+                (lambda calls: self._review_calls_for_run(calls, run_id))
                 if self.review_tool_calls is not None
                 else None
             ),

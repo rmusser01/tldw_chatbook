@@ -1539,6 +1539,13 @@ class ConsoleAgentBridge:
         request_skill_script_confirm: Callable[[dict], dict] | None = None,
         local_provider: Any | None = None,
         library_provider: Any | None = None,
+        # PR2a Task 7: called with the run id of every sub-agent this turn
+        # cancels or abandons, so its still-armed approval cards are failed
+        # closed and taken off screen instead of staying pressable for a
+        # run that is already over. Forwarded straight to
+        # `AgentService(revoke_approvals=...)`; `None` (a caller with no UI)
+        # leaves cancellation exactly as it was.
+        revoke_approvals: Callable[[str], None] | None = None,
     ) -> tuple[str, RunOutcome]:
         # Per-run tool registry + allow-list (Task 12, extended by P5-T6 for
         # MCP, by task-545/T6 for a per-run builtin_gate, and extended again
@@ -2092,6 +2099,7 @@ class ConsoleAgentBridge:
             review_state_scope=review_state_scope,
             install_skill_tool=install_skill_tool,
             run_skill_script_tool=run_skill_script_tool,
+            revoke_approvals=revoke_approvals,
         )
 
         supersede_run_id = (

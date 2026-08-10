@@ -175,7 +175,13 @@ def db(tmp_path):
 
 
 def make_fleet_service(
-    db, parent_replies, child_replies=None, max_live=3, providers=()
+    db,
+    parent_replies,
+    child_replies=None,
+    max_live=3,
+    providers=(),
+    revoke_approvals=None,
+    review_tool_calls=None,
 ):
     """An AgentService wired for the fleet (explicit coordinator = opt in)."""
     registry = ToolCatalogRegistry()
@@ -189,6 +195,8 @@ def make_fleet_service(
         registry=registry,
         chat_call=chat,
         fleet_coordinator=coordinator,
+        revoke_approvals=revoke_approvals,
+        review_tool_calls=review_tool_calls,
     )
     return service, chat, coordinator
 
@@ -1044,6 +1052,68 @@ def test_wait_agents_cancellation_stops_children_and_ends_the_run(db):
     assert child["status"] == RUN_CANCELLED
 
 
+def test_cancelling_and_abandoning_a_child_revokes_its_approval_cards(db):
+    """PR2a Task 7: a stopped child's pending approval card is revoked.
+
+    The approval wait lives on the child's own per-call daemon thread, so
+    a card left on screen after the child is cancelled is a card the user
+    can still press Approve on -- and the tool would run for real for a
+    run that already reads ``cancelled``. The service does not know what a
+    card is; it only knows which run it just stopped, and hands that id to
+    the injected ``revoke_approvals`` seam (wired by the Console bridge to
+    ``ConsoleChatController.revoke_approval_rounds_for_run``).
+
+    The child here is wedged inside its provider call, so it is both
+    cooperatively cancelled AND abandoned -- the two moments that must
+    revoke.
+    """
+    never = threading.Event()
+    entered = threading.Event()
+
+    def wedged_child():
+        entered.set()
+        never.wait(30.0)  # released in the finally below, not by the run
+        return "unreachable"
+
+    revoked: list[str] = []
+    short = AgentConfig(
+        model="test-model",
+        system_prompt="You are helpful.",
+        allowed_tools=(SPAWN_TOOL_NAME,),
+        budget=RunBudget(
+            max_steps=40,
+            max_model_turns=40,
+            max_subagents=2,
+            max_wall_seconds=1.0,
+        ),
+    )
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [fence(SPAWN_TOOL_NAME, {"task": "wedged"}), "parent done"],
+        {"wedged": [wedged_child]},
+        revoke_approvals=revoked.append,
+    )
+    try:
+        _run_id, outcome = service.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go"}],
+            config=short,
+            api_endpoint="llama_cpp",
+        )
+        assert entered.is_set()
+        assert outcome.status == RUN_DONE
+        child_run_ids = [handle.run_id for handle in coordinator.snapshot()]
+        assert child_run_ids and all(child_run_ids), (
+            "precondition: the child's run id reached its handle"
+        )
+        # Revoked for exactly the children this turn stopped -- never for
+        # the parent, whose own card (if any) belongs to a live run.
+        assert set(revoked) == set(child_run_ids)
+        assert _run_id not in revoked
+    finally:
+        never.set()
+
+
 def test_wait_agents_is_bounded_by_the_runs_remaining_wall_clock(
     db, monkeypatch
 ):
@@ -1340,6 +1410,60 @@ def test_child_tool_call_binds_the_childs_own_run_id(db):
     child = next(r for r in db.list_runs("c") if r["agent_kind"] == "subagent")
     assert probe.seen == [child["id"]]
     assert probe.seen[0] != ""
+
+
+def test_the_review_hook_runs_with_its_own_runs_id_bound(db):
+    """The approval bridge the review hook calls must see the run id.
+
+    PR2a Task 7: an approval card is armed from inside
+    ``review_tool_calls`` (and from ``MCPToolProvider.invoke``'s
+    single-call fallback), and each armed round records WHICH RUN armed
+    it so a cancelled child's card can be revoked without touching a live
+    sibling's. The hook's own ``run_id`` parameter cannot reach that
+    bridge -- it is a pre-bound callable whose signature the hook builders
+    do not own -- so the service binds the same ``run_context``
+    ContextVar around the hook that it already binds around tool
+    execution. Unbound, ownership would silently read ``""`` and every
+    revoke would be a no-op: fail-OPEN, which is the direction that
+    leaves a cancelled child's card pressable.
+    """
+    seen: list[tuple[str, str]] = []
+
+    def review(calls, run_id):
+        seen.append((run_id, current_run_id()))
+        return {}
+
+    cfg = AgentConfig(
+        model="test-model",
+        system_prompt="You are helpful.",
+        allowed_tools=("calculator", SPAWN_TOOL_NAME),
+        budget=RunBudget(max_steps=40, max_model_turns=40, max_subagents=2),
+    )
+    service, _chat, _coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "probe task"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "done",
+        ],
+        {"probe task": [fence("calculator", {"expression": "1+1"}), "child done"]},
+        review_tool_calls=review,
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=cfg,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    assert seen, "the review hook never ran"
+    # Every batch: the id bound for the hook IS the run the hook was told
+    # it was reviewing -- never "" and never a sibling's.
+    assert all(bound == hook_run_id for hook_run_id, bound in seen), seen
+    child = next(r for r in db.list_runs("c") if r["agent_kind"] == "subagent")
+    bound_ids = {bound for _hook_run_id, bound in seen}
+    assert child["id"] in bound_ids, "the child's own batch was reviewed unbound"
+    assert run_id in bound_ids
 
 
 # -- deferred self-review items -------------------------------------------

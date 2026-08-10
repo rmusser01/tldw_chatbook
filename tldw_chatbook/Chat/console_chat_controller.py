@@ -92,6 +92,7 @@ from tldw_chatbook.Agents.builtin_tool_gate import (
 )
 from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall, MCPToolProvider
+from tldw_chatbook.Agents.run_context import current_run_id
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
 from tldw_chatbook.config import coerce_bool_setting, get_cli_setting
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
@@ -2786,17 +2787,42 @@ class ConsoleChatController:
             if session_id is not None
             else (self.store.active_session_id or "")
         )
+        # PR2a Task 7: which RUN armed this round. Read from the
+        # `run_context` ContextVar, which `AgentService` binds around both
+        # arming paths -- the per-turn review hook (`build_tool_review_
+        # hook`/`build_mcp_review_hook`/`build_local_review_hook`, which
+        # call straight through to this method on their own run's thread)
+        # and each tool invocation (the single-call fallback approval
+        # `MCPToolProvider.invoke` raises through `approval_callback`,
+        # which has no run_id parameter to thread at all). A session id
+        # cannot substitute: every child of a fleet turn shares the
+        # parent's session, so only the run id can tell a cancelled
+        # child's card apart from its live sibling's. `""` (no run bound
+        # -- e.g. the MCP workbench's Test Tool) is never revocable, which
+        # is correct: no run owns it.
+        owning_run_id = current_run_id()
+        round_state: dict[str, Any] = {
+            "event": event,
+            "decisions": decisions,
+            "session_id": owning_session_id,
+            "run_id": owning_run_id,
+            # The names this round must answer for -- what `revoke_
+            # approval_rounds_for_run` fills with "deny".
+            "names": tuple(unique_names),
+            # Flipped by revocation. Re-read after the wait below so a
+            # decision that lands in `decisions` AFTER the revoke (the
+            # `ApprovalDecided` message is async, and `resolve_pending_
+            # approval` snapshots the box before writing to it) can never
+            # turn a revoked round back into an approval.
+            "revoked": False,
+        }
         # F2b fix (Qodo wave): guard the round registration -- the UI
         # thread's `resolve_pending_approval` (TASK-913: fails closed by
         # round_id now, no more active-session scan) and the
         # `fleet_summary_counts` sync tick can read/iterate this map
         # concurrently with this worker thread's own writes.
         with self._approval_state_lock:
-            self._pending_approval_rounds[round_id] = {
-                "event": event,
-                "decisions": decisions,
-                "session_id": owning_session_id,
-            }
+            self._pending_approval_rounds[round_id] = round_state
 
         timeout_seconds = self._resolve_mcp_approval_timeout_seconds()
         deadline = time.monotonic() + timeout_seconds
@@ -2896,6 +2922,27 @@ class ConsoleChatController:
                     for name in unique_names:
                         decisions.setdefault(name, "timeout")
                     break
+            # PR2a Task 7: a revoked round answers "deny" for every name,
+            # unconditionally -- it does not consult `decisions` at all.
+            # The run this round belongs to has been cancelled or
+            # abandoned, and `resolve_pending_approval` can still write
+            # into the shared `decisions` box after revocation (it
+            # snapshots the box under the lock, then updates it outside),
+            # so honouring that box here would let a click delivered
+            # microseconds after the cancellation execute the tool for
+            # real. `revoke_approval_rounds_for_run` already filled every
+            # name with "deny"; this is the guard that makes it stick.
+            with self._approval_state_lock:
+                was_revoked = bool(round_state.get("revoked"))
+            if was_revoked:
+                # Same audit gap Finding I3 documents for the cancellation
+                # branch above: the child's loop is being torn down, so
+                # these calls never reach `invoke()`'s own gate and would
+                # otherwise leave no record of having been denied.
+                self._record_cancelled_approval_decisions(
+                    list(unique_names), call_by_name
+                )
+                return {name: "deny" for name in unique_names}
             # Any name the resolution path above didn't already cover (e.g.
             # a partial/empty decisions dict handed to `resolve_pending_
             # approval`) fails closed to "deny" rather than silently
@@ -3559,6 +3606,110 @@ class ConsoleChatController:
         approval_event = round_state["event"]
         decisions_dict.update(decisions or {})
         approval_event.set()
+
+    def revoke_approval_rounds_for_run(self, run_id: str) -> int:
+        """Fail every approval round owned by ``run_id`` closed, right now.
+
+        PR2a Task 7 (safety). The approval wait blocks inside
+        ``_call_with_timeout``'s per-call daemon thread, which keeps
+        running after the fleet cooperatively cancels -- or outright
+        ABANDONS -- the child that owns it. Until this existed, that
+        child's card stayed on screen and stayed live: pressing Approve
+        resolved the round, the waiting thread returned the approval, and
+        the tool EXECUTED FOR REAL (a file written, a message sent) for a
+        run whose handle and run row already read ``cancelled``. The
+        documented ``approval_timeout < max_tool_call_seconds`` invariant
+        (see ``_DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS``) bounds the same
+        class of hazard for the timeout path; this closes the
+        cancellation path.
+
+        Called by ``AgentService`` (through its injected
+        ``revoke_approvals`` seam) at both moments a child stops being
+        allowed to act: the cooperative cancel and the end-of-turn
+        abandon. Safe to call for a run that never armed a card -- the
+        common case -- and never touches another run's rounds, which
+        matters because every child of a fleet turn shares ONE console
+        session: session-keyed teardown could not tell a cancelled child's
+        card from its live sibling's.
+
+        Each revoked round is (a) marked ``revoked`` so the waiting thread
+        returns "deny" for every name even if a click lands in its shared
+        decisions box afterwards, (b) filled with "deny" for every name it
+        was asked about, (c) removed from ``_pending_approval_rounds``, so
+        a late ``resolve_pending_approval`` finds nothing to resolve, (d)
+        released via its Event, so the waiting thread returns immediately
+        rather than at its 120s auto-deny, (e) discarded from
+        ``_pending_approvals`` so the session's NEEDS_APPROVAL badge
+        clears once its last round is gone, and (f) taken off screen
+        through ``_clear_pending_approval_if_round_is_current`` -- the
+        SAME round-identity-guarded clear a resolved round's own teardown
+        uses, so a sibling round's card is never clobbered.
+
+        Thread-safe: the registry mutations happen under
+        ``_approval_state_lock``; ``discard_pending_round`` and the UI
+        clear take that same (non-reentrant) lock themselves and are
+        therefore deliberately called after it is released.
+
+        Args:
+            run_id: The cancelled/abandoned run whose cards must die. A
+                falsy id is a no-op -- ``""`` is the "no run bound" key
+                that rounds armed outside any agent run carry, and
+                sweeping those would deny cards no run owns.
+
+        Returns:
+            How many rounds were revoked (``0`` when the run had none).
+        """
+        if not run_id:
+            return 0
+        revoked: list[tuple[str, str | None]] = []
+        with self._approval_state_lock:
+            for round_id, state in list(self._pending_approval_rounds.items()):
+                if state.get("run_id") != run_id:
+                    continue
+                state["revoked"] = True
+                decisions = state.get("decisions")
+                if isinstance(decisions, dict):
+                    for name in state.get("names") or ():
+                        decisions[name] = "deny"
+                self._pending_approval_rounds.pop(round_id, None)
+                session_id = state.get("session_id") or None
+                revoked.append((round_id, session_id))
+                event = state.get("event")
+                if event is not None:
+                    # Last, and only once the round is unreachable: the
+                    # thread this releases returns the moment it wakes.
+                    event.set()
+            # Mirrors `request_mcp_approvals`' `finally` exactly: the
+            # retained payload is a SINGLE per-session slot, so it may
+            # only be dropped once NO armed round is left for that
+            # session -- otherwise a still-armed sibling loses the only
+            # copy of its card and a switch away/back mounts nothing.
+            for _round_id, session_id in revoked:
+                if session_id is None:
+                    continue
+                if not any(
+                    state.get("session_id") == session_id
+                    for state in self._pending_approval_rounds.values()
+                ):
+                    self._parked_approval_payloads.pop(session_id, None)
+        for round_id, session_id in revoked:
+            if session_id is not None:
+                self.discard_pending_round(session_id, round_id)
+            try:
+                self._clear_pending_approval_if_round_is_current(
+                    round_id, session_id
+                )
+            except Exception:  # noqa: BLE001 -- a UI clear must never
+                # break the cancellation path that called us.
+                logger.opt(exception=True).debug(
+                    "Failed to marshal approval clear during revocation"
+                )
+        if revoked:
+            logger.info(
+                f"revoked {len(revoked)} pending approval round(s) for "
+                f"cancelled run {run_id}"
+            )
+        return len(revoked)
 
     # -- Skill-install confirm bridge (task-5, parked TASK-910) --------------
 
@@ -7507,6 +7658,14 @@ class ConsoleChatController:
                     if self.set_pending_skill_script is not None
                     else None
                 ),
+                # PR2a Task 7: the fleet cancels/abandons children on the
+                # bridge's worker thread and hands each stopped run's id
+                # here, so a card still on screen for a child that is
+                # already `cancelled` is denied and cleared rather than
+                # left pressable (an approval that would still EXECUTE the
+                # tool for real). Run-keyed, so a live sibling child --
+                # which shares this same session -- keeps its own card.
+                revoke_approvals=self.revoke_approval_rounds_for_run,
             )
         except asyncio.CancelledError:
             if cancel_event.is_set():
