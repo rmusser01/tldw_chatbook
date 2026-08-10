@@ -211,6 +211,16 @@ silent runtime updates are prohibited.
 Unknown packages are not rejected from audio.cpp generally. They remain usable
 through the existing user-provided JSON source.
 
+Implementation evidence recorded on 2026-08-10 refined the initial PocketTTS
+classification. The pinned PocketTTS GGUF packages register in the shared
+server, but a real release-0.5.1 synthesis requests a separate voice embedding
+that is not contained in those standalone GGUF files. Their revision-2 recipes
+therefore declare `Reference: Required`; they remain valid guided catalog
+entries but are not eligible for the no-reference first sample. The PocketTTS
+Safetensors package includes its reviewed embeddings and remains
+`Reference: Optional`. The first text-ready onboarding sample uses Supertonic;
+PocketTTS GGUF generation belongs to the typed voice/reference increment.
+
 ### GM-DEC-004 — One multi-model child
 
 All accepted guided models are projected into one generated `server.json` and
@@ -1491,8 +1501,9 @@ These are product release boundaries, not implementation tasks or a plan. Task
 decomposition occurs only after this design receives final approval.
 
 1. **Generated text-ready vertical** — guided setup, exact recipes for the
-   approved initial text-ready subset (starting with Supertonic and PocketTTS),
-   POSIX real-process evidence, and first-time sample UAT.
+   approved initial package subset, a no-reference Supertonic first sample,
+   truthful PocketTTS GGUF voice-required classification, POSIX real-process
+   evidence, and first-time sample UAT.
 2. **Clone-reference foundation** — profile v3, canonical private reference,
    transient audition, typed admission, and explicit voice bundle.
 3. **Model Library and dependency UX** — reviewed artifact mapping, install

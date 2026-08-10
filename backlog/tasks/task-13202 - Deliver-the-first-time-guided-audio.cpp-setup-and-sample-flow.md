@@ -1,9 +1,11 @@
 ---
 id: TASK-13202
 title: Deliver the first-time guided audio.cpp setup and sample flow
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-08-09 17:39'
+updated_date: '2026-08-10 19:31'
 labels:
   - tts
   - audio-cpp
@@ -39,3 +41,20 @@ Let a first-time user configure a supported local package in Global Settings and
 - [ ] #8 The full guided flow is keyboard-operable and screen-reader/non-color legible at supported narrow widths, with current disabled reasons, focus restoration, bounded scrollable diagnostics, and live announcements that do not spam progress ticks.
 - [ ] #9 User documentation and pinned first-time macOS/Linux UAT demonstrate install-server-separately, package selection, side-effect-free Save, sample generation, audible playback, multi-model reuse, restart/apply, crash recovery, explicit shutdown, and unchanged External/manual-json behavior without editing JSON.
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Follow `Docs/superpowers/plans/2026-08-10-task-13202-audio-cpp-first-time-guided-setup.md` test-first and keep every change within this task's acceptance criteria.
+2. Round-trip and validate External, manual `server.json`, and Guided audio.cpp settings while preserving dormant values and proving Save remains side-effect free.
+3. Add the keyboard-accessible guided Settings controls, bounded package scan/review, default/backend selection, truthful copy, and exact Speech Lab handoff.
+4. Derive the Speech Lab primary action from one immutable runtime observation and add the fenced Start & Generate Sample flow without duplicating lifecycle actions.
+5. Complete the current-result experience with WAV playback state, safe provenance, duration, Generate again, Save WAV, and the existing Studio-only autoplay preference.
+6. Verify one-child multi-model reuse plus exact captured Console and Roleplay selections, changing production code only where regressions expose a task-scoped gap.
+7. Complete narrow-width/accessibility checks, user documentation, and pinned macOS/Linux UAT evidence without touching unrelated audio.cpp processes.
+8. Run focused and proportionate verification, self-review the diff against all acceptance criteria, record implementation notes, and close the task only after the Definition of Done is satisfied.
+
+ADR required: no
+
+ADR path: N/A (`ADR-039`, `ADR-040`, and `ADR-050` already apply)
+
+Reason: TASK-13202 implements the already-approved guided setup, onboarding, and product seam without changing settings ownership, Studio preference ownership, generated-configuration ownership, or managed-lifecycle boundaries.

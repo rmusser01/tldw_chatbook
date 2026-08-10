@@ -10,6 +10,7 @@ from __future__ import annotations
 import math
 import os
 import shutil
+import stat
 import unicodedata
 from collections.abc import Mapping
 from copy import deepcopy
@@ -23,10 +24,16 @@ from urllib.parse import urlsplit
 
 from tldw_chatbook.TTS.adapter_types import TTSNativeCapabilityObservation
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
+from tldw_chatbook.TTS.audio_cpp_guided_config import (
+    AudioCppManagedSetupSource,
+    AudioCppSettingsConfig,
+)
 from tldw_chatbook.TTS.audio_cpp_managed_config import (
     validate_audio_cpp_managed_launch,
 )
+from tldw_chatbook.TTS.audio_cpp_recipes import AUDIO_CPP_RECIPE_REGISTRY
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+from tldw_chatbook.Utils.path_validation import validate_path_simple
 from tldw_chatbook.UI.Speech.speech_settings_contracts import (
     SpeechTTSConfigurationState,
 )
@@ -102,8 +109,18 @@ GLOBAL_TTS_PROVIDER_FIELD_IDS = MappingProxyType(
         "audio_cpp": (
             "mode",
             "base_url",
+            "managed_setup_source",
             "managed_binary_path",
             "managed_server_json_path",
+            "guided_binary_path",
+            "guided_binary_source",
+            "guided_packages",
+            "guided_default_model_id",
+            "guided_backend_preference",
+            "guided_device",
+            "guided_threads",
+            "guided_max_request_body_bytes",
+            "guided_busy_timeout_ms",
             "managed_startup_timeout_seconds",
             "managed_health_check_interval_seconds",
             "managed_termination_grace_seconds",
@@ -174,7 +191,7 @@ GLOBAL_TTS_PROVIDER_FIELD_IDS = MappingProxyType(
 
 
 _PROVIDER_NON_SECRET_DEFAULTS: dict[str, dict[str, object]] = {
-    "audio_cpp": AudioCppConfig().to_mapping(),
+    "audio_cpp": AudioCppSettingsConfig().to_mapping(),
     "openai": {
         "base_url": "https://api.openai.com/v1/audio/speech",
         "organization_id": "",
@@ -631,12 +648,17 @@ def load_global_speech_tts_state(
     try:
         if not isinstance(raw_audio_cpp, Mapping):
             raise ValueError("Invalid audio.cpp settings")
-        audio_cpp = AudioCppConfig.from_mapping(raw_audio_cpp).to_mapping()
-        for field_id in GLOBAL_TTS_PROVIDER_FIELD_IDS["audio_cpp"]:
-            if field_id in raw_audio_cpp and field_id not in audio_cpp:
-                audio_cpp[field_id] = deepcopy(raw_audio_cpp[field_id])
-    except ValueError:
-        audio_cpp = AudioCppConfig().to_mapping()
+        load_values = AudioCppSettingsConfig().to_mapping()
+        load_values.update(
+            {
+                field_id: deepcopy(raw_audio_cpp[field_id])
+                for field_id in GLOBAL_TTS_PROVIDER_FIELD_IDS["audio_cpp"]
+                if field_id in raw_audio_cpp
+            }
+        )
+        audio_cpp = _validated_provider_values("audio_cpp", load_values)
+    except (GlobalSpeechTTSValidationError, ValueError):
+        audio_cpp = AudioCppSettingsConfig().to_mapping()
 
     providers = deepcopy(_PROVIDER_NON_SECRET_DEFAULTS)
     providers["audio_cpp"] = audio_cpp
@@ -1049,6 +1071,61 @@ def validate_audio_cpp_managed_settings(values: Mapping[str, object]) -> None:
     if validated.get("mode") != "managed":
         return
 
+    setup_source = validated.get(
+        "managed_setup_source",
+        AudioCppManagedSetupSource.USER_JSON.value,
+    )
+    if setup_source == AudioCppManagedSetupSource.GUIDED.value:
+        try:
+            config = AudioCppSettingsConfig.from_mapping(validated)
+        except ValueError:
+            raise GlobalSpeechTTSValidationError(
+                "audio_cpp",
+                "managed_setup_source",
+                "Review the Guided audio.cpp settings.",
+            ) from None
+        try:
+            binary = validate_path_simple(
+                config.guided_binary_path,
+                require_exists=True,
+            )
+            info = binary.stat()
+            executable = (
+                binary.is_absolute()
+                and stat.S_ISREG(info.st_mode)
+                and os.access(binary, os.X_OK)
+            )
+        except OSError:
+            executable = False
+        if not executable:
+            raise GlobalSpeechTTSValidationError(
+                "audio_cpp",
+                "guided_binary_path",
+                "Choose an existing audiocpp_server file that is executable.",
+            ) from None
+        if not config.guided_packages:
+            raise GlobalSpeechTTSValidationError(
+                "audio_cpp",
+                "guided_packages",
+                "Add and review at least one compatible model package.",
+            ) from None
+        if config.guided_default_model_id is None:
+            raise GlobalSpeechTTSValidationError(
+                "audio_cpp",
+                "guided_default_model_id",
+                "Choose the default model for Guided audio.cpp speech.",
+            ) from None
+        try:
+            for package in config.guided_packages:
+                AUDIO_CPP_RECIPE_REGISTRY.validate_accepted(package)
+        except ValueError:
+            raise GlobalSpeechTTSValidationError(
+                "audio_cpp",
+                "guided_packages",
+                "One or more model packages require review.",
+            ) from None
+        return
+
     config = AudioCppConfig.from_mapping(validated)
     failure: tuple[str, str] | None = None
     try:
@@ -1275,41 +1352,61 @@ def _validated_provider_values(
                 values.get("base_url"),
             )
         else:
-            candidate.update(
-                {
-                    "managed_binary_path": _path_syntax(
-                        provider_id,
-                        "managed_binary_path",
-                        values.get("managed_binary_path"),
-                    ),
-                    "managed_server_json_path": _path_syntax(
-                        provider_id,
-                        "managed_server_json_path",
-                        values.get("managed_server_json_path"),
-                    ),
-                    "managed_startup_timeout_seconds": _number(
-                        provider_id,
-                        "managed_startup_timeout_seconds",
-                        values.get("managed_startup_timeout_seconds"),
-                        1.0,
-                        300.0,
-                    ),
-                    "managed_health_check_interval_seconds": _number(
-                        provider_id,
-                        "managed_health_check_interval_seconds",
-                        values.get("managed_health_check_interval_seconds"),
-                        2.0,
-                        300.0,
-                    ),
-                    "managed_termination_grace_seconds": _number(
-                        provider_id,
-                        "managed_termination_grace_seconds",
-                        values.get("managed_termination_grace_seconds"),
-                        0.1,
-                        60.0,
-                    ),
-                }
+            setup_source = _choice(
+                provider_id,
+                "managed_setup_source",
+                values.get("managed_setup_source", "user_json"),
+                frozenset({"user_json", "guided"}),
             )
+            candidate["managed_setup_source"] = setup_source
+            if setup_source == "user_json":
+                candidate.update(
+                    {
+                        "managed_binary_path": _path_syntax(
+                            provider_id,
+                            "managed_binary_path",
+                            values.get("managed_binary_path"),
+                        ),
+                        "managed_server_json_path": _path_syntax(
+                            provider_id,
+                            "managed_server_json_path",
+                            values.get("managed_server_json_path"),
+                        ),
+                    }
+                )
+            for field_id, minimum, maximum in (
+                ("managed_startup_timeout_seconds", 1.0, 300.0),
+                ("managed_health_check_interval_seconds", 2.0, 300.0),
+                ("managed_termination_grace_seconds", 0.1, 60.0),
+            ):
+                candidate[field_id] = _number(
+                    provider_id,
+                    field_id,
+                    values.get(field_id),
+                    minimum,
+                    maximum,
+                )
+            if setup_source == "guided":
+                try:
+                    guided_values = dict(values)
+                    guided_values.update(candidate)
+                    return AudioCppSettingsConfig.from_mapping(
+                        guided_values
+                    ).to_mapping()
+                except ValueError as error:
+                    field_id = "managed_setup_source"
+                    errors = getattr(error, "errors", None)
+                    if callable(errors):
+                        details = errors()
+                        if details:
+                            location = details[0].get("loc", ())
+                            if location and location[0] in allowed_fields:
+                                field_id = str(location[0])
+                    _validation_error(
+                        provider_id,
+                        field_id,
+                        "Review the Guided audio.cpp setting.",
+                    )
         try:
             projected = AudioCppConfig.from_mapping(candidate).to_mapping()
         except ValueError as error:
@@ -1327,11 +1424,14 @@ def _validated_provider_values(
                 field_id,
                 "The external audio.cpp setting is invalid.",
             )
-        durable = {
-            field_id: deepcopy(values[field_id])
-            for field_id in GLOBAL_TTS_PROVIDER_FIELD_IDS[provider_id]
-            if field_id in values
-        }
+        durable = AudioCppSettingsConfig().to_mapping()
+        durable.update(
+            {
+                field_id: deepcopy(values[field_id])
+                for field_id in GLOBAL_TTS_PROVIDER_FIELD_IDS[provider_id]
+                if field_id in values
+            }
+        )
         durable.update(projected)
         if mode == "managed" and "base_url" not in durable:
             durable["base_url"] = AudioCppConfig().base_url

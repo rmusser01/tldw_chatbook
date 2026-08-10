@@ -622,6 +622,85 @@ async def test_runtime_observation_is_passive_and_keeps_paths_out_of_repr(
 
 
 @pytest.mark.asyncio
+async def test_guided_runtime_observation_exposes_only_safe_sample_facts(
+    tmp_path: Path,
+) -> None:
+    supervisor = _PreparationSupervisor()
+    settings = _guided_settings(tmp_path, public_model_id="safe-model")
+    service, factory_configs = _service(settings.to_mapping(), supervisor)
+
+    try:
+        observation = await service.audio_cpp_runtime_observation()
+
+        assert observation.saved_managed_setup_source == "guided"
+        assert observation.applied_managed_setup_source == "guided"
+        assert observation.saved_guided_model_ids == ("safe-model",)
+        assert observation.applied_guided_model_ids == ("safe-model",)
+        assert observation.saved_guided_default_model_id == "safe-model"
+        assert observation.applied_guided_default_model_id == "safe-model"
+        assert observation.saved_guided_text_ready is True
+        assert observation.applied_guided_text_ready is True
+        assert observation.saved_managed_binary_path is None
+        assert observation.saved_managed_server_json_path is None
+        assert observation.applied_managed_binary_path is None
+        assert observation.applied_managed_server_json_path is None
+        assert str(tmp_path) not in repr(observation)
+        assert factory_configs == []
+        assert supervisor.ensure_calls == 0
+        assert supervisor.launches == 0
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_guided_runtime_sample_readiness_belongs_to_exact_default(
+    tmp_path: Path,
+) -> None:
+    supervisor = _PreparationSupervisor()
+    supertonic = _accepted_guided_package(
+        tmp_path / "models" / "supertonic",
+        filename="supertonic-3-orig.gguf",
+        package_variant="supertonic_3_orig",
+        public_model_id="narrator",
+    )
+    pocket = _accepted_guided_package(
+        tmp_path / "models" / "pocket",
+        filename="pocket-tts-english-bf16.gguf",
+        package_variant="pocket_tts_english_bf16",
+        public_model_id="clone-voice",
+    )
+    binary = tmp_path / "audiocpp_server"
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    binary.chmod(0o700)
+    settings = AudioCppSettingsConfig.from_mapping(
+        {
+            "mode": "managed",
+            "managed_setup_source": "guided",
+            "guided_binary_path": str(binary),
+            "guided_packages": [
+                supertonic.model_dump(mode="json"),
+                pocket.model_dump(mode="json"),
+            ],
+            "guided_default_model_id": "clone-voice",
+        }
+    )
+    service, _ = _service(settings.to_mapping(), supervisor)
+
+    try:
+        observation = await service.audio_cpp_runtime_observation()
+
+        assert observation.saved_guided_model_ids == ("narrator", "clone-voice")
+        assert observation.saved_guided_default_model_id == "clone-voice"
+        assert observation.saved_guided_text_ready is False
+        assert observation.applied_guided_text_ready is False
+        assert supervisor.launches == 0
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
 async def test_runtime_observation_reports_staged_managed_over_applied_external(
     tmp_path: Path,
 ) -> None:
@@ -983,10 +1062,48 @@ async def test_default_first_available_launches_applied_managed_first_use(
 
         assert response.model_id == "model"
         assert audio == [_wav()]
+        assert response.metadata["process_generation"] == 1
         assert supervisor.launches == 1
     finally:
         await service.close()
         await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_complete_wav_keeps_the_admitted_process_generation_if_exit_follows(
+    tmp_path: Path,
+) -> None:
+    supervisor = _PreparationSupervisor()
+    managed = _managed_config(tmp_path, "generation-provenance", 19_129)
+    adapter = AudioCppAdapter(
+        AudioCppConfig.from_mapping(managed),
+        transport=httpx.MockTransport(_handler),
+        supervisor=supervisor,  # type: ignore[arg-type]
+    )
+    original_post = adapter._post_speech
+
+    async def post_then_invalidate(payload: dict[str, str]):
+        outcome = await original_post(payload)
+        adapter._managed_process_generation = None
+        return outcome
+
+    adapter._post_speech = post_then_invalidate  # type: ignore[method-assign]
+
+    try:
+        response = await adapter.synthesize(
+            TTSRequest(
+                provider_id="audio_cpp",
+                model_id="model",
+                text="retain exact generation provenance",
+                voice=None,
+                response_format="wav",
+            )
+        )
+        await response.aclose()
+
+        assert response.metadata["process_generation"] == 1
+    finally:
+        await adapter.close()
 
 
 @pytest.mark.asyncio
@@ -2751,6 +2868,19 @@ async def test_real_child_uses_generated_multi_model_config_and_cleans_artifact(
         )
         audio = [chunk async for chunk in response.byte_stream]
         await response.aclose()
+        first_process_generation = response.metadata["process_generation"]
+
+        second_response = await adapter.synthesize(
+            TTSRequest(
+                provider_id="audio_cpp",
+                model_id="clone-voice",
+                text="a second model in the same managed child",
+                voice=None,
+                response_format="wav",
+            )
+        )
+        second_audio = [chunk async for chunk in second_response.byte_stream]
+        await second_response.aclose()
 
         assert [model.model_id for model in catalog.models] == [
             "narrator",
@@ -2761,6 +2891,11 @@ async def test_real_child_uses_generated_multi_model_config_and_cleans_artifact(
             ("tts", "clone"),
         ]
         assert audio == [_wav()]
+        assert second_audio == [_wav()]
+        assert second_response.metadata["process_generation"] == (
+            first_process_generation
+        )
+        assert len(launched) == 1
         assert state["pid"] == launched[0].pid
         assert state["argv"] == [
             str(wrapper),

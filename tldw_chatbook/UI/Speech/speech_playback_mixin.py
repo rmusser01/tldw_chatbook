@@ -74,7 +74,11 @@ class SpeechPlaybackMixin:
                 self._generation_operation_id = artifact.operation_id
                 self._result_transition_operation_id = artifact.operation_id
                 self._sync_generate_enabled()
-                self.query_one("#audio-play-btn", Button).disabled = True
+                play = self.query_one("#audio-play-btn", Button)
+                play.disabled = True
+                play.tooltip = (
+                    "Wait for current playback to stop before playing the new result"
+                )
                 self.run_worker(
                     self._replace_result_after_playback(artifact),
                     name="replace_tts_result_after_playback",
@@ -93,6 +97,9 @@ class SpeechPlaybackMixin:
             self._sync_save_profile_action()
             log = self.query_one("#tts-generation-log", RichLog)
             log.write("[bold red]✗ TTS generation failed![/bold red]")
+            result_hook = getattr(self, "_on_generation_result", None)
+            if callable(result_hook):
+                result_hook(None)
 
     def _playback_transition_required(self) -> bool:
         """Return whether replacing the result must first retire playback."""
@@ -158,6 +165,9 @@ class SpeechPlaybackMixin:
         """Publish one result only after prior playback ownership is settled."""
 
         self._store_delivered_artifact(artifact, announce=True)
+        result_hook = getattr(self, "_on_generation_result", None)
+        if callable(result_hook):
+            result_hook(artifact)
         preferences = getattr(self, "studio_preferences", None)
         if getattr(preferences, "auto_play", False) is True:
             self._play_audio()
@@ -212,8 +222,10 @@ class SpeechPlaybackMixin:
         if self.is_mounted:
             self.query_one("#generation-status-container").add_class("hidden")
             if self.current_audio_artifact is None:
-                self.query_one("#audio-play-btn", Button).disabled = True
-                self.query_one("#audio-export-btn", Button).disabled = True
+                self._sync_idle_transport_actions()
+                export = self.query_one("#audio-export-btn", Button)
+                export.disabled = True
+                export.tooltip = "Generate audio before saving a current result"
             self._sync_generate_enabled()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -258,6 +270,9 @@ class SpeechPlaybackMixin:
         elif event.button.id == "audio-export-btn":
             self._export_audio()
             event.stop()
+        elif event.button.id == "audio-generate-again-btn":
+            self._generate_tts()
+            event.stop()
         elif event.button.id == "audio-save-profile-btn":
             event.button.disabled = True
             self.run_worker(
@@ -294,10 +309,14 @@ class SpeechPlaybackMixin:
             self.query_one("#tts-generation-log", RichLog).write(
                 "[bold green]✓ TTS generation complete![/bold green]"
             )
-        self.query_one("#audio-play-btn", Button).disabled = False
-        self.query_one("#pause-audio-btn", Button).disabled = True
-        self.query_one("#stop-audio-btn", Button).disabled = True
+        self._sync_idle_transport_actions()
         self.query_one("#audio-export-btn", Button).disabled = False
+        repeat = self.query_one("#audio-generate-again-btn", Button)
+        repeat.disabled = False
+        repeat.tooltip = "Generate another result with the current Speech Lab controls"
+        save = self.query_one("#audio-export-btn", Button)
+        save.label = f"Save {artifact.audio_format.upper()} as…"
+        save.tooltip = f"Save the current {artifact.audio_format.upper()} result"
         self._sync_save_profile_action()
         self.query_one("#audio-player-status", Static).update(
             self._current_result_status_copy()
@@ -306,6 +325,9 @@ class SpeechPlaybackMixin:
             self.query_one("#audio-result-lifecycle", Static).update(
                 self._result_lifecycle_copy(artifact)
             )
+            self.query_one("#audio-result-provenance", Static).update(
+                self._current_result_provenance_copy(artifact)
+            )
             self.query_one("#audio-player-transport").add_class("hidden")
             self.query_one("#audio-progress-bar").add_class("hidden")
             time_display = self.query_one("#audio-time-display", Static)
@@ -313,6 +335,48 @@ class SpeechPlaybackMixin:
             time_display.add_class("hidden")
         except NoMatches:
             pass
+
+    def _sync_idle_transport_actions(self) -> None:
+        """Project current-result transport controls in a truthful idle state."""
+
+        has_result = self._current_generated_audio_path() is not None
+        play = self.query_one("#audio-play-btn", Button)
+        pause = self.query_one("#pause-audio-btn", Button)
+        stop = self.query_one("#stop-audio-btn", Button)
+        play.disabled = not has_result
+        play.tooltip = (
+            "Play the current result (Ctrl+P)"
+            if has_result
+            else "Generate audio before playing the current result"
+        )
+        pause.label = "Pause"
+        pause.disabled = True
+        pause.tooltip = (
+            "Start playback before pausing"
+            if has_result
+            else "Generate audio before pausing playback"
+        )
+        stop.disabled = True
+        stop.tooltip = (
+            "Start playback before stopping"
+            if has_result
+            else "Generate audio before stopping playback"
+        )
+
+    def _sync_active_transport_actions(self) -> None:
+        """Project current-result transport controls while playback is active."""
+
+        play = self.query_one("#audio-play-btn", Button)
+        pause = self.query_one("#pause-audio-btn", Button)
+        stop = self.query_one("#stop-audio-btn", Button)
+        play.disabled = True
+        play.tooltip = "Playback is already in progress"
+        pause.disabled = False
+        pause.tooltip = (
+            "Resume playback" if str(pause.label) == "Resume" else "Pause playback"
+        )
+        stop.disabled = False
+        stop.tooltip = "Stop playback (Ctrl+S)"
 
     @staticmethod
     def _artifact_duration_seconds(
@@ -333,6 +397,19 @@ class SpeechPlaybackMixin:
             duration = float(value) * scale
             if math.isfinite(duration) and duration > 0:
                 return duration
+        frame_count = artifact.metadata.get("frame_count")
+        sample_rate = artifact.metadata.get("sample_rate")
+        if (
+            not isinstance(frame_count, bool)
+            and isinstance(frame_count, Real)
+            and not isinstance(sample_rate, bool)
+            and isinstance(sample_rate, Real)
+            and math.isfinite(float(frame_count))
+            and math.isfinite(float(sample_rate))
+            and float(frame_count) > 0
+            and float(sample_rate) > 0
+        ):
+            return float(frame_count) / float(sample_rate)
         return None
 
     @staticmethod
@@ -349,10 +426,39 @@ class SpeechPlaybackMixin:
         artifact = self.current_audio_artifact
         if artifact is None:
             return "No audio generated yet"
-        parts = ["Ready", artifact.audio_format.upper()]
+        format_copy = artifact.audio_format.upper()
+        if (
+            artifact.audio_format.casefold() == "wav"
+            and artifact.metadata.get("delivery") == "complete_wav"
+        ):
+            format_copy = "Complete WAV"
+        parts = ["Ready", format_copy]
         duration = self._artifact_duration_seconds(artifact)
         if duration is not None:
             parts.append(self._format_result_duration(duration))
+        return " · ".join(parts)
+
+    @staticmethod
+    def _current_result_provenance_copy(artifact: STTSGeneratedAudio) -> str:
+        """Return path-free provenance captured with the delivered artifact."""
+
+        provider = (
+            "audio.cpp"
+            if artifact.provider_id == "audio_cpp"
+            else artifact.provider_id.replace("_", " ").title()
+        )
+        voice = artifact.voice_id or "Server default"
+        parts = [
+            f"Provider: {provider}",
+            f"Model: {artifact.model_id}",
+            f"Voice: {voice}",
+        ]
+        selection = artifact.requested_selection
+        if selection is not None:
+            parts.append(f"configuration revision {selection.configuration_revision}")
+        process_generation = artifact.metadata.get("process_generation")
+        if type(process_generation) is int and process_generation >= 0:
+            parts.append(f"process generation {process_generation}")
         return " · ".join(parts)
 
     @staticmethod
@@ -490,9 +596,7 @@ class SpeechPlaybackMixin:
                 self._progress_timer_task = None
                 logger.debug("Cancelled existing progress timer")
 
-            # Enable pause and stop buttons
-            self.query_one("#pause-audio-btn", Button).disabled = False
-            self.query_one("#stop-audio-btn", Button).disabled = False
+            self._sync_active_transport_actions()
             self.query_one("#audio-player-status", Static).update(
                 "Playing current result…"
             )
@@ -583,9 +687,7 @@ class SpeechPlaybackMixin:
                         logger.error("Failed to start playback - play() returned False")
                         self.app.notify("Failed to start playback", severity="error")
                         # Reset button states on failure
-                        self.query_one("#audio-play-btn", Button).disabled = False
-                        self.query_one("#pause-audio-btn", Button).disabled = True
-                        self.query_one("#stop-audio-btn", Button).disabled = True
+                        self._sync_idle_transport_actions()
                         self.query_one("#audio-player-status", Static).update(
                             "Playback failed"
                         )
@@ -601,9 +703,7 @@ class SpeechPlaybackMixin:
             logger.opt(exception=True).error(f"Error playing audio: {e}")
             self.app.notify(f"Playback error: {str(e)}", severity="error")
             # Reset button states on error
-            self.query_one("#audio-play-btn", Button).disabled = False
-            self.query_one("#pause-audio-btn", Button).disabled = True
-            self.query_one("#stop-audio-btn", Button).disabled = True
+            self._sync_idle_transport_actions()
             self.query_one("#audio-player-status", Static).update("Playback error")
         finally:
             if release_artifact is not None:
@@ -655,6 +755,7 @@ class SpeechPlaybackMixin:
                 if success:
                     # Update button states
                     self.query_one("#pause-audio-btn", Button).label = "Resume"
+                    self._sync_active_transport_actions()
                     self.app.notify("Playback paused", severity="information")
                 else:
                     self.app.notify("Failed to pause playback", severity="warning")
@@ -663,6 +764,7 @@ class SpeechPlaybackMixin:
                 if success:
                     # Update button states
                     self.query_one("#pause-audio-btn", Button).label = "Pause"
+                    self._sync_active_transport_actions()
                     self.app.notify("Playback resumed", severity="information")
                     # Cancel any existing timer and restart
                     if (
@@ -718,12 +820,7 @@ class SpeechPlaybackMixin:
 
             # Always reset button states regardless of success
             # (audio may have already finished playing)
-            self.query_one(
-                "#audio-play-btn", Button
-            ).disabled = False  # Re-enable play button
-            self.query_one("#pause-audio-btn", Button).label = "Pause"
-            self.query_one("#pause-audio-btn", Button).disabled = True
-            self.query_one("#stop-audio-btn", Button).disabled = True
+            self._sync_idle_transport_actions()
             self.query_one("#audio-player-transport").add_class("hidden")
 
             if success:
@@ -997,10 +1094,7 @@ class SpeechPlaybackMixin:
                         self.query_one("#audio-player-transport").add_class("hidden")
 
                         # Reset button states when playback finishes
-                        self.query_one("#audio-play-btn", Button).disabled = False
-                        self.query_one("#pause-audio-btn", Button).disabled = True
-                        self.query_one("#pause-audio-btn", Button).label = "Pause"
-                        self.query_one("#stop-audio-btn", Button).disabled = True
+                        self._sync_idle_transport_actions()
                         self.query_one("#audio-player-status", Static).update(
                             self._current_result_status_copy()
                         )
@@ -1022,9 +1116,7 @@ class SpeechPlaybackMixin:
         # Ensure UI is reset on exit
         try:
             if self._result_transition_operation_id is None:
-                self.query_one("#audio-play-btn", Button).disabled = False
-                self.query_one("#pause-audio-btn", Button).disabled = True
-                self.query_one("#stop-audio-btn", Button).disabled = True
+                self._sync_idle_transport_actions()
                 self.query_one("#audio-player-transport").add_class("hidden")
                 self.query_one("#audio-player-status", Static).update(
                     self._current_result_status_copy()

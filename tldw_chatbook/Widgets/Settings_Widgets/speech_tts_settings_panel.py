@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -49,7 +49,25 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSSettingsSaveResult,
 )
 from tldw_chatbook.TTS.adapter_types import TTSNativeCapabilityObservation
-from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
+from tldw_chatbook.TTS.audio_cpp_guided_config import (
+    AudioCppAcceptedPackage,
+    AudioCppSettingsConfig,
+)
+from tldw_chatbook.TTS.audio_cpp_guided_launch import (
+    AudioCppGuidedLaunchError,
+    revalidate_audio_cpp_guided_packages,
+)
+from tldw_chatbook.TTS.audio_cpp_package_scanner import (
+    AudioCppPackageScanError,
+    AudioCppScanOutcome,
+    scan_audio_cpp_package_root_async,
+)
+from tldw_chatbook.TTS.audio_cpp_recipes import (
+    AUDIO_CPP_RECIPE_REGISTRY,
+    AUDIO_CPP_PINNED_RELEASE,
+    AudioCppMatchState,
+    AudioCppReferenceRequirement,
+)
 from tldw_chatbook.Third_Party.textual_fspicker import (
     FileOpen,
     Filters,
@@ -84,6 +102,7 @@ from tldw_chatbook.UI.Screens.settings_speech_tts import (
     CredentialSource,
     GlobalSpeechTTSEffectiveSource,
     GlobalSpeechTTSCredentialMutation,
+    GlobalSpeechTTSSaveProposal,
     GlobalSpeechTTSState,
     GlobalSpeechTTSValidationError,
     audio_cpp_transport_warning,
@@ -127,7 +146,28 @@ _AUDIO_CPP_MANAGED_FIELD_IDS = frozenset(
         "managed_termination_grace_seconds",
     }
 )
-_AUDIO_CPP_MANAGED_DEFAULTS = AudioCppConfig(mode="managed").to_mapping()
+_AUDIO_CPP_MANUAL_FIELD_IDS = frozenset(
+    {
+        "managed_binary_path",
+        "managed_server_json_path",
+    }
+)
+_AUDIO_CPP_GUIDED_FIELD_IDS = frozenset(
+    {
+        "guided_binary_path",
+        "guided_binary_source",
+        "guided_packages",
+        "guided_default_model_id",
+        "guided_backend_preference",
+        "guided_device",
+        "guided_threads",
+        "guided_max_request_body_bytes",
+        "guided_busy_timeout_ms",
+    }
+)
+_AUDIO_CPP_MANAGED_DEFAULTS = AudioCppSettingsConfig(mode="managed").to_mapping()
+_AUDIO_CPP_PACKAGE_SCAN_GROUP = "settings-audio-cpp-package-scan"
+_AUDIO_CPP_PACKAGE_SAVE_VALIDATION_GROUP = "settings-audio-cpp-package-save-validation"
 # The panel's own blank sentinel for "no default voice profile chosen" in the
 # `#settings-speech-default-profile` Select. Never a real saved value: Task 2's
 # loader normalizes an absent/blank/whitespace-only `default_profile_id` to
@@ -516,6 +556,7 @@ class SpeechTTSSettingsPanel(Vertical):
         self._pending_focus_moved_after_displacement = False
         self._leave_save_waiters: dict[int, asyncio.Future[bool]] = {}
         self._last_focused_control_id: str | None = None
+        self._audio_cpp_scan_revision = 0
         self._realtime_original = _read_realtime_settings_draft()
         self._realtime_draft = replace(self._realtime_original)
 
@@ -529,6 +570,17 @@ class SpeechTTSSettingsPanel(Vertical):
         """Keep labels and actions inside the available Settings detail width."""
 
         self._sync_responsive_layout()
+
+    def on_unmount(self) -> None:
+        """Fence and cancel any package scan owned by this Settings panel."""
+
+        self._fence_audio_cpp_package_scan()
+
+    def _fence_audio_cpp_package_scan(self) -> None:
+        """Invalidate even an uncooperative late scan before changing its owner."""
+
+        self._audio_cpp_scan_revision += 1
+        self.workers.cancel_group(self, _AUDIO_CPP_PACKAGE_SCAN_GROUP)
 
     def _sync_responsive_layout(self) -> None:
         """Stack fields and actions when one row cannot fit four cells."""
@@ -544,10 +596,20 @@ class SpeechTTSSettingsPanel(Vertical):
         if self.configure_provider != "audio_cpp":
             return
         mode = self.state.providers["audio_cpp"].get("mode", "external")
+        setup_source = self.state.providers["audio_cpp"].get(
+            "managed_setup_source",
+            "user_json",
+        )
         try:
             mode_control = self.query_one("#settings-speech-audio_cpp-mode", Select)
             if isinstance(mode_control.value, str):
                 mode = mode_control.value
+            source_control = self.query_one(
+                "#settings-speech-audio_cpp-managed-setup-source",
+                Select,
+            )
+            if isinstance(source_control.value, str):
+                setup_source = source_control.value
             self.query_one("#settings-speech-audio-cpp-external-fields").display = (
                 mode == "external"
             )
@@ -557,8 +619,61 @@ class SpeechTTSSettingsPanel(Vertical):
             self.query_one(
                 "#settings-speech-audio-cpp-managed-lifecycle-fields"
             ).display = mode == "managed" and _AUDIO_CPP_MANAGED_UI_SUPPORTED
+            self.query_one("#settings-speech-audio-cpp-manual-json-fields").display = (
+                mode == "managed"
+                and _AUDIO_CPP_MANAGED_UI_SUPPORTED
+                and setup_source == "user_json"
+            )
+            self.query_one("#settings-speech-audio-cpp-guided-fields").display = (
+                mode == "managed"
+                and _AUDIO_CPP_MANAGED_UI_SUPPORTED
+                and setup_source == "guided"
+            )
+            self.query_one(
+                "#settings-speech-audio-cpp-guided-advanced-fields"
+            ).display = (
+                mode == "managed"
+                and _AUDIO_CPP_MANAGED_UI_SUPPORTED
+                and setup_source == "guided"
+            )
+            handoff = self.query_one(
+                "#settings-speech-audio-cpp-open-lab",
+                Button,
+            )
+            handoff.label = self._audio_cpp_handoff_label(
+                self.state.providers["audio_cpp"]
+            )
         except QueryError:
             return
+
+    def _sync_audio_cpp_handoff(self, *, draft_modified: bool) -> None:
+        """Expose a saved-state handoff only when Speech Lab can observe it."""
+
+        if self.configure_provider != "audio_cpp":
+            return
+        try:
+            handoff = self.query_one(
+                "#settings-speech-audio-cpp-open-lab",
+                Button,
+            )
+        except QueryError:
+            return
+        if draft_modified:
+            handoff.label = "Save Settings before opening Speech Lab"
+            handoff.disabled = True
+            handoff.tooltip = (
+                "Save this draft so Speech Lab can use the saved configuration"
+            )
+        else:
+            handoff.label = self._audio_cpp_handoff_label(
+                self.state.providers["audio_cpp"]
+            )
+            handoff.disabled = False
+            handoff.tooltip = (
+                "Open the TTS Playground; Settings itself never contacts the "
+                "configured server."
+            )
+        handoff.refresh(layout=True)
 
     @staticmethod
     def _field_dom_id(provider_id: str, field_id: str) -> str:
@@ -777,10 +892,11 @@ class SpeechTTSSettingsPanel(Vertical):
         disabled: bool = False,
         default: object = "",
     ) -> Horizontal:
+        current = self.state.providers[provider_id].get(field_id, default)
         return self._row(
             label,
             Input(
-                value=str(self.state.providers[provider_id].get(field_id, default)),
+                value="" if current is None else str(current),
                 id=self._field_dom_id(provider_id, field_id),
                 placeholder=placeholder,
                 disabled=disabled,
@@ -991,6 +1107,127 @@ class SpeechTTSSettingsPanel(Vertical):
         return (
             "Catalog and runtime observations apply to the saved server configuration."
         )
+
+    def _audio_cpp_guided_packages(self) -> tuple[AudioCppAcceptedPackage, ...]:
+        """Return only well-formed accepted package rows from the current draft."""
+
+        raw = self.state.providers["audio_cpp"].get("guided_packages", ())
+        if not isinstance(raw, (list, tuple)):
+            return ()
+        packages: list[AudioCppAcceptedPackage] = []
+        for item in raw:
+            try:
+                packages.append(AudioCppAcceptedPackage.model_validate(item))
+            except ValueError:
+                continue
+        return tuple(packages)
+
+    @staticmethod
+    def _audio_cpp_safe_package_name(package: AudioCppAcceptedPackage) -> str:
+        """Reduce one private package root to a bounded printable basename."""
+
+        name = Path(package.canonical_root).name
+        safe = "".join(character for character in name if character.isprintable())
+        safe = safe.strip()[:96]
+        return safe or "Selected local package"
+
+    def _audio_cpp_package_copy(self, package: AudioCppAcceptedPackage) -> str:
+        """Project a path-safe, evidence-specific Guided package review row."""
+
+        try:
+            recipe = AUDIO_CPP_RECIPE_REGISTRY.validate_accepted(package)
+        except ValueError:
+            return (
+                f"Model ID: {package.public_model_id}\n"
+                "Compatibility: Review required. Remove this package and scan it "
+                "again before saving."
+            )
+        capability_labels = {
+            "tts": "Text-to-speech",
+            "clone": "Voice cloning",
+            "design": "Voice design",
+        }
+        capabilities = ", ".join(
+            capability_labels[item] for item in recipe.capabilities
+        )
+        reference = recipe.reference_requirement.value.replace("_", " ").title()
+        release = AUDIO_CPP_PINNED_RELEASE.removeprefix("release-")
+        recovery = (
+            "Recovery: voice setup is required before this package can generate. "
+            "Keep it registered in the shared server and choose a text-ready "
+            "default for the one-click sample, or use compatible voice setup when "
+            "that flow is available."
+            if recipe.reference_requirement is AudioCppReferenceRequirement.REQUIRED
+            else "Recovery: if files change or this package no longer matches "
+            "exactly, remove it and scan the package again."
+        )
+        return (
+            f"{recipe.display_name}\n"
+            f"Model ID: {package.public_model_id}\n"
+            f"Family / variant: {recipe.family} / {recipe.package_variant}\n"
+            f"Task capability: {capabilities} | Reference: {reference}\n"
+            f"Compatibility: Exact reviewed recipe for audio.cpp {release}; "
+            "backend support is Expected and is verified at runtime in Speech Lab.\n"
+            f"Local package: {self._audio_cpp_safe_package_name(package)} (full path "
+            "hidden)\n"
+            "Loads lazily. A loaded model may remain in memory until Shutdown; "
+            "switching models does not promise an unload.\n"
+            f"{recovery}"
+        )
+
+    @staticmethod
+    def _audio_cpp_guided_default_text_ready(values: Mapping[str, object]) -> bool:
+        """Return whether the exact draft default needs no voice reference."""
+
+        default_model_id = values.get("guided_default_model_id")
+        raw_packages = values.get("guided_packages", ())
+        if not isinstance(default_model_id, str) or not isinstance(
+            raw_packages, (list, tuple)
+        ):
+            return False
+        for raw in raw_packages:
+            try:
+                package = AudioCppAcceptedPackage.model_validate(raw)
+                if package.public_model_id != default_model_id:
+                    continue
+                recipe = AUDIO_CPP_RECIPE_REGISTRY.validate_accepted(package)
+            except ValueError:
+                return False
+            return bool(
+                recipe.projection.task == "tts"
+                and recipe.reference_requirement
+                is not AudioCppReferenceRequirement.REQUIRED
+            )
+        return False
+
+    @classmethod
+    def _audio_cpp_handoff_label(cls, values: Mapping[str, object]) -> str:
+        """Return a truthful no-work handoff for the current audio.cpp draft."""
+
+        if (
+            values.get("mode") != "managed"
+            or values.get("managed_setup_source") != "guided"
+        ):
+            return "Open Speech Lab to test or refresh"
+        if cls._audio_cpp_guided_default_text_ready(values):
+            return "Open Speech Lab & Hear a Sample"
+        return "Open Speech Lab to Test Connection"
+
+    def _audio_cpp_guided_model_options(self) -> list[tuple[str, str]]:
+        options: list[tuple[str, str]] = []
+        for package in self._audio_cpp_guided_packages():
+            try:
+                recipe = AUDIO_CPP_RECIPE_REGISTRY.validate_accepted(package)
+                label = f"{recipe.display_name} — {package.public_model_id}"
+                if (
+                    recipe.reference_requirement
+                    is AudioCppReferenceRequirement.REQUIRED
+                ):
+                    label += " — voice setup required"
+            except ValueError:
+                label = f"Review required — {package.public_model_id}"
+            options.append((label, package.public_model_id))
+        return options
 
     def _configuration_state(self) -> SpeechTTSConfigurationState:
         """Derive only the selected provider's local configuration state."""
@@ -1759,39 +1996,197 @@ class SpeechTTSSettingsPanel(Vertical):
                         classes="settings-status-row",
                         markup=False,
                     )
-                    yield self._path(
+                    yield self._select(
                         provider_id,
-                        "managed_binary_path",
-                        "audiocpp_server binary path",
-                        placeholder="Choose a prebuilt audiocpp_server executable",
+                        "managed_setup_source",
+                        "Managed setup source",
+                        [
+                            ("Guided setup — no JSON editing", "guided"),
+                            ("Use an existing server.json", "user_json"),
+                        ],
                     )
-                    yield Button(
-                        "Use detected audiocpp_server",
-                        id="settings-speech-audio-cpp-use-detected",
-                        compact=True,
-                        tooltip=(
-                            "Look for audiocpp_server on PATH and update only this "
-                            "unsaved draft."
-                        ),
-                    )
-                    yield self._path(
-                        provider_id,
-                        "managed_server_json_path",
-                        "server.json path",
-                        placeholder="Choose an existing server.json",
-                    )
-                    yield Static(
-                        "Managed mode requires server.json to bind exactly to "
-                        "127.0.0.1 with an explicit port. The server.json folder "
-                        "becomes the child working directory, so relative paths in "
-                        "that file resolve from that folder. Chatbook never edits it.",
-                        id="settings-speech-audio-cpp-managed-json-help",
-                        classes="settings-detail-row",
-                        markup=False,
-                    )
+                    with Vertical(id="settings-speech-audio-cpp-manual-json-fields"):
+                        yield Static(
+                            "Manual server.json keeps the existing audio.cpp workflow. "
+                            "Chatbook validates but never rewrites your file.",
+                            classes="settings-detail-row",
+                            markup=False,
+                        )
+                        yield self._path(
+                            provider_id,
+                            "managed_binary_path",
+                            "audiocpp_server binary path",
+                            placeholder=(
+                                "Choose a prebuilt audiocpp_server executable"
+                            ),
+                        )
+                        yield Button(
+                            "Use detected audiocpp_server",
+                            id="settings-speech-audio-cpp-manual-use-detected",
+                            compact=True,
+                            tooltip=(
+                                "Look for audiocpp_server on PATH and update only "
+                                "this unsaved manual draft."
+                            ),
+                        )
+                        yield self._path(
+                            provider_id,
+                            "managed_server_json_path",
+                            "server.json path",
+                            placeholder="Choose an existing server.json",
+                        )
+                        yield Static(
+                            "Managed mode requires server.json to bind exactly to "
+                            "127.0.0.1 with an explicit port. The server.json folder "
+                            "becomes the child working directory, so relative paths "
+                            "in that file resolve from that folder. Chatbook never "
+                            "edits it.",
+                            id="settings-speech-audio-cpp-managed-json-help",
+                            classes="settings-detail-row",
+                            markup=False,
+                        )
+
+                    with Vertical(id="settings-speech-audio-cpp-guided-fields"):
+                        yield Static(
+                            "Guided setup creates a private runtime configuration "
+                            "from reviewed model packages. Install audio.cpp "
+                            "separately; Chatbook does not download or run it while "
+                            "you edit or Save Settings.",
+                            id="settings-speech-audio-cpp-guided-intro",
+                            classes="settings-detail-row",
+                            markup=False,
+                        )
+                        yield self._path(
+                            provider_id,
+                            "guided_binary_path",
+                            "audiocpp_server binary path",
+                            placeholder=(
+                                "Detect or choose a separately installed executable"
+                            ),
+                        )
+                        yield Button(
+                            "Use detected audiocpp_server",
+                            id="settings-speech-audio-cpp-use-detected",
+                            compact=True,
+                            tooltip=(
+                                "Look for audiocpp_server on PATH and update only "
+                                "this unsaved Guided draft."
+                            ),
+                        )
+                        yield Static(
+                            "Selection source: "
+                            + str(
+                                self.state.providers[provider_id].get(
+                                    "guided_binary_source", "manual"
+                                )
+                            )
+                            .replace("_", " ")
+                            .title(),
+                            id=self._field_dom_id(provider_id, "guided_binary_source"),
+                            classes="settings-detail-row",
+                            markup=False,
+                        )
+                        yield Button(
+                            "Add local package…",
+                            id="settings-speech-audio-cpp-guided-add-package",
+                            compact=True,
+                            tooltip=(
+                                "Choose one package directory to scan against the "
+                                "reviewed audio.cpp recipes."
+                            ),
+                        )
+                        with Vertical(
+                            id=self._field_dom_id(provider_id, "guided_packages"),
+                            classes="settings-speech-audio-cpp-packages",
+                        ):
+                            packages = self._audio_cpp_guided_packages()
+                            if not packages:
+                                yield Static(
+                                    "No reviewed model packages yet. Add a local "
+                                    "Supertonic or PocketTTS package to continue.",
+                                    classes=(
+                                        "settings-detail-row "
+                                        "settings-speech-audio-cpp-package-copy"
+                                    ),
+                                    markup=False,
+                                )
+                            for package in packages:
+                                with Vertical(
+                                    classes="settings-speech-audio-cpp-package-row"
+                                ):
+                                    yield Static(
+                                        self._audio_cpp_package_copy(package),
+                                        classes=(
+                                            "settings-detail-row "
+                                            "settings-speech-audio-cpp-package-copy"
+                                        ),
+                                        markup=False,
+                                    )
+                                    yield Button(
+                                        "Remove package",
+                                        id=(
+                                            "settings-speech-audio-cpp-guided-"
+                                            f"package-remove-{package.package_uuid}"
+                                        ),
+                                        compact=True,
+                                        variant="warning",
+                                        classes=(
+                                            "settings-speech-audio-cpp-package-remove"
+                                        ),
+                                        tooltip=(
+                                            "Remove this package from the unsaved "
+                                            "Guided draft. No files are deleted."
+                                        ),
+                                    )
+                            yield self._error(provider_id, "guided_packages")
+                        model_options = self._audio_cpp_guided_model_options()
+                        selected_model = self.state.providers[provider_id].get(
+                            "guided_default_model_id"
+                        )
+                        if not isinstance(selected_model, str):
+                            selected_model = Select.BLANK
+                        yield self._row(
+                            "Default Guided model",
+                            Select(
+                                model_options
+                                or [("Add a reviewed package first", Select.BLANK)],
+                                value=selected_model,
+                                id=self._field_dom_id(
+                                    provider_id, "guided_default_model_id"
+                                ),
+                                allow_blank=False,
+                                compact=True,
+                                classes=(
+                                    "settings-compact-select settings-speech-field "
+                                    "settings-speech-draft-field"
+                                ),
+                            ),
+                            classes="settings-select-row",
+                            error=self._error(provider_id, "guided_default_model_id"),
+                        )
+                        yield self._select(
+                            provider_id,
+                            "guided_backend_preference",
+                            "Compute backend",
+                            [
+                                ("Auto — choose a reviewed compatible backend", "auto"),
+                                ("CPU", "cpu"),
+                                ("Metal", "metal"),
+                                ("CUDA", "cuda"),
+                                ("Vulkan", "vulkan"),
+                                ("HIP", "hip"),
+                            ],
+                        )
+                        yield Static(
+                            "One lazy audio.cpp child serves every accepted model. "
+                            "A model may stay resident in memory until Shutdown.",
+                            id="settings-speech-audio-cpp-guided-memory-note",
+                            classes="settings-status-row",
+                            markup=False,
+                        )
 
                 yield Button(
-                    "Open Speech Lab to test or refresh",
+                    self._audio_cpp_handoff_label(self.state.providers[provider_id]),
                     id="settings-speech-audio-cpp-open-lab",
                     compact=True,
                     tooltip=(
@@ -1829,6 +2224,37 @@ class SpeechTTSSettingsPanel(Vertical):
                             "Managed termination grace (seconds)",
                             default=_AUDIO_CPP_MANAGED_DEFAULTS[
                                 "managed_termination_grace_seconds"
+                            ],
+                        )
+                    with Vertical(
+                        id="settings-speech-audio-cpp-guided-advanced-fields"
+                    ):
+                        yield self._input(
+                            provider_id,
+                            "guided_device",
+                            "Guided device index (blank = backend default)",
+                            default="",
+                        )
+                        yield self._input(
+                            provider_id,
+                            "guided_threads",
+                            "Guided CPU threads (blank = server default)",
+                            default="",
+                        )
+                        yield self._input(
+                            provider_id,
+                            "guided_max_request_body_bytes",
+                            "Guided max request body bytes",
+                            default=_AUDIO_CPP_MANAGED_DEFAULTS[
+                                "guided_max_request_body_bytes"
+                            ],
+                        )
+                        yield self._input(
+                            provider_id,
+                            "guided_busy_timeout_ms",
+                            "Guided busy timeout (milliseconds)",
+                            default=_AUDIO_CPP_MANAGED_DEFAULTS[
+                                "guided_busy_timeout_ms"
                             ],
                         )
                     yield self._input(
@@ -2095,6 +2521,10 @@ class SpeechTTSSettingsPanel(Vertical):
 
         values = self.state.providers[self.configure_provider]
         active_audio_cpp_mode = values.get("mode", "external")
+        active_audio_cpp_setup_source = values.get(
+            "managed_setup_source",
+            "user_json",
+        )
         if self.configure_provider == "audio_cpp":
             try:
                 selected_mode = self.query_one(
@@ -2105,6 +2535,16 @@ class SpeechTTSSettingsPanel(Vertical):
             if isinstance(selected_mode, str):
                 active_audio_cpp_mode = selected_mode
                 values["mode"] = selected_mode
+            try:
+                selected_source = self.query_one(
+                    "#settings-speech-audio_cpp-managed-setup-source",
+                    Select,
+                ).value
+            except QueryError:
+                selected_source = active_audio_cpp_setup_source
+            if isinstance(selected_source, str):
+                active_audio_cpp_setup_source = selected_source
+                values["managed_setup_source"] = selected_source
         for field_id in GLOBAL_TTS_PROVIDER_FIELD_IDS[self.configure_provider]:
             if field_id == "credential":
                 continue
@@ -2113,9 +2553,21 @@ class SpeechTTSSettingsPanel(Vertical):
                     continue
                 if field_id == "base_url" and active_audio_cpp_mode != "external":
                     continue
-                if (
+                if active_audio_cpp_mode != "managed" and (
                     field_id in _AUDIO_CPP_MANAGED_FIELD_IDS
-                    and active_audio_cpp_mode != "managed"
+                    or field_id in _AUDIO_CPP_MANUAL_FIELD_IDS
+                    or field_id in _AUDIO_CPP_GUIDED_FIELD_IDS
+                    or field_id == "managed_setup_source"
+                ):
+                    continue
+                if (
+                    field_id in _AUDIO_CPP_MANUAL_FIELD_IDS
+                    and active_audio_cpp_setup_source != "user_json"
+                ):
+                    continue
+                if (
+                    field_id in _AUDIO_CPP_GUIDED_FIELD_IDS
+                    and active_audio_cpp_setup_source != "guided"
                 ):
                     continue
             selector = f"#{self._field_dom_id(self.configure_provider, field_id)}"
@@ -2124,7 +2576,24 @@ class SpeechTTSSettingsPanel(Vertical):
             except QueryError:
                 continue
             if isinstance(widget, Input):
-                values[field_id] = widget.value
+                if field_id in {
+                    "guided_device",
+                    "guided_threads",
+                    "guided_max_request_body_bytes",
+                    "guided_busy_timeout_ms",
+                }:
+                    if not widget.value.strip() and field_id in {
+                        "guided_device",
+                        "guided_threads",
+                    }:
+                        values[field_id] = None
+                    else:
+                        try:
+                            values[field_id] = int(widget.value)
+                        except ValueError:
+                            values[field_id] = widget.value
+                else:
+                    values[field_id] = widget.value
             elif isinstance(widget, Select):
                 if isinstance(widget.value, str):
                     values[field_id] = widget.value
@@ -2220,6 +2689,7 @@ class SpeechTTSSettingsPanel(Vertical):
     def _announce_draft_state(self) -> None:
         """Publish the latest safe draft snapshot to the Settings shell."""
         is_modified = self.has_unsaved_changes()
+        self._sync_audio_cpp_handoff(draft_modified=is_modified)
         self._refresh_status_rows()
         self.post_message(
             self.DraftModified(
@@ -2263,7 +2733,7 @@ class SpeechTTSSettingsPanel(Vertical):
     def _show_validation_error(self, error: GlobalSpeechTTSValidationError) -> None:
         key = (error.provider_id, error.field_id)
         self._field_errors[key] = str(error)
-        selector = (
+        field_selector = (
             f"#{self._field_dom_id(error.provider_id, error.field_id)}"
             if error.provider_id != "defaults"
             else {
@@ -2277,8 +2747,14 @@ class SpeechTTSSettingsPanel(Vertical):
                 "default_speed": "#settings-speech-speed",
             }.get(error.field_id, "#settings-speech-default-provider")
         )
+        error_selector = f"{field_selector}-error"
+        selector = (
+            "#settings-speech-audio-cpp-guided-add-package"
+            if error.provider_id == "audio_cpp" and error.field_id == "guided_packages"
+            else field_selector
+        )
         try:
-            error_widget = self.query_one(f"{selector}-error", Static)
+            error_widget = self.query_one(error_selector, Static)
             error_widget.update(str(error))
             error_widget.add_class("settings-speech-field-error-visible")
         except QueryError:
@@ -2334,6 +2810,17 @@ class SpeechTTSSettingsPanel(Vertical):
             self._refresh_status_rows()
             return None
         realtime_changed = realtime_payload is not None
+        guided_packages: tuple[AudioCppAcceptedPackage, ...] = ()
+        if "audio_cpp" in proposal.changed_provider_ids:
+            saved_audio_cpp = proposal.settings.get("audio_cpp")
+            if not isinstance(saved_audio_cpp, Mapping):
+                raise AssertionError("validated audio.cpp settings are unavailable")
+            if (
+                saved_audio_cpp.get("mode") == "managed"
+                and saved_audio_cpp.get("managed_setup_source") == "guided"
+            ):
+                audio_cpp = AudioCppSettingsConfig.from_mapping(saved_audio_cpp)
+                guided_packages = audio_cpp.guided_packages
 
         if (
             not defaults_changed
@@ -2344,7 +2831,10 @@ class SpeechTTSSettingsPanel(Vertical):
             self._set_result("No global Speech & TTS changes to save.")
             return None
 
-        if realtime_payload is not None:
+        provider_save_required = bool(
+            defaults_changed or proposal.settings or proposal.delete_setting_keys
+        )
+        if realtime_payload is not None and not guided_packages:
             if not self._persist_realtime_draft(realtime_payload):
                 self._set_result(
                     "Realtime engine settings were not saved.",
@@ -2353,11 +2843,7 @@ class SpeechTTSSettingsPanel(Vertical):
                 return None
             self._realtime_original = replace(self._realtime_draft)
 
-        if (
-            not defaults_changed
-            and not proposal.settings
-            and not proposal.delete_setting_keys
-        ):
+        if not provider_save_required:
             # Only the realtime/dictation block changed; already persisted
             # locally above through the same atomic config writer -- no TTS
             # provider adapter round trip needed.
@@ -2386,6 +2872,32 @@ class SpeechTTSSettingsPanel(Vertical):
             if proposal.settings or proposal.delete_setting_keys
             else None
         )
+        if guided_packages:
+            self._set_result("Rechecking reviewed model packages locally before Save…")
+            self.run_worker(
+                self._revalidate_guided_save(
+                    request_id=request_id,
+                    packages=guided_packages,
+                    proposal=proposal,
+                    realtime_payload=realtime_payload,
+                ),
+                group=_AUDIO_CPP_PACKAGE_SAVE_VALIDATION_GROUP,
+                exclusive=True,
+                exit_on_error=False,
+            )
+        else:
+            self._post_settings_save(request_id, proposal)
+        return request_id
+
+    def _post_settings_save(
+        self,
+        request_id: int,
+        proposal: GlobalSpeechTTSSaveProposal,
+    ) -> None:
+        """Post one already-validated immutable Settings proposal."""
+
+        if request_id != self._latest_request_id or not self.is_mounted:
+            return
         self._set_result(
             "Saving global Speech & TTS settings locally…",
             severity="information",
@@ -2399,7 +2911,73 @@ class SpeechTTSSettingsPanel(Vertical):
                 reply_to=self,
             )
         )
-        return request_id
+
+    async def _revalidate_guided_save(
+        self,
+        *,
+        request_id: int,
+        packages: tuple[AudioCppAcceptedPackage, ...],
+        proposal: GlobalSpeechTTSSaveProposal,
+        realtime_payload: _RealtimeSavePayload | None,
+    ) -> None:
+        """Recheck exact local package identities off the Textual message loop."""
+
+        try:
+            await revalidate_audio_cpp_guided_packages(packages)
+        except asyncio.CancelledError:
+            raise
+        except AudioCppGuidedLaunchError:
+            self._abort_pending_save(
+                request_id,
+                GlobalSpeechTTSValidationError(
+                    "audio_cpp",
+                    "guided_packages",
+                    "A reviewed model package changed. Remove it and scan the "
+                    "package again before saving.",
+                ),
+            )
+            return
+
+        if request_id != self._latest_request_id or not self.is_mounted:
+            return
+        if realtime_payload is not None:
+            if not self._persist_realtime_draft(realtime_payload):
+                self._abort_pending_save(
+                    request_id,
+                    "Realtime engine settings were not saved.",
+                )
+                return
+            self._realtime_original = replace(self._realtime_draft)
+        self._post_settings_save(request_id, proposal)
+
+    def _abort_pending_save(
+        self,
+        request_id: int,
+        failure: GlobalSpeechTTSValidationError | str,
+    ) -> None:
+        """Release one local pre-persistence failure without posting a save."""
+
+        if request_id != self._latest_request_id:
+            return
+        focus_id = self._completion_focus_id(self._pending_focus_control_id)
+        leave_waiter = self._leave_save_waiters.pop(request_id, None)
+        self._latest_request_id = None
+        self._pending_focus_control_id = None
+        self._pending_displaced_focus_control_id = None
+        self._pending_focus_moved_after_displacement = False
+        self._pending_credential_mutation = None
+        self._pending_saved_defaults = None
+        self._pending_saved_provider_id = None
+        self._pending_saved_provider_values = None
+        self._set_save_pending(False)
+        if isinstance(failure, GlobalSpeechTTSValidationError):
+            self._show_validation_error(failure)
+        else:
+            self._set_result(failure, severity="error")
+            self.call_later(self._restore_focus, focus_id)
+        self._refresh_status_rows()
+        if leave_waiter is not None and not leave_waiter.done():
+            leave_waiter.set_result(False)
 
     def _validated_realtime_payload(self) -> _RealtimeSavePayload | None:
         """Validate the Realtime block draft; ``None`` when unchanged.
@@ -2798,14 +3376,32 @@ class SpeechTTSSettingsPanel(Vertical):
                 if saved_provider_values is not None
                 else "external"
             )
+            guided = bool(
+                desired_mode == "managed"
+                and saved_provider_values is not None
+                and saved_provider_values.get("managed_setup_source") == "guided"
+            )
+            guided_text_ready = bool(
+                guided
+                and saved_provider_values is not None
+                and self._audio_cpp_guided_default_text_ready(saved_provider_values)
+            )
             handoff_copy = (
-                "Open Speech Lab to apply the saved Managed settings."
+                "Open Speech Lab & Hear a Sample to apply the saved Guided settings."
+                if guided_text_ready
+                else "Open Speech Lab to test the saved Guided settings. Voice "
+                "setup is required before the selected default can generate."
+                if guided
+                else "Open Speech Lab to apply the saved Managed settings."
                 if desired_mode == "managed"
                 else "Open Speech Lab to apply External mode and stop any active "
                 "managed server."
             )
             result_copy = (
-                "Saved locally; the active audio.cpp configuration remains "
+                "Configuration saved — ready to test. The active audio.cpp "
+                f"configuration remains unchanged. {handoff_copy}"
+                if guided
+                else "Saved locally; the active audio.cpp configuration remains "
                 f"unchanged. {handoff_copy}"
             )
         else:
@@ -2920,6 +3516,15 @@ class SpeechTTSSettingsPanel(Vertical):
             self.query_one(target_selector, Input).value = str(path)
         except QueryError:
             return
+        if target_selector == "#settings-speech-audio_cpp-guided-binary-path":
+            self.state.providers["audio_cpp"]["guided_binary_source"] = "manual"
+            try:
+                self.query_one(
+                    "#settings-speech-audio_cpp-guided-binary-source",
+                    Static,
+                ).update("Selection source: Manual")
+            except QueryError:
+                pass
 
     async def _ask_leave_choice(self) -> LeaveChoice:
         return await self.app.push_screen_wait(_GlobalSpeechTTSLeaveModal())
@@ -3200,6 +3805,7 @@ class SpeechTTSSettingsPanel(Vertical):
     def handle_audio_cpp_mode_changed(self, event: Select.Changed) -> None:
         if self._syncing or not isinstance(event.value, str):
             return
+        self._fence_audio_cpp_package_scan()
         if event.value == "managed" and not _AUDIO_CPP_MANAGED_UI_SUPPORTED:
             with event.select.prevent(Select.Changed):
                 event.select.value = "external"
@@ -3211,10 +3817,39 @@ class SpeechTTSSettingsPanel(Vertical):
                 severity="warning",
             )
             return
-        self.state.providers["audio_cpp"]["mode"] = event.value
+        values = self.state.providers["audio_cpp"]
+        values["mode"] = event.value
+        if (
+            event.value == "managed"
+            and self.original_state.providers["audio_cpp"].get("mode", "external")
+            != "managed"
+            and not values.get("managed_binary_path")
+            and not values.get("managed_server_json_path")
+            and not values.get("guided_binary_path")
+            and not values.get("guided_packages")
+        ):
+            values["managed_setup_source"] = "guided"
+            try:
+                source = self.query_one(
+                    "#settings-speech-audio_cpp-managed-setup-source",
+                    Select,
+                )
+                with source.prevent(Select.Changed):
+                    source.value = "guided"
+            except QueryError:
+                pass
+        self._apply_audio_cpp_mode_visibility()
+
+    @on(Select.Changed, "#settings-speech-audio_cpp-managed-setup-source")
+    def handle_audio_cpp_setup_source_changed(self, event: Select.Changed) -> None:
+        if self._syncing or not isinstance(event.value, str):
+            return
+        self._fence_audio_cpp_package_scan()
+        self.state.providers["audio_cpp"]["managed_setup_source"] = event.value
         self._apply_audio_cpp_mode_visibility()
 
     @on(Button.Pressed, "#settings-speech-audio-cpp-use-detected")
+    @on(Button.Pressed, "#settings-speech-audio-cpp-manual-use-detected")
     def handle_audio_cpp_use_detected(self, event: Button.Pressed) -> None:
         event.stop()
         detected = detect_audio_cpp_server_binary()
@@ -3225,17 +3860,200 @@ class SpeechTTSSettingsPanel(Vertical):
                 severity="warning",
             )
             return
+        guided = event.button.id == "settings-speech-audio-cpp-use-detected"
+        field_id = "guided_binary_path" if guided else "managed_binary_path"
         try:
             self.query_one(
-                "#settings-speech-audio_cpp-managed-binary-path", Input
+                f"#{self._field_dom_id('audio_cpp', field_id)}", Input
             ).value = detected
         except QueryError:
             return
+        if guided:
+            self.state.providers["audio_cpp"]["guided_binary_source"] = "path"
+            try:
+                self.query_one(
+                    "#settings-speech-audio_cpp-guided-binary-source",
+                    Static,
+                ).update("Selection source: Path")
+            except QueryError:
+                pass
         self._set_result(
-            "Detected audiocpp_server in the managed draft. Review it and Save; "
+            "Detected audiocpp_server in the unsaved draft. Review it and Save; "
             "the server was not started.",
             severity="information",
         )
+
+    @on(Button.Pressed, "#settings-speech-audio-cpp-guided-add-package")
+    def handle_audio_cpp_add_package(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.app.push_screen(
+            SelectDirectory(title="Choose an audio.cpp model package directory"),
+            self._audio_cpp_package_picker_result,
+        )
+
+    def _audio_cpp_package_picker_result(self, path: Path | None) -> None:
+        """Start one latest-wins bounded scan for an explicitly selected root."""
+
+        if path is None:
+            return
+        self._collect_visible_state()
+        values = self.state.providers["audio_cpp"]
+        if (
+            values.get("mode") != "managed"
+            or values.get("managed_setup_source") != "guided"
+        ):
+            return
+        self._audio_cpp_scan_revision += 1
+        revision = self._audio_cpp_scan_revision
+        self._set_result(
+            "Scanning the selected package against reviewed audio.cpp recipes…"
+        )
+        self.run_worker(
+            self._scan_audio_cpp_package(path, revision),
+            group=_AUDIO_CPP_PACKAGE_SCAN_GROUP,
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _scan_audio_cpp_package(self, path: Path, revision: int) -> None:
+        """Accept exact reviewed candidates only when this scan still owns the UI."""
+
+        try:
+            result = await scan_audio_cpp_package_root_async(
+                path,
+                request_revision=revision,
+            )
+        except asyncio.CancelledError:
+            raise
+        except (AudioCppPackageScanError, OSError, ValueError):
+            if revision == self._audio_cpp_scan_revision and self.is_mounted:
+                self._set_result(
+                    "The selected package could not be reviewed. Choose a readable "
+                    "package directory and try again.",
+                    severity="error",
+                )
+            return
+        if (
+            revision != self._audio_cpp_scan_revision
+            or not self.is_mounted
+            or result.request_revision != revision
+        ):
+            return
+
+        values = self.state.providers["audio_cpp"]
+        if (
+            values.get("mode") != "managed"
+            or values.get("managed_setup_source") != "guided"
+        ):
+            return
+        existing = list(self._audio_cpp_guided_packages())
+        identities = {
+            (
+                item.canonical_root,
+                item.package_variant,
+                item.configuration_identity,
+                item.weight_identity,
+            )
+            for item in existing
+        }
+        model_ids = {item.public_model_id for item in existing}
+        added = 0
+        conflicts = 0
+        for discovery in result.discoveries:
+            if discovery.match.state not in {
+                AudioCppMatchState.EXACT,
+                AudioCppMatchState.AMBIGUOUS,
+            }:
+                continue
+            for candidate in discovery.match.candidates:
+                identity = (
+                    candidate.canonical_root,
+                    candidate.recipe.package_variant,
+                    candidate.configuration_identity,
+                    candidate.weight_identity,
+                )
+                if identity in identities:
+                    continue
+                accepted = candidate.accept()
+                if accepted.public_model_id in model_ids:
+                    conflicts += 1
+                    continue
+                existing.append(accepted)
+                identities.add(identity)
+                model_ids.add(accepted.public_model_id)
+                added += 1
+
+        values["guided_packages"] = [
+            package.model_dump(mode="json") for package in existing
+        ]
+        if not values.get("guided_default_model_id") and existing:
+            values["guided_default_model_id"] = existing[0].public_model_id
+        await self.recompose()
+        self._apply_audio_cpp_mode_visibility()
+        try:
+            self.query_one(
+                "#settings-speech-audio-cpp-guided-add-package",
+                Button,
+            ).focus()
+        except QueryError:
+            pass
+        if added:
+            suffix = " A conflicting public model ID was skipped." if conflicts else ""
+            qualifier = (
+                " Review every added variant and remove any you do not want."
+                if added > 1
+                else " Review it before Save."
+            )
+            self._set_result(
+                f"Added {added} exact reviewed package candidate"
+                f"{'s' if added != 1 else ''} to the unsaved draft."
+                f"{qualifier}{suffix}"
+            )
+        elif result.outcome is AudioCppScanOutcome.CANCELLED:
+            self._set_result("The package scan was cancelled.")
+        else:
+            self._set_result(
+                "No new exact reviewed package was found. Choose a supported "
+                "Supertonic or PocketTTS package, or review the scan evidence.",
+                severity="warning",
+            )
+        self._announce_draft_state()
+
+    @on(Button.Pressed, ".settings-speech-audio-cpp-package-remove")
+    async def handle_audio_cpp_remove_package(self, event: Button.Pressed) -> None:
+        event.stop()
+        button_id = event.button.id or ""
+        prefix = "settings-speech-audio-cpp-guided-package-remove-"
+        if not button_id.startswith(prefix):
+            return
+        package_uuid = button_id.removeprefix(prefix)
+        packages = [
+            package
+            for package in self._audio_cpp_guided_packages()
+            if package.package_uuid != package_uuid
+        ]
+        values = self.state.providers["audio_cpp"]
+        values["guided_packages"] = [
+            package.model_dump(mode="json") for package in packages
+        ]
+        remaining_ids = {package.public_model_id for package in packages}
+        if values.get("guided_default_model_id") not in remaining_ids:
+            values["guided_default_model_id"] = (
+                packages[0].public_model_id if packages else None
+            )
+        await self.recompose()
+        self._apply_audio_cpp_mode_visibility()
+        try:
+            self.query_one(
+                "#settings-speech-audio-cpp-guided-add-package",
+                Button,
+            ).focus()
+        except QueryError:
+            pass
+        self._set_result(
+            "Removed the package from the unsaved draft. No local files were deleted."
+        )
+        self._announce_draft_state()
 
     @on(Input.Changed, ".settings-speech-draft-field")
     @on(Select.Changed, ".settings-speech-draft-field")
@@ -3250,6 +4068,7 @@ class SpeechTTSSettingsPanel(Vertical):
     def _reset_to_saved(self) -> None:
         """Reset the draft model without starting a competing recompose."""
 
+        self._fence_audio_cpp_package_scan()
         self._clear_validation_errors()
         self.state = deepcopy(self.original_state)
         self._realtime_draft = replace(self._realtime_original)
@@ -3379,6 +4198,11 @@ class SpeechTTSSettingsPanel(Vertical):
         elif target_selector == ("#settings-speech-audio_cpp-managed-binary-path"):
             picker = FileOpen(
                 title="Choose prebuilt audiocpp_server",
+                filters=Filters(("Executable files", lambda path: path.is_file())),
+            )
+        elif target_selector == ("#settings-speech-audio_cpp-guided-binary-path"):
+            picker = FileOpen(
+                title="Choose separately installed audiocpp_server",
                 filters=Filters(("Executable files", lambda path: path.is_file())),
             )
         elif target_selector == ("#settings-speech-audio_cpp-managed-server-json-path"):

@@ -15,7 +15,16 @@ from tldw_chatbook.TTS import AudioCppRuntimeObservation
 from ..Workbench.workbench_state import WorkbenchAction
 from .speech_action_strip import SpeechActionStrip
 
-AudioCppRuntimeOperation = Literal["test", "restart", "shutdown"]
+AudioCppRuntimeOperation = Literal["test", "sample", "restart", "shutdown"]
+AudioCppSampleState = Literal["not_attempted", "generating", "failed", "ready"]
+
+
+@dataclass(frozen=True, slots=True)
+class AudioCppRuntimeCardObservation:
+    """One immutable runtime-and-current-sample view used for action projection."""
+
+    runtime: AudioCppRuntimeObservation
+    sample_state: AudioCppSampleState = "not_attempted"
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +35,9 @@ class AudioCppRuntimeAction:
     label: str
     enabled: bool
     disabled_reason: str = ""
+    tooltip: str = ""
+    progress_label: str = "Working…"
+    post_operation_focus: str = "#tts-test-connection-btn"
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,12 +73,31 @@ def _action(
     label: str,
     enabled: bool,
     reason: str = "",
+    *,
+    tooltip: str = "",
+    progress_label: str = "Working…",
+    post_operation_focus: str = "#tts-test-connection-btn",
 ) -> AudioCppRuntimeAction:
     return AudioCppRuntimeAction(
         operation=operation,
         label=label,
         enabled=enabled,
         disabled_reason="" if enabled else reason,
+        tooltip=tooltip or (label if enabled else reason),
+        progress_label=progress_label,
+        post_operation_focus=post_operation_focus,
+    )
+
+
+def project_audio_cpp_unknown_action() -> AudioCppRuntimeAction:
+    """Project the safe primary action used before passive runtime truth arrives."""
+
+    return _action(
+        "test",
+        "Test Connection",
+        True,
+        tooltip="Read and test the current audio.cpp configuration",
+        progress_label="Testing…",
     )
 
 
@@ -115,8 +146,9 @@ def _pending_copy(observation: AudioCppRuntimeObservation) -> str:
 
 
 def _runtime_actions(
-    observation: AudioCppRuntimeObservation,
+    card_observation: AudioCppRuntimeCardObservation,
 ) -> tuple[AudioCppRuntimeAction, AudioCppRuntimeAction, AudioCppRuntimeAction]:
+    observation = card_observation.runtime
     state = observation.process.state
     busy_reason = "A managed audio.cpp lifecycle change is already in progress."
     no_child_reason = "No managed audio.cpp server is active."
@@ -151,24 +183,106 @@ def _runtime_actions(
             "restart",
             "Apply Settings & Stop Managed Server",
             True,
+            tooltip="Apply the saved External settings and stop the managed server",
+            progress_label="Applying & Stopping…",
         )
     elif observation.pending_configuration and live_managed:
-        primary = _action("restart", "Restart & Apply Settings", True)
+        primary = _action(
+            "restart",
+            "Restart & Apply Settings",
+            True,
+            tooltip="Restart audio.cpp with the latest saved Managed settings",
+            progress_label="Restarting & Applying…",
+        )
     elif state == "unhealthy" and observation.applied_mode == "managed":
-        primary = _action("restart", "Restart", True)
+        primary = _action(
+            "restart",
+            "Restart",
+            True,
+            tooltip="Restart the unhealthy managed audio.cpp server",
+            progress_label="Restarting…",
+        )
     elif observation.saved_mode == "managed" and state in {
         "stopped",
         "unavailable",
     }:
-        primary = _action("test", "Start & Test Connection", True)
+        guided_default = observation.saved_guided_default_model_id
+        guided_sample_ready = bool(
+            observation.saved_managed_setup_source == "guided"
+            and observation.saved_guided_text_ready
+            and guided_default is not None
+            and guided_default in observation.saved_guided_model_ids
+        )
+        if guided_sample_ready:
+            primary = _action(
+                "sample",
+                "Start & Generate Sample",
+                True,
+                tooltip=(
+                    f"Start audio.cpp, verify {guided_default}, and generate one "
+                    "complete WAV"
+                ),
+                progress_label="Starting & Generating…",
+                post_operation_focus="#audio-play-btn",
+            )
+        else:
+            primary = _action(
+                "test",
+                "Start & Test Connection",
+                True,
+                progress_label="Starting & Testing…",
+            )
     elif (
         observation.pending_configuration
         and observation.saved_mode == "external"
         and not live_managed
     ):
-        primary = _action("test", "Apply & Test Connection", True)
+        primary = _action(
+            "test",
+            "Apply & Test Connection",
+            True,
+            tooltip="Apply the saved External endpoint and test it",
+            progress_label="Applying & Testing…",
+        )
     else:
-        primary = _action("test", "Test Connection", True)
+        primary = _action(
+            "test",
+            "Test Connection",
+            True,
+            tooltip="Test the active audio.cpp connection and model catalog",
+            progress_label="Testing…",
+        )
+
+    healthy_guided_sample = bool(
+        not observation.pending_configuration
+        and live_managed
+        and observation.applied_managed_setup_source == "guided"
+        and observation.applied_guided_text_ready
+        and observation.applied_guided_default_model_id is not None
+        and observation.applied_guided_default_model_id
+        in observation.applied_guided_model_ids
+        and observation.tts_capability == "available"
+        and observation.catalog_fresh
+    )
+    if card_observation.sample_state == "generating" and healthy_guided_sample:
+        primary = _action(
+            "sample",
+            "Generating Sample…",
+            False,
+            "Sample generation is already in progress.",
+            tooltip="Sample generation is already in progress.",
+            progress_label="Generating Sample…",
+            post_operation_focus="#audio-play-btn",
+        )
+    elif card_observation.sample_state == "failed" and healthy_guided_sample:
+        primary = _action(
+            "sample",
+            "Retry Sample",
+            True,
+            tooltip="Generate another complete WAV with the active guided model",
+            progress_label="Generating Sample…",
+            post_operation_focus="#audio-play-btn",
+        )
 
     duplicate_restart = live_managed and primary.operation == "restart"
     restart_reason = (
@@ -183,18 +297,73 @@ def _runtime_actions(
         "Restart",
         live_managed and not duplicate_restart,
         restart_reason,
+        tooltip=(
+            "Restart the active managed audio.cpp server"
+            if live_managed and not duplicate_restart
+            else restart_reason
+        ),
+        progress_label="Restarting…",
     )
     shutdown = _action(
         "shutdown",
         "Shut down server",
         live_managed,
         external_reason if observation.applied_mode == "external" else no_child_reason,
+        tooltip=(
+            "Shut down the active managed audio.cpp server"
+            if live_managed
+            else external_reason
+            if observation.applied_mode == "external"
+            else no_child_reason
+        ),
+        progress_label="Shutting down…",
     )
     return primary, restart, shutdown
 
 
-def project_audio_cpp_runtime_card(
+def _configuration_copy(
     observation: AudioCppRuntimeObservation,
+    *,
+    saved: bool,
+) -> str:
+    """Return one path-free saved or applied configuration summary."""
+
+    prefix = "Saved" if saved else "Active"
+    mode = observation.saved_mode if saved else observation.applied_mode
+    generation = (
+        observation.saved_configuration_generation
+        if saved
+        else observation.applied_configuration_generation
+    )
+    if mode == "external":
+        return f"{prefix}: External · generation {generation}"
+    source = (
+        observation.saved_managed_setup_source
+        if saved
+        else observation.applied_managed_setup_source
+    )
+    if source != "guided":
+        return f"{prefix}: Managed · Manual server.json · generation {generation}"
+    model_ids = (
+        observation.saved_guided_model_ids
+        if saved
+        else observation.applied_guided_model_ids
+    )
+    default_model = (
+        observation.saved_guided_default_model_id
+        if saved
+        else observation.applied_guided_default_model_id
+    )
+    model_copy = "1 model" if len(model_ids) == 1 else f"{len(model_ids)} models"
+    default_copy = default_model or "None"
+    return (
+        f"{prefix}: Managed · Guided · {model_copy} · default {default_copy} · "
+        f"generation {generation}"
+    )
+
+
+def project_audio_cpp_runtime_card(
+    observation: AudioCppRuntimeObservation | AudioCppRuntimeCardObservation,
 ) -> AudioCppRuntimeCardProjection:
     """Project one service observation without I/O or lifecycle work.
 
@@ -205,13 +374,19 @@ def project_audio_cpp_runtime_card(
         Bounded display copy and lifecycle-action state for the runtime card.
     """
 
-    process = observation.process
-    primary, restart, shutdown = _runtime_actions(observation)
-    catalog_state = "Fresh" if observation.catalog_fresh else "Stale"
+    card_observation = (
+        observation
+        if isinstance(observation, AudioCppRuntimeCardObservation)
+        else AudioCppRuntimeCardObservation(runtime=observation)
+    )
+    runtime = card_observation.runtime
+    process = runtime.process
+    primary, restart, shutdown = _runtime_actions(card_observation)
+    catalog_state = "Fresh" if runtime.catalog_fresh else "Stale"
     catalog_copy = (
         "Catalog: Not checked"
-        if observation.catalog_revision is None
-        else f"Catalog: {catalog_state} · revision {observation.catalog_revision}"
+        if runtime.catalog_revision is None
+        else f"Catalog: {catalog_state} · revision {runtime.catalog_revision}"
     )
     dropped = process.dropped_diagnostic_lines
     dropped_copy = (
@@ -222,25 +397,19 @@ def project_audio_cpp_runtime_card(
         else f"{dropped} older lines were dropped."
     )
     return AudioCppRuntimeCardProjection(
-        primary_status=_primary_status(observation),
-        pending_copy=_pending_copy(observation),
-        saved_copy=(
-            f"Saved: {observation.saved_mode.title()} · generation "
-            f"{observation.saved_configuration_generation}"
-        ),
-        applied_copy=(
-            f"Active: {observation.applied_mode.title()} · generation "
-            f"{observation.applied_configuration_generation}"
-        ),
+        primary_status=_primary_status(runtime),
+        pending_copy=_pending_copy(runtime),
+        saved_copy=(_configuration_copy(runtime, saved=True)),
+        applied_copy=(_configuration_copy(runtime, saved=False)),
         process_copy=(
             f"Process: {process.state.title()} · generation "
             f"{process.process_generation}"
         ),
         endpoint_copy=(
-            f"Active endpoint: {observation.active_endpoint or process.endpoint or 'None'}"
+            f"Active endpoint: {runtime.active_endpoint or process.endpoint or 'None'}"
         ),
         capability_copy=(
-            f"TTS capability: {observation.tts_capability.replace('_', ' ').title()}"
+            f"TTS capability: {runtime.tts_capability.replace('_', ' ').title()}"
         ),
         catalog_copy=catalog_copy,
         primary_action=primary,
@@ -253,10 +422,10 @@ def project_audio_cpp_runtime_card(
         diagnostic_lines=tuple(
             f"{line.stream.upper()} · {line.text}" for line in process.diagnostics
         ),
-        saved_binary_path=observation.saved_managed_binary_path,
-        saved_server_json_path=observation.saved_managed_server_json_path,
-        applied_binary_path=observation.applied_managed_binary_path,
-        applied_server_json_path=observation.applied_managed_server_json_path,
+        saved_binary_path=runtime.saved_managed_binary_path,
+        saved_server_json_path=runtime.saved_managed_server_json_path,
+        applied_binary_path=runtime.applied_managed_binary_path,
+        applied_server_json_path=runtime.applied_managed_server_json_path,
     )
 
 
@@ -404,7 +573,7 @@ class AudioCppRuntimeCard(Vertical):
 
     def apply_observation(
         self,
-        observation: AudioCppRuntimeObservation,
+        observation: AudioCppRuntimeObservation | AudioCppRuntimeCardObservation,
     ) -> AudioCppRuntimeCardProjection:
         """Update mounted children in place and return the pure projection.
 
@@ -416,7 +585,11 @@ class AudioCppRuntimeCard(Vertical):
         """
 
         projection = project_audio_cpp_runtime_card(observation)
-        self.observation = observation
+        self.observation = (
+            observation.runtime
+            if isinstance(observation, AudioCppRuntimeCardObservation)
+            else observation
+        )
         if not self.is_mounted:
             return projection
         copies = {
@@ -479,4 +652,4 @@ class AudioCppRuntimeCard(Vertical):
             return
         button.label = action.label
         button.disabled = not action.enabled
-        button.tooltip = action.disabled_reason or action.label
+        button.tooltip = action.tooltip

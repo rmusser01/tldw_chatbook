@@ -87,6 +87,7 @@ from tldw_chatbook.UI.stts_playground_catalog import (
 )
 from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
 from tldw_chatbook.UI.Speech.audio_cpp_runtime_card import (
+    AudioCppRuntimeCardObservation,
     AudioCppRuntimeCard,
     project_audio_cpp_runtime_card,
 )
@@ -130,6 +131,14 @@ def _runtime_observation(
     service_closed: bool = False,
     diagnostics: tuple[AudioCppDiagnosticLine, ...] = (),
     dropped_diagnostics: int = 0,
+    saved_setup_source: str | None = "user_json",
+    applied_setup_source: str | None = "user_json",
+    saved_guided_model_ids: tuple[str, ...] = (),
+    applied_guided_model_ids: tuple[str, ...] = (),
+    saved_guided_default_model_id: str | None = None,
+    applied_guided_default_model_id: str | None = None,
+    saved_guided_text_ready: bool = False,
+    applied_guided_text_ready: bool = False,
 ) -> AudioCppRuntimeObservation:
     return AudioCppRuntimeObservation(
         saved_mode=saved_mode,  # type: ignore[arg-type]
@@ -167,6 +176,18 @@ def _runtime_observation(
             "/private/applied/server.json" if applied_mode == "managed" else None
         ),
         active_endpoint=active_endpoint,
+        saved_managed_setup_source=(
+            saved_setup_source if saved_mode == "managed" else None
+        ),
+        applied_managed_setup_source=(
+            applied_setup_source if applied_mode == "managed" else None
+        ),
+        saved_guided_model_ids=saved_guided_model_ids,
+        applied_guided_model_ids=applied_guided_model_ids,
+        saved_guided_default_model_id=saved_guided_default_model_id,
+        applied_guided_default_model_id=applied_guided_default_model_id,
+        saved_guided_text_ready=saved_guided_text_ready,
+        applied_guided_text_ready=applied_guided_text_ready,
     )
 
 
@@ -299,6 +320,69 @@ def test_audio_cpp_runtime_projection_uses_state_specific_actions(
         assert projection.shutdown_action.disabled_reason
 
 
+def test_guided_text_ready_projection_is_one_complete_sample_action() -> None:
+    observation = _runtime_observation(
+        saved_setup_source="guided",
+        applied_setup_source="guided",
+        saved_guided_model_ids=("model-a", "model-b"),
+        applied_guided_model_ids=("model-a", "model-b"),
+        saved_guided_default_model_id="model-a",
+        applied_guided_default_model_id="model-a",
+        saved_guided_text_ready=True,
+        applied_guided_text_ready=True,
+    )
+
+    projection = project_audio_cpp_runtime_card(
+        AudioCppRuntimeCardObservation(runtime=observation)
+    )
+
+    assert projection.primary_action.operation == "sample"
+    assert projection.primary_action.label == "Start & Generate Sample"
+    assert projection.primary_action.enabled is True
+    assert projection.primary_action.disabled_reason == ""
+    assert projection.primary_action.tooltip == (
+        "Start audio.cpp, verify model-a, and generate one complete WAV"
+    )
+    assert projection.primary_action.progress_label == "Starting & Generating…"
+    assert projection.primary_action.post_operation_focus == "#audio-play-btn"
+    assert projection.restart_action.enabled is False
+    assert projection.shutdown_action.enabled is False
+    assert "Guided" in projection.saved_copy
+    assert "model-a" in projection.saved_copy
+    assert "2 models" in projection.saved_copy
+    assert "/private/" not in repr(projection)
+
+
+def test_failed_guided_sample_projects_retry_without_duplicate_restart() -> None:
+    observation = _runtime_observation(
+        process_state="running",
+        process_generation=4,
+        capability="available",
+        endpoint="http://127.0.0.1:19001",
+        catalog_revision=11,
+        catalog_fresh=True,
+        saved_setup_source="guided",
+        applied_setup_source="guided",
+        saved_guided_model_ids=("model-a",),
+        applied_guided_model_ids=("model-a",),
+        saved_guided_default_model_id="model-a",
+        applied_guided_default_model_id="model-a",
+        saved_guided_text_ready=True,
+        applied_guided_text_ready=True,
+    )
+
+    projection = project_audio_cpp_runtime_card(
+        AudioCppRuntimeCardObservation(runtime=observation, sample_state="failed")
+    )
+
+    assert projection.primary_action.operation == "sample"
+    assert projection.primary_action.label == "Retry Sample"
+    assert projection.primary_action.progress_label == "Generating Sample…"
+    assert projection.primary_action.post_operation_focus == "#audio-play-btn"
+    assert projection.restart_action.enabled is True
+    assert projection.restart_action.operation == "restart"
+
+
 @pytest.mark.parametrize("state", ("starting", "draining", "stopping"))
 def test_audio_cpp_runtime_projection_keeps_busy_actions_visible_but_disabled(
     state: str,
@@ -337,7 +421,9 @@ def test_audio_cpp_runtime_projection_describes_generation_and_catalog_truth() -
     assert projection.primary_status.startswith("[RUNNING]")
     assert "external mode is saved" in projection.pending_copy.lower()
     assert projection.saved_copy == "Saved: External · generation 7"
-    assert projection.applied_copy == "Active: Managed · generation 4"
+    assert projection.applied_copy == (
+        "Active: Managed · Manual server.json · generation 4"
+    )
     assert projection.process_copy == "Process: Running · generation 3"
     assert projection.endpoint_copy.endswith("http://127.0.0.1:19001")
     assert projection.catalog_copy == "Catalog: Stale · revision 11"
@@ -1326,6 +1412,51 @@ def _audio_catalog(
     )
 
 
+def _guided_text_catalog(model_id: str = "model-a") -> TTSProviderCatalog:
+    return TTSProviderCatalog(
+        provider_id="audio_cpp",
+        revision=21,
+        health=ProviderHealth(state="available", fresh=True),
+        models=(
+            TTSModelInfo(
+                model_id=model_id,
+                display_name="Guided model",
+                family="supertonic",
+                upstream_mode="tts",
+                formats=("wav",),
+                voices=(),
+                supports_speed=False,
+                omit_voice_uses_server_default=True,
+            ),
+        ),
+    )
+
+
+def _guided_runtime_observation(
+    *,
+    process_state: str = "stopped",
+    process_generation: int = 0,
+    catalog_fresh: bool = False,
+) -> AudioCppRuntimeObservation:
+    running = process_state == "running"
+    return _runtime_observation(
+        process_state=process_state,
+        process_generation=process_generation,
+        capability="available" if running else "unknown",
+        endpoint="http://127.0.0.1:19001" if running else None,
+        catalog_revision=21 if catalog_fresh else None,
+        catalog_fresh=catalog_fresh,
+        saved_setup_source="guided",
+        applied_setup_source="guided",
+        saved_guided_model_ids=("model-a",),
+        applied_guided_model_ids=("model-a",),
+        saved_guided_default_model_id="model-a",
+        applied_guided_default_model_id="model-a",
+        saved_guided_text_ready=True,
+        applied_guided_text_ready=True,
+    )
+
+
 def _option_values(select: Select[Any]) -> tuple[Any, ...]:
     return tuple(value for _label, value in select._options)
 
@@ -1413,6 +1544,177 @@ class _PaneHost(App[None]):
             self.navigation.append(message)
             return True
         return super().post_message(message)
+
+
+@pytest.mark.asyncio
+async def test_guided_primary_starts_verifies_and_uses_existing_generation_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _RuntimeObservationService(_guided_runtime_observation())
+    service.catalogs["audio_cpp"] = _guided_text_catalog()
+    service.lifecycle_result_observation = _guided_runtime_observation(
+        process_state="running",
+        process_generation=1,
+        catalog_fresh=True,
+    )
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_tts_service_factory",
+        lambda self: _resolved(service),
+    )
+    app = _PaneHost(provider="audio_cpp")
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        primary = app.query_one("#tts-test-connection-btn", Button)
+        await _wait_until(
+            pilot,
+            lambda: str(primary.label) == "Start & Generate Sample",
+        )
+        app.query_one("#tts-text-input", TextArea).text = "Hello from audio.cpp."
+
+        primary.press()
+        await _wait_until(pilot, lambda: len(app.generation_events) == 1)
+
+        request = app.generation_events[0].request
+        assert service.lifecycle_calls == ["test"]
+        assert request.provider_id == "audio_cpp"
+        assert request.model_id == "model-a"
+        assert request.text == "Hello from audio.cpp."
+        assert request.response_format == "wav"
+        assert service.synthesize_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_guided_sample_completion_is_fenced_after_provider_switch_round_trip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _RuntimeObservationService(_guided_runtime_observation())
+    service.catalogs["audio_cpp"] = _guided_text_catalog()
+    service.lifecycle_gate = asyncio.Event()
+    service.lifecycle_result_observation = _guided_runtime_observation(
+        process_state="running",
+        process_generation=1,
+        catalog_fresh=True,
+    )
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_tts_service_factory",
+        lambda self: _resolved(service),
+    )
+    app = _PaneHost(provider="audio_cpp")
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        primary = app.query_one("#tts-test-connection-btn", Button)
+        await _wait_until(
+            pilot,
+            lambda: str(primary.label) == "Start & Generate Sample",
+        )
+        app.query_one("#tts-text-input", TextArea).text = "Do not generate late."
+        primary.press()
+        await asyncio.wait_for(service.lifecycle_started.wait(), timeout=2.0)
+
+        provider = app.query_one("#tts-provider-select", Select)
+        provider.value = "openai"
+        await _wait_until(
+            pilot,
+            lambda: provider.value == "openai" and str(primary.label) == "Test",
+        )
+        provider.value = "audio_cpp"
+        await _wait_until(
+            pilot,
+            lambda: (
+                provider.value == "audio_cpp"
+                and str(primary.label) == "Starting & Generating…"
+            ),
+        )
+        service.lifecycle_gate.set()
+        await pilot.pause(0.2)
+
+        assert service.lifecycle_calls == ["test"]
+        assert app.generation_events == []
+
+
+@pytest.mark.asyncio
+async def test_guided_primary_click_executes_visible_immutable_action(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _RuntimeObservationService(_guided_runtime_observation())
+    service.catalogs["audio_cpp"] = _guided_text_catalog()
+    service.lifecycle_result_observation = _guided_runtime_observation(
+        process_state="running",
+        process_generation=1,
+        catalog_fresh=True,
+    )
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_tts_service_factory",
+        lambda self: _resolved(service),
+    )
+    app = _PaneHost(provider="audio_cpp")
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        primary = app.query_one("#tts-test-connection-btn", Button)
+        await _wait_until(
+            pilot,
+            lambda: str(primary.label) == "Start & Generate Sample",
+        )
+        pane = app.query_one(SpeechPlaygroundPane)
+        pane._audio_cpp_runtime_observation = _runtime_observation(
+            saved_generation=2,
+            applied_generation=1,
+            process_state="running",
+            process_generation=1,
+            capability="available",
+            endpoint="http://127.0.0.1:19001",
+        )
+        app.query_one("#tts-text-input", TextArea).text = "Use visible action."
+
+        primary.press()
+        await _wait_until(pilot, lambda: len(app.generation_events) == 1)
+
+        assert service.lifecycle_calls == ["test"]
+        assert app.generation_events[0].request.model_id == "model-a"
+
+
+@pytest.mark.asyncio
+async def test_failed_guided_generation_projects_and_executes_retry_sample(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _RuntimeObservationService(_guided_runtime_observation())
+    service.catalogs["audio_cpp"] = _guided_text_catalog()
+    service.lifecycle_result_observation = _guided_runtime_observation(
+        process_state="running",
+        process_generation=1,
+        catalog_fresh=True,
+    )
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_tts_service_factory",
+        lambda self: _resolved(service),
+    )
+    app = _PaneHost(provider="audio_cpp")
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        primary = app.query_one("#tts-test-connection-btn", Button)
+        await _wait_until(
+            pilot,
+            lambda: str(primary.label) == "Start & Generate Sample",
+        )
+        app.query_one("#tts-text-input", TextArea).text = "Retry this sample."
+        primary.press()
+        await _wait_until(pilot, lambda: len(app.generation_events) == 1)
+
+        pane = app.query_one(SpeechPlaygroundPane)
+        pane._generation_complete(None)
+        await _wait_until(pilot, lambda: str(primary.label) == "Retry Sample")
+
+        assert primary.disabled is False
+        assert "another complete WAV" in str(primary.tooltip)
+        primary.press()
+        await _wait_until(pilot, lambda: len(app.generation_events) == 2)
+
+        assert service.lifecycle_calls == ["test", "test"]
+        assert app.generation_events[1].request.model_id == "model-a"
 
 
 @pytest.mark.asyncio

@@ -586,6 +586,7 @@ class AudioCppAdapter:
         failure: _OperationFailure | None = None
         outcome: _SpeechOutcome | None = None
         payload: dict[str, str] | None = None
+        process_generation: int | None = None
 
         if not self._valid_speech_request(request):
             failure = _REQUEST_INVALID
@@ -606,6 +607,7 @@ class AudioCppAdapter:
                 failure = _MODEL_INVALID
 
         if failure is None:
+            process_generation = self._managed_process_generation
             await self._report_progress(
                 progress_sink,
                 TTSProgress(status="Generating", fraction=None),
@@ -702,6 +704,8 @@ class AudioCppAdapter:
             "frame_count": outcome.wav_info.frame_count,
             "data_size": outcome.wav_info.data_size,
         }
+        if process_generation is not None:
+            metadata["process_generation"] = process_generation
         if outcome.timing is not None:
             metadata.update(outcome.timing)
         response = TTSAudioResponse(

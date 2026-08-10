@@ -5277,9 +5277,35 @@ _CredentialClearModal {
    strand Save below the Settings scroll owner. */
 #settings-speech-audio-cpp-external-fields,
 #settings-speech-audio-cpp-managed-fields,
-#settings-speech-audio-cpp-managed-lifecycle-fields {
+#settings-speech-audio-cpp-managed-lifecycle-fields,
+#settings-speech-audio-cpp-manual-json-fields,
+#settings-speech-audio-cpp-guided-fields,
+#settings-speech-audio-cpp-guided-advanced-fields,
+.settings-speech-audio-cpp-packages,
+.settings-speech-audio-cpp-package-row {
     width: 100%;
     height: auto;
+}
+
+.settings-speech-audio-cpp-package-row {
+    min-height: 1;
+    margin: 1 0;
+    padding: 0 1;
+    background: $ds-surface-panel;
+}
+
+.settings-speech-audio-cpp-package-copy {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+}
+
+.settings-speech-audio-cpp-package-remove {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    margin: 1 0 0 0;
 }
 
 /* Field errors live below their control. As a third child of a Horizontal,

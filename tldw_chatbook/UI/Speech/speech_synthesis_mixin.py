@@ -26,6 +26,7 @@ from typing import Any
 from uuid import uuid4
 
 from loguru import logger
+from textual.css.query import NoMatches
 from textual.widgets import Button, Input, RichLog, Select, Switch, TextArea
 
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
@@ -99,11 +100,40 @@ class SpeechSynthesisMixin:
         """
         text_present = bool(self.query_one("#tts-text-input", TextArea).text.strip())
         provider_id, model_id = self._effective_generation_selection()
-        self.query_one("#tts-generate-btn", Button).disabled = not (
-            text_present
-            and self._generation_readiness_error(provider_id, model_id) is None
-            and not getattr(self.app, "_is_generating", False)
+        readiness_error = (
+            self._generation_readiness_error(provider_id, model_id)
+            if text_present
+            else "Enter text before generating speech"
         )
+        if (
+            provider_id == "audio_cpp"
+            and getattr(self, "_audio_cpp_lifecycle_busy", None) is not None
+        ):
+            readiness_error = "An audio.cpp operation is in progress."
+        elif getattr(self.app, "_is_generating", False):
+            readiness_error = "TTS generation is already in progress"
+        generation_disabled = readiness_error is not None
+        generate = self.query_one("#tts-generate-btn", Button)
+        generate.disabled = generation_disabled
+        generate.tooltip = (
+            readiness_error
+            if readiness_error is not None
+            else "Generate speech with the current Speech Lab controls"
+        )
+        try:
+            repeat = self.query_one("#audio-generate-again-btn", Button)
+        except NoMatches:
+            pass
+        else:
+            artifact_missing = getattr(self, "current_audio_artifact", None) is None
+            repeat.disabled = bool(generation_disabled or artifact_missing)
+            repeat.tooltip = (
+                "Generate audio before generating another result"
+                if artifact_missing
+                else readiness_error
+                if readiness_error is not None
+                else "Generate another result with the current Speech Lab controls"
+            )
 
     def _generation_readiness_error(
         self,
@@ -483,6 +513,10 @@ class SpeechSynthesisMixin:
 
         # Disable generate button
         self.query_one("#tts-generate-btn", Button).disabled = True
+        try:
+            self.query_one("#audio-generate-again-btn", Button).disabled = True
+        except NoMatches:
+            pass
 
         request = STTSPlaygroundRequest(
             operation_id=str(uuid4()),

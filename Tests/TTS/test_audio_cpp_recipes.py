@@ -102,6 +102,7 @@ def _api():
         AudioCppMatchState,
         AudioCppPackageDescription,
         AudioCppPackageFileEvidence,
+        AudioCppReferenceRequirement,
         AudioCppRecipeRegistry,
         AudioCppRecipeSupportState,
     )
@@ -197,7 +198,8 @@ def test_recipe_has_exact_reviewed_layout_and_safe_projection(
     assert recipe.audio_cpp_release == "release-0.5.1"
     assert recipe.audio_cpp_commit == api["AUDIO_CPP_PINNED_COMMIT"]
     assert recipe.schema_version == 1
-    assert recipe.recipe_revision == 1
+    expected_revision = 2 if package_variant in POCKET_GGUF_PACKAGES else 1
+    assert recipe.recipe_revision == expected_revision
     assert recipe.support_state is support_state.APPROVED
     assert recipe.projection.family == recipe.family
     assert recipe.projection.task == "tts"
@@ -219,12 +221,14 @@ def test_recipe_has_exact_reviewed_layout_and_safe_projection(
 
 def test_tasks_and_pocket_language_options_follow_the_pinned_specs() -> None:
     registry = _api()["AUDIO_CPP_RECIPE_REGISTRY"]
+    reference_requirement = _api()["AudioCppReferenceRequirement"]
 
     for recipe in registry.recipes:
         if recipe.family == "supertonic":
             assert recipe.capabilities == ("tts",)
             assert recipe.projection.load_options == ()
             assert recipe.projection.session_options == ()
+            assert recipe.reference_requirement is reference_requirement.NONE
             continue
         assert recipe.family == "pocket_tts"
         assert recipe.capabilities == ("tts", "clone")
@@ -235,6 +239,11 @@ def test_tasks_and_pocket_language_options_follow_the_pinned_specs() -> None:
         assert {
             (item.name, item.value) for item in recipe.projection.session_options
         } == {("language", language)}
+        if recipe.package_format.value == "gguf":
+            assert recipe.recipe_revision == 2
+            assert recipe.reference_requirement is reference_requirement.REQUIRED
+        else:
+            assert recipe.reference_requirement is reference_requirement.OPTIONAL
 
 
 def test_recipe_records_are_frozen_and_reject_path_or_extension_attacks() -> None:

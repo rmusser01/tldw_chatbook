@@ -50,6 +50,10 @@ from tldw_chatbook.TTS.adapter_types import (
 )
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
+from tldw_chatbook.TTS.audio_cpp_guided_config import AudioCppSettingsConfig
+from tldw_chatbook.TTS.audio_cpp_recipes import (
+    audio_cpp_guided_default_is_text_ready,
+)
 from tldw_chatbook.TTS.audio_cpp_supervisor import (
     AudioCppProcessAdmissionSnapshot,
     AudioCppProcessSnapshot,
@@ -115,6 +119,14 @@ class AudioCppRuntimeObservation:
     applied_managed_binary_path: str | None = field(repr=False)
     applied_managed_server_json_path: str | None = field(repr=False)
     active_endpoint: str | None = field(default=None, repr=False)
+    saved_managed_setup_source: Literal["user_json", "guided"] | None = None
+    applied_managed_setup_source: Literal["user_json", "guided"] | None = None
+    saved_guided_model_ids: tuple[str, ...] = ()
+    applied_guided_model_ids: tuple[str, ...] = ()
+    saved_guided_default_model_id: str | None = None
+    applied_guided_default_model_id: str | None = None
+    saved_guided_text_ready: bool = False
+    applied_guided_text_ready: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -1873,6 +1885,10 @@ class TTSService:
                     else:
                         saved_config = dict(configuration.applied_config)
 
+                saved_settings = AudioCppSettingsConfig.from_mapping(saved_config)
+                applied_settings = AudioCppSettingsConfig.from_mapping(
+                    configuration.applied_config
+                )
                 saved = AudioCppConfig.from_mapping(saved_config)
                 applied = AudioCppConfig.from_mapping(configuration.applied_config)
                 latest_capability = self._native_capability_observations.get(
@@ -1930,27 +1946,73 @@ class TTSService:
                     tts_capability=tts_capability,
                     service_closed=service_closed,
                     saved_managed_binary_path=(
-                        saved.managed_binary_path if saved.mode == "managed" else None
+                        saved.managed_binary_path
+                        if saved.mode == "managed"
+                        and saved_settings.managed_setup_source == "user_json"
+                        else None
                     ),
                     saved_managed_server_json_path=(
                         saved.managed_server_json_path
                         if saved.mode == "managed"
+                        and saved_settings.managed_setup_source == "user_json"
                         else None
                     ),
                     applied_managed_binary_path=(
                         applied.managed_binary_path
                         if applied.mode == "managed"
+                        and applied_settings.managed_setup_source == "user_json"
                         else None
                     ),
                     applied_managed_server_json_path=(
                         applied.managed_server_json_path
                         if applied.mode == "managed"
+                        and applied_settings.managed_setup_source == "user_json"
                         else None
                     ),
                     active_endpoint=(
                         process.endpoint
                         if applied.mode == "managed"
                         else applied.base_url
+                    ),
+                    saved_managed_setup_source=(
+                        saved_settings.managed_setup_source.value
+                        if saved.mode == "managed"
+                        else None
+                    ),
+                    applied_managed_setup_source=(
+                        applied_settings.managed_setup_source.value
+                        if applied.mode == "managed"
+                        else None
+                    ),
+                    saved_guided_model_ids=tuple(
+                        package.public_model_id
+                        for package in saved_settings.guided_packages
+                    ),
+                    applied_guided_model_ids=tuple(
+                        package.public_model_id
+                        for package in applied_settings.guided_packages
+                    ),
+                    saved_guided_default_model_id=(
+                        saved_settings.guided_default_model_id
+                        if saved.mode == "managed"
+                        and saved_settings.managed_setup_source == "guided"
+                        else None
+                    ),
+                    applied_guided_default_model_id=(
+                        applied_settings.guided_default_model_id
+                        if applied.mode == "managed"
+                        and applied_settings.managed_setup_source == "guided"
+                        else None
+                    ),
+                    saved_guided_text_ready=bool(
+                        saved.mode == "managed"
+                        and saved_settings.managed_setup_source == "guided"
+                        and audio_cpp_guided_default_is_text_ready(saved_settings)
+                    ),
+                    applied_guided_text_ready=bool(
+                        applied.mode == "managed"
+                        and applied_settings.managed_setup_source == "guided"
+                        and audio_cpp_guided_default_is_text_ready(applied_settings)
                     ),
                 )
 

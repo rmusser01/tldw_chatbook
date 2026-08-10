@@ -280,9 +280,22 @@ def _candidate_matches_accepted(
     return len(matches) == 1
 
 
-async def _revalidate_packages(
+async def revalidate_audio_cpp_guided_packages(
     accepted_packages: tuple[AudioCppAcceptedPackage, ...],
 ) -> tuple[AudioCppPackageRecipe, ...]:
+    """Recheck accepted package identities without launching audio.cpp.
+
+    Args:
+        accepted_packages: Immutable package snapshots accepted in Settings.
+
+    Returns:
+        The exact reviewed recipes for the still-current package identities.
+
+    Raises:
+        AudioCppGuidedLaunchError: If a recipe or local package no longer
+            matches its accepted snapshot.
+    """
+
     recipes: list[AudioCppPackageRecipe] = []
     for accepted in accepted_packages:
         invalid_recipe = False
@@ -626,7 +639,7 @@ async def materialize_audio_cpp_guided_launch(
     binary = await asyncio.to_thread(_validate_binary, settings.guided_binary_path)
     if binary is None:
         raise AudioCppGuidedLaunchError("binary_invalid") from None
-    recipes = await _revalidate_packages(settings.guided_packages)
+    recipes = await revalidate_audio_cpp_guided_packages(settings.guided_packages)
 
     host_system = (platform.system() if system is None else system).casefold()
     host_architecture = _normalize_architecture(
@@ -698,4 +711,5 @@ __all__ = (
     "AudioCppGuidedLaunchError",
     "AudioCppGuidedLaunchErrorCode",
     "materialize_audio_cpp_guided_launch",
+    "revalidate_audio_cpp_guided_packages",
 )
