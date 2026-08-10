@@ -373,7 +373,9 @@ def test_baseline_completes_before_the_first_tool_executes(tmp_path, root):
     gateway = _SideEffectGateway([[fence], ["42."]])
     bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
 
-    def probe_review(calls):
+    # PR2a Task 5: an AgentService-wired hook takes `(calls, run_id)` --
+    # the change-tracker wrapper passes it straight through.
+    def probe_review(calls, run_id):
         events.append("review-called")
         return {}
 

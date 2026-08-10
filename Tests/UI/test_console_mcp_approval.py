@@ -26,6 +26,7 @@ from textual.widgets import Button, Select, Static
 
 import tldw_chatbook
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
+from tldw_chatbook.Agents.run_context import use_run_id
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunMarker
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
@@ -34,6 +35,12 @@ from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
 
 from Tests.UI.app_factory import _build_test_app
+
+#: PR2a Task 5: the review hook takes the id of the run whose batch it is
+#: reviewing (both gates key their per-turn verdicts by run). These
+#: hook-level tests drive ONE run each, so they name it once here; every
+#: assertion below is unchanged.
+RUN = "run-1"
 
 _CSS_ROOT = Path(tldw_chatbook.__file__).parent / "css"
 _AGENTIC_TERMINAL_TCSS = _CSS_ROOT / "components" / "_agentic_terminal.tcss"
@@ -2266,13 +2273,13 @@ def test_call_id_keyed_decision_still_stamps_the_builtin_gate():
     stamped: list[tuple[str, str]] = []
 
     class _Gate:
-        def begin_turn(self):
+        def begin_turn(self, run_id):
             pass
 
         def resolve(self, tool):
             return SimpleNamespace(state="ask", risk_floored=False)
 
-        def stamp(self, name, decision):
+        def stamp(self, run_id, name, decision):
             stamped.append((name, decision))
 
         def is_session_approved(self, name):
@@ -2293,7 +2300,7 @@ def test_call_id_keyed_decision_still_stamps_the_builtin_gate():
     hook = build_tool_review_hook(
         _Gate(), _Provider(), None, request_approvals, workspace_id=None
     )
-    hook([ToolCall(name="read_file", args={"path": "spec.md"}, call_id="call-1")])
+    hook([ToolCall(name="read_file", args={"path": "spec.md"}, call_id="call-1")], RUN)
 
     assert stamped == [("read_file", "approve_session")], (
         f"the call-id-keyed decision never reached the gate: {stamped}"
@@ -2396,10 +2403,10 @@ def test_refusing_one_call_does_not_get_overwritten_by_approving_another():
     stamped: list[tuple[str, str]] = []
 
     class _Gate:
-        def begin_turn(self): pass
+        def begin_turn(self, run_id): pass
         def resolve(self, tool):
             return SimpleNamespace(state="ask", risk_floored=False)
-        def stamp(self, name, decision): stamped.append((name, decision))
+        def stamp(self, run_id, name, decision): stamped.append((name, decision))
         def is_session_approved(self, name): return False
         def options_for(self, tool):
             return ("approve_once", "approve_session", "deny")
@@ -2424,7 +2431,7 @@ def test_refusing_one_call_does_not_get_overwritten_by_approving_another():
     verdicts = hook([
         ToolCall(name="read_file", args={"path": "secrets.md"}, call_id="call-1"),
         ToolCall(name="read_file", args={"path": "spec.md"}, call_id="call-2"),
-    ])
+    ], RUN)
 
     refusal = verdicts.get("call-1")
     assert refusal and refusal != "proceed", (
@@ -2499,10 +2506,10 @@ def test_a_refusal_never_stamps_the_name_even_when_it_is_decided_last():
     stamped: list[tuple[str, str]] = []
 
     class _Gate:
-        def begin_turn(self): pass
+        def begin_turn(self, run_id): pass
         def resolve(self, tool):
             return SimpleNamespace(state="ask", risk_floored=False)
-        def stamp(self, name, decision): stamped.append((name, decision))
+        def stamp(self, run_id, name, decision): stamped.append((name, decision))
         def is_session_approved(self, name): return False
         def options_for(self, tool):
             return ("approve_once", "approve_session", "deny")
@@ -2525,7 +2532,7 @@ def test_a_refusal_never_stamps_the_name_even_when_it_is_decided_last():
     verdicts = hook([
         ToolCall(name="read_file", args={"path": "spec.md"}, call_id="c-ok"),
         ToolCall(name="read_file", args={"path": "secrets.md"}, call_id="c-no"),
-    ])
+    ], RUN)
 
     assert stamped == [("read_file", "approve_session")], (
         "the refusal was stamped against the tool NAME, which also blocks "
@@ -2558,10 +2565,10 @@ def test_the_broadest_approval_scope_for_a_tool_survives_collapsing():
     stamped: list[tuple[str, str]] = []
 
     class _Gate:
-        def begin_turn(self): pass
+        def begin_turn(self, run_id): pass
         def resolve(self, tool):
             return SimpleNamespace(state="ask", risk_floored=False)
-        def stamp(self, name, decision): stamped.append((name, decision))
+        def stamp(self, run_id, name, decision): stamped.append((name, decision))
         def is_session_approved(self, name): return False
         def options_for(self, tool):
             return ("approve_once", "approve_session", "deny")
@@ -2584,9 +2591,333 @@ def test_the_broadest_approval_scope_for_a_tool_survives_collapsing():
     hook([
         ToolCall(name="read_file", args={"path": "a.md"}, call_id="c1"),
         ToolCall(name="read_file", args={"path": "b.md"}, call_id="c2"),
-    ])
+    ], RUN)
 
     assert stamped == [("read_file", "approve_session")], (
         "the session grant the user chose was downgraded to approve_once, so "
         f"the next call re-prompts: {stamped}"
+    )
+
+
+# -- PR2a Task 7: cancellation revokes a child's pending approval cards ----
+#
+# The hazard: the approval wait blocks inside `_call_with_timeout`'s per-call
+# daemon thread. When the fleet cancels or abandons a child while its card is
+# still on screen, the user can still press Approve -- and the tool would
+# EXECUTE FOR REAL (file written, message sent) for a run that already reads
+# `cancelled`. `revoke_approval_rounds_for_run` is the fail-closed answer.
+
+#: Two concurrent children of one turn. They share the console SESSION (the
+#: fleet's children all run under the parent's session) and differ only by
+#: run id -- which is exactly why round ownership had to become run-keyed.
+RUN_A = "run-child-a"
+RUN_B = "run-child-b"
+
+
+def _arm_round(controller, *, run_id, session_id, llm_name, results):
+    """Arm one approval round on a worker thread, owned by ``run_id``.
+
+    Mirrors production: `request_mcp_approvals` runs on the agent bridge's
+    worker thread, and the dispatching run's id reaches it through the
+    `run_context` ContextVar that `AgentService` binds around the review
+    hook and around each tool invocation.
+    """
+
+    def _run() -> None:
+        with use_run_id(run_id):
+            results[run_id] = controller.request_mcp_approvals(
+                [_pending(llm_name=llm_name)], session_id=session_id
+            )
+
+    thread = threading.Thread(target=_run)
+    thread.start()
+    return thread
+
+
+def _round_id_for(controller, run_id: str) -> str:
+    rounds = [
+        rid
+        for rid, state in controller._pending_approval_rounds.items()
+        if state.get("run_id") == run_id
+    ]
+    assert len(rounds) == 1, f"expected exactly one armed round for {run_id}: {rounds}"
+    return rounds[0]
+
+
+def test_revoking_a_run_denies_its_rounds_and_leaves_another_runs_untouched():
+    """Two concurrent children, one cancelled: only its own card is revoked.
+
+    Both rounds belong to the SAME console session, so nothing session-keyed
+    could tell them apart -- the round has to record which RUN armed it.
+    """
+    controller, store = _build_controller()
+    session_id = store.create_session(title="Fleet").id
+    store.switch_session(session_id)
+    controller.app = _FakeApp()
+    controller.set_pending_approval = lambda payload: None
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    results: dict[str, dict[str, str]] = {}
+    worker_a = _arm_round(
+        controller,
+        run_id=RUN_A,
+        session_id=session_id,
+        llm_name="mcp__srv__a",
+        results=results,
+    )
+    worker_b = _arm_round(
+        controller,
+        run_id=RUN_B,
+        session_id=session_id,
+        llm_name="mcp__srv__b",
+        results=results,
+    )
+    time.sleep(0.15)
+
+    round_a = _round_id_for(controller, RUN_A)
+    round_b = _round_id_for(controller, RUN_B)
+    assert controller._pending_approvals[session_id] == {round_a, round_b}
+
+    assert controller.revoke_approval_rounds_for_run(RUN_A) == 1
+
+    worker_a.join(timeout=3.0)
+    assert not worker_a.is_alive(), "the revoked round never released its thread"
+    assert results[RUN_A] == {"mcp__srv__a": "deny"}
+
+    # The sibling child is mid-approval and must be completely undisturbed:
+    # still armed, still counted for the badge, still blocking its thread.
+    assert worker_b.is_alive()
+    assert round_a not in controller._pending_approval_rounds
+    assert round_b in controller._pending_approval_rounds
+    assert controller._pending_approvals[session_id] == {round_b}
+    assert controller.run_marker_for(session_id) is ConsoleRunMarker.NEEDS_APPROVAL
+
+    controller.resolve_pending_approval(
+        {"mcp__srv__b": "approve_once"}, round_id=round_b
+    )
+    worker_b.join(timeout=3.0)
+    assert results[RUN_B] == {"mcp__srv__b": "approve_once"}
+    assert session_id not in controller._pending_approvals
+
+
+def test_revoking_a_run_unblocks_its_waiting_thread_and_clears_the_card():
+    """Revocation resolves the round NOW -- not at the 120s auto-deny -- and
+    takes the card down through the same clear a resolved card uses."""
+    controller, store = _build_controller()
+    session_id = store.create_session(title="Child").id
+    store.switch_session(session_id)
+    controller.app = _FakeApp()
+    mounted: list[dict | None] = []
+    controller.set_pending_approval = mounted.append
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    results: dict[str, dict[str, str]] = {}
+    worker = _arm_round(
+        controller,
+        run_id=RUN_A,
+        session_id=session_id,
+        llm_name="mcp__srv__tool",
+        results=results,
+    )
+    time.sleep(0.15)
+    assert mounted and mounted[-1] is not None, "precondition: the card is on screen"
+
+    started = time.monotonic()
+    assert controller.revoke_approval_rounds_for_run(RUN_A) == 1
+    worker.join(timeout=3.0)
+    elapsed = time.monotonic() - started
+
+    assert not worker.is_alive()
+    assert results[RUN_A] == {"mcp__srv__tool": "deny"}
+    # Nowhere near the 30s deadline: the Event was set, not waited out.
+    assert elapsed < 2.5
+    assert mounted[-1] is None, "the revoked card was left on screen"
+    assert session_id not in controller._pending_approvals
+    assert session_id not in controller._parked_approval_payloads
+
+
+def test_revoking_an_unknown_run_is_a_zero_return_noop():
+    """Safe for a run that never armed a card (the overwhelmingly common
+    case: every cancelled child with no approval outstanding)."""
+    controller, store = _build_controller()
+    session_id = store.create_session(title="Child").id
+    store.switch_session(session_id)
+    controller.app = _FakeApp()
+    controller.set_pending_approval = lambda payload: None
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    # Nothing armed at all.
+    assert controller.revoke_approval_rounds_for_run(RUN_A) == 0
+
+    results: dict[str, dict[str, str]] = {}
+    worker = _arm_round(
+        controller,
+        run_id=RUN_A,
+        session_id=session_id,
+        llm_name="mcp__srv__tool",
+        results=results,
+    )
+    time.sleep(0.15)
+    round_a = _round_id_for(controller, RUN_A)
+
+    assert controller.revoke_approval_rounds_for_run("run-nobody") == 0
+    # An empty/absent run id must never match the rounds armed outside any
+    # run (a direct provider call) -- fail closed by refusing to sweep.
+    assert controller.revoke_approval_rounds_for_run("") == 0
+
+    assert round_a in controller._pending_approval_rounds
+    assert controller._pending_approvals[session_id] == {round_a}
+    assert worker.is_alive()
+
+    controller.resolve_pending_approval(
+        {"mcp__srv__tool": "approve_once"}, round_id=round_a
+    )
+    worker.join(timeout=3.0)
+    assert results[RUN_A] == {"mcp__srv__tool": "approve_once"}
+
+
+def test_a_decision_landing_after_a_revoke_cannot_reopen_the_round():
+    """The in-flight-click race, pinned deterministically.
+
+    `ApprovalDecided` travels as an async Textual message, so a user click
+    can be delivered AFTER the fleet cancelled the child -- and
+    `resolve_pending_approval` snapshots the round's shared decisions dict,
+    so a write can even land in that dict after the round was torn down.
+    The waiting thread must still return "deny".
+
+    The worker is held inside its own mount callback (which runs on the
+    worker thread, after the round is registered and before the wait loop),
+    which makes the ordering exact rather than hopeful.
+    """
+    controller, store = _build_controller()
+    session_id = store.create_session(title="Child").id
+    store.switch_session(session_id)
+    controller.app = _FakeApp()
+    mounted: list[dict | None] = []
+    release = threading.Event()
+
+    def _mount(payload):
+        mounted.append(payload)
+        if payload is not None:
+            # Park the worker just before it enters the wait loop.
+            release.wait(5.0)
+
+    controller.set_pending_approval = _mount
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    results: dict[str, dict[str, str]] = {}
+    worker = _arm_round(
+        controller,
+        run_id=RUN_A,
+        session_id=session_id,
+        llm_name="mcp__srv__tool",
+        results=results,
+    )
+    try:
+        deadline = time.monotonic() + 3.0
+        while not mounted and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert mounted and mounted[0] is not None
+        round_a = _round_id_for(controller, RUN_A)
+        decisions_box = controller._pending_approval_rounds[round_a]["decisions"]
+
+        assert controller.revoke_approval_rounds_for_run(RUN_A) == 1
+        # The stale click is delivered now: by round id (a no-op, the round
+        # is gone) AND straight into the shared box a pre-revoke snapshot
+        # would still hold. Neither may resurrect the approval.
+        controller.resolve_pending_approval(
+            {"mcp__srv__tool": "approve_once"}, round_id=round_a
+        )
+        decisions_box["mcp__srv__tool"] = "approve_once"
+    finally:
+        release.set()
+
+    worker.join(timeout=3.0)
+    assert not worker.is_alive()
+    assert results[RUN_A] == {"mcp__srv__tool": "deny"}, (
+        "a click that landed after cancellation re-opened a revoked round"
+    )
+
+
+@pytest.mark.unit
+def test_a_revoked_childs_card_can_no_longer_execute_its_tool(tmp_path, monkeypatch):
+    """End to end, with the real gate, the real provider and a real file.
+
+    The whole point of the task: a child cancelled mid-approval must not be
+    able to write to disk when the user presses Approve afterwards. Drives
+    the production chain -- `build_tool_review_hook` -> `request_mcp_
+    approvals` -> `BuiltinToolGate` stamp -> `BuiltinToolProvider.invoke`.
+    """
+    import tldw_chatbook.config as config_module
+    import tldw_chatbook.Tools.file_operation_tools as fot
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate
+    from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+
+    from Tests.Agents.test_builtin_tool_gate import _FakeService
+
+    def _tools_setting(section, key=None, default=None):
+        if section == "tools" and key == "write_file_enabled":
+            return True
+        return default
+
+    monkeypatch.setattr(config_module, "get_cli_setting", _tools_setting)
+    monkeypatch.setattr(fot, "_resolve_sandbox_config", lambda: str(tmp_path))
+
+    controller, store = _build_controller()
+    session_id = store.create_session(title="Child").id
+    store.switch_session(session_id)
+    controller.app = _FakeApp()
+    mounted: list[dict | None] = []
+    controller.set_pending_approval = mounted.append
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    gate = BuiltinToolGate(service=_FakeService())
+    provider = BuiltinToolProvider(gate=gate)
+    hook = build_tool_review_hook(
+        gate,
+        provider,
+        None,
+        lambda pending: controller.request_mcp_approvals(
+            pending, session_id=session_id
+        ),
+        workspace_id=None,
+    )
+    args = {"file_path": "owned.txt", "content": "written by a cancelled child"}
+    target = tmp_path / "owned.txt"
+
+    verdicts: dict[str, str] = {}
+
+    def _review() -> None:
+        with use_run_id(RUN_A):
+            verdicts.update(
+                hook([ToolCall(name="write_file", args=args, call_id="call-1")], RUN_A)
+            )
+
+    worker = threading.Thread(target=_review)
+    worker.start()
+    time.sleep(0.2)
+    assert mounted and mounted[-1] is not None, "precondition: the card is on screen"
+    round_a = mounted[-1]["round_id"]
+
+    # The fleet cancels/abandons this child while its card is still up.
+    assert controller.revoke_approval_rounds_for_run(RUN_A) == 1
+    worker.join(timeout=3.0)
+    assert not worker.is_alive()
+
+    # ... and the user presses Approve anyway.
+    controller.resolve_pending_approval(
+        {"call-1": "approve_once", "write_file": "approve_once"}, round_id=round_a
+    )
+
+    with use_run_id(RUN_A):
+        result = provider.invoke("builtin:write_file", args)
+
+    assert verdicts["call-1"] != "proceed", (
+        f"the revoked call was cleared for dispatch: {verdicts}"
+    )
+    assert result.ok is False
+    assert not target.exists(), (
+        "a revoked approval executed the tool for real -- the file was written"
     )

@@ -13,6 +13,7 @@ from typing import Callable
 from loguru import logger
 
 from .agent_models import (
+    CHECK_AGENTS_TOOL_NAME,
     FENCE_TOOL_RESULT_PREFIX,
     FIND_TOOLS_NAME,
     INSTALL_SKILL_TOOL_NAME,
@@ -40,6 +41,7 @@ from .agent_models import (
     ToolCall,
     ToolResult,
     ToolSchema,
+    WAIT_AGENTS_TOOL_NAME,
 )
 
 FENCE_OPEN = "```tool_call"
@@ -283,6 +285,28 @@ class LoopDeps:
     # (the default) means the run is not wired for it and a call by that
     # name falls through to the generic deps.invoke_tool path.
     run_log_slice: Callable[[dict], ToolResult] | None = None
+    # wait_agents / check_agents: the fleet runtime tools (PR2a Task 6).
+    # Wired ONLY for the top-level agent of a run that actually has a
+    # fleet coordinator -- same primary-only reasoning as install_skill
+    # (a depth-1 child has max_subagents clamped to 0, so it has no
+    # children to wait on) plus the obvious one: without a coordinator
+    # there is nothing to wait on at all. `None` (the default) means the
+    # run is not wired for them and a call by either name falls through
+    # to the generic deps.invoke_tool path.
+    #
+    # Dispatched IN-LOOP beside spawn_subagent below, deliberately NOT
+    # through deps.invoke_tool: that path wraps every call in
+    # agent_service._call_with_timeout's per-call daemon thread, which
+    # would abandon a wait at `max_tool_call_seconds` and leave the
+    # children it was waiting for running unattended. wait_agents is
+    # bounded by the parent's own remaining wall-clock and polls
+    # should_cancel itself, which is the correct bound for a call whose
+    # entire purpose is to block.
+    #
+    # `wait_agents` takes the requested handle ids, or None for "every
+    # child of this run"; `check_agents` takes nothing.
+    wait_agents: Callable[[list[str] | None], ToolResult] | None = None
+    check_agents: Callable[[], ToolResult] | None = None
     # on_record: full-fidelity capture for the run log (run_log.py). Called
     # with (record_type, payload) at the two points where the COMPLETE value
     # exists -- which the step log does not carry, since `add()` truncates
@@ -748,6 +772,34 @@ def run_agent_loop(
                             #   budget check.
                             if result.ok or not agent_name:
                                 spawned += 1
+                elif (
+                    call.name == WAIT_AGENTS_TOOL_NAME
+                    and deps.wait_agents is not None
+                ):
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    # Same defensive coercion as load_tools' `ids` right
+                    # below: an unreliable local model may send one bare
+                    # string, a JSON null, or junk. A bare string is ONE
+                    # id (never char-split); anything unusable becomes
+                    # None, which the service reads as "every child" --
+                    # the same thing an omitted `ids` means, and the
+                    # safest reading of an ambiguous request to wait.
+                    raw_ids = call.args.get("ids")
+                    if isinstance(raw_ids, str):
+                        wait_ids: list[str] | None = [raw_ids]
+                    elif isinstance(raw_ids, list):
+                        # An explicitly EMPTY list is "no ids given",
+                        # i.e. all of them -- not "wait for nothing".
+                        wait_ids = [str(x) for x in raw_ids] or None
+                    else:
+                        wait_ids = None
+                    result = deps.wait_agents(wait_ids)
+                elif (
+                    call.name == CHECK_AGENTS_TOOL_NAME
+                    and deps.check_agents is not None
+                ):
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    result = deps.check_agents()
                 elif call.name == FIND_TOOLS_NAME:
                     add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
                     entries = deps.find_tools(str(call.args.get("query", "")))

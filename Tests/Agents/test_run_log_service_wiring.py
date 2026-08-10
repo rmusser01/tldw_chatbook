@@ -121,7 +121,7 @@ def test_disabled_writer_leaves_the_run_untouched(wired, monkeypatch):
     assert not (root / "agent-runs").exists()
 
 
-def test_a_real_spawn_shares_the_parent_log_directory_and_counter(wired):
+def test_a_real_spawn_shares_the_parent_log_directory_and_counter(wired, inline_spawns):
     """Round-1 review fix: the prior version of this suite only ever proved
     sharing by manually calling ``writer.append`` on the object the test
     already held -- a real ``spawn()`` never ran. A mutation giving
@@ -168,7 +168,9 @@ def test_a_real_spawn_shares_the_parent_log_directory_and_counter(wired):
     )
 
 
-def test_parent_spawn_tool_call_record_precedes_the_childs_own_records(wired):
+def test_parent_spawn_tool_call_record_precedes_the_childs_own_records(
+    wired, inline_spawns
+):
     """F5 (Qodo #5, PR #1066 review): end-to-end counterpart of the pure-loop
     test in test_run_log_on_record.py, driven through a REAL nested spawn
     and the REAL RunLogWriter. `deps.spawn()` runs the child's ENTIRE loop

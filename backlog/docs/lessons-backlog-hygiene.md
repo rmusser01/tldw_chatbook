@@ -21,8 +21,18 @@ known, expensive to rediscover. Every entry states the incident that produced it
   collision; fixing the gate required tracing both files' add commits and renumbering
   the later task to `TASK-3791` across its code, tests, plan, and task record.
 
+- **2026-08-10, supervisor-fleet PR 2a.** Two distinct failures in one branch. (i) The
+  branch was cut from dev *before* a `task-3401` renumber merged, so Backlog Guard went
+  red on a duplicate **dev had already fixed** — the branch introduced neither side, and
+  the fix was `git rebase origin/dev`, not renumbering anything. (ii) A task filed
+  mid-session as `13213` collided with a task another session landed on dev while the PR
+  was in flight. The ceiling moved from **13,212 to 14,826 in a few hours** of concurrent
+  work — an ID scanned at the start of a long PR is not safe at the end of it.
+
 Checking `origin/dev` *feels* like diligence. It is not: parallel agents hold IDs on
-unmerged branches.
+unmerged branches. And a *green* Backlog Guard at branch time proves nothing later —
+a duplicate can arrive from dev moving underneath you, in which case rebasing is the
+fix and renumbering is actively wrong.
 
 **What to do.** Before filing, sweep **every remote ref** plus every worktree, and
 re-check at merge time — dev moves under you. Never trust the CLI's auto-assignment.

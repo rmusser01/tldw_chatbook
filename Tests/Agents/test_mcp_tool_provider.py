@@ -26,6 +26,7 @@ from tldw_chatbook.Agents.mcp_tool_provider import (
     USER_DENY_REFUSAL,
     UNRESOLVED_REFUSAL,
 )
+from tldw_chatbook.Agents.run_context import use_run_id
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 
@@ -160,6 +161,26 @@ class FakeMCPService:
         if self.execute_raises is not None:
             raise self.execute_raises
         return self.execute_result
+
+
+#: PR2a Task 5: verdict stamps are keyed by RUN. Every test in this file
+#: exercises a single run, so it stamps and reads under this one id.
+RUN = "run-1"
+
+
+@pytest.fixture(autouse=True)
+def _dispatching_run():
+    """Bind ``RUN`` as the dispatching run for every test in this module.
+
+    ``invoke()`` reads the run whose call it is executing from
+    ``run_context`` (bound in production by ``AgentService`` around each
+    invocation), so a test that stamps a verdict for ``RUN`` and then calls
+    ``invoke()`` must be running as ``RUN`` -- exactly as production does.
+    Assertions are unchanged: a stamp this run made is a stamp this run
+    consumes.
+    """
+    with use_run_id(RUN):
+        yield
 
 
 @pytest.fixture
@@ -327,9 +348,9 @@ def test_apply_batch_decisions_then_stamped_decision_is_a_peek_not_a_pop():
     provider = MCPToolProvider(
         service=FakeMCPService(), main_loop=asyncio.new_event_loop()
     )
-    provider.apply_batch_decisions({"mcp__srv__run": "deny"})
-    assert provider.stamped_decision("mcp__srv__run") == "deny"
-    assert provider.stamped_decision("mcp__srv__run") == "deny"
+    provider.apply_batch_decisions(RUN, {"mcp__srv__run": "deny"})
+    assert provider.stamped_decision(RUN, "mcp__srv__run") == "deny"
+    assert provider.stamped_decision(RUN, "mcp__srv__run") == "deny"
 
 
 def test_apply_batch_decisions_replaces_rather_than_merges_prior_stamps():
@@ -339,11 +360,11 @@ def test_apply_batch_decisions_replaces_rather_than_merges_prior_stamps():
     provider = MCPToolProvider(
         service=FakeMCPService(), main_loop=asyncio.new_event_loop()
     )
-    provider.apply_batch_decisions({"mcp__srv__run": "approve_once"})
-    assert provider.stamped_decision("mcp__srv__run") == "approve_once"
+    provider.apply_batch_decisions(RUN, {"mcp__srv__run": "approve_once"})
+    assert provider.stamped_decision(RUN, "mcp__srv__run") == "approve_once"
 
-    provider.apply_batch_decisions({})  # next turn: nothing needed gating
-    assert provider.stamped_decision("mcp__srv__run") is None
+    provider.apply_batch_decisions(RUN, {})  # next turn: nothing needed gating
+    assert provider.stamped_decision(RUN, "mcp__srv__run") is None
 
 
 def test_compose_catalog_clears_stale_stamped_decisions():
@@ -357,12 +378,12 @@ def test_compose_catalog_clears_stale_stamped_decisions():
 
     # Stamp a bogus tool name not in the catalog.
     bogus_name = "mcp__srv__nonexistent"
-    provider.apply_batch_decisions({bogus_name: "approve_once"})
-    assert provider.stamped_decision(bogus_name) == "approve_once"
+    provider.apply_batch_decisions(RUN, {bogus_name: "approve_once"})
+    assert provider.stamped_decision(RUN, bogus_name) == "approve_once"
 
     # Recompose: stale decision should be cleared.
     _compose(provider)
-    assert provider.stamped_decision(bogus_name) is None
+    assert provider.stamped_decision(RUN, bogus_name) is None
 
 
 # ---------------------------------------------------------------------------
@@ -838,7 +859,7 @@ def test_invoke_stamped_deny_wins_for_every_call_this_turn_until_cleared(running
     provider = MCPToolProvider(service=service, main_loop=running_loop)
     _compose(provider)
     tool_id = provider.list_catalog()[0].id
-    provider.apply_batch_decisions({tool_id: "deny"})
+    provider.apply_batch_decisions(RUN, {tool_id: "deny"})
 
     result = provider.invoke(tool_id, {})
 
@@ -858,7 +879,7 @@ def test_invoke_stamped_deny_wins_for_every_call_this_turn_until_cleared(running
 
     # Next turn: the closure clears the stamp set (even with `{}`) -- a
     # further call now re-gates fresh instead of reusing the stale stamp.
-    provider.apply_batch_decisions({})
+    provider.apply_batch_decisions(RUN, {})
     result3 = provider.invoke(tool_id, {})
     assert result3.ok is False  # default "ask" state, no callback -> fail closed
     assert len(service.record_tool_decision_calls) == 3
@@ -871,7 +892,7 @@ def test_invoke_stamped_timeout_uses_exact_model_facing_copy(running_loop):
     provider = MCPToolProvider(service=service, main_loop=running_loop)
     _compose(provider)
     tool_id = provider.list_catalog()[0].id
-    provider.apply_batch_decisions({tool_id: "timeout"})
+    provider.apply_batch_decisions(RUN, {tool_id: "timeout"})
 
     result = provider.invoke(tool_id, {})
 
@@ -888,7 +909,7 @@ def test_invoke_stamped_approve_once_executes(running_loop):
     provider = MCPToolProvider(service=service, main_loop=running_loop)
     _compose(provider)
     tool_id = provider.list_catalog()[0].id
-    provider.apply_batch_decisions({tool_id: "approve_once"})
+    provider.apply_batch_decisions(RUN, {tool_id: "approve_once"})
 
     result = provider.invoke(tool_id, {})
 
@@ -911,7 +932,7 @@ def test_invoke_stamped_approve_once_applies_to_every_same_name_call_this_turn(
     _compose(provider)
     tool_id = provider.list_catalog()[0].id
     # One batch-review round trip, one card, one verdict for both calls.
-    provider.apply_batch_decisions({tool_id: "approve_once"})
+    provider.apply_batch_decisions(RUN, {tool_id: "approve_once"})
 
     result1 = provider.invoke(tool_id, {"query": "first"})
     result2 = provider.invoke(tool_id, {"query": "second"})
@@ -1378,7 +1399,7 @@ def test_invoke_refuses_when_kill_switch_flips_even_with_a_stamped_verdict(
     provider = MCPToolProvider(service=service, main_loop=running_loop)
     _compose(provider)
     tool_id = provider.list_catalog()[0].id
-    provider.apply_batch_decisions({tool_id: "approve_once"})
+    provider.apply_batch_decisions(RUN, {tool_id: "approve_once"})
 
     service.kill_switch = True
 

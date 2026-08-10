@@ -11,12 +11,30 @@ from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_TIMEOUT_REFUSAL,
     LocalToolProvider,
 )
+from tldw_chatbook.Agents.run_context import use_run_id
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Tools import web_tool_impls
 
 ALLOW = EffectiveToolState(state="allow", origin="tool_override")
 ASK = EffectiveToolState(state="ask", origin="global_default")
 DENY = EffectiveToolState(state="deny", origin="tool_override")
+
+#: PR2a Task 5: per-turn stamps are keyed by RUN. Every test here drives a
+#: single run, so it stamps and dispatches under this one id.
+RUN = "run-1"
+
+
+@pytest.fixture(autouse=True)
+def _dispatching_run():
+    """Bind ``RUN`` as the dispatching run for every test in this module.
+
+    ``invoke()`` reads the run whose call it is executing from
+    ``run_context`` (bound in production by ``AgentService`` around each
+    invocation), so a test that stamps for ``RUN`` and then invokes must
+    be running as ``RUN`` -- exactly as production does.
+    """
+    with use_run_id(RUN):
+        yield
 
 
 @pytest.fixture(autouse=True)
@@ -363,7 +381,7 @@ def test_timeout_verdict_keeps_pinned_copy_even_with_override(tmp_path):
     # Only the "no_callback" verdict maps to the override; a real "timeout"
     # verdict ALWAYS keeps the pinned LOCAL_TIMEOUT_REFUSAL.
     p = make_provider(state=ASK, root=tmp_path, no_callback_refusal="custom")
-    p.apply_batch_decisions({"fs_list": "timeout"})
+    p.apply_batch_decisions(RUN, {"fs_list": "timeout"})
     r = p.invoke("local:fs_list", {"path": "."})
     assert not r.ok and r.error == LOCAL_TIMEOUT_REFUSAL
 
@@ -371,14 +389,14 @@ def test_timeout_verdict_keeps_pinned_copy_even_with_override(tmp_path):
 def test_ask_with_approve_once_stamp_executes(tmp_path):
     (tmp_path / "a.txt").write_text("a")
     p = make_provider(state=ASK, root=tmp_path)
-    p.apply_batch_decisions({"fs_list": "approve_once"})
+    p.apply_batch_decisions(RUN, {"fs_list": "approve_once"})
     assert p.invoke("local:fs_list", {"path": "."}).ok
 
 
 def test_stamps_replace_not_merge(tmp_path):
     p = make_provider(state=ASK, root=tmp_path)
-    p.apply_batch_decisions({"fs_list": "approve_once"})
-    p.apply_batch_decisions({})  # next turn cleared first
+    p.apply_batch_decisions(RUN, {"fs_list": "approve_once"})
+    p.apply_batch_decisions(RUN, {})  # next turn cleared first
     r = p.invoke("local:fs_list", {"path": "."})
     assert not r.ok and r.error == LOCAL_TIMEOUT_REFUSAL
 
@@ -394,8 +412,8 @@ def test_pending_gate_for_ask_returns_pending_call(tmp_path):
 
 def test_stamp_scope_isolates_nested_run(tmp_path):
     p = make_provider(state=ASK, root=tmp_path)
-    p.apply_batch_decisions({"fs_list": "approve_once"})
-    with p.stamp_scope():
+    p.apply_batch_decisions(RUN, {"fs_list": "approve_once"})
+    with p.stamp_scope(RUN):
         assert not p.invoke("local:fs_list", {"path": "."}).ok  # child: no stamps
     assert p.invoke("local:fs_list", {"path": "."}).ok  # parent stamps restored
 
@@ -425,7 +443,7 @@ def test_approve_session_stamp_persists(tmp_path):
         root=tmp_path,
         persist_approval=lambda hub, decision: persisted.append((hub.name, decision)),
     )
-    p.apply_batch_decisions({"fs_list": "approve_session"})
+    p.apply_batch_decisions(RUN, {"fs_list": "approve_session"})
     assert p.invoke("local:fs_list", {"path": "."}).ok
     assert persisted == [("fs_list", "approve_session")]
 
@@ -438,7 +456,7 @@ def test_always_allow_stamp_persists(tmp_path):
         root=tmp_path,
         persist_approval=lambda hub, decision: persisted.append((hub.name, decision)),
     )
-    p.apply_batch_decisions({"fs_list": "always_allow"})
+    p.apply_batch_decisions(RUN, {"fs_list": "always_allow"})
     assert p.invoke("local:fs_list", {"path": "."}).ok
     assert persisted == [("fs_list", "always_allow")]
 
@@ -451,7 +469,7 @@ def test_approve_once_stamp_does_not_persist(tmp_path):
         root=tmp_path,
         persist_approval=lambda hub, decision: persisted.append((hub.name, decision)),
     )
-    p.apply_batch_decisions({"fs_list": "approve_once"})
+    p.apply_batch_decisions(RUN, {"fs_list": "approve_once"})
     assert p.invoke("local:fs_list", {"path": "."}).ok
     assert persisted == []
 
@@ -476,7 +494,7 @@ def test_persist_failure_does_not_block_execution(tmp_path):
         raise RuntimeError("store write failed")
 
     p = make_provider(state=ASK, root=tmp_path, persist_approval=boom)
-    p.apply_batch_decisions({"fs_list": "always_allow"})
+    p.apply_batch_decisions(RUN, {"fs_list": "always_allow"})
     assert p.invoke("local:fs_list", {"path": "."}).ok
 
 
@@ -702,7 +720,7 @@ def test_kill_switch_records_denied(tmp_path):
 
 def test_timeout_stamp_records_denied_timeout(tmp_path):
     p, recorded = _recording_provider(tmp_path, state=ASK)
-    p.apply_batch_decisions({"fs_list": "timeout"})
+    p.apply_batch_decisions(RUN, {"fs_list": "timeout"})
     r = p.invoke("local:fs_list", {"path": "."})
     assert not r.ok and r.error == LOCAL_TIMEOUT_REFUSAL
     assert [(h.name, d) for h, d in recorded] == [("fs_list", "denied-timeout")]
@@ -719,7 +737,7 @@ def test_ask_without_callback_records_denied_timeout(tmp_path):
 
 def test_deny_stamp_records_denied(tmp_path):
     p, recorded = _recording_provider(tmp_path, state=ASK)
-    p.apply_batch_decisions({"fs_list": "deny"})
+    p.apply_batch_decisions(RUN, {"fs_list": "deny"})
     r = p.invoke("local:fs_list", {"path": "."})
     assert not r.ok and r.error == LOCAL_DENY_REFUSAL
     assert [(h.name, d) for h, d in recorded] == [("fs_list", "denied")]

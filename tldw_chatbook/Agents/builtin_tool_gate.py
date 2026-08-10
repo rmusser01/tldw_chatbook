@@ -10,6 +10,7 @@ See ``Docs/superpowers/specs/2026-07-25-builtin-tool-permission-gate-design.md``
 from __future__ import annotations
 
 import contextlib
+import threading
 
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -54,70 +55,149 @@ def tool_ref(tool: Tool) -> GatedToolRef:
 class BuiltinToolGate:
     """Resolves and enforces allow/ask/deny for built-in tools.
 
-    One instance per run. ``begin_turn()`` clears the previous turn's
-    stamps and cached payload; ``resolve()`` reports a state (used by the
-    review hook to build the approval card); ``check()`` is the
+    One instance per RUN TREE -- the console bridge builds one per user
+    turn and shares it with every sub-agent that turn spawns.
+    ``begin_turn(run_id)`` clears that ONE run's stamps and invalidates the
+    cached payload; ``resolve()`` reports a state (used by the review hook
+    to build the approval card); ``check(tool, run_id)`` is the
     execution-time verdict used by ``BuiltinToolProvider.invoke``.
+
+    Per-run keying (PR2a Task 5): stamps live in one dict keyed
+    ``(run_id, tool_name)``. Before this, they were keyed by tool name
+    alone and ``begin_turn()`` cleared the dict wholesale, so a sub-agent
+    starting its own turn wiped verdicts the parent (or, once children run
+    concurrently, a sibling) had already been granted and not yet
+    consumed -- with no per-call approval fallback to degrade to, that
+    fails an approved call CLOSED. ``stamp_scope`` used to be the only
+    protection; it is a snapshot/restore, which is sound only for a
+    strictly nested (LIFO) inline child. Per-run keying is what makes N
+    concurrent children safe.
     """
 
     def __init__(self, service: Any | None) -> None:
         self._service = service
+        # CONFIG, not per-run state: the permission-store payload is the
+        # same for every run in the tree (one file, one profile), so it
+        # stays a single shared cache rather than being keyed by run id.
+        # `begin_turn` still drops it -- that is a cache INVALIDATION, and
+        # the worst a concurrent child's invalidation can cost a sibling
+        # is one extra `store.load()`, never a wrong answer.
         self._payload: dict | None = None
-        self._stamps: dict[str, str] = {}
+        self._stamps: dict[tuple[str, str], str] = {}
+        # RLock, not Lock. To be precise about why, since a plain Lock
+        # would work today: NOTHING here currently re-enters the lock --
+        # `check()` deliberately does not hold it across `resolve()`,
+        # `stamped()`, or its service reads. But those public methods DO
+        # compose (`check` -> `resolve` -> `_load_payload`, `check` ->
+        # `stamped`), so a plain Lock would turn any later edit that
+        # widens one of them into a silent self-deadlock instead of a
+        # visible bug, for a saving of one owner check per acquire.
+        #
+        # The invariant that actually matters, and must be preserved: no
+        # critical section holds this lock across a call into
+        # `self._service` -- `stamp`'s session approval and `check`'s
+        # kill-switch/session reads are all made OUTSIDE it. The single
+        # deliberate exception is `_load_payload`'s `store.load()`, held
+        # so N concurrent children cannot stampede the permission store;
+        # that store never calls back into this gate.
+        self._lock = threading.RLock()
 
-    def begin_turn(self) -> None:
-        """Drop this run's cached payload and the previous turn's stamps.
+    def begin_turn(self, run_id: str) -> None:
+        """Drop ``run_id``'s stamps and invalidate the cached payload.
 
         Clearing stamps at turn start (not after a round trip) means a
         raising approval path can never leave a stale prior-turn stamp
         live for the next turn to consume -- the same discipline
         ``build_mcp_review_hook`` applies to its own stamps.
+
+        Only ``run_id``'s own stamps are dropped. A sibling or parent run
+        sharing this instance keeps whatever its user already decided:
+        that is the whole point of keying by run.
+
+        Args:
+            run_id: The run whose turn is starting.
         """
-        self._payload = None
-        self._stamps.clear()
+        with self._lock:
+            self._payload = None
+            self._stamps = {
+                key: value
+                for key, value in self._stamps.items()
+                if key[0] != run_id
+            }
 
     @contextlib.contextmanager
-    def stamp_scope(self) -> Iterator[None]:
-        """Snapshot this turn's stamps on enter; RESTORE (not merge) on exit.
+    def stamp_scope(self, run_id: str) -> Iterator[None]:
+        """Snapshot ``run_id``'s stamps on enter; RESTORE (not merge) on exit.
 
-        task-628. Wired as part of ``AgentService``'s ``review_state_scope``
-        so it wraps every NESTED sub-agent run, mirroring
-        ``MCPToolProvider.stamp_scope``.
+        task-628, re-scoped by PR2a Task 5. Wired as part of
+        ``AgentService``'s ``review_state_scope`` so it wraps every NESTED
+        sub-agent run, mirroring ``MCPToolProvider.stamp_scope``.
 
-        ``spawn_subagent`` runs the child's entire loop INLINE and
-        synchronously on the parent's own call stack, before the parent's
-        remaining same-batch tool calls are dispatched, and the child
-        invokes the SAME shared review hook — whose first act is
-        ``begin_turn()``, which clears ``_stamps``. Without this scope a
-        child wipes the verdicts the parent's user just gave for this turn.
+        **Per-run keying is now the real mechanism.** A child's
+        ``begin_turn(child_run_id)`` no longer touches the parent's
+        stamps at all, so the clobber this scope was introduced to prevent
+        cannot happen even with the scope unwired. This remains for the
+        nested/inline path as belt-and-braces -- it guarantees the
+        parent's slice is byte-identical after a nested run regardless of
+        what that run did -- and because the seam is public: other
+        providers implement ``stamp_scope`` and
+        ``console_agent_bridge._combine_state_scopes`` composes three of
+        them into the one ``review_state_scope`` the service holds.
 
-        That is worse for built-ins than the MCP case it mirrors: MCP's
-        ``invoke`` has a per-call ``_approval_callback`` fallback, so a lost
-        stamp merely re-prompts. ``BuiltinToolGate.check`` has no such
-        fallback — its only approval sources are ``_stamps`` (set solely by
-        the batch review hook) and a live session approval — so a clobbered
-        stamp fails CLOSED outright, making an approved tool unusable from
-        inside any sub-agent.
+        Unlike the pre-Task-5 version this does NOT restore ``_payload``.
+        That is a shared config cache, not per-run state; restoring a
+        snapshot of it could resurrect a payload a CONCURRENT sibling's
+        ``begin_turn`` had deliberately invalidated, and the only cost of
+        leaving it invalidated is one extra permission-store load.
 
-        ``_payload`` is restored too: it is a per-turn cache the child's
-        ``begin_turn()`` also drops, and restoring it keeps the parent's
-        "one permission-store load per turn" property intact.
+        Args:
+            run_id: The run whose slice is snapshotted and restored --
+                normally the PARENT's, since it is the parent's already
+                decided verdicts a nested run must not disturb.
 
         Yields:
-            None. On exit the parent's stamps and cached payload are put
-            back exactly as they were, discarding whatever the nested run
-            recorded — a restore, never a merge.
+            None. On exit ``run_id``'s stamps are put back exactly as they
+            were, discarding whatever the nested run recorded against that
+            same run id -- a restore, never a merge. Other runs' slices
+            are untouched in both directions.
         """
-        stamps = dict(self._stamps)
-        payload = self._payload
+        with self._lock:
+            snapshot = {
+                key: value
+                for key, value in self._stamps.items()
+                if key[0] == run_id
+            }
         try:
             yield
         finally:
-            self._stamps = stamps
-            self._payload = payload
+            with self._lock:
+                self._stamps = {
+                    key: value
+                    for key, value in self._stamps.items()
+                    if key[0] != run_id
+                }
+                self._stamps.update(snapshot)
 
-    def stamp(self, tool_name: str, decision: str) -> None:
-        """Record this turn's decision for ``tool_name``.
+    def stamped(self, run_id: str, tool_name: str) -> str | None:
+        """Peek at ``run_id``'s stamped decision for ``tool_name``, if any.
+
+        Non-destructive: several calls to the same tool within one turn
+        must all observe the same verdict, so reading never removes it --
+        only ``begin_turn`` clears (mirrors
+        ``MCPToolProvider.stamped_decision``'s Finding F1 contract).
+
+        Args:
+            run_id: The run whose verdict is being read.
+            tool_name: The built-in tool's LLM-facing name.
+
+        Returns:
+            The decision string this run stamped this turn, or ``None``.
+        """
+        with self._lock:
+            return self._stamps.get((run_id, tool_name))
+
+    def stamp(self, run_id: str, tool_name: str, decision: str) -> None:
+        """Record ``run_id``'s decision for ``tool_name`` this turn.
 
         ``"always_allow"`` is accepted as a permitting stamp for THIS
         call only -- Constraint 3 (P1 is session-scoped only) means it is
@@ -125,8 +205,18 @@ class BuiltinToolGate:
         card does not offer that option in the first place, but the gate
         does not trust the caller to have enforced that and simply never
         makes the call that would write it.
+
+        Args:
+            run_id: The run this decision belongs to. A stamp is only ever
+                visible to that run's own ``check()``.
+            tool_name: The built-in tool's LLM-facing name.
+            decision: The verdict string from the approval card.
         """
-        self._stamps[tool_name] = decision
+        with self._lock:
+            self._stamps[(run_id, tool_name)] = decision
+        # Outside the lock on purpose: a session approval calls into the
+        # control-plane service, and no gate lock is ever held across a
+        # call into foreign code.
         if decision == "approve_session" and self._service is not None:
             approve = getattr(self._service, "approve_for_session", None)
             if approve is not None:
@@ -147,18 +237,25 @@ class BuiltinToolGate:
         # `unified_control_plane_service.py`'s `effective_tool_states`,
         # `gate_tool_test`, etc., which all follow this same
         # `store = self.permission_store; ...; store.load()` shape).
-        if self._payload is None:
-            self._payload = {}
-            if self._service is not None:
-                try:
-                    store = getattr(self._service, "permission_store", None)
-                    if store is not None:
-                        loaded = store.load()
-                        if isinstance(loaded, dict):
-                            self._payload = loaded
-                except Exception as exc:  # noqa: BLE001 — fail to the floor
-                    logger.warning(f"builtin permission load failed: {exc}")
-        return self._payload
+        #
+        # Held under `self._lock` for the whole check-then-fill so N
+        # concurrent children cannot each miss the cache and stampede the
+        # store; the lock is reentrant, so a caller already holding it is
+        # fine. `store.load()` is a local file read that never calls back
+        # into this gate.
+        with self._lock:
+            if self._payload is None:
+                self._payload = {}
+                if self._service is not None:
+                    try:
+                        store = getattr(self._service, "permission_store", None)
+                        if store is not None:
+                            loaded = store.load()
+                            if isinstance(loaded, dict):
+                                self._payload = loaded
+                    except Exception as exc:  # noqa: BLE001 — fail to the floor
+                        logger.warning(f"builtin permission load failed: {exc}")
+            return self._payload
 
     def resolve(self, tool: Tool) -> EffectiveToolState:
         """Resolve ``tool``'s effective state (no stamps, no kill switch)."""
@@ -209,8 +306,20 @@ class BuiltinToolGate:
         """
         return self._session_approved(tool_name)
 
-    def check(self, tool: Tool) -> str | None:
-        """Execution-time verdict.
+    def check(self, tool: Tool, run_id: str) -> str | None:
+        """Execution-time verdict for ``run_id``'s call to ``tool``.
+
+        Args:
+            tool: The built-in tool about to execute.
+            run_id: The run dispatching this call -- the ONLY run whose
+                stamps may permit it. ``BuiltinToolProvider.invoke``
+                supplies this from ``run_context.current_run_id()`` (the
+                ``ToolProvider.invoke`` Protocol has no run parameter to
+                thread it through; see that module's docstring). ``""``
+                means "no agent run bound one", which matches no stamp any
+                review hook ever writes -- such a call falls through to
+                the resolved state exactly as it did before per-run
+                keying.
 
         Returns:
             ``None`` when the call may proceed, else a human-readable
@@ -239,7 +348,7 @@ class BuiltinToolGate:
         if state.state == "deny":
             return f"tool is set to Off: {tool.name}"
 
-        stamp = self._stamps.get(tool.name)
+        stamp = self.stamped(run_id, tool.name)
         if stamp == "deny":
             return f"tool call denied by the user: {tool.name}"
         if stamp in _PERMITTING:

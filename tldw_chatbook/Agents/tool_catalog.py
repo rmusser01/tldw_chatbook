@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from collections.abc import Sequence
 from typing import Any, Callable, Iterable, Mapping, NamedTuple, Protocol
 
@@ -19,6 +20,7 @@ from tldw_chatbook.Tools.tool_executor import CalculatorTool, DateTimeTool
 
 from .agent_models import (
     AgentDefinition,
+    CHECK_AGENTS_TOOL_NAME,
     DIRECT_DISCLOSE_THRESHOLD,
     FIND_TOOLS_NAME,
     INSTALL_SKILL_TOOL_NAME,
@@ -33,7 +35,9 @@ from .agent_models import (
     ToolCatalogEntry,
     ToolResult,
     ToolSchema,
+    WAIT_AGENTS_TOOL_NAME,
 )
+from .run_context import current_run_id
 from .run_log_search import (
     MAX_CROSS_RUN_RUNS,
     MAX_SLICE_RECORDS,
@@ -101,6 +105,49 @@ def build_spawn_schema(definitions: Sequence[AgentDefinition]) -> ToolSchema:
         description=SPAWN_TOOL_SCHEMA.description,
         parameters=parameters,
     )
+
+
+# Fleet (PR2a Task 6). Pinned together with the spawn schema, and only
+# for a run that actually has a fleet coordinator -- a model told it can
+# wait on children it can never start has been handed a dead end.
+WAIT_AGENTS_SCHEMA = ToolSchema(
+    id="runtime:wait_agents",
+    name=WAIT_AGENTS_TOOL_NAME,
+    description=(
+        "Wait for sub-agents you started with spawn_subagent and collect "
+        "their results. Omit 'ids' to wait for every sub-agent still "
+        "running, or pass the handle ids spawn_subagent returned to wait "
+        "for just those. Results that arrive after your final answer are "
+        "wasted, so always call this before you answer. When several "
+        "results come back together each one is shortened to share this "
+        "turn's result budget -- call wait_agents with a single id to get "
+        "that one sub-agent's full result."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Handle ids to wait for (omit for all of them)."
+                ),
+            }
+        },
+        "required": [],
+    },
+)
+
+CHECK_AGENTS_SCHEMA = ToolSchema(
+    id="runtime:check_agents",
+    name=CHECK_AGENTS_TOOL_NAME,
+    description=(
+        "List every sub-agent you have started in this turn with its "
+        "handle id, status, and elapsed time. Returns immediately and "
+        "never waits -- use wait_agents to actually collect results."
+    ),
+    parameters={"type": "object", "properties": {}, "required": []},
+)
 
 
 FIND_TOOLS_SCHEMA = ToolSchema(
@@ -678,8 +725,16 @@ class BuiltinToolProvider:
         # reaches invoke() without going through it must still not execute
         # ungated. A gate that raises fails CLOSED -- never into the pure
         # loop, which must not see exceptions from tool invocation.
+        # PR2a Task 5: the gate keys this turn's stamps by run, and only
+        # the DISPATCHING run's own stamp may permit this call. The
+        # `ToolProvider.invoke` Protocol has no run parameter, so the run
+        # id rides `run_context` (bound by `AgentService` around each
+        # invocation -- see that module's docstring for why). Outside any
+        # run this resolves to `""`, which matches no stamp a review hook
+        # ever writes, so such a call falls through to the resolved
+        # permission state exactly as it did before per-run keying.
         try:
-            refusal = self._resolve_gate().check(tool)
+            refusal = self._resolve_gate().check(tool, current_run_id())
         except Exception as exc:  # noqa: BLE001 — fail closed
             return ToolResult(ok=False, error=f"permission check failed: {exc}")
         if refusal is not None:
@@ -905,6 +960,18 @@ class ToolCatalogRegistry:
         # invalidation, with no lock guarding `_owner_cache`/
         # `_name_to_id_cache` — two concurrent lookups CAN observe different
         # generations of the catalog.
+        #
+        # PR2a (fleet children each on their own thread, sharing this
+        # bridge-owned registry across a WHOLE session rather than a single
+        # run) makes that no longer a corner case, so `_cache_lock` below
+        # closes it: every read of and invalidation to the three caches now
+        # goes through the lock, and `_ensure_catalog_cache()` hands callers
+        # one coherent (owner, name_to_id, source) snapshot as a tuple
+        # instead of letting them re-read the instance attributes
+        # separately after the lock has already been released.
+        # `invoke_by_name()` takes exactly one such snapshot for its whole
+        # name -> id -> provider lookup, so the two-read gap described above
+        # can no longer produce a torn generation.
         self._owner_cache: dict[str, ToolProvider] | None = None
         self._name_to_id_cache: dict[str, str] | None = None
         # tool_id -> the owning catalog entry's `source` ("builtin"/"skill"/
@@ -913,14 +980,70 @@ class ToolCatalogRegistry:
         # from this map resolves to `None`, which that gate treats as
         # "unknown source" and refuses — the fail-toward-not-writing default.
         self._source_cache: dict[str, str] | None = None
+        # Guards the three caches above. RLock, not Lock -- and NOT because
+        # same-thread reentrance is actually safe here. A live probe (task-4
+        # review) built a deliberately re-entrant provider (one whose
+        # list_catalog() calls back into this registry) and measured both
+        # primitives against it:
+        #   - Lock: the reentrant call blocks forever on a lock its own
+        #     thread already holds -- a PERMANENT hang. Because this one
+        #     lock is shared by the whole registry, that stalls every other
+        #     fleet child's tool lookups too, forever.
+        #   - RLock: the reentrant call is let through (same thread), but it
+        #     re-enters _ensure_catalog_cache() BEFORE _build_owner_cache()
+        #     has returned, so `_owner_cache` is still `None` (the publish
+        #     below hasn't run yet) and it recurses into ANOTHER
+        #     _build_owner_cache() call, which calls the re-entrant
+        #     provider's list_catalog() again, forever -- until Python's
+        #     recursion limit ends it with a RecursionError. (The exact
+        #     depth is environment-dependent -- one measurement saw 73
+        #     nested calls, a later re-measurement on different stack
+        #     state saw 322; the number itself isn't the point. What
+        #     matters is fail-fast-on-one-thread vs. a fleet-wide hang.)
+        #     The `with self._cache_lock:` blocks still
+        #     unwind correctly through that exception (each nested `with`
+        #     releases its RLock count as the stack pops), so the lock is
+        #     NOT left held: the crash is confined to the one thread that
+        #     owned the misbehaving provider, and every other fleet child
+        #     keeps running and can still acquire the lock once that
+        #     thread's stack finishes unwinding.
+        # RLock is still the right choice, but for THAT reason -- it turns
+        # an unbounded, fleet-wide hang into a fail-fast crash confined to
+        # one thread -- not because this class means to support reentrant
+        # callers.
+        #
+        # Atomic publish: _build_owner_cache() builds `owner`/`name_to_id`/
+        # `source_by_id` as fresh LOCAL dicts and returns them only once
+        # fully populated; _ensure_catalog_cache() assigns all three
+        # instance attributes together, still holding the lock, before
+        # returning. A thread blocked on the lock can therefore only ever
+        # observe the caches in one of two states -- the previous complete
+        # generation, or the next complete one -- never a partially-built
+        # map with some providers swept and others not.
+        #
+        # Provider contract this all depends on: list_catalog() must NOT
+        # re-enter this registry (see above) and must NOT block. Today that
+        # holds only by convention -- BuiltinToolProvider, MCPToolProvider,
+        # and LocalToolProvider each return an already-built in-memory
+        # list/dict with no I/O -- but nothing enforces it. A future
+        # provider that does network I/O inside list_catalog() would run
+        # that I/O WHILE `_cache_lock` is held, stalling every other fleet
+        # child's tool lookup for however long the call takes.
+        self._cache_lock = threading.RLock()
 
     def register_provider(self, provider: ToolProvider) -> None:
-        self._providers.append(provider)
-        # A newly registered provider's tools aren't reflected in any
-        # cache already built — invalidate so the next lookup rebuilds it.
-        self._owner_cache = None
-        self._name_to_id_cache = None
-        self._source_cache = None
+        # The append lives inside the lock too, alongside the three
+        # invalidations: a concurrent reader must never be able to observe
+        # the new provider in `self._providers` while still holding a
+        # cache built before it was appended (or vice versa).
+        with self._cache_lock:
+            self._providers.append(provider)
+            # A newly registered provider's tools aren't reflected in any
+            # cache already built — invalidate so the next lookup rebuilds
+            # it.
+            self._owner_cache = None
+            self._name_to_id_cache = None
+            self._source_cache = None
 
     def reset_catalog_cache(self) -> None:
         """Drop the owner-map/name-map cache; call once at the start of a run.
@@ -931,9 +1054,10 @@ class ToolCatalogRegistry:
         picked up. No cross-run invalidation signal is needed beyond this
         single reset — see the skills spec's Catalog scale section.
         """
-        self._owner_cache = None
-        self._name_to_id_cache = None
-        self._source_cache = None
+        with self._cache_lock:
+            self._owner_cache = None
+            self._name_to_id_cache = None
+            self._source_cache = None
 
     def list_catalog(self) -> list[ToolCatalogEntry]:
         entries: list[ToolCatalogEntry] = []
@@ -973,7 +1097,9 @@ class ToolCatalogRegistry:
                     source_by_id.setdefault(entry.id, entry.source)
         return owner, name_to_id, source_by_id
 
-    def _ensure_catalog_cache(self) -> None:
+    def _ensure_catalog_cache(
+        self,
+    ) -> tuple[dict[str, ToolProvider], dict[str, str], dict[str, str]]:
         # This is the fix MCP (task-201) also needs: a network-backed
         # provider must not re-list_catalog() per lookup. Both the owner
         # map (id -> provider, used by load_schema()/_owner_and_id()) and
@@ -993,20 +1119,32 @@ class ToolCatalogRegistry:
         # was reset to None. A single-cache guard would then skip the
         # rebuild and leave _name_to_id_cache (or _owner_cache) permanently
         # None for the rest of the run.
-        if (
-            self._owner_cache is None
-            or self._name_to_id_cache is None
-            or self._source_cache is None
-        ):
-            (
-                self._owner_cache,
-                self._name_to_id_cache,
-                self._source_cache,
-            ) = self._build_owner_cache()
+        #
+        # PR2a: the whole check-and-rebuild runs under `_cache_lock`, and
+        # the three maps are returned as a tuple rather than left for the
+        # caller to re-read off `self` afterwards — a read of `self.
+        # _owner_cache` two lines after the lock is released could still
+        # observe a DIFFERENT generation than a `self._name_to_id_cache`
+        # read right after it, if another thread's reset/rebuild lands in
+        # between. Callers (resolve_name(), _owner_and_id(), _source_for(),
+        # invoke_by_name()) must use the returned tuple, not the instance
+        # attributes, to get one coherent snapshot.
+        with self._cache_lock:
+            if (
+                self._owner_cache is None
+                or self._name_to_id_cache is None
+                or self._source_cache is None
+            ):
+                (
+                    self._owner_cache,
+                    self._name_to_id_cache,
+                    self._source_cache,
+                ) = self._build_owner_cache()
+            return self._owner_cache, self._name_to_id_cache, self._source_cache
 
     def _owner_and_id(self, tool_id: str):
-        self._ensure_catalog_cache()
-        return self._owner_cache.get(tool_id)
+        owner, _name_to_id, _source = self._ensure_catalog_cache()
+        return owner.get(tool_id)
 
     def _source_for(self, tool_id: str) -> str | None:
         """Return the catalog ``source`` that owns ``tool_id``, if known.
@@ -1014,9 +1152,8 @@ class ToolCatalogRegistry:
         ``None`` when the id is absent from the cache — which the ephemeral
         gate treats as an unaudited source and refuses, never as "allow".
         """
-        self._ensure_catalog_cache()
-        cache = self._source_cache
-        return cache.get(tool_id) if cache else None
+        _owner, _name_to_id, source = self._ensure_catalog_cache()
+        return source.get(tool_id)
 
     def load_schema(self, tool_id: str) -> ToolSchema:
         provider = self._owner_and_id(tool_id)
@@ -1025,26 +1162,31 @@ class ToolCatalogRegistry:
         return provider.load_schema(tool_id)
 
     def resolve_name(self, name: str) -> str | None:
-        self._ensure_catalog_cache()
-        cache = self._name_to_id_cache
-        return cache.get(name) if cache else None
+        _owner, name_to_id, _source = self._ensure_catalog_cache()
+        return name_to_id.get(name)
 
     def invoke_by_name(self, name: str, args: dict) -> ToolResult:
-        tool_id = self.resolve_name(name)
+        # PR2a: name -> id, id -> owner, and id -> source all come from ONE
+        # locked snapshot (`_ensure_catalog_cache()` returns the three maps
+        # as a tuple, built or read under `_cache_lock`), instead of the
+        # previous resolve_name() + _owner_and_id() pair, each independently
+        # acquiring (and releasing) its own view of the cache. That closed
+        # the specific gap this method used to have: a reset landing between
+        # the two separate reads could leave `tool_id` resolved against a
+        # generation the owner map no longer had.
+        owner, name_to_id, source = self._ensure_catalog_cache()
+        tool_id = name_to_id.get(name)
         if tool_id is None:
             return ToolResult(ok=False, error=f"Unknown tool: {name}")
-        provider = self._owner_and_id(tool_id)
+        provider = owner.get(tool_id)
         if provider is None:
-            # resolve_name()/_owner_and_id() share one cache built from a
-            # single list_catalog() sweep, so within one SERIALIZED lookup
-            # a name resolved above is always present in the owner map too.
-            # That no longer makes this branch unreachable, though: this
-            # registry has no lock, and task-327's per-call timeout can run
-            # invoke_by_name() calls concurrently (one call's cache read
-            # racing another call's, or a register_provider() rebuild), so
-            # `tool_id` above can genuinely belong to a since-superseded
-            # generation by the time this line runs. This fallback never
-            # lets a `None` owner surface as an AttributeError either way.
+            # name_to_id/owner/source above are one coherent snapshot from a
+            # single locked call, so within this one invocation a resolved
+            # `tool_id` is always present in `owner` too -- the lock makes
+            # this branch unreachable in-process. Kept anyway as defense in
+            # depth (e.g. a future _build_owner_cache() change that lets the
+            # two maps diverge): this fallback never lets a `None` owner
+            # surface as an AttributeError either way.
             return ToolResult(ok=False, error=f"Tool provider not found for: {name}")
         # THE choke point for the temporary-session ("not saved locally")
         # guarantee. Every provider's invoke() is reached through this one
@@ -1059,7 +1201,7 @@ class ToolCatalogRegistry:
             from tldw_chatbook.Chat.console_ephemeral import tool_blocked_reason
 
             reason = tool_blocked_reason(
-                name, source=self._source_for(tool_id), ephemeral=True
+                name, source=source.get(tool_id), ephemeral=True
             )
             if reason is not None:
                 return ToolResult(ok=False, error=reason)
@@ -1078,10 +1220,14 @@ class ToolCatalogRegistry:
         Returns:
             A positive seconds value, or None to use the run default.
         """
-        tool_id = self.resolve_name(name)
+        # One locked snapshot, like invoke_by_name() -- this was the last
+        # unlocked two-read pair left in the class (resolve_name() then
+        # _owner_and_id(), each its own _ensure_catalog_cache() call).
+        owner, name_to_id, _source = self._ensure_catalog_cache()
+        tool_id = name_to_id.get(name)
         if tool_id is None:
             return None
-        provider = self._owner_and_id(tool_id)
+        provider = owner.get(tool_id)
         getter = getattr(provider, "timeout_for", None)
         return getter(tool_id) if getter is not None else None
 

@@ -13,8 +13,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import threading
 import time
 from collections import deque
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -82,6 +84,24 @@ CONSOLE_AGENT_OPERATING_PROMPT = CATALOG["agents.console_agent_operating"].defau
 # `_StreamingModelAdapter._is_subagent` for why a single current-value
 # check is not enough.
 _KNOWN_SUBAGENT_PREFIXES: set[str] = {SUBAGENT_SYSTEM_PROMPT}
+
+#: How long `run_reply` waits for this run's event-loop thread to stop
+#: before giving up on closing the loop. Matched to
+#: `agent_service.FLEET_JOIN_TIMEOUT_SECONDS`, and for the same reason:
+#: every fleet child is already settled by the time we get here, so this
+#: should return instantly -- it exists so a wedged straggler leaks a loop
+#: instead of hanging the Console.
+_LOOP_THREAD_JOIN_SECONDS = 5.0
+
+#: Ceiling on ONE submitted provider turn (`_StreamingModelAdapter.
+#: chat_call`). Deliberately generous -- this is not a request timeout (the
+#: gateway and the run's own `max_wall_seconds` own that) but a deadlock
+#: backstop for an abandoned fleet child still waiting on a loop that
+#: `run_reply` has already stopped. Set to TWICE
+#: `CONSOLE_RUN_BUDGET.max_wall_seconds` (1800) so it can never pre-empt a
+#: legitimately slow turn -- by the time it could fire, the run's own wall
+#: budget has long since ended the run.
+_CHAT_CALL_TIMEOUT_SECONDS = 3600.0
 
 # Skills Phase-2 gate finding 1 (Task-14 report, scenario 5: "Find a skill
 # that can shout, load it, and use it on: hello"): a discovery-heavy run --
@@ -189,16 +209,22 @@ def _combine_state_scopes(scopes: list) -> "Any | None":
     """Combine per-turn state scopes into the one ``review_state_scope`` seam.
 
     ``AgentService.review_state_scope`` holds a single
-    ``Callable[[], AbstractContextManager]``, but more than one component
-    can own per-turn stamp state that a nested sub-agent run would clobber
-    (task-628): the MCP provider's ``_stamped_decisions`` and the built-in
-    gate's ``_stamps``. Entering them together keeps the seam's shape while
-    guarding both.
+    ``Callable[[str], AbstractContextManager]``, but more than one
+    component can own per-turn stamp state that a nested sub-agent run
+    would clobber (task-628): the MCP provider's ``_stamped_decisions``,
+    the built-in gate's ``_stamps``, and the local provider's own stamps.
+    Entering them together keeps the seam's shape while guarding all
+    three.
+
+    PR2a Task 5: each scope now takes the run id whose slice it should
+    snapshot and restore (all three key their stamps by ``(run_id,
+    name)``), and the scope is no longer the load-bearing protection --
+    per-run keying is. See ``MCPToolProvider.stamp_scope``.
 
     Args:
-        scopes: Zero or more zero-argument callables, each returning a
-            context manager that snapshots and restores its owner's
-            per-turn state.
+        scopes: Zero or more one-argument callables, each taking a run id
+            and returning a context manager that snapshots and restores
+            that run's slice of its owner's per-turn state.
 
     Returns:
         ``None`` when ``scopes`` is empty (the service then uses a
@@ -213,10 +239,10 @@ def _combine_state_scopes(scopes: list) -> "Any | None":
         return scopes[0]
 
     @contextlib.contextmanager
-    def _combined():
+    def _combined(run_id: str):
         with contextlib.ExitStack() as stack:
             for scope in scopes:
-                stack.enter_context(scope())
+                stack.enter_context(scope(run_id))
             yield
 
     return _combined
@@ -785,6 +811,21 @@ class _StreamingModelAdapter:
     ``chat_call``, which forced the gateway's owned ``httpx.AsyncClient`` to
     swap (see ``ConsoleProviderGateway._active_http_client``) once per turn
     instead of at most once per run.
+
+    PR2a Task 6.5: that shared loop is now driven by its OWN thread
+    (``run_forever``, started in ``run_reply``) and every turn is submitted
+    with ``asyncio.run_coroutine_threadsafe``. It used to be driven by
+    ``run_until_complete`` on whichever thread happened to call — sound
+    only while the whole run tree was single-threaded. Under the fleet a
+    child runs on its own thread and calls ``chat_call`` while the parent
+    is inside its own call, and a second ``run_until_complete`` on an
+    already-running loop raises ``RuntimeError: This event loop is already
+    running``: PROBED, and it failed EVERY overlapping child (the child's
+    run row persisted `error` and its coroutine was dropped un-awaited).
+    Submitting instead keeps exactly one loop and one httpx client per run
+    — Fix 1(c) intact — while letting the parent's and the children's
+    turns be genuinely in flight at once, which is the whole point of the
+    fleet.
     """
 
     def __init__(
@@ -856,12 +897,35 @@ class _StreamingModelAdapter:
                 self._store.append_stream_chunk(self._assistant_message_id, tail)
                 any_streamed = True
 
-        # The service runs on a worker thread with no running loop of its
-        # own, so `run_until_complete` on this run's shared loop is safe
-        # here (the loop is never touched concurrently — every chat_call
-        # for this run_reply happens synchronously, one at a time, on this
-        # same thread; see ConsoleAgentBridge.run_reply).
-        self._loop.run_until_complete(_consume())
+        # PR2a Task 6.5: submit to the run's loop rather than driving it
+        # from this thread. Every caller — the primary run's worker thread
+        # and each fleet child's own thread — may be inside `chat_call`
+        # simultaneously, and only ONE thread may ever drive a loop.
+        # `run_coroutine_threadsafe` is the documented cross-thread entry
+        # point; `.result()` blocks THIS thread (exactly as
+        # `run_until_complete` did, including re-raising the coroutine's
+        # exception) while the loop, on its own thread, interleaves this
+        # turn with whatever other agents of this run have in flight.
+        #
+        # The wait is BOUNDED. A bare `.result()` deadlocks forever in one
+        # real case: a child ABANDONED by `_settle_fleet` (which gives a
+        # wedged child `FLEET_JOIN_TIMEOUT_SECONDS` and then walks away)
+        # can still be sitting here when `run_reply`'s finally stops the
+        # loop -- after which its coroutine is never scheduled again and
+        # nothing will ever complete this future. The child's thread is a
+        # daemon, so the process still exits, but it would hold its
+        # provider connection and any locks it owns for the life of the
+        # session. Timing out turns that into an ordinary turn failure the
+        # run loop already knows how to report.
+        future = asyncio.run_coroutine_threadsafe(_consume(), self._loop)
+        try:
+            future.result(timeout=_CHAT_CALL_TIMEOUT_SECONDS)
+        except FuturesTimeoutError:
+            future.cancel()
+            raise TimeoutError(
+                "provider turn did not complete within "
+                f"{_CHAT_CALL_TIMEOUT_SECONDS}s"
+            ) from None
         if any_streamed and not is_subagent:
             # Finding A: this turn leaked prose to the store before it was
             # known to be a tool call (a well-behaved fence-first tool call
@@ -1521,7 +1585,11 @@ class ConsoleAgentBridge:
         supersede_previous: bool = False,
         mcp_provider: Any | None = None,
         builtin_gate: Any | None = None,
-        review_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None,
+        # PR2a Task 5: `(calls, run_id)` -- forwarded straight to
+        # `AgentService(review_tool_calls=...)`, which binds each run's own
+        # id in before handing it to `LoopDeps`.
+        review_tool_calls: Callable[[list[ToolCall], str], dict[str, str]]
+        | None = None,
         change_roots: Sequence[Path] | None = None,
         turn_skill_bindings: tuple[str, ...] = (),
         turn_bundle_block: str = "",
@@ -1529,6 +1597,13 @@ class ConsoleAgentBridge:
         request_skill_script_confirm: Callable[[dict], dict] | None = None,
         local_provider: Any | None = None,
         library_provider: Any | None = None,
+        # PR2a Task 7: called with the run id of every sub-agent this turn
+        # cancels or abandons, so its still-armed approval cards are failed
+        # closed and taken off screen instead of staying pressable for a
+        # run that is already over. Forwarded straight to
+        # `AgentService(revoke_approvals=...)`; `None` (a caller with no UI)
+        # leaves cancellation exactly as it was.
+        revoke_approvals: Callable[[str], object] | None = None,
     ) -> tuple[str, RunOutcome]:
         # Per-run tool registry + allow-list (Task 12, extended by P5-T6 for
         # MCP, by task-545/T6 for a per-run builtin_gate, and extended again
@@ -1903,13 +1978,33 @@ class ConsoleAgentBridge:
         # One event loop for the whole run (PR #629 Fix 1(c)): every turn
         # this run makes -- primary tool-call turns, any sub-agent turns,
         # and the final-answer turn -- bridges through this same loop via
-        # `_StreamingModelAdapter.chat_call`'s `run_until_complete`, instead
-        # of each turn spinning up (and tearing down) its own loop via
-        # `asyncio.run()`. That per-turn churn forced a client swap on the
-        # gateway's owned httpx client every single turn (see
+        # `_StreamingModelAdapter.chat_call`, instead of each turn spinning
+        # up (and tearing down) its own loop via `asyncio.run()`. That
+        # per-turn churn forced a client swap on the gateway's owned httpx
+        # client every single turn (see
         # `ConsoleProviderGateway._active_http_client`); reusing one loop
         # for the whole run means at most one swap per run.
+        #
+        # PR2a Task 6.5: the loop gets its OWN thread. It is no longer
+        # driven by `run_until_complete` from whichever agent's thread is
+        # calling, because with the fleet ON by default several of them
+        # call at once and a loop may only ever be driven by one thread --
+        # the second concurrent driver raises "This event loop is already
+        # running" and kills that child's run. `chat_call` now submits
+        # with `run_coroutine_threadsafe`, so this thread is the single
+        # driver and the callers merely wait on their own futures.
+        # Constructed here (with the loop it drives) but STARTED only just
+        # before the try/finally that owns its shutdown, a few hundred
+        # lines below: a raise in the composition work between the two
+        # would otherwise leave a daemon thread spinning `run_forever`
+        # forever with nothing to stop it. Same ordering rule -- and the
+        # same failure -- as `AgentService`'s own `thread.start()` guard.
         run_loop = asyncio.new_event_loop()
+        loop_thread = threading.Thread(
+            target=run_loop.run_forever,
+            name="console-agent-loop",
+            daemon=True,
+        )
         adapter = _StreamingModelAdapter(
             store=self._store,
             provider_gateway=self._gateway,
@@ -1928,7 +2023,13 @@ class ConsoleAgentBridge:
         # previously cached historical (DB-derived) summary is stale.
         self._historical_cache.pop(conversation_id, None)
 
-        def on_step(step: AgentStep, agent_kind: str) -> None:
+        def on_step(step: AgentStep, agent_kind: str, run_id: str) -> None:
+            # PR 2a (task-3): AgentService now attributes every step to its
+            # run id so a fleet of concurrent children can be told apart.
+            # This bridge is still single-run-at-a-time -- `run_id` is
+            # accepted here but not yet used; PR 2b routes fleet rows by it
+            # (keying `live_steps`/`self._live` per run_id instead of per
+            # conversation_id).
             live_steps.append(
                 AgentLiveStep(step.kind, self._summarize(step), agent_kind)
             )
@@ -2055,11 +2156,15 @@ class ConsoleAgentBridge:
             _inner_review = review_tool_calls
             _handle = change_handle
 
-            def review_tool_calls(calls):  # type: ignore[no-redef]
+            def review_tool_calls(calls, run_id):  # type: ignore[no-redef]
+                # PR2a Task 5: pass the run id straight through -- this
+                # wrapper only gates on the baseline snapshot; the inner
+                # hook is what needs the run identity to scope its gate
+                # writes.
                 _handle.await_baseline()
                 if _inner_review is None:
                     return {}
-                return _inner_review(calls)
+                return _inner_review(calls, run_id)
         service = AgentService(
             self._db,
             registry,
@@ -2072,6 +2177,7 @@ class ConsoleAgentBridge:
             review_state_scope=review_state_scope,
             install_skill_tool=install_skill_tool,
             run_skill_script_tool=run_skill_script_tool,
+            revoke_approvals=revoke_approvals,
         )
 
         supersede_run_id = (
@@ -2105,6 +2211,14 @@ class ConsoleAgentBridge:
                     }
                     break
         try:
+            # FIRST statement in the block that owns this thread's
+            # shutdown -- see its construction above. Not merely *before*
+            # the try: one inserted line there would silently re-open the
+            # leak. If start() itself raises (thread exhaustion), the
+            # finally still runs and still closes the loop; `is_alive()`
+            # is False for a never-started thread, so the close branch is
+            # the one taken and no fd leaks.
+            loop_thread.start()
             run_id, outcome = service.run_turn(
                 conversation_id=conversation_id,
                 messages=run_messages,
@@ -2138,7 +2252,35 @@ class ConsoleAgentBridge:
                 supersede_run_id=supersede_run_id,
             )
         finally:
-            run_loop.close()
+            # PR2a Task 6.5: stop the driver thread before closing, and
+            # join it -- `close()` on a still-running loop raises, and a
+            # loop closed out from under its own thread is undefined. By
+            # this point `run_turn` has already settled every fleet child
+            # (`AgentService._settle_fleet` joins/abandons them before it
+            # returns), so nothing should still be submitting; the join is
+            # bounded anyway so an abandoned straggler can never wedge the
+            # Console. The thread is a daemon, so even a wedged one dies
+            # with the process rather than holding it open.
+            #
+            # `ident` is None only if `start()` itself never succeeded
+            # (thread exhaustion): `join()` on a never-started thread
+            # raises RuntimeError, which would escape this finally and
+            # skip the close below -- leaking the loop's fd. Nothing was
+            # ever scheduled in that case, so close it directly.
+            if loop_thread.ident is not None:
+                run_loop.call_soon_threadsafe(run_loop.stop)
+                loop_thread.join(timeout=_LOOP_THREAD_JOIN_SECONDS)
+            if loop_thread.is_alive():
+                # Leave it (and its loop) rather than closing a loop its
+                # own thread is still inside -- a leaked loop is survivable,
+                # a segfaulting one is not.
+                logger.warning(
+                    "console agent run loop did not stop within "
+                    f"{_LOOP_THREAD_JOIN_SECONDS}s; leaving it to the "
+                    "daemon thread"
+                )
+            else:
+                run_loop.close()
             # TASK-1971: E snapshot on EVERY terminal path -- completed,
             # failed, cancelled, or crashed. A run that died halfway through
             # editing is when review matters most. `run_id` is unbound when

@@ -3,6 +3,7 @@
 
 import dataclasses
 import json
+import threading
 import time
 
 import pytest
@@ -14,6 +15,7 @@ from tldw_chatbook.Agents.agent_models import (
     RUN_DONE,
     RUN_STUCK,
     SPAWN_TOOL_NAME,
+    WAIT_AGENTS_TOOL_NAME,
     AgentConfig,
     AgentDefinition,
     RunBudget,
@@ -56,7 +58,12 @@ def native_call(name, args, call_id="c1"):
 
 
 class ScriptedChat:
-    """Returns scripted replies; records every call's kwargs."""
+    """Returns scripted replies; records every call's kwargs.
+
+    ONE ordered queue shared by every agent in the run tree, which is
+    deterministic only while children run INLINE (see `FleetChat` below
+    for the addressed variant the fleet needs).
+    """
 
     def __init__(self, replies):
         self.replies = list(replies)
@@ -65,6 +72,183 @@ class ScriptedChat:
     def __call__(self, **kwargs):
         self.calls.append(kwargs)
         return provider_reply(self.replies.pop(0))
+
+
+#: The child's system prompt is the sub-agent prompt (plus, for a named
+#: agent, its appended instructions) followed by the rendered fence
+#: protocol -- so a prefix match on its first sentence is what identifies a
+#: child's provider call, the same identity contract
+#: `console_agent_bridge._is_subagent` relies on.
+SUBAGENT_PROMPT_PREFIX = SUBAGENT_SYSTEM_PROMPT.split(".")[0]
+
+
+def child_task_of(payload):
+    """The task text of the child whose provider call this payload is.
+
+    Args:
+        payload: The ``messages_payload`` handed to ``chat_api_call``.
+
+    Returns:
+        The child's task text (its first user message), or ``None`` when
+        this payload belongs to the primary agent.
+    """
+    if not payload:
+        return None
+    system = payload[0]
+    if system.get("role") != "system":
+        return None
+    if not str(system.get("content", "")).startswith(SUBAGENT_PROMPT_PREFIX):
+        return None
+    for message in payload[1:]:
+        if message.get("role") == "user":
+            return str(message.get("content", ""))
+    return None
+
+
+def verbatim(item):
+    """``reply`` hook for scripts already holding full provider responses.
+
+    ``provider_reply`` wraps a str/message-dict into the ``{"choices":
+    [{"message": ...}]}`` envelope; several suites script that envelope
+    directly, and hand this in so ``FleetChat`` passes their entries
+    through untouched.
+    """
+    return item
+
+
+class FleetChat:
+    """Addressed scripted provider: one script per agent, not one queue.
+
+    PR2a Task 6.5. `ScriptedChat` pops one shared ordered list, which stops
+    being deterministic the moment children run on their own threads
+    (whichever thread wins the race takes the next reply) -- and the fleet
+    is ON by default from Task 6.5 on. This keeps the same shape but
+    ADDRESSES replies: an ordered script for the primary agent, and a
+    separate ordered script per child TASK TEXT. Every reply therefore
+    goes to the agent it was written for, no matter who calls first.
+
+    Replies may be plain strings/dicts (as ``ScriptedChat``) or zero-arg
+    callables, which are invoked at call time -- that is how a test gates a
+    child on an ``Event`` or a ``Barrier`` while the parent keeps running.
+
+    ``calls`` records every call in arrival order (so it is NOT a stable
+    index under concurrency -- address ``parent_calls``/``child_calls``
+    instead); ``parent_calls`` records the primary agent's own calls and
+    ``child_calls`` each child's, each in that agent's own order, which IS
+    stable because one agent's turns are strictly sequential.
+
+    FAILING LOUDLY (PR2a Task 6.5 review). A scripting mistake here used to
+    vanish: a bare ``assert`` raised on a CHILD's thread is swallowed by
+    ``AgentService``'s ``run_child`` (which catches BaseException by design,
+    so a buggy child cannot strand the parent's join) and becomes
+    ``status=error``, so any test not asserting the child's RESULT still
+    passed -- vacuously. Demonstrated: mis-keying ``test_child_cannot_spawn``'s
+    child script to a task text no child ever asks for left it green. Since
+    this harness is now load-bearing for nine suites, and a future task-text
+    rename is exactly the kind of change that would re-introduce it, every
+    scripting fault is recorded in ``harness_errors``, re-raised on the
+    parent's next call, and swept at teardown by the autouse
+    ``_fleet_chat_scripts_fully_consumed`` fixture in ``Tests/conftest.py``
+    -- which also fails a test that left any scripted turn UNUSED.
+    """
+
+    #: Every instance built during the current test, for the autouse sweep.
+    _live_instances: list["FleetChat"] = []
+
+    def __init__(
+        self,
+        parent_replies,
+        child_replies=None,
+        *,
+        reply=provider_reply,
+        allow_unconsumed=False,
+    ):
+        """
+        Args:
+            parent_replies: ordered script for the primary agent.
+            child_replies: {task_text: ordered script} per child.
+            reply: item -> provider response. `verbatim` for suites whose
+                scripts already hold full response envelopes.
+            allow_unconsumed: opt OUT of the "every scripted turn was
+                used" teardown check -- and ONLY that check. Set it when a
+                test deliberately strands turns: a child cancelled
+                mid-flight, one wedged past the wall clock, one that
+                raises instead of answering.
+
+                KNOWN RESIDUAL, measured: for such a test a mis-keyed
+                child script can still pass silently, because the child
+                may be cancelled (or may explode) before it ever asks for
+                a reply -- so neither signal exists to fire. There is no
+                signal to recover here; the mitigation is that this flag
+                is rare and deliberate (three tests in the fleet suite,
+                each commented). A child that DOES get to ask still
+                records a `harness_errors` entry, which is fatal
+                regardless of this flag.
+        """
+        self.parent_replies = list(parent_replies)
+        self.child_replies = {
+            task: list(script) for task, script in (child_replies or {}).items()
+        }
+        self.calls: list[dict] = []
+        self.parent_calls: list[dict] = []
+        self.child_calls: dict[str, list[dict]] = {}
+        self.harness_errors: list[str] = []
+        self.allow_unconsumed = allow_unconsumed
+        self._reply = reply
+        self._lock = threading.Lock()
+        FleetChat._live_instances.append(self)
+
+    def _fault(self, message):
+        """Record a scripting fault and raise it on the calling thread."""
+        self.harness_errors.append(message)
+        raise AssertionError(f"FleetChat scripting fault: {message}")
+
+    def __call__(self, **kwargs):
+        payload = kwargs["messages_payload"]
+        task = child_task_of(payload)
+        with self._lock:
+            self.calls.append(kwargs)
+            # Surface a fault raised earlier on a CHILD's thread, where the
+            # runtime swallowed it, the first time the parent calls again.
+            if self.harness_errors:
+                raise AssertionError(
+                    "FleetChat scripting fault on another agent's thread: "
+                    + "; ".join(self.harness_errors)
+                )
+            if task is None:
+                self.parent_calls.append(kwargs)
+                if not self.parent_replies:
+                    self._fault("parent script exhausted")
+                item = self.parent_replies.pop(0)
+            else:
+                self.child_calls.setdefault(task, []).append(kwargs)
+                script = self.child_replies.get(task)
+                if not script:
+                    self._fault(
+                        f"no scripted reply left for child task {task!r}; "
+                        f"scripted tasks are {sorted(self.child_replies)}"
+                    )
+                item = script.pop(0)
+        # Called OUTSIDE the lock: a gated reply blocks here, and holding
+        # the lock would serialize the very concurrency under test.
+        if callable(item):
+            item = item()
+        return self._reply(item)
+
+    def unconsumed(self):
+        """Scripted turns nobody ever asked for, as readable strings."""
+        if self.allow_unconsumed:
+            return []
+        leftovers = []
+        if self.parent_replies:
+            leftovers.append(f"parent has {len(self.parent_replies)} unused turn(s)")
+        for task, script in self.child_replies.items():
+            if script:
+                leftovers.append(
+                    f"child {task!r} has {len(script)} unused turn(s) "
+                    f"(asked for {len(self.child_calls.get(task, []))})"
+                )
+        return leftovers
 
 
 @pytest.fixture()
@@ -77,6 +261,13 @@ def make_service(db, replies):
     registry.register_provider(BuiltinToolProvider())
     chat = ScriptedChat(replies)
     return AgentService(db=db, registry=registry, chat_call=chat), chat
+
+
+def _service_with(db, chat):
+    """`make_service` for a chat double built by the caller (a `FleetChat`)."""
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    return AgentService(db=db, registry=registry, chat_call=chat)
 
 
 CFG = AgentConfig(
@@ -174,17 +365,20 @@ def test_native_kill_switch_forces_fence(db):
 
 
 def test_native_subagent_turns_also_carry_tools(db):
-    service, chat = make_service(
-        db,
+    # PR2a Task 6.5: the fleet is ON by default, so the child runs on its
+    # own thread -- addressed script, and `chat.child_calls[task]` instead
+    # of `chat.calls[1]`. Same call, named rather than counted.
+    chat = FleetChat(
         [
             {
                 "content": None,
                 "tool_calls": [native_call("spawn_subagent", {"task": "say hi"}, "s1")],
             },
-            "hi from child",  # child's (native-mode) only turn
             "done",
         ],
+        {"say hi": ["hi from child"]},  # child's (native-mode) only turn
     )
+    service = _service_with(db, chat)
     _run_id, outcome = service.run_turn(
         conversation_id="c",
         messages=[{"role": "user", "content": "go"}],
@@ -193,7 +387,7 @@ def test_native_subagent_turns_also_carry_tools(db):
         should_cancel=lambda: False,
     )
     assert outcome.status == RUN_DONE
-    child_call = chat.calls[1]
+    child_call = chat.child_calls["say hi"][0]
     assert child_call["messages_payload"][0]["content"].startswith(
         SUBAGENT_SYSTEM_PROMPT
     )
@@ -304,14 +498,15 @@ def test_permission_gate_blocks_disallowed_tool(db):
 
 
 def test_spawn_creates_linked_child_with_clean_context(db):
-    service, chat = make_service(
-        db,
+    # PR2a Task 6.5: addressed script (the child is on its own thread).
+    chat = FleetChat(
         [
             fence(SPAWN_TOOL_NAME, {"task": "compute 6*7"}),  # parent turn 1
-            "sub answer: 42",  # CHILD turn 1
             "The sub-agent says 42.",  # parent turn 2
         ],
+        {"compute 6*7": ["sub answer: 42"]},  # CHILD turn 1
     )
+    service = _service_with(db, chat)
     run_id, outcome = service.run_turn(
         conversation_id="c",
         messages=[{"role": "user", "content": "delegate this"}],
@@ -325,8 +520,9 @@ def test_spawn_creates_linked_child_with_clean_context(db):
     assert child["task"] == "compute 6*7"
     assert child["status"] == "done" and child["result"] == "sub answer: 42"
     # Clean context: the child's provider call saw ONLY its task + its own
-    # system prompt — never the parent's transcript.
-    child_call = chat.calls[1]["messages_payload"]
+    # system prompt — never the parent's transcript. Addressed by task text
+    # rather than by `calls[1]`: same call, named rather than counted.
+    child_call = chat.child_calls["compute 6*7"][0]["messages_payload"]
     assert child_call[0]["role"] == "system"
     assert SUBAGENT_SYSTEM_PROMPT.split(".")[0] in child_call[0]["content"]
     assert child_call[1] == {"role": "user", "content": "compute 6*7"}
@@ -358,7 +554,24 @@ def test_run_turn_records_assistant_message_id_on_primary_only(db):
     assert child["assistant_message_id"] is None
 
 
-def test_subagent_result_is_capped(db):
+def test_subagent_result_is_capped(db, inline_spawns):
+    """A child's oversized answer reaches the parent capped, not whole.
+
+    THE INLINE CARRIER, verbatim. This is the original test, re-pinned on
+    `max_live_subagents = 1` -- the shipped kill switch, and the path whose
+    own cap (`agent_service`'s `spawn`, inline branch) is the code under
+    test here.
+
+    PR2a Task 6.5 review caught me moving this assertion to `wait_agents`
+    and calling it "the same guarantee, new carrier". It was not: the
+    fleet's own cap was ALREADY covered by
+    `test_fleet_runtime.test_wait_agents_splits_the_history_budget_across_children`,
+    so the move landed on held ground and left the inline cap with no
+    coverage at all -- deleting those three lines kept Tests/Agents and
+    Tests/Chat fully green. Both carriers are now pinned: this test for the
+    inline branch, `test_subagent_result_is_capped_under_the_fleet` below
+    for the threaded one.
+    """
     long_answer = "x" * 10000
     service, _ = make_service(
         db, [fence(SPAWN_TOOL_NAME, {"task": "t"}), long_answer, "done"]
@@ -383,16 +596,65 @@ def test_subagent_result_is_capped(db):
     assert len(capped["result"]) < 300
 
 
+def test_subagent_result_is_capped_under_the_fleet(db):
+    """The same cap, on the threaded carrier: `wait_agents`.
+
+    Companion to the inline test above (PR2a Task 6.5). With the fleet on,
+    `spawn` returns a handle and the child's text reaches the supervisor
+    through `wait_agents`, so that is where the cap must be observable.
+    Both branches cap, and both are now pinned.
+    """
+    long_answer = "x" * 10000
+    chat = FleetChat(
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "t"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "done",
+        ],
+        {"t": [long_answer]},
+    )
+    service = _service_with(db, chat)
+    tight = AgentConfig(
+        model="m",
+        system_prompt="s",
+        allowed_tools=(SPAWN_TOOL_NAME,),
+        # max_steps raised only to fit the extra collection round the fleet
+        # adds; nothing here ever asserted on the step budget.
+        budget=RunBudget(max_subagent_result_chars=100, max_steps=16),
+    )
+    _, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "q"}],
+        config=tight,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    run = db.list_runs("c", include_superseded=False)
+    parent = next(r for r in run if r["agent_kind"] == "primary")
+    capped = [
+        s
+        for s in parent["steps"]
+        if s["kind"] == "tool_result" and s["tool_name"] == WAIT_AGENTS_TOOL_NAME
+    ][0]
+    assert "[truncated]" in capped["result"]
+    assert len(capped["result"]) < 300
+
+
 def test_child_cannot_spawn(db):
-    service, _ = make_service(
-        db,
+    # PR2a Task 6.5: addressed script (the child is on its own thread).
+    chat = FleetChat(
         [
             fence(SPAWN_TOOL_NAME, {"task": "t"}),  # parent spawns
-            fence(SPAWN_TOOL_NAME, {"task": "nested"}),  # CHILD tries to spawn
-            "child recovered",  # child answers
             "parent done",
         ],
+        {
+            "t": [
+                fence(SPAWN_TOOL_NAME, {"task": "nested"}),  # CHILD tries to spawn
+                "child recovered",  # child answers
+            ]
+        },
     )
+    service = _service_with(db, chat)
     _, outcome = service.run_turn(
         conversation_id="c",
         messages=[{"role": "user", "content": "q"}],
@@ -1234,8 +1496,14 @@ def test_make_invoke_tool_wraps_slow_custom_tool_cancellable(db, monkeypatch):
         allowed_tools=("calculator",),
         budget=RunBudget(max_tool_call_seconds=5.0),
     )
+    # PR2a Task 5: `run_id` is keyword-REQUIRED -- it binds the dispatching
+    # run for the permission gates (run_context), and a default would let a
+    # caller silently lose every approval stamp instead of failing loudly.
     invoke_tool = service._make_invoke_tool(
-        cfg, disclosed_names={"calculator"}, should_cancel=lambda: True
+        cfg,
+        disclosed_names={"calculator"},
+        should_cancel=lambda: True,
+        run_id="run-1",
     )
     from tldw_chatbook.Agents.agent_models import ToolCall
     t0 = time.monotonic()
@@ -1268,7 +1536,9 @@ def test_make_invoke_tool_bypasses_wrapper_when_unlimited(db, monkeypatch):
         allowed_tools=("calculator",),
         budget=RunBudget(max_tool_call_seconds=0),
     )
-    invoke_tool = service._make_invoke_tool(cfg, disclosed_names={"calculator"})
+    invoke_tool = service._make_invoke_tool(
+        cfg, disclosed_names={"calculator"}, run_id="run-1"
+    )
     from tldw_chatbook.Agents.agent_models import ToolCall
     result = invoke_tool(ToolCall(name="calculator", args={"expression": "2+2"}))
     assert result.ok is True
@@ -1294,7 +1564,9 @@ def test_make_invoke_tool_wraps_slow_custom_tool_in_timeout(db, monkeypatch):
         allowed_tools=("calculator",),
         budget=RunBudget(max_tool_call_seconds=0.2),
     )
-    invoke_tool = service._make_invoke_tool(cfg, disclosed_names={"calculator"})
+    invoke_tool = service._make_invoke_tool(
+        cfg, disclosed_names={"calculator"}, run_id="run-1"
+    )
     from tldw_chatbook.Agents.agent_models import ToolCall
     result = invoke_tool(ToolCall(name="calculator", args={"expression": "2+2"}))
     assert result.ok is False
@@ -1348,14 +1620,15 @@ def _seed_definition(db, defn=RESEARCHER_DEFN):
 
 def test_named_spawn_appends_instructions_and_keeps_identity_prefix(db):
     _seed_definition(db)
-    service, chat = make_service(
-        db,
+    # PR2a Task 6.5: addressed script (the child is on its own thread).
+    chat = FleetChat(
         [
             fence(SPAWN_TOOL_NAME, {"task": "compute 6*7", "agent": "researcher"}),
-            "sub answer: 42",
             "done",
         ],
+        {"compute 6*7": ["sub answer: 42"]},
     )
+    service = _service_with(db, chat)
     run_id, outcome = service.run_turn(
         conversation_id="c",
         messages=[{"role": "user", "content": "delegate"}],
@@ -1363,7 +1636,7 @@ def test_named_spawn_appends_instructions_and_keeps_identity_prefix(db):
         api_endpoint="llama_cpp",
     )
     assert outcome.status == RUN_DONE
-    child_system = chat.calls[1]["messages_payload"][0]
+    child_system = chat.child_calls["compute 6*7"][0]["messages_payload"][0]
     assert child_system["role"] == "system"
     # IDENTITY CONTRACT: base subagent prompt stays the PREFIX
     # (console_agent_bridge._is_subagent prefix-matches it) ...
@@ -1383,14 +1656,15 @@ def test_named_spawn_intersects_allowlist_never_grants(db):
             tool_allowlist=("calculator", "forbidden_tool"),
         ),
     )
-    service, chat = make_service(
-        db,
+    # PR2a Task 6.5: addressed script (the child is on its own thread).
+    chat = FleetChat(
         [
             fence(SPAWN_TOOL_NAME, {"task": "t", "agent": "narrow"}),
-            "child done",
             "done",
         ],
+        {"t": ["child done"]},
     )
+    service = _service_with(db, chat)
     service.run_turn(
         conversation_id="c",
         messages=[{"role": "user", "content": "go"}],
@@ -1400,7 +1674,7 @@ def test_named_spawn_intersects_allowlist_never_grants(db):
     # Channel-agnostic: disclosed schemas may ride the system prompt
     # (fence protocol) OR the tools= kwarg (native) — inspect the whole
     # provider call.
-    child_call = json.dumps(chat.calls[1], default=str)
+    child_call = json.dumps(chat.child_calls["t"][0], default=str)
     assert "calculator" in child_call
     assert "get_current_datetime" not in child_call  # narrowed away
     assert "forbidden_tool" not in child_call  # never granted
@@ -1413,34 +1687,39 @@ def test_named_spawn_model_override_same_endpoint(db):
             name="cheap", instructions="Do it.", model="tiny-model"
         ),
     )
-    service, chat = make_service(
-        db,
-        [fence(SPAWN_TOOL_NAME, {"task": "t", "agent": "cheap"}), "ok", "done"],
+    # PR2a Task 6.5: addressed script (the child is on its own thread).
+    chat = FleetChat(
+        [fence(SPAWN_TOOL_NAME, {"task": "t", "agent": "cheap"}), "done"],
+        {"t": ["ok"]},
     )
+    service = _service_with(db, chat)
     service.run_turn(
         conversation_id="c",
         messages=[{"role": "user", "content": "go"}],
         config=CFG,
         api_endpoint="llama_cpp",
     )
-    assert chat.calls[1]["model"] == "tiny-model"
-    assert chat.calls[0]["model"] == "test-model"
-    assert chat.calls[1]["api_endpoint"] == "llama_cpp"
+    child_call = chat.child_calls["t"][0]
+    assert child_call["model"] == "tiny-model"
+    assert chat.parent_calls[0]["model"] == "test-model"
+    assert child_call["api_endpoint"] == "llama_cpp"
 
 
 def test_unknown_agent_refused_without_burning_budget(db):
     _seed_definition(db)
-    service, chat = make_service(
-        db,
+    # PR2a Task 6.5: addressed script -- both children are on their own
+    # threads, so their two answers are no longer interleaved into the
+    # parent's queue at fixed positions.
+    chat = FleetChat(
         [
             fence(SPAWN_TOOL_NAME, {"task": "t", "agent": "nope"}),
             fence(SPAWN_TOOL_NAME, {"task": "t2", "agent": "researcher"}),
-            "child ok",
             fence(SPAWN_TOOL_NAME, {"task": "t3", "agent": "researcher"}),
-            "child ok 2",
             "done",
         ],
+        {"t2": ["child ok"], "t3": ["child ok 2"]},
     )
+    service = _service_with(db, chat)
     # 3 parent-level spawn rounds (1 refused + 2 real) + the final answer =
     # 10 parent steps; CFG's default max_steps=8 would trip stuck before
     # the model ever gets to answer -- raise it, mirroring
@@ -1458,8 +1737,10 @@ def test_unknown_agent_refused_without_burning_budget(db):
     # slot, so BOTH later spawns succeed.
     assert outcome.status == RUN_DONE
     assert db.count_subagent_runs("c") == 2
-    # The refusal itself surfaced the roster to the model.
-    refusal = chat.calls[1]["messages_payload"]
+    # The refusal itself surfaced the roster to the model -- the PARENT's
+    # own second turn, addressed rather than counted (`calls[1]` may now be
+    # a child's).
+    refusal = chat.parent_calls[1]["messages_payload"]
     assert any(
         "unknown agent 'nope'" in str(m.get("content", "")) for m in refusal
     )

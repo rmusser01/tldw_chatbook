@@ -92,6 +92,7 @@ from tldw_chatbook.Agents.builtin_tool_gate import (
 )
 from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall, MCPToolProvider
+from tldw_chatbook.Agents.run_context import current_run_id
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
 from tldw_chatbook.config import coerce_bool_setting, get_cli_setting
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
@@ -357,7 +358,7 @@ def build_mcp_review_hook(
         `AgentService(review_tool_calls=...)`.
     """
 
-    def review_tool_calls(calls: list["ToolCall"]) -> dict[str, str]:
+    def review_tool_calls(calls: list["ToolCall"], run_id: str) -> dict[str, str]:
         # I3: clear THIS turn's stamps FIRST, before pending_gate_for/the
         # approval round trip even run -- subsumes the `if not pending`
         # branch's own clear below (every invocation of this hook clears,
@@ -365,13 +366,15 @@ def build_mcp_review_hook(
         # clear must happen at entry, not only after a successful round
         # trip: a raising `request_mcp_approvals` must never leave a stale
         # prior-turn stamp live for the fail-open runtime to hand straight
-        # to `invoke()`.
-        provider.apply_batch_decisions({})
+        # to `invoke()`. PR2a Task 5: that clear is scoped to `run_id` --
+        # it still wipes THIS run's prior turn, and no longer wipes a
+        # concurrent sibling's live verdicts.
+        provider.apply_batch_decisions(run_id, {})
         pending = _collect_mcp_pending(provider, calls)
         if not pending:
             return {}
         decisions = request_mcp_approvals(pending)
-        provider.apply_batch_decisions(decisions)
+        provider.apply_batch_decisions(run_id, decisions)
         return {call.llm_name: "proceed" for call in pending}
 
     return review_tool_calls
@@ -461,20 +464,29 @@ def build_tool_review_hook(
     was).
 
     Mirrors `build_mcp_review_hook`'s I3 clear-at-entry discipline, extended
-    to the built-in side: `builtin_gate.begin_turn()` runs FIRST,
+    to the built-in side: `builtin_gate.begin_turn(run_id)` runs FIRST,
     unconditionally -- before the MCP stamp clear, before any
     `pending_gate_for`/`resolve` call, before the `request_approvals` round
     trip -- so a raising round trip can never leave a stale built-in stamp
     (or a stale cached permission payload) live for the next turn to
-    consume. `mcp_provider.apply_batch_decisions({})` follows the same
-    reasoning for the MCP side, only when a provider was actually composed
-    this run.
+    consume. `mcp_provider.apply_batch_decisions(run_id, {})` follows the
+    same reasoning for the MCP side, only when a provider was actually
+    composed this run.
+
+    PR2a Task 5: every one of those mutations is scoped to `run_id`, the
+    second argument this hook now receives (`AgentService` binds its own
+    run id into the callable it hands `LoopDeps`). The gate and the MCP
+    provider are shared by a parent run and every sub-agent it spawns, so
+    an unscoped clear here wipes -- and an unscoped stamp overwrites --
+    verdicts another run in the tree has already been granted and has not
+    yet consumed. It still clears THIS run's own previous turn, which is
+    what the I3 discipline above requires.
 
     Exactly ONE `request_approvals` round trip is made per turn, carrying
     BOTH the MCP and built-in pending rows together -- never one call per
     owner. Decisions are then applied back to each owner separately:
-    `mcp_provider.apply_batch_decisions(...)` for MCP rows,
-    `builtin_gate.stamp(name, decision)` for built-in rows. The returned
+    `mcp_provider.apply_batch_decisions(run_id, ...)` for MCP rows,
+    `builtin_gate.stamp(run_id, name, decision)` for built-in rows. The returned
     verdict map carries "proceed" for approved calls and REFUSAL STRINGS
     for per-call denials (TASK-1861) and kill-switch blocks (TASK-631) --
     the runtime enforces those directly, skipping dispatch. Approvals are
@@ -523,8 +535,14 @@ def build_tool_review_hook(
         `AgentService(review_tool_calls=...)`.
     """
 
-    def review_tool_calls(calls: list["ToolCall"]) -> dict[str, str]:
-        builtin_gate.begin_turn()
+    def review_tool_calls(calls: list["ToolCall"], run_id: str) -> dict[str, str]:
+        # PR2a Task 5: every gate mutation below is scoped to `run_id` --
+        # the run whose batch this is, supplied by `AgentService` (which
+        # binds its own run id into the hook it puts on `LoopDeps`). The
+        # gate and provider instances are shared by a parent and every
+        # sub-agent it spawns, so an unscoped clear/stamp here reaches
+        # verdicts a concurrent sibling has not yet consumed.
+        builtin_gate.begin_turn(run_id)
         # TASK-631: the kill switch outranks everything -- no prompting, no
         # stamps, every call refused. Per-call keys where the runtime can
         # address them; an id-less (fence-path) call is refused by NAME,
@@ -541,7 +559,7 @@ def build_tool_review_hook(
                 switch_on = True
             if switch_on:
                 if mcp_provider is not None:
-                    mcp_provider.apply_batch_decisions({})
+                    mcp_provider.apply_batch_decisions(run_id, {})
                 return {
                     (str(getattr(call, "call_id", "") or "") or call.name): (
                         KILL_SWITCH_REFUSAL
@@ -549,7 +567,7 @@ def build_tool_review_hook(
                     for call in calls
                 }
         if mcp_provider is not None:
-            mcp_provider.apply_batch_decisions({})
+            mcp_provider.apply_batch_decisions(run_id, {})
 
         mcp_pending = (
             _collect_mcp_pending(mcp_provider, calls)
@@ -688,12 +706,13 @@ def build_tool_review_hook(
 
         if mcp_provider is not None:
             mcp_provider.apply_batch_decisions(
+                run_id,
                 _stamps_for(
                     [r for r in mcp_pending if r.llm_name in mcp_claimed_names]
-                )
+                ),
             )
         for name, decision in _stamps_for(builtin_pending).items():
-            builtin_gate.stamp(name, decision)
+            builtin_gate.stamp(run_id, name, decision)
 
         # The refusal half, enforced HERE rather than through the stamps.
         # The runtime resolves `call_id` before name and turns any
@@ -748,9 +767,11 @@ def build_local_review_hook(
         `AgentService(review_tool_calls=...)`.
     """
 
-    def review_tool_calls(calls: list["ToolCall"]) -> dict[str, str]:
+    def review_tool_calls(calls: list["ToolCall"], run_id: str) -> dict[str, str]:
         # I3: clear THIS turn's stamps FIRST -- see build_mcp_review_hook.
-        provider.apply_batch_decisions({})
+        # PR2a Task 5: scoped to `run_id`, so the clear cannot reach a
+        # concurrent sibling run's live verdicts.
+        provider.apply_batch_decisions(run_id, {})
         pending: list["MCPPendingCall"] = []
         for call in calls:
             gate = provider.pending_gate_for(call.name, call.args)
@@ -759,7 +780,7 @@ def build_local_review_hook(
         if not pending:
             return {}
         decisions = request_approvals(pending)
-        provider.apply_batch_decisions(decisions)
+        provider.apply_batch_decisions(run_id, decisions)
         return {call.llm_name: "proceed" for call in pending}
 
     return review_tool_calls
@@ -800,12 +821,12 @@ def build_combined_review_hook(
         verdict map into one.
     """
 
-    def review_tool_calls(calls: list["ToolCall"]) -> dict[str, str]:
+    def review_tool_calls(calls: list["ToolCall"], run_id: str) -> dict[str, str]:
         verdicts: dict[str, str] = {}
         first_exc: Exception | None = None
         for hook in hooks:
             try:
-                verdicts.update(hook(calls))
+                verdicts.update(hook(calls, run_id))
             except Exception as exc:  # noqa: BLE001 -- re-raised after ALL hooks ran
                 logger.opt(exception=True).warning(
                     "combined review_tool_calls: a provider hook raised; "
@@ -2766,17 +2787,42 @@ class ConsoleChatController:
             if session_id is not None
             else (self.store.active_session_id or "")
         )
+        # PR2a Task 7: which RUN armed this round. Read from the
+        # `run_context` ContextVar, which `AgentService` binds around both
+        # arming paths -- the per-turn review hook (`build_tool_review_
+        # hook`/`build_mcp_review_hook`/`build_local_review_hook`, which
+        # call straight through to this method on their own run's thread)
+        # and each tool invocation (the single-call fallback approval
+        # `MCPToolProvider.invoke` raises through `approval_callback`,
+        # which has no run_id parameter to thread at all). A session id
+        # cannot substitute: every child of a fleet turn shares the
+        # parent's session, so only the run id can tell a cancelled
+        # child's card apart from its live sibling's. `""` (no run bound
+        # -- e.g. the MCP workbench's Test Tool) is never revocable, which
+        # is correct: no run owns it.
+        owning_run_id = current_run_id()
+        round_state: dict[str, Any] = {
+            "event": event,
+            "decisions": decisions,
+            "session_id": owning_session_id,
+            "run_id": owning_run_id,
+            # The names this round must answer for -- what `revoke_
+            # approval_rounds_for_run` fills with "deny".
+            "names": tuple(unique_names),
+            # Flipped by revocation. Re-read after the wait below so a
+            # decision that lands in `decisions` AFTER the revoke (the
+            # `ApprovalDecided` message is async, and `resolve_pending_
+            # approval` snapshots the box before writing to it) can never
+            # turn a revoked round back into an approval.
+            "revoked": False,
+        }
         # F2b fix (Qodo wave): guard the round registration -- the UI
         # thread's `resolve_pending_approval` (TASK-913: fails closed by
         # round_id now, no more active-session scan) and the
         # `fleet_summary_counts` sync tick can read/iterate this map
         # concurrently with this worker thread's own writes.
         with self._approval_state_lock:
-            self._pending_approval_rounds[round_id] = {
-                "event": event,
-                "decisions": decisions,
-                "session_id": owning_session_id,
-            }
+            self._pending_approval_rounds[round_id] = round_state
 
         timeout_seconds = self._resolve_mcp_approval_timeout_seconds()
         deadline = time.monotonic() + timeout_seconds
@@ -2876,6 +2922,27 @@ class ConsoleChatController:
                     for name in unique_names:
                         decisions.setdefault(name, "timeout")
                     break
+            # PR2a Task 7: a revoked round answers "deny" for every name,
+            # unconditionally -- it does not consult `decisions` at all.
+            # The run this round belongs to has been cancelled or
+            # abandoned, and `resolve_pending_approval` can still write
+            # into the shared `decisions` box after revocation (it
+            # snapshots the box under the lock, then updates it outside),
+            # so honouring that box here would let a click delivered
+            # microseconds after the cancellation execute the tool for
+            # real. `revoke_approval_rounds_for_run` already filled every
+            # name with "deny"; this is the guard that makes it stick.
+            with self._approval_state_lock:
+                was_revoked = bool(round_state.get("revoked"))
+            if was_revoked:
+                # Same audit gap Finding I3 documents for the cancellation
+                # branch above: the child's loop is being torn down, so
+                # these calls never reach `invoke()`'s own gate and would
+                # otherwise leave no record of having been denied.
+                self._record_cancelled_approval_decisions(
+                    list(unique_names), call_by_name
+                )
+                return {name: "deny" for name in unique_names}
             # Any name the resolution path above didn't already cover (e.g.
             # a partial/empty decisions dict handed to `resolve_pending_
             # approval`) fails closed to "deny" rather than silently
@@ -3540,6 +3607,197 @@ class ConsoleChatController:
         decisions_dict.update(decisions or {})
         approval_event.set()
 
+    def revoke_approval_rounds_for_run(self, run_id: str) -> int:
+        """Fail every approval round owned by ``run_id`` closed, right now.
+
+        PR2a Task 7 (safety). The approval wait blocks inside
+        ``_call_with_timeout``'s per-call daemon thread, which keeps
+        running after the fleet cooperatively cancels -- or outright
+        ABANDONS -- the child that owns it. Until this existed, that
+        child's card stayed on screen and stayed live: pressing Approve
+        resolved the round, the waiting thread returned the approval, and
+        the tool EXECUTED FOR REAL (a file written, a message sent) for a
+        run whose handle and run row already read ``cancelled``. The
+        documented ``approval_timeout < max_tool_call_seconds`` invariant
+        (see ``_DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS``) bounds the same
+        class of hazard for the timeout path; this closes the
+        cancellation path.
+
+        Called by ``AgentService`` (through its injected
+        ``revoke_approvals`` seam) at both moments a child stops being
+        allowed to act: the cooperative cancel and the end-of-turn
+        abandon. Safe to call for a run that never armed a card -- the
+        common case -- and never touches another run's rounds, which
+        matters because every child of a fleet turn shares ONE console
+        session: session-keyed teardown could not tell a cancelled child's
+        card from its live sibling's.
+
+        Covers BOTH card registries a cancelled child can be holding:
+        ``_pending_approval_rounds`` (tool-call approvals) and
+        ``_pending_skill_script_rounds`` (run_skill_script confirms). The
+        skill-script leg is the wider hazard of the two -- that tool is
+        all-agents scope, its schema is not filtered by
+        ``config.allowed_tools``, and ``console_agent_bridge``'s closure
+        runs the script on the very next line after the confirm returns
+        Allow, with no cancellation checkpoint in between. (Skill-INSTALL
+        confirms are deliberately not swept: ``install_skill`` is wired
+        for the primary agent only, so no sub-agent can arm one.)
+
+        Each revoked round is (a) marked ``revoked`` so the waiting thread
+        fails closed even if a click lands in its shared decision box
+        afterwards, (b) pre-filled with the closed verdict, (c) removed
+        from its registry, so a late ``resolve_pending_approval``/
+        ``resolve_pending_skill_script`` finds nothing to resolve, (d)
+        released via its Event, so the waiting thread returns immediately
+        rather than at its auto-deny deadline, (e) discarded from
+        ``_pending_approvals`` so the session's NEEDS_APPROVAL badge
+        clears once its last round is gone, and (f) taken off screen
+        through the SAME round-identity-guarded clear that round's own
+        teardown uses, so a sibling round's card is never clobbered.
+
+        Thread-safe. Each registry is swept under its own lock, and the
+        two locks are taken SEQUENTIALLY, never nested -- the ordering
+        contract ``_clear_pending_skill_script_if_round_is_current``
+        already documents. ``discard_pending_round`` and both UI clears
+        take those (non-reentrant) locks themselves, so they are
+        deliberately called after every critical section is released.
+
+        Args:
+            run_id: The cancelled/abandoned run whose cards must die. A
+                falsy id is a no-op -- ``""`` is the "no run bound" key
+                that rounds armed outside any agent run carry, and
+                sweeping those would deny cards no run owns.
+
+        Returns:
+            How many rounds were revoked across both registries (``0``
+            when the run had none).
+        """
+        if not run_id:
+            return 0
+        revoked = self._revoke_tool_approval_rounds(run_id)
+        script_revoked = self._revoke_skill_script_rounds(run_id)
+        for round_id, session_id in revoked:
+            if session_id is not None:
+                self.discard_pending_round(session_id, round_id)
+            try:
+                self._clear_pending_approval_if_round_is_current(
+                    round_id, session_id
+                )
+            except Exception:  # noqa: BLE001 -- a UI clear must never
+                # break the cancellation path that called us.
+                logger.opt(exception=True).debug(
+                    "Failed to marshal approval clear during revocation"
+                )
+        for request_id, session_id in script_revoked:
+            if session_id is not None:
+                self.discard_pending_round(session_id, request_id)
+            try:
+                self._clear_pending_skill_script_if_round_is_current(
+                    request_id, session_id
+                )
+            except Exception:  # noqa: BLE001 -- as above.
+                logger.opt(exception=True).debug(
+                    "Failed to clear skill-script confirm during revocation"
+                )
+        total = len(revoked) + len(script_revoked)
+        if total:
+            logger.info(
+                f"revoked {total} pending approval round(s) for "
+                f"cancelled run {run_id}"
+            )
+        return total
+
+    def _revoke_tool_approval_rounds(self, run_id: str) -> list[tuple[str, str | None]]:
+        """Fail this run's tool-approval rounds closed. Registry work only.
+
+        Args:
+            run_id: The cancelled/abandoned run.
+
+        Returns:
+            ``(round_id, session_id)`` for each revoked round, for the
+            caller's badge/card teardown (which must run outside the lock
+            held here).
+        """
+        revoked: list[tuple[str, str | None]] = []
+        with self._approval_state_lock:
+            for round_id, state in list(self._pending_approval_rounds.items()):
+                if state.get("run_id") != run_id:
+                    continue
+                state["revoked"] = True
+                # Defense in depth only: the post-wait `revoked` guard in
+                # `request_mcp_approvals` is the actual mechanism (it
+                # ignores this box entirely). Filling it keeps the box
+                # honest for anything that reads it directly.
+                decisions = state.get("decisions")
+                if isinstance(decisions, dict):
+                    for name in state.get("names") or ():
+                        decisions[name] = "deny"
+                self._pending_approval_rounds.pop(round_id, None)
+                session_id = state.get("session_id") or None
+                revoked.append((round_id, session_id))
+                event = state.get("event")
+                if event is not None:
+                    # Last, and only once the round is unreachable: the
+                    # thread this releases returns the moment it wakes.
+                    event.set()
+            # Mirrors `request_mcp_approvals`' `finally` exactly: the
+            # retained payload is a SINGLE per-session slot, so it may
+            # only be dropped once NO armed round is left for that
+            # session -- otherwise a still-armed sibling loses the only
+            # copy of its card and a switch away/back mounts nothing.
+            for _round_id, session_id in revoked:
+                if session_id is None:
+                    continue
+                if not any(
+                    state.get("session_id") == session_id
+                    for state in self._pending_approval_rounds.values()
+                ):
+                    self._parked_approval_payloads.pop(session_id, None)
+        return revoked
+
+    def _revoke_skill_script_rounds(self, run_id: str) -> list[tuple[str, str | None]]:
+        """Fail this run's ``run_skill_script`` confirms closed.
+
+        Registry work only, under ``_pending_skill_script_lock`` and then
+        (sequentially, never nested -- see
+        ``_clear_pending_skill_script_if_round_is_current``)
+        ``_approval_state_lock`` for the retained-payload slot.
+
+        Args:
+            run_id: The cancelled/abandoned run.
+
+        Returns:
+            ``(request_id, session_id)`` for each revoked confirm.
+        """
+        revoked: list[tuple[str, str | None]] = []
+        with self._pending_skill_script_lock:
+            for request_id, state in list(self._pending_skill_script_rounds.items()):
+                if state.get("run_id") != run_id:
+                    continue
+                state["revoked"] = True
+                # Defense in depth -- the post-wait `revoked` guard in
+                # `request_skill_script_confirm` is what actually denies.
+                decision = state.get("decision")
+                if isinstance(decision, dict):
+                    decision["allow"] = False
+                    decision["remember"] = False
+                self._pending_skill_script_rounds.pop(request_id, None)
+                session_id = state.get("session_id") or None
+                revoked.append((request_id, session_id))
+                event = state.get("event")
+                if event is not None:
+                    event.set()
+            still_armed = {
+                state.get("session_id")
+                for state in self._pending_skill_script_rounds.values()
+            }
+        if revoked:
+            with self._approval_state_lock:
+                for _request_id, session_id in revoked:
+                    if session_id is not None and session_id not in still_armed:
+                        self._parked_skill_script_payloads.pop(session_id, None)
+        return revoked
+
     # -- Skill-install confirm bridge (task-5, parked TASK-910) --------------
 
     def request_skill_install_confirm(
@@ -3885,12 +4143,27 @@ class ConsoleChatController:
         owning_session_id = session_id if session_id is not None else (
             self.store.active_session_id or ""
         )
+        # PR2a Task 7 (review M1): same run-ownership stamp
+        # `request_mcp_approvals` carries, and for a WIDER hazard --
+        # `run_skill_script` is all-agents scope (no agent_kind gate in
+        # `AgentService._run_one`) and runtime schemas are not filtered by
+        # `config.allowed_tools`, so a fleet child is offered it
+        # unconditionally; the bridge closure then runs the script as the
+        # very next statement after this confirm returns Allow, with no
+        # cancellation checkpoint in between. `current_run_id()` is bound
+        # for the whole loop by `AgentService` (this tool is dispatched
+        # IN-LOOP, not through `invoke_tool`'s per-call thread).
+        script_round_state: dict[str, Any] = {
+            "event": event,
+            "decision": decision,
+            "session_id": owning_session_id,
+            "run_id": current_run_id(),
+            # Re-read after the wait: a late Allow must not stick. See
+            # `revoke_approval_rounds_for_run`.
+            "revoked": False,
+        }
         with self._pending_skill_script_lock:
-            self._pending_skill_script_rounds[request_id] = {
-                "event": event,
-                "decision": decision,
-                "session_id": owning_session_id,
-            }
+            self._pending_skill_script_rounds[request_id] = script_round_state
 
         timeout_seconds = (
             self.skill_script_confirm_timeout_seconds()
@@ -3924,6 +4197,18 @@ class ConsoleChatController:
                     break
                 if time.monotonic() >= deadline:
                     break
+            # PR2a Task 7 (review M1): a revoked round denies
+            # unconditionally, without consulting `decision` at all --
+            # `resolve_pending_skill_script` writes into that shared box
+            # after snapshotting the round, so an Allow delivered just
+            # after the child was cancelled could otherwise reach the
+            # `asyncio.run(scope.run_skill_script(...))` call the bridge
+            # makes on the very next line. Mirrors `request_mcp_
+            # approvals`' identical post-wait guard.
+            with self._pending_skill_script_lock:
+                was_revoked = bool(script_round_state.get("revoked"))
+            if was_revoked:
+                return {"allow": False, "remember": False}
             return {
                 "allow": bool(decision.get("allow", False)),
                 "remember": bool(decision.get("remember", False)),
@@ -7487,6 +7772,14 @@ class ConsoleChatController:
                     if self.set_pending_skill_script is not None
                     else None
                 ),
+                # PR2a Task 7: the fleet cancels/abandons children on the
+                # bridge's worker thread and hands each stopped run's id
+                # here, so a card still on screen for a child that is
+                # already `cancelled` is denied and cleared rather than
+                # left pressable (an approval that would still EXECUTE the
+                # tool for real). Run-keyed, so a live sibling child --
+                # which shares this same session -- keeps its own card.
+                revoke_approvals=self.revoke_approval_rounds_for_run,
             )
         except asyncio.CancelledError:
             if cancel_event.is_set():

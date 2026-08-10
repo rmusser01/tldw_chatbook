@@ -173,7 +173,7 @@ class TestWriteFileDiffCapture:
 class AllowAllGate:
     """Provider gate stub that permits every tool."""
 
-    def check(self, tool):
+    def check(self, tool, run_id):
         return None
 
 

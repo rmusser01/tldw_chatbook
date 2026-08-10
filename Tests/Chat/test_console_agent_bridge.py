@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import json
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -49,12 +50,16 @@ from tldw_chatbook.Agents.agent_models import (
     ToolSchema,
 )
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
+from tldw_chatbook.Agents import agent_service
 from tldw_chatbook.Agents.agent_service import AgentService
+from tldw_chatbook.Agents.run_context import current_run_id
 from tldw_chatbook.Agents.tool_catalog import (
     SkillToolProvider,
     ToolCatalogRegistry,
 )
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
+
+from Tests.Agents.test_agent_service import SUBAGENT_PROMPT_PREFIX
 
 
 @pytest.fixture(autouse=True)
@@ -108,12 +113,13 @@ class _FakeMCPProvider:
         return ToolResult(ok=True, content=f"mcp-result:{tool_id}")
 
     @contextlib.contextmanager
-    def stamp_scope(self):
+    def stamp_scope(self, run_id):
         # C1 (probe-verified security regression): stands in for
         # MCPToolProvider.stamp_scope -- a no-op snapshot/restore here since
         # this fake carries no per-turn stamp state of its own, just a call
         # counter so bridge-level wiring tests can assert `run_reply` threads
-        # it through to AgentService(review_state_scope=...).
+        # it through to AgentService(review_state_scope=...). PR2a Task 5:
+        # the scope takes the run id whose slice it guards.
         self.stamp_scope_calls += 1
         yield
 
@@ -145,6 +151,74 @@ class _ChunkGateway:
         self.calls += 1
         for chunk in chunks:
             yield chunk
+
+
+class _FleetChunkGateway:
+    """A gateway that addresses scripts by AGENT, not by arrival order.
+
+    PR2a Task 6.5: `_ChunkGateway` indexes its scripts by call count
+    (`self._scripts[self.calls]`), which stops being deterministic once the
+    fleet is ON by default -- a spawned child runs on its own thread and
+    its turn can land before, after, or between the parent's. This keeps
+    the same chunk-list-per-turn shape but keeps ONE queue for the primary
+    agent and one per child, so each turn's script reaches the agent it was
+    written for.
+
+    Children are identified exactly as ``_StreamingModelAdapter.
+    _is_subagent`` identifies them -- a system prompt starting with the
+    sub-agent prompt -- so the addressing follows the production contract
+    rather than a test-only convention.
+
+    Args:
+        parent_script: turns for the primary agent, in order.
+        child_script: turns for THE child, in order. These suites spawn
+            exactly one, and its task text is an implementation detail of
+            whatever spawned it (a skill's rendered prompt, say), so
+            addressing on "is a child" is both sufficient and stabler than
+            addressing on that text.
+    """
+
+    def __init__(self, parent_script, child_script=()):
+        self._parent = list(parent_script)
+        self._child = list(child_script)
+        self.calls = 0
+        self.tools_seen = []
+        self.child_calls = 0
+        self._lock = threading.Lock()
+
+    async def stream_chat(self, resolution, messages, tools=None, **kwargs):
+        system = str(messages[0].get("content", "")) if messages else ""
+        is_child = system.startswith(SUBAGENT_PROMPT_PREFIX)
+        with self._lock:
+            self.tools_seen.append(tools)
+            self.calls += 1
+            if is_child:
+                self.child_calls += 1
+                assert self._child, "child script exhausted"
+                chunks = self._child.pop(0)
+            else:
+                assert self._parent, "parent script exhausted"
+                chunks = self._parent.pop(0)
+        # Resolved OUTSIDE the lock: a turn may be a zero-arg callable that
+        # BLOCKS on an Event, which is how a test pins an interleaving; the
+        # lock would serialize the very concurrency under test.
+        if callable(chunks):
+            chunks = chunks()
+        for chunk in chunks:
+            yield chunk
+
+
+def _join_fleet_threads(timeout=5.0):
+    """Block until every live fleet child thread has fully finished.
+
+    `AgentService` names them ``fleet-<handle>``. "Fully finished" is the
+    point: a child's own run row goes terminal slightly BEFORE its thread
+    unwinds, so joining the thread -- not polling the DB -- is what
+    guarantees any context manager wrapping that run has already exited.
+    """
+    for thread in list(threading.enumerate()):
+        if thread.name.startswith("fleet-"):
+            thread.join(timeout)
 
 
 class _SignalChunkGateway(_ChunkGateway):
@@ -287,7 +361,7 @@ class _RefusingBuiltinGate:
     def __init__(self) -> None:
         self.checked: list[str] = []
 
-    def check(self, tool):
+    def check(self, tool, run_id):
         self.checked.append(tool.name)
         return f"disabled for test: {tool.name}"
 
@@ -568,6 +642,86 @@ def test_multi_turn_run_reuses_one_event_loop_across_chat_call_turns(tmp_path):
     assert seen_loops[0].is_closed(), (
         "the run's shared loop must be closed once run_reply returns"
     )
+
+
+def test_a_concurrent_child_can_use_the_runs_shared_event_loop(tmp_path):
+    """PR2a Task 6.5: a fleet child's turn must survive overlapping the
+    parent's on the run's ONE shared event loop.
+
+    Found by probe when the fleet default was flipped, and it failed every
+    overlapping child: `chat_call` drove the shared loop with
+    `run_until_complete` from whichever thread was calling, which is only
+    sound while the whole run tree is single-threaded. A loop may be driven
+    by exactly one thread, so the second concurrent caller got
+    ``RuntimeError: This event loop is already running``, its coroutine was
+    dropped un-awaited, and the child's run row persisted `error` -- silent
+    from the parent's side, which just saw a failed sub-agent. `chat_call`
+    now submits with `run_coroutine_threadsafe` to a loop running on its
+    own thread.
+
+    The gateway awaits inside every turn so the parent and the child really
+    are in flight together (a turn that yields without awaiting can slip
+    through the window); the child additionally blocks until the parent has
+    entered its own next turn, so the overlap is pinned rather than raced
+    for. PR #629 Fix 1(c) is re-asserted here too: it is still ONE loop.
+    """
+    parent_in_flight = threading.Event()
+    seen_loops = []
+
+    class _OverlappingGateway(_FleetChunkGateway):
+        async def stream_chat(self, resolution, messages, tools=None, **kwargs):
+            system = str(messages[0].get("content", "")) if messages else ""
+            if not system.startswith(SUBAGENT_PROMPT_PREFIX):
+                parent_in_flight.set()
+            seen_loops.append(asyncio.get_running_loop())
+            # Yield control so the other agent's coroutine can be scheduled
+            # onto this same loop while this one is still open.
+            await asyncio.sleep(0.01)
+            async for chunk in super().stream_chat(resolution, messages, tools=tools):
+                yield chunk
+
+    def gated_child_turn():
+        assert parent_in_flight.wait(5), "the parent never started a turn"
+        return ["child answer"]
+
+    gateway = _OverlappingGateway(
+        [
+            [_fence("spawn_subagent", {"task": "child work"})],
+            [_fence("wait_agents", {})],
+            ["parent final"],
+        ],
+        [gated_child_turn],
+    )
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=gateway
+    )
+
+    outcome = _run(
+        bridge, store, session, assistant.id, conversation_id="conv-overlap"
+    )
+
+    assert outcome.status == "done"
+    assert outcome.final_text == "parent final"
+    # The child completed -- it did NOT die on the loop.
+    child_runs = [
+        r for r in db.list_runs("conv-overlap") if r["agent_kind"] == "subagent"
+    ]
+    assert len(child_runs) == 1
+    assert child_runs[0]["status"] == RUN_DONE
+    assert child_runs[0]["result"] == "child answer"
+    # ... and its answer really reached the parent, through wait_agents.
+    assert "child answer" in str(outcome.steps)
+    # Still ONE loop for the whole run tree, children included (Fix 1(c)).
+    assert len(seen_loops) == 4  # 3 parent turns + 1 child turn
+    assert all(loop is seen_loops[0] for loop in seen_loops)
+    assert seen_loops[0].is_closed()
 
 
 def test_provider_stream_signal_survives_primary_tool_and_final_turns(tmp_path):
@@ -1939,7 +2093,7 @@ class _FakeBuiltinGateForRegistry:
         self.refuse = refuse
         self.checked: list[str] = []
 
-    def check(self, tool):
+    def check(self, tool, run_id):
         self.checked.append(tool.name)
         return f"disabled for test: {tool.name}" if self.refuse else None
 
@@ -2524,7 +2678,8 @@ def test_run_reply_forwards_review_tool_calls_hook_to_agent_service(tmp_path):
     bridge, _db, store, session, aid = _bridge(tmp_path, scripts)
     captured_batches = []
 
-    def hook(calls):
+    # PR2a Task 5: an AgentService-wired hook takes `(calls, run_id)`.
+    def hook(calls, run_id):
         captured_batches.append(list(calls))
         return {"calculator": "blocked by test hook"}
 
@@ -2540,19 +2695,32 @@ def test_run_reply_forwards_review_tool_calls_hook_to_agent_service(tmp_path):
     assert any("blocked by test hook" in row.content for row in tool_rows)
 
 
-def test_run_reply_wires_mcp_provider_stamp_scope_around_a_spawned_child(tmp_path):
-    """C1 (probe-verified security regression): `run_reply` must thread
-    `mcp_provider.stamp_scope` through to `AgentService(review_state_scope=
-    ...)` whenever an MCP provider is composed for this run -- that seam is
-    what protects a parent turn's MCP approval stamps from being clobbered by
-    a sub-agent's own inline nested run (see `MCPToolProvider.stamp_scope`'s
-    own docstring and `Tests/Agents/test_agent_service_review_state_scope.py`
-    for the full adversarial reproduction). This is the bridge-level wiring
-    check: a run that spawns exactly one sub-agent must enter/exit the
-    composed MCP provider's `stamp_scope()` exactly once around that spawn."""
+def test_run_reply_still_wires_stamp_scope_for_the_inline_kill_switch_path(
+    tmp_path, monkeypatch
+):
+    """`run_reply` must still thread `mcp_provider.stamp_scope` through to
+    `AgentService(review_state_scope=...)` whenever an MCP provider is
+    composed for this run.
+
+    This is the surviving half of the old
+    `test_run_reply_wires_mcp_provider_stamp_scope_around_a_spawned_child`
+    (C1, probe-verified security regression). Its guarantee -- one
+    enter/exit of the composed provider's `stamp_scope()` around a spawned
+    child -- is UNCHANGED on the inline path, which is what a user who sets
+    `[agents] max_live_subagents = 1` gets, so the assertion is unchanged
+    too; only the pinning of that path is new (before Task 6.5 it was the
+    shipped default and needed no pinning). The concurrent path is the
+    companion test below -- where holding this scope would be actively
+    harmful, not merely unnecessary.
+    """
+    monkeypatch.setattr(
+        agent_service, "_setting", lambda key, default: (
+            1 if key == agent_service.MAX_LIVE_SUBAGENTS_KEY else default
+        )
+    )
     scripts = [
         [_fence("spawn_subagent", {"task": "compute 1+1"})],  # primary turn 1
-        ["2"],  # sub-agent turn
+        ["2"],  # sub-agent turn (inline, so strictly ordered)
         ["Done: ", "2."],  # primary final
     ]
     bridge, _db, store, session, aid = _bridge(tmp_path, scripts)
@@ -2562,6 +2730,150 @@ def test_run_reply_wires_mcp_provider_stamp_scope_around_a_spawned_child(tmp_pat
 
     assert outcome.status == "done"
     assert mcp_provider.stamp_scope_calls == 1
+
+
+class _StampingMCPProvider(_FakeMCPProvider):
+    """A `_FakeMCPProvider` that models the REAL per-run stamp bookkeeping.
+
+    `_FakeMCPProvider.stamp_scope` is a bare call counter, which cannot
+    show what the scope actually DOES. This one mirrors
+    `MCPToolProvider`'s two documented behaviours that matter here:
+
+    * verdicts are keyed by ``(run_id, llm_name)``, so a run can only ever
+      reach its own slice (PR2a Task 5);
+    * ``stamp_scope(run_id)`` snapshots that run's slice on enter, CLEARS
+      it, and restores the snapshot on exit.
+
+    That second behaviour is exactly why the threaded spawn path must not
+    take the scope: entering it mid-turn wipes the parent's live verdicts,
+    and with concurrent siblings there is no LIFO order in which the
+    restore could put them back correctly.
+    """
+
+    def __init__(self, entries, on_invoke=None):
+        super().__init__(entries)
+        self.stamps: dict[tuple[str, str], str] = {}
+        self.refusals: list[str] = []
+        # Runs at the top of invoke, BEFORE the stamp is consumed -- the
+        # seam a test uses to pin what has happened by the time the parent
+        # cashes in its verdict.
+        self._on_invoke = on_invoke
+
+    def stamp(self, run_id, llm_name, verdict):
+        self.stamps[(run_id, llm_name)] = verdict
+
+    def invoke(self, tool_id, args):
+        if self._on_invoke is not None:
+            self._on_invoke()
+        # Fails CLOSED on a missing stamp, like the real gate: that is what
+        # makes a wiped verdict observable rather than silently benign.
+        run_id = current_run_id()
+        if self.stamps.get((run_id, tool_id)) != "approve_once":
+            self.refusals.append(tool_id)
+            return ToolResult(ok=False, error=f"no stamped approval for {tool_id}")
+        return super().invoke(tool_id, args)
+
+    @contextlib.contextmanager
+    def stamp_scope(self, run_id):
+        self.stamp_scope_calls += 1
+        snapshot = {k: v for k, v in self.stamps.items() if k[0] == run_id}
+        self.stamps = {k: v for k, v in self.stamps.items() if k[0] != run_id}
+        try:
+            yield
+        finally:
+            self.stamps = {k: v for k, v in self.stamps.items() if k[0] != run_id}
+            self.stamps.update(snapshot)
+
+
+def test_run_reply_keeps_the_parents_mcp_verdict_across_a_concurrent_child(tmp_path):
+    """The parent's own approval SURVIVES a concurrently-running child.
+
+    Replaces `test_run_reply_wires_mcp_provider_stamp_scope_around_a_
+    spawned_child`'s spawn-path half. That test pinned the scope being
+    entered around a child, which PR2a Task 6 deliberately stopped doing on
+    the threaded path -- not as a relaxation but because it is now unsafe:
+    `stamp_scope` CLEARS the parent's slice on enter, so holding it across
+    siblings would wipe verdicts the parent is still going to consume, and
+    with no LIFO order the restore cannot repair it.
+
+    The protection that replaces it is Task 5's per-run keying, and this
+    asserts THAT, at the same bridge level.
+
+    The interleaving is pinned, not hoped for, because only ONE ordering
+    is dangerous: the child must still be live when the parent stamps, and
+    must finish before the parent consumes. The child therefore blocks
+    until the parent's own MCP invoke releases it, and that invoke joins
+    the child's thread before reading the stamp. Under the mutation
+    (re-wrapping the fleet path in `review_state_scope`) the child's scope
+    is open across the parent's stamp, so its exit-restore rolls the
+    parent's slice back to a snapshot taken before that stamp existed and
+    the parent's own call is refused -- verified red both behaviourally
+    (`refusals`) and structurally (`stamp_scope_calls`).
+    """
+    release_child = threading.Event()
+
+    def gated_child_turn():
+        assert release_child.wait(5), "the parent never released the child"
+        return ["2"]
+
+    scripts = [
+        [_fence("spawn_subagent", {"task": "compute 1+1"})],  # primary turn 1
+        [_fence("mcp__srv_a__search", {"query": "weather"})],  # parent's own call
+        ["Done."],  # primary final
+    ]
+    child_script = [gated_child_turn]  # the child's single turn, on its own thread
+    gateway = _FleetChunkGateway(scripts, child_script)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=gateway
+    )
+
+    def release_then_settle():
+        # The parent is about to cash in its verdict. Let the child finish
+        # first, and wait until its THREAD is gone -- that is the moment any
+        # context manager wrapping the child's run would have exited.
+        release_child.set()
+        _join_fleet_threads()
+
+    mcp_provider = _StampingMCPProvider(
+        [("mcp__srv_a__search", "Search the web")], on_invoke=release_then_settle
+    )
+
+    # The parent's verdict, stamped under ITS run id, while the child is
+    # still live. The review hook is what does this in production; here it
+    # stamps directly so the test is about the scope, not about the hook.
+    def review(calls, run_id):
+        for call in calls:
+            if call.name == "mcp__srv_a__search":
+                mcp_provider.stamp(run_id, call.name, "approve_once")
+        return {}
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        assistant.id,
+        conversation_id="conv-fleet-stamp",
+        mcp_provider=mcp_provider,
+        review_tool_calls=review,
+    )
+
+    assert outcome.status == "done"
+    assert db.count_subagent_runs("conv-fleet-stamp") == 1  # the child really ran
+    assert gateway.child_calls == 1  # ... concurrently, on its own thread
+    # The parent's own approved call executed: its verdict outlived the
+    # concurrent child.
+    assert mcp_provider.refusals == []
+    assert mcp_provider.invoke_calls == [("mcp__srv_a__search", {"query": "weather"})]
+    # ... and the threaded child was NOT wrapped in the parent's scope,
+    # which is what would have wiped that verdict.
+    assert mcp_provider.stamp_scope_calls == 0
 
 
 def test_skill_named_like_a_runtime_tool_never_shadows_it_at_invocation(tmp_path):
@@ -2677,16 +2989,30 @@ class _ManySkillsService:
 
 
 def _discovery_heavy_shout_scripts():
-    # Mirrors the gate's live raw step log: find_tools({"query": "shout"})
-    # -> load_tools({"ids": ["skill:shout"]}) -> shout({"args": "hello"})
-    # -> the sub-agent's own turn -> the primary's final wrap-up reply.
-    return [
+    """The gate's live shape, split per agent (PR2a Task 6.5).
+
+    Mirrors the gate's live raw step log: find_tools({"query": "shout"})
+    -> load_tools({"ids": ["skill:shout"]}) -> shout({"args": "hello"})
+    -> the sub-agent's own turn -> the primary's final wrap-up reply.
+
+    The ROUND COUNT is unchanged from before the fleet: a skill call runs
+    its child INLINE and returns the skill's output, so there is no
+    collection round (see `AgentService`'s `invoke_tool` skill branch).
+    Only the SHAPE changed -- the five turns are addressed per agent (the
+    primary's four, the child's one) rather than popped off one queue,
+    which is how they should always have been written.
+
+    Returns:
+        (parent_script, child_script) for `_FleetChunkGateway`.
+    """
+    parent = [
         [_fence("find_tools", {"query": "shout"})],
         [_fence("load_tools", {"ids": ["skill:shout"]})],
         [_fence("shout", {"args": "hello"})],
-        ["HELLO"],  # sub-agent turn (never streamed to the store)
         ["Shouted: HELLO"],  # primary final answer
     ]
+    child = [["HELLO"]]  # sub-agent turn (never streamed to the store)
+    return parent, child
 
 
 def test_discovery_heavy_skill_run_completes_done_not_stuck(tmp_path):
@@ -2701,7 +3027,7 @@ def test_discovery_heavy_skill_run_completes_done_not_stuck(tmp_path):
     wrap-up reply, even though every tool call already succeeded. The
     Console bridge must give this exact shape enough headroom to actually
     reach the final answer and persist `done`."""
-    scripts = _discovery_heavy_shout_scripts()
+    parent_script, child_script = _discovery_heavy_shout_scripts()
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
@@ -2713,7 +3039,7 @@ def test_discovery_heavy_skill_run_completes_done_not_stuck(tmp_path):
     bridge = ConsoleAgentBridge(
         agent_runs_db=db,
         store=store,
-        provider_gateway=_ChunkGateway(scripts),
+        provider_gateway=_FleetChunkGateway(parent_script, child_script),
         skills_service=skills_service,
     )
 
@@ -3045,7 +3371,7 @@ def test_combine_state_scopes_enters_and_exits_both():
 
     def _make(name):
         @contextlib.contextmanager
-        def _scope():
+        def _scope(run_id):
             events.append(f"enter:{name}")
             try:
                 yield
@@ -3055,7 +3381,8 @@ def test_combine_state_scopes_enters_and_exits_both():
         return _scope
 
     combined = _combine_state_scopes([_make("mcp"), _make("builtin")])
-    with combined():
+    # PR2a Task 5: each scope takes the run id whose slice it guards.
+    with combined("run-1"):
         events.append("child-run")
 
     # Both entered, both exited, unwinding in reverse order.
@@ -3077,7 +3404,7 @@ def test_combine_state_scopes_restores_both_when_the_nested_run_raises():
 
     def _make(name):
         @contextlib.contextmanager
-        def _scope():
+        def _scope(run_id):
             try:
                 yield
             finally:
@@ -3088,7 +3415,7 @@ def test_combine_state_scopes_restores_both_when_the_nested_run_raises():
     combined = _combine_state_scopes([_make("mcp"), _make("builtin")])
     raised = False
     try:
-        with combined():
+        with combined("run-1"):
             raise RuntimeError("child blew up")
     except RuntimeError:
         raised = True

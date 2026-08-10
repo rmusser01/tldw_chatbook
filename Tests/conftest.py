@@ -982,3 +982,43 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if "live" in item.keywords:
                 item.add_marker(skip_live)
+
+
+@pytest.fixture(autouse=True)
+def _fleet_chat_scripts_fully_consumed():
+    """Fail any test that mis-scripted a `FleetChat` (PR2a Task 6.5 review).
+
+    `Tests/Agents/test_agent_service.FleetChat` addresses provider replies
+    per agent, and is the load-bearing harness for every suite that spawns
+    a sub-agent. Two of its failure modes are otherwise SILENT:
+
+    * a fault raised on a CHILD's thread is swallowed by `AgentService`'s
+      `run_child` (BaseException by design) into `status=error`, so a test
+      that does not assert the child's own result still passes;
+    * a scripted turn nobody ever asks for -- e.g. after a task-text
+      rename leaves the key stale -- simply goes unused, and the test
+      passes while exercising nothing it claims to.
+
+    Autouse and repo-wide on purpose: this must not be something a future
+    test can forget to opt into. It is a no-op (one empty list check) for
+    the thousands of tests that never touch `FleetChat`, and it never
+    imports it -- the class registers its own instances.
+    """
+    # Looked up through sys.modules rather than imported: a test that
+    # never pulled the harness in must not pay to import the whole agent
+    # stack, nor gain its import side effects. No module -> nothing to check.
+    module = sys.modules.get("Tests.Agents.test_agent_service")
+    fleet_chat = getattr(module, "FleetChat", None) if module else None
+    if fleet_chat is None:
+        yield
+        return
+
+    fleet_chat._live_instances.clear()
+    yield
+    instances = list(fleet_chat._live_instances)
+    fleet_chat._live_instances.clear()
+    problems = []
+    for chat in instances:
+        problems.extend(chat.harness_errors)
+        problems.extend(chat.unconsumed())
+    assert not problems, "FleetChat scripting fault(s): " + "; ".join(problems)

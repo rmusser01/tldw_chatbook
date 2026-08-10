@@ -635,3 +635,28 @@ def test_agent_runs_columns_backfilled_on_old_file(tmp_path):
             for row in conn.execute("PRAGMA table_info(agent_runs)").fetchall()
         }
     assert {"agent_definition", "definition_fingerprint"} <= columns
+
+
+# --- Task 2: terminal-status guard on set_status (first-writer-wins) ---
+
+
+def test_set_status_first_terminal_write_wins(db):
+    # A child abandoned after a join timeout can persist LATE; it must not
+    # overwrite the terminal status the coordinator already recorded.
+    run_id = db.create_run(conversation_id="c", agent_kind="subagent", task="t")
+    assert db.set_status(run_id, "cancelled") is True
+    assert db.set_status(run_id, "done", result="late answer") is False
+    run = db.get_run(run_id)
+    assert run["status"] == "cancelled"
+    assert run["result"] is None
+
+
+def test_set_status_still_updates_a_running_run(db):
+    run_id = db.create_run(conversation_id="c", agent_kind="primary")
+    assert db.set_status(run_id, "done", result="ok") is True
+    assert db.get_run(run_id)["status"] == "done"
+    assert db.get_run(run_id)["result"] == "ok"
+
+
+def test_set_status_missing_run_returns_false(db):
+    assert db.set_status("nope", "done") is False

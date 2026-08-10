@@ -50,6 +50,8 @@ from tldw_chatbook.Agents.run_log_format import RunLogRecord, encode_record
 from tldw_chatbook.Agents.run_log_search import load_records
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+from Tests.Agents.test_agent_service import FleetChat, verbatim
 from tldw_chatbook.Tools.file_operation_tools import GlobFiles, GrepFiles
 
 
@@ -62,7 +64,7 @@ class _AllowGate:
     approval round trip.
     """
 
-    def check(self, tool):
+    def check(self, tool, run_id):
         return None
 
 
@@ -228,36 +230,45 @@ def test_spawned_subagent_cannot_read_parents_log_via_grep_files_in_bound_worksp
 
     secret = "PARENT_SECRET_API_KEY=sk-live-workspace321"
     task = "search the workspace for anything interesting"
-    script = [
-        {
-            "choices": [
-                {
-                    "message": {
-                        "content": (
-                            f"Noting {secret} before delegating.\n"
-                            + _fence(SPAWN_TOOL_NAME, {"task": task})
-                        )
+    # PR2a Task 6.5: the fleet is ON by default, so the child runs on its
+    # own thread -- one ordered queue is no longer deterministic. Addressed
+    # per agent instead; the replies themselves are unchanged.
+    chat = FleetChat(
+        [
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                f"Noting {secret} before delegating.\n"
+                                + _fence(SPAWN_TOOL_NAME, {"task": task})
+                            )
+                        }
                     }
-                }
+                ]
+            },
+            {"choices": [{"message": {"content": "done"}}]},  # parent's answer
+        ],
+        {
+            task: [
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": _fence(
+                                    "grep_files", {"pattern": "PARENT_SECRET"}
+                                )
+                            }
+                        }
+                    ]
+                },
+                {
+                    "choices": [{"message": {"content": "found nothing"}}]
+                },  # child's answer
             ]
         },
-        {
-            "choices": [
-                {
-                    "message": {
-                        "content": _fence(
-                            "grep_files", {"pattern": "PARENT_SECRET"}
-                        )
-                    }
-                }
-            ]
-        },
-        {"choices": [{"message": {"content": "found nothing"}}]},  # child's answer
-        {"choices": [{"message": {"content": "done"}}]},  # parent's answer
-    ]
-
-    def chat(**kwargs):
-        return script.pop(0)
+        reply=verbatim,
+    )
 
     service = AgentService(db, reg, chat_call=chat)
     _rid, outcome = service.run_turn(

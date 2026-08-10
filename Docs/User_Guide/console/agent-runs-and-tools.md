@@ -44,9 +44,12 @@ reply:
 - Status line: `Agent: idle`, or `Agent: running · step N` while working.
 - One `·`-prefixed line per step.
 - One line per sub-agent, prefixed `✓` (done), `●` (running), `⚠` (stuck), or
-  `✗` (error/cancelled). **Click a sub-agent line to drill in** — the status
-  line becomes `Sub-agent · <status> (Back)` with that run's own step lines;
-  the **Back** button returns to the main run.
+  `✗` (error/cancelled). Several of these can read `●` at once — sub-agents
+  the supervisor spawned in the same reply run in parallel, not one at a
+  time; see [Parallel sub-agents](#parallel-sub-agents-the-fleet). **Click a
+  sub-agent line to drill in** — the status line becomes `Sub-agent ·
+  <status> (Back)` with that run's own step lines; the **Back** button
+  returns to the main run.
 - **View full log** opens the "Full run log — <run id>" window: the complete,
   untruncated record ("what the model actually saw, before the Console's
   display cap trimmed it"). **Close** or **Esc** dismisses it.
@@ -93,6 +96,14 @@ current definition — if the server later changes the tool, the approval card
 comes back with a "(definition changed)" badge. Review or change a remembered
 allow from the tool's row on the [MCP screen](../mcp.md) 🚧.
 
+With sub-agents running in parallel (see below), more than one approval card
+can be pending at once — cards aren't merged across sub-agents: each is
+scoped to the one run that raised it, so deciding one card never resolves or
+touches another's. Cancelling that sub-agent (see
+[Stopping & leaving](#stopping--leaving)) withdraws only its own still-pending
+cards; a sibling sub-agent's card, or the parent's, is left exactly as it
+was.
+
 ### Background & parked runs
 
 Tabs with unwatched activity carry a status marker, listed in F1 help:
@@ -135,6 +146,40 @@ already streaming.
   `definition_fingerprint` (a content hash of its instructions, tools, and
   model at spawn time) are written on every named-agent spawn. Neither is
   currently surfaced in **View full log** or anywhere else in the UI.
+
+### Parallel sub-agents (the fleet)
+
+Sub-agents the supervisor spawns within a **single reply** no longer run one
+at a time — up to a configured number can be live together, each working its
+own task concurrently. The Agent rail shows this directly: several
+`●`-prefixed sub-agent lines can be running at once (see
+[Layout tour](#layout-tour--what-you-see-during-a-run) above).
+
+- **How results come back.** The supervisor has to explicitly collect a
+  sub-agent's result before it can use it — spawning one hands back a
+  handle, not an answer. It gathers results with its own internal
+  `wait_agents` step (optionally for just one sub-agent, to get that one's
+  answer back in full rather than sharing a combined budget with its
+  siblings) and can check progress without blocking via `check_agents`. This
+  is internal turn mechanics, not something you drive — the reply you see
+  simply arrives once every sub-agent it waited on has finished, and by then
+  it has already folded each result into its answer.
+- **Skills still run one at a time.** Running a skill (`$name`) always
+  returns that skill's own output directly into the same turn, never a
+  fleet handle — skills are not part of the parallel fleet.
+- **How many can run at once.** Capped at `[agents] max_live_subagents` in
+  `config.toml` (default **3**; no Settings UI switch — hand-edit the file).
+  Setting it to `1` turns the fleet off entirely: sub-agents go back to
+  running one at a time, synchronously, exactly as before. Trying to spawn
+  a sub-agent past the live cap is refused ("live sub-agent limit reached
+  (N already running); call wait_agents to collect a finished sub-agent
+  before starting another") rather than queued — the supervisor collects
+  a finished sub-agent to free a slot, then retries, and the refusal itself
+  doesn't count against its per-turn spawn budget. A bad value in the
+  config file never stops a run: zero or a negative number floors to `1`
+  (fleet off), and anything that isn't a number at all (letters, a blank)
+  falls back to the default of `3` (fleet on) — either way the run
+  proceeds instead of erroring.
 
 ### Skills
 
@@ -188,8 +233,11 @@ Import…** and submit its URL; Console does not advertise the retired
 ### Stopping & leaving
 
 - **Stop** (appears next to Send while a run is active) stops **this tab's
-  run only** — other tabs keep going. The partial reply is tagged
-  `[stopped]` and a System row records "Response stopped by user."
+  run only** — other tabs keep going. Any sub-agents still working for that
+  run are cancelled with it, and any of their approval cards still pending
+  are withdrawn (denied) at the same time — a sibling sub-agent's card
+  belonging to a *different* tab's run is untouched. The partial reply is
+  tagged `[stopped]` and a System row records "Response stopped by user."
 - Leaving the Console screen is different: after the "Leave Console?" confirm,
   **every** in-flight run is cancelled and every pending or parked approval is
   denied — never approved. Details in
@@ -233,7 +281,13 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
 - **Settings > Console Behavior** — "Max parallel agent runs" (saved as
   `console.max_parallel_runs`; raising it is allowed without limit) and
   "Tool result display cap" (how much of a tool result the transcript
-  preview shows).
+  preview shows). This caps parallel **tabs**, a different knob from
+  `[agents] max_live_subagents` below, which caps parallel **sub-agents
+  within one reply**.
+- **`[agents] max_live_subagents`** in `config.toml` — how many sub-agents
+  of one reply may run at once (default 3; `1` disables the fleet). No
+  Settings UI switch; see [Parallel sub-agents](#parallel-sub-agents-the-fleet)
+  above.
 - **Settings > Agents** — create and manage the named agent definitions the
   supervisor can delegate to; see [Named agents](#named-agents) above.
 - [Library ▸ Skills](../library/skills.md) — create, import, review, and
@@ -263,4 +317,11 @@ against dev @ 3dd3e7431 — 2026-08-09 (fleet PR-1: driven live — Console
 delegated to a real named definition, the transcript showed the
 `[researcher]` sub-agent marker, and the reply visibly honored the
 definition's instructions; the rest of this page's content unchanged from
-the prior stamp).*
+the prior stamp). Parallel sub-agents section, concurrent-approval-card
+scoping, and the `max_live_subagents` knob added @ d21a91649 — 2026-08-10
+(fleet PR2a Task 8: driven live — a single reply spawned two sub-agents at
+once, both appeared in the Agent rail with their own handle ids and
+results, the reply incorporated both, `sqlite3` showed two terminal child
+run rows, and Stop mid-fleet cancelled two live children with zero rows
+left `running`; the rest of this page's content unchanged from the prior
+stamp).*

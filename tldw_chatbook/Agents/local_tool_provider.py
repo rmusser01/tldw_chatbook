@@ -9,6 +9,7 @@ methods are sync and worker-thread safe; no Textual/event-loop imports.
 
 from __future__ import annotations
 
+import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,6 +24,7 @@ from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from ..config import coerce_bool_setting, get_cli_setting
 from .agent_models import ToolCatalogEntry, ToolResult, ToolSchema
 from .mcp_tool_provider import MCPPendingCall
+from .run_context import current_run_id
 
 # Module-level (not the function-local imports the other `_default_specs`
 # tool modules use) SPECIFICALLY so tests can patch this one name via
@@ -198,7 +200,17 @@ class LocalToolProvider:
         self._persist_approval = persist_approval
         self._record_decision = record_decision
         self._no_callback_refusal = no_callback_refusal
-        self._stamps: dict[str, str] = {}
+        # PR2a Task 5: keyed (run_id, tool_name), not tool_name -- one
+        # provider instance is shared by a parent run and every sub-agent
+        # it spawns, so a name-keyed dict let any run's turn clear or
+        # overwrite verdicts another run had been granted and not yet
+        # consumed. Same treatment, same reasons, as MCPToolProvider's
+        # `_stamped_decisions` and BuiltinToolGate's `_stamps`.
+        self._stamps: dict[tuple[str, str], str] = {}
+        # Lock (not RLock): flat, self-contained critical sections over one
+        # dict; no locked method calls another, and `stamp_scope` never
+        # holds it across its `yield`.
+        self._stamps_lock = threading.Lock()
 
     # -- catalog ------------------------------------------------------
 
@@ -322,25 +334,71 @@ class LocalToolProvider:
 
     # -- approval stamps (mirror MCPToolProvider) ----------------------
 
-    def apply_batch_decisions(self, decisions: dict[str, str]) -> None:
-        """REPLACE this turn's stamps (never merge) — clear-first discipline."""
-        self._stamps = dict(decisions)
+    def apply_batch_decisions(self, run_id: str, decisions: dict[str, str]) -> None:
+        """REPLACE ``run_id``'s stamps (never merge) — clear-first discipline.
+
+        REPLACE within that run's slice only (PR2a Task 5): ``{}`` still
+        clears this run's prior turn, which is what the hook's I3
+        clear-at-entry relies on, but another run's verdicts survive.
+
+        Args:
+            run_id: The run whose turn these decisions belong to.
+            decisions: ``{tool_name: verdict}`` for this turn.
+        """
+        with self._stamps_lock:
+            self._stamps = {
+                key: value
+                for key, value in self._stamps.items()
+                if key[0] != run_id
+            }
+            for name, verdict in (decisions or {}).items():
+                self._stamps[(run_id, name)] = verdict
+
+    def stamped(self, run_id: str, name: str) -> str | None:
+        """Peek at ``run_id``'s stamped verdict for ``name``, if any."""
+        with self._stamps_lock:
+            return self._stamps.get((run_id, name))
 
     @contextmanager
-    def stamp_scope(self) -> Iterator[None]:
-        """Snapshot/restore stamps around a nested sub-agent run.
+    def stamp_scope(self, run_id: str) -> Iterator[None]:
+        """Snapshot/restore ``run_id``'s stamps around a nested sub-agent run.
 
-        Clears on entry -- a deliberate divergence from a pure snapshot:
-        the child run starts stamp-less and re-checks permissions itself,
-        so a parent's verdict can never leak into nested invocations.
-        The parent's stamps are restored on exit, even on exception.
+        Clears ``run_id``'s slice on entry -- a deliberate divergence from
+        a pure snapshot, preserved from the pre-Task-5 version: a nested
+        run that somehow reused this run id would start stamp-less and
+        re-check permissions itself. The run's stamps are restored on exit,
+        even on exception; other runs' slices are untouched in both
+        directions.
+
+        Per-run keying is the real protection now (a child stamps under
+        its OWN run id and never sees this one's), and it is the only one
+        that holds once children run concurrently -- snapshot/restore is
+        sound only for a strictly nested inline child.
+
+        Args:
+            run_id: The run whose slice is cleared, then restored.
         """
-        saved = self._stamps
-        self._stamps = {}
+        with self._stamps_lock:
+            saved = {
+                key: value
+                for key, value in self._stamps.items()
+                if key[0] == run_id
+            }
+            self._stamps = {
+                key: value
+                for key, value in self._stamps.items()
+                if key[0] != run_id
+            }
         try:
             yield
         finally:
-            self._stamps = saved
+            with self._stamps_lock:
+                self._stamps = {
+                    key: value
+                    for key, value in self._stamps.items()
+                    if key[0] != run_id
+                }
+                self._stamps.update(saved)
 
     def pending_gate_for(self, name: str, args: dict) -> MCPPendingCall | None:
         """The approval payload when this call needs human gating, else None.
@@ -459,7 +517,12 @@ class LocalToolProvider:
         if self._kill_switch_engaged():
             self._record_decision_safe(self.hub_tool_for(name), "denied")
             return ToolResult(ok=False, error=LOCAL_KILL_SWITCH_REFUSAL)
-        verdict = self._verdict_for(name, args)
+        # PR2a Task 5: only the DISPATCHING run's own stamp may resolve
+        # this call. `ToolProvider.invoke` has no run parameter, so the run
+        # id rides `run_context` (bound by `AgentService` around each
+        # invocation); `""` outside any run matches no stamp a review hook
+        # writes, so such a call resolves through the fresh gate below.
+        verdict = self._verdict_for(name, args, current_run_id())
         if verdict == "allow":
             try:
                 return ToolResult(ok=True, content=_fit_result(spec.handler(args)))
@@ -510,11 +573,17 @@ class LocalToolProvider:
             logger.warning(f"LocalToolProvider: kill_switch read failed: {exc}")
             return True
 
-    def _verdict_for(self, name: str, args: dict) -> str:
+    def _verdict_for(self, name: str, args: dict, run_id: str) -> str:
         """Resolve this call's gate decision: only "allow" executes.
 
         Never raises: every injected callable is guarded, and a guard trip
         resolves to a refusing verdict.
+
+        Args:
+            name: The bare local tool name.
+            args: The call's arguments.
+            run_id: The dispatching run -- the only run whose per-turn
+                stamp may resolve this call (PR2a Task 5).
         """
         hub = self.hub_tool_for(name)
         try:
@@ -532,7 +601,7 @@ class LocalToolProvider:
             return "deny"
         # ask: per-turn stamp wins; then a live session approval; then the
         # single-call fallback; then fail closed.
-        stamp = self._stamps.get(name)
+        stamp = self.stamped(run_id, name)
         if stamp in ("approve_once", "approve_session", "always_allow"):
             if stamp != "approve_once":
                 self._persist_approval_safe(hub, stamp)

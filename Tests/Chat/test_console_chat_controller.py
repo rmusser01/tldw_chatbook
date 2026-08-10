@@ -2268,13 +2268,21 @@ def test_history_image_with_empty_mime_type_falls_back_to_default_mime(monkeypat
 # ---------------------------------------------------------------------------
 
 
+#: PR2a Task 5: the review hooks take the id of the run whose batch they
+#: are reviewing, and every gate mutation they make is scoped to it. These
+#: hook-level tests each drive ONE run, so they name it once here -- their
+#: assertions are unchanged (what a run stamps is what that run reads);
+#: cross-run isolation is pinned by `Tests/Agents/test_gate_run_scoping.py`.
+RUN = "run-1"
+
+
 class _FakeReviewProvider:
     """Stands in for `MCPToolProvider` in `build_mcp_review_hook` unit tests."""
 
     def __init__(self, gated_names: set[str]) -> None:
         self._gated_names = gated_names
         self.apply_batch_decisions_calls: list[dict[str, str]] = []
-        self._stamped: dict[str, str] = {}
+        self._stamped: dict[tuple[str, str], str] = {}
 
     def pending_gate_for(
         self, name: str, args: dict, call_id: str = ""
@@ -2294,14 +2302,20 @@ class _FakeReviewProvider:
             reason="ask",
         )
 
-    def apply_batch_decisions(self, decisions: dict[str, str]) -> None:
+    def apply_batch_decisions(self, run_id: str, decisions: dict[str, str]) -> None:
         self.apply_batch_decisions_calls.append(dict(decisions))
         # Mirrors MCPToolProvider.apply_batch_decisions' REPLACE semantics
-        # (not merge) -- see that method's own docstring (Finding F1).
-        self._stamped = dict(decisions or {})
+        # (not merge) -- see that method's own docstring (Finding F1) --
+        # and, since PR2a Task 5, that the replace is scoped to ONE run:
+        # other runs' slices survive.
+        self._stamped = {
+            key: value for key, value in self._stamped.items() if key[0] != run_id
+        }
+        for name, verdict in (decisions or {}).items():
+            self._stamped[(run_id, name)] = verdict
 
-    def stamped_decision(self, name: str) -> str | None:
-        return self._stamped.get(name)
+    def stamped_decision(self, run_id: str, name: str) -> str | None:
+        return self._stamped.get((run_id, name))
 
 
 def test_build_mcp_review_hook_clears_stamps_even_when_nothing_needs_gating():
@@ -2316,7 +2330,7 @@ def test_build_mcp_review_hook_clears_stamps_even_when_nothing_needs_gating():
     hook = build_mcp_review_hook(provider, lambda pending: {})
 
     calls = [ToolCall(name="local_only_tool", args={}, call_id="1")]
-    verdicts = hook(calls)
+    verdicts = hook(calls, RUN)
 
     assert verdicts == {}
     assert provider.apply_batch_decisions_calls == [{}]
@@ -2333,7 +2347,7 @@ def test_build_mcp_review_hook_stamps_decisions_when_gating_needed():
     hook = build_mcp_review_hook(provider, _approve)
     calls = [ToolCall(name="mcp__srv__run", args={"x": 1}, call_id="1")]
 
-    verdicts = hook(calls)
+    verdicts = hook(calls, RUN)
 
     assert verdicts == {"mcp__srv__run": "proceed"}
     # I3: the hook clears at ENTRY (unconditionally, before the round trip)
@@ -2364,7 +2378,7 @@ def test_build_mcp_review_hook_shares_one_verdict_for_same_name_calls_this_turn(
         ToolCall(name="mcp__srv__run", args={"x": 2}, call_id="2"),
     ]
 
-    verdicts = hook(calls)
+    verdicts = hook(calls, RUN)
 
     assert verdicts == {"mcp__srv__run": "proceed"}
     assert len(round_trips) == 1  # ONE request_mcp_approvals round trip
@@ -2394,8 +2408,8 @@ def test_build_mcp_review_hook_clears_stamp_at_entry_before_a_raising_round_trip
     hook = build_mcp_review_hook(
         provider, lambda pending: {"mcp__srv__run": "approve_once"}
     )
-    hook([ToolCall(name="mcp__srv__run", args={}, call_id="1")])
-    assert provider.stamped_decision("mcp__srv__run") == "approve_once"
+    hook([ToolCall(name="mcp__srv__run", args={}, call_id="1")], RUN)
+    assert provider.stamped_decision(RUN, "mcp__srv__run") == "approve_once"
 
     # Turn 2: same tool, but request_mcp_approvals now raises mid-round-trip.
     def _raise(pending):
@@ -2403,10 +2417,10 @@ def test_build_mcp_review_hook_clears_stamp_at_entry_before_a_raising_round_trip
 
     hook2 = build_mcp_review_hook(provider, _raise)
     with pytest.raises(RuntimeError):
-        hook2([ToolCall(name="mcp__srv__run", args={}, call_id="2")])
+        hook2([ToolCall(name="mcp__srv__run", args={}, call_id="2")], RUN)
 
     # No stale stamp from turn 1 must survive the raise for invoke() to peek.
-    assert provider.stamped_decision("mcp__srv__run") is None
+    assert provider.stamped_decision(RUN, "mcp__srv__run") is None
 
 
 # ---------------------------------------------------------------------------
@@ -2424,7 +2438,7 @@ class _FakeBuiltinGate:
         self.turns = 0
         self.stamped: list[tuple[str, str]] = []
 
-    def begin_turn(self) -> None:
+    def begin_turn(self, run_id: str) -> None:
         self.turns += 1
 
     def resolve(self, tool) -> EffectiveToolState:
@@ -2434,7 +2448,7 @@ class _FakeBuiltinGate:
             risk_floored=self._floored,
         )
 
-    def stamp(self, name: str, decision: str) -> None:
+    def stamp(self, run_id: str, name: str, decision: str) -> None:
         self.stamped.append((name, decision))
 
     def is_session_approved(self, name: str) -> bool:
@@ -2486,7 +2500,7 @@ def test_review_hook_gates_builtins_with_no_mcp_provider():
     hook = build_tool_review_hook(
         gate, _FakeBuiltinProvider(_FakeMutatingTool()), None, request_approvals
     )
-    verdicts = hook([_builtin_call("write_thing")])
+    verdicts = hook([_builtin_call("write_thing")], RUN)
 
     assert gate.turns == 1  # begin_turn ran first
     assert gate.stamped == [("write_thing", "approve_once")]
@@ -2545,7 +2559,7 @@ def test_review_hook_flags_read_file_path_outside_roots(monkeypatch, tmp_path):
         gate, _FakeBuiltinProvider(_file_tool("read_file")), None, request_approvals
     )
     verdicts = hook(
-        [ToolCall(name="read_file", args={"file_path": str(outside)})]
+        [ToolCall(name="read_file", args={"file_path": str(outside)})], RUN
     )
 
     row = asked["pending"][0]
@@ -2585,7 +2599,7 @@ def test_review_hook_does_not_flag_read_file_path_inside_roots(monkeypatch, tmp_
     hook = build_tool_review_hook(
         gate, _FakeBuiltinProvider(_file_tool("read_file")), None, request_approvals
     )
-    hook([ToolCall(name="read_file", args={"file_path": str(inside)})])
+    hook([ToolCall(name="read_file", args={"file_path": str(inside)})], RUN)
 
     row = asked["pending"][0]
     assert row.path_precheck_failed is False
@@ -2607,7 +2621,7 @@ def test_review_hook_leaves_non_file_builtins_unflagged():
     hook = build_tool_review_hook(
         gate, _FakeBuiltinProvider(_FakeMutatingTool()), None, request_approvals
     )
-    hook([_builtin_call("write_thing")])
+    hook([_builtin_call("write_thing")], RUN)
 
     row = asked["pending"][0]
     assert row.path_precheck_failed is False
@@ -2682,7 +2696,7 @@ def test_review_hook_precheck_uses_the_runs_workspace_not_the_active_one(
         request_approvals,
         workspace_id="ws-a",
     )
-    hook([ToolCall(name="read_file", args={"file_path": str(target_in_a)})])
+    hook([ToolCall(name="read_file", args={"file_path": str(target_in_a)})], RUN)
 
     row = asked["pending"][0]
     assert row.path_precheck_failed is False
@@ -2726,7 +2740,7 @@ def test_review_hook_precheck_does_not_fall_back_to_the_active_workspace(
         request_approvals,
         workspace_id="ws-a",
     )
-    hook([ToolCall(name="read_file", args={"file_path": str(target_in_b)})])
+    hook([ToolCall(name="read_file", args={"file_path": str(target_in_b)})], RUN)
 
     row = asked["pending"][0]
     assert row.path_precheck_failed is True
@@ -2742,7 +2756,7 @@ def test_allow_resolved_builtin_never_prompts():
         None,
         lambda pending: calls.append(pending) or {},
     )
-    assert hook([_builtin_call("write_thing")]) == {}
+    assert hook([_builtin_call("write_thing")], RUN) == {}
     assert calls == []  # no card shown
 
 
@@ -2756,7 +2770,7 @@ def test_deny_resolved_builtin_is_not_offered_to_the_user():
         None,
         lambda pending: calls.append(pending) or {},
     )
-    hook([_builtin_call("write_thing")])
+    hook([_builtin_call("write_thing")], RUN)
     assert calls == []  # a tool that is Off gets no approval card
 
 
@@ -2773,7 +2787,7 @@ def test_begin_turn_runs_even_when_approvals_raise():
         gate, _FakeBuiltinProvider(_FakeMutatingTool()), None, boom
     )
     with pytest.raises(RuntimeError):
-        hook([_builtin_call("write_thing")])
+        hook([_builtin_call("write_thing")], RUN)
     assert gate.turns == 1
 
 
@@ -2787,7 +2801,7 @@ def test_unknown_names_are_returned_unreviewed():
         None,
         lambda pending: {},
     )
-    assert hook([_builtin_call("some_skill")]) == {}
+    assert hook([_builtin_call("some_skill")], RUN) == {}
 
 
 def test_mcp_and_builtin_share_one_round_trip():
@@ -2811,7 +2825,7 @@ def test_mcp_and_builtin_share_one_round_trip():
         _builtin_call("write_thing"),
     ]
 
-    verdicts = hook(calls)
+    verdicts = hook(calls, RUN)
 
     assert len(round_trips) == 1
     names_asked = {row.llm_name for row in round_trips[0]}
@@ -2885,7 +2899,7 @@ def test_approve_for_session_is_not_re_prompted_next_turn():
 
     # Turn 1: no session approval yet -- a card IS shown, and the user
     # approves for session.
-    verdict1 = hook([_builtin_call("write_thing")])
+    verdict1 = hook([_builtin_call("write_thing")], RUN)
     assert len(round_trips) == 1
     assert round_trips[0][0].llm_name == "write_thing"
     assert verdict1 == {"write_thing": "proceed"}
@@ -2893,7 +2907,7 @@ def test_approve_for_session_is_not_re_prompted_next_turn():
     # Turn 2: `begin_turn()` clears the turn-scoped `_stamps` dict, but the
     # SESSION approval lives on the fake service, not in `_stamps` -- no
     # second round trip.
-    verdict2 = hook([_builtin_call("write_thing")])
+    verdict2 = hook([_builtin_call("write_thing")], RUN)
     assert len(round_trips) == 1  # still just the one round trip
     # Nothing needed gating this turn, so the call is absent from the
     # returned map entirely -- purely documentary, exactly like an
@@ -2903,7 +2917,7 @@ def test_approve_for_session_is_not_re_prompted_next_turn():
     assert verdict2 == {}
     # And the call genuinely still proceeds: this is the EXACT verdict
     # `BuiltinToolProvider.invoke()` consults on dispatch.
-    assert gate.check(tool) is None
+    assert gate.check(tool, RUN) is None
 
 
 # ---------------------------------------------------------------------------
@@ -4272,10 +4286,10 @@ def test_kill_switch_refuses_unclaimed_tool_calls_at_the_review_hook():
     )
 
     class _Gate:
-        def begin_turn(self): pass
+        def begin_turn(self, run_id): pass
         def resolve(self, tool):
             return SimpleNamespace(state="ask", risk_floored=False)
-        def stamp(self, name, decision): pass
+        def stamp(self, run_id, name, decision): pass
         def is_session_approved(self, name): return False
         def options_for(self, tool):
             return ("approve_once", "approve_session", "deny")
@@ -4298,7 +4312,7 @@ def test_kill_switch_refuses_unclaimed_tool_calls_at_the_review_hook():
         ToolCall(name="spawn_subagent", args={"task": "x"}, call_id="c1"),
         ToolCall(name="skill__notes__summarize", args={}, call_id="c2"),
         ToolCall(name="find_tools", args={"query": "q"}),
-    ])
+    ], RUN)
 
     assert not prompted, "the kill switch must refuse, not prompt"
     assert verdicts.get("c1") == KILL_SWITCH_REFUSAL
@@ -4318,10 +4332,10 @@ def test_kill_switch_off_changes_nothing():
     from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
 
     class _Gate:
-        def begin_turn(self): pass
+        def begin_turn(self, run_id): pass
         def resolve(self, tool):
             return SimpleNamespace(state="ask", risk_floored=False)
-        def stamp(self, name, decision): pass
+        def stamp(self, run_id, name, decision): pass
         def is_session_approved(self, name): return False
         def options_for(self, tool):
             return ("approve_once", "approve_session", "deny")
@@ -4339,7 +4353,7 @@ def test_kill_switch_off_changes_nothing():
             kill_switch=switch,
         )
         verdicts = hook(
-            [ToolCall(name="read_file", args={"path": "a"}, call_id="c1")]
+            [ToolCall(name="read_file", args={"path": "a"}, call_id="c1")], RUN
         )
         assert verdicts.get("c1", "proceed") == "proceed", (switch, verdicts)
 
@@ -4363,10 +4377,10 @@ def test_unclaimed_names_pass_through_the_hook_unreviewed_switch_off():
     from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
 
     class _Gate:
-        def begin_turn(self): pass
+        def begin_turn(self, run_id): pass
         def resolve(self, tool):
             return SimpleNamespace(state="ask", risk_floored=False)
-        def stamp(self, name, decision): pass
+        def stamp(self, run_id, name, decision): pass
         def is_session_approved(self, name): return False
         def options_for(self, tool):
             return ("approve_once", "approve_session", "deny")
@@ -4386,7 +4400,7 @@ def test_unclaimed_names_pass_through_the_hook_unreviewed_switch_off():
         ToolCall(name="find_tools", args={"query": "q"}, call_id="c2"),
         ToolCall(name="load_tools", args={"names": []}, call_id="c3"),
         ToolCall(name="skill__notes__summarize", args={}, call_id="c4"),
-    ])
+    ], RUN)
 
     assert not prompted, "unclaimed names must not be offered a card"
     assert verdicts == {}, (
