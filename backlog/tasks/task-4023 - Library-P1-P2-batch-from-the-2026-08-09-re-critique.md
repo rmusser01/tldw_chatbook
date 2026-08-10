@@ -4,6 +4,7 @@ title: Library P1/P2 batch from the 2026-08-09 re-critique
 status: To Do
 assignee: []
 created_date: '2026-08-09 20:30'
+updated_date: '2026-08-10 00:15'
 labels:
   - library
   - ux
@@ -82,3 +83,9 @@ split if any item grows.
 - [ ] #6 Search results are visible at the point of action, Enter runs the search, and one query model backs both inputs
 - [ ] #7 Each remaining copy/layout item is fixed or declined with a one-line reason in the notes
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Cross-task observation (2026-08-09, task-4022 review round 2): Library now ships three different reversibility stories on one screen -- notes are silently GC'd with no undo, bulk media delete gets an in-place Undo receipt, and single media delete gets nothing at all. This is the same divergence the re-critique scored heuristic #4 (Consistency and Standards) a 1 for; worth reconciling as part of AC#5 (one active-state/interaction grammar) rather than as a separate item.
+<!-- SECTION:NOTES:END -->

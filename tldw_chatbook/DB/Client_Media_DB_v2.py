@@ -3494,6 +3494,7 @@ class MediaDatabase:
         overwrite: bool = False,
         chunk_options: Optional[Dict] = None,
         chunks: Optional[List[Dict[str, Any]]] = None,
+        restore_trashed: bool = False,
     ) -> Tuple[Optional[int], Optional[str], str]:
         """Add or update a media record, handle keyword links, optional chunks and full-text sync.
 
@@ -3504,13 +3505,24 @@ class MediaDatabase:
         operation that returned a media_id -- creates and updates, but not
         duplicate skips. Callback failures are logged and never propagate.
 
-        task-4022: when the URL/hash match is a row currently in trash
-        (``is_trash = 1``), it is always restored and updated (as if
-        ``overwrite=True``) regardless of the ``overwrite`` argument -- a
-        trashed row is not an active duplicate to protect from being
-        clobbered, and the alternative (a silent duplicate-skip) would leave
-        the file permanently un-importable. ``overwrite`` still governs
-        ordinary (non-trashed) matches exactly as before.
+        task-4022 (review round 2): when the URL/hash match is a row
+        currently in trash (``is_trash = 1``), it is restored and updated
+        (as if ``overwrite=True``) ONLY when the caller explicitly passes
+        ``restore_trashed=True``. This is opt-in, not a change to the
+        default ``overwrite=False`` contract: a caller that doesn't ask for
+        restore gets exactly the pre-task-4022 behavior for a trashed match
+        (duplicate-skip, or URL canonicalization if applicable) -- the row
+        stays trashed and untouched. Restore was previously unconditional
+        for ANY trashed match regardless of ``overwrite``, which silently
+        resurrected rows for callers that never asked for that (chatbook
+        SKIP-conflict imports, reading-list bulk imports matching on
+        content hash, Console "save message as media") -- see task-4022's
+        review round 2 findings I1-I3. The one caller that DOES want
+        "re-importing this file un-trashes it" -- the real Library ingest
+        writer, ``Local_Ingestion/local_file_ingestion.py``'s
+        ``persist_parsed_media`` -- passes ``restore_trashed=True``
+        explicitly. ``overwrite`` still governs ordinary (non-trashed)
+        matches exactly as before, independent of this flag.
         """
         media_id, media_uuid, message = self._add_media_with_keywords_impl(
             url=url,
@@ -3527,6 +3539,7 @@ class MediaDatabase:
             overwrite=overwrite,
             chunk_options=chunk_options,
             chunks=chunks,
+            restore_trashed=restore_trashed,
         )
         if media_id is not None:
             dispatch_media_post_ingest(self, media_id, media_uuid)
@@ -3549,6 +3562,7 @@ class MediaDatabase:
         overwrite: bool = False,
         chunk_options: Optional[Dict] = None,
         chunks: Optional[List[Dict[str, Any]]] = None,
+        restore_trashed: bool = False,
     ) -> Tuple[Optional[int], Optional[str], str]:
         """Transactional body of ``add_media_with_keywords`` (see wrapper above)."""
 
@@ -3614,12 +3628,27 @@ class MediaDatabase:
                 "deleted": 0,
             }
 
-        def _persist_chunks(cnx: sqlite3.Connection, media_id: int) -> None:
-            """Delete/insert un-vectorized chunks as requested. DOES NOT update parent Media."""
+        def _persist_chunks(
+            cnx: sqlite3.Connection, media_id: int, *, replace_existing: bool
+        ) -> None:
+            """Delete/insert un-vectorized chunks as requested. DOES NOT update parent Media.
+
+            ``replace_existing`` (task-4022 review round 2 / C1) must be
+            passed explicitly by every caller rather than read off the
+            outer ``overwrite`` closure variable: the trash-restore path
+            (``restoring_from_trash``) can reach this function with
+            ``overwrite=False`` -- the real Library ingest writer never
+            passes ``overwrite=True`` -- and without also gating the
+            DELETE on ``restoring_from_trash``, stale chunk rows left over
+            from BEFORE the item was trashed survive the restore and
+            collide with the fresh INSERTs on
+            ``UNIQUE(media_id, chunk_index, chunk_type)``, raising
+            ``sqlite3.IntegrityError`` and rolling back the whole restore.
+            """
             if chunks is None:
                 return  # caller did not touch chunks
 
-            if overwrite:
+            if replace_existing:
                 cnx.execute(
                     "DELETE FROM UnvectorizedMediaChunks WHERE media_id = ?",
                     (media_id,),
@@ -3722,15 +3751,30 @@ class MediaDatabase:
                     current_ver = row["version"]
                     existing_url = row["url"]
                     existing_hash = row["content_hash"]
-                    # task-4022: a matched row that's sitting in trash is not
-                    # an active duplicate to protect -- the user's intent in
-                    # re-importing it is "I want this file in my library
-                    # again". Route it through the full-update path (which
-                    # always writes is_trash=0/trash_date=NULL) regardless of
-                    # the caller's ``overwrite`` flag, instead of the
-                    # duplicate-skip path below that returns media_id=None
-                    # and leaves the row trashed forever.
-                    restoring_from_trash = bool(row["is_trash"])
+                    # task-4022 (review round 2): a matched row that's
+                    # sitting in trash is only routed through the
+                    # full-update path (which writes is_trash=0/
+                    # trash_date=NULL) when the CALLER opted in via
+                    # ``restore_trashed=True`` -- restoring is no longer
+                    # unconditional for any trashed match, since that
+                    # silently resurrected rows for callers that never
+                    # asked for it (I1). A caller that didn't opt in still
+                    # falls through to the duplicate-skip / canonicalize
+                    # path below, exactly as it did before task-4022.
+                    restoring_from_trash = bool(row["is_trash"]) and restore_trashed
+                    # task-4022 (review round 2 / I3): when restoring, only
+                    # canonicalize ``url`` in the same one direction the
+                    # pre-existing ``is_canonicalisation`` branch (Case A.2
+                    # below) always has -- auto-generated ``local://...``
+                    # -> a real url, never the reverse. Restoring from a
+                    # less-canonical source (e.g. a local file path) must
+                    # not clobber an already-canonical source url (e.g. the
+                    # https:// the row was first imported from).
+                    restore_canonicalizes_url = (
+                        restoring_from_trash
+                        and existing_url.startswith("local://")
+                        and not url.startswith("local://")
+                    )
 
                     # Case A.1: Overwrite is requested, or the match is a
                     # trashed row being restored.
@@ -3761,9 +3805,23 @@ class MediaDatabase:
                                 != transcription_provenance_json
                             )
 
-                            # Update keywords first
-                            self.update_keywords_for_media(media_id, keywords_norm)
-                            _persist_chunks(conn, media_id)
+                            # Update keywords first (task-4022 review round
+                            # 2 / I2: a restore with no incoming keywords
+                            # must NOT wipe the row's existing, user-
+                            # curated keywords -- ``keywords=[]`` here
+                            # almost always just means "the caller didn't
+                            # pass any", not "the user wants them all
+                            # removed". A genuine explicit clear via
+                            # ``overwrite=True`` + ``keywords=[]`` is
+                            # unaffected -- this only skips the sync when
+                            # BOTH conditions hold.)
+                            if not (restoring_from_trash and not keywords_norm):
+                                self.update_keywords_for_media(media_id, keywords_norm)
+                            _persist_chunks(
+                                conn,
+                                media_id,
+                                replace_existing=overwrite or restoring_from_trash,
+                            )
 
                             # If metadata changed or chunks were provided, update the Media record
                             # (task-4022: also force through when restoring a trashed match,
@@ -3794,22 +3852,30 @@ class MediaDatabase:
                                     # one ``is_canonicalisation`` used to
                                     # cover before a trashed match started
                                     # bypassing that ``overwrite=False``-only
-                                    # branch entirely -- without also
-                                    # canonicalizing ``url`` here, a row
-                                    # restored via this path would end up
-                                    # live (``is_trash=0``) but still
-                                    # addressed by its STALE url (e.g. the
-                                    # auto-generated ``local://...`` it was
-                                    # first created under), so
-                                    # ``get_media_by_url(<the url just
-                                    # imported>)`` would return ``None`` for
-                                    # a real, un-trashed item until a LATER
-                                    # re-import happened to land on this
-                                    # same identical-content branch again.
-                                    update_fields.extend(
-                                        ["url = ?", "is_trash = ?", "trash_date = ?"]
-                                    )
-                                    update_params.extend([url, 0, None])
+                                    # branch entirely -- ``is_trash``/
+                                    # ``trash_date`` must always reset here
+                                    # or the row would end up live but still
+                                    # sitting behind a stale trash flag.
+                                    #
+                                    # review round 2 (I3): ``url`` itself
+                                    # must NOT always follow -- only when
+                                    # ``restore_canonicalizes_url`` (computed
+                                    # above, mirroring the pre-existing
+                                    # ``is_canonicalisation`` branch's own
+                                    # one-directional rule: auto-generated
+                                    # ``local://...`` -> a real url, never
+                                    # the reverse). Writing url
+                                    # unconditionally would let a restore
+                                    # FROM a less-canonical source (e.g. a
+                                    # local file path) silently replace an
+                                    # already-canonical source url (e.g. the
+                                    # https:// the row was first imported
+                                    # from).
+                                    update_fields.extend(["is_trash = ?", "trash_date = ?"])
+                                    update_params.extend([0, None])
+                                    if restore_canonicalizes_url:
+                                        update_fields.append("url = ?")
+                                        update_params.append(url)
 
                                 if metadata_changed:
                                     update_fields.extend(
@@ -3849,8 +3915,10 @@ class MediaDatabase:
                                 }
                                 if restoring_from_trash:
                                     sync_payload.update(
-                                        {"url": url, "is_trash": 0, "trash_date": None}
+                                        {"is_trash": 0, "trash_date": None}
                                     )
+                                    if restore_canonicalizes_url:
+                                        sync_payload["url"] = url
                                 if metadata_changed:
                                     sync_payload.update(
                                         {
@@ -3966,14 +4034,23 @@ class MediaDatabase:
                         self._update_fts_media(
                             conn, media_id, payload["title"], payload["content"]
                         )
-                        self.update_keywords_for_media(media_id, keywords_norm)
+                        # task-4022 review round 2 / I2: see the identical-
+                        # content branch above for why an empty incoming
+                        # keyword list is skipped, not synced, while
+                        # restoring from trash.
+                        if not (restoring_from_trash and not keywords_norm):
+                            self.update_keywords_for_media(media_id, keywords_norm)
                         self.create_document_version(
                             media_id=media_id,
                             content=content,
                             prompt=prompt,
                             analysis_content=analysis_content,
                         )
-                        _persist_chunks(conn, media_id)
+                        _persist_chunks(
+                            conn,
+                            media_id,
+                            replace_existing=overwrite or restoring_from_trash,
+                        )
                         # Log metrics for content update
                         duration = time.time() - start_time
                         log_histogram(
@@ -4122,7 +4199,10 @@ class MediaDatabase:
                         prompt=prompt,
                         analysis_content=analysis_content,
                     )
-                    _persist_chunks(conn, media_id)
+                    # A brand-new row can't have pre-existing chunks to
+                    # collide with; ``replace_existing`` is a no-op DELETE
+                    # here either way, kept for signature consistency.
+                    _persist_chunks(conn, media_id, replace_existing=overwrite)
                     if chunk_options:
                         logging.info(
                             "chunk_options ignored (placeholder): %s", chunk_options

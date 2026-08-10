@@ -185,9 +185,13 @@ later.", and the single-item copy (which has no in-place Undo) says
 browse."
 
 **Tests.** New: `Tests/Media_DB/test_media_db_v2.py::TestReimportAfterTrash`
-(3 tests, real file-backed `MediaDatabase`) covers url-match restore,
-hash-fallback restore, and a guard rail that an ACTIVE duplicate is still
-skipped exactly as before. `Tests/UI/test_library_multiselect_media.py`
+(4 tests, real file-backed `MediaDatabase` -- M7 correction: this was
+written as "3 tests" below when first drafted, but round 1 added a fourth,
+`test_reimport_identical_content_at_new_url_canonicalizes_url`, without
+this paragraph being updated to match) covers url-match restore,
+hash-fallback restore, a guard rail that an ACTIVE duplicate is still
+skipped exactly as before, and round 1's url-canonicalization regression.
+`Tests/UI/test_library_multiselect_media.py`
 gained 3 real-DB Undo tests (full success, partial failure, a
 duplicate-insert guard) plus 4 handler-level tests (Undo dispatch/no-op/
 in-flight-guard, Dismiss) and 2 canvas-render tests for the receipt row;
@@ -221,7 +225,122 @@ receipt afterward: it no-opped safely (no duplicate row, `Media` stayed at
 1), confirming the dedup guard in `_undo_library_media_bulk_delete` holds
 even when a receipt outlives the item it names.
 
-**Files changed:**
+**Review round 2 (final-review fix wave, `fix/library-recritique-p1s`):
+scoped restore to opt-in and fixed three defects the unconditional form
+of round 1 introduced.** A second review of this task's DB-layer hunk
+found 1 Critical + 3 Important, all confined to
+`_add_media_with_keywords_impl`, plus a records-hygiene item on the
+critique doc itself:
+
+- **Adopted the reviewer's architectural recommendation first:** added
+  `restore_trashed: bool = False` to `add_media_with_keywords` /
+  `_add_media_with_keywords_impl`. `restoring_from_trash` is now
+  `bool(row["is_trash"]) and restore_trashed` instead of unconditional on
+  any trashed match -- the `overwrite=False` "never mutate an existing
+  row" contract is intact again for every caller that doesn't ask for
+  restore. Only `Local_Ingestion/local_file_ingestion.py`'s
+  `persist_parsed_media` (the real Library ingest writer, both its
+  `app.py` and `ingest_local_file` call paths) passes
+  `restore_trashed=True` -- it is the one caller whose user-facing
+  behavior actually needs "re-importing this file un-trashes it."
+  `ingest_article_to_db_new`/`import_obsidian_note_to_db` (module-level
+  wrappers) were left unchanged: neither is named by any finding, and
+  scoping the flag to just the flagged callers keeps the blast radius
+  exactly as small as the reviewer asked for.
+- **C1 (Critical) fixed:** `_persist_chunks` took a `replace_existing`
+  parameter instead of reading the outer `overwrite` closure variable;
+  both restore sub-paths now pass `overwrite or restoring_from_trash`, so
+  a chunked re-import of a trashed row deletes the stale chunk rows
+  before inserting instead of colliding on
+  `UNIQUE(media_id, chunk_index, chunk_type)`. (SQLite treats a NULL
+  `chunk_type` as always distinct in a UNIQUE index, so the regression
+  tests had to give chunks an explicit, shared `chunk_type` to actually
+  reproduce the collision -- an omitted one would have passed for the
+  wrong reason.)
+- **I1 (Important) resolved by construction:** the opt-in flag itself is
+  the fix. Verified all three non-import callers I1 named still leave a
+  trashed match untouched, since none passes `restore_trashed=True`:
+  `Chatbooks/chatbook_importer.py`'s `_import_media` (real-DB regression
+  test added), `Media/local_media_reading_service.py`'s
+  `_materialize_reading_import_row` content-hash leg (real-DB regression
+  test added), and `UI/Console_Modules/message.py`'s
+  `_save_console_message_as_media` (verified by reading the call site --
+  no `restore_trashed` kwarg passed; a full Textual-pilot test was judged
+  disproportionate for a call site with no opt-in flag to test).
+- **I2 (Important) fixed:** both restore branches now skip
+  `update_keywords_for_media` when `restoring_from_trash and not
+  keywords_norm` -- an empty incoming keyword list on a restore no longer
+  wipes the row's existing, user-curated keywords. A restore that DOES
+  supply keywords still applies them normally (unchanged, pinned by a
+  guard-rail test).
+- **I3 (Important) fixed:** the identical-content restore branch's `url`
+  write is now gated on `restore_canonicalizes_url` (`existing_url`
+  starts with `local://` and the new `url` doesn't), mirroring the
+  pre-existing `is_canonicalisation` branch's one-directional rule
+  instead of reversing it. A row imported from a canonical source url,
+  trashed, then re-imported from a local file path with identical
+  content now keeps its canonical url. Also fixed the stale "never
+  touches url" test comment this drift left behind (`Tests/Media_DB/
+  test_media_db_v2.py`, the hash-fallback test) and added a real
+  assertion pinning it.
+- **Every fix was mutation-tested**, not just written-then-run-once: each
+  of C1/I1/I2/I3 was reverted in isolation via targeted `Edit` calls
+  (never `git checkout`/stash, per this repo's mutation-restore lesson),
+  confirmed the relevant new test(s) failed with the exact symptom the
+  finding described (`sqlite3.IntegrityError` for C1, resurrection for
+  I1, wiped keywords for I2, clobbered canonical url for I3), then
+  restored.
+- **New tests** (all real, file-backed `MediaDatabase`, no mocks):
+  `TestRestoreTrashedIsOptIn` (2), `TestReimportAfterTrashChunks` (2),
+  `TestReimportAfterTrashKeywords` (2),
+  `TestReimportAfterTrashUrlCanonicalization` (1), and
+  `TestReimportAfterTrashCombined` (1) -- the last is the reviewer's own
+  suggested coverage: ONE test exercising restore with chunks, existing
+  keywords, and a canonical url together, which alone would have caught
+  C1+I2+I3. All in `Tests/Media_DB/test_media_db_v2.py`. Plus one
+  caller-level regression test each in `Tests/Chatbooks/
+  test_chatbook_importer.py` and `Tests/Media/
+  test_local_media_reading_service.py` for I1(a)/I1(b). The pre-existing
+  `TestReimportAfterTrash` tests were updated to pass
+  `restore_trashed=True` explicitly, matching what the real ingest writer
+  now does.
+- **I4 (records):** fixed the re-critique document itself --
+  `p1_count: 9` -> `8` in the frontmatter (the correction note already
+  said to read it as 8), added an inline withdrawal marker on the RC-02
+  bullet in the P1 list (68 lines below the correction, it still read as
+  a live finding), and corrected the conclusion's "Two of our own shipped
+  fixes (nav ghosting, blank-note GC)" to name only the blank-note GC
+  (nav ghosting was a measurement artifact, not a broken fix).
+- **Minors:** re-stamped `Docs/User_Guide/library/media-and-conversations.md`
+  from a branch SHA (`8bb6dd730`, a commit on THIS branch, not dev) to the
+  actual dev merge-base (`e13608106`); fixed this task's own "3 tests"
+  claim above to "4" (M7).
+- **Targeted suites, 0 regressions:** `Media_DB` (94 passed, 6 skipped --
+  sync-server integration), `Chatbooks` (188 passed, 1 skipped -- slow
+  opt-in), `Media/test_local_media_reading_service.py` (67 passed),
+  `UI/test_library_multiselect_media.py` (38 passed),
+  `Local_Ingestion`+`Library/test_library_ingest_*` (207 passed). A
+  `--collect-only -q` sweep across every touched tree (2,837 tests) found
+  no import errors.
+
+**Files changed (round 2):**
+- `tldw_chatbook/DB/Client_Media_DB_v2.py` -- opt-in `restore_trashed`
+  flag, `_persist_chunks(replace_existing=...)`, I2 keyword-skip, I3 url
+  gating
+- `tldw_chatbook/Local_Ingestion/local_file_ingestion.py` --
+  `persist_parsed_media` passes `restore_trashed=True`
+- `Tests/Media_DB/test_media_db_v2.py` -- 4 existing tests updated
+  (`restore_trashed=True`), 8 new tests across 5 new classes
+- `Tests/Chatbooks/test_chatbook_importer.py`,
+  `Tests/Media/test_local_media_reading_service.py` -- one caller-level
+  regression test each
+- `Docs/User_Guide/library/media-and-conversations.md` -- SHA re-stamp
+- `.impeccable/critique/2026-08-09T20-15-07Z__tldw-chatbook-ui-screens-library-screen-py.md`
+  -- I4 corrections
+- `backlog/tasks/task-4023 - *.md` -- cross-task reversibility-inconsistency
+  note
+
+**Files changed (round 1):**
 - `tldw_chatbook/DB/Client_Media_DB_v2.py` -- the dedup/restore fix
 - `tldw_chatbook/Library/library_media_state.py` -- `delete_receipt_count`
 - `tldw_chatbook/UI/Screens/library_screen.py` -- receipt state, Undo/

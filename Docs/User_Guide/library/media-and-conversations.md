@@ -274,7 +274,7 @@ behavior for the bulk-delete confirmation is covered in the
 [Library overview](../library.md#keyboard--commands), not duplicated
 here).*
 
-*Verified against dev @ 8bb6dd730 — 2026-08-09 (task-4022: a re-critique
+*Verified against dev @ e13608106 — 2026-08-09 (task-4022: a re-critique
 found the confirm copy promised a Trash that didn't exist anywhere in the
 product, a deleted file could never be re-imported (the dedup match didn't
 exclude trashed rows), and bulk delete had no receipt or undo. Fixed: a

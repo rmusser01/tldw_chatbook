@@ -1573,6 +1573,16 @@ def persist_parsed_media(
             split, wrapped both the parse and the DB-write steps with this
             same message shape) so composed callers see identical error
             text regardless of which stage failed.
+
+    task-4022 (review round 2): this is the ONE caller in the codebase
+    that wants "re-importing this file un-trashes it" -- it's the real
+    Library ingest writer, and the user re-importing a file they
+    previously deleted is asking for exactly that. It passes
+    ``restore_trashed=True`` explicitly. Every other
+    ``add_media_with_keywords`` caller (chatbook SKIP-conflict imports,
+    reading-list bulk imports, Console "save message as media", ...)
+    leaves the flag at its default ``False`` and a trashed match is left
+    untouched, same as before task-4022 ever existed.
     """
     file_type = payload["file_type"]
     _reject_empty_extraction(payload, file_type)
@@ -1592,6 +1602,7 @@ def persist_parsed_media(
             ingestion_date=datetime.now().strftime("%Y-%m-%d"),
             chunks=payload["chunks"],
             chunk_options=payload["chunk_options"],
+            restore_trashed=True,
         )
         logger.info(f"Successfully ingested {file_type} file with media_id: {media_id}")
         return media_id, media_uuid, message
