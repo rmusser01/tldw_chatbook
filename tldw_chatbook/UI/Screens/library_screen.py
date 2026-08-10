@@ -19923,6 +19923,20 @@ class LibraryScreen(BaseAppScreen):
         if not callable(submit):
             self._notify_library_ingest_warning(INGEST_UNAVAILABLE_COPY)
             return
+        # (task-14823) A selection the pre-flight already knows can import
+        # nothing must not reach the queue: an empty folder used to leave
+        # Start enabled, and the press manufactured "✗ failed · emptydir ·
+        # No files to import were found in this folder." -- a permanent
+        # failure receipt, in the tally and in Recent imports, for an
+        # outcome that was predictable before the click. Enforced HERE,
+        # not only on the Button's disabled flag, so no entry point
+        # (Enter, accelerator, a future caller) can route around it.
+        gate_state = self._build_library_ingest_state()
+        if gate_state.selection_has_nothing_importable is True:
+            reason = gate_state.start_quiet_line
+            if reason:
+                self._notify_library_ingest_warning(reason)
+            return
         if form.preflight is not None and form.preflight.warnings:
             # (task-3314) Mirrors the queue's Clear-finished two-press
             # mechanism (task-2015/2160): arm in place, never submit on

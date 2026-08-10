@@ -1,5 +1,6 @@
 """Integration tests for the Library ingest flow."""
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -308,3 +309,173 @@ async def test_unsupported_file_not_retryable(library_screen, tmp_path):
     # Here we just verify the registry-level flag that drives the UI.
     assert job.error_detail is not None
     assert job.error_detail.get("category") == "unsupported_file_type"
+
+
+# --- task-14820: the forecast must match the receipt ------------------------
+
+
+@pytest.mark.asyncio
+async def test_forecast_counts_equal_the_real_receipt_for_a_mixed_folder(
+    tmp_path,
+):
+    """(task-14820 AC#3) GOVERNANCE: the forecast is measured against what
+    the pipeline actually does, not against the other line on screen.
+
+    A mixed folder is staged on an install with no pdf/ebook/OCR backends
+    (this venv), the forecast is computed from the REAL pre-flight, and
+    the same folder is then run through the REAL submit path -- real
+    ``submit_library_ingest_job``, real ``run_parse_job``, real
+    ``persist_parsed_media``, real ``MediaDatabase`` (only the process
+    pool is an in-process stand-in, per the runner suite's own contract).
+    Every forecast bucket is asserted against the terminal job states.
+
+    The old forecast promised ``5 will import`` for this folder and
+    delivered 2 -- ``will_import = supported_total - will_match`` counted
+    the pdf/epub/png files as imports even though the pre-flight had
+    already warned that their required tooling was absent.
+    """
+    from tldw_chatbook.Library.ingest_capabilities import (
+        get_capabilities,
+        _is_installed,
+    )
+    from tldw_chatbook.Library.ingest_preflight import analyze_path
+    from tldw_chatbook.Library.library_ingest_state import (
+        build_ingest_forecast,
+        forecast_summary_line,
+    )
+    from tldw_chatbook.Library.library_ingest_jobs import IngestJobState
+    from Tests.Library.test_library_ingest_runner import (
+        _IngestRunnerHarness,
+        _make_db,
+        _wait_for_runner_idle,
+    )
+
+    # The bug lives in the absence of optional backends; if a future venv
+    # installs them the fixture no longer exercises it, so say so loudly
+    # rather than passing vacuously.
+    for group in ("pdf", "ebook", "image"):
+        missing = [
+            feature
+            for feature in get_capabilities(group).required_features
+            if not _is_installed(feature)
+        ]
+        assert missing, (
+            f"{group} tooling is installed in this environment; this "
+            "governance fixture cannot exercise the tooling forecast"
+        )
+
+    folder = tmp_path / "mixed"
+    folder.mkdir()
+    (folder / "notes.txt").write_text("Tides are driven by the moon.")
+    (folder / "memo.txt").write_text("A second perfectly ingestible note.")
+    (folder / "empty.txt").write_text("")
+    (folder / "weird.xyz").write_bytes(b"no handler for this")
+    (folder / "doc.pdf").write_bytes(b"%PDF-1.4 not really a pdf")
+    (folder / "book.epub").write_bytes(b"PK not really an epub")
+    (folder / "diagram.png").write_bytes(b"\x89PNG not really a png")
+
+    preflight = analyze_path(str(folder))
+    forecast = build_ingest_forecast(preflight)
+    assert forecast is not None
+    # The forecast the user would read at the commit point.
+    assert forecast_summary_line(forecast) == (
+        "2 will import · 1 will skip · 4 will fail (3 need tooling, 1 empty)"
+    )
+
+    db = _make_db(tmp_path, name="forecast-governance.db")
+    app = _IngestRunnerHarness(db, worker_count=2)
+    try:
+        async with app.run_test() as pilot:
+            app.submit_library_ingest_job(source_path=str(folder))
+            jobs = app.library_ingest_jobs.jobs()
+            assert len(jobs) == 7
+
+            terminal = {
+                IngestJobState.DONE,
+                IngestJobState.FAILED,
+                IngestJobState.SKIPPED,
+                IngestJobState.CANCELLED,
+            }
+            for _ in range(600):
+                snapshot = app.library_ingest_jobs.jobs()
+                if all(job.state in terminal for job in snapshot):
+                    break
+                await pilot.pause(0.02)
+            else:  # pragma: no cover - diagnostic only
+                raise AssertionError(
+                    "jobs never settled: "
+                    f"{[(j.source_path, j.state) for j in snapshot]}"
+                )
+            await _wait_for_runner_idle(app, pilot)
+
+            outcomes = {
+                Path(job.source_path).name: job
+                for job in app.library_ingest_jobs.jobs()
+            }
+            actual_done = sum(
+                1
+                for job in outcomes.values()
+                if job.state is IngestJobState.DONE
+            )
+            actual_skipped = sum(
+                1
+                for job in outcomes.values()
+                if job.state is IngestJobState.SKIPPED
+            )
+            actual_failed = sum(
+                1
+                for job in outcomes.values()
+                if job.state is IngestJobState.FAILED
+            )
+
+            assert (
+                forecast.will_import,
+                forecast.will_skip,
+                forecast.will_fail,
+            ) == (actual_done, actual_skipped, actual_failed), (
+                "forecast disagreed with the receipt: "
+                f"{[(name, job.state.value) for name, job in outcomes.items()]}"
+            )
+            # ...and each bucket holds the files the forecast said it would.
+            assert forecast.will_fail_tooling == 3
+            assert forecast.will_fail_empty == 1
+            assert {
+                name
+                for name, job in outcomes.items()
+                if job.state is IngestJobState.FAILED
+            } == {"doc.pdf", "book.epub", "diagram.png", "empty.txt"}
+
+            # (task-14821 AC#3) The no-content refusals happen BEFORE any
+            # write; the receipt must not call them write errors.
+            png_detail = outcomes["diagram.png"].error_detail or {}
+            assert png_detail.get("category") == "no_content"
+            empty_detail = outcomes["empty.txt"].error_detail or {}
+            assert empty_detail.get("category") == "empty_source"
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_empty_folder_creates_no_job_at_all(library_screen, tmp_path):
+    """(task-14823 AC#3) Pressing Start on an empty folder used to leave a
+    permanent "✗ failed · emptydir" receipt in the queue and in Recent
+    imports -- for a selection the pre-flight had already diagnosed."""
+    screen, pilot = library_screen
+    folder = tmp_path / "emptydir"
+    folder.mkdir()
+
+    form = screen._library_ingest_form
+    form.path = str(folder)
+    screen._trigger_preflight(str(folder))
+    await screen.app.workers.wait_for_complete()
+    await pilot.pause()
+
+    state = screen._build_library_ingest_state()
+    assert state.start_enabled is False
+    assert state.selection_has_nothing_importable is True
+
+    screen._submit_library_ingest_form()
+    await pilot.pause()
+    await pilot.pause()
+
+    assert screen.app_instance.library_ingest_jobs.jobs() == ()

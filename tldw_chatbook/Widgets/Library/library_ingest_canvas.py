@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import PurePath
 from typing import Any
@@ -53,6 +54,125 @@ def _command_short_name(command: str) -> str:
     if match:
         return match.group(1)
     return command if len(command) <= 24 else f"{command[:23]}…"
+
+
+#: (task-14822) The fold that holds the per-warning detail. The title is a
+#: ``CollapsibleTitle``, which is a tab stop -- the detail is keyboard
+#: reachable, not mouse-only.
+INGEST_TOOLING_FOLD_TITLE = "What's missing"
+
+#: (task-14824 AC#3) The path field's persistent label. Names both accepted
+#: shapes, because the field takes either -- the placeholder said so and
+#: then disappeared.
+INGEST_PATH_LABEL_COPY = "File, folder or URL to import"
+
+#: The combined-command copy button's id. Deliberately NOT prefixed
+#: ``ingest-preflight-copy-command-`` (the per-extra buttons' prefix, which
+#: the shared handler parses an index out of).
+INGEST_COPY_ALL_COMMANDS_ID = "ingest-preflight-copy-all-commands"
+
+
+def install_command_button_label(command: str) -> str:
+    """One label shape for a per-extra copy button, at any count.
+
+    (task-14825 / task-14822 AC#4) The suffix used to be dropped whenever
+    there happened to be exactly one command, so the same control had two
+    label shapes -- and a user who learned the one-warning wording did not
+    recognise the nine-warning one.
+    """
+    return f"Copy install command ({_command_short_name(command)})"
+
+
+def combined_install_command(commands: Sequence[str]) -> str:
+    """ONE command installing the union of the missing extras.
+
+    (task-14822 AC#4) Nine stacked buttons said "you must install nine
+    things"; the truth is one pip invocation. Every warning command this
+    codebase produces is ``pip install -e ".[<extra>]"``
+    (``OptionalFeatureInfo.source_install_command``), so the union folds
+    into a single bracket list in first-seen order. Anything that does not
+    match that shape is NOT rewritten -- the commands are chained instead,
+    because silently reshaping a command a user is about to paste into a
+    shell is worse than a long one.
+
+    Args:
+        commands: The distinct install commands, in first-appearance order.
+
+    Returns:
+        The combined command, or ``""`` when there are none. A single
+        command is returned unchanged.
+    """
+    commands = [command for command in commands if command.strip()]
+    if not commands:
+        return ""
+    if len(commands) == 1:
+        return commands[0]
+    extras: list[str] = []
+    for command in commands:
+        match = re.fullmatch(r'pip install -e "\.\[([^\]]+)\]"', command.strip())
+        if match is None:
+            return " && ".join(commands)
+        for extra in match.group(1).split(","):
+            extra = extra.strip()
+            if extra and extra not in extras:
+                extras.append(extra)
+    return f'pip install -e ".[{",".join(extras)}]"'
+
+
+def ingest_tooling_summary_line(state: Any) -> str:
+    """The one line that replaces the tooling-warning wall.
+
+    (task-14822) ``LibraryIngestPreflightSummary`` used to emit one
+    ``Static`` per warning -- eleven of them, CSS-double-spaced, plus nine
+    copy buttons -- which owned the entire first viewport and read as
+    "this app is broken". This states the blast radius in staged FILES,
+    which is what the user actually has at stake.
+
+    The file count is read from task-14820's single ``IngestForecast``
+    (``consent_affected``: doomed + degraded), never recomputed here --
+    two independently-derived counts on one screen is precisely the P1
+    defect that arc exists to fix. Without a forecast the line falls back
+    to what IS known (how many components are missing) rather than
+    inventing a file count.
+
+    Args:
+        state: The canvas render state.
+
+    Returns:
+        A single ``⚠``-prefixed sentence. The glyph, not the colour,
+        carries the severity (monochrome rule).
+    """
+    warning_count = len(getattr(state, "warning_lines", ()) or ())
+    forecast = getattr(state, "forecast", None)
+    affected = int(getattr(forecast, "consent_affected", 0) or 0)
+    if forecast is None:
+        noun = "component" if warning_count == 1 else "components"
+        verb = "isn't" if warning_count == 1 else "aren't"
+        return (
+            f"⚠ {warning_count} optional {noun} {verb} installed — "
+            "some imports may fail."
+        )
+    if not affected:
+        noun = "component" if warning_count == 1 else "components"
+        verb = "isn't" if warning_count == 1 else "aren't"
+        return (
+            f"⚠ {warning_count} optional {noun} {verb} installed — "
+            "no staged file needs them."
+        )
+    # ``staged_total`` is optional: the proportion is what turns "eleven
+    # warnings" back into "3 of your 21 files", so it is used whenever the
+    # forecast carries it.
+    staged_total = int(getattr(forecast, "staged_total", 0) or 0)
+    scope = f"{affected} of {staged_total} files" if staged_total else (
+        f"{affected} file" if affected == 1 else f"{affected} files"
+    )
+    verb = "needs" if (affected == 1 and not staged_total) else "need"
+    outcome = (
+        "that import may fail."
+        if (affected == 1 and not staged_total)
+        else "those imports may fail."
+    )
+    return f"⚠ {scope} {verb} optional tooling — {outcome}"
 
 
 class LibraryIngestPreflightSummary(Vertical):
@@ -109,33 +229,57 @@ class LibraryIngestPreflightSummary(Vertical):
                     compact=True,
                 )
         if state.warning_lines:
-            for index, warning in enumerate(state.warning_lines):
-                yield Static(
-                    f"⚠ {warning}",
-                    id=f"ingest-preflight-warning-{index}",
-                    classes="library-ingest-quiet-line",
-                    markup=False,
-                )
-            # (task-3304, MI-17) The pip command must be recoverable AT the
-            # warning -- the guardrail modal used to hold the only copy
-            # button, and a command read off a wrapped prose line is a
-            # transcription exercise. One compact button per DISTINCT
-            # command (several features often share one extra); with more
-            # than one, each is disambiguated by its extra name rather
-            # than the full command (compact buttons cannot afford it).
-            for index, command in enumerate(state.warning_commands):
-                if len(state.warning_commands) == 1:
-                    label = "Copy install command"
-                else:
-                    label = f"Copy install command ({_command_short_name(command)})"
+            # (task-14822) ONE line at canvas level; the eleven warnings and
+            # their per-extra copy buttons live inside the fold below. The
+            # wall used to own the entire first viewport, drowning the two
+            # lines that DO matter (unsupported/empty) at identical weight.
+            yield Static(
+                ingest_tooling_summary_line(state),
+                id="ingest-preflight-tooling-summary",
+                classes="library-ingest-tooling-summary",
+                markup=False,
+            )
+            # The combined command sits OUTSIDE the fold: recovering from a
+            # missing dependency must stay one press away, and one pip
+            # invocation is the truth the nine stacked buttons obscured.
+            if combined_install_command(state.warning_commands):
                 yield Button(
-                    label,
-                    id=f"ingest-preflight-copy-command-{index}",
+                    "Copy install command",
+                    id=INGEST_COPY_ALL_COMMANDS_ID,
                     classes=(
                         "library-canvas-action ingest-preflight-copy-command"
                     ),
                     compact=True,
                 )
+            with Collapsible(
+                title=INGEST_TOOLING_FOLD_TITLE,
+                collapsed=True,
+                id="ingest-preflight-tooling-detail",
+            ):
+                for index, warning in enumerate(state.warning_lines):
+                    yield Static(
+                        f"⚠ {warning}",
+                        id=f"ingest-preflight-warning-{index}",
+                        classes="library-ingest-quiet-line",
+                        markup=False,
+                    )
+                # (task-3304, MI-17) The pip command must be recoverable AT
+                # the warning -- the guardrail modal used to hold the only
+                # copy button, and a command read off a wrapped prose line
+                # is a transcription exercise. One compact button per
+                # DISTINCT command (several features often share one
+                # extra), each disambiguated by its extra name in a label
+                # shape that no longer changes with the count.
+                for index, command in enumerate(state.warning_commands):
+                    yield Button(
+                        install_command_button_label(command),
+                        id=f"ingest-preflight-copy-command-{index}",
+                        classes=(
+                            "library-canvas-action "
+                            "ingest-preflight-copy-command"
+                        ),
+                        compact=True,
+                    )
         if state.type_breakdown_line:
             yield Static(
                 state.type_breakdown_line,
@@ -150,18 +294,23 @@ class LibraryIngestPreflightSummary(Vertical):
                 classes="library-ingest-quiet-line",
                 markup=False,
             )
+        # (task-14822 AC#3) These two are OUTCOMES of this import ("5
+        # unsupported files will be skipped", "1 empty file will fail"),
+        # not facts about the environment -- they used to share
+        # ``library-ingest-quiet-line`` with the eleven tooling warnings
+        # and drowned in them at identical weight.
         if state.unsupported_line:
             yield Static(
                 state.unsupported_line,
                 id="ingest-unsupported-summary",
-                classes="library-ingest-quiet-line",
+                classes="library-ingest-outcome-line",
                 markup=False,
             )
         if state.empty_line:
             yield Static(
                 state.empty_line,
                 id="ingest-empty-summary",
-                classes="library-ingest-quiet-line",
+                classes="library-ingest-outcome-line",
                 markup=False,
             )
         if state.duplicate_line:
@@ -514,8 +663,29 @@ def _option_is_default(field: Any, value: Any) -> bool:
 _TITLE_MAX_PAIRS = 3
 
 
-def build_type_group_title(cap: TypeGroupCapabilities, values: dict[str, Any]) -> str:
-    """Collapsed-panel title: group label + the few most salient pairs.
+def _preferred_blocked_reason(reasons: Sequence[str]) -> str:
+    """Pick the one blocking reason a group's title should carry.
+
+    Packaging gates (``"needs Docling installed"``) come first: they name
+    work outside this screen, and they are the reasons a keyboard user
+    could not reach at all -- Textual drops a ``disabled`` widget from the
+    tab order, so the annotation at the control is unreachable (task-14824
+    AC#2). Within-form gates ("needs Enable OCR on") are recoverable right
+    here, and the gate control itself is still focusable.
+    """
+    for reason in reasons:
+        if reason.endswith(" installed"):
+            return reason
+    return reasons[0] if reasons else ""
+
+
+def build_type_group_title(
+    cap: TypeGroupCapabilities,
+    values: dict[str, Any],
+    *,
+    is_installed: Any = None,
+) -> str:
+    """Collapsed-panel title: group label + the few most salient facts.
 
     (task-3305, MI-16) Shared by ``_compose_type_group`` and the screen's
     in-place receipt update so the two renders can never drift. Rules:
@@ -524,27 +694,95 @@ def build_type_group_title(cap: TypeGroupCapabilities, values: dict[str, Any]) -
     about what the user chose); at most :data:`_TITLE_MAX_PAIRS` pairs
     render, with a trailing ``…`` naming the omission.
 
+    Three later findings ride the same one-line receipt, ahead of the
+    pairs because each of them changes what the panel MEANS:
+
+    - (task-14826 AC#2) An invalid value inside a COLLAPSED panel was
+      invisible: ``-ingest-option-invalid`` is applied to the ``Input``,
+      which lives in the collapsed body, so the gate said "fix the
+      highlighted options" while nothing on screen was highlighted. The
+      title leads with a ``⚠`` and names the field. Text, not a CSS class,
+      deliberately: the screen's in-place update assigns ``Collapsible
+      .title`` and nothing else, so a class-based marker would drift --
+      and a mark that survives monochrome is the house rule anyway.
+    - (task-14824 AC#2) A disabled control is removed from the tab order
+      by Textual outright, so the ``— needs X installed`` reasons written
+      for keyboard users were unreachable by keyboard. The title is a
+      ``CollapsibleTitle``, which IS a tab stop, so a blocked group states
+      its reason there.
+    - (task-14825 #7) Disabled fields no longer contribute pairs at all:
+      the title advertised ``Extract text (OCR): on`` while the control
+      below it read ``— needs OCR backend installed``.
+
     Args:
         cap: The group's capability schema.
         values: Current per-group option values (missing keys fall back to
             schema defaults).
+        is_installed: Feature-availability probe forwarded to
+            :func:`field_disabled_state`. Defaults to this module's own
+            ``_is_installed`` so the late lookup keeps working for tests
+            that patch it.
 
     Returns:
         The full title string, e.g.
-        ``"Audio & video — Transcription provider: Auto (faster-whisper),
-        Transcription model: Base (fast), Language: en, …"``.
+        ``"Audio & video — 13 options unavailable — needs faster-whisper
+        installed"``.
     """
+    probe = _is_installed if is_installed is None else is_installed
     changed: list[str] = []
     untouched: list[str] = []
+    blocked_reasons: list[str] = []
+    blocked_count = 0
+    invalid_labels: list[str] = []
     for field in cap.fields:
         value = values.get(field.name, field.default)
+        disabled, reason = field_disabled_state(
+            field, cap, values, is_installed=probe
+        )
+        if disabled:
+            blocked_count += 1
+            if reason and reason not in blocked_reasons:
+                blocked_reasons.append(reason)
+            continue
+        if validate_ingest_option_value(field, value):
+            invalid_labels.append(field.label)
+            continue
         if value is None or str(value).strip() == "":
             continue
         bucket = untouched if _option_is_default(field, value) else changed
         bucket.append(_summarise_option(field, value))
+    # Order: the blocker first (nothing in this panel can be committed
+    # while it stands), then what the USER chose (the receipt's whole
+    # point), then the blocked-options clause -- which is never dropped by
+    # the cap, because being droppable is what made it unreachable -- then
+    # untouched defaults to fill the remaining budget.
+    shown: list[str] = []
+    if invalid_labels:
+        extra = (
+            f" (+{len(invalid_labels) - 1} more)"
+            if len(invalid_labels) > 1
+            else ""
+        )
+        shown.append(f"⚠ {invalid_labels[0]} needs fixing{extra}")
+    blocked_clause = ""
+    if blocked_count:
+        noun = "option" if blocked_count == 1 else "options"
+        blocked_clause = f"{blocked_count} {noun} unavailable"
+        if blocked_reasons:
+            # A packaging gate ("needs Docling installed") outranks a
+            # within-form one ("needs Enable OCR on"): the first is work
+            # the user must do OUTSIDE this screen, and it is the reason a
+            # keyboard user could not reach at all.
+            blocked_clause += f" — {_preferred_blocked_reason(blocked_reasons)}"
+    reserved = len(shown) + (1 if blocked_clause else 0)
+    shown.extend(changed[: max(_TITLE_MAX_PAIRS - reserved, 0)])
+    if blocked_clause:
+        shown.append(blocked_clause)
     pairs = changed + untouched
-    shown = pairs[:_TITLE_MAX_PAIRS]
-    if len(pairs) > len(shown):
+    remaining = max(_TITLE_MAX_PAIRS - len(shown), 0)
+    filler = [pair for pair in pairs if pair not in shown][:remaining]
+    shown.extend(filler)
+    if len([pair for pair in pairs if pair not in shown]):
         shown.append("…")
     if not shown:
         return cap.label
@@ -930,6 +1168,17 @@ class LibraryIngestCanvas(VerticalScroll):
                 classes="library-ingest-quiet-line",
                 markup=False,
             )
+        # (task-14824 AC#3) The primary control's identity was
+        # placeholder-only -- and a placeholder is gone the moment the field
+        # holds a path, which is exactly when a long absolute path needs
+        # saying what it IS. Same fix task-2012 applied to the option
+        # fields, finally applied to the field above them.
+        yield Static(
+            INGEST_PATH_LABEL_COPY,
+            id="library-ingest-path-label",
+            classes="library-ingest-field-label",
+            markup=False,
+        )
         yield Input(
             value=state.form.path,
             placeholder="Path to a local file or a URL…",
@@ -1151,14 +1400,21 @@ class LibraryIngestCanvas(VerticalScroll):
         """
         event.stop()
         button_id = event.button.id or ""
-        prefix = "ingest-preflight-copy-command-"
-        if not button_id.startswith(prefix):
-            return
-        try:
-            index = int(button_id[len(prefix):])
-            command = self.state.warning_commands[index]
-        except (ValueError, IndexError):
-            return
+        if button_id == INGEST_COPY_ALL_COMMANDS_ID:
+            # (task-14822) The union of the missing extras, so a nine-warning
+            # selection is one paste rather than nine.
+            command = combined_install_command(self.state.warning_commands)
+            if not command:
+                return
+        else:
+            prefix = "ingest-preflight-copy-command-"
+            if not button_id.startswith(prefix):
+                return
+            try:
+                index = int(button_id[len(prefix):])
+                command = self.state.warning_commands[index]
+            except (ValueError, IndexError):
+                return
         copy_fn = getattr(self.app, "copy_to_clipboard", None)
         if callable(copy_fn):
             try:

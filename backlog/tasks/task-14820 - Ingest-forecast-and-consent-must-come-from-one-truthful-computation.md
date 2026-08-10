@@ -1,17 +1,17 @@
 ---
 id: TASK-14820
-title: >-
-  Ingest forecast and consent must come from one truthful computation
-status: In Progress
+title: Ingest forecast and consent must come from one truthful computation
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-10 21:00'
+updated_date: '2026-08-10 21:41'
 labels:
   - library
   - ingest
   - ux
-priority: high
 dependencies: []
+priority: high
 ---
 
 ## Description
@@ -27,10 +27,37 @@ This is the forecast→receipt honesty loop that two prior critiques named as th
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
 <!-- AC:BEGIN -->
-- [ ] #1 The commit forecast and the inline consent line are derived from ONE computation and can never state different numbers for the same staged selection
-- [ ] #2 Files whose type group has unmet required tooling are forecast as failures (not imports), with the reason distinguishable from the empty-file reason (e.g. "N need tooling, M empty")
-- [ ] #3 A mixed folder staged on an install lacking optional backends produces a forecast whose import/skip/fail counts match the actual receipt tally
-- [ ] #4 The forecast remains visible (not blanked) while a gate blocks Start, so a blocked user does not lose the numbers they were reasoning about
+- [x] #1 The commit forecast and the inline consent line are derived from ONE computation and can never state different numbers for the same staged selection
+- [x] #2 Files whose type group has unmet required tooling are forecast as failures (not imports), with the reason distinguishable from the empty-file reason (e.g. "N need tooling, M empty")
+- [x] #3 A mixed folder staged on an install lacking optional backends produces a forecast whose import/skip/fail counts match the actual receipt tally
+- [x] #4 The forecast remains visible (not blanked) while a gate blocks Start, so a blocked user does not lose the numbers they were reasoning about
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add `classify_missing_features(group, missing)` to `ingest_capabilities.py` -- the one place that knows which of a group's features are REQUIRED vs optional; reuse it instead of re-deriving the split at the call sites.
+2. Add ONE forecast in `library_ingest_state.py`: frozen `IngestForecast` (will_import / will_match / match_capped / will_skip / will_fail_tooling / will_fail_empty / at_risk / tooling_groups) built by `build_ingest_forecast(preflight)` from the pre-flight's OWN warnings (not a fresh environment probe, so forecast and warning wall can never disagree).
+3. Derive BOTH lines from that one object: `forecast_summary_line()` (commit line) and `forecast_consent_line()` (inline two-press consent). `count_warning_affected_files` becomes a thin wrapper over the forecast so no second computation survives.
+4. Files in a group whose REQUIRED feature is warned forecast as failures with a distinguishable reason ('N need tooling, M empty'); a group with only an OPTIONAL feature warned stays an import but counts as at-risk for the consent line.
+5. AC#4: stop blanking the commit line when a gate blocks Start -- it is suppressed only for path/pre-flight errors and for no-selection. (Deliberately supersedes task-3305 MI-16's hide-on-option-error rule, whose real defect was STALENESS; the gate updater already syncs both lines in one pass.)
+6. GOVERNANCE TEST: stage a real mixed folder on this venv (no pdf/audio/ebook/OCR backends), compute the forecast, run it through the real submit path (`_IngestRunnerHarness`: real `submit_library_ingest_job` + real `run_parse_job` + real `persist_parsed_media` + real MediaDatabase) and assert the forecast's import/skip/fail counts EQUAL the terminal job outcomes.
+7. Keep the state-layer unit suite + inline-consent suite green; update the two suites' copy pins that encode the old (untruthful) numbers.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Built ONE forecast and made both lines render from it.
+
+**`IngestForecast` + `build_ingest_forecast` (library_ingest_state.py)** — a frozen dataclass (will_import / will_match / match_capped / will_skip / will_fail_tooling / will_fail_empty / at_risk / tooling_groups) computed once per state build. `forecast_summary_line` renders the commit line, `forecast_consent_line` renders the armed gate line, and `count_warning_affected_files` is now a two-line read of `forecast.consent_affected` — that function BEING a second, independent computation is what let the two lines disagree on screen. There is no longer any arithmetic outside the forecast.
+
+**Truthfulness (AC#2)** — the forecast is keyed off the pre-flight's OWN warnings (not a fresh environment probe), so what it counts and what the warning wall says are the same fact. `ingest_capabilities.classify_missing_features(group, missing)` splits those warned features into the group's REQUIRED and OPTIONAL ones — the required/optional distinction is declared on `TypeGroupCapabilities`, and every consumer previously re-derived it by unioning both tuples. A group with an unmet REQUIRED feature forecasts every one of its files as a failure ('N need tooling'); an unmet OPTIONAL one leaves them imports but marks them `at_risk`, which is what still reads 'may fail' in the consent line.
+
+**AC#4** — the commit line no longer blanks when a gate closes. This deliberately supersedes task-3305 MI-16 (which hid it on an option error); MI-16's real defect was a STALE line, and the gate updater already syncs the forecast and the gate line in one in-place pass, so they move together. `Tests/UI/test_library_shell.py::test_commit_line_hides_while_option_error_gate_blocks` was rewritten (and renamed `…stays_visible_and_synced…`) to encode the new rule plus MI-16's surviving half (widget identity across the in-place path).
+
+**GOVERNANCE (AC#3)** — `Tests/integration/test_library_ingest_flow.py::test_forecast_counts_equal_the_real_receipt_for_a_mixed_folder` stages a real 7-file mixed folder on this venv (no pdf/ebook/OCR backends — asserted up front, so the fixture cannot pass vacuously), computes the forecast from the REAL `analyze_path`, then runs the SAME folder through the real submit path (`submit_library_ingest_job` -> `run_parse_job` -> `persist_parsed_media` -> real `MediaDatabase`; only the process pool is the runner suite's in-process stand-in) and asserts (will_import, will_skip, will_fail) == (done, skipped, failed) plus which files landed in which bucket. Result: forecast '2 will import · 1 will skip · 4 will fail (3 need tooling, 1 empty)' == receipt 2 done / 1 skipped / 4 failed. Reverting the required-tooling branch makes that same test print '5 will import' against 2 actual — the original live defect, reproduced.
+
+Modified: `Library/ingest_capabilities.py`, `Library/library_ingest_state.py`, `Tests/Library/test_ingest_capabilities.py`, `Tests/Library/test_library_ingest_state.py`, `Tests/UI/test_library_ingest_inline_consent.py`, `Tests/UI/test_library_shell.py`, `Tests/integration/test_library_ingest_flow.py`, `Docs/User_Guide/library/import-and-export.md`.
+<!-- SECTION:NOTES:END -->

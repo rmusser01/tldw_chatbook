@@ -4468,7 +4468,17 @@ class LibraryIngestQueueMixin:
                         error=_sanitize_library_ingest_error(exc),
                         permanent=classify_parse_failure(exc),
                         error_detail={
-                            "category": "write_error",
+                            # (task-14821) The stage covers two different
+                            # things: refusing an empty extraction (which
+                            # happens BEFORE any write) and a genuine
+                            # database write failure. Stamping both
+                            # "write_error" told users nothing was saved
+                            # because of a write problem, when in fact
+                            # there had been nothing to save. The refusal
+                            # carries its own category.
+                            "category": getattr(
+                                exc, "ingest_error_category", "write_error"
+                            ),
                             "message": str(exc),
                             "exception_type": exc.__class__.__name__,
                         },

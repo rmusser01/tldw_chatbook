@@ -1699,7 +1699,9 @@ def test_expanded_details_render_unwrapped_lines_and_retry_hint():
     row = state.queue_rows[0]
     assert row.details_expanded is True
     # (task-2160) No parenthesized exception class -- it serves no user.
-    assert row.detail_lines[0] == "Category: parse error"
+    # (task-14821) ...and no raw internal token either: the reason reads
+    # as a sentence, not as the pipeline's own category name.
+    assert row.detail_lines[0] == "Reason: The file couldn't be read."
     assert not any(
         line.startswith("Details:") for line in row.detail_lines
     ), "a Details line that repeats the summary is the round-4 P1"
@@ -2885,3 +2887,344 @@ def test_failed_queue_row_names_the_blocked_host(tmp_path=None):
     assert "127.0.0.1:8000" in row.line
     assert "SSRF" not in row.line
     assert "[web_security]" not in row.line
+
+
+# --- task-14820: ONE truthful forecast --------------------------------------
+
+
+_PDF_WARNING = {
+    "feature": "pdf_processing",
+    "label": "PDF processing",
+    "hint": "PDF ingestion",
+    "command": 'pip install -e ".[pdf]"',
+}
+_DOCLING_WARNING = {
+    "feature": "docling",
+    "label": "Docling",
+    "hint": "richer document extraction",
+    "command": 'pip install -e ".[pdf]"',
+}
+
+
+def _mixed_preflight(**overrides) -> PreflightResult:
+    defaults = dict(
+        type_groups={
+            "pdf": ["/tmp/a.pdf", "/tmp/b.pdf"],
+            "generic": ["/tmp/notes.txt"],
+            "unsupported": ["/tmp/weird.xyz"],
+        },
+        warnings=[dict(_PDF_WARNING)],
+        errors=[],
+        total_size=400,
+        truncated=False,
+        total_files=5,
+        empty_files=("/tmp/zero.txt",),
+    )
+    defaults.update(overrides)
+    return PreflightResult(**defaults)
+
+
+def test_files_needing_missing_required_tooling_forecast_as_failures():
+    """(task-14820 AC#2) The pre-flight already warned that PDF processing
+    is absent; the commit line used to promise those two PDFs would
+    import anyway (``will_import = supported_total - will_match``)."""
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp/folder"),
+        preflight=_mixed_preflight(),
+    )
+    assert state.commit_summary_line == (
+        "1 will import · 1 will skip · 3 will fail (2 need tooling, 1 empty)"
+    )
+
+
+def test_forecast_and_consent_line_state_the_same_number():
+    """(task-14820 AC#1) Both lines read one forecast object, so they
+    cannot disagree: live saw "15 will import" two rows above "7 files
+    may fail"."""
+    from tldw_chatbook.Library.library_ingest_state import (
+        build_ingest_forecast,
+    )
+
+    preflight = _mixed_preflight()
+    forecast = build_ingest_forecast(preflight)
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp/folder"),
+        preflight=preflight,
+        start_confirm_armed=True,
+    )
+    assert forecast.will_fail_tooling == 2
+    assert state.start_confirm_armed is True
+    assert "2 files will fail without more tooling" in state.start_quiet_line
+    # The commit line's own tooling component is the SAME number.
+    assert "2 need tooling" in state.commit_summary_line
+
+
+def test_optional_only_tooling_gap_stays_an_import_but_reads_as_at_risk():
+    """A group whose OPTIONAL feature is missing still imports -- the
+    consent line says "may fail", never "will fail"."""
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp/folder"),
+        preflight=PreflightResult(
+            type_groups={"document": ["/tmp/a.docx", "/tmp/b.docx"]},
+            warnings=[dict(_DOCLING_WARNING)],
+            errors=[],
+            total_size=200,
+            truncated=False,
+            total_files=2,
+        ),
+        start_confirm_armed=True,
+    )
+    assert state.commit_summary_line == "2 will import"
+    assert "2 files may fail" in state.start_quiet_line
+    assert "will fail without" not in state.start_quiet_line
+
+
+def test_forecast_stays_visible_while_a_gate_blocks_start():
+    """(task-14820 AC#4) A blocked user must not lose the numbers they
+    were reasoning about. Supersedes task-3305 MI-16's hide-on-block
+    rule -- the real defect there was a STALE line, not a visible one."""
+    form = LibraryIngestFormState(path="/tmp/folder")
+    form.type_options["generic"] = {"chunk": True, "chunk_size": "abc"}
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        preflight=PreflightResult(
+            type_groups={"generic": ["/tmp/notes.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=10,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    assert state.start_enabled is False
+    assert "Fix the highlighted options" in state.start_quiet_line
+    assert state.commit_summary_line == "1 will import"
+
+
+def test_forecast_is_silent_without_a_selection_or_under_path_errors():
+    """The line still clears with the selection and stays out of the way
+    of a path error (the error + its recovery own that state)."""
+    empty = build_library_ingest_state((), form=LibraryIngestFormState())
+    assert empty.commit_summary_line == ""
+    errored = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp/nope"),
+        preflight=PreflightResult(
+            type_groups={},
+            warnings=[],
+            errors=["Path not found: /tmp/nope"],
+            total_size=0,
+            truncated=False,
+            total_files=0,
+            path_invalid=True,
+        ),
+    )
+    assert errored.commit_summary_line == ""
+
+
+# --- task-14823: gate a selection with nothing importable -------------------
+
+
+def test_empty_folder_gates_start_with_its_own_reason():
+    """(task-14823) An empty directory left Start ENABLED with an empty
+    gate line; pressing it manufactured "✗ failed · emptydir · No files
+    to import were found in this folder."."""
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp/emptydir"),
+        preflight=PreflightResult(
+            type_groups={},
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=0,
+        ),
+    )
+    assert state.start_enabled is False
+    assert state.start_quiet_line == (
+        "This folder is empty — there's nothing to import. Choose a folder "
+        "with files, or a single file."
+    )
+
+
+def test_all_unsupported_folder_keeps_its_own_distinct_reason():
+    """(task-14823 AC#2) The recovery differs from an empty folder, so
+    the reason must too."""
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp/folder"),
+        preflight=PreflightResult(
+            type_groups={"unsupported": ["/tmp/a.xyz", "/tmp/b.xyz"]},
+            warnings=[],
+            errors=[],
+            total_size=20,
+            truncated=False,
+            total_files=2,
+        ),
+    )
+    assert state.start_enabled is False
+    assert state.start_quiet_line == (
+        "Nothing in this selection can be imported — 2 unsupported files."
+    )
+
+
+# --- task-14821: retry advice derives from the failure reason ---------------
+
+
+_OCR_MESSAGE = (
+    "No text was found in diagram.png. An image import stores the text OCR "
+    "extracts; turn Extract text (OCR) on and install an OCR backend "
+    "(docling, tesseract, easyocr, paddleocr, or docext)."
+)
+
+
+def _expanded_detail_lines(**error_detail) -> tuple[str, ...]:
+    job = _job(
+        job_id="ingest-job-1",
+        state=IngestJobState.FAILED,
+        source_path=error_detail.pop("source_path", "/tmp/diagram.png"),
+        error=error_detail.pop("error", _OCR_MESSAGE),
+        error_detail=dict(error_detail),
+    )
+    state = build_library_ingest_state(
+        (job,),
+        form=LibraryIngestFormState(),
+        expanded_details={"ingest-job-1"},
+    )
+    return state.queue_rows[0].detail_lines
+
+
+def test_no_content_failure_is_never_described_as_transient():
+    """(task-14821 AC#1) A missing-OCR failure is deterministic. Its
+    message names an install remedy the ``_MISSING_DEPENDENCY_RE`` does
+    not match, so the optimistic ELSE branch fired -- on the COMMON case."""
+    lines = _expanded_detail_lines(
+        category="no_content",
+        message=_OCR_MESSAGE,
+        exception_type="FileIngestionError",
+    )
+    joined = " ".join(lines)
+    assert "transient" not in joined
+    assert "network hiccup" not in joined
+    assert "install the tooling named above" in joined
+
+
+def test_no_content_reason_is_user_readable_and_not_a_write_error():
+    """(task-14821 AC#3) Nothing was written -- extraction produced no
+    content -- and the line must not show the raw internal token."""
+    lines = _expanded_detail_lines(
+        category="no_content",
+        message=_OCR_MESSAGE,
+        exception_type="FileIngestionError",
+    )
+    assert lines[0] == "Reason: No text could be extracted."
+    assert not any("write error" in line for line in lines)
+    assert not any(line.startswith("Category:") for line in lines)
+
+
+def test_unknown_failure_category_stays_silent_rather_than_encouraging():
+    """(task-14821 AC#2) The unknown case gets no advice at all."""
+    lines = _expanded_detail_lines(
+        category="something_new",
+        message="Ingest stopped for an unrecognised reason.",
+        exception_type="RuntimeError",
+        error="Ingest stopped for an unrecognised reason (row).",
+    )
+    joined = " ".join(lines)
+    assert "Retry" not in joined
+    assert "transient" not in joined
+
+
+def test_write_error_keeps_the_one_genuinely_retryable_advisory():
+    """A real database write failure IS worth retrying as-is."""
+    lines = _expanded_detail_lines(
+        category="write_error",
+        message="database is locked",
+        exception_type="MediaDatabaseError",
+        error="Failed to ingest txt file: database is locked",
+    )
+    joined = " ".join(lines)
+    assert "A retry can succeed" in joined
+    assert "network hiccup" not in joined
+
+
+def test_underlying_tool_output_is_printed_once_not_twice():
+    """(task-14821 AC#4) The real ffmpeg failure: the row message carries
+    a "Failed to ingest audio file: " wrapper the chain entry lacks, so
+    the exact-equality dedup missed it and the ~40-line banner printed
+    under BOTH Details and Underlying."""
+    banner = (
+        "ffmpeg version 8.1 Copyright (c) 2000-2026 the FFmpeg developers\n"
+        "  built with Apple clang version 17.0.0\n"
+        "  configuration: --prefix=/opt/homebrew/Cellar/ffmpeg/8.1\n"
+        "  libavutil      60. 26.100 / 60. 26.100\n"
+        "Error opening input files: Invalid data found when processing input"
+    )
+    inner = f"Audio processing failed: FFmpeg conversion failed: {banner}"
+    lines = _expanded_detail_lines(
+        source_path="/tmp/song.mp3",
+        category="parse_error",
+        message=f"Failed to ingest audio file: {inner}",
+        exception_type="FileIngestionError",
+        chain=[f"FileIngestionError: {inner}"],
+        # ``job.error`` is the sanitized single line (app.py caps at 200).
+        error="Failed to ingest audio file: Audio processing failed: FFmpeg "
+        "conversion failed: ffmpeg version 8.1 Copyright (c) 2000-2026 the "
+        "FFmpeg developers",
+    )
+    banner_lines = [line for line in lines if "libavutil" in line]
+    assert len(banner_lines) == 1, (
+        f"the tool banner appeared {len(banner_lines)} times: {lines}"
+    )
+
+
+def test_real_canvas_state_carries_the_forecast_the_fold_reads():
+    """(task-14820/14822 seam) The folded tooling summary reads
+    ``state.forecast.consent_affected``/``.staged_total``. Every unit test
+    of that line stubs the state, so nothing proved the REAL builder
+    supplies those fields -- and while it didn't, the fold silently
+    rendered its degraded "N optional components aren't installed"
+    fallback instead of the file count it exists to show. This drives the
+    real builder and then the real render function.
+    """
+    from tldw_chatbook.Widgets.Library.library_ingest_canvas import (
+        ingest_tooling_summary_line,
+    )
+
+    preflight = PreflightResult(
+        type_groups={
+            "pdf": ["/tmp/a.pdf", "/tmp/b.pdf"],
+            "generic": ["/tmp/c.txt"],
+        },
+        # A missing REQUIRED pdf feature: both PDFs are doomed, and the
+        # pre-flight's own warning is what the forecast keys off.
+        warnings=[{"feature": "pdf_processing", "label": "PDF processing"}],
+        errors=[],
+        total_size=3072,
+        truncated=False,
+        total_files=3,
+    )
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp/mixed", preflight=preflight),
+    )
+
+    assert state.forecast is not None, (
+        "the canvas state must carry the forecast; without it the fold has "
+        "no honest file count"
+    )
+    assert state.forecast.staged_total == 3, state.forecast
+    assert state.forecast.consent_affected == 2, state.forecast
+
+    line = ingest_tooling_summary_line(state)
+    assert line == (
+        "⚠ 2 of 3 files need optional tooling — those imports may fail."
+    ), line
+    assert "components" not in line, (
+        f"the fold fell back to counting components, not files: {line}"
+    )

@@ -343,23 +343,34 @@ async def test_type_group_panels_render_for_detected_groups():
         ),
     )
     app = _CanvasHost(state)
-    async with app.run_test() as pilot:
-        pdf_panel = pilot.app.query_one("#type-group-pdf", Collapsible)
-        generic_panel = pilot.app.query_one("#type-group-generic", Collapsible)
-        assert "PDF documents" in str(pdf_panel.title)
-        # (task-3305) The receipt shows the display label, never the token.
-        assert "PDF engine: PyMuPDF4LLM (Markdown)" in str(pdf_panel.title)
-        assert "pymupdf4llm" not in str(pdf_panel.title)
-        assert "Plain text & HTML" in str(generic_panel.title)
-        assert "Chunk size: 1000" in str(generic_panel.title)
+    # (task-14825 #7) Pinned installed: a title only advertises values of
+    # fields the user can actually edit, so what this asserts must not
+    # depend on which extras this venv happens to have.
+    with patch(
+        "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed",
+        return_value=True,
+    ):
+        async with app.run_test() as pilot:
+            pdf_panel = pilot.app.query_one("#type-group-pdf", Collapsible)
+            generic_panel = pilot.app.query_one(
+                "#type-group-generic", Collapsible
+            )
+            assert "PDF documents" in str(pdf_panel.title)
+            # (task-3305) The receipt shows the display label, never the token.
+            assert "PDF engine: PyMuPDF4LLM (Markdown)" in str(pdf_panel.title)
+            assert "pymupdf4llm" not in str(pdf_panel.title)
+            assert "Plain text & HTML" in str(generic_panel.title)
+            assert "Chunk size: 1000" in str(generic_panel.title)
 
-        scope = pilot.app.query_one("#type-group-pdf .type-group-scope", Static)
-        assert "Applies to every PDF document in this import." in str(
-            scope.renderable
-        )
+            scope = pilot.app.query_one(
+                "#type-group-pdf .type-group-scope", Static
+            )
+            assert "Applies to every PDF document in this import." in str(
+                scope.renderable
+            )
 
-        assert pilot.app.query_one("#opt-pdf-reset", Button)
-        assert pilot.app.query_one("#opt-generic-reset", Button)
+            assert pilot.app.query_one("#opt-pdf-reset", Button)
+            assert pilot.app.query_one("#opt-generic-reset", Button)
 
 
 @pytest.mark.asyncio
@@ -1161,7 +1172,12 @@ async def test_option_panel_title_reads_as_plain_language():
     assert "ocr=False" not in title
     assert "PDF engine: PyMuPDF4LLM (Markdown)" in title
     assert "pymupdf4llm" not in title
-    assert "Enable OCR: off" in title
+    # (task-14825 #7) "Enable OCR" is gated by the chosen PDF engine, so the
+    # control reads "— needs the docext engine". Advertising its value in
+    # the title told the user they had a setting they cannot change; the
+    # title states the blocked count instead.
+    assert "Enable OCR: off" not in title, title
+    assert "unavailable" in title, title
 
 
 def test_warning_line_does_not_repeat_itself():
@@ -1439,7 +1455,9 @@ async def test_expanded_details_render_inline_and_flip_button_label():
     app = _CanvasHost(state)
     async with app.run_test() as pilot:
         detail = pilot.app.query_one("#library-ingest-detail-ingest-job-1-0", Static)
-        assert "Category: parse error" in str(detail.renderable)
+        # (task-14821) The first detail line is the user-facing REASON, not
+        # the raw internal category token ("Category: parse error").
+        assert str(detail.renderable).startswith("Reason: ")
         button = pilot.app.query_one("#library-ingest-details-ingest-job-1", Button)
         assert str(button.label) == "Hide details"
 
@@ -2147,3 +2165,336 @@ async def test_each_copy_install_button_names_its_own_extra():
         assert any(
             "transcription_faster_whisper" in text for text in rendered
         ), rendered
+
+
+# --- task-14822: the tooling-warning wall folds -----------------------------
+#
+# A 21-file mixed folder rendered 11 warning Statics (CSS double-spaces them
+# into ~22 rows) followed by 9 stacked "Copy install command (…)" buttons --
+# ~31 rows, the whole 52-row viewport, before the type breakdown, the options
+# or Start. The honest reading of that block was "this app is broken", when
+# the truth was "3 of your 21 files need optional extras".
+
+
+def _tooling_warnings(count: int) -> list[dict[str, str]]:
+    """``count`` distinct tooling warnings, each with its own extra."""
+    return [
+        {
+            "feature": f"feature_{index}",
+            "label": f"Backend {index}",
+            "hint": f"capability {index}",
+            "command": f'pip install -e ".[extra{index}]"',
+        }
+        for index in range(count)
+    ]
+
+
+def _warned_state(count: int = 11):
+    return build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={"generic": ["/tmp/a.txt"]},
+            warnings=_tooling_warnings(count),
+            errors=[],
+            total_size=10,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_tooling_warnings_collapse_to_one_summary_line():
+    """AC#1: eleven warnings render ONE summary line at canvas level; the
+    per-warning detail moves behind a collapsed fold."""
+    app = _CanvasHost(_warned_state(11))
+    async with app.run_test() as pilot:
+        summary_block = pilot.app.query_one(
+            "#library-ingest-preflight-summary"
+        )
+        summary = pilot.app.query_one(
+            "#ingest-preflight-tooling-summary", Static
+        )
+        assert summary.visual.plain.startswith("⚠")
+        fold = pilot.app.query_one(
+            "#ingest-preflight-tooling-detail", Collapsible
+        )
+        assert fold.collapsed is True, "the detail must start folded away"
+        # Every warning line still exists -- inside the fold, not stacked
+        # above the rest of the form.
+        for index in range(11):
+            warning = pilot.app.query_one(
+                f"#ingest-preflight-warning-{index}", Static
+            )
+            assert fold in warning.ancestors, (
+                f"warning {index} is not inside the fold"
+            )
+        # No warning Static is a direct child of the summary block.
+        assert not [
+            child
+            for child in summary_block.children
+            if (child.id or "").startswith("ingest-preflight-warning-")
+        ]
+
+
+class _StubForecast:
+    """The only two forecast reads the fold makes (task-14820's object)."""
+
+    def __init__(self, consent_affected: int, staged_total: int = 0) -> None:
+        self.consent_affected = consent_affected
+        if staged_total:
+            self.staged_total = staged_total
+
+
+class _StubWarnedState:
+    """Just enough state for the pure summary-line function."""
+
+    def __init__(self, warning_count: int, forecast=None) -> None:
+        self.warning_lines = [f"line {i}" for i in range(warning_count)]
+        self.forecast = forecast
+
+
+def test_tooling_summary_line_names_affected_files_from_the_one_forecast():
+    """AC#1: the count comes from task-14820's forecast object -- the fold
+    never computes a second one (two independently-derived counts is the
+    P1 this arc exists to fix)."""
+    from tldw_chatbook.Widgets.Library.library_ingest_canvas import (
+        ingest_tooling_summary_line,
+    )
+
+    with_total = ingest_tooling_summary_line(
+        _StubWarnedState(11, _StubForecast(3, staged_total=21))
+    )
+    assert with_total == (
+        "⚠ 3 of 21 files need optional tooling — those imports may fail."
+    ), with_total
+
+    without_total = ingest_tooling_summary_line(
+        _StubWarnedState(11, _StubForecast(1))
+    )
+    assert without_total == (
+        "⚠ 1 file needs optional tooling — that import may fail."
+    ), without_total
+
+    # A forecast that puts NO staged file at risk still explains the block.
+    none_affected = ingest_tooling_summary_line(
+        _StubWarnedState(4, _StubForecast(0))
+    )
+    assert none_affected == (
+        "⚠ 4 optional components aren't installed — "
+        "no staged file needs them."
+    ), none_affected
+
+
+def test_tooling_summary_line_degrades_without_a_forecast():
+    """No forecast means no file count may be stated -- the block is
+    described by what IS known (how many components are missing)."""
+    from tldw_chatbook.Widgets.Library.library_ingest_canvas import (
+        ingest_tooling_summary_line,
+    )
+
+    line = ingest_tooling_summary_line(_StubWarnedState(3, None))
+    assert line == (
+        "⚠ 3 optional components aren't installed — some imports may fail."
+    ), line
+
+
+@pytest.mark.asyncio
+async def test_rendered_tooling_summary_is_the_shared_line():
+    """The mounted summary renders exactly the shared function's output --
+    one source for the copy, whatever the state carries."""
+    from tldw_chatbook.Widgets.Library.library_ingest_canvas import (
+        ingest_tooling_summary_line,
+    )
+
+    state = _warned_state(11)
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        text = pilot.app.query_one(
+            "#ingest-preflight-tooling-summary", Static
+        ).visual.plain
+    assert text == ingest_tooling_summary_line(state)
+    assert text.startswith("⚠")
+
+
+@pytest.mark.asyncio
+async def test_one_combined_install_command_is_offered_outside_the_fold():
+    """AC#4: a single command installs the union of missing extras, and it
+    is reachable without opening the fold."""
+    copied: list[str] = []
+
+    class _ClipboardHost(_CanvasHost):
+        def copy_to_clipboard(self, text: str) -> None:
+            copied.append(text)
+
+    app = _ClipboardHost(_warned_state(3))
+    async with app.run_test() as pilot:
+        button = pilot.app.query_one(
+            "#ingest-preflight-copy-all-commands", Button
+        )
+        fold = pilot.app.query_one(
+            "#ingest-preflight-tooling-detail", Collapsible
+        )
+        assert fold not in button.ancestors, (
+            "the combined command must not be hidden behind the fold"
+        )
+        button.press()
+        await pilot.pause()
+
+    assert copied == ['pip install -e ".[extra0,extra1,extra2]"'], copied
+
+
+@pytest.mark.asyncio
+async def test_per_extra_copy_labels_have_one_shape_at_any_count():
+    """AC#4: the ``(extra)`` suffix used to VANISH at exactly one command,
+    so the same control had two label shapes."""
+    for count in (1, 4):
+        app = _CanvasHost(_warned_state(count))
+        async with app.run_test() as pilot:
+            labels = [
+                pilot.app.query_one(
+                    f"#ingest-preflight-copy-command-{index}", Button
+                ).label.plain
+                for index in range(count)
+            ]
+        assert labels == [
+            f"Copy install command (extra{index})" for index in range(count)
+        ], labels
+
+
+@pytest.mark.asyncio
+async def test_outcome_lines_do_not_share_the_tooling_warning_class():
+    """AC#3: unsupported/empty files are OUTCOMES of this import, not
+    environment facts -- they must not render at the tooling warnings'
+    weight."""
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={
+                "generic": ["/tmp/a.txt"],
+                "unsupported": ["/tmp/b.xyz"],
+            },
+            warnings=_tooling_warnings(3),
+            errors=[],
+            total_size=10,
+            truncated=False,
+            total_files=2,
+            empty_files=["/tmp/c.txt"],
+        ),
+    )
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        unsupported = pilot.app.query_one("#ingest-unsupported-summary", Static)
+        empty = pilot.app.query_one("#ingest-empty-summary", Static)
+        tooling = pilot.app.query_one(
+            "#ingest-preflight-tooling-summary", Static
+        )
+        for outcome in (unsupported, empty):
+            assert outcome.has_class("library-ingest-outcome-line"), (
+                f"{outcome.id} carries no outcome weight: {outcome.classes}"
+            )
+            assert not outcome.has_class("library-ingest-quiet-line"), (
+                f"{outcome.id} still shares the quiet/warning weight"
+            )
+        assert not tooling.has_class("library-ingest-outcome-line")
+
+
+# --- task-14825 #7 / task-14826 AC#2: what a collapsed title must say ------
+
+
+@pytest.mark.asyncio
+async def test_collapsed_title_omits_values_of_disabled_fields():
+    """task-14825 #7: the title read ``Extract text (OCR): on`` while the
+    control below it read ``— needs OCR backend installed``. Advertising a
+    value the user cannot change is a promise the panel does not keep."""
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={"pdf": ["/tmp/a.pdf"]},
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    app = _CanvasHost(state)
+    with patch(
+        "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed",
+        return_value=False,
+    ):
+        async with app.run_test() as pilot:
+            panel = pilot.app.query_one("#type-group-pdf", Collapsible)
+            title = str(panel.title)
+            disabled_labels = [
+                widget
+                for widget in panel.query(Select)
+                if widget.disabled
+            ]
+            assert disabled_labels, "precondition: the group is gated"
+            # Not one gated field's value may appear in the receipt.
+            assert "PDF engine:" not in title, title
+            assert "unavailable" in title and "installed" in title, title
+
+
+@pytest.mark.asyncio
+async def test_collapsed_panel_with_an_invalid_value_is_marked_in_its_title():
+    """task-14826 AC#2: the gate said "Fix the highlighted options" while
+    the highlight (`-ingest-option-invalid`) sat on an Input inside the
+    COLLAPSED body -- nothing on screen was marked, and the collapsed title
+    cheerfully reported ``Chunk size: 7``."""
+    form = _default_form()
+    form.type_options = {"generic": {"chunk": True, "chunk_size": "7"}}
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        preflight=PreflightResult(
+            type_groups={"generic": ["/tmp/a.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=10,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        panel = pilot.app.query_one("#type-group-generic", Collapsible)
+        assert panel.collapsed is True, "precondition: the panel is folded"
+        title = str(panel.title)
+        assert title.count("⚠") == 1, title
+        assert "Chunk size needs fixing" in title, title
+        # The invalid value itself must not be presented as a setting.
+        assert "Chunk size: 7" not in title, title
+        # And the marker survives the screen's in-place title update, which
+        # assigns `Collapsible.title` and nothing else.
+        from tldw_chatbook.Widgets.Library.library_ingest_canvas import (
+            build_type_group_title,
+        )
+        from tldw_chatbook.Library.ingest_capabilities import get_capabilities
+
+        assert build_type_group_title(
+            get_capabilities("generic"), form.type_options["generic"]
+        ) == title
+
+
+@pytest.mark.asyncio
+async def test_opening_the_tooling_fold_is_not_reported_as_an_option_panel():
+    """The fold is a ``Collapsible`` inside the summary; the canvas's
+    option-panel handler must ignore it, or opening it would persist a
+    bogus expanded type group under the id ``ingest-preflight-tooling-
+    detail``."""
+    app = _MessageRecordingHost(_warned_state(3))
+    async with app.run_test() as pilot:
+        fold = pilot.app.query_one(
+            "#ingest-preflight-tooling-detail", Collapsible
+        )
+        fold.collapsed = False
+        await pilot.pause()
+        assert fold.collapsed is False
+    assert app.panel_toggles == [], (
+        f"the fold leaked an option-panel toggle: {app.panel_toggles}"
+    )

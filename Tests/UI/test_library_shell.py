@@ -19380,9 +19380,14 @@ async def test_option_input_edit_updates_receipt_error_and_gate(tmp_path):
         await pilot.pause()
 
         panel = screen.query_one("#type-group-generic", Collapsible)
-        assert "Chunk size: abc" in str(panel.title), (
+        # (task-14826 AC#2) The receipt tracks the edit in place, but an
+        # INVALID value is reported as a fault, not as a setting: the
+        # collapsed title used to read "Chunk size: 7" beside a gate
+        # saying "fix the highlighted options", with nothing highlighted.
+        assert "⚠ Chunk size needs fixing" in str(panel.title), (
             "receipt still asserts the old value after an Input edit"
         )
+        assert "Chunk size: abc" not in str(panel.title)
         error_line = screen.query_one("#opt-generic-chunk_size-error", Static)
         assert error_line.display is True
         assert "whole number" in str(error_line.renderable)
@@ -23008,11 +23013,19 @@ async def test_library_note_unmount_clears_notes_timers_and_workers() -> None:
 
 
 @pytest.mark.asyncio
-async def test_commit_line_hides_while_option_error_gate_blocks(tmp_path):
-    """(task-3305, MI-16) "1 will import" beside "Fix the highlighted
-    options to start" is a mixed message: text/number edits take the
-    in-place path, which synced the gate but left the commit line
-    asserting the pre-error forecast."""
+async def test_commit_line_stays_visible_and_synced_while_a_gate_blocks(
+    tmp_path,
+):
+    """(task-3305 MI-16, revised by task-14820 AC#4) MI-16's defect was a
+    STALE commit line: text/number edits take the in-place path, which
+    synced the gate but left the forecast asserting the pre-error
+    numbers. It was fixed by HIDING the line -- which cost a blocked user
+    the very numbers they were reasoning about. The line now stays
+    visible while the gate blocks Start, and rides the same in-place
+    sync as the gate, so the two can never disagree.
+
+    The forecast describes the SELECTION (unchanged by a bad chunk size);
+    the gate line beside it says why Start is unavailable."""
     db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="t3305-commit")
     harness = _LibraryIngestCanvasHarness(db)
     staged = tmp_path / "report.txt"
@@ -23044,15 +23057,17 @@ async def test_commit_line_hides_while_option_error_gate_blocks(tmp_path):
         await pilot.pause()
         quiet = screen.query_one("#library-ingest-start-quiet-line", Static)
         assert "Fix the highlighted options" in str(quiet.renderable)
-        assert summary.display is False, (
-            "commit forecast stayed visible while the option-error gate "
-            "blocks Start (mixed message)"
+        assert screen.query_one(
+            "#library-ingest-commit-summary", Static
+        ) is summary, "the forecast must survive the in-place path"
+        assert summary.display is True, (
+            "a blocked user lost the numbers they were reasoning about "
+            "(task-14820 AC#4)"
         )
+        assert "1 will import" in str(summary.renderable)
 
         chunk.value = "1500"
         await pilot.pause()
         await pilot.pause()
-        assert summary.display is True, (
-            "fixing the option must restore the commit forecast in place"
-        )
+        assert summary.display is True
         assert "1 will import" in str(summary.renderable)

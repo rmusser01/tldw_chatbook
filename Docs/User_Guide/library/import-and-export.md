@@ -60,8 +60,17 @@ In server mode the **Export** rail row is disabled, with the tooltip
   always-present base. Each fold ends with "Reset to defaults".
 - **Metadata** — "Title (optional)", "Author (optional)", "Keywords,
   comma-separated (optional)". These apply to everything in the import.
-- **Start** — a quiet gate line ("Enter a file path or URL to start.")
-  and the "Start import" button.
+- **Start** — a forecast line, a quiet gate line ("Enter a file path or
+  URL to start.") and the "Start import" button. The forecast is one
+  sentence of counts for the staged selection — "2 will import · 1 will
+  skip · 4 will fail (3 need tooling, 1 empty)" — and it counts a file
+  whose type needs tooling you don't have as a failure, not an import,
+  because the pre-check has already warned that the tooling is missing.
+  The failure segment names its reasons whenever tooling is one of them,
+  so you can tell which part of the number an install would change. The
+  line stays on screen while a gate blocks Start (a bad option value, a
+  selection with nothing importable), so the numbers you were reasoning
+  about don't vanish at the moment you need them.
 - **Queue** — the "Queue" heading, a per-state count line while jobs
   exist ("This queue: 1 parsing · 2 queued · 1 done" — task-2859: the
   "This queue:" prefix replaced a trailing "— in queue" suffix that
@@ -111,9 +120,10 @@ the rest of the session.
 | "Chunk content" | Governs every type: off means no retrieval chunks are stored at all; on chunks plain text / documents / HTML too (not just PDF/e-book/audio), using "Chunk size" and "Chunk overlap" — both measured in words. |
 | "Encoding" | How plain text and HTML files are decoded: "Auto-detect (UTF-8 first)" (strict UTF-8, then detection) or an explicit UTF-8 / UTF-16 / "Latin-1 (ISO-8859-1)" / "Windows-1252 (Western)". A wrong explicit choice shows up as replacement characters rather than failing the import. |
 | "Install verified Parakeet v2 INT8 (630.6 MiB)…" | In the Audio & video fold, enabled when the provider is parakeet-onnx (under any other provider the button is inert and its label ends "— needs the parakeet-onnx provider"). Opens a consent dialog listing Source, Revision, License, Download size, and Destination, ending "All four files are checked against pinned sizes and SHA-256 digests before the bundle becomes usable." Buttons: "Cancel" / "Install". |
-| "Start import" | Queues everything the pre-check found. If "⚠" tooling warnings are outstanding, the first press doesn't submit — the line beside Start turns into "⚠ Press Start again to import anyway — N files may fail." and a second press (or a second Enter in the path field) starts the import. See "Consent for risky imports" below. |
+| "Start import" | Queues everything the pre-check found. If "⚠" tooling warnings are outstanding, the first press doesn't submit — the line beside Start turns into "⚠ Press Start again to import anyway — N files will fail without more tooling." (or "… N files may fail." when the missing package is only an optional enhancement) and a second press (or a second Enter in the path field) starts the import. See "Consent for risky imports" below. Start is unavailable, with the reason stated at the button, when the selection has nothing importable: "This folder is empty — there's nothing to import. Choose a folder with files, or a single file." for an empty folder, "Nothing in this selection can be imported — N unsupported files." when nothing in it has a handler. Neither case leaves a failed row behind: the import never starts. |
 | Queue rows | "● queued / parsing / writing · name" while working, "✓ done · name · 4s" on success, "✗ failed · name · reason" (plus " · retry 1" after a retry) on failure, "⊘ cancelled · name" when stopped on purpose. Server jobs carry an " · on server" suffix. |
 | Row actions | "Open in Library" (done, local) jumps to the new media item; "View on server" (done, server); "Show details" shows the full error; "Retry" re-queues a failed job; "Cancel" stops an in-flight server job; "Dismiss" removes a failed row. |
+| "Show details" | Opens inline under the row: a plain-language reason ("Reason: No text could be extracted." / "The file couldn't be read." / "The file is empty." / "The Library couldn't be written to."), the full message when it says more than the row line, the underlying tool output once (never repeated between the message and the chain), and — only when a retry could actually change the outcome — one line of advice derived from that same reason. A deterministic failure says so ("Retrying now will fail the same way — install the tooling named above first, then Retry."); a named missing package is named ("Missing dependency: pymupdf. Install it, then Retry."); a cause we can't classify says nothing rather than encouraging a retry that would repeat itself. |
 | "Clear finished" | Removes all done and failed rows at once (two presses: the first arms and renames the button "Press again to clear N finished…"). |
 | "Retry this batch" | Below the queue, once your last import of the session has settled (while a job is still queued/parsing/writing it is hidden, and `r` is inert too — re-staging mid-run invites a duplicate batch): one press puts that submission's source, options, title, author, and keywords back into the form and re-runs the pre-check from scratch — install the package a warning named, press it, and the fresh forecast reflects the fix. If the form currently holds work the re-stage would overwrite (a different path, a title you started typing, an option you flipped), it takes two presses: the first renames the button "Press again to replace form" and changes nothing. It stages, not submits: review the forecast and press "Start import" again. Keyboard: `r` (anywhere on the Import canvas outside a text field). |
 
@@ -121,8 +131,12 @@ the rest of the session.
 outstanding takes two presses, right at the Start button (task-3314
 retired the old "Some files may fail to import:" dialog). The first press
 converts the line beside Start into "⚠ Press Start again to import anyway
-— N files may fail." naming how many staged files depend on the missing
-tooling ("1 file" when only one). The second press — button or Enter,
+— N files will fail without more tooling." naming how many staged files
+cannot be handled at all without it ("1 file" when only one), or "…
+N files may fail." when the missing package only degrades the result.
+That count is the same number the forecast line above it reports — both
+are renderings of one computation, so they cannot disagree. The second
+press — button or Enter,
 they behave identically — starts the import. You can arm with Enter in
 the path field and confirm with the Start button, or the other way
 round; moving focus between the two presses does not cancel anything.
@@ -429,3 +443,48 @@ text option keeps its format hint beside the reason it is inert (e.g.
 needs yt-dlp installed"); a blocked-URL failure row now names the address
 it refused; and characters typed immediately after "Clear" are no longer
 swallowed by the relayout.*
+
+*Verified against feat/media-ingest-forecast-truth — 2026-08-10 (tasks
+14820/14821/14823): the commit-point forecast and the two-press consent
+line are now two renderings of ONE computation, so they can no longer
+state different numbers for the same selection (live saw "15 will
+import" two rows above "7 files may fail", delivering 8 imported / 5
+skipped / 8 failed); files whose type group needs tooling this install
+lacks are forecast as failures with the reason named ("3 need tooling,
+1 empty"), verified against the real import receipt for a mixed folder;
+the forecast stays visible while a gate blocks Start; a failure's
+"Show details" now states a plain-language reason instead of a raw
+category token ("write error" for a file that never reached a write),
+prints the underlying tool output once instead of twice, and derives its
+retry advice from that reason — the optimistic "a retry can succeed if
+the failure was transient" no longer appears under a deterministic
+missing-tooling failure, and an unclassifiable cause says nothing at
+all; and a selection with nothing importable (an empty folder, or one
+whose files are all unsupported) gates Start with its own stated reason
+instead of manufacturing a permanent "✗ failed · <folder>" receipt.*
+
+*Verified against feat/media-ingest-forecast-truth — 2026-08-10 (tasks
+14822/14824/14825/14826): missing optional tooling no longer prints a
+wall. A folder that needs eleven optional components now shows one line
+("⚠ 3 of 21 files need optional tooling — those imports may fail"), one
+**Copy install command** button that copies a SINGLE pip command
+installing every missing extra at once, and a **What's missing** fold
+holding the per-component detail and its per-extra copy buttons — so the
+type breakdown, the options and **Start import** are all on screen at
+once, which eleven warnings and nine stacked buttons used to prevent.
+The lines that describe your selection ("5 unsupported files will be
+skipped", "1 empty file will fail") are now bold, distinct from the
+muted environment note above them. Accessibility: the encoding (and
+every other) dropdown now shows a heavy border on focus instead of a
+colour change only; the path field carries a persistent "File, folder or
+URL to import" label that survives being filled in; placeholder text was
+raised to meet the AA contrast floor in both enabled and disabled
+fields; and an options group whose controls are all disabled — which
+Textual removes from the tab order entirely — states the reason on its
+collapsible title, which IS a tab stop ("Audio & video — 13 options
+unavailable — needs faster-whisper installed"). A collapsed options
+panel holding an invalid value is marked in its title ("⚠ Chunk size
+needs fixing"), and a collapsed title no longer advertises settings for
+controls you cannot edit. In the file picker, the Name/Size/Modified
+headers now line up with their own columns whether or not the listing is
+long enough to show a scrollbar.*

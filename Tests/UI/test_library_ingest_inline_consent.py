@@ -374,9 +374,12 @@ def _warned_state(*, armed: bool, files: list[str] | None = None):
 def test_armed_state_converts_the_gate_line_into_the_confirm_copy():
     state = _warned_state(armed=True)
     assert state.start_confirm_armed is True
-    assert (
-        state.start_quiet_line
-        == "⚠ Press Start again to import anyway — 1 file may fail."
+    # (task-14820) ``pdf_processing`` is the pdf group's REQUIRED feature,
+    # so this file cannot import at all -- "may fail" understated a
+    # certainty the forecast beside it now states outright.
+    assert state.start_quiet_line == (
+        "⚠ Press Start again to import anyway — 1 file will fail without "
+        "more tooling."
     )
     # The gate itself stays open: the second press must be possible.
     assert state.start_enabled is True
@@ -386,10 +389,19 @@ def test_confirm_copy_pluralizes_the_file_count():
     """(migrated from the modal's pluralization pin) "2 files", never
     "(1 files)"."""
     state = _warned_state(armed=True, files=["/tmp/a.pdf", "/tmp/b.pdf"])
-    assert "2 files may fail" in state.start_quiet_line
+    assert "2 files will fail" in state.start_quiet_line
     single = _warned_state(armed=True)
-    assert "1 file may fail" in single.start_quiet_line
+    assert "1 file will fail" in single.start_quiet_line
     assert "1 files" not in single.start_quiet_line
+
+
+def test_confirm_count_is_the_forecast_count_not_a_second_computation():
+    """(task-14820 AC#1) The consent line and the commit forecast are two
+    renderings of ONE object -- live saw them disagree by 8 files."""
+    state = _warned_state(armed=True, files=["/tmp/a.pdf", "/tmp/b.pdf"])
+    assert "2 will fail" in state.commit_summary_line
+    assert "2 files will fail" in state.start_quiet_line
+    assert count_warning_affected_files(state.form.preflight) == 2
 
 
 def test_unarmed_state_keeps_the_plain_gate_line():
@@ -502,7 +514,8 @@ async def test_enter_enter_two_press_flow_renders_confirm_then_submits(
         quiet = screen.query_one("#library-ingest-start-quiet-line", Static)
         text = str(quiet.renderable)
         assert "Press Start again to import anyway" in text
-        assert "1 file may fail" in text
+        # (task-14820) A missing REQUIRED feature is a certainty, not a risk.
+        assert "1 file will fail without more tooling" in text
         assert quiet.has_class("-ingest-start-confirm")
         # AC#3: the copy-install-command affordance stays reachable at the
         # inline warnings while the confirm is pending.

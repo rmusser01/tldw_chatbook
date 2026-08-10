@@ -1253,3 +1253,64 @@ def test_the_backend_roster_the_umbrella_mirrors_is_pinned() -> None:
         "paddleocr",
         "docext",
     }
+
+
+# --- task-14820: required vs optional, asked once ---------------------------
+
+
+def test_classify_missing_features_splits_required_from_optional() -> None:
+    """The forecast has to tell "cannot run at all" from "runs, degraded".
+
+    Consumers used to union both tuples (``count_warning_affected_files``
+    did), so a missing REQUIRED backend read exactly like a missing
+    optional one -- every warned file was "may fail" and none was a
+    forecast failure.
+    """
+    from tldw_chatbook.Library.ingest_capabilities import (
+        classify_missing_features,
+    )
+
+    required, optional = classify_missing_features(
+        "pdf", {"pdf_processing", "docling", "unrelated_feature"}
+    )
+    assert required == ("pdf_processing",)
+    assert optional == ("docling",)
+
+    # A group whose only stake in the missing feature is optional.
+    assert classify_missing_features("document", {"docling"}) == (
+        (),
+        ("docling",),
+    )
+
+
+def test_classify_missing_features_is_quiet_for_unknown_input() -> None:
+    """Unsupported/unknown groups have no declared tooling, and an empty
+    missing-set never invents one."""
+    from tldw_chatbook.Library.ingest_capabilities import (
+        UNSUPPORTED_GROUP,
+        classify_missing_features,
+    )
+
+    assert classify_missing_features(UNSUPPORTED_GROUP, {"pdf_processing"}) == (
+        (),
+        (),
+    )
+    assert classify_missing_features("not-a-group", {"pdf_processing"}) == (
+        (),
+        (),
+    )
+    assert classify_missing_features("pdf", set()) == ((), ())
+    assert classify_missing_features("pdf", {"", "  "}) == ((), ())
+
+
+def test_classify_missing_features_agrees_with_the_warning_wall() -> None:
+    """The classifier and ``get_tooling_warnings`` must name the same
+    features for a group -- the forecast reads one, the user reads the
+    other."""
+    from tldw_chatbook.Library.ingest_capabilities import (
+        classify_missing_features,
+    )
+
+    warned = {w["feature"] for w in get_tooling_warnings("pdf")}
+    required, optional = classify_missing_features("pdf", warned)
+    assert set(required) | set(optional) == warned

@@ -9,6 +9,7 @@ what options they expose.
 from __future__ import annotations
 
 import importlib.util
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -1334,6 +1335,45 @@ def get_capabilities(group: str) -> TypeGroupCapabilities:
         KeyError: If ``group`` is not a known type group.
     """
     return _TYPE_GROUPS[group]
+
+
+def classify_missing_features(
+    group: str, missing: Iterable[str]
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Split ``missing`` into ``group``'s REQUIRED and OPTIONAL features.
+
+    (task-14820) The forecast has to tell "this group cannot run at all"
+    apart from "this group runs, just less well": a file whose group has
+    an unmet REQUIRED feature is a certain failure, while an unmet
+    OPTIONAL one only degrades it. That required/optional split is
+    declared here, on :class:`TypeGroupCapabilities`, and consumers used
+    to re-derive it by unioning both tuples (``count_warning_affected_files``
+    did exactly that, which is why every warned file read as "may fail"
+    and none as "will fail"). One accessor, so a schema change reaches
+    every consumer.
+
+    Args:
+        group: Type group identifier. :data:`UNSUPPORTED_GROUP` (and any
+            unknown group) has no declared tooling, so nothing classifies.
+        missing: Feature IDs known to be unavailable -- typically the
+            ``feature`` keys of a pre-flight's warnings, so the answer
+            matches what the user was actually told rather than a fresh
+            probe of this process.
+
+    Returns:
+        ``(required_missing, optional_missing)``, each in the group's own
+        declared order, containing only members of ``missing``.
+    """
+    if group == UNSUPPORTED_GROUP or group not in _TYPE_GROUPS:
+        return (), ()
+    wanted = {str(feature).strip() for feature in missing} - {""}
+    if not wanted:
+        return (), ()
+    capabilities = get_capabilities(group)
+    return (
+        tuple(f for f in capabilities.required_features if f in wanted),
+        tuple(f for f in capabilities.optional_features if f in wanted),
+    )
 
 
 def get_tooling_warnings(group: str) -> list[dict[str, Any]]:

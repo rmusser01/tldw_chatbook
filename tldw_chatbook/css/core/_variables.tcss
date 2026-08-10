@@ -49,6 +49,15 @@ $ds-status-error: $error;
    foreground (7.71:1) for text and marks that must be READ, while
    $ds-status-error stays the decorative status hue. */
 $ds-status-error-readable: #ff8fa3;
+/* task-14824 (3): Textual's stock placeholder colour ($text-disabled)
+   measured 3.52:1 on an enabled ingest field and 3.49:1 on a disabled one
+   -- below AA for normal text, and a 0.03 delta means a placeholder is
+   also useless as a disabled-state cue. This grey clears AA against BOTH
+   the resting field surface (rgb 30) and the darkened disabled surface
+   (rgb 13) -- measured 4.94:1 / 5.63:1 -- while staying obviously dimmer
+   than a real value ($text, rgb 224), so a placeholder still reads as an
+   absent value rather than as content. */
+$ds-text-placeholder: #8a8a8a;
 $ds-status-paused: $warning;
 $ds-status-unsaved: $warning;
 $ds-status-recovered: $success;
