@@ -4526,6 +4526,20 @@ class LibraryIngestQueueMixin:
 
 
 # --- Main App ---
+def _build_generated_video_store():
+    from tldw_chatbook.Video_Generation.video_store import VideoStore
+
+    store = VideoStore()
+    try:
+        store.enforce_retention()
+    except Exception as exc:
+        logger.warning(
+            "Generated-video startup retention failed (error_type={}).",
+            type(exc).__name__,
+        )
+    return store
+
+
 class TldwCli(
     # TextSelectionCrashGuard sits before App so its on_event wrapper is the
     # last line of defense against Textual 8.x's text-selection MouseDown
@@ -4735,6 +4749,7 @@ class TldwCli(
         phase_start = time.perf_counter()
         self.MediaDatabase = MediaDatabase
         self.app_config = load_settings()
+        self.generated_video_store = _build_generated_video_store()
         # TASK-13157: snapshot any TOML parse failure `load_settings()` just
         # hit -- captured here (mirroring `_instance_lock_status` below, the
         # same "detect at __init__, stash, notify once mounted" shape)
