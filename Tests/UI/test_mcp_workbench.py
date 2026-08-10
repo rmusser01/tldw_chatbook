@@ -164,6 +164,8 @@ async def test_workbench_mounts_rail_canvas_inspector_and_loads_local_servers():
     app = WorkbenchApp()
     async with app.run_test() as pilot:
         await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
         workbench = app.query_one(MCPWorkbench)
         assert workbench.active_mode == "servers"
         # builtin + docs rows (+ "All servers")
@@ -892,7 +894,12 @@ async def test_tool_gate_checkbox_toggle_saves_setting_and_reloads_catalog(monke
     import tldw_chatbook.config as config_module
     from tldw_chatbook.Agents.local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
 
-    flags: dict[tuple[str, str], Any] = {}
+    # TASK-14807 changed the product default to enabled. This test exercises
+    # the explicit off -> on persistence path, so seed that starting state
+    # instead of inheriting the new default from ``default``.
+    flags: dict[tuple[str, str], Any] = {
+        ("console", "local_tools_enabled"): False
+    }
     save_calls: list[tuple[str, str, Any]] = []
 
     def fake_get_cli_setting(section, key=None, default=None):
@@ -1632,6 +1639,8 @@ async def test_in_flight_shows_checking_and_cancel_then_completes():
     app.unified_mcp_service.connect_gate = asyncio.Event()
     async with app.run_test() as pilot:
         await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
         workbench = app.query_one(MCPWorkbench)
         workbench._selected_server_key = "local:docs"
         workbench._start_lifecycle("local:docs", "docs", "connect")
@@ -1669,6 +1678,8 @@ async def test_in_flight_checking_message_includes_time_bound(monkeypatch):
     app.unified_mcp_service.connect_gate = asyncio.Event()
     async with app.run_test() as pilot:
         await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
         workbench = app.query_one(MCPWorkbench)
         workbench._selected_server_key = "local:docs"
         workbench._start_lifecycle("local:docs", "docs", "connect")
@@ -1698,6 +1709,8 @@ async def test_in_flight_checking_message_time_bound_honors_config_override(monk
     app = LifecycleApp()
     app.unified_mcp_service.connect_gate = asyncio.Event()
     async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         workbench = app.query_one(MCPWorkbench)
         workbench._selected_server_key = "local:docs"
@@ -1729,6 +1742,8 @@ async def test_in_flight_checking_message_time_bound_survives_malformed_config(m
     app = LifecycleApp()
     app.unified_mcp_service.connect_gate = asyncio.Event()
     async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         workbench = app.query_one(MCPWorkbench)
         workbench._selected_server_key = "local:docs"
@@ -3037,7 +3052,7 @@ async def test_empty_diagnosis_no_servers_shows_add_server_and_button_opens_form
 async def test_empty_diagnosis_names_the_gate_off_count_when_gates_are_off():
     """task-3240 SECONDARY breadcrumb: `_empty_tools_diagnosis()` appends
     "N tool gate(s) are off ..." whenever `all_tool_gates()` finds any --
-    the isolated test config defaults every gate off, so all 9 are named."""
+    TASK-14807 defaults the local master gate on, leaving 8 gates off."""
     app = NoServersApp()
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -3046,8 +3061,8 @@ async def test_empty_diagnosis_names_the_gate_off_count_when_gates_are_off():
         await pilot.pause()
         canvas = app.query_one(MCPToolsMode)
         message = str(canvas.query_one("#mcp-tools-empty-message", Static).renderable)
-        assert "9 tool gate(s) are off" in message
-        assert "Servers mode" in message
+        assert "8 tool gate(s) are off" in message
+        assert "Tools mode" in message
 
 
 @pytest.mark.asyncio

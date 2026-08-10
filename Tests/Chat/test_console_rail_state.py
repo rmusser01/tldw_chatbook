@@ -423,6 +423,8 @@ def test_console_rail_preferences_serialize_to_public_dict_shape():
         "left_open": False,
         "right_open": True,
         "session_open": True,
+        "workspace_open": True,
+        "conversations_open": True,
         "model_open": True,
         "details_open": False,
         "agent_open": False,
@@ -731,12 +733,16 @@ def test_console_rail_section_defaults():
     # it renders in the Inspector rail instead. P3c added "character".
     assert CONSOLE_RAIL_SECTION_IDS == (
         "session",
+        "workspace",
+        "conversations",
         "model",
         "details",
         "agent",
         "character",
     )
     assert prefs.session_open is True
+    assert prefs.workspace_open is True
+    assert prefs.conversations_open is True
     assert prefs.model_open is True
     assert prefs.details_open is False
     assert prefs.character_open is True
@@ -744,18 +750,39 @@ def test_console_rail_section_defaults():
 
 def test_coerce_console_rail_preferences_reads_section_fields():
     coerced = coerce_console_rail_preferences(
-        {"left_open": True, "details_open": "true", "model_open": "off"}
+        {
+            "left_open": True,
+            "details_open": "true",
+            "model_open": "off",
+            "workspace_open": "false",
+            "conversations_open": "on",
+        }
     )
     assert coerced.details_open is True
     assert coerced.model_open is False
     assert coerced.session_open is True  # missing key -> default
+    assert coerced.workspace_open is False
+    assert coerced.conversations_open is True
+
+
+def test_coerce_console_rail_preferences_migrates_legacy_session_collapse():
+    coerced = coerce_console_rail_preferences({"session_open": False})
+
+    assert coerced.session_open is False
+    assert coerced.workspace_open is False
+    assert coerced.conversations_open is False
 
 
 def test_serialize_console_rail_preferences_round_trips_sections():
-    prefs = ConsoleRailPreferences(details_open=True, model_open=False)
+    prefs = ConsoleRailPreferences(
+        details_open=True,
+        model_open=False,
+        conversations_open=False,
+    )
     serialized = serialize_console_rail_preferences(prefs)
     assert serialized["details_open"] is True
     assert serialized["model_open"] is False
+    assert serialized["conversations_open"] is False
     assert "context_open" not in serialized
     assert coerce_console_rail_preferences(serialized) == prefs
 
@@ -777,8 +804,15 @@ def test_build_console_rail_state_carries_section_flags():
     key = build_console_rail_preference_key(workspace_id="ws", session_id="s")
     state = build_console_rail_state(
         preference_key=key,
-        stored_preferences={"details_open": True, "session_open": False},
+        stored_preferences={
+            "details_open": True,
+            "session_open": False,
+            "workspace_open": False,
+            "conversations_open": True,
+        },
     )
     assert state.details_open is True
     assert state.session_open is False
+    assert state.workspace_open is False
+    assert state.conversations_open is True
     assert state.model_open is True

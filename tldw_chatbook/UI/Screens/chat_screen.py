@@ -11037,16 +11037,9 @@ class ChatScreen(BaseAppScreen):
                 workspace_context, "_console_workspace_context_synced", False
             )
             if state_changed or not run_active or not already_synced:
-                workspace_context.sync_state(state)
-                workspace_context._console_workspace_context_synced = True
-                try:
-                    details_tray = self.query_one(
-                        "#console-workspace-details", ConsoleWorkspaceDetailsTray
-                    )
-                except (NoMatches, QueryError):
-                    pass
-                else:
-                    details_tray.sync_state(state)
+                self.query_one("#console-left-rail", ConsoleLeftRail).sync_workspace_context(
+                    state
+                )
             # PR #660 review: a full-screen recompose constructs a FRESH tray
             # already carrying the current state, so `state_changed` alone
             # would never re-kick the legacy-alias worker after a recompose —

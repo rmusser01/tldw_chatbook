@@ -17,6 +17,7 @@ from loguru import logger
 from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
+from textual.css.query import QueryError
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import ContentSwitcher
@@ -1048,6 +1049,15 @@ class MCPWorkbench(Container):
         """Run the mount-time reload without letting a failure strand the UI."""
         try:
             await self._mount_deferred_canvases()
+            if not self.query(MCPToolsMode):
+                # Textual 8.2.8 can deliver the first after-refresh callback
+                # before this widget's composed ContentSwitcher is queryable.
+                # In that case _mount_deferred_canvases() deliberately returns;
+                # queue one message-pump turn instead of letting reload() query
+                # canvases that do not exist yet. The current exclusive worker
+                # completes before this callback starts its replacement.
+                self.call_later(self._start_initial_load)
+                return
             await self.reload()
         except Exception as exc:
             # `reload()` clears `is_loading` in its own `finally`, but only for
@@ -1442,6 +1452,15 @@ class MCPWorkbench(Container):
         handlers just mutated the store itself).
         """
         async with self._sync_children_lock:
+            # Lifecycle and restore workers may request a sync during the same
+            # Textual-floor pre-mount window as the initial load. Establish the
+            # deferred-canvas invariant at this shared boundary, under the lock
+            # that already serializes every sync pass. If even the parent
+            # switcher is not queryable yet, the initial-load retry will paint
+            # the current state on the next message-pump turn.
+            await self._mount_deferred_canvases()
+            if not self.query(MCPToolsMode):
+                return
             display_snapshots = [self._display_snapshot(snap) for snap in self._snapshots]
             rail = self.query_one(MCPRail)
             rail.sync_state(

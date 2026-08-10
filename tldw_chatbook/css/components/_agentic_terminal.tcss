@@ -2565,6 +2565,8 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 #console-staged-context-tray,
+#console-session-context,
+#console-workspaces-context,
 #console-workspace-context,
 #console-run-inspector {
     width: 1fr;
@@ -2582,6 +2584,8 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 #console-staged-context-tray,
+#console-session-context,
+#console-workspaces-context,
 #console-workspace-context {
     width: 100%;
     min-width: 0;
@@ -2593,6 +2597,8 @@ with stray left-edge border fragments), and padding 0 1 so the full
     max-height: 6;
 }
 
+#console-session-context,
+#console-workspaces-context,
 #console-workspace-context {
     height: auto;
     min-height: 0;
@@ -2778,6 +2784,8 @@ with stray left-edge border fragments), and padding 0 1 so the full
     background: $ds-surface-panel;
 }
 
+#console-session-context:focus,
+#console-workspaces-context:focus,
 #console-workspace-context:focus {
     outline: none;
     border: none;
@@ -2828,6 +2836,8 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 #console-staged-context-tray,
+#console-session-context,
+#console-workspaces-context,
 #console-workspace-context,
 #console-right-rail,
 #console-run-inspector,
@@ -2837,6 +2847,8 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 #console-staged-context-tray.console-frame-quiet,
+#console-session-context.console-frame-quiet,
+#console-workspaces-context.console-frame-quiet,
 #console-workspace-context.console-frame-quiet {
     border: none;
     background: $ds-surface-panel;
@@ -6379,6 +6391,18 @@ Button.mcp-callout {
    with equal-or-higher specificity than that bare rule, to actually win. */
 #mcp-tools-filter-server-slot Select {
     width: 28;
+}
+
+/* TASK-14807: the bundle carries an app-wide Checkbox width/height rule
+   for legacy conversation forms. Widget DEFAULT_CSS cannot outrank a
+   CSS_PATH rule, so keep this Tools-mode escape in the source bundle: a
+   compact, readable toggle with one content row instead of a full-width
+   border-only box. The adjacent Enabled/Disabled word remains the primary
+   state label. */
+MCPToolsMode #mcp-tools-local-enabled {
+    width: 8;
+    height: auto;
+    min-height: 1;
 }
 
 /* Kept in lockstep with the baseline copy in MCPServersMode.DEFAULT_CSS
