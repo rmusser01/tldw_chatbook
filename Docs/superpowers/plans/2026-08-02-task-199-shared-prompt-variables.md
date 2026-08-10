@@ -89,12 +89,12 @@
 
 ## Task 7: Integrate Library Append and Optional System Replacement
 
-- [ ] Add red `Tests/UI/test_library_prompts_canvas.py` and `Tests/UI/test_console_native_chat_flow.py` cases for Library append to the settled active draft, optional System replacement, shared values, use-original, expiry, latest wins, wrong session, stale System fingerprint, and transient missing composer.
-- [ ] Library authorization captures target session and System fingerprint, but Console captures the active composer snapshot when consuming the append handoff.
-- [ ] The target comes only from the app-owned sanitized projection published with the Console screen snapshot. A runtime/source change invalidates both; no prior target refuses with `Open Console once, then retry Use in Console.` before the dialog opens.
-- [ ] On transient missing composer, release only if still valid; expired/wrong-session/stale requests are acknowledged/discarded with a warning.
-- [ ] Apply composer/System in-memory changes coordinately and reversibly. If durable System persistence fails after live update, report that separate failure honestly; do not claim an atomic disk rollback.
-- [ ] Keep System checkbox default off and prevent a no-op application when no authorized lane exists.
+- [x] Add red `Tests/UI/test_library_prompts_canvas.py` and `Tests/UI/test_console_native_chat_flow.py` cases for Library append to the settled active draft, optional System replacement, shared values, use-original, expiry, latest wins, wrong session, stale System fingerprint, and transient missing composer.
+- [x] Library authorization captures target session and System fingerprint, but Console captures the active composer snapshot when consuming the append handoff.
+- [x] The target comes only from the app-owned sanitized projection published with the Console screen snapshot. A runtime/source change invalidates both; no prior target refuses with `Open Console once, then retry Use in Console.` before the dialog opens.
+- [x] On transient missing composer, release only if still valid; expired/wrong-session/stale requests are acknowledged/discarded with a warning.
+- [x] Apply composer/System in-memory changes coordinately and reversibly. If durable System persistence fails after live update, report that separate failure honestly; do not claim an atomic disk rollback.
+- [x] Keep System checkbox default off and prevent a no-op application when no authorized lane exists.
 
 ## Task 8: Documentation and Verification
 
