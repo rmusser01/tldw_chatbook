@@ -1,9 +1,10 @@
 ---
 id: TASK-14751
 title: Hybrid keyword-leg budget is split three ways with no source-type pushdown
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-09 21:21'
+updated_date: '2026-08-10 21:32'
 labels:
   - rag
   - retrieval
@@ -29,3 +30,9 @@ This is invisible to both existing guards: the P1 eval gate selects all three so
 - [ ] #3 A test pins the leg's composition against a REAL mixed corpus (media, notes and conversations seeded in real DBs, as Tests/RAG_Search/test_keyword_leg_chacha.py does), not canned fakes - it must red if the budget silently reverts to a fixed three-way split under a single-type selection.
 - [ ] #4 Rank-fair interleaving is preserved among the types that ARE selected (a multi-type selection must not regress to concatenation, where one well-stocked source consumes every slot).
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+See Docs/superpowers/plans/2026-08-10-rag-fusion-weighting.md (Task 2: source-type pushdown) and Docs/superpowers/specs/2026-08-10-rag-fusion-weighting-design.md (pushdown fix design) for the implementation.
+<!-- SECTION:PLAN:END -->

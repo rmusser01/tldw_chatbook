@@ -3,10 +3,10 @@ id: TASK-4110
 title: >-
   Hybrid fusion alpha blend buries FTS-only rows below the vector leg, so hybrid
   never rescues a keyword-only match
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-09 20:22'
-updated_date: '2026-08-09 20:59'
+updated_date: '2026-08-10 21:32'
 labels:
   - rag
   - retrieval
@@ -29,3 +29,9 @@ Found closing the TASK-3994/3995/3996 fusion cluster (plan Task 6), by the fixtu
 - [ ] #4 A regression test pins that an FTS-only row outranks at least one vector-only row under the shipped default alpha and rrf_k
 - [ ] #5 A test asserts the vector-blind fixture is STILL vector-blind - semantic mode does not return note-saltmarsh-hide for kw-plant-maintenance-record - so a future model bump or re-stamp cannot silently return the corpus to the state where it cannot distinguish coverage from noise
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+See Docs/superpowers/plans/2026-08-10-rag-fusion-weighting.md (Task 4 sweep + Task 5 ship-the-winner) and Docs/superpowers/specs/2026-08-10-rag-fusion-weighting-design.md (decision rule + two rescue senses) for the measured fix.
+<!-- SECTION:PLAN:END -->
