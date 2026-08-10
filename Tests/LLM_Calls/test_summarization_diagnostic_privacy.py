@@ -34,6 +34,32 @@ PRIVATE_GROUP_COUNTS = {
     "general_streaming": 20,
     "general_tail": 20,
 }
+PRIVATE_CATEGORY_COUNTS = {
+    "response/output content": 71,
+    "exception/error detail": 58,
+    "raw/processed/extracted input": 21,
+    "credential fragment": 21,
+    "prompt content": 17,
+    "private endpoint/path": 11,
+}
+PRIVATE_CATEGORY_COUNTS_BY_MODULE = {
+    "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py": {
+        "response/output content": 29,
+        "exception/error detail": 36,
+        "raw/processed/extracted input": 13,
+        "credential fragment": 8,
+        "prompt content": 8,
+        "private endpoint/path": 6,
+    },
+    "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py": {
+        "response/output content": 42,
+        "exception/error detail": 22,
+        "raw/processed/extracted input": 8,
+        "credential fragment": 13,
+        "prompt content": 9,
+        "private endpoint/path": 5,
+    },
+}
 
 
 def _guard() -> ModuleType:
@@ -100,6 +126,7 @@ def _call_from_record(site: dict[str, object], record_name: str):
         message_shape=record["message_shape"],
         expressions=tuple(record["expressions"]),
         captures_exception=record["captures_exception"],
+        level_expression=record.get("level_expression"),
     )
 
 
@@ -121,6 +148,33 @@ def _assert_ledger_lifecycle(sites: list[dict[str, object]]) -> None:
                 "unknown starting diagnostic classification: "
                 f"{site['site_id']}={classification}"
             )
+
+        if outcome == "deleted":
+            deletion_reason = site.get("deletion_reason")
+            assert isinstance(deletion_reason, str) and deletion_reason.strip(), (
+                "deleted diagnostic requires a non-empty deletion_reason: "
+                f"{site['site_id']}"
+            )
+        else:
+            assert "deletion_reason" not in site, (
+                f"only deleted diagnostics may have deletion_reason: {site['site_id']}"
+            )
+
+
+def _assert_private_category_matrix(sites: list[dict[str, object]]) -> None:
+    private_sites = [
+        site for site in sites if site["starting_classification"] == "private"
+    ]
+    assert Counter(site["category"] for site in private_sites) == (
+        PRIVATE_CATEGORY_COUNTS
+    )
+    for module, expected in PRIVATE_CATEGORY_COUNTS_BY_MODULE.items():
+        assert (
+            Counter(
+                site["category"] for site in private_sites if site["module"] == module
+            )
+            == expected
+        )
 
 
 def test_guard_finds_stdlib_loguru_nested_and_bound_calls() -> None:
@@ -156,9 +210,85 @@ def outer():
     assert calls[3].expressions == (
         "chunk.index",
         "extra_field",
-        "session_id",
-        "True",
+        "session=session_id",
+        "colors=True",
     )
+
+
+def test_guard_finds_imported_logging_method_callables() -> None:
+    source = """
+from logging import error, warning as warn
+
+error(private_value)
+warn(msg=other_private)
+"""
+
+    calls = _guard().discover_diagnostic_calls(source, module="synthetic.py")
+
+    assert [(call.method, call.event) for call in calls] == [
+        ("error", ""),
+        ("warning", ""),
+    ]
+    assert [call.expressions for call in calls] == [
+        ("private_value",),
+        ("other_private",),
+    ]
+    for call in calls:
+        with pytest.raises(AssertionError, match="constant string first argument"):
+            _guard().assert_review_outcome(call, call, outcome="metadata")
+
+
+def test_guard_finds_bind_and_opt_derived_logger_aliases() -> None:
+    source = """
+from loguru import logger
+
+bound = logger.bind(context=private_value)
+configured = logger.opt(exception=private_exc)
+bound.info("bound event")
+configured.warning("configured event")
+"""
+
+    calls = _guard().discover_diagnostic_calls(source, module="synthetic.py")
+
+    assert [(call.method, call.event) for call in calls] == [
+        ("info", "bound event"),
+        ("warning", "configured event"),
+    ]
+    assert calls[0].expressions == ("context=private_value",)
+    assert calls[1].expressions == ("exception=private_exc",)
+    assert calls[0].captures_exception is False
+    assert calls[1].captures_exception is True
+    with pytest.raises(AssertionError, match="approved metadata expression"):
+        _guard().assert_review_outcome(calls[0], calls[0], outcome="metadata")
+    with pytest.raises(AssertionError, match="must not capture exception"):
+        _guard().assert_review_outcome(calls[1], calls[1], outcome="frozen")
+
+
+def test_guard_preserves_bind_and_opt_keyword_names() -> None:
+    safe = _single_call(
+        'logger.bind(safe_count=value).opt(colors=True).info("event")\n'
+    )
+    private = _single_call(
+        'logger.bind(private_summary=value).opt(colors=True).info("event")\n'
+    )
+
+    assert safe.expressions == ("safe_count=value", "colors=True")
+    assert private.expressions == ("private_summary=value", "colors=True")
+    assert safe.expressions != private.expressions
+
+
+@pytest.mark.timeout(1)
+def test_guard_handles_logger_rebound_to_derived_alias() -> None:
+    source = """
+from loguru import logger
+
+logger = logger.bind(context=private_value)
+logger.info("event")
+"""
+
+    call = _single_call(source)
+
+    assert call.expressions == ("context=private_value",)
 
 
 def test_guard_identity_ignores_line_movement() -> None:
@@ -240,6 +370,26 @@ logger.log("INFO", f"loguru event: {private_value}", loguru_field)
     ]
 
 
+def test_guard_ledger_record_round_trips_log_level_expression() -> None:
+    site = {
+        "module": "synthetic.py",
+        "qualname": "summarize",
+        "current": {
+            "method": "log",
+            "event": "fixed event",
+            "occurrence": 1,
+            "message_shape": _message_shape('"fixed event"'),
+            "expressions": [],
+            "captures_exception": False,
+            "level_expression": "logging.ERROR",
+        },
+    }
+
+    call = _call_from_record(site, "current")
+
+    assert call.level_expression == "logging.ERROR"
+
+
 def test_guard_records_dynamic_format_receiver() -> None:
     call = _single_call("logger.error(template.format(secret))\n")
 
@@ -286,10 +436,86 @@ def test_guard_rejects_changed_reviewed_safe_expression() -> None:
 def test_guard_accepts_metadata_replacement_with_new_fixed_event() -> None:
     starting = _single_call('logger.error(f"Request failed: {error}")\n')
     repaired = _single_call(
-        'logger.error("Request failed; exception_type=%s", exception_type)\n'
+        'logger.error("Request failed; exception_type=%s", '
+        "safe_metadata_token(type(exc).__name__))\n"
     )
 
     _guard().assert_review_outcome(starting, repaired, outcome="metadata")
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "response.text",
+        "str(exc)",
+        "exc",
+        "api_key[:5]",
+        "custom_prompt_arg",
+        "input_data",
+        "summary",
+        "response_data",
+        "type(exc).__name__",
+        "response.headers",
+        "response.status",
+        "http_response.status_code",
+    ],
+)
+def test_guard_metadata_rejects_private_lazy_expression(
+    expression: str,
+) -> None:
+    starting = _single_call('logger.error(f"Legacy failure: {private}")\n')
+    current = _single_call(f'logger.error("Fixed failure; field=%s", {expression})\n')
+
+    with pytest.raises(AssertionError, match="approved metadata expression"):
+        _guard().assert_review_outcome(starting, current, outcome="metadata")
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "7",
+        "True",
+        "len(prompt)",
+        "len(response.content)",
+        "response.status_code",
+        "character_count",
+        "payload_length",
+        "retry_count",
+        "attempt + 1",
+        "streaming",
+        "safe_metadata_token(type(exc).__name__)",
+    ],
+)
+def test_guard_metadata_accepts_approved_lazy_expression(
+    expression: str,
+) -> None:
+    starting = _single_call('logger.error(f"Legacy failure: {private}")\n')
+    current = _single_call(f'logger.error("Fixed failure; field=%s", {expression})\n')
+
+    _guard().assert_review_outcome(starting, current, outcome="metadata")
+
+
+def test_guard_metadata_accepts_fixed_event_without_fields() -> None:
+    starting = _single_call('logger.error(f"Legacy failure: {private}")\n')
+    current = _single_call('logger.error("Fixed failure")\n')
+
+    _guard().assert_review_outcome(starting, current, outcome="metadata")
+
+
+def test_guard_metadata_rejects_severity_change() -> None:
+    starting = _single_call('logger.error(f"Legacy failure: {private}")\n')
+    current = _single_call('logger.warning("Fixed failure")\n')
+
+    with pytest.raises(AssertionError, match="preserve diagnostic method"):
+        _guard().assert_review_outcome(starting, current, outcome="metadata")
+
+
+def test_guard_metadata_rejects_log_level_change() -> None:
+    starting = _single_call('logger.log("ERROR", f"Legacy failure: {private}")\n')
+    current = _single_call('logger.log("WARNING", "Fixed failure")\n')
+
+    with pytest.raises(AssertionError, match="preserve log level"):
+        _guard().assert_review_outcome(starting, current, outcome="metadata")
 
 
 def test_guard_records_and_rejects_bare_name_message() -> None:
@@ -388,6 +614,10 @@ def test_ledger_retains_all_523_starting_sites() -> None:
     assert hashlib.sha256(encoded).hexdigest() == STARTING_PROJECTION_SHA256
 
 
+def test_ledger_private_categories_match_authoritative_inventory() -> None:
+    _assert_private_category_matrix(_ledger_sites())
+
+
 def test_ledger_current_state_matches_sources() -> None:
     sites = _ledger_sites()
     _assert_ledger_lifecycle(sites)
@@ -477,15 +707,14 @@ def test_ledger_lifecycle_uses_exact_approved_outcomes() -> None:
 
     for classification, allowed in approved.items():
         for outcome in allowed:
-            _assert_ledger_lifecycle(
-                [
-                    {
-                        "site_id": "synthetic-lifecycle-site",
-                        "starting_classification": classification,
-                        "outcome": outcome,
-                    }
-                ]
-            )
+            site = {
+                "site_id": "synthetic-lifecycle-site",
+                "starting_classification": classification,
+                "outcome": outcome,
+            }
+            if outcome == "deleted":
+                site["deletion_reason"] = "redundant legacy diagnostic removed"
+            _assert_ledger_lifecycle([site])
         for outcome in all_outcomes - allowed:
             with pytest.raises(AssertionError):
                 _assert_ledger_lifecycle(
@@ -497,3 +726,28 @@ def test_ledger_lifecycle_uses_exact_approved_outcomes() -> None:
                         }
                     ]
                 )
+
+
+def test_ledger_deletion_reason_contract() -> None:
+    deleted = {
+        "site_id": "synthetic-deleted-site",
+        "starting_classification": "private",
+        "outcome": "deleted",
+    }
+    with pytest.raises(AssertionError, match="non-empty deletion_reason"):
+        _assert_ledger_lifecycle([deleted])
+    with pytest.raises(AssertionError, match="non-empty deletion_reason"):
+        _assert_ledger_lifecycle([{**deleted, "deletion_reason": "   "}])
+
+    _assert_ledger_lifecycle(
+        [{**deleted, "deletion_reason": "redundant legacy diagnostic removed"}]
+    )
+
+    pending_with_reason = {
+        "site_id": "synthetic-pending-site",
+        "starting_classification": "private",
+        "outcome": "pending",
+        "deletion_reason": "not actually deleted",
+    }
+    with pytest.raises(AssertionError, match="only deleted diagnostics"):
+        _assert_ledger_lifecycle([pending_with_reason])
