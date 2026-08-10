@@ -1404,8 +1404,11 @@ def test_failed_curated_provision_notifies_mirrors_and_resets_state(monkeypatch)
     source_service.prefer_managed.assert_not_called()
 
 
+@pytest.mark.parametrize("preference_write_fails", (False, True))
 @pytest.mark.asyncio
-async def test_successful_curated_install_persists_managed_preference_off_loop():
+async def test_successful_curated_install_persists_managed_preference_off_loop(
+    preference_write_fails: bool,
+):
     import threading
 
     from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
@@ -1414,6 +1417,13 @@ async def test_successful_curated_install_persists_managed_preference_off_loop()
     from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V2_MODEL
 
     service = _FakeExternalSourceService()
+    if preference_write_fails:
+
+        def fail_preference_write(_key, *, cancelled=lambda: False):
+            service.prefer_threads.append(threading.get_ident())
+            raise RuntimeError("preference write failed")
+
+        service.prefer_managed = fail_preference_write
     app = _app()
     app._parakeet_source_service = service
     async with app.run_test(size=(120, 40)) as pilot:
@@ -1438,12 +1448,22 @@ async def test_successful_curated_install_persists_managed_preference_off_loop()
 
         screen._model_install_worker = screen._run_curated_provision()
 
-        assert await _wait_for(lambda: bool(service.preferred), pilot)
-        assert service.prefer_threads[0] != threading.get_ident()
         assert await _wait_for(lambda: screen._model_install_kind is None, pilot)
-        screen.notify.assert_called_once_with(
-            "Model installed and activated.", severity="information"
+        assert service.prefer_threads[0] != threading.get_ident()
+        assert screen._model_install_pending_report is None
+        delivered = screen._deliver_curated.call_args.args[0]
+        assert delivered.succeeded is True
+        assert delivered.active is False
+        expected_message = (
+            "Model installed, but the managed source preference could not be saved."
+            if preference_write_fails
+            else "Model installed and activated."
         )
+        screen.notify.assert_called_once_with(
+            expected_message,
+            severity="error" if preference_write_fails else "information",
+        )
+        assert bool(service.preferred) is not preference_write_fails
 
 
 @pytest.mark.asyncio

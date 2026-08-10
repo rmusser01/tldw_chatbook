@@ -1634,6 +1634,7 @@ class LLMScreen(LabScreen):
         self._model_install_service = None
         self._model_install_registry = None
         self._model_install_sources = None
+        self._model_install_pending_report = None
         self._model_install_kind = None
         view = self._curated_view()
         if view is not None:
