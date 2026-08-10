@@ -1791,10 +1791,7 @@ class SpeechSetupStep(SetupStep):
                 progress=progress,
             )
         except ExternalParakeetVerificationError as exc:
-            message, is_error = format_external_parakeet_recovery(
-                exc.code,
-                concise=True,
-            )
+            message, is_error = format_external_parakeet_recovery(exc.code)
             if is_error:
                 logger.warning(
                     "External Parakeet verification failed; error_type={}",

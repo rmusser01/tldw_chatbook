@@ -1896,7 +1896,7 @@ def test_external_hash_progress_is_path_private(monkeypatch, tmp_path):
     assert str(tmp_path) not in step._external_status
 
 
-def test_corrupt_external_source_reports_stable_path_private_error(
+def test_changed_external_source_uses_shared_path_private_error(
     monkeypatch,
     tmp_path,
 ):
@@ -1912,7 +1912,7 @@ def test_corrupt_external_source_reports_stable_path_private_error(
     )
     source_service = MagicMock()
     source_service.prepare_external.side_effect = ExternalParakeetVerificationError(
-        ExternalParakeetErrorCode.CORRUPT
+        ExternalParakeetErrorCode.CHANGED
     )
     step = _step(wizard=_wizard_with_source(source_service))
     step.notify = MagicMock()
@@ -1930,7 +1930,10 @@ def test_corrupt_external_source_reports_stable_path_private_error(
         step._external_scope_ids[token],
     )
 
-    assert "do not match" in step._external_status
+    assert step._external_status == (
+        "Model files changed during verification. "
+        "Wait for file changes to finish, then retry."
+    )
     assert str(tmp_path) not in step._external_status
     assert str(tmp_path) not in str(step.notify.call_args)
     source_service.prepare_config_commit.assert_not_called()

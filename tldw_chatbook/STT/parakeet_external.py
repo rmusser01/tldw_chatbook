@@ -77,26 +77,17 @@ _EXTERNAL_PARAKEET_RECOVERY = {
 
 def format_external_parakeet_recovery(
     code: ExternalParakeetErrorCode,
-    *,
-    concise: bool = False,
 ) -> tuple[str, bool]:
     """Return stable path-free recovery copy for one verification failure.
 
     Args:
         code: Stable verification failure code.
-        concise: Preserve the shorter First Run changed-file wording.
 
     Returns:
         User-facing recovery message and whether it is an error.
     """
 
-    message, is_error = _EXTERNAL_PARAKEET_RECOVERY[code]
-    if concise and code is ExternalParakeetErrorCode.CHANGED:
-        message = (
-            "Model files changed during verification. "
-            "Wait for changes to finish, then retry."
-        )
-    return message, is_error
+    return _EXTERNAL_PARAKEET_RECOVERY[code]
 
 
 class ExternalParakeetVerificationError(RuntimeError):

@@ -80,16 +80,6 @@ def test_recovery_formatter_preserves_path_free_lab_copy(
     assert str(tmp_path) not in message
 
 
-def test_recovery_formatter_preserves_first_run_changed_copy() -> None:
-    assert format_external_parakeet_recovery(
-        ExternalParakeetErrorCode.CHANGED,
-        concise=True,
-    ) == (
-        "Model files changed during verification. Wait for changes to finish, then retry.",
-        True,
-    )
-
-
 def _artifact_file(path: str, payload: bytes) -> ArtifactFile:
     return ArtifactFile(
         path=path,
