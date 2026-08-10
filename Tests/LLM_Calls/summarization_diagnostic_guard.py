@@ -171,93 +171,243 @@ def _receiver_root_name(node: ast.AST) -> str | None:
     return node.id if isinstance(node, ast.Name) else None
 
 
-def _imported_log_methods(tree: ast.AST) -> dict[str, str]:
-    methods: dict[str, str] = {}
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.ImportFrom) or node.module not in {
-            "logging",
-            "loguru",
-        }:
-            continue
-        for alias in node.names:
-            if alias.name in LOG_METHODS:
-                methods[alias.asname or alias.name] = alias.name
-    return methods
+@dataclass(frozen=True)
+class _AliasValue:
+    is_logger: bool = False
+    fields: tuple[str, ...] = ()
+    captures_exception: bool = False
+    is_factory: bool = False
+    methods: tuple[str, ...] = ()
 
 
-def _imported_get_logger_factories(tree: ast.AST) -> set[str]:
-    return {
-        alias.asname or alias.name
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom) and node.module == "logging"
-        for alias in node.names
-        if alias.name == "getLogger"
-    }
+_AliasState = dict[str, _AliasValue]
 
 
-def _opt_captures_exception(node: ast.AST) -> bool:
-    return any(
-        isinstance(candidate, ast.Call)
-        and isinstance(candidate.func, ast.Attribute)
-        and candidate.func.attr == "opt"
-        and any(
-            keyword.arg == "exception" and not _is_explicitly_disabled(keyword.value)
-            for keyword in candidate.keywords
-        )
-        for candidate in ast.walk(node)
+def _stable_unique(values: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(values))
+
+
+def _merge_alias_values(values: list[_AliasValue]) -> _AliasValue:
+    return _AliasValue(
+        is_logger=any(value.is_logger for value in values),
+        fields=_stable_unique(
+            tuple(field for value in values for field in value.fields)
+        ),
+        captures_exception=any(value.captures_exception for value in values),
+        is_factory=any(value.is_factory for value in values),
+        methods=_stable_unique(
+            tuple(method for value in values for method in value.methods)
+        ),
     )
 
 
-def _derived_logger_aliases(
-    tree: ast.AST, symbols: set[str], factories: set[str]
-) -> tuple[dict[str, tuple[str, ...]], dict[str, bool]]:
-    fields: dict[str, tuple[str, ...]] = {}
-    captures: dict[str, bool] = {}
-    assignments = [
-        node for node in ast.walk(tree) if isinstance(node, (ast.Assign, ast.AnnAssign))
-    ]
-    assignments.sort(key=lambda node: (node.lineno, node.col_offset))
-    for assignment in assignments:
-        value = assignment.value
-        targets = (
-            assignment.targets
-            if isinstance(assignment, ast.Assign)
-            else [assignment.target]
+def _merge_alias_states(*states: _AliasState) -> _AliasState:
+    names = _stable_unique(tuple(name for state in states for name in state))
+    return {
+        name: _merge_alias_values([state[name] for state in states if name in state])
+        for name in names
+    }
+
+
+def _bound_call_fields(node: ast.Call) -> tuple[str, ...]:
+    return (
+        *_unparse_many(list(node.args)),
+        *(_unparse_keyword(keyword) for keyword in node.keywords),
+    )
+
+
+def _alias_from_expression(
+    node: ast.AST | None, state: _AliasState
+) -> _AliasValue | None:
+    if node is None:
+        return None
+    if isinstance(node, ast.Name):
+        return state.get(node.id)
+    if isinstance(node, ast.Attribute):
+        base = _alias_from_expression(node.value, state)
+        if base is None or not base.is_logger:
+            return None
+        if node.attr == "getLogger":
+            return _AliasValue(is_factory=True)
+        if node.attr in LOG_METHODS:
+            return _AliasValue(methods=(node.attr,))
+        return None
+    if not isinstance(node, ast.Call):
+        return None
+    if isinstance(node.func, ast.Name):
+        callee = state.get(node.func.id)
+        return _AliasValue(is_logger=True) if callee and callee.is_factory else None
+    if not isinstance(node.func, ast.Attribute):
+        return None
+
+    base = _alias_from_expression(node.func.value, state)
+    if node.func.attr == "getLogger" and base and base.is_logger:
+        return _AliasValue(is_logger=True)
+    if node.func.attr not in {"bind", "opt"} or base is None or not base.is_logger:
+        return None
+    captures_exception = base.captures_exception or (
+        node.func.attr == "opt"
+        and any(
+            keyword.arg == "exception" and not _is_explicitly_disabled(keyword.value)
+            for keyword in node.keywords
         )
-        if (
-            isinstance(value, ast.Call)
-            and isinstance(value.func, ast.Name)
-            and value.func.id in factories
-        ):
-            for target in targets:
-                if isinstance(target, ast.Name):
-                    fields[target.id] = ()
-                    captures[target.id] = False
+    )
+    return _AliasValue(
+        is_logger=True,
+        fields=_stable_unique((*base.fields, *_bound_call_fields(node))),
+        captures_exception=captures_exception,
+    )
+
+
+def _assign_alias_target(
+    target: ast.AST, value: _AliasValue | None, state: _AliasState
+) -> None:
+    if isinstance(target, ast.Name):
+        if value is None:
+            state.pop(target.id, None)
+        else:
+            state[target.id] = value
+        return
+    if isinstance(target, (ast.Tuple, ast.List)):
+        for element in target.elts:
+            _assign_alias_target(element, None, state)
+
+
+def _record_call_snapshots(
+    node: ast.AST | None,
+    state: _AliasState,
+    snapshots: dict[int, _AliasState],
+) -> None:
+    if node is None:
+        return
+    for candidate in ast.walk(node):
+        if isinstance(candidate, ast.Call):
+            snapshots[id(candidate)] = dict(state)
+
+
+def _import_aliases(node: ast.Import | ast.ImportFrom, state: _AliasState) -> None:
+    if isinstance(node, ast.Import):
+        for alias in node.names:
+            name = alias.asname or alias.name.split(".", 1)[0]
+            state.pop(name, None)
+            if alias.name in {"logging", "loguru"}:
+                state[name] = _AliasValue(is_logger=True)
+        return
+
+    for alias in node.names:
+        if alias.name == "*":
             continue
-        if (
-            not isinstance(value, ast.Call)
-            or not isinstance(value.func, ast.Attribute)
-            or value.func.attr not in {"bind", "opt"}
-        ):
-            continue
-        root = _receiver_root_name(value.func.value)
-        if root is None or (
-            root not in symbols
-            and root not in fields
-            and root.casefold() not in {"log", "logger", "loguru_logger"}
-            and not root.casefold().endswith("_logger")
-        ):
-            continue
-        alias_fields = (
-            *fields.get(root, ()),
-            *_receiver_field_expressions(value),
+        name = alias.asname or alias.name
+        state.pop(name, None)
+        if node.module == "logging" and alias.name == "getLogger":
+            state[name] = _AliasValue(is_factory=True)
+        elif node.module in {"logging", "loguru"} and alias.name in LOG_METHODS:
+            state[name] = _AliasValue(methods=(alias.name,))
+        elif node.module == "loguru" and alias.name == "logger":
+            state[name] = _AliasValue(is_logger=True)
+
+
+def _function_argument_names(node: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
+    arguments = node.args
+    names = {
+        argument.arg
+        for argument in (
+            *arguments.posonlyargs,
+            *arguments.args,
+            *arguments.kwonlyargs,
         )
-        alias_captures = captures.get(root, False) or _opt_captures_exception(value)
-        for target in targets:
-            if isinstance(target, ast.Name):
-                fields[target.id] = alias_fields
-                captures[target.id] = alias_captures
-    return fields, captures
+    }
+    if arguments.vararg is not None:
+        names.add(arguments.vararg.arg)
+    if arguments.kwarg is not None:
+        names.add(arguments.kwarg.arg)
+    return names
+
+
+def _process_alias_statements(
+    statements: list[ast.stmt],
+    initial: _AliasState,
+    snapshots: dict[int, _AliasState],
+) -> _AliasState:
+    state = dict(initial)
+    for statement in statements:
+        if isinstance(statement, (ast.Import, ast.ImportFrom)):
+            _import_aliases(statement, state)
+            continue
+        if isinstance(statement, ast.Assign):
+            _record_call_snapshots(statement.value, state, snapshots)
+            value = _alias_from_expression(statement.value, state)
+            for target in statement.targets:
+                _assign_alias_target(target, value, state)
+            continue
+        if isinstance(statement, ast.AnnAssign):
+            _record_call_snapshots(statement.value, state, snapshots)
+            if statement.value is not None:
+                _assign_alias_target(
+                    statement.target,
+                    _alias_from_expression(statement.value, state),
+                    state,
+                )
+            continue
+        if isinstance(statement, ast.If):
+            _record_call_snapshots(statement.test, state, snapshots)
+            body = _process_alias_statements(statement.body, state, snapshots)
+            if statement.orelse:
+                otherwise = _process_alias_statements(
+                    statement.orelse, state, snapshots
+                )
+                state = _merge_alias_states(body, otherwise)
+            else:
+                state = _merge_alias_states(state, body)
+            continue
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for expression in (
+                *statement.decorator_list,
+                *statement.args.defaults,
+                *(default for default in statement.args.kw_defaults if default),
+            ):
+                _record_call_snapshots(expression, state, snapshots)
+            child_state = dict(state)
+            for name in _function_argument_names(statement):
+                child_state.pop(name, None)
+            _process_alias_statements(statement.body, child_state, snapshots)
+            state.pop(statement.name, None)
+            continue
+        if isinstance(statement, ast.ClassDef):
+            for expression in (*statement.decorator_list, *statement.bases):
+                _record_call_snapshots(expression, state, snapshots)
+            _process_alias_statements(statement.body, state, snapshots)
+            state.pop(statement.name, None)
+            continue
+
+        for child in ast.iter_child_nodes(statement):
+            if not isinstance(child, ast.stmt):
+                _record_call_snapshots(child, state, snapshots)
+    return state
+
+
+def _alias_snapshots(tree: ast.Module) -> dict[int, _AliasState]:
+    scanner_symbols = _logger_symbols(tree)
+    initial = {
+        name: _AliasValue(is_logger=True)
+        for name in {"logger", "logging", "loguru_logger"}
+        if name in scanner_symbols
+    }
+    snapshots: dict[int, _AliasState] = {}
+    _process_alias_statements(tree.body, initial, snapshots)
+    return snapshots
+
+
+def _diagnostic_method(node: ast.Call, state: _AliasState) -> str | None:
+    if isinstance(node.func, ast.Name):
+        value = state.get(node.func.id)
+        if value is not None and len(value.methods) == 1:
+            return value.methods[0]
+        return None
+    if not isinstance(node.func, ast.Attribute) or node.func.attr not in LOG_METHODS:
+        return None
+    logger_symbols = {name for name, value in state.items() if value.is_logger}
+    return node.func.attr if _is_diagnostic_call(node, logger_symbols) else None
 
 
 def _message_parts(
@@ -296,36 +446,25 @@ def _message_parts(
 def discover_diagnostic_calls(source: str, *, module: str) -> list[DiagnosticCall]:
     """Extract diagnostic calls with stable identities from Python source."""
     tree = ast.parse(source, filename=module)
-    symbols = _logger_symbols(tree)
-    imported_methods = _imported_log_methods(tree)
-    logger_factories = _imported_get_logger_factories(tree)
-    alias_fields, alias_captures = _derived_logger_aliases(
-        tree, symbols, logger_factories
-    )
-    symbols.update(alias_fields)
+    snapshots = _alias_snapshots(tree)
+    fallback_state = {
+        name: _AliasValue(is_logger=True)
+        for name in ("logger", "logging", "loguru_logger")
+    }
     scopes = _scope_names(tree)
-    nodes = sorted(
-        (
-            node
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call)
-            and (
-                _is_diagnostic_call(node, symbols)
-                or (
-                    isinstance(node.func, ast.Name) and node.func.id in imported_methods
-                )
-            )
-        ),
-        key=lambda node: (node.lineno, node.col_offset),
-    )
+    recognized: list[tuple[ast.Call, str, _AliasState]] = []
+    for candidate in ast.walk(tree):
+        if not isinstance(candidate, ast.Call):
+            continue
+        state = snapshots.get(id(candidate), fallback_state)
+        method = _diagnostic_method(candidate, state)
+        if method is not None:
+            recognized.append((candidate, method, state))
+    recognized.sort(key=lambda item: (item[0].lineno, item[0].col_offset))
+
     occurrences: defaultdict[tuple[str, str], int] = defaultdict(int)
     calls: list[DiagnosticCall] = []
-    for node in nodes:
-        method = (
-            node.func.attr
-            if isinstance(node.func, ast.Attribute)
-            else imported_methods[node.func.id]
-        )
+    for node, method, state in recognized:
         first, positional_fields, keyword_fields, level_expression = _message_parts(
             node, method
         )
@@ -335,12 +474,18 @@ def discover_diagnostic_calls(source: str, *, module: str) -> list[DiagnosticCal
         occurrences[occurrence_key] += 1
         receiver = node.func.value if isinstance(node.func, ast.Attribute) else node
         receiver_root = _receiver_root_name(receiver)
+        alias_value = state.get(receiver_root or "")
+        receiver_fields = _stable_unique(
+            (
+                *(alias_value.fields if alias_value and alias_value.is_logger else ()),
+                *_receiver_field_expressions(receiver),
+            )
+        )
         expressions = [
             *(_first_argument_expressions(first) if first is not None else []),
             *_unparse_many(positional_fields),
             *_unparse_many(keyword_fields),
-            *alias_fields.get(receiver_root or "", ()),
-            *_receiver_field_expressions(receiver),
+            *receiver_fields,
         ]
         calls.append(
             DiagnosticCall(
@@ -357,7 +502,11 @@ def discover_diagnostic_calls(source: str, *, module: str) -> list[DiagnosticCal
                 expressions=tuple(expressions),
                 captures_exception=(
                     _captures_exception(node, method=method)
-                    or alias_captures.get(receiver_root or "", False)
+                    or bool(
+                        alias_value
+                        and alias_value.is_logger
+                        and alias_value.captures_exception
+                    )
                 ),
                 level_expression=level_expression,
             )
@@ -468,10 +617,14 @@ def assert_review_outcome(
         assert _has_constant_string_message(current), (
             "metadata requires a constant string first argument"
         )
-        assert all(
-            _is_approved_metadata_expression(expression)
+        rejected = tuple(
+            expression
             for expression in current.expressions
-        ), "metadata contains an unapproved metadata expression"
+            if not _is_approved_metadata_expression(expression)
+        )
+        assert not rejected, (
+            f"metadata contains unapproved metadata expression(s): {rejected!r}"
+        )
     else:
         raise AssertionError(f"unknown diagnostic outcome: {outcome}")
 

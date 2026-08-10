@@ -279,6 +279,148 @@ audit.error("fixed", private)
     assert _guard().discover_diagnostic_calls(source, module="synthetic.py") == []
 
 
+def test_guard_alias_state_clears_on_later_getlogger_assignment() -> None:
+    source = """
+from logging import getLogger
+from loguru import logger
+
+audit = logger.bind(secret=private_value).opt(exception=private_exc)
+audit.error("first")
+audit = getLogger(__name__)
+audit.error("second")
+"""
+
+    calls = _guard().discover_diagnostic_calls(source, module="synthetic.py")
+
+    assert [call.expressions for call in calls] == [
+        ("secret=private_value", "exception=private_exc"),
+        (),
+    ]
+    assert [call.captures_exception for call in calls] == [True, False]
+
+
+def test_guard_alias_state_uses_later_bound_assignment() -> None:
+    source = """
+from logging import getLogger
+from loguru import logger
+
+audit = getLogger(__name__)
+audit.error("first")
+audit = logger.bind(secret=private_value).opt(exception=private_exc)
+audit.error("second")
+"""
+
+    calls = _guard().discover_diagnostic_calls(source, module="synthetic.py")
+
+    assert [call.expressions for call in calls] == [
+        (),
+        ("secret=private_value", "exception=private_exc"),
+    ]
+    assert [call.captures_exception for call in calls] == [False, True]
+
+
+def test_guard_follows_direct_logger_alias() -> None:
+    call = _single_call("audit = logger\naudit.info(private_value)\n")
+
+    assert call.method == "info"
+    assert call.expressions == ("private_value",)
+
+
+def test_guard_follows_getlogger_factory_alias_chain() -> None:
+    source = """
+from logging import getLogger
+
+factory = getLogger
+audit = factory(__name__)
+audit.error(private_value)
+"""
+
+    call = _single_call(source)
+
+    assert call.method == "error"
+    assert call.expressions == ("private_value",)
+
+
+def test_guard_follows_imported_severity_callable_alias() -> None:
+    source = """
+from logging import error
+
+emit = error
+emit(private_value)
+"""
+
+    call = _single_call(source)
+
+    assert call.method == "error"
+    assert call.expressions == ("private_value",)
+
+
+def test_guard_alias_state_is_lexically_scoped() -> None:
+    source = """
+from logging import getLogger
+from loguru import logger
+
+def first():
+    audit = logger.bind(secret=first_private)
+    audit.info("first")
+
+def second():
+    audit = getLogger(__name__)
+    audit.info("second")
+"""
+
+    calls = _guard().discover_diagnostic_calls(source, module="synthetic.py")
+
+    assert [(call.qualname, call.expressions) for call in calls] == [
+        ("first", ("secret=first_private",)),
+        ("second", ()),
+    ]
+
+
+def test_guard_branch_alias_state_unions_fields_and_exception_capture() -> None:
+    source = """
+from logging import getLogger
+from loguru import logger
+
+audit = logger.bind(shared=shared_value)
+if use_private_backend:
+    audit = logger.bind(
+        shared=shared_value,
+        branch_secret=private_value,
+    ).opt(exception=private_exc)
+audit.error("after branch")
+"""
+
+    call = _single_call(source)
+
+    assert call.expressions == (
+        "shared=shared_value",
+        "branch_secret=private_value",
+        "exception=private_exc",
+    )
+    assert call.captures_exception is True
+
+
+def test_guard_branch_alias_state_retains_prebranch_possible_value() -> None:
+    source = """
+from logging import getLogger
+from loguru import logger
+
+audit = logger.bind(secret=private_value).opt(exception=private_exc)
+if use_standard_logger:
+    audit = getLogger(__name__)
+audit.error("after branch")
+"""
+
+    call = _single_call(source)
+
+    assert call.expressions == (
+        "secret=private_value",
+        "exception=private_exc",
+    )
+    assert call.captures_exception is True
+
+
 def test_guard_finds_bind_and_opt_derived_logger_aliases() -> None:
     source = """
 from loguru import logger
@@ -511,6 +653,14 @@ def test_guard_metadata_rejects_private_lazy_expression(
     current = _single_call(f'logger.error("Fixed failure; field=%s", {expression})\n')
 
     with pytest.raises(AssertionError, match="approved metadata expression"):
+        _guard().assert_review_outcome(starting, current, outcome="metadata")
+
+
+def test_guard_metadata_rejection_names_rejected_source_expression() -> None:
+    starting = _single_call('logger.error(f"Legacy failure: {private}")\n')
+    current = _single_call('logger.error("Fixed failure; field=%s", response.text)\n')
+
+    with pytest.raises(AssertionError, match=r"response\.text"):
         _guard().assert_review_outcome(starting, current, outcome="metadata")
 
 
