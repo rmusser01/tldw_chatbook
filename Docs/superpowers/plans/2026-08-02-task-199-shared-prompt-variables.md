@@ -64,12 +64,12 @@
 
 ## Task 4: Build One Shared Dialog
 
-- [ ] Add UI tests for variables shown once with lane-use labels, blank defaults/blank allowed, scrollability up to 64, shared value across lanes, and markup-looking labels/content rendered literally.
-- [ ] Add System checkbox tests: visible only when System exists, off by default, exact approved copy, active variable list recomputes, and ephemeral values for temporarily hidden variables reappear during the mounted dialog.
-- [ ] Add destination-copy tests for exact `/prompt` replace, picker replace over ordinary text, and Library append. Do not label ordinary picker draft text as a slash command.
-- [ ] Add Use original/Cancel/limit/no-active-lane tests. With System off and no User lane, both application actions are disabled and Cancel remains enabled.
-- [ ] Implement `PromptVariablesDialog` as a view/controller over pure parser results. It emits rendered or use-original lanes and never owns Console mutation.
-- [ ] Use existing Neon Workbench tokens and inspect narrow/large-variable layouts.
+- [x] Add UI tests for variables shown once with lane-use labels, blank defaults/blank allowed, scrollability up to 64, shared value across lanes, and markup-looking labels/content rendered literally.
+- [x] Add System checkbox tests: visible only when System exists, off by default, exact approved copy, active variable list recomputes, and ephemeral values for temporarily hidden variables reappear during the mounted dialog.
+- [x] Add destination-copy tests for exact `/prompt` replace, picker replace over ordinary text, and Library append. Do not label ordinary picker draft text as a slash command.
+- [x] Add Use original/Cancel/limit/no-active-lane tests. With System off and no User lane, both application actions are disabled and Cancel remains enabled.
+- [x] Implement `PromptVariablesDialog` as a view/controller over pure parser results. It emits rendered or use-original lanes and never owns Console mutation.
+- [x] Use existing Neon Workbench tokens and inspect narrow/large-variable layouts.
 
 ## Task 5: Harden the Pending Handoff Store
 
