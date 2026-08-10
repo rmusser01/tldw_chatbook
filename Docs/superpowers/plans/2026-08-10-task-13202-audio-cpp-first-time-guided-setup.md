@@ -39,15 +39,15 @@ ownership, or managed-lifecycle boundaries.
 - Modify: `Tests/UI/test_settings_speech_tts_model.py`
 - Modify: `Tests/TTS/test_stts_settings_reconfiguration.py`
 
-- [ ] Write failing tests that load, edit, validate, save, and reload External,
+- [x] Write failing tests that load, edit, validate, save, and reload External,
       manual `server.json`, and Guided settings with all dormant source values intact.
-- [ ] Add negative fixtures for invalid executable/package/default/backend tuples and
+- [x] Add negative fixtures for invalid executable/package/default/backend tuples and
       a side-effect spy proving Save performs no launch, socket, HTTP, catalog,
       synthesis, generated-artifact, or model write.
-- [ ] Run the focused tests and confirm failures describe the missing guided projection.
-- [ ] Extend the canonical Settings inventory/default/load/validation path through
+- [x] Run the focused tests and confirm failures describe the missing guided projection.
+- [x] Extend the canonical Settings inventory/default/load/validation path through
       `AudioCppSettingsConfig`, retaining the manual runtime projection unchanged.
-- [ ] Re-run focused tests and the guided foundation tests.
+- [x] Re-run focused tests and the guided foundation tests.
 
 ### Task 2: Guided Global Settings controls and package review
 
@@ -56,19 +56,19 @@ ownership, or managed-lifecycle boundaries.
 - Modify: `tldw_chatbook/css/features/_lab.tcss` if layout rules are required
 - Modify: `Tests/UI/test_settings_speech_tts_panel.py`
 
-- [ ] Write failing mounted tests for the External / manual JSON / Guided hierarchy,
+- [x] Write failing mounted tests for the External / manual JSON / Guided hierarchy,
       detected-or-browsed server selection, directory browsing, bounded package scan,
       exact candidate review/removal, default model and backend selection, dormant
       values, validation recovery, keyboard focus, and narrow layout.
-- [ ] Add stale-scan/cancellation and unmount regressions; only the latest explicit
+- [x] Add stale-scan/cancellation and unmount regressions; only the latest explicit
       root may update the visible draft.
-- [ ] Build the smallest review UI that exposes exact family/variant, task,
+- [x] Build the smallest review UI that exposes exact family/variant, task,
       evidence/compatibility, public model ID, path-safe package summary, lazy
       load/resident-memory truth, and recovery guidance without download/support
       overclaims.
-- [ ] Make successful Save announce `Configuration saved — ready to test` and route
+- [x] Make successful Save announce `Configuration saved — ready to test` and route
       focus to Speech Lab's one dynamic primary action, never to Refresh.
-- [ ] Re-run Settings panel/model tests.
+- [x] Re-run Settings panel/model tests.
 
 ### Task 3: Immutable Speech Lab runtime observation and primary action
 
@@ -79,15 +79,15 @@ ownership, or managed-lifecycle boundaries.
 - Modify: `Tests/UI/test_speech_playground_pane_lifecycle.py`
 - Modify: `Tests/TTS/test_audio_cpp_managed_integration.py`
 
-- [ ] Write failing pure and mounted tests for path-safe Guided observation fields
+- [x] Write failing pure and mounted tests for path-safe Guided observation fields
       and the exact labels/operations/reasons/tooltips/focus targets: Start & Generate
       Sample, Restart & Apply Settings, Retry Sample, Test Connection, and Shutdown.
-- [ ] Prove a click executes the exact visible immutable projection, including
+- [x] Prove a click executes the exact visible immutable projection, including
       provider switches, newer observations, late lifecycle/catalog results, and
       failure recovery; retain only one restart action.
-- [ ] Extend the runtime observation with only the safe Guided facts needed to derive
+- [x] Extend the runtime observation with only the safe Guided facts needed to derive
       the primary action and render manual/External/Guided details truthfully.
-- [ ] Re-run lifecycle/runtime-card and managed integration tests.
+- [x] Re-run lifecycle/runtime-card and managed integration tests.
 
 ### Task 4: Deliberate first sample and complete current-result experience
 
@@ -100,15 +100,15 @@ ownership, or managed-lifecycle boundaries.
 - Modify: `Tests/UI/test_speech_playground_pane_lifecycle.py`
 - Modify: relevant `Tests/TTS/test_stts_*generation*.py` and adapter tests
 
-- [ ] Write failing tests that the Guided primary deliberately starts/tests once,
+- [x] Write failing tests that the Guided primary deliberately starts/tests once,
       verifies the exact selected catalog model, and only then invokes the existing
       full-WAV generation path if provider/request/config fences still match.
-- [ ] Add current-result regressions for prominent Play/Pause, structural WAV status,
+- [x] Add current-result regressions for prominent Play/Pause, structural WAV status,
       duration, path-free provider/model/voice/config/process provenance, Generate
       again, Save WAV, last-good-result retention, and Studio-only optional autoplay.
-- [ ] Implement the combined action by composing existing lifecycle and synthesis
+- [x] Implement the combined action by composing existing lifecycle and synthesis
       seams; do not add streaming, history, comparison, or another player.
-- [ ] Re-run Speech Lab, playback, adapter, and STTS generation tests.
+- [x] Re-run Speech Lab, playback, adapter, and STTS generation tests.
 
 ### Task 5: One-child multi-model and captured consumer selections
 
@@ -118,14 +118,14 @@ ownership, or managed-lifecycle boundaries.
 - Modify tests first: the existing first-time Roleplay/character speech UAT test
 - Modify production files only if a regression exposes a TASK-13202 gap
 
-- [ ] Add regressions proving multiple accepted models remain registered, selecting a
+- [x] Add regressions proving multiple accepted models remain registered, selecting a
       second model reuses the same child, and visible copy warns loaded models may
       remain resident until explicit shutdown.
-- [ ] Prove Console uses the exact captured global selection and Roleplay uses the
+- [x] Prove Console uses the exact captured global selection and Roleplay uses the
       exact captured character override, with no passive-browse launch.
-- [ ] Prove provider switches and late lifecycle/catalog/generation completions cannot
+- [x] Prove provider switches and late lifecycle/catalog/generation completions cannot
       relabel, disable, or execute a stale visible action.
-- [ ] Re-run the focused managed, Console, and Roleplay suites.
+- [x] Re-run the focused managed, Console, and Roleplay suites.
 
 ### Task 6: Accessibility, responsive polish, and CSS bundle
 
@@ -138,12 +138,12 @@ ownership, or managed-lifecycle boundaries.
 - Regenerate: `tldw_chatbook/css/tldw_cli_modular.tcss`
 - Modify: focused mounted UI tests
 
-- [ ] Verify keyboard-only traversal, explicit labels and non-color status, current
+- [x] Verify keyboard-only traversal, explicit labels and non-color status, current
       disabled reasons, hidden-field expansion/focus, focus restoration, bounded
       scrollable diagnostics, and non-spamming live announcements.
-- [ ] Verify the supported narrow width keeps status, primary action, player, and
+- [x] Verify the supported narrow width keeps status, primary action, player, and
       recovery controls usable without clipped or duplicate actions.
-- [ ] Regenerate the modular CSS bundle and run bundle sync plus the Impeccable
+- [x] Regenerate the modular CSS bundle and run bundle sync plus the Impeccable
       detector against the changed UI targets.
 
 ### Task 7: User documentation and pinned first-time UAT
@@ -154,17 +154,17 @@ ownership, or managed-lifecycle boundaries.
 - Create: `Docs/superpowers/qa/audio-cpp-guided-first-run-2026-08-10/README.md`
 - Create: pinned macOS and Linux UAT evidence beneath that QA directory
 
-- [ ] Document that users install audio.cpp separately, then choose a server and
+- [x] Document that users install audio.cpp separately, then choose a server and
       reviewed package without editing JSON; distinguish Global Settings from Studio
       preferences and Guided from External/manual JSON.
-- [ ] Run the pinned first-time macOS journey with isolated Chatbook config/data and a
+- [x] Run the pinned first-time macOS journey with isolated Chatbook config/data and a
       task-owned child only; record exact app/server/model versions and never touch
       unrelated PID 84574.
-- [ ] Record package selection, no-side-effect Save, complete WAV, audible playback,
+- [x] Record package selection, no-side-effect Save, complete WAV, audible playback,
       multi-model reuse, restart/apply, crash recovery, shutdown, and unchanged
       External/manual behavior. If audible confirmation needs a human, pause only at
       the actual playback checkpoint.
-- [ ] Record a reproducible pinned Linux journey or CI/harness evidence for the same
+- [x] Record a reproducible pinned Linux journey or CI/harness evidence for the same
       supported paths, clearly separating automated structural evidence from human
       audible evidence.
 
@@ -175,11 +175,11 @@ ownership, or managed-lifecycle boundaries.
 - Modify: `backlog/tasks/task-13202 - Deliver-the-first-time-guided-audio.cpp-setup-and-sample-flow.md`
 - Modify: a relevant `backlog/docs/lessons-*.md` only if this task produces an evidenced reusable lesson
 
-- [ ] Run focused tests after each batch, then the complete affected TTS/UI suites,
+- [x] Run focused tests after each batch, then the complete affected TTS/UI suites,
       Ruff on changed Python files, CSS bundle sync, `git diff --check`, and any
       proportionate static/privacy checks.
-- [ ] Self-review every changed line against all nine acceptance criteria and the
+- [x] Self-review every changed line against all nine acceptance criteria and the
       three governing ADRs; fix all confirmed issues before closeout.
-- [ ] Update this checklist, check every acceptance criterion, add concise
+- [x] Update this checklist, check every acceptance criterion, add concise
       Implementation Notes with exact verification/UAT evidence and ADR decision,
       and set TASK-13202 Done only when the repository Definition of Done is met.

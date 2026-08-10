@@ -289,6 +289,24 @@ This one looked authoritative, ran green, and proved nothing.
 
 ---
 
+## Catalog registration does not prove a TTS package is text-ready
+
+**TASK-13202, 2026-08-10.** The pinned audio.cpp `release-0.5.1` server
+successfully registered a standalone PocketTTS GGUF, and its catalog advertised
+a TTS task. That looked sufficient to classify the package as ready for the
+first no-reference sample. Real synthesis disproved the assumption: PocketTTS
+requested a separate voice embedding (`alba.safetensors`) that the standalone
+GGUF does not contain. Registration and task metadata were both true, but the
+promised user journey was still impossible.
+
+**What to do.** Before classifying an exact local-model recipe as text-ready,
+run a model-specific complete-WAV request against the pinned real server and
+confirm any required voice/reference material is present. Catalog registration
+proves that the server accepted the model; it does not prove that text alone is
+a complete synthesis input.
+
+---
+
 ## Full component coverage, zero feature coverage
 
 **TASK-1210, 2026-07-27.** Watchlists never checked on a schedule — not at the
