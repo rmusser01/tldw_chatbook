@@ -1155,6 +1155,95 @@ async def test_established_malformed_json_reaps_real_child() -> None:
             await process.wait()
 
 
+@pytest.mark.parametrize("reader", [None, _Reader(b"")], ids=["missing-stdout", "eof"])
+@pytest.mark.asyncio
+async def test_established_reader_end_schedules_owner_cleanup(
+    reader: object | None,
+) -> None:
+    process = _SlowReapProcess(reader)
+    connection = _bare_connection(process)
+    client = client_module.MCPClient(name="ended-reader-client")
+    client.sessions["server"] = connection
+    client.servers["server"] = {"command": "fake"}
+
+    async def cleanup() -> None:
+        await client._bounded_teardown_connection("server", session=connection)
+
+    connection._on_transport_failure = cleanup
+    connection._read_task = asyncio.create_task(connection._read_loop())
+    try:
+        await connection._read_task
+        cleanup_task = connection._transport_cleanup_task
+        assert cleanup_task is not None
+        await asyncio.wait_for(process.wait_started.wait(), timeout=1)
+        assert client.sessions == {"server": connection}
+
+        process.allow_reap.set()
+        await asyncio.wait_for(cleanup_task, timeout=1)
+
+        assert process.stdin.closed
+        assert process.returncode == 0
+        assert connection._cleanup_complete is True
+        assert connection._transport_cleanup_task is None
+        assert client.sessions == {}
+        assert client.servers == {}
+    finally:
+        process.allow_reap.set()
+        cleanup_task = connection._transport_cleanup_task
+        if cleanup_task is not None:
+            await asyncio.gather(cleanup_task, return_exceptions=True)
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_established_real_child_closing_stdout_is_reaped_without_disconnect() -> (
+    None
+):
+    script = "import os,sys,time;sys.stdin.buffer.readline();os.close(1);time.sleep(60)"
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-c",
+        script,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        limit=MAX_OUTPUT_LINE_BYTES,
+    )
+    client = client_module.MCPClient(name="real-eof-client")
+    connection: client_module._StdioJSONRPCConnection
+
+    async def cleanup() -> None:
+        await client._bounded_teardown_connection("server", session=connection)
+
+    connection = client_module._StdioJSONRPCConnection(
+        process,
+        client_name="real-eof-client",
+        on_transport_failure=cleanup,
+    )
+    client.sessions["server"] = connection
+    client.servers["server"] = {"command": sys.executable}
+    try:
+        assert process.stdin is not None
+        process.stdin.write(b"go\n")
+        await process.stdin.drain()
+        await asyncio.wait_for(connection._read_task, timeout=1)
+        cleanup_task = connection._transport_cleanup_task
+        assert cleanup_task is not None
+        await asyncio.wait_for(cleanup_task, timeout=1)
+
+        assert process.stdin.is_closing()
+        assert process.returncode is not None
+        assert connection._cleanup_complete is True
+        assert connection._transport_cleanup_task is None
+        assert client.sessions == {}
+        assert client.servers == {}
+        await connection.close()
+    finally:
+        if process.returncode is None:
+            process.kill()
+            await process.wait()
+
+
 @pytest.mark.asyncio
 async def test_disconnect_cancellation_keeps_recovery_state_until_forced_reap(
     monkeypatch: pytest.MonkeyPatch,
@@ -1201,6 +1290,77 @@ async def test_disconnect_cancellation_keeps_recovery_state_until_forced_reap(
 
 
 @pytest.mark.asyncio
+async def test_second_disconnect_cancellation_waits_for_retained_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    close_started = asyncio.Event()
+    process = _SlowReapProcess()
+
+    class Session:
+        async def close(self) -> None:
+            close_started.set()
+            await asyncio.Future()
+
+        def __init__(self) -> None:
+            self.process = process
+
+    session = Session()
+    client = client_module.MCPClient(name="second-cancel-client")
+    client.sessions["server"] = session  # type: ignore[assignment]
+    client.servers["server"] = {"command": "fake"}
+    monkeypatch.setattr(client_module, "CLEANUP_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(client_module, "_TERMINATE_TIMEOUT_SECONDS", 0.01)
+
+    task = asyncio.create_task(client.disconnect_from_server("server"))
+    await asyncio.wait_for(close_started.wait(), timeout=1)
+    task.cancel()
+    await asyncio.sleep(0)
+    task.cancel()
+    await asyncio.sleep(0)
+    waited_after_second_cancel = not task.done()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert waited_after_second_cancel
+    assert process.stdin.closed
+    assert process.returncode == -9
+    assert process.kill_calls == 1
+    assert client.sessions == {}
+    assert client.servers == {}
+    assert await client.disconnect_from_server("server") is False
+
+
+@pytest.mark.asyncio
+async def test_disconnect_wait_for_timeout_returns_only_after_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = _SlowReapProcess()
+
+    class Session:
+        def __init__(self) -> None:
+            self.process = process
+
+        async def close(self) -> None:
+            await asyncio.Future()
+
+    client = client_module.MCPClient(name="wait-for-timeout-client")
+    client.sessions["server"] = Session()  # type: ignore[assignment]
+    client.servers["server"] = {"command": "fake"}
+    monkeypatch.setattr(client_module, "CLEANUP_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(client_module, "_TERMINATE_TIMEOUT_SECONDS", 0.01)
+
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(client.disconnect_from_server("server"), timeout=0.001)
+
+    assert process.stdin.closed
+    assert process.returncode == -9
+    assert process.kill_calls == 1
+    assert client.sessions == {}
+    assert client.servers == {}
+
+
+@pytest.mark.asyncio
 async def test_disconnect_all_cancellation_still_reaps_every_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1240,6 +1400,59 @@ async def test_disconnect_all_cancellation_still_reaps_every_session(
     assert all(process.returncode is not None for process in processes)
     assert client.sessions == {}
     assert client.servers == {}
+
+
+@pytest.mark.asyncio
+async def test_second_disconnect_all_cancellation_waits_for_every_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_started = asyncio.Event()
+    processes = [_SlowReapProcess(), _SlowReapProcess()]
+    close_calls: list[str] = []
+
+    class Session:
+        def __init__(self, server_id: str, process: _SlowReapProcess) -> None:
+            self.server_id = server_id
+            self.process = process
+
+        async def close(self) -> None:
+            close_calls.append(self.server_id)
+            if self.server_id == "first":
+                first_started.set()
+                await asyncio.Future()
+            self.process.stdin.close()
+            self.process.terminate()
+            self.process.allow_reap.set()
+            await self.process.wait()
+
+    client = client_module.MCPClient(name="second-cancel-all-client")
+    for server_id, process in zip(("first", "second"), processes):
+        client.sessions[server_id] = Session(server_id, process)  # type: ignore[assignment]
+        client.servers[server_id] = {"command": "fake"}
+    monkeypatch.setattr(client_module, "CLEANUP_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(client_module, "_TERMINATE_TIMEOUT_SECONDS", 0.01)
+
+    task = asyncio.create_task(client.disconnect_all())
+    await asyncio.wait_for(first_started.wait(), timeout=1)
+    task.cancel()
+    await asyncio.sleep(0)
+    task.cancel()
+    await asyncio.sleep(0)
+    waited_after_second_cancel = not task.done()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    first_returned_before_reap = processes[0].returncode is None
+    await asyncio.wait_for(processes[0].allow_reap.wait(), timeout=1)
+    await asyncio.sleep(0)
+
+    assert waited_after_second_cancel
+    assert not first_returned_before_reap
+    assert close_calls == ["first", "second"]
+    assert all(process.returncode is not None for process in processes)
+    assert client.sessions == {}
+    assert client.servers == {}
+    await client.disconnect_all()
 
 
 @pytest.mark.asyncio

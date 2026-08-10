@@ -654,15 +654,15 @@ class _StdioJSONRPCConnection:
         except asyncio.CancelledError:
             raise
         except Exception:
-            self._mark_reader_unavailable(cleanup=True)
+            self._mark_reader_unavailable()
 
-    def _mark_reader_unavailable(self, *, cleanup: bool = False) -> None:
+    def _mark_reader_unavailable(self) -> None:
         self._reader_unavailable = True
         self._fail_pending_requests(RuntimeError("MCP transport unavailable"))
         logger.warning("MCP transport unavailable")
         cleanup_handler = getattr(self, "_on_transport_failure", None)
         cleanup_task = getattr(self, "_transport_cleanup_task", None)
-        if cleanup and cleanup_handler is not None and cleanup_task is None:
+        if cleanup_handler is not None and cleanup_task is None:
             self._transport_cleanup_task = asyncio.create_task(
                 self._run_transport_failure_cleanup()
             )
@@ -1239,19 +1239,26 @@ class MCPClient:
         server_id: str,
         active_session: Optional[_StdioJSONRPCConnection],
     ) -> None:
-        cleanup = asyncio.create_task(
-            self._teardown_connection(server_id, session=active_session)
-        )
         try:
-            await asyncio.wait_for(
-                asyncio.shield(cleanup), timeout=CLEANUP_TIMEOUT_SECONDS
+            cleanup = asyncio.create_task(
+                self._teardown_connection(server_id, session=active_session)
             )
-        except asyncio.TimeoutError:
-            cleanup.cancel()
-            await asyncio.gather(cleanup, return_exceptions=True)
-        process = getattr(active_session, "process", None)
-        if process is not None and getattr(process, "returncode", None) is None:
-            await self._force_stop_process(process)
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(cleanup), timeout=CLEANUP_TIMEOUT_SECONDS
+                )
+            except asyncio.TimeoutError:
+                cleanup.cancel()
+                await asyncio.gather(cleanup, return_exceptions=True)
+            process = getattr(active_session, "process", None)
+            if process is not None and getattr(process, "returncode", None) is None:
+                await self._force_stop_process(process)
+        finally:
+            if self.sessions.get(server_id) is active_session:
+                self.sessions.pop(server_id, None)
+                self.servers.pop(server_id, None)
+            elif active_session is None and server_id not in self.sessions:
+                self.servers.pop(server_id, None)
 
     async def _bounded_teardown_connection(
         self,
@@ -1266,18 +1273,11 @@ class MCPClient:
             self._finish_connection_cleanup(server_id, active_session)
         )
         cancelled = False
-        try:
+        while not cleanup.done():
             try:
                 await asyncio.shield(cleanup)
             except asyncio.CancelledError:
                 cancelled = True
-                await asyncio.shield(cleanup)
-        finally:
-            if cleanup.done():
-                if self.sessions.get(server_id) is active_session:
-                    self.sessions.pop(server_id, None)
-                    self.servers.pop(server_id, None)
-                elif active_session is None and server_id not in self.sessions:
-                    self.servers.pop(server_id, None)
+        cleanup.result()
         if cancelled:
             raise asyncio.CancelledError
