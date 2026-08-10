@@ -1444,6 +1444,40 @@ class AgentService:
                         result=result_text,
                         error=error_text,
                     )
+                    # Review fix (PR2a final review): `_persist` -- called
+                    # from INSIDE `_run_one`'s own try/except -- is
+                    # normally the only thing that writes this child's
+                    # terminal DB status. But `_run_one`'s try/except
+                    # wraps ONLY the `run_agent_loop(...)` call; an
+                    # exception raised between `create_run()` and that
+                    # try block (e.g. `initial_disclosure` recursing into
+                    # the tool catalog's RLock and raising RecursionError)
+                    # unwinds `_run_one` entirely, past `_persist`, and
+                    # lands in the `except BaseException` above instead --
+                    # leaving the DB row `running` for the life of the
+                    # process, violating "DB is truth" (spec Sec 3
+                    # invariant 3). `attach_run` has already fired by the
+                    # time any post-`create_run` exception can, so
+                    # `fleet.get()` (re-fetched, not the possibly-stale
+                    # `handle` closed over above) reliably has the run id.
+                    # `set_status` is first-writer-wins (AgentRunsDB), so
+                    # this call is a safe no-op on the normal path where
+                    # `_persist` already wrote a terminal status -- it
+                    # only matters on the setup-phase-exception path,
+                    # where it is the only writer. Same defensive shape as
+                    # `_settle_fleet`'s abandonment path: a DB failure
+                    # here must not take down a turn that has already
+                    # produced its answer.
+                    current = fleet.get(handle.handle_id)
+                    child_run_id = current.run_id if current is not None else None
+                    if child_run_id:
+                        try:
+                            self.db.set_status(child_run_id, status)
+                        except Exception:  # noqa: BLE001
+                            logger.opt(exception=True).warning(
+                                "could not persist terminal status for "
+                                f"sub-agent run {child_run_id}"
+                            )
 
             thread = threading.Thread(
                 target=run_child,

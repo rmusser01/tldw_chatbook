@@ -96,7 +96,15 @@ class FleetCoordinator:
             agent: Agent name, if applicable.
 
         Returns:
-            A new FleetHandle if a slot is available, else None.
+            A copy of the new FleetHandle if a slot is available, else
+            None. A copy -- not the live, internally-stored object -- for
+            the same reason `get()`/`snapshot()` return copies: it stops
+            a caller from racing a concurrent `finish()`/`attach_run()`
+            by reading a mutating object instead of a point-in-time
+            snapshot. Every current consumer reads only the immutable
+            `.handle_id` off the returned handle, or re-fetches a fresh
+            copy via `get()` when it needs live state (e.g. `run_id`
+            attached later) -- so this is safe.
         """
         with self._lock:
             if len(self._live_ids) >= self._max_live:
@@ -126,7 +134,7 @@ class FleetCoordinator:
                     status="running",
                 )
             )
-            return handle
+            return dataclasses.replace(handle)
 
     def attach_run(self, handle_id: str, run_id: str) -> None:
         """Attach a run ID to an existing handle.

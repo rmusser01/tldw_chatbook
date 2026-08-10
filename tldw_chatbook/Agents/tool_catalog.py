@@ -995,8 +995,12 @@ class ToolCatalogRegistry:
         #     below hasn't run yet) and it recurses into ANOTHER
         #     _build_owner_cache() call, which calls the re-entrant
         #     provider's list_catalog() again, forever -- until Python's
-        #     recursion limit ends it with a RecursionError (measured at 73
-        #     nested calls). The `with self._cache_lock:` blocks still
+        #     recursion limit ends it with a RecursionError. (The exact
+        #     depth is environment-dependent -- one measurement saw 73
+        #     nested calls, a later re-measurement on different stack
+        #     state saw 322; the number itself isn't the point. What
+        #     matters is fail-fast-on-one-thread vs. a fleet-wide hang.)
+        #     The `with self._cache_lock:` blocks still
         #     unwind correctly through that exception (each nested `with`
         #     releases its RLock count as the stack pops), so the lock is
         #     NOT left held: the crash is confined to the one thread that

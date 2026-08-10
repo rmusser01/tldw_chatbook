@@ -1239,6 +1239,77 @@ def test_child_thread_exception_finishes_the_handle_as_error(db):
     assert "child thread blew up" in handle.error
 
 
+def test_setup_phase_exception_still_persists_a_terminal_db_status(
+    db, monkeypatch
+):
+    """A setup-phase exception must not leave the child's DB row `running`.
+
+    `_run_one`'s own `except Exception` (which calls `_persist`) wraps
+    ONLY the `run_agent_loop(...)` call. Anything between `create_run()`
+    and that try block -- notably `initial_disclosure`, which walks the
+    tool catalog's cache/lock path -- is unprotected: raising there
+    unwinds `_run_one` entirely, past `_persist`, straight into
+    `run_child`'s `except BaseException`. Unlike
+    `test_child_thread_exception_finishes_the_handle_as_error` above
+    (which replaces the whole of `_run_one`, so `create_run()` never
+    runs and no DB row ever exists), this raises AFTER `create_run()`
+    and `attach_run()` have already fired -- a DB row exists, in
+    `running` status, and nothing but `run_child`'s `finally` can ever
+    mark it terminal. Before the fix that `finally` only called
+    `fleet.finish()` (in-memory), so the row stayed `running` for the
+    life of the process -- only `reconcile_orphaned_runs` on the NEXT
+    app restart would clear it, violating spec Sec 3 invariant 3
+    ("DB is truth").
+    """
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "boom"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "handled",
+        ],
+        # "never reached" is literal: initial_disclosure blows up before
+        # the child ever asks the model for a reply.
+        {"boom": ["never reached"]},
+        allow_unconsumed=True,
+    )
+    real_initial_disclosure = agent_service.initial_disclosure
+
+    def exploding_initial_disclosure(registry, budget):
+        # Only a depth-1 CHILD's budget is clamped to max_subagents == 0
+        # (`clamp_child_budget`); the primary's is > 0. This fires only
+        # for the child -- standing in for a misbehaving provider's
+        # `list_catalog()` recursing into the tool catalog's RLock
+        # (Task 4's own documented trigger for this exact exception).
+        if budget.max_subagents == 0:
+            raise RecursionError("setup-phase blew up")
+        return real_initial_disclosure(registry, budget)
+
+    monkeypatch.setattr(
+        agent_service, "initial_disclosure", exploding_initial_disclosure
+    )
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE  # the PARENT survives
+    assert coordinator.all_finished()
+
+    handle = coordinator.snapshot()[0]
+    assert handle.status == RUN_ERROR
+    assert handle.run_id, "attach_run must have fired before the exception"
+
+    # The headline assertion: the child's DB row reached a terminal
+    # status. Before the fix this read "running" forever.
+    child_row = db.get_run(handle.run_id)
+    assert child_row is not None
+    assert child_row["status"] in TERMINAL_RUN_STATUSES
+    assert child_row["status"] != "running"
+
+
 class _SpyRunLogWriter:
     """Minimal stand-in recording the run tree's two cleanup calls."""
 
