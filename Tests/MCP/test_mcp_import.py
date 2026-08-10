@@ -1,11 +1,18 @@
 # Tests/MCP/test_mcp_import.py
 from __future__ import annotations
 
+import ast
 import json
+from pathlib import Path
 
 import pytest
 
 from tldw_chatbook.MCP.mcp_import import parse_mcp_servers_json
+
+
+SERVER_PATH = (
+    Path(__file__).resolve().parents[2] / "tldw_chatbook" / "MCP" / "server.py"
+)
 
 
 def test_parses_command_args_env_and_placeholder_passthrough():
@@ -67,3 +74,17 @@ def test_to_payload_uses_exact_store_keys():
         "env_placeholders",
         "env_literals",
     }
+
+
+def test_standalone_server_imports_only_the_public_mcp_unified_gateway() -> None:
+    tree = ast.parse(SERVER_PATH.read_text(encoding="utf-8"))
+    mcp_imports: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            mcp_imports.extend(
+                alias.name for alias in node.names if alias.name.startswith("mcp")
+            )
+        elif isinstance(node, ast.ImportFrom) and (node.module or "").startswith("mcp"):
+            mcp_imports.append(node.module or "")
+
+    assert mcp_imports == ["mcp_unified.gateway"]

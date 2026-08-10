@@ -40,11 +40,11 @@ surface: they are read-only, locally served, and contract-governed by
 the descriptor table (`_describe_local_library_tools`), and the in-app direct
 runtime (`local_runtime_delegate.LocalMCPRuntimeDelegate`) dispatches them to
 one shared `LocalLibraryToolService` (composed by
-`build_local_library_tool_service`) via `asyncio.to_thread`. This surface is
-deliberately FastMCP-free (owner directive, 2026-08-07): the standalone
-`TldwMCPServer` below remains the legacy FastMCP-based stdio server and is
-untouched by this work. The Console-only `[console].direct_library_tools`
-retrieval-mode toggle has no effect on this surface.
+`build_local_library_tool_service`) via `asyncio.to_thread`. The standalone
+`TldwMCPServer` below uses `mcp-unified` and deliberately does not publish
+these in-process Library tools. The Console-only
+`[console].direct_library_tools` retrieval-mode toggle has no effect on this
+surface.
 """
 
 import asyncio  # noqa: E402
@@ -54,16 +54,14 @@ from pathlib import Path  # noqa: E402
 from typing import Dict, List, Optional, Any  # noqa: E402
 from datetime import datetime  # noqa: E402
 
-# Import MCP server components conditionally
+# Import the standalone MCP runtime conditionally.
 try:
-    from mcp.server.fastmcp import FastMCP
-    from mcp.server.models import InitializationOptions
-    from mcp.types import Tool, Resource, Prompt, TextContent, ImageContent  # noqa: F401
+    from mcp_unified.gateway import serve_stdio
 
     MCP_AVAILABLE = True
 except ImportError:
     MCP_AVAILABLE = False
-    FastMCP = None
+    serve_stdio = None  # type: ignore[assignment]
 
 from loguru import logger  # noqa: E402
 
@@ -288,9 +286,9 @@ def build_local_library_tool_service(
     Single construction site for ``LocalLibraryToolService`` on the local MCP
     surface (task-1337, plan Task 9): ``LocalMCPRuntimeDelegate`` calls this
     lazily on first Library dispatch, so every in-process consumer of the
-    direct runtime shares identical backend wiring. (The standalone
-    FastMCP-based ``TldwMCPServer`` deliberately does NOT use this -- the
-    local Library surface is FastMCP-free per owner directive, 2026-08-07.)
+    direct runtime shares identical backend wiring. The ``mcp-unified``
+    standalone ``TldwMCPServer`` deliberately does NOT use this; Library
+    tools remain available only through the in-process direct runtime.
 
     Every backend is best-effort: a construction failure degrades that item
     type's tools to the service's structured ``feature_unavailable`` payload
@@ -413,7 +411,14 @@ class TldwMCPServer:
 
         self.name = name
         self.version = version
-        self.mcp = FastMCP(name)
+        # Defer this import: local-tool provider modules refer back to server helpers.
+        from .gateway_runtime import ChatbookGatewayRuntime
+
+        self.mcp = ChatbookGatewayRuntime(
+            name=name,
+            version=version,
+            tool_descriptors=_describe_local_tools(),
+        )
 
         # Initialize databases
         self._init_databases()
@@ -432,6 +437,7 @@ class TldwMCPServer:
         self._register_resources()
         self._register_prompts()
         self._register_local_agent_tools()
+        self.mcp.finalize()
 
         logger.info(f"MCP Server '{name}' initialized")
 
@@ -906,34 +912,23 @@ class TldwMCPServer:
                 file=sys.stderr,
             )
 
-    async def run(self, transport: str = "stdio"):
+    async def run(self, transport: str = "stdio") -> int:
         """Run the MCP server.
 
         Args:
-            transport: Transport type (stdio, http)
+            transport: Transport name; only ``stdio`` is supported.
         """
-        if transport == "stdio":
-            # Run with stdio transport (for Claude Desktop)
-            from mcp.server.stdio import stdio_server
-
-            async with stdio_server() as (read_stream, write_stream):
-                await self.mcp.run(
-                    read_stream=read_stream,
-                    write_stream=write_stream,
-                    initialization_options=InitializationOptions(
-                        server_name=self.name, server_version=self.version
-                    ),
-                )
-        else:
-            # TODO: Implement HTTP transport
-            raise NotImplementedError(f"Transport {transport} not implemented yet")
+        if transport != "stdio":
+            raise NotImplementedError("Only stdio transport is supported")
+        if serve_stdio is None:
+            raise RuntimeError("MCP stdio runtime is unavailable")
+        return await serve_stdio(self.mcp)
 
 
-async def main():
+async def main() -> int:
     """Main entry point for running the MCP server."""
-    server = TldwMCPServer()
-    await server.run()
+    return await TldwMCPServer().run("stdio")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    raise SystemExit(asyncio.run(main()))
