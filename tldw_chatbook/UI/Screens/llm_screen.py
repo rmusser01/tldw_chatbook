@@ -1545,15 +1545,18 @@ class LLMScreen(LabScreen):
         unhandled exception that skips
         ``_apply_curated_provision_result`` and strands install state.
         """
+        app = self.app
         report = self._model_install_pending_report
         if report is None:
-            self.app.call_from_thread(
+            app.call_from_thread(
                 self._apply_curated_provision_result,
                 "No install plan is available; review the model again.",
             )
             return
         try:
-            asyncio.run(self._provision_curated(report))  # policy-exception: worker-thread loop
+            reference = asyncio.run(
+                self._provision_curated(report)
+            )  # policy-exception: worker-thread loop
         except Exception as exc:
             root = getattr(report, "root", None)
             artifact_id = getattr(root, "artifact_id", "unknown")
@@ -1563,43 +1566,15 @@ class LLMScreen(LabScreen):
                 getattr(root, "revision", "unknown"),
                 getattr(root, "variant", "unknown"),
             )
-            self.app.call_from_thread(
+            app.call_from_thread(
                 self._apply_curated_provision_result,
                 install_failure_message(exc, model_label=artifact_id),
             )
             return
-        self.app.call_from_thread(self._apply_curated_provision_result, None)
-
-    def _apply_curated_provision_result(self, error: str | None) -> None:
-        """Finish an installation: notify, mirror lifecycle, and reset state."""
-        reference = self._model_install_reference
-        self._model_install_worker = None
-        self._model_install_pending_report = None
-        if error is None and reference is not None:
-            key = self._external_key_for_reference(reference)
-            if key is not None:
-                self._model_install_worker = self._run_curated_prefer_managed(
-                    reference,
-                    key,
-                )
-                return
-        self._finish_curated_provision(error, succeeded=error is None)
-
-    @work(
-        thread=True,
-        group="llm_curated_source_preference",
-        exclusive=True,
-        exit_on_error=False,
-        description="Select managed Parakeet source",
-    )
-    def _run_curated_prefer_managed(
-        self,
-        reference: ArtifactRef,
-        key: ParakeetSourceKey,
-    ) -> None:
-        """Persist the post-install managed preference off the UI thread."""
-
-        app = self.app
+        key = self._external_key_for_reference(reference)
+        if key is None:
+            app.call_from_thread(self._apply_curated_provision_result, None)
+            return
         try:
             app._ensure_parakeet_source_service().prefer_managed(key)
         except Exception as exc:
@@ -1617,6 +1592,12 @@ class LLMScreen(LabScreen):
             reference,
             error,
         )
+
+    def _apply_curated_provision_result(self, error: str | None) -> None:
+        """Finish an installation: notify, mirror lifecycle, and reset state."""
+        self._model_install_worker = None
+        self._model_install_pending_report = None
+        self._finish_curated_provision(error, succeeded=error is None)
 
     def _apply_curated_preference_result(
         self,

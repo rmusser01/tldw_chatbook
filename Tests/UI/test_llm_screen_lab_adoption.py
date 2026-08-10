@@ -964,6 +964,8 @@ def test_curated_install_failures_log_exact_artifact_context(operation, monkeypa
     assert reference.artifact_id in logged
     assert reference.revision in logged
     assert reference.variant in logged
+    if operation == "installation":
+        fake_app._ensure_parakeet_source_service.assert_not_called()
 
 
 def test_curated_preflight_failure_notifies_and_does_not_push_a_modal(monkeypatch):
@@ -1429,7 +1431,12 @@ async def test_successful_curated_install_persists_managed_preference_off_loop()
         screen._model_install_sources = {}
         screen._model_install_pending_report = object()
 
-        screen._apply_curated_provision_result(None)
+        async def provision_succeeds(_report):
+            return reference
+
+        screen._provision_curated = provision_succeeds
+
+        screen._model_install_worker = screen._run_curated_provision()
 
         assert await _wait_for(lambda: bool(service.preferred), pilot)
         assert service.prefer_threads[0] != threading.get_ident()
@@ -1441,6 +1448,8 @@ async def test_successful_curated_install_persists_managed_preference_off_loop()
 
 @pytest.mark.asyncio
 async def test_successful_curated_preference_survives_immediate_screen_unmount():
+    import threading
+
     from textual.screen import Screen
 
     from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
@@ -1449,7 +1458,7 @@ async def test_successful_curated_preference_survives_immediate_screen_unmount()
     from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V2_MODEL
     from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
 
-    service = _FakeExternalSourceService(block_prefer=True)
+    service = _FakeExternalSourceService()
     app = _app()
     app._parakeet_source_service = service
     async with app.run_test(size=(120, 40)) as pilot:
@@ -1465,20 +1474,42 @@ async def test_successful_curated_preference_survives_immediate_screen_unmount()
         screen._model_install_sources = {}
         screen._model_install_pending_report = object()
         screen.notify = MagicMock()
+        screen._deliver_curated = MagicMock()
+        terminal_delivery_started = threading.Event()
+        release_terminal_delivery = threading.Event()
+        real_call_from_thread = app.call_from_thread
 
-        screen._apply_curated_provision_result(None)
-        assert screen._model_install_worker is not None
-        assert await _wait_for(service.prefer_started.is_set, pilot)
+        async def provision_succeeds(_report):
+            return reference
+
+        screen._provision_curated = provision_succeeds
+
+        def block_terminal_delivery(callback, *args, **kwargs):
+            callback_function = getattr(callback, "__func__", None)
+            if callback_function in {
+                LLMScreen._apply_curated_provision_result,
+                LLMScreen._apply_curated_preference_result,
+            }:
+                terminal_delivery_started.set()
+                assert release_terminal_delivery.wait(3)
+            return real_call_from_thread(callback, *args, **kwargs)
+
+        app.call_from_thread = block_terminal_delivery
+
+        screen._model_install_worker = screen._run_curated_provision()
+        assert await _wait_for(terminal_delivery_started.is_set, pilot)
         await app.switch_screen(Screen())
         await pilot.pause()
         assert screen not in app.screen_stack
         assert screen.is_attached is False
-        service.release_prefer.set()
+        release_terminal_delivery.set()
 
         assert await _wait_for(lambda: bool(service.preferred), pilot)
         assert service.preferred == [ParakeetSourceKey.V2_INT8]
+        assert service.prefer_threads[0] != threading.get_ident()
         await pilot.pause()
         screen.notify.assert_not_called()
+        screen._deliver_curated.assert_not_called()
 
 
 @pytest.mark.asyncio
