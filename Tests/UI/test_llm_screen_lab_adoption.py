@@ -2728,6 +2728,7 @@ class _FakeExternalSourceService:
         *,
         records=None,
         block_verification: bool = False,
+        block_plan: bool = False,
         block_copy: bool = False,
         block_prefer: bool = False,
     ) -> None:
@@ -2735,10 +2736,15 @@ class _FakeExternalSourceService:
 
         self._records = dict(records or {})
         self.block_verification = block_verification
+        self.block_plan = block_plan
         self.block_copy = block_copy
         self.block_prefer = block_prefer
         self.progress_seen = threading.Event()
         self.release_verification = threading.Event()
+        self.plan_started = threading.Event()
+        self.release_plan = threading.Event()
+        self.plan_returned = threading.Event()
+        self.plan_returned_at = 0.0
         self.copy_started = threading.Event()
         self.copy_cancelled = threading.Event()
         self.release_copy = threading.Event()
@@ -2841,9 +2847,16 @@ class _FakeExternalSourceService:
         self.stopped.append(key)
 
     def plan_managed_copy(self, verified):
+        import time
+
         from tldw_chatbook.STT.parakeet_sources import ManagedCopyPlan
 
         self.copy_plans.append(verified)
+        if self.block_plan:
+            self.plan_started.set()
+            self.release_plan.wait(3)
+            self.plan_returned_at = time.monotonic()
+            self.plan_returned.set()
         return ManagedCopyPlan(
             reference=verified.reference,
             additional_bytes=1024,
@@ -3581,6 +3594,78 @@ async def test_replacing_external_copy_cooperatively_stops_its_side_effect():
 
         assert was_cancelled is True
         assert service.copy_continued.is_set() is False
+        assert service.copied == []
+
+
+@pytest.mark.asyncio
+async def test_external_copy_planning_keeps_cancel_responsive_off_loop(tmp_path):
+    import asyncio
+    import threading
+    import time
+
+    from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V2_MODEL
+    from tldw_chatbook.STT.parakeet_sources import (
+        ParakeetSourceKey,
+        ParakeetSourcePreference,
+        ParakeetSourceRecord,
+    )
+    from tldw_chatbook.UI.Screens.model_external_view import ExternalModelView
+    from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+    key = ParakeetSourceKey.V2_INT8
+    root = tmp_path / "external-root"
+    root.mkdir()
+    service = _FakeExternalSourceService(
+        records={
+            key: ParakeetSourceRecord(
+                model_id=PARAKEET_V2_MODEL,
+                precision="int8",
+                directory=root,
+                preferred_source=ParakeetSourcePreference.EXTERNAL,
+            )
+        },
+        block_plan=True,
+    )
+    app = _app()
+    app._parakeet_source_service = service
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _models_screen(app)
+        assert await _wait_for(
+            lambda: bool(screen.query("#external-models-view")), pilot
+        )
+        ui_thread = threading.get_ident()
+        owns_external_token = screen._owns_external_token
+
+        def ui_owned_token(candidate):
+            assert threading.get_ident() == ui_thread
+            return owns_external_token(candidate)
+
+        screen._owns_external_token = ui_owned_token
+
+        async def cancel_during_plan() -> float:
+            started = await asyncio.to_thread(service.plan_started.wait, 2)
+            assert started is True
+            screen.post_message(ExternalModelView.CancelRequested())
+            assert await _wait_for(
+                lambda: "cancelled" in screen._external_operation_status.casefold(),
+                pilot,
+            )
+            return time.monotonic()
+
+        release = threading.Timer(0.5, service.release_plan.set)
+        release.start()
+        try:
+            cancel_task = asyncio.create_task(cancel_during_plan())
+            screen.post_message(ExternalModelView.CopyRequested(key))
+            cancelled_at = await cancel_task
+            assert await asyncio.to_thread(service.plan_returned.wait, 2)
+        finally:
+            service.release_plan.set()
+            release.cancel()
+
+        assert cancelled_at < service.plan_returned_at
+        assert not isinstance(app.screen, ConfirmationDialog)
         assert service.copied == []
 
 

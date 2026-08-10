@@ -1659,6 +1659,93 @@ def test_external_runtime_holds_exact_vad_lease_across_reuse_and_close(
     ModelArtifactService(tmp_path / "store").delete(dependency.reference)
 
 
+@pytest.mark.parametrize(
+    ("mutation", "expected_code"),
+    (
+        ("delete", TranscriptionFailureCode.MODEL_NOT_INSTALLED),
+        ("corrupt", TranscriptionFailureCode.ARTIFACT_CORRUPT),
+    ),
+)
+def test_external_runtime_reverifies_vad_before_resident_reuse(
+    tmp_path: Path,
+    mutation: str,
+    expected_code: TranscriptionFailureCode,
+) -> None:
+    service, _root, dependency = installed_root_and_dependency(tmp_path)
+    request, _model = _external_dependency_request(
+        tmp_path,
+        dependency,
+        attempt_id="external-vad-first",
+    )
+    executor = _resident_executor()
+    first = _Callbacks()
+    second = _Callbacks()
+    repaired = _Callbacks()
+    payload = service.artifact_path(dependency.reference) / dependency.files[0].path
+    try:
+        first_generation = executor.submit(
+            attempt_id="external-vad-first",
+            job_id="job-external-vad-first",
+            source=request.source,
+            identity=request.identity,
+            options={"transcription_provider": "parakeet-onnx"},
+            local_source=request.local_source,
+            managed_store_root=request.managed_store_root,
+            managed_dependency_refs=request.managed_dependency_refs,
+            on_result=first.on_result,
+            on_failure=first.on_failure,
+        )
+        _wait_for_terminal(first)
+        assert first.results
+
+        if mutation == "delete":
+            payload.unlink()
+        else:
+            payload.write_bytes(b"x" * dependency.files[0].size_bytes)
+
+        executor.submit(
+            attempt_id="external-vad-reuse",
+            job_id="job-external-vad-reuse",
+            source=request.source,
+            identity=request.identity,
+            options={"transcription_provider": "parakeet-onnx"},
+            local_source=request.local_source,
+            managed_store_root=request.managed_store_root,
+            managed_dependency_refs=request.managed_dependency_refs,
+            on_result=second.on_result,
+            on_failure=second.on_failure,
+        )
+        _wait_for_terminal(second)
+
+        assert second.results == []
+        assert second.failures[0].code is expected_code
+        assert str(tmp_path) not in repr(second.failures[0])
+        _wait_until(lambda: executor.resident_identity is None)
+
+        payload.write_bytes(b"dependency")
+        repaired_generation = executor.submit(
+            attempt_id="external-vad-repaired",
+            job_id="job-external-vad-repaired",
+            source=request.source,
+            identity=request.identity,
+            options={"transcription_provider": "parakeet-onnx"},
+            local_source=request.local_source,
+            managed_store_root=request.managed_store_root,
+            managed_dependency_refs=request.managed_dependency_refs,
+            on_result=repaired.on_result,
+            on_failure=repaired.on_failure,
+        )
+        _wait_for_terminal(repaired)
+
+        assert repaired_generation > first_generation
+        assert repaired.results
+        assert repaired.failures == []
+    finally:
+        executor.close()
+
+    ModelArtifactService(tmp_path / "store").delete(dependency.reference)
+
+
 def test_external_load_revalidates_model_after_acquiring_vad(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

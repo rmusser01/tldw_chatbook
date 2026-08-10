@@ -22,14 +22,15 @@ from ...Model_Artifacts.remote_huggingface import (
 from ...Model_Artifacts.service import ArtifactRef, ModelArtifactService
 from ...STT.parakeet_sources import (
     ManagedCopyConsent,
+    ManagedCopyPlan,
     ParakeetSourceError,
     ParakeetSourceErrorCode,
     ParakeetSourceKey,
     PreparedExternalSelection,
 )
 from ...STT.parakeet_external import (
-    ExternalParakeetErrorCode,
     ExternalParakeetVerificationError,
+    format_external_parakeet_recovery,
 )
 from ...Third_Party.textual_fspicker import SelectDirectory
 from ...Widgets.confirmation_dialog import ConfirmationDialog
@@ -97,33 +98,6 @@ MODELS_RAIL_SECTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
 #: process -- the event handler assigns it from an async worker -- so a
 #: press-triggered read would report "stopped".
 LAB_SERVER_POLL_SECONDS = 2.0
-
-_EXTERNAL_VERIFICATION_RECOVERY = {
-    ExternalParakeetErrorCode.MISSING: (
-        "Required model files are missing. Choose a complete model directory.",
-        True,
-    ),
-    ExternalParakeetErrorCode.IRREGULAR: (
-        "Model files must be regular files without links. Choose a safe model directory.",
-        True,
-    ),
-    ExternalParakeetErrorCode.CHANGED: (
-        "Model files changed during verification. Wait for file changes to finish, then retry.",
-        True,
-    ),
-    ExternalParakeetErrorCode.CORRUPT: (
-        "Model files do not match the curated model. Choose an unmodified model directory.",
-        True,
-    ),
-    ExternalParakeetErrorCode.UNSUPPORTED: (
-        "This curated model does not support an external directory.",
-        True,
-    ),
-    ExternalParakeetErrorCode.CANCELLED: (
-        "Verification cancelled. The prior source is unchanged.",
-        False,
-    ),
-}
 
 #: Back-compat alias for the (app attribute, display name) server-process
 #: table; ``LAB_SERVER_SOURCES`` in ``lab_server_status`` is the canonical
@@ -811,7 +785,7 @@ class LLMScreen(LabScreen):
                 progress=progress,
             )
         except ExternalParakeetVerificationError as exc:
-            message, is_error = _EXTERNAL_VERIFICATION_RECOVERY[exc.code]
+            message, is_error = format_external_parakeet_recovery(exc.code)
             if is_error:
                 logger.warning(
                     "External Parakeet verification failed; error_type={}",
@@ -1190,6 +1164,26 @@ class LLMScreen(LabScreen):
         token: tuple[int, int],
         prepared: PreparedExternalSelection,
     ) -> None:
+        self._set_external_status("Planning managed copy…", active=True)
+        self._external_selection_worker = self._run_external_copy_plan(token, prepared)
+
+    @work(
+        thread=True,
+        group="llm_external_copy_plan",
+        exclusive=True,
+        exit_on_error=False,
+        description="Plan external Parakeet managed copy",
+    )
+    def _run_external_copy_plan(
+        self,
+        token: tuple[int, int],
+        prepared: PreparedExternalSelection,
+    ) -> None:
+        """Plan managed-store space outside the Textual event loop."""
+
+        worker = get_current_worker()
+        if worker.is_cancelled:
+            return
         try:
             plan = self.app._ensure_parakeet_source_service().plan_managed_copy(
                 prepared.verified
@@ -1199,8 +1193,36 @@ class LLMScreen(LabScreen):
                 "External Parakeet copy planning failed; error_type={}",
                 type(exc).__name__,
             )
+            plan = None
+            error = (
+                "The managed copy could not be planned. "
+                "The external source is unchanged."
+            )
+        else:
+            error = None
+        self.app.call_from_thread(
+            self._apply_external_copy_plan,
+            token,
+            prepared,
+            plan,
+            error,
+        )
+
+    def _apply_external_copy_plan(
+        self,
+        token: tuple[int, int],
+        prepared: PreparedExternalSelection,
+        plan: ManagedCopyPlan | None,
+        error: str | None,
+    ) -> None:
+        """Apply only the current screen-owned copy plan."""
+
+        if not self._owns_external_token(token):
+            return
+        self._external_selection_worker = None
+        if error is not None or plan is None:
             self._set_external_status(
-                "The managed copy could not be planned. The external source is unchanged.",
+                error or "The managed copy could not be planned.",
                 error=True,
                 active=False,
             )

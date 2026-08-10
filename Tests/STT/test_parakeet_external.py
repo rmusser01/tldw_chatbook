@@ -26,12 +26,68 @@ from tldw_chatbook.STT.parakeet_external import (
     ExternalParakeetErrorCode,
     ExternalParakeetVerificationError,
     ExternalParakeetVerifier,
+    format_external_parakeet_recovery,
 )
 
 
 V2_MODEL_ID = "nemo-parakeet-tdt-0.6b-v2"
 V3_MODEL_ID = "nemo-parakeet-tdt-0.6b-v3"
 HASH_CHUNK_BYTES = 64 * 1024
+
+
+@pytest.mark.parametrize(
+    ("code", "message", "is_error"),
+    (
+        (
+            ExternalParakeetErrorCode.MISSING,
+            "Required model files are missing. Choose a complete model directory.",
+            True,
+        ),
+        (
+            ExternalParakeetErrorCode.IRREGULAR,
+            "Model files must be regular files without links. Choose a safe model directory.",
+            True,
+        ),
+        (
+            ExternalParakeetErrorCode.CHANGED,
+            "Model files changed during verification. Wait for file changes to finish, then retry.",
+            True,
+        ),
+        (
+            ExternalParakeetErrorCode.CORRUPT,
+            "Model files do not match the curated model. Choose an unmodified model directory.",
+            True,
+        ),
+        (
+            ExternalParakeetErrorCode.UNSUPPORTED,
+            "This curated model does not support an external directory.",
+            True,
+        ),
+        (
+            ExternalParakeetErrorCode.CANCELLED,
+            "Verification cancelled. The prior source is unchanged.",
+            False,
+        ),
+    ),
+)
+def test_recovery_formatter_preserves_path_free_lab_copy(
+    tmp_path: Path,
+    code: ExternalParakeetErrorCode,
+    message: str,
+    is_error: bool,
+) -> None:
+    assert format_external_parakeet_recovery(code) == (message, is_error)
+    assert str(tmp_path) not in message
+
+
+def test_recovery_formatter_preserves_first_run_changed_copy() -> None:
+    assert format_external_parakeet_recovery(
+        ExternalParakeetErrorCode.CHANGED,
+        concise=True,
+    ) == (
+        "Model files changed during verification. Wait for changes to finish, then retry.",
+        True,
+    )
 
 
 def _artifact_file(path: str, payload: bytes) -> ArtifactFile:

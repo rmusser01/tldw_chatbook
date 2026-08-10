@@ -355,16 +355,20 @@ def test_progress_message_updates_retained_state_and_widget() -> None:
         1,
         2,
     )
-    widget = MagicMock(spec=ModelInstallProgress)
+    label = MagicMock(spec=Static)
+    progress_widget = MagicMock(spec=ModelInstallProgress)
     screen = object.__new__(LibraryScreen)
     screen._parakeet_v2_install_progress = None
-    screen.query_one = MagicMock(return_value=widget)
+    screen._library_model_install_progress_label = "Parakeet v2"
+    screen.query_one = MagicMock(side_effect=(label, progress_widget))
 
     screen.handle_model_install_progressed(InstallProgressed(progress))
 
     assert screen._parakeet_v2_install_progress is progress
-    assert widget.display is True
-    widget.update_progress.assert_called_once_with(progress)
+    label.update.assert_called_once_with(screen._library_model_install_progress_label)
+    assert label.display is True
+    assert progress_widget.display is True
+    progress_widget.update_progress.assert_called_once_with(progress)
 
 
 # ---------------------------------------------------------------------------

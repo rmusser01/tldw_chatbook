@@ -47,6 +47,58 @@ class ExternalParakeetErrorCode(str, Enum):
     CANCELLED = "cancelled"
 
 
+_EXTERNAL_PARAKEET_RECOVERY = {
+    ExternalParakeetErrorCode.MISSING: (
+        "Required model files are missing. Choose a complete model directory.",
+        True,
+    ),
+    ExternalParakeetErrorCode.IRREGULAR: (
+        "Model files must be regular files without links. Choose a safe model directory.",
+        True,
+    ),
+    ExternalParakeetErrorCode.CHANGED: (
+        "Model files changed during verification. Wait for file changes to finish, then retry.",
+        True,
+    ),
+    ExternalParakeetErrorCode.CORRUPT: (
+        "Model files do not match the curated model. Choose an unmodified model directory.",
+        True,
+    ),
+    ExternalParakeetErrorCode.UNSUPPORTED: (
+        "This curated model does not support an external directory.",
+        True,
+    ),
+    ExternalParakeetErrorCode.CANCELLED: (
+        "Verification cancelled. The prior source is unchanged.",
+        False,
+    ),
+}
+
+
+def format_external_parakeet_recovery(
+    code: ExternalParakeetErrorCode,
+    *,
+    concise: bool = False,
+) -> tuple[str, bool]:
+    """Return stable path-free recovery copy for one verification failure.
+
+    Args:
+        code: Stable verification failure code.
+        concise: Preserve the shorter First Run changed-file wording.
+
+    Returns:
+        User-facing recovery message and whether it is an error.
+    """
+
+    message, is_error = _EXTERNAL_PARAKEET_RECOVERY[code]
+    if concise and code is ExternalParakeetErrorCode.CHANGED:
+        message = (
+            "Model files changed during verification. "
+            "Wait for changes to finish, then retry."
+        )
+    return message, is_error
+
+
 class ExternalParakeetVerificationError(RuntimeError):
     """Path-safe failure raised while verifying an external Parakeet root."""
 

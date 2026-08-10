@@ -3117,32 +3117,13 @@ class ModelArtifactService:
                     "failed to create artifact install staging directory"
                 ) from error
             self._assert_managed_path(staging)
-            # Only pass consume_source if True to maintain backward compatibility
-            # with tests that monkeypatch _copy_payload
-            if consume_source and cancelled is not _never_cancelled:
-                self._copy_payload(
-                    descriptor,
-                    source_directory,
-                    staging,
-                    consume_source=True,
-                    cancelled=cancelled,
-                )
-            elif consume_source:
-                self._copy_payload(
-                    descriptor,
-                    source_directory,
-                    staging,
-                    consume_source=True,
-                )
-            elif cancelled is not _never_cancelled:
-                self._copy_payload(
-                    descriptor,
-                    source_directory,
-                    staging,
-                    cancelled=cancelled,
-                )
-            else:
-                self._copy_payload(descriptor, source_directory, staging)
+            self._copy_payload(
+                descriptor,
+                source_directory,
+                staging,
+                consume_source=consume_source,
+                cancelled=cancelled,
+            )
             _raise_if_install_cancelled(cancelled)
             # When consume_source=True, files are intentionally moved from source.
             # Skip the unchanged-tree check in that case; it's expected to change.
@@ -3181,14 +3162,11 @@ class ModelArtifactService:
                         )
                         return descriptor.reference
                     _raise_if_install_cancelled(cancelled)
-                    if cancelled is _never_cancelled:
-                        self._verify_payload(staging, descriptor.files)
-                    else:
-                        self._verify_payload(
-                            staging,
-                            descriptor.files,
-                            cancelled=cancelled,
-                        )
+                    self._verify_payload(
+                        staging,
+                        descriptor.files,
+                        cancelled=cancelled,
+                    )
                     _raise_if_install_cancelled(cancelled)
                     atomic_write_json(
                         staging / "manifest.json",
@@ -3732,7 +3710,7 @@ class ModelArtifactService:
         if missing:
             raise ArtifactPathError(
                 f"source is missing declared files: {sorted(missing)}"
-            )
+            ) from FileNotFoundError("declared payload file is missing")
         return tuple(snapshots)
 
     def _copy_payload(

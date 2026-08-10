@@ -42,8 +42,8 @@ from tldw_chatbook.STT.transcribe_cpp_config import (
     is_gguf_file,
 )
 from tldw_chatbook.STT.parakeet_external import (
-    ExternalParakeetErrorCode,
     ExternalParakeetVerificationError,
+    format_external_parakeet_recovery,
 )
 from tldw_chatbook.STT.parakeet_sources import (
     ParakeetSourceError,
@@ -79,34 +79,6 @@ from tldw_chatbook.Widgets.ModelArtifacts import (
 )
 from tldw_chatbook.Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
-
-
-_EXTERNAL_VERIFICATION_RECOVERY = {
-    ExternalParakeetErrorCode.MISSING: (
-        "Required model files are missing. Choose a complete model directory.",
-        True,
-    ),
-    ExternalParakeetErrorCode.IRREGULAR: (
-        "Model files must be regular files without links. Choose a safe model directory.",
-        True,
-    ),
-    ExternalParakeetErrorCode.CHANGED: (
-        "Model files changed during verification. Wait for changes to finish, then retry.",
-        True,
-    ),
-    ExternalParakeetErrorCode.CORRUPT: (
-        "Model files do not match the curated model. Choose an unmodified model directory.",
-        True,
-    ),
-    ExternalParakeetErrorCode.UNSUPPORTED: (
-        "This curated model does not support an external directory.",
-        True,
-    ),
-    ExternalParakeetErrorCode.CANCELLED: (
-        "Verification cancelled. The prior source is unchanged.",
-        False,
-    ),
-}
 
 
 class SetupRadioButton(RadioButton):
@@ -1819,7 +1791,10 @@ class SpeechSetupStep(SetupStep):
                 progress=progress,
             )
         except ExternalParakeetVerificationError as exc:
-            message, is_error = _EXTERNAL_VERIFICATION_RECOVERY[exc.code]
+            message, is_error = format_external_parakeet_recovery(
+                exc.code,
+                concise=True,
+            )
             if is_error:
                 logger.warning(
                     "External Parakeet verification failed; error_type={}",

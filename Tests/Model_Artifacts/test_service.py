@@ -934,8 +934,17 @@ def test_reconcile_reports_live_pre_lifecycle_install_staging_entry(
         copied_item: ArtifactDescriptor,
         copied_source: Path,
         staging: Path,
+        *,
+        consume_source: bool = False,
+        cancelled: Callable[[], bool],
     ) -> None:
-        original_copy(copied_item, copied_source, staging)
+        original_copy(
+            copied_item,
+            copied_source,
+            staging,
+            consume_source=consume_source,
+            cancelled=cancelled,
+        )
         copy_finished.set()
         if not release_install.wait(10.0):
             raise AssertionError("test did not release staged install")
@@ -1537,6 +1546,31 @@ def test_install_verifies_then_promotes_immutable_directory(tmp_path: Path) -> N
         "schema_version": 1,
         "descriptor": item.to_dict(),
     }
+
+
+@pytest.mark.parametrize("phase", ("_copy_payload", "_verify_payload"))
+def test_install_forwards_default_cancellation_probe_to_private_phase(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    phase: str,
+) -> None:
+    service, item, source = install_inputs(tmp_path)
+    real_phase = getattr(service, phase)
+    probes: list[Callable[[], bool]] = []
+
+    def record_phase(
+        *args: object,
+        cancelled: Callable[[], bool],
+        **kwargs: object,
+    ) -> None:
+        probes.append(cancelled)
+        real_phase(*args, cancelled=cancelled, **kwargs)
+
+    monkeypatch.setattr(service, phase, record_phase)
+
+    assert service.install(item, source) == item.reference
+    assert len(probes) == 1
+    assert probes[0]() is False
 
 
 def test_install_cancellation_during_copy_is_path_private_and_removes_only_its_stage(
@@ -2445,10 +2479,19 @@ def test_install_rejects_source_directory_identity_change_during_copy(
         copied_descriptor: ArtifactDescriptor,
         copied_source: Path,
         staging: Path,
+        *,
+        consume_source: bool = False,
+        cancelled: Callable[[], bool],
     ) -> None:
         copied_source.rename(tmp_path / "original-source")
         replacement.rename(copied_source)
-        original_copy(copied_descriptor, copied_source, staging)
+        original_copy(
+            copied_descriptor,
+            copied_source,
+            staging,
+            consume_source=consume_source,
+            cancelled=cancelled,
+        )
 
     monkeypatch.setattr(service, "_copy_payload", swap_then_copy)
 
@@ -2541,8 +2584,17 @@ def test_declared_files_only_install_rechecks_declared_ancestor_identity(
         copied_descriptor: ArtifactDescriptor,
         copied_source: Path,
         staging: Path,
+        *,
+        consume_source: bool = False,
+        cancelled: Callable[[], bool],
     ) -> None:
-        original_copy(copied_descriptor, copied_source, staging)
+        original_copy(
+            copied_descriptor,
+            copied_source,
+            staging,
+            consume_source=consume_source,
+            cancelled=cancelled,
+        )
         nested = copied_source / "nested"
         nested.rename(copied_source / "original-nested")
         nested.mkdir()

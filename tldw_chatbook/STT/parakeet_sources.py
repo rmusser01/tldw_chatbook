@@ -387,12 +387,6 @@ class ParakeetSourceService:
             raise ParakeetSourceError(ParakeetSourceErrorCode.COPY_CONSENT_MISMATCH)
         _, descriptor = self._validated_external(verified)
         try:
-            if cancelled is _never_cancelled:
-                return self._managed_store_service().install(
-                    descriptor,
-                    verified.directory,
-                    declared_files_only=True,
-                )
             return self._managed_store_service().install(
                 descriptor,
                 verified.directory,

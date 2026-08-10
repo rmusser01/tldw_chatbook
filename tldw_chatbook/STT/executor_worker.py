@@ -232,6 +232,8 @@ def _dependency_failure_code(error: BaseException) -> TranscriptionFailureCode:
             return TranscriptionFailureCode.ARTIFACT_CORRUPT
         return TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE
     if isinstance(error, ArtifactIntegrityError):
+        if _caused_by_missing_path(error):
+            return TranscriptionFailureCode.MODEL_NOT_INSTALLED
         return TranscriptionFailureCode.ARTIFACT_CORRUPT
     if isinstance(error, (ArtifactLeaseError, ArtifactStateError)):
         return TranscriptionFailureCode.PROVIDER_UNAVAILABLE
@@ -350,6 +352,11 @@ def _validate_reuse(request: ExecutorRequest, resident: _ResidentRuntime) -> Non
         or request.managed_artifact_ref != resident.managed_artifact_ref
     ):
         raise _ProviderLoadFailure(TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE)
+    if request.local_source is not None and request.managed_dependency_refs:
+        acquired = _acquire_managed_model(request)
+        if acquired is None:
+            raise _ProviderLoadFailure(TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE)
+        acquired[0].close()
 
 
 def _transcribe_cpp_provider(
@@ -906,7 +913,14 @@ def _run_executor_worker(
                         cancelled=cancellation_event.is_set(),
                     )
                 )
-                if isinstance(error, LocalSourceChangedError):
+                if isinstance(error, LocalSourceChangedError) or (
+                    isinstance(error, _ProviderLoadFailure)
+                    and error.code
+                    in {
+                        TranscriptionFailureCode.MODEL_NOT_INSTALLED,
+                        TranscriptionFailureCode.ARTIFACT_CORRUPT,
+                    }
+                ):
                     return
     except (EOFError, OSError):
         return

@@ -62,6 +62,12 @@ async def test_models_host_lazily_wires_parakeet_activation_and_deletion(
             assert scopes == set()
             lifecycle_threads.append(("release", threading.get_ident()))
 
+        def records(self) -> dict[object, object]:
+            return {}
+
+        def close(self) -> None:
+            return None
+
         def on_root_activated(self, reference: ArtifactRef) -> None:
             self.activated.append(reference)
 

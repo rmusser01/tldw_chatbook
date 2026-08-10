@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import traceback
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -859,26 +860,28 @@ def test_managed_copy_plan_and_consent_install_only_declared_root_files(
     assert plan.already_installed is False
 
     real_install = managed.install
-    calls: list[tuple[ArtifactRef, Path, bool]] = []
+    calls: list[tuple[ArtifactRef, Path, bool, bool]] = []
 
     def install(
         descriptor: ArtifactDescriptor,
         source: Path,
         *,
         declared_files_only: bool = False,
+        cancelled: Callable[[], bool],
     ) -> ArtifactRef:
-        calls.append((descriptor.reference, source, declared_files_only))
+        calls.append((descriptor.reference, source, declared_files_only, cancelled()))
         return real_install(
             descriptor,
             source,
             declared_files_only=declared_files_only,
+            cancelled=cancelled,
         )
 
     monkeypatch.setattr(managed, "install", install)
     copied = service.copy_into_managed(prepared.verified, plan.grant())
 
     assert copied == plan.reference
-    assert calls == [(plan.reference, root.absolute(), True)]
+    assert calls == [(plan.reference, root.absolute(), True, False)]
     destination_files = {
         path.relative_to(plan.destination).as_posix()
         for path in plan.destination.rglob("*")
