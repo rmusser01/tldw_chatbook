@@ -2111,6 +2111,152 @@ async def test_generation_cancellation_after_commit_persists_before_child_finish
     assert adapter_cancels == {}
 
 
+@pytest.mark.parametrize("caller", ["initial", "regenerate"])
+@pytest.mark.asyncio
+async def test_generation_cancellation_during_sync_does_not_wait_for_stale_ui(
+    caller: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+    from tldw_chatbook.Video_Generation import adapter_registry
+
+    generated_meta = VideoGenerationMetadata(
+        name="generated", prompt="generate me", backend="comfyui"
+    )
+    original_meta = VideoGenerationMetadata(
+        name="original", prompt="generate me", backend="comfyui"
+    )
+    managed_path = tmp_path / f"{caller}-cancelled-during-sync.mp4"
+    sync_started = asyncio.Event()
+    release_sync = asyncio.Event()
+    sync_completed = False
+    inflight: set[str] = set()
+    adapter_cancels: dict = {}
+    harness = _OutcomeHarness(actions=[], video_store=object())
+    harness._console_videogen_inflight_sessions = lambda: inflight
+    harness._console_videogen_cancel_events = lambda: adapter_cancels
+    harness._append_native_console_system_message = (
+        lambda *_args, **_kwargs: _completed_async()
+    )
+    harness.app_instance = SimpleNamespace(notify=lambda *_args, **_kwargs: None)
+
+    async def blocking_sync() -> None:
+        nonlocal sync_completed
+        sync_started.set()
+        await release_sync.wait()
+        sync_completed = True
+
+    harness._sync_native_console_chat_ui = blocking_sync
+    if caller == "initial":
+        harness.chat_store.workspace_context = SimpleNamespace(
+            active_workspace_id="workspace"
+        )
+        harness.chat_store.ensure_session = lambda **_kwargs: SimpleNamespace(
+            id="session"
+        )
+        harness._session = SimpleNamespace(
+            _default_console_session_settings=lambda: object()
+        )
+        harness._console_composer_or_none = lambda: None
+        harness._clear_console_composer_draft = lambda: None
+    else:
+        harness.chat_store.get_message = lambda _message_id: SimpleNamespace(
+            video_metadata=original_meta
+        )
+        harness.chat_store.session_id_for_message = lambda _message_id: "session"
+
+    class Registry:
+        @staticmethod
+        def resolve_backend(_backend):
+            return object()
+
+    def commit_generation(**kwargs):
+        gate = kwargs["publication_gate"]
+        with gate.claim_publication() as active:
+            assert active
+            managed_path.write_bytes(b"committed before sync")
+        return generated_meta, managed_path
+
+    monkeypatch.setattr(
+        chat_screen_module,
+        "get_video_generation_config",
+        lambda: SimpleNamespace(
+            default_backend="comfyui", confirm_cost_estimate=False
+        ),
+    )
+    monkeypatch.setattr(adapter_registry, "get_registry", lambda: Registry())
+    monkeypatch.setattr(
+        chat_screen_module, "run_video_generation", commit_generation
+    )
+
+    if caller == "initial":
+        operation = asyncio.create_task(
+            ChatScreen._console_command_generate_video(
+                harness, SimpleNamespace(args="generate me")
+            )
+        )
+    else:
+        operation = asyncio.create_task(
+            ChatScreen._regenerate_console_video_message(harness, "old-message")
+        )
+    await sync_started.wait()
+
+    harness._drain_pending_console_videos()
+    operation.cancel()
+    for _ in range(3):
+        await asyncio.sleep(0)
+    cancellation_finished_without_sync_release = operation.done()
+    release_sync.set()
+    with pytest.raises(asyncio.CancelledError):
+        await operation
+    await asyncio.sleep(0)
+
+    assert cancellation_finished_without_sync_release
+    assert managed_path.read_bytes() == b"committed before sync"
+    assert len(harness.appended) == 1
+    assert harness.appended[0][1]["persist"] is True
+    assert harness.sync_count == 0
+    assert not sync_completed
+    assert inflight == set()
+    assert adapter_cancels == {}
+
+
+@pytest.mark.asyncio
+async def test_generation_drain_during_durable_append_skips_outer_sync(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    generated_meta = VideoGenerationMetadata(
+        name="generated", prompt="generate me", backend="comfyui"
+    )
+    harness = _OutcomeHarness(actions=[], video_store=object())
+    original_append = harness.chat_store.append_video_message
+
+    def append_then_drain(*args, **kwargs):
+        original_append(*args, **kwargs)
+        harness._drain_pending_console_videos()
+
+    harness.chat_store.append_video_message = append_then_drain
+
+    async def fake_to_thread(_function, **_kwargs):
+        return generated_meta, tmp_path / "durable-before-drain.mp4"
+
+    monkeypatch.setattr(asyncio, "to_thread", fake_to_thread)
+
+    await ChatScreen._run_console_video_generation_operation(
+        harness,
+        session_id="session",
+        message_id="durable-before-drain",
+        backend="comfyui",
+    )
+
+    assert len(harness.appended) == 1
+    assert harness.appended[0][1]["persist"] is True
+    assert harness.appended[0][1]["message_id"] == "durable-before-drain"
+    assert harness.sync_count == 0
+
+
 @pytest.mark.asyncio
 async def test_initial_generation_cancellation_closes_late_pending_without_modal(
     monkeypatch: pytest.MonkeyPatch,
@@ -2394,7 +2540,7 @@ def test_real_unmount_path_invokes_pending_artifact_drain() -> None:
 
 
 @pytest.mark.asyncio
-async def test_regenerate_dispatches_result_through_shared_resolver(
+async def test_regenerate_normal_result_persists_then_syncs_through_shared_operation(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     original_meta = VideoGenerationMetadata(
@@ -2403,41 +2549,32 @@ async def test_regenerate_dispatches_result_through_shared_resolver(
     generated_meta = VideoGenerationMetadata(
         name="new", prompt="regenerate me", backend="comfyui"
     )
-    captured: list[tuple] = []
-
-    class Store:
-        def get_message(self, _message_id):
-            return SimpleNamespace(video_metadata=original_meta)
-
-        def session_id_for_message(self, _message_id):
-            return "session"
+    harness = _OutcomeHarness(actions=[], video_store=object())
+    harness.chat_store.get_message = lambda _message_id: SimpleNamespace(
+        video_metadata=original_meta
+    )
+    harness.chat_store.session_id_for_message = lambda _message_id: "session"
 
     async def fake_to_thread(_function, **_kwargs):
         return generated_meta, tmp_path / "new.mp4"
 
-    async def capture_resolver(self, outcome, *, session_id, message_id):
-        captured.append((self, outcome, session_id, message_id))
-
     monkeypatch.setattr("asyncio.to_thread", fake_to_thread)
-    monkeypatch.setattr(ChatScreen, "_resolve_generated_video_outcome", capture_resolver)
     inflight: set[str] = set()
     cancels: dict = {}
-    fake = SimpleNamespace(
-        _ensure_console_chat_store=lambda: Store(),
-        _console_videogen_inflight_sessions=lambda: inflight,
-        _console_videogen_cancel_events=lambda: cancels,
-        _ensure_console_video_store=lambda: object(),
-        _append_native_console_system_message=lambda *_args, **_kwargs: None,
-        app_instance=SimpleNamespace(notify=lambda *_args, **_kwargs: None),
+    harness._console_videogen_inflight_sessions = lambda: inflight
+    harness._console_videogen_cancel_events = lambda: cancels
+    harness._append_native_console_system_message = (
+        lambda *_args, **_kwargs: _completed_async()
     )
+    harness.app_instance = SimpleNamespace(notify=lambda *_args, **_kwargs: None)
 
-    await ChatScreen._regenerate_console_video_message(fake, "old-message")
+    await ChatScreen._regenerate_console_video_message(harness, "old-message")
 
-    assert len(captured) == 1
-    assert captured[0][0] is fake
-    assert captured[0][1][0] is generated_meta
-    assert captured[0][2] == "session"
-    assert captured[0][3]
+    assert len(harness.appended) == 1
+    assert harness.appended[0][1]["video_metadata"] is generated_meta
+    assert harness.appended[0][1]["persist"] is True
+    assert harness.appended[0][1]["message_id"]
+    assert harness.sync_count == 1
     assert inflight == set()
     assert cancels == {}
 

@@ -16978,14 +16978,14 @@ class ChatScreen(BaseAppScreen):
     ) -> None:
         """Run generation and make every committed tuple durable in one child."""
 
-        async def _generate_and_finalize() -> Any:
+        async def _generate_and_finalize() -> tuple[Any, Path] | PendingVideoArtifact:
             outcome = await asyncio.to_thread(
                 run_video_generation,
                 message_id=message_id,
                 **generation_kwargs,
             )
             if not isinstance(outcome, PendingVideoArtifact):
-                await ChatScreen._resolve_generated_video_outcome(
+                ChatScreen._persist_generated_video_tuple(
                     self,
                     outcome,
                     session_id=session_id,
@@ -17009,6 +17009,10 @@ class ChatScreen(BaseAppScreen):
                 session_id=session_id,
                 message_id=message_id,
             )
+            return
+        if getattr(self, "_pending_video_artifacts_closed", False):
+            return
+        await self._sync_native_console_chat_ui()
 
     def _drain_pending_console_videos(self) -> None:
         """Atomically detach and close every staged video owned by the screen."""
@@ -17507,12 +17511,8 @@ class ChatScreen(BaseAppScreen):
         """Resolve one normal or staged generation result for either caller."""
         chat_store = self._ensure_console_chat_store()
         if not isinstance(outcome, PendingVideoArtifact):
-            metadata, _managed_path = outcome
-            chat_store.append_video_message(
-                session_id,
-                video_metadata=metadata,
-                persist=True,
-                message_id=message_id,
+            ChatScreen._persist_generated_video_tuple(
+                self, outcome, session_id=session_id, message_id=message_id
             )
             if getattr(self, "_pending_video_artifacts_closed", False):
                 return
@@ -17671,6 +17671,22 @@ class ChatScreen(BaseAppScreen):
             ChatScreen._release_console_video_publication_gate(
                 self, message_id, publication_gate
             )
+
+    def _persist_generated_video_tuple(
+        self,
+        outcome: tuple[Any, Path],
+        *,
+        session_id: str,
+        message_id: str,
+    ) -> None:
+        """Persist one already-published normal video without touching the UI."""
+        metadata, _managed_path = outcome
+        self._ensure_console_chat_store().append_video_message(
+            session_id,
+            video_metadata=metadata,
+            persist=True,
+            message_id=message_id,
+        )
 
     async def _console_command_generate_video(self, parse: CommandParse) -> None:
         """Resolve and run one ``/generate-video`` generation (task-3401.5).
