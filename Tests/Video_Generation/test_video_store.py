@@ -607,6 +607,38 @@ def test_capacity_operations_never_follow_symlinked_directories_or_files(
     assert (linked_file_dir / "linked.mp4").is_symlink()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX internal directory-symlink case")
+def test_snapshot_excludes_internal_message_directory_symlink_alias(tmp_path):
+    store = VideoStore(root=tmp_path / "gv", config=_config(retention="ttl"))
+    real = store.save("real-message", "clip", b"real-video")
+    alias = store.root / "alias-message"
+    alias.symlink_to(real.parent, target_is_directory=True)
+
+    stored = list(store.iter_stored())
+
+    assert [(item.message_id, item.slug) for item in stored] == [
+        ("real-message", "clip")
+    ]
+    assert stored[0].path == real
+    assert alias.is_symlink()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX internal file-symlink case")
+def test_snapshot_excludes_internal_file_symlink_alias(tmp_path):
+    store = VideoStore(root=tmp_path / "gv", config=_config(retention="ttl"))
+    real = store.save("real-message", "clip", b"real-video")
+    alias = real.parent / "alias.mp4"
+    alias.symlink_to(real.name)
+
+    stored = list(store.iter_stored())
+
+    assert [(item.message_id, item.slug) for item in stored] == [
+        ("real-message", "clip")
+    ]
+    assert stored[0].path == real
+    assert alias.is_symlink()
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows reparse containment case")
 def test_capacity_operations_never_follow_windows_junction(tmp_path):
     store = VideoStore(root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1))
@@ -939,6 +971,41 @@ def test_later_victim_failure_withdraws_new_target_and_leaves_bounded_store(
     assert third.read_bytes() == b"c" * 100_000
     assert store.resolve("new", "clip") is None
     assert sum(item.size_bytes for item in store.iter_stored()) <= store.capacity_bytes
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX deterministic symlink-swap case")
+def test_capacity_victim_is_revalidated_after_snapshot_before_unlink(
+    tmp_path, monkeypatch
+):
+    store = VideoStore(root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1))
+    oldest = store.save("old", "clip", b"o" * 900_000)
+    os.utime(oldest, (1, 1))
+    external = tmp_path / "private"
+    external.mkdir()
+    sentinel = external / "PRIVATE-SENTINEL"
+    sentinel.write_bytes(b"PRIVATE-SENTINEL")
+    original_sort = store._sorted_oldest
+    swapped = False
+
+    def swap_selected_victim(videos):
+        nonlocal swapped
+        selected = original_sort(videos)
+        if not swapped and any(video.path == oldest for video in selected):
+            oldest.unlink()
+            oldest.symlink_to(sentinel)
+            swapped = True
+        return selected
+
+    monkeypatch.setattr(store, "_sorted_oldest", swap_selected_victim)
+    with pytest.raises(video_store_module.VideoStoreSaveError):
+        store.save("new", "clip", b"n" * 300_000)
+
+    assert swapped
+    assert sentinel.read_bytes() == b"PRIVATE-SENTINEL"
+    assert oldest.is_symlink()
+    assert oldest.resolve() == sentinel
+    assert store.resolve("new", "clip") is None
+    assert not list(store.root.rglob(".video-stage-*"))
 
 
 # -- retention -------------------------------------------------------------
