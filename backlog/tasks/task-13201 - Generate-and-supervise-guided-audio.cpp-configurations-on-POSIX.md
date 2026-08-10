@@ -69,7 +69,7 @@ Project accepted guided settings into immutable generation-local server configur
   retaining bounded allowlisted internal-failure diagnostics without raw
   exception text or type names.
 - Verification at implementation commit
-  `df8268a6b682ca1a6c2fe32d7c404c3788995331`: 1,109 affected tests passed;
+  `29e4262d9d6a7abe107206bb4ac097e7c06a444e`: 1,109 affected tests passed;
   Ruff check/format, scoped mypy, compileall, privacy/boundary checks, and diff
   integrity passed; pinned audio.cpp 0.5.1 CPU journeys passed on native macOS
   arm64 and provisioned Linux arm64. The final WAV was byte-identical to the

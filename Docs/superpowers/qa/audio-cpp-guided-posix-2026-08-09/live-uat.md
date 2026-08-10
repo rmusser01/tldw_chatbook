@@ -9,8 +9,8 @@ committed-revision reruns passed.
 ## Build and host
 
 - Chatbook implementation commit:
-  `df8268a6b682ca1a6c2fe32d7c404c3788995331`, rebased onto `dev` commit
-  `37e634cbb3309282043b4b7b789f15bec8072f8d`.
+  `29e4262d9d6a7abe107206bb4ac097e7c06a444e`, rebased onto `dev` commit
+  `8ffded2e4f98114db3a7b9d340ac49c980ebf499`.
 - Host: macOS 15.6 (`24G84`), arm64.
 - Selected backend: `cpu` through Guided `Auto` and the intersection of both
   accepted recipe tuples.
@@ -166,7 +166,7 @@ afterward.
 ## Automated evidence
 
 - Exact committed revision, complete affected TTS/UI/privacy surface outside
-  the sandbox: `1109 passed in 13.59s`.
+  the sandbox: `1109 passed in 13.98s`.
 - Generated-launch/supervisor/managed-integration subset: `144 passed` before
   the same-root amendment; the amended and hard-link ownership tests are
   included in the 1,109-test run.
