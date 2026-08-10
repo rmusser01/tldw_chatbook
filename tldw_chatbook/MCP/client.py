@@ -8,15 +8,17 @@ and use their tools, resources, and prompts within tldw_chatbook.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 import json
 import math
+import re
 import subprocess
 from datetime import datetime
 from itertools import count
 from time import monotonic as _monotonic
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlsplit
 
 from loguru import logger
 
@@ -32,8 +34,14 @@ MAX_JSON_DEPTH = 64
 MAX_SCHEMA_BYTES = 262_144
 MAX_SCHEMA_DEPTH = 32
 MAX_DESCRIPTOR_STRING_LENGTH = 4096
+MAX_DESCRIPTOR_NAME_LENGTH = 128
+MAX_RESOURCE_NAME_LENGTH = 512
+MAX_RESOURCE_URI_LENGTH = 2048
+MAX_MIME_TYPE_LENGTH = 255
 MAX_CATALOG_PAGES = 100
 MAX_CATALOG_ITEMS = 10_000
+_DESCRIPTOR_NAME_PATTERN = re.compile(r"[A-Za-z0-9_.-]{1,128}\Z")
+_URI_SCHEME_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*\Z")
 
 
 class MCPClientError(RuntimeError):
@@ -105,30 +113,91 @@ def _bounded_json_copy(
         raise MCPClientError(message) from None
 
 
-def _required_string(payload: Mapping[str, Any], key: str) -> str:
+def _required_string(
+    payload: Mapping[str, Any],
+    key: str,
+    *,
+    maximum: int = MAX_DESCRIPTOR_STRING_LENGTH,
+) -> str:
     value = payload.get(key)
-    if (
-        not isinstance(value, str)
-        or not value
-        or len(value) > MAX_DESCRIPTOR_STRING_LENGTH
-    ):
+    if not isinstance(value, str) or not value or len(value) > maximum:
         raise ValueError
     return value
 
 
-def _optional_string(payload: Mapping[str, Any], key: str, default: str = "") -> str:
+def _optional_string(
+    payload: Mapping[str, Any],
+    key: str,
+    default: str = "",
+    *,
+    maximum: int = MAX_DESCRIPTOR_STRING_LENGTH,
+) -> str:
     value = payload.get(key, default)
-    if not isinstance(value, str) or len(value) > MAX_DESCRIPTOR_STRING_LENGTH:
+    if not isinstance(value, str) or len(value) > maximum:
         raise ValueError
     return value
 
 
-def _annotations(payload: Mapping[str, Any]) -> Dict[str, Any]:
-    return _bounded_json_copy(
+def _descriptor_name(payload: Mapping[str, Any]) -> str:
+    name = _required_string(payload, "name", maximum=MAX_DESCRIPTOR_NAME_LENGTH)
+    if _DESCRIPTOR_NAME_PATTERN.fullmatch(name) is None:
+        raise ValueError
+    return name
+
+
+def _resource_uri(payload: Mapping[str, Any]) -> str:
+    uri = _required_string(payload, "uri", maximum=MAX_RESOURCE_URI_LENGTH)
+    if any(character.isspace() or ord(character) < 32 for character in uri):
+        raise ValueError
+    try:
+        parsed = urlsplit(uri)
+        parsed.port
+    except ValueError:
+        raise ValueError from None
+    if _URI_SCHEME_PATTERN.fullmatch(parsed.scheme) is None:
+        raise ValueError
+    if parsed.scheme.lower() in {"http", "https"} and not parsed.hostname:
+        raise ValueError
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError
+    return uri
+
+
+def _annotations(payload: Mapping[str, Any], *, tool: bool = False) -> Dict[str, Any]:
+    annotations = _bounded_json_copy(
         payload.get("annotations", {}),
         message="Invalid MCP catalog items",
         mapping=True,
     )
+    audience = annotations.get("audience")
+    if audience is not None and (
+        not isinstance(audience, list)
+        or not all(role in {"user", "assistant"} for role in audience)
+    ):
+        raise ValueError
+    priority = annotations.get("priority")
+    if priority is not None and (
+        isinstance(priority, bool)
+        or not isinstance(priority, (int, float))
+        or not 0 <= priority <= 1
+    ):
+        raise ValueError
+    if "lastModified" in annotations and not isinstance(
+        annotations["lastModified"], str
+    ):
+        raise ValueError
+    if tool:
+        if "title" in annotations:
+            _optional_string(annotations, "title")
+        for field in (
+            "readOnlyHint",
+            "destructiveHint",
+            "idempotentHint",
+            "openWorldHint",
+        ):
+            if field in annotations and not isinstance(annotations[field], bool):
+                raise ValueError
+    return annotations
 
 
 def _copy_resource_metadata(value: Any) -> Dict[str, Any]:
@@ -144,17 +213,20 @@ def _copy_resource_metadata(value: Any) -> Dict[str, Any]:
 def _tool_from_payload(payload: Dict[str, Any]) -> SimpleNamespace:
     if not isinstance(payload, Mapping):
         raise ValueError
+    input_schema = _bounded_json_copy(
+        payload.get("inputSchema"),
+        message="Invalid MCP catalog items",
+        max_bytes=MAX_SCHEMA_BYTES,
+        max_depth=MAX_SCHEMA_DEPTH,
+        mapping=True,
+    )
+    if input_schema.get("type") != "object":
+        raise ValueError
     return SimpleNamespace(
-        name=_required_string(payload, "name"),
+        name=_descriptor_name(payload),
         description=_optional_string(payload, "description"),
-        inputSchema=_bounded_json_copy(
-            payload.get("inputSchema"),
-            message="Invalid MCP catalog items",
-            max_bytes=MAX_SCHEMA_BYTES,
-            max_depth=MAX_SCHEMA_DEPTH,
-            mapping=True,
-        ),
-        annotations=_annotations(payload),
+        inputSchema=input_schema,
+        annotations=_annotations(payload, tool=True),
     )
 
 
@@ -167,10 +239,14 @@ def _resource_from_payload(payload: Dict[str, Any]) -> SimpleNamespace:
     ):
         raise ValueError
     return SimpleNamespace(
-        uri=_required_string(payload, "uri"),
-        name=_required_string(payload, "name"),
+        uri=_resource_uri(payload),
+        name=_required_string(payload, "name", maximum=MAX_RESOURCE_NAME_LENGTH),
         description=_optional_string(payload, "description"),
-        mimeType=_optional_string(payload, "mimeType", "text/plain"),
+        mimeType=(
+            _required_string(payload, "mimeType", maximum=MAX_MIME_TYPE_LENGTH)
+            if "mimeType" in payload
+            else "text/plain"
+        ),
         annotations=_annotations(payload),
         size=size,
     )
@@ -183,7 +259,7 @@ def _prompt_argument_from_payload(payload: Dict[str, Any]) -> SimpleNamespace:
     if not isinstance(required, bool):
         raise ValueError
     return SimpleNamespace(
-        name=_required_string(payload, "name"),
+        name=_required_string(payload, "name", maximum=MAX_DESCRIPTOR_NAME_LENGTH),
         description=_optional_string(payload, "description"),
         required=required,
     )
@@ -195,10 +271,14 @@ def _prompt_from_payload(payload: Dict[str, Any]) -> SimpleNamespace:
     arguments = payload.get("arguments", [])
     if not isinstance(arguments, list):
         raise ValueError
+    converted_arguments = [_prompt_argument_from_payload(arg) for arg in arguments]
+    argument_names = [argument.name for argument in converted_arguments]
+    if len(argument_names) != len(set(argument_names)):
+        raise ValueError
     return SimpleNamespace(
-        name=_required_string(payload, "name"),
+        name=_descriptor_name(payload),
         description=_optional_string(payload, "description"),
-        arguments=[_prompt_argument_from_payload(arg) for arg in arguments],
+        arguments=converted_arguments,
         annotations=_annotations(payload),
     )
 
@@ -246,6 +326,7 @@ class _StdioJSONRPCConnection:
         *,
         client_name: str,
         request_timeout_seconds: float = _REQUEST_TIMEOUT_SECONDS,
+        on_transport_failure: Optional[Callable[[], Awaitable[None]]] = None,
     ) -> None:
         self.process = process
         self.client_name = client_name
@@ -257,8 +338,11 @@ class _StdioJSONRPCConnection:
         self._request_ids = count(1)
         self._pending_requests: Dict[int, asyncio.Future[Dict[str, Any]]] = {}
         self._write_lock = asyncio.Lock()
+        self._close_lock = asyncio.Lock()
         self._reader_unavailable = False
         self._cleanup_complete = False
+        self._on_transport_failure = on_transport_failure
+        self._transport_cleanup_task: Optional[asyncio.Task[None]] = None
         self._read_task = asyncio.create_task(self._read_loop())
         self._stderr_task = (
             asyncio.create_task(self._stderr_loop())
@@ -456,75 +540,80 @@ class _StdioJSONRPCConnection:
         )
 
     async def close(self) -> None:
-        if self._cleanup_complete:
-            return
+        close_lock = getattr(self, "_close_lock", None)
+        if close_lock is None:
+            close_lock = self._close_lock = asyncio.Lock()
+        async with close_lock:
+            if self._cleanup_complete:
+                return
 
-        self._reader_unavailable = True
-        self._fail_pending_requests(RuntimeError("MCP connection closed"))
+            self._reader_unavailable = True
+            self._fail_pending_requests(RuntimeError("MCP connection closed"))
 
-        stdin = getattr(self.process, "stdin", None)
-        if stdin is not None:
-            try:
-                stdin.close()
-            except Exception:
-                pass
-            wait_closed = getattr(stdin, "wait_closed", None)
-            if callable(wait_closed):
+            stdin = getattr(self.process, "stdin", None)
+            if stdin is not None:
                 try:
-                    await wait_closed()
+                    stdin.close()
                 except Exception:
                     pass
+                wait_closed = getattr(stdin, "wait_closed", None)
+                if callable(wait_closed):
+                    try:
+                        await wait_closed()
+                    except Exception:
+                        pass
 
-        if self.process.returncode is None:
-            try:
-                self.process.terminate()
-            except ProcessLookupError:
-                pass
-            except Exception:
-                logger.opt(exception=True).debug(
-                    "Failed to terminate MCP subprocess cleanly"
-                )
-
-            try:
-                await asyncio.wait_for(
-                    self.process.wait(), timeout=_TERMINATE_TIMEOUT_SECONDS
-                )
-            except asyncio.TimeoutError:
+            if self.process.returncode is None:
                 try:
-                    self.process.kill()
+                    self.process.terminate()
                 except ProcessLookupError:
                     pass
                 except Exception:
                     logger.opt(exception=True).debug(
-                        "Failed to kill MCP subprocess cleanly"
+                        "Failed to terminate MCP subprocess cleanly"
                     )
+
                 try:
-                    await self.process.wait()
+                    await asyncio.wait_for(
+                        self.process.wait(), timeout=_TERMINATE_TIMEOUT_SECONDS
+                    )
+                except asyncio.TimeoutError:
+                    try:
+                        self.process.kill()
+                    except ProcessLookupError:
+                        pass
+                    except Exception:
+                        logger.opt(exception=True).debug(
+                            "Failed to kill MCP subprocess cleanly"
+                        )
+                    try:
+                        await self.process.wait()
+                    except Exception:
+                        pass
                 except Exception:
                     pass
-            except Exception:
-                pass
 
-        for task in (self._read_task, self._stderr_task):
-            if task is None:
-                continue
-            if task.done():
+            current_task = asyncio.current_task()
+            for task in (self._read_task, self._stderr_task):
+                if task is None or task is current_task:
+                    continue
+                if task.done():
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception:
+                        pass
+                    continue
+                task.cancel()
                 try:
                     await task
                 except asyncio.CancelledError:
                     pass
                 except Exception:
                     pass
-                continue
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-            except Exception:
-                pass
 
-        self._cleanup_complete = True
+            self._cleanup_complete = True
 
     async def _send_message(self, payload: Dict[str, Any]) -> None:
         stdin = getattr(self.process, "stdin", None)
@@ -565,12 +654,33 @@ class _StdioJSONRPCConnection:
         except asyncio.CancelledError:
             raise
         except Exception:
-            self._mark_reader_unavailable()
+            self._mark_reader_unavailable(cleanup=True)
 
-    def _mark_reader_unavailable(self) -> None:
+    def _mark_reader_unavailable(self, *, cleanup: bool = False) -> None:
         self._reader_unavailable = True
         self._fail_pending_requests(RuntimeError("MCP transport unavailable"))
         logger.warning("MCP transport unavailable")
+        cleanup_handler = getattr(self, "_on_transport_failure", None)
+        cleanup_task = getattr(self, "_transport_cleanup_task", None)
+        if cleanup and cleanup_handler is not None and cleanup_task is None:
+            self._transport_cleanup_task = asyncio.create_task(
+                self._run_transport_failure_cleanup()
+            )
+
+    async def _run_transport_failure_cleanup(self) -> None:
+        current_task = asyncio.current_task()
+        try:
+            await asyncio.sleep(0)
+            cleanup_handler = self._on_transport_failure
+            if cleanup_handler is not None:
+                await cleanup_handler()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("MCP transport cleanup failed")
+        finally:
+            if self._transport_cleanup_task is current_task:
+                self._transport_cleanup_task = None
 
     async def _stderr_loop(self) -> None:
         stderr = getattr(self.process, "stderr", None)
@@ -605,7 +715,7 @@ class _StdioJSONRPCConnection:
             return
 
         if "method" in payload:
-            logger.debug("Ignoring MCP server notification: {}", payload.get("method"))
+            logger.debug("Ignoring MCP server notification")
             return
 
         if "id" in payload:
@@ -697,7 +807,7 @@ class MCPClient:
             True if connection successful
         """
         if server_id in self.sessions:
-            await self._teardown_connection(server_id)
+            await self._bounded_teardown_connection(server_id)
 
         session = None
         deadline = _monotonic() + CONNECT_TIMEOUT_SECONDS
@@ -715,7 +825,13 @@ class MCPClient:
                 ),
                 timeout=spawn_timeout,
             )
+
+            async def cleanup_failed_transport() -> None:
+                if session is not None and self.sessions.get(server_id) is session:
+                    await self._bounded_teardown_connection(server_id, session=session)
+
             session = _StdioJSONRPCConnection(process, client_name=self.name)
+            session._on_transport_failure = cleanup_failed_transport
             initialize_timeout = _remaining(
                 deadline, "MCP connection deadline exceeded"
             )
@@ -770,7 +886,7 @@ class MCPClient:
         """
         try:
             if server_id in self.sessions:
-                await self._teardown_connection(server_id)
+                await self._bounded_teardown_connection(server_id)
                 logger.info("Disconnected from MCP server: {}", server_id)
                 return True
             else:
@@ -1063,9 +1179,15 @@ class MCPClient:
     async def disconnect_all(self) -> None:
         """Disconnect from all servers."""
         server_ids = list(self.sessions.keys())
+        cancelled = False
         for server_id in server_ids:
-            await self.disconnect_from_server(server_id)
+            try:
+                await self.disconnect_from_server(server_id)
+            except asyncio.CancelledError:
+                cancelled = True
         logger.info("Disconnected from all MCP servers")
+        if cancelled:
+            raise asyncio.CancelledError
 
     async def _teardown_connection(
         self,
@@ -1080,14 +1202,56 @@ class MCPClient:
         if active_session is not None:
             try:
                 await active_session.close()
+            except asyncio.CancelledError:
+                raise
             except Exception:
                 pass
-            finally:
-                self.sessions.pop(server_id, None)
-                self.servers.pop(server_id, None)
-        else:
-            self.sessions.pop(server_id, None)
-            self.servers.pop(server_id, None)
+
+    async def _force_stop_process(self, process: Any) -> None:
+        stdin = getattr(process, "stdin", None)
+        if stdin is not None:
+            try:
+                stdin.close()
+            except Exception:
+                pass
+        if process is None or getattr(process, "returncode", None) is not None:
+            return
+        try:
+            process.terminate()
+        except Exception:
+            pass
+        try:
+            await asyncio.wait_for(process.wait(), timeout=_TERMINATE_TIMEOUT_SECONDS)
+            return
+        except Exception:
+            pass
+        try:
+            process.kill()
+        except Exception:
+            return
+        try:
+            await asyncio.wait_for(process.wait(), timeout=_TERMINATE_TIMEOUT_SECONDS)
+        except Exception:
+            pass
+
+    async def _finish_connection_cleanup(
+        self,
+        server_id: str,
+        active_session: Optional[_StdioJSONRPCConnection],
+    ) -> None:
+        cleanup = asyncio.create_task(
+            self._teardown_connection(server_id, session=active_session)
+        )
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(cleanup), timeout=CLEANUP_TIMEOUT_SECONDS
+            )
+        except asyncio.TimeoutError:
+            cleanup.cancel()
+            await asyncio.gather(cleanup, return_exceptions=True)
+        process = getattr(active_session, "process", None)
+        if process is not None and getattr(process, "returncode", None) is None:
+            await self._force_stop_process(process)
 
     async def _bounded_teardown_connection(
         self,
@@ -1099,43 +1263,21 @@ class MCPClient:
             session if session is not None else self.sessions.get(server_id)
         )
         cleanup = asyncio.create_task(
-            self._teardown_connection(server_id, session=session)
+            self._finish_connection_cleanup(server_id, active_session)
         )
+        cancelled = False
         try:
-            await asyncio.wait_for(
-                asyncio.shield(cleanup), timeout=CLEANUP_TIMEOUT_SECONDS
-            )
-        except asyncio.TimeoutError:
-            cleanup.cancel()
-            await asyncio.gather(cleanup, return_exceptions=True)
-            process = getattr(active_session, "process", None)
-            stdin = getattr(process, "stdin", None)
-            if stdin is not None:
-                try:
-                    stdin.close()
-                except Exception:
-                    pass
-            if process is not None and getattr(process, "returncode", None) is None:
-                try:
-                    process.terminate()
-                except Exception:
-                    pass
-                try:
-                    await asyncio.wait_for(
-                        process.wait(), timeout=_TERMINATE_TIMEOUT_SECONDS
-                    )
-                except Exception:
-                    try:
-                        process.kill()
-                    except Exception:
-                        pass
-                    else:
-                        try:
-                            await asyncio.wait_for(
-                                process.wait(), timeout=_TERMINATE_TIMEOUT_SECONDS
-                            )
-                        except Exception:
-                            pass
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                cancelled = True
+                await asyncio.shield(cleanup)
         finally:
-            self.sessions.pop(server_id, None)
-            self.servers.pop(server_id, None)
+            if cleanup.done():
+                if self.sessions.get(server_id) is active_session:
+                    self.sessions.pop(server_id, None)
+                    self.servers.pop(server_id, None)
+                elif active_session is None and server_id not in self.sessions:
+                    self.servers.pop(server_id, None)
+        if cancelled:
+            raise asyncio.CancelledError

@@ -456,7 +456,7 @@ class FakeJSONRPCProcess:
                                 {
                                     "name": f"remote_tool_{self.process_id}",
                                     "description": "Remote tool",
-                                    "inputSchema": {},
+                                    "inputSchema": {"type": "object"},
                                 }
                             ]
                         },

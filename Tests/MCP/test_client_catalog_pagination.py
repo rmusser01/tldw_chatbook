@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from itertools import count
+import sys
 from types import SimpleNamespace
 from typing import Any
 
@@ -58,6 +59,29 @@ class _Process:
         return self.returncode or 0
 
 
+class _SlowReapProcess(_Process):
+    def __init__(self, stdout: object | None = None) -> None:
+        super().__init__(stdout)
+        self.wait_started = asyncio.Event()
+        self.allow_reap = asyncio.Event()
+
+    def terminate(self) -> None:
+        self.terminate_calls += 1
+
+    def kill(self) -> None:
+        self.kill_calls += 1
+        self.returncode = -9
+        self.allow_reap.set()
+
+    async def wait(self) -> int:
+        self.wait_calls += 1
+        self.wait_started.set()
+        await self.allow_reap.wait()
+        if self.returncode is None:
+            self.returncode = 0
+        return self.returncode
+
+
 def _bare_connection(
     process: object | None = None,
 ) -> client_module._StdioJSONRPCConnection:
@@ -72,6 +96,8 @@ def _bare_connection(
     connection._cleanup_complete = False
     connection._read_task = None
     connection._stderr_task = None
+    connection._on_transport_failure = None
+    connection._transport_cleanup_task = None
     connection.request_timeout_seconds = 10
     return connection
 
@@ -87,9 +113,9 @@ CATALOG_RESPONSES = [
 
 def _item(item_key: str, value: str) -> dict[str, Any]:
     if item_key == "resources":
-        return {"uri": value, "name": value}
+        return {"uri": f"resource:{value}", "name": value}
     if item_key == "tools":
-        return {"name": value, "inputSchema": {}}
+        return {"name": value, "inputSchema": {"type": "object"}}
     return {"name": value}
 
 
@@ -402,7 +428,10 @@ async def test_catalog_uses_one_monotonic_deadline_and_remaining_timeout(
         timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
         timeouts.append(timeout_seconds)
-        return {"tools": [{"name": "one", "inputSchema": {}}], "nextCursor": "more"}
+        return {
+            "tools": [{"name": "one", "inputSchema": {"type": "object"}}],
+            "nextCursor": "more",
+        }
 
     connection.request = request  # type: ignore[method-assign]
 
@@ -500,11 +529,13 @@ async def test_catalogs_omit_first_cursor_forward_exact_cursor_and_preserve_orde
         lambda index, _method, _params: pages[index - 1]
     )
 
-    assert await _catalog_values(connection, list_method, item_key, value_field) == [
-        "first",
-        "second",
-        "third",
-    ]
+    expected_values = ["first", "second", "third"]
+    if item_key == "resources":
+        expected_values = [f"resource:{value}" for value in expected_values]
+    assert (
+        await _catalog_values(connection, list_method, item_key, value_field)
+        == expected_values
+    )
     assert requests == [
         (request_method, {}),
         (request_method, {"cursor": "cursor-exact"}),
@@ -529,8 +560,9 @@ async def test_catalog_null_cursor_terminates_without_another_request(
         }
     )
 
+    expected_value = "resource:only" if item_key == "resources" else "only"
     assert await _catalog_values(connection, list_method, item_key, value_field) == [
-        "only"
+        expected_value
     ]
     assert requests == [(request_method, {})]
 
@@ -561,9 +593,12 @@ async def test_catalog_rejects_repeated_cursor_instead_of_returning_partial_item
     None
 ):
     pages = [
-        {"tools": [{"name": "first", "inputSchema": {}}], "nextCursor": "repeat"},
         {
-            "tools": [{"name": "private-second", "inputSchema": {}}],
+            "tools": [{"name": "first", "inputSchema": {"type": "object"}}],
+            "nextCursor": "repeat",
+        },
+        {
+            "tools": [{"name": "private-second", "inputSchema": {"type": "object"}}],
             "nextCursor": "repeat",
         },
     ]
@@ -602,7 +637,7 @@ async def test_catalog_rejects_non_list_item_array_without_payload_leakage(
 async def test_catalog_accepts_exactly_100_pages() -> None:
     def respond(index: int, _method: str, _params: dict[str, Any]) -> dict[str, Any]:
         result: dict[str, Any] = {
-            "tools": [{"name": f"tool-{index}", "inputSchema": {}}]
+            "tools": [{"name": f"tool-{index}", "inputSchema": {"type": "object"}}]
         }
         if index < 100:
             result["nextCursor"] = f"page-{index + 1}"
@@ -623,7 +658,7 @@ async def test_catalog_accepts_exactly_100_pages() -> None:
 async def test_catalog_rejects_page_101_instead_of_returning_100_page_partial() -> None:
     def respond(index: int, _method: str, _params: dict[str, Any]) -> dict[str, Any]:
         return {
-            "tools": [{"name": f"tool-{index}", "inputSchema": {}}],
+            "tools": [{"name": f"tool-{index}", "inputSchema": {"type": "object"}}],
             "nextCursor": f"page-{index + 1}",
         }
 
@@ -638,7 +673,10 @@ async def test_catalog_rejects_page_101_instead_of_returning_100_page_partial() 
 
 @pytest.mark.asyncio
 async def test_catalog_accepts_exactly_10_000_items() -> None:
-    items = [{"name": f"tool-{index}", "inputSchema": {}} for index in range(10_000)]
+    items = [
+        {"name": f"tool-{index}", "inputSchema": {"type": "object"}}
+        for index in range(10_000)
+    ]
     connection, _requests = _scripted_connection(
         lambda _index, _method, _params: {"tools": items}
     )
@@ -653,11 +691,19 @@ async def test_catalog_accepts_exactly_10_000_items() -> None:
 @pytest.mark.asyncio
 async def test_catalog_rejects_item_10_001_instead_of_returning_partial_items() -> None:
     first_page = [
-        {"name": f"tool-{index}", "inputSchema": {}} for index in range(10_000)
+        {"name": f"tool-{index}", "inputSchema": {"type": "object"}}
+        for index in range(10_000)
     ]
     pages = [
         {"tools": first_page, "nextCursor": "more"},
-        {"tools": [{"name": "private-item-10001", "inputSchema": {}}]},
+        {
+            "tools": [
+                {
+                    "name": "private-item-10001",
+                    "inputSchema": {"type": "object"},
+                }
+            ]
+        },
     ]
     connection, requests = _scripted_connection(
         lambda index, _method, _params: pages[index - 1]
@@ -687,7 +733,11 @@ async def test_catalog_rejects_item_10_001_instead_of_returning_partial_items() 
         pytest.param(
             "list_tools",
             "tools",
-            {"name": "tool", "inputSchema": {}, "annotations": []},
+            {
+                "name": "tool",
+                "inputSchema": {"type": "object"},
+                "annotations": [],
+            },
             id="tool-annotations",
         ),
         pytest.param(
@@ -978,6 +1028,455 @@ async def test_unrecognized_payload_log_does_not_include_content(
     await connection._handle_incoming_payload({"private": "private-dict-content"})
 
     assert "private-dict-content" not in str(logged)
+
+
+@pytest.mark.parametrize("case", ["decode", "json", "oversized", "dispatch"])
+@pytest.mark.asyncio
+async def test_established_fatal_reader_failure_reaps_child_before_dropping_state(
+    case: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinel = "private-fatal-reader"
+    lines = {
+        "decode": b"\xff\n",
+        "json": f"{sentinel}\n".encode(),
+        "oversized": _response_line(MAX_OUTPUT_LINE_BYTES + 1),
+        "dispatch": b'{"jsonrpc":"2.0","method":"ping","id":9}\n',
+    }
+    process = _SlowReapProcess(_Reader(lines[case]))
+    connection = _bare_connection(process)
+    client = client_module.MCPClient(name="fatal-reader-client")
+    client.sessions["server"] = connection
+    client.servers["server"] = {"command": "fake"}
+
+    async def cleanup() -> None:
+        await client._bounded_teardown_connection("server", session=connection)
+
+    connection._on_transport_failure = cleanup
+    if case == "dispatch":
+
+        async def fail_dispatch(_payload: object) -> None:
+            raise RuntimeError(sentinel)
+
+        connection._handle_incoming_payload = fail_dispatch  # type: ignore[method-assign]
+
+    pending = asyncio.get_running_loop().create_future()
+    connection._pending_requests = {1: pending}
+    connection._read_task = asyncio.create_task(connection._read_loop())
+    try:
+        await connection._read_task
+        with pytest.raises(RuntimeError, match="MCP transport unavailable"):
+            pending.result()
+        assert connection._pending_requests == {}
+
+        for _ in range(10):
+            if process.wait_started.is_set():
+                break
+            await asyncio.sleep(0)
+        assert process.wait_started.is_set()
+        assert client.sessions == {"server": connection}
+        assert "server" in client.servers
+
+        cleanup_task = connection._transport_cleanup_task
+        assert cleanup_task is not None
+        process.allow_reap.set()
+        await asyncio.wait_for(cleanup_task, timeout=1)
+
+        assert process.stdin.closed
+        assert process.terminate_calls == 1
+        assert process.wait_calls == 1
+        assert process.returncode == 0
+        assert connection._cleanup_complete is True
+        assert client.sessions == {}
+        assert client.servers == {}
+        assert connection._read_task.done()
+        assert connection._transport_cleanup_task is None
+        await connection.close()
+        assert process.terminate_calls == 1
+    finally:
+        process.allow_reap.set()
+        cleanup_task = connection._transport_cleanup_task
+        if cleanup_task is not None:
+            await asyncio.gather(cleanup_task, return_exceptions=True)
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_established_malformed_json_reaps_real_child() -> None:
+    script = (
+        "import sys,time;"
+        "sys.stdin.buffer.readline();"
+        "sys.stdout.buffer.write(b'private-malformed-json\\n');"
+        "sys.stdout.buffer.flush();"
+        "time.sleep(60)"
+    )
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-c",
+        script,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        limit=MAX_OUTPUT_LINE_BYTES,
+    )
+    client = client_module.MCPClient(name="real-fatal-reader-client")
+    connection: client_module._StdioJSONRPCConnection
+
+    async def cleanup() -> None:
+        await client._bounded_teardown_connection("server", session=connection)
+
+    connection = client_module._StdioJSONRPCConnection(
+        process,
+        client_name="real-fatal-reader-client",
+        on_transport_failure=cleanup,
+    )
+    client.sessions["server"] = connection
+    client.servers["server"] = {"command": sys.executable}
+    try:
+        assert process.stdin is not None
+        process.stdin.write(b"go\n")
+        await process.stdin.drain()
+        await asyncio.wait_for(connection._read_task, timeout=1)
+        cleanup_task = connection._transport_cleanup_task
+        assert cleanup_task is not None
+        await asyncio.wait_for(cleanup_task, timeout=1)
+
+        assert process.returncode is not None
+        assert connection._cleanup_complete is True
+        assert connection._read_task.done()
+        assert connection._stderr_task is None or connection._stderr_task.done()
+        assert connection._transport_cleanup_task is None
+        assert client.sessions == {}
+        assert client.servers == {}
+        await connection.close()
+    finally:
+        if process.returncode is None:
+            process.kill()
+            await process.wait()
+
+
+@pytest.mark.asyncio
+async def test_disconnect_cancellation_keeps_recovery_state_until_forced_reap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    close_started = asyncio.Event()
+    process = _SlowReapProcess()
+
+    class Session:
+        def __init__(self) -> None:
+            self.process = process
+
+        async def close(self) -> None:
+            close_started.set()
+            await asyncio.Future()
+
+    session = Session()
+    client = client_module.MCPClient(name="disconnect-cancel-client")
+    client.sessions["server"] = session  # type: ignore[assignment]
+    client.servers["server"] = {"command": "fake"}
+    monkeypatch.setattr(client_module, "CLEANUP_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(client_module, "_TERMINATE_TIMEOUT_SECONDS", 0.01)
+
+    task = asyncio.create_task(client.disconnect_from_server("server"))
+    await asyncio.wait_for(close_started.wait(), timeout=1)
+    task.cancel()
+    await asyncio.sleep(0)
+    state_retained_during_cleanup = (
+        not task.done()
+        and client.sessions.get("server") is session
+        and "server" in client.servers
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=1)
+
+    assert state_retained_during_cleanup
+    assert process.stdin.closed
+    assert process.returncode is not None
+    assert process.kill_calls == 1
+    assert process.wait_calls == 2
+    assert client.sessions == {}
+    assert client.servers == {}
+    assert await client.disconnect_from_server("server") is False
+
+
+@pytest.mark.asyncio
+async def test_disconnect_all_cancellation_still_reaps_every_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_started = asyncio.Event()
+    processes = [_SlowReapProcess(), _SlowReapProcess()]
+    close_calls: list[str] = []
+
+    class Session:
+        def __init__(self, server_id: str, process: _SlowReapProcess) -> None:
+            self.server_id = server_id
+            self.process = process
+
+        async def close(self) -> None:
+            close_calls.append(self.server_id)
+            if self.server_id == "first":
+                first_started.set()
+                await asyncio.Future()
+            self.process.stdin.close()
+            self.process.terminate()
+            self.process.allow_reap.set()
+            await self.process.wait()
+
+    client = client_module.MCPClient(name="disconnect-all-cancel-client")
+    for server_id, process in zip(("first", "second"), processes):
+        client.sessions[server_id] = Session(server_id, process)  # type: ignore[assignment]
+        client.servers[server_id] = {"command": "fake"}
+    monkeypatch.setattr(client_module, "CLEANUP_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(client_module, "_TERMINATE_TIMEOUT_SECONDS", 0.01)
+
+    task = asyncio.create_task(client.disconnect_all())
+    await asyncio.wait_for(first_started.wait(), timeout=1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=1)
+
+    assert close_calls == ["first", "second"]
+    assert all(process.returncode is not None for process in processes)
+    assert client.sessions == {}
+    assert client.servers == {}
+
+
+@pytest.mark.asyncio
+async def test_notification_log_is_fixed_and_payload_free(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    sentinel = "private-notification-method"
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    monkeypatch.setattr(
+        client_module.logger,
+        "debug",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+    connection = _bare_connection()
+
+    await connection._handle_incoming_payload({"method": sentinel})
+
+    captured = capsys.readouterr()
+    assert calls == [(("Ignoring MCP server notification",), {})]
+    assert sentinel not in repr(calls)
+    assert sentinel not in captured.out
+    assert sentinel not in captured.err
+
+
+@pytest.mark.parametrize(
+    ("list_method", "item_key", "item"),
+    [
+        pytest.param(
+            "list_tools",
+            "tools",
+            {"name": "bad name", "inputSchema": {"type": "object"}},
+            id="tool-name-pattern",
+        ),
+        pytest.param(
+            "list_tools",
+            "tools",
+            {"name": "tool", "inputSchema": {}},
+            id="tool-schema-root-missing",
+        ),
+        pytest.param(
+            "list_tools",
+            "tools",
+            {"name": "tool", "inputSchema": {"type": "array"}},
+            id="tool-schema-root-wrong",
+        ),
+        pytest.param(
+            "list_tools",
+            "tools",
+            {
+                "name": "tool",
+                "inputSchema": {"type": "object"},
+                "annotations": {"audience": ["private-role"]},
+            },
+            id="annotation-audience",
+        ),
+        pytest.param(
+            "list_tools",
+            "tools",
+            {
+                "name": "tool",
+                "inputSchema": {"type": "object"},
+                "annotations": {"priority": True},
+            },
+            id="annotation-priority-bool",
+        ),
+        pytest.param(
+            "list_tools",
+            "tools",
+            {
+                "name": "tool",
+                "inputSchema": {"type": "object"},
+                "annotations": {"priority": 1.1},
+            },
+            id="annotation-priority-range",
+        ),
+        pytest.param(
+            "list_tools",
+            "tools",
+            {
+                "name": "tool",
+                "inputSchema": {"type": "object"},
+                "annotations": {"readOnlyHint": "yes"},
+            },
+            id="tool-annotation-hint",
+        ),
+        pytest.param(
+            "list_resources",
+            "resources",
+            {"name": "resource", "uri": "relative/path"},
+            id="resource-relative-uri",
+        ),
+        pytest.param(
+            "list_resources",
+            "resources",
+            {"name": "resource", "uri": "https:///missing-host"},
+            id="resource-http-host",
+        ),
+        pytest.param(
+            "list_resources",
+            "resources",
+            {"name": "resource", "uri": "https://user@example.test/private"},
+            id="resource-credentials",
+        ),
+        pytest.param(
+            "list_resources",
+            "resources",
+            {"name": "x" * 513, "uri": "resource://valid"},
+            id="resource-name-bound",
+        ),
+        pytest.param(
+            "list_resources",
+            "resources",
+            {
+                "name": "resource",
+                "uri": "resource://valid",
+                "mimeType": "x" * 256,
+            },
+            id="resource-mime-bound",
+        ),
+        pytest.param(
+            "list_prompts",
+            "prompts",
+            {"name": "bad name", "arguments": []},
+            id="prompt-name-pattern",
+        ),
+        pytest.param(
+            "list_prompts",
+            "prompts",
+            {
+                "name": "prompt",
+                "arguments": [{"name": "same"}, {"name": "same"}],
+            },
+            id="prompt-duplicate-argument",
+        ),
+        pytest.param(
+            "list_prompts",
+            "prompts",
+            {"name": "prompt", "arguments": [{"name": "x" * 129}]},
+            id="prompt-argument-bound",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_catalog_rejects_profile_invalid_descriptors_with_fixed_error(
+    list_method: str,
+    item_key: str,
+    item: dict[str, object],
+) -> None:
+    connection, _requests = _scripted_connection(
+        lambda _index, _method, _params: {item_key: [item]}
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        await getattr(connection, list_method)()
+
+    _assert_client_error(exc_info.value, "Invalid MCP catalog items")
+    assert "private" not in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_catalog_accepts_exact_profile_descriptor_controls() -> None:
+    items = {
+        "tools": [
+            {
+                "name": "tool.one-2",
+                "inputSchema": {"type": "object"},
+                "annotations": {
+                    "audience": ["user", "assistant"],
+                    "priority": 0.5,
+                    "title": "Tool title",
+                    "readOnlyHint": True,
+                    "destructiveHint": False,
+                    "idempotentHint": True,
+                    "openWorldHint": False,
+                },
+            }
+        ],
+        "resources": [
+            {
+                "name": "Resource display name",
+                "uri": "custom://Host/path?q=1",
+                "mimeType": "text/plain",
+                "annotations": {"audience": ["assistant"], "priority": 1},
+            }
+        ],
+        "prompts": [
+            {
+                "name": "prompt.one-2",
+                "arguments": [
+                    {"name": "first argument", "required": True},
+                    {"name": "second", "required": False},
+                ],
+                "annotations": {"audience": ["user"], "priority": 0},
+            }
+        ],
+    }
+
+    projected: dict[str, SimpleNamespace] = {}
+    for list_method, item_key in (
+        ("list_tools", "tools"),
+        ("list_resources", "resources"),
+        ("list_prompts", "prompts"),
+    ):
+        connection, _requests = _scripted_connection(
+            lambda _index, _method, _params, item_key=item_key: {
+                item_key: items[item_key]
+            }
+        )
+        result = await getattr(connection, list_method)()
+        assert len(getattr(result, item_key)) == 1
+        projected[item_key] = getattr(result, item_key)[0]
+
+    assert vars(projected["tools"]) == {
+        "name": "tool.one-2",
+        "description": "",
+        "inputSchema": {"type": "object"},
+        "annotations": items["tools"][0]["annotations"],
+    }
+    assert vars(projected["resources"]) == {
+        "uri": "custom://Host/path?q=1",
+        "name": "Resource display name",
+        "description": "",
+        "mimeType": "text/plain",
+        "annotations": items["resources"][0]["annotations"],
+        "size": None,
+    }
+    assert vars(projected["prompts"]) == {
+        "name": "prompt.one-2",
+        "description": "",
+        "arguments": projected["prompts"].arguments,
+        "annotations": items["prompts"][0]["annotations"],
+    }
+    assert [vars(argument) for argument in projected["prompts"].arguments] == [
+        {"name": "first argument", "description": "", "required": True},
+        {"name": "second", "description": "", "required": False},
+    ]
 
 
 @pytest.mark.asyncio
