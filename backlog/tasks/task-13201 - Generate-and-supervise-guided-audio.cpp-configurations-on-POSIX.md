@@ -1,11 +1,11 @@
 ---
 id: TASK-13201
 title: Generate and supervise guided audio.cpp configurations on POSIX
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-09 17:38'
-updated_date: '2026-08-10 16:20'
+updated_date: '2026-08-10 19:04'
 labels:
   - tts
   - audio-cpp

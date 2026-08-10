@@ -242,8 +242,10 @@ def _normalize_architecture(value: str, *, system: str) -> str:
 
 
 def _validate_binary(path: str) -> Path | None:
-    candidate = Path(path)
+    from tldw_chatbook.Utils.path_validation import validate_path_simple
+
     try:
+        candidate = validate_path_simple(path, require_exists=True)
         info = candidate.stat()
         if (
             not candidate.is_absolute()
@@ -596,6 +598,22 @@ async def materialize_audio_cpp_guided_launch(
 
     This is a deliberate-operation boundary. Merely loading or saving Settings
     never calls it.
+
+    Args:
+        settings: Persisted guided audio.cpp settings to revalidate.
+        artifact_root: Optional private parent for the generated configuration.
+        port_selector: Optional bounded loopback-port selector.
+        system: Optional operating-system override used by deterministic tests.
+        architecture: Optional machine-architecture override used by tests.
+
+    Returns:
+        An immutable managed launch snapshot owning its generated artifact.
+
+    Raises:
+        AudioCppGuidedLaunchError: If validation, backend selection, port
+            allocation, artifact creation, or cancellation cleanup fails.
+        asyncio.CancelledError: If the deliberate operation is cancelled after
+            any completed artifact has been retired.
     """
     if (
         not isinstance(settings, AudioCppSettingsConfig)

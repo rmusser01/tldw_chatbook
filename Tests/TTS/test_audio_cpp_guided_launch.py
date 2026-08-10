@@ -51,6 +51,19 @@ def _binary(tmp_path: Path) -> Path:
     return binary
 
 
+def test_binary_validation_applies_shared_arbitrary_path_security_rules(
+    tmp_path: Path,
+) -> None:
+    from tldw_chatbook.TTS.audio_cpp_guided_launch import _validate_binary
+
+    binary = tmp_path / "bin" / "audio;cpp_server"
+    binary.parent.mkdir()
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    binary.chmod(0o700)
+
+    assert _validate_binary(str(binary)) is None
+
+
 def _settings(
     binary: Path,
     packages: list[object],

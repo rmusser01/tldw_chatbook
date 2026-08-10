@@ -917,6 +917,35 @@ def test_generated_artifact_validation_does_not_swallow_control_flow(
     assert caught.value is signal
 
 
+def test_unexpected_artifact_validation_failure_records_only_safe_phase(
+    tmp_path: Path,
+) -> None:
+    private_detail = "SYNTHETIC_PRIVATE_REVALIDATION_DETAIL"
+    private_error_type = type(
+        "SYNTHETIC_PRIVATE_REVALIDATION_TYPE",
+        (Exception,),
+        {},
+    )
+    artifact = _GeneratedArtifactSpy(
+        validate_failure=private_error_type(private_detail)
+    )
+    supervisor = AudioCppSupervisor(source_environment={})
+    launch = replace(_make_launch(tmp_path), generated_artifact=artifact)
+
+    with pytest.raises(TTSOperationError) as caught:
+        supervisor._revalidate_launch(launch)
+
+    assert caught.value.code == "configuration_invalid"
+    assert _exception_graph(caught.value) == [caught.value]
+    diagnostics = supervisor.snapshot().diagnostics
+    assert tuple(line.text for line in diagnostics) == (
+        "Chatbook internal supervisor failure "
+        "(phase=launch_revalidation, category=unexpected_exception).",
+    )
+    assert private_detail not in repr(diagnostics)
+    assert private_error_type.__name__ not in repr(diagnostics)
+
+
 @pytest.mark.asyncio
 async def test_generated_artifact_cleanup_failure_is_safe_and_blocks_relaunch(
     tmp_path: Path,
@@ -946,6 +975,11 @@ async def test_generated_artifact_cleanup_failure_is_safe_and_blocks_relaunch(
         assert snapshot.state == "unavailable"
         assert snapshot.last_failure is not None
         assert snapshot.last_failure.code == "cleanup_failed"
+        assert tuple(line.text for line in snapshot.diagnostics) == (
+            "Chatbook internal supervisor failure "
+            "(phase=artifact_cleanup, category=runtime_error).",
+        )
+        assert private_detail not in repr(snapshot.diagnostics)
         assert supervisor.admission_snapshot().stage_application_eligible is False
         assert artifact.cleanup_calls == 1
         assert process.wait_calls == 1
@@ -960,6 +994,52 @@ async def test_generated_artifact_cleanup_failure_is_safe_and_blocks_relaunch(
     finally:
         await asyncio.gather(supervisor.close(), return_exceptions=True)
         await asyncio.gather(supervisor.wait_closed(), return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_unexpected_generation_cleanup_failure_records_only_safe_phase(
+    tmp_path: Path,
+) -> None:
+    private_detail = "SYNTHETIC_PRIVATE_GENERATION_CLEANUP_DETAIL"
+    process = _FakeProcess()
+    supervisor = AudioCppSupervisor(
+        source_environment={},
+        process_launcher=_FakeLauncher([process]),
+        port_preflight=_available_preflight,
+    )
+
+    async def hooks_factory(_generation: int) -> AudioCppGenerationHooks:
+        async def contract_probe() -> str:
+            return "available"
+
+        async def health_probe() -> bool:
+            return True
+
+        async def cleanup() -> None:
+            raise RuntimeError(private_detail)
+
+        return AudioCppGenerationHooks(
+            contract_probe=contract_probe,
+            health_probe=health_probe,
+            cleanup=cleanup,
+        )
+
+    await supervisor.ensure_running(
+        _make_launch(tmp_path),
+        generation_hooks_factory=hooks_factory,
+    )
+
+    with pytest.raises(TTSOperationError) as stopped:
+        await supervisor.stop()
+
+    assert stopped.value.code == "cleanup_failed"
+    assert _exception_graph(stopped.value) == [stopped.value]
+    diagnostics = supervisor.snapshot().diagnostics
+    assert tuple(line.text for line in diagnostics) == (
+        "Chatbook internal supervisor failure "
+        "(phase=generation_cleanup, category=runtime_error).",
+    )
+    assert private_detail not in repr(diagnostics)
 
 
 @pytest.mark.asyncio

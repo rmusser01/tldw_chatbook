@@ -35,6 +35,11 @@ from tldw_chatbook.TTS.audio_cpp_managed_config import (
 )
 
 _DiagnosticStream = Literal["stdout", "stderr"]
+_InternalDiagnosticPhase = Literal[
+    "launch_revalidation",
+    "generation_cleanup",
+    "artifact_cleanup",
+]
 _MAX_DIAGNOSTIC_LINES = 200
 _MAX_DIAGNOSTIC_BYTES = 65_536
 _MAX_DIAGNOSTIC_LINE_BYTES = 4_096
@@ -549,6 +554,25 @@ class AudioCppSupervisor:
             dropped_diagnostic_lines=dropped,
         )
 
+    def _record_internal_diagnostic(
+        self,
+        phase: _InternalDiagnosticPhase,
+        error: Exception,
+    ) -> None:
+        if isinstance(error, AssertionError):
+            category = "assertion_error"
+        elif isinstance(error, RuntimeError):
+            category = "runtime_error"
+        else:
+            category = "unexpected_exception"
+        self._diagnostics.feed(
+            "stderr",
+            (
+                "Chatbook internal supervisor failure "
+                f"(phase={phase}, category={category}).\n"
+            ).encode("ascii"),
+        )
+
     def admission_snapshot(self) -> AudioCppProcessAdmissionSnapshot:
         """Return the generation fence and staged-application eligibility."""
         eligible = (
@@ -1047,7 +1071,10 @@ class AudioCppSupervisor:
                 }
             )
             validated = validate_audio_cpp_managed_launch(config)
-        except Exception:
+        except (TypeError, ValueError, OSError):
+            invalid = True
+        except Exception as error:
+            self._record_internal_diagnostic("launch_revalidation", error)
             invalid = True
         if invalid:
             raise _operation_error(_failure_for(_CONFIGURATION_FAILURE, None))
@@ -1451,13 +1478,14 @@ class AudioCppSupervisor:
         if record.hooks is not None:
             try:
                 await record.hooks.cleanup()
-            except Exception:
+            except Exception as error:
+                self._record_internal_diagnostic("generation_cleanup", error)
                 succeeded = False
         artifact_succeeded = await self._cleanup_launch_artifact(record.launch)
         return succeeded and artifact_succeeded
 
-    @staticmethod
     async def _cleanup_launch_artifact(
+        self,
         launch: AudioCppManagedLaunchConfig,
     ) -> bool:
         artifact = launch.generated_artifact
@@ -1465,7 +1493,10 @@ class AudioCppSupervisor:
             return True
         try:
             await asyncio.to_thread(artifact.cleanup)
-        except Exception:
+        except (TypeError, ValueError, OSError):
+            return False
+        except Exception as error:
+            self._record_internal_diagnostic("artifact_cleanup", error)
             return False
         return True
 
