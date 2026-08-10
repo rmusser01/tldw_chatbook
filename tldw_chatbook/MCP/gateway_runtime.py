@@ -10,6 +10,7 @@ import inspect
 import json
 import math
 import re
+import sys
 from collections.abc import Awaitable, Callable, Iterable
 from binascii import Error as Base64Error
 from typing import TYPE_CHECKING, Any, NoReturn, overload
@@ -68,6 +69,37 @@ _RESOURCE_TEMPLATE_MATCHERS = {
     )
     for template, variable in _RESOURCE_TEMPLATE_VARIABLES.items()
 }
+
+
+def _encode_continuation_state(
+    *, offset: int, base_digest: str, content_digest: str
+) -> str:
+    payload = json.dumps(
+        {
+            "b": base_digest,
+            "c": content_digest,
+            "o": offset,
+            "v": _CONTINUATION_VERSION,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("ascii")
+    return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+
+_MAX_EMITTED_CONTINUATION_TOKEN_CHARS = len(
+    _encode_continuation_state(
+        offset=sys.maxsize,
+        base_digest="0" * 64,
+        content_digest="0" * 64,
+    )
+)
+_CONTINUATION_QUERY_PREFIX = f"?{CONTINUATION_QUERY_KEY}="
+_MAX_RESOURCE_BASE_URI_CHARS = (
+    _MAX_RESOURCE_URI_CHARS
+    - len(_CONTINUATION_QUERY_PREFIX)
+    - _MAX_EMITTED_CONTINUATION_TOKEN_CHARS
+)
 
 _OPERATOR_APPROVAL_ERROR = (
     "operator_approval_required",
@@ -402,6 +434,8 @@ class ChatbookGatewayRuntime:
         variable, handler, identifier, canonical_base_uri = self._match_resource(
             base_uri
         )
+        if len(canonical_base_uri) > _MAX_RESOURCE_BASE_URI_CHARS:
+            self._raise_invalid_resource_uri()
         state = self._decode_continuation(token) if token is not None else None
         base_digest = self._digest(canonical_base_uri)
         if state is not None and state["b"] != base_digest:
@@ -769,17 +803,11 @@ class ChatbookGatewayRuntime:
     def _encode_continuation(
         *, offset: int, base_digest: str, content_digest: str
     ) -> str:
-        payload = json.dumps(
-            {
-                "b": base_digest,
-                "c": content_digest,
-                "o": offset,
-                "v": _CONTINUATION_VERSION,
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("ascii")
-        return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+        return _encode_continuation_state(
+            offset=offset,
+            base_digest=base_digest,
+            content_digest=content_digest,
+        )
 
     @staticmethod
     def _decode_continuation(token: str) -> dict[str, Any]:

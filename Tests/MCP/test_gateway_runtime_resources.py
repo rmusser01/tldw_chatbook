@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import base64
 import copy
+import hashlib
 import json
 import re
+import sys
 import threading
 from typing import Any
 from urllib.parse import parse_qs, quote, urlencode, urlsplit, urlunsplit
@@ -162,6 +164,19 @@ def _serialized_result_bytes(result: dict[str, Any]) -> int:
             allow_nan=False,
         ).encode("utf-8")
     )
+
+
+def _maximum_emitted_token() -> str:
+    return ChatbookGatewayRuntime._encode_continuation(
+        offset=sys.maxsize,
+        base_digest="0" * 64,
+        content_digest="f" * 64,
+    )
+
+
+def _canonical_base_uri_limit() -> int:
+    continuation_suffix = f"?{CONTINUATION_QUERY_KEY}="
+    return 2_048 - len(continuation_suffix) - len(_maximum_emitted_token())
 
 
 async def _assert_bounded_reconstruction(
@@ -606,6 +621,96 @@ async def test_equivalent_uri_spellings_share_canonical_cursor_identity(
     assert parsed_canonical.path == ""
     assert parsed_canonical.query == ""
     assert parsed_canonical.fragment == ""
+
+
+@pytest.mark.asyncio
+async def test_exact_canonical_base_limit_reserves_full_continuation_capacity() -> None:
+    prefix = "conversation://"
+    base_uri = prefix + "a" * (_canonical_base_uri_limit() - len(prefix))
+    text = "x" * (MAX_RESOURCE_CHUNK_BYTES + 1)
+    calls: list[tuple[str, str]] = []
+    runtime = _ready_runtime(content={"conversation": text}, calls=calls)
+
+    first = await runtime.read_resource(base_uri, _context())
+    next_uri = first["_meta"]["tldw.chatbook/continuation"]["nextUri"]
+
+    assert len(base_uri) == _canonical_base_uri_limit()
+    assert (
+        len(f"{base_uri}?{CONTINUATION_QUERY_KEY}={_maximum_emitted_token()}") == 2_048
+    )
+    assert next_uri is not None
+    assert len(next_uri) <= 2_048
+    await runtime.read_resource(next_uri, _context())
+    assert calls == [
+        ("conversation", base_uri.removeprefix(prefix)),
+        ("conversation", base_uri.removeprefix(prefix)),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_one_over_canonical_base_limit_is_rejected_before_handler() -> None:
+    prefix = "conversation://"
+    uri = prefix + "a" * (_canonical_base_uri_limit() - len(prefix) + 1)
+    calls: list[tuple[str, str]] = []
+    runtime = _ready_runtime(calls=calls)
+
+    with pytest.raises(GatewayApplicationError) as exc_info:
+        await runtime.read_resource(uri, _context())
+
+    assert len(uri) == _canonical_base_uri_limit() + 1
+    assert exc_info.value.reason_code == "invalid_resource_uri"
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_one_over_canonical_base_continuation_is_rejected_before_handler() -> (
+    None
+):
+    prefix = "conversation://"
+    base_uri = prefix + "a" * (_canonical_base_uri_limit() - len(prefix) + 1)
+    content = "continuation content"
+    token = ChatbookGatewayRuntime._encode_continuation(
+        offset=1,
+        base_digest=hashlib.sha256(base_uri.encode("utf-8")).hexdigest(),
+        content_digest=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+    )
+    uri = f"{base_uri}?{CONTINUATION_QUERY_KEY}={token}"
+    calls: list[tuple[str, str]] = []
+    runtime = _ready_runtime(content={"conversation": content}, calls=calls)
+
+    with pytest.raises(GatewayApplicationError) as exc_info:
+        await runtime.read_resource(uri, _context())
+
+    assert len(uri) <= 2_048
+    assert exc_info.value.reason_code == "invalid_resource_uri"
+    assert calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unicode_spelling", ["é", "%c3%a9"])
+async def test_unicode_canonical_base_exact_limit_and_one_over_are_predispatch(
+    unicode_spelling: str,
+) -> None:
+    prefix = "note://"
+    filler = "a" * (_canonical_base_uri_limit() - len(prefix) - len("%C3%A9"))
+    exact_request = f"{prefix}{filler}{unicode_spelling}"
+    one_over_request = f"{exact_request}a"
+    canonical_uri = f"{prefix}{filler}%C3%A9"
+    text = "x" * (MAX_RESOURCE_CHUNK_BYTES + 1)
+    calls: list[tuple[str, str]] = []
+    runtime = _ready_runtime(content={"note": text}, calls=calls)
+
+    exact = await runtime.read_resource(exact_request, _context())
+    with pytest.raises(GatewayApplicationError) as exc_info:
+        await runtime.read_resource(one_over_request, _context())
+
+    assert len(exact_request) <= 2_048
+    assert len(one_over_request) <= 2_048
+    assert len(canonical_uri) == _canonical_base_uri_limit()
+    assert exact["contents"][0]["uri"] == canonical_uri
+    assert len(exact["_meta"]["tldw.chatbook/continuation"]["nextUri"]) <= 2_048
+    assert exc_info.value.reason_code == "invalid_resource_uri"
+    assert calls == [("note", f"{filler}é")]
 
 
 @pytest.mark.asyncio
