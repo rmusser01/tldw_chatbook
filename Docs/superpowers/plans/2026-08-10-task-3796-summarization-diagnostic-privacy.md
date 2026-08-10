@@ -181,10 +181,14 @@ Add tests named:
 def test_guard_finds_stdlib_loguru_nested_and_bound_calls() -> None: ...
 def test_guard_identity_ignores_line_movement() -> None: ...
 def test_guard_rejects_changed_reviewed_safe_expression() -> None: ...
+def test_guard_records_and_rejects_bare_name_message() -> None: ...
+def test_guard_records_and_rejects_percent_formatted_message() -> None: ...
+def test_guard_records_and_rejects_dot_format_message() -> None: ...
+def test_guard_records_and_rejects_concatenated_message() -> None: ...
 def test_guard_rejects_exception_and_traceback_capture() -> None: ...
 ```
 
-The synthetic source must include stdlib logging, Loguru, `logger.opt(...)`, a nested generator, duplicate labels requiring an occurrence ordinal, and `exc_info=True`/`logger.exception` mutants.
+The synthetic source must include stdlib logging, Loguru, `logger.opt(...)`, a nested generator, duplicate labels requiring an occurrence ordinal, bare-name first messages, `%` interpolation, `.format()`, string concatenation, and `exc_info=True`/`logger.exception` mutants. For each dynamic-message mutant, first prove its exact `message_shape`/expressions are recorded, then classify it as `metadata` and prove the strict validator rejects it.
 
 - [ ] **Step 2: Run the new guard tests and verify RED**
 
@@ -208,6 +212,7 @@ class DiagnosticCall:
     method: str
     event: str
     occurrence: int
+    message_shape: str
     expressions: tuple[str, ...]
     captures_exception: bool
 
@@ -216,7 +221,7 @@ class DiagnosticCall:
         return (self.module, self.qualname, self.event, self.occurrence)
 ```
 
-`event` is the constant literal projection of the first argument; formatted values are excluded from the label. `expressions` includes f-string formatted values, positional arguments after the message, keyword fields, and bound fields. Ignore line numbers when comparing identity.
+`event` is the constant literal projection of the first argument; formatted values are excluded from the label. `message_shape` is the canonical `ast.dump(first_argument, include_attributes=False)` for every call, including constants, f-strings, bare names, `%`, `.format()`, and concatenation. `expressions` includes every dynamic subtree in the first argument plus positional arguments after the message, keyword fields, and bound fields. Ignore line numbers when comparing identity. A `metadata` outcome requires a constant string first argument; legacy dynamic first arguments may exist only as exact frozen or pending shapes.
 
 - [ ] **Step 4: Create and hand-review the starting ledger**
 
@@ -234,6 +239,7 @@ Emit the extractor snapshot to stdout, then add the reviewed JSON with `apply_pa
     "method": "debug",
     "event": "Custom OpenAI API: Using API Key: ...",
     "occurrence": 0,
+    "message_shape": "JoinedStr(values=[Constant(value='Custom OpenAI API: Using API Key: '), ...])",
     "expressions": ["custom_openai_api_key[:5]", "custom_openai_api_key[-5:]"],
     "captures_exception": false
   },
@@ -242,6 +248,7 @@ Emit the extractor snapshot to stdout, then add the reviewed JSON with `apply_pa
     "method": "debug",
     "event": "Custom OpenAI API: Using API Key: ...",
     "occurrence": 0,
+    "message_shape": "JoinedStr(values=[Constant(value='Custom OpenAI API: Using API Key: '), ...])",
     "expressions": ["custom_openai_api_key[:5]", "custom_openai_api_key[-5:]"],
     "captures_exception": false
   },
@@ -276,7 +283,7 @@ def test_ledger_current_state_matches_sources() -> None:
     assert_ledger_matches_source(load_review_ledger(), scan_reviewed_modules())
 ```
 
-Compute `STARTING_PROJECTION_SHA256` once from canonical JSON containing only site ID, module, qualname, group, starting classification/category, and the complete `starting` record; hard-code that digest in the test module. Outcome/current/navigation edits do not participate. The matcher compares each non-deleted `current` record to source and each deleted outcome to explicit absence. It must fail on additions, undeclared deletions, label/method changes, expression changes, duplicate loss, unclassified calls, or exception capture in a `frozen`/`metadata` record. A known-private `pending` record may temporarily match its inventoried starting traceback shape; it cannot survive a batch completion gate or the final zero-pending gate. The immutable projection digest preserves starting evidence after current source changes.
+Compute `STARTING_PROJECTION_SHA256` once from canonical JSON containing only site ID, module, qualname, group, starting classification/category, and the complete `starting` record; hard-code that digest in the test module. Outcome/current/navigation edits do not participate. The matcher compares each non-deleted `current` record to source and each deleted outcome to explicit absence. It must fail on additions, undeclared deletions, label/method/message-shape changes, expression changes, duplicate loss, unclassified calls, dynamic first arguments in a `metadata` record, or exception capture in a `frozen`/`metadata` record. A known-private `pending` record may temporarily match its inventoried starting traceback shape; it cannot survive a batch completion gate or the final zero-pending gate. The immutable projection digest preserves starting evidence after current source changes.
 
 - [ ] **Step 6: Run the guard foundation GREEN**
 
@@ -310,6 +317,23 @@ git commit -m "test(security): inventory summarization diagnostic privacy"
 - [ ] **Step 1: Add the failing 24-site batch gate and direct-function sentinels**
 
 Add `test_no_pending_local_core_sites`, plus direct tests for `summarize_with_local_llm` success, malformed streamed JSON, and exception paths. Use canaries for input, response line, and exception message; fully consume the returned stream. Assert the pre-change return/yield/error contract separately from captured logging.
+
+Build the required cross-module category matrix under one stable parameterized node name. Add cases incrementally as their production paths are repaired:
+
+```python
+@pytest.mark.parametrize(
+    "case",
+    RUNTIME_SENTINEL_CASES,
+    ids=lambda case: f"{case.module}-{case.category}",
+)
+def test_runtime_sentinel_hides_private_value(case, monkeypatch, caplog) -> None:
+    with capture_stdlib_and_loguru(caplog) as captured:
+        result = case.invoke(monkeypatch)
+        case.assert_contract(result)
+    assert case.canary not in captured.text
+```
+
+Final IDs are exactly `local-input`, `local-prompt`, `local-credential`, `local-path`, `local-response`, `local-exception`, and the corresponding six `general-*` IDs. Extra provider/stream tests use separate descriptive names.
 
 - [ ] **Step 2: Run RED**
 
@@ -674,23 +698,50 @@ git status --short
 
 Expected: clean status; record both hashes.
 
-- [ ] **Step 2: Run 12 independent runtime mutations**
+- [ ] **Step 2: Collect and record the exact 12 owning node IDs**
+
+Run:
+
+```bash
+../../.venv/bin/python -B -m pytest --collect-only -q Tests/LLM_Calls/test_summarization_diagnostic_privacy.py -k runtime_sentinel_hides_private_value
+```
+
+Expected: exactly these 12 nodes, with no deselection or duplicate ID:
+
+```text
+Tests/LLM_Calls/test_summarization_diagnostic_privacy.py::test_runtime_sentinel_hides_private_value[local-input]
+Tests/LLM_Calls/test_summarization_diagnostic_privacy.py::test_runtime_sentinel_hides_private_value[local-prompt]
+Tests/LLM_Calls/test_summarization_diagnostic_privacy.py::test_runtime_sentinel_hides_private_value[local-credential]
+Tests/LLM_Calls/test_summarization_diagnostic_privacy.py::test_runtime_sentinel_hides_private_value[local-path]
+Tests/LLM_Calls/test_summarization_diagnostic_privacy.py::test_runtime_sentinel_hides_private_value[local-response]
+Tests/LLM_Calls/test_summarization_diagnostic_privacy.py::test_runtime_sentinel_hides_private_value[local-exception]
+Tests/LLM_Calls/test_summarization_diagnostic_privacy.py::test_runtime_sentinel_hides_private_value[general-input]
+Tests/LLM_Calls/test_summarization_diagnostic_privacy.py::test_runtime_sentinel_hides_private_value[general-prompt]
+Tests/LLM_Calls/test_summarization_diagnostic_privacy.py::test_runtime_sentinel_hides_private_value[general-credential]
+Tests/LLM_Calls/test_summarization_diagnostic_privacy.py::test_runtime_sentinel_hides_private_value[general-path]
+Tests/LLM_Calls/test_summarization_diagnostic_privacy.py::test_runtime_sentinel_hides_private_value[general-response]
+Tests/LLM_Calls/test_summarization_diagnostic_privacy.py::test_runtime_sentinel_hides_private_value[general-exception]
+```
+
+Record this collection output before mutation. Each following mutation command names one exact node from this list; never use a broad `-k` selector as mutation evidence.
+
+- [ ] **Step 3: Run 12 independent runtime mutations**
 
 For each module/category pair (Local and General × input, prompt, credential, endpoint/path, response/output, exception/error detail):
 
 1. use `apply_patch` to restore exactly one former private interpolation from the task inventory;
-2. run only the owning cache-disabled sentinel node with `-B`;
+2. run only its exact cache-disabled node with `../../.venv/bin/python -B -m pytest -q <node-id> -vv`;
 3. require RED on that category's distinctive canary, not setup or another assertion;
 4. restore with `apply_patch`;
 5. rerun the same node and require GREEN before the next mutation.
 
 Do not combine mutations. For exception mutations, separately confirm traceback-capture mutants fail the structural guard.
 
-- [ ] **Step 3: Mutate the stable guard itself**
+- [ ] **Step 4: Mutate the stable guard itself**
 
 Temporarily add an unclassified logger call, change one frozen reviewed-safe expression, and enable one `exc_info=True`/Loguru exception capture. Each must fail its intended guard assertion. Restore between runs.
 
-- [ ] **Step 4: Prove exact restoration and final reconciliation**
+- [ ] **Step 5: Prove exact restoration and final reconciliation**
 
 ```bash
 git hash-object tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py
