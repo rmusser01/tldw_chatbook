@@ -4198,14 +4198,14 @@ class ConsoleChatStore:
                         system_prompt=normalized,
                     ):
                         persisted = False
-                except Exception:
+                except Exception as exc:
                     persisted = False
-                    logger.bind(
-                        session_id=session_id,
-                        conversation_id=session.persisted_conversation_id,
-                    ).exception(
-                        "Failed to persist Console session system prompt; "
-                        "in-memory session keeps the applied value."
+                    logger.error(
+                        "Console operation failed "
+                        "(operation=set_session_system_prompt, "
+                        "context=durable_write, exception_category={}); "
+                        "in-memory session keeps the applied value.",
+                        type(exc).__name__,
                     )
         return session, persisted
 

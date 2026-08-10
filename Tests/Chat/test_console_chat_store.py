@@ -1075,7 +1075,9 @@ def test_set_session_system_prompt_normalizes_blank_to_none():
     ]
 
 
-def test_set_session_system_prompt_survives_persistence_failure():
+def test_set_session_system_prompt_survives_persistence_failure_without_log_leak(
+    caplog: pytest.LogCaptureFixture,
+):
     """A persistence error (e.g. the conversation was deleted, or a DB
     conflict) must not escape `set_session_system_prompt`, and the
     in-memory session keeps the applied value (this store's existing
@@ -1084,9 +1086,20 @@ def test_set_session_system_prompt_survives_persistence_failure():
     surface the failure honestly instead of assuming the change was saved.
     """
 
+    import logging
+
+    from loguru import logger as loguru_logger
+
+    system_sentinel = "TASK199_SYSTEM_BODY_MUST_NOT_LEAK"
+    fingerprint_sentinel = "TASK199_SYSTEM_FINGERPRINT_MUST_NOT_LEAK"
+    exception_sentinel = "TASK199_ADAPTER_EXCEPTION_MUST_NOT_LEAK"
+
     class RaisingPersistence(FakePersistence):
         def update_conversation_system_prompt(self, *, conversation_id, system_prompt):
-            raise RuntimeError("conversation vanished")
+            raise RuntimeError(
+                f"{exception_sentinel}: system_prompt={system_prompt!r}; "
+                f"fingerprint={fingerprint_sentinel}"
+            )
 
     persistence = RaisingPersistence()
     store = ConsoleChatStore(persistence=persistence)
@@ -1096,11 +1109,42 @@ def test_set_session_system_prompt_survives_persistence_failure():
     )
     store.persist_session_if_needed(session.id)
 
-    updated, persisted = store.set_session_system_prompt(session.id, "New prompt")
+    captured_logs: list[object] = []
+    caplog.set_level(logging.ERROR, logger="task199.console_store")
+
+    def capture_loguru(message: object) -> None:
+        captured_logs.append(message)
+        logging.getLogger("task199.console_store").error(str(message))
+
+    sink_id = loguru_logger.add(capture_loguru, level="ERROR")
+    try:
+        updated, persisted = store.set_session_system_prompt(
+            session.id,
+            system_sentinel,
+        )
+    finally:
+        loguru_logger.remove(sink_id)
 
     assert persisted is False
-    assert updated.settings.system_prompt == "New prompt"
-    assert store.session_settings(session.id).system_prompt == "New prompt"
+    assert updated.settings.system_prompt == system_sentinel
+    assert store.session_settings(session.id).system_prompt == system_sentinel
+    assert captured_logs
+    rendered_logs = "\n".join(
+        rendered
+        for message in captured_logs
+        for rendered in (str(message), repr(message))
+    )
+    for sentinel in (
+        system_sentinel,
+        fingerprint_sentinel,
+        exception_sentinel,
+    ):
+        assert sentinel not in rendered_logs
+        assert sentinel not in caplog.text
+    assert "Traceback" not in rendered_logs
+    assert "operation=set_session_system_prompt" in rendered_logs
+    assert "context=durable_write" in rendered_logs
+    assert "exception_category=RuntimeError" in rendered_logs
 
 
 def test_set_session_pinned_prefill_updates_memory_and_writes_through():
