@@ -322,23 +322,89 @@ def _function_argument_names(node: ast.FunctionDef | ast.AsyncFunctionDef) -> se
     return names
 
 
-def _process_alias_statements(
+class _LocalNameCollector(ast.NodeVisitor):
+    def __init__(self) -> None:
+        self.names: set[str] = set()
+        self.nonlocal_names: set[str] = set()
+
+    def visit_Name(self, node: ast.Name) -> None:
+        if isinstance(node.ctx, ast.Store):
+            self.names.add(node.id)
+
+    def visit_Import(self, node: ast.Import) -> None:
+        self.names.update(
+            alias.asname or alias.name.split(".", 1)[0] for alias in node.names
+        )
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        self.names.update(
+            alias.asname or alias.name for alias in node.names if alias.name != "*"
+        )
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self.names.add(node.name)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self.names.add(node.name)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self.names.add(node.name)
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        pass
+
+    def visit_ListComp(self, node: ast.ListComp) -> None:
+        pass
+
+    def visit_SetComp(self, node: ast.SetComp) -> None:
+        pass
+
+    def visit_DictComp(self, node: ast.DictComp) -> None:
+        pass
+
+    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
+        pass
+
+    def visit_Nonlocal(self, node: ast.Nonlocal) -> None:
+        self.nonlocal_names.update(node.names)
+
+    def visit_Global(self, node: ast.Global) -> None:
+        self.nonlocal_names.update(node.names)
+
+    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+        if node.name is not None:
+            self.names.add(node.name)
+        self.generic_visit(node)
+
+
+def _function_local_names(node: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
+    collector = _LocalNameCollector()
+    for statement in node.body:
+        collector.visit(statement)
+    return (collector.names | _function_argument_names(node)) - collector.nonlocal_names
+
+
+_DeferredFunction = tuple[ast.FunctionDef | ast.AsyncFunctionDef, _AliasState]
+_AliasHistory = list[tuple[int, _AliasState]]
+
+
+def _process_alias_block(
     statements: list[ast.stmt],
     initial: _AliasState,
     snapshots: dict[int, _AliasState],
+    history: _AliasHistory,
+    deferred: list[_DeferredFunction],
 ) -> _AliasState:
     state = dict(initial)
     for statement in statements:
         if isinstance(statement, (ast.Import, ast.ImportFrom)):
             _import_aliases(statement, state)
-            continue
-        if isinstance(statement, ast.Assign):
+        elif isinstance(statement, ast.Assign):
             _record_call_snapshots(statement.value, state, snapshots)
             value = _alias_from_expression(statement.value, state)
             for target in statement.targets:
                 _assign_alias_target(target, value, state)
-            continue
-        if isinstance(statement, ast.AnnAssign):
+        elif isinstance(statement, ast.AnnAssign):
             _record_call_snapshots(statement.value, state, snapshots)
             if statement.value is not None:
                 _assign_alias_target(
@@ -346,41 +412,60 @@ def _process_alias_statements(
                     _alias_from_expression(statement.value, state),
                     state,
                 )
-            continue
-        if isinstance(statement, ast.If):
+        elif isinstance(statement, ast.If):
             _record_call_snapshots(statement.test, state, snapshots)
-            body = _process_alias_statements(statement.body, state, snapshots)
+            body = _process_alias_block(
+                statement.body, state, snapshots, history, deferred
+            )
             if statement.orelse:
-                otherwise = _process_alias_statements(
-                    statement.orelse, state, snapshots
+                otherwise = _process_alias_block(
+                    statement.orelse, state, snapshots, history, deferred
                 )
                 state = _merge_alias_states(body, otherwise)
             else:
                 state = _merge_alias_states(state, body)
-            continue
-        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        elif isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
             for expression in (
                 *statement.decorator_list,
                 *statement.args.defaults,
                 *(default for default in statement.args.kw_defaults if default),
             ):
                 _record_call_snapshots(expression, state, snapshots)
-            child_state = dict(state)
-            for name in _function_argument_names(statement):
-                child_state.pop(name, None)
-            _process_alias_statements(statement.body, child_state, snapshots)
+            deferred.append((statement, dict(state)))
             state.pop(statement.name, None)
-            continue
-        if isinstance(statement, ast.ClassDef):
+        elif isinstance(statement, ast.ClassDef):
             for expression in (*statement.decorator_list, *statement.bases):
                 _record_call_snapshots(expression, state, snapshots)
             _process_alias_statements(statement.body, state, snapshots)
             state.pop(statement.name, None)
-            continue
+        else:
+            for child in ast.iter_child_nodes(statement):
+                if not isinstance(child, ast.stmt):
+                    _record_call_snapshots(child, state, snapshots)
+        history.append((statement.end_lineno or statement.lineno, dict(state)))
+    return state
 
-        for child in ast.iter_child_nodes(statement):
-            if not isinstance(child, ast.stmt):
-                _record_call_snapshots(child, state, snapshots)
+
+def _process_alias_statements(
+    statements: list[ast.stmt],
+    initial: _AliasState,
+    snapshots: dict[int, _AliasState],
+) -> _AliasState:
+    history: _AliasHistory = []
+    deferred: list[_DeferredFunction] = []
+    state = _process_alias_block(statements, initial, snapshots, history, deferred)
+    for function, definition_state in deferred:
+        later_states = [
+            later
+            for lineno, later in history
+            if lineno > (function.end_lineno or function.lineno)
+        ]
+        inherited = _merge_alias_states(definition_state, *later_states)
+        local_names = _function_local_names(function)
+        inherited = {
+            name: value for name, value in inherited.items() if name not in local_names
+        }
+        _process_alias_statements(function.body, inherited, snapshots)
     return state
 
 

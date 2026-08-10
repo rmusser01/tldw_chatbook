@@ -516,6 +516,127 @@ emit(private_value)
         _guard().assert_review_outcome(starting, current, outcome="metadata")
 
 
+def test_guard_closure_inherits_later_enclosing_bound_logger_state() -> None:
+    source = """
+from logging import getLogger
+from loguru import logger
+
+def outer():
+    audit = getLogger(__name__)
+
+    def inner():
+        audit.error("inside closure")
+
+    audit = logger.bind(secret=private_value).opt(exception=private_exc)
+    inner()
+"""
+
+    call = _single_call(source)
+
+    assert call.qualname == "outer.inner"
+    assert call.expressions == (
+        "secret=private_value",
+        "exception=private_exc",
+    )
+    assert call.captures_exception is True
+
+
+def test_guard_closure_conservatively_retains_definition_state_after_clear() -> None:
+    source = """
+from logging import getLogger
+from loguru import logger
+
+def outer():
+    audit = logger.bind(secret=private_value).opt(exception=private_exc)
+
+    def inner():
+        audit.error("inside closure")
+
+    audit = getLogger(__name__)
+    inner()
+"""
+
+    call = _single_call(source)
+
+    assert call.qualname == "outer.inner"
+    assert call.expressions == (
+        "secret=private_value",
+        "exception=private_exc",
+    )
+    assert call.captures_exception is True
+
+
+def test_guard_closure_parameter_shadows_enclosing_logger_alias() -> None:
+    source = """
+from loguru import logger
+
+def outer():
+    audit = logger.bind(secret=private_value).opt(exception=private_exc)
+
+    def inner(audit):
+        audit.error("parameter-owned")
+"""
+
+    assert _guard().discover_diagnostic_calls(source, module="synthetic.py") == []
+
+
+def test_guard_closure_local_logger_aliases_replace_enclosing_state() -> None:
+    source = """
+from logging import getLogger
+from loguru import logger
+
+def outer():
+    audit = logger.bind(secret=outer_private).opt(exception=outer_exc)
+
+    def standard():
+        audit = getLogger(__name__)
+        audit.error("standard")
+
+    def bound():
+        audit = logger.bind(secret=inner_private).opt(exception=inner_exc)
+        audit.error("bound")
+"""
+
+    calls = _guard().discover_diagnostic_calls(source, module="synthetic.py")
+
+    assert [(call.qualname, call.expressions) for call in calls] == [
+        ("outer.standard", ()),
+        (
+            "outer.bound",
+            ("secret=inner_private", "exception=inner_exc"),
+        ),
+    ]
+    assert [call.captures_exception for call in calls] == [False, True]
+
+
+def test_guard_closure_keeps_sibling_and_nested_generator_scopes_distinct() -> None:
+    source = """
+from logging import getLogger
+from loguru import logger
+
+def outer():
+    audit = logger.bind(secret=outer_private)
+
+    def first():
+        audit.info("first")
+
+    def second():
+        audit = getLogger(__name__)
+
+        def stream_generator():
+            audit.warning("stream")
+
+        return stream_generator
+"""
+
+    calls = _guard().discover_diagnostic_calls(source, module="synthetic.py")
+
+    assert [(call.qualname, call.expressions) for call in calls] == [
+        ("outer.first", ("secret=outer_private",)),
+        ("outer.second.stream_generator", ()),
+    ]
+
+
 def test_guard_finds_bind_and_opt_derived_logger_aliases() -> None:
     source = """
 from loguru import logger
