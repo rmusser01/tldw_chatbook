@@ -130,7 +130,10 @@ def test_prompt_improvement_undo_is_conditional_and_stays_in_hamburger_menu():
         action_undo,
     ]
     undo = actionable[3]
-    assert undo.label == "Undo prompt improvement"
+    assert undo.label == "Undo Prompt change"
+    assert undo.description == (
+        "Restore the draft captured before the latest Prompt change."
+    )
     assert undo.enabled is True
 
     temporary = build_composer_menu_entries(
@@ -983,7 +986,9 @@ def _bare_promote_screen(store):
     # and closed) -- mirrors the pre-move test, which relied on the real
     # `ChatScreen._sync_native_console_chat_ui` bound method for the exact
     # same reason: calling it only creates the coroutine, it never runs.
-    session._sync_native_console_chat_ui_fn = lambda: screen._sync_native_console_chat_ui()
+    session._sync_native_console_chat_ui_fn = lambda: (
+        screen._sync_native_console_chat_ui()
+    )
     screen._session = session
 
     return screen, chip_calls, invalidated, dispatched, notifications
@@ -1168,8 +1173,8 @@ def test_save_chat_menu_choice_dispatches_to_the_promote_handler():
     screen = ChatScreen.__new__(ChatScreen)
     screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
     calls: list[bool] = []
-    screen._session._dispatch_promote_console_temporary_session = (
-        lambda: calls.append(True)
+    screen._session._dispatch_promote_console_temporary_session = lambda: calls.append(
+        True
     )
 
     screen._handle_console_composer_menu_choice(ACTION_SAVE_CHAT)
@@ -1204,8 +1209,8 @@ def test_temporary_chip_save_requested_reaches_the_promote_handler():
     screen = ChatScreen.__new__(ChatScreen)
     screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
     calls: list[bool] = []
-    screen._session._dispatch_promote_console_temporary_session = (
-        lambda: calls.append(True)
+    screen._session._dispatch_promote_console_temporary_session = lambda: calls.append(
+        True
     )
 
     event = ConsoleTemporaryChip.SaveRequested()

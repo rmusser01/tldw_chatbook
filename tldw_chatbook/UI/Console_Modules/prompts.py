@@ -100,7 +100,7 @@ direct `self._prompts.X(...)` call-site edit instead of a delegation.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from typing import Any, Optional, TYPE_CHECKING
 import asyncio
 import uuid
@@ -119,6 +119,15 @@ from ...Prompt_Management.prompt_improvement_models import (
     fingerprint_text,
 )
 from ...Prompt_Management.prompt_improvement_service import PromptImprovementService
+from ...Prompt_Management.prompt_variables import (
+    PromptVariableApplication,
+    compile_prompt_variables,
+    fingerprint_system_text,
+)
+from ...Widgets.Console.console_composer_bar import (
+    ComposerDraftSnapshot,
+    ComposerTransactionValidationError,
+)
 from ...Widgets.Console.console_prompt_improve_view import (
     ConsolePromptImprovementContext,
 )
@@ -134,6 +143,10 @@ from ...Widgets.Console.console_prompts_modal import (
     ConsoleSavedPromptApplyGuard,
 )
 from ...Widgets.Console.console_system_prompt_modal import ConsoleSystemPromptModal
+from ...Widgets.Console.prompt_variables_dialog import (
+    PromptVariablesDialog,
+    PromptVariablesDialogRequest,
+)
 
 #: One browse page of the Console prompt picker. Behaviour-defining: the
 #: modal's paging controls, its "no more results" state, and the Library's
@@ -151,6 +164,15 @@ if TYPE_CHECKING:
     from ..Screens.chat_screen import ChatScreen
 
 logger = logger.bind(module="ChatScreen")
+
+
+@dataclass(frozen=True, slots=True)
+class _ConsolePromptReplaceTarget:
+    """Exact Console mutation target captured before asynchronous selection."""
+
+    composer_snapshot: ComposerDraftSnapshot = field(repr=False)
+    session_id: str
+    system_fingerprint: str = field(repr=False)
 
 
 # -- Module-level copy this cluster owns exclusively -- moved verbatim from
@@ -490,8 +512,13 @@ class _ConsolePromptImprovementFlow:
             raise ValueError(
                 "The provider, model, or endpoint changed. Reopen Improve to refresh disclosure."
             )
-        if not pinned_resolution.ready or not str(pinned_resolution.model or "").strip():
-            raise ValueError(pinned_resolution.visible_copy or "Provider is unavailable.")
+        if (
+            not pinned_resolution.ready
+            or not str(pinned_resolution.model or "").strip()
+        ):
+            raise ValueError(
+                pinned_resolution.visible_copy or "Provider is unavailable."
+            )
         include_system = bool(values.get("include_system"))
         recipe_definition = values.get("recipe_definition")
         return PromptImprovementRequestSnapshot(
@@ -580,7 +607,10 @@ class _ConsolePromptImprovementFlow:
         decoded = decode_prompt_artifact(latest)
         if decoded.artifact_type != "prompt" or decoded.definition is None:
             raise ValueError("The selected Prompt is no longer compatible.")
-        if fingerprint_block_definition(decoded.definition) != captured.prompt_fingerprint:
+        if (
+            fingerprint_block_definition(decoded.definition)
+            != captured.prompt_fingerprint
+        ):
             raise ValueError("The selected Prompt changed.")
 
     async def _record_applied_usage(self, captured: Any) -> None:
@@ -686,7 +716,9 @@ class _ConsolePromptImprovementFlow:
             )
         live_settings = self._active_session_settings()
         if str(live_settings.system_prompt or "") != str(result.system_text or ""):
-            return ConsolePromptsApplyOutcome("stale", "The live System prompt changed.")
+            return ConsolePromptsApplyOutcome(
+                "stale", "The live System prompt changed."
+            )
         _session, persisted = self._store.set_session_system_prompt(
             self._session_id, result.system_text
         )
@@ -719,6 +751,20 @@ class ConsolePromptsController:
     _RECIPE_EXECUTION_BLOCKED_COPY = (
         "Recipes cannot be applied directly. Open Prompts and edit the Recipe "
         "as an unsaved Prompt copy first."
+    )
+    _PROMPT_APPLICATION_EXPIRED_COPY = (
+        "This Prompt insertion expired. Open the Prompt and retry."
+    )
+    _PROMPT_APPLICATION_STALE_COPY = (
+        "The Console draft, session, or System prompt changed. "
+        "Open the Prompt and retry."
+    )
+    _PROMPT_APPLICATION_FAILED_COPY = (
+        "The Prompt could not be applied. The Console draft was restored."
+    )
+    _PROMPT_SYSTEM_PERSISTENCE_FAILED_COPY = (
+        "System prompt applied for this session, but the change could not be "
+        "saved -- it may not survive a reload."
     )
 
     def __init__(
@@ -1188,6 +1234,181 @@ class ConsolePromptsController:
             return prefix_matches[0]
         return None
 
+    def _capture_prompt_replace_target(self) -> _ConsolePromptReplaceTarget | None:
+        """Capture the exact active Console target before asynchronous work."""
+        composer = self._console_composer_or_none()
+        if composer is None:
+            return None
+        settings = self._ensure_active_console_session_settings()
+        store = self._ensure_console_chat_store()
+        session_id = store.active_session_id
+        if session_id is None:
+            return None
+        return _ConsolePromptReplaceTarget(
+            composer_snapshot=composer.capture_draft_snapshot(),
+            session_id=session_id,
+            system_fingerprint=fingerprint_system_text(
+                str(settings.system_prompt or "")
+            ),
+        )
+
+    def _warn_prompt_application(self, copy: str) -> None:
+        self.app_instance.notify(copy, severity="warning")
+        self._focus_console_composer_if_needed(force=True)
+
+    def _apply_prompt_application(
+        self,
+        application: PromptVariableApplication,
+        *,
+        captured_snapshot: ComposerDraftSnapshot | None,
+    ) -> bool:
+        """Apply one guarded Prompt request through the current Console owner.
+
+        Replacement is coordinated in memory: every guard is checked before
+        either lane changes, and an unexpected System mutation error restores
+        the exact captured composer state and its stored draft. Durable System
+        persistence remains a separately reported outcome.
+        """
+        if not isinstance(application, PromptVariableApplication):
+            self._warn_prompt_application(self._PROMPT_APPLICATION_STALE_COPY)
+            return False
+        if application.is_expired():
+            self._warn_prompt_application(self._PROMPT_APPLICATION_EXPIRED_COPY)
+            return False
+        if application.destination != "replace_snapshot":
+            self._warn_prompt_application(self._PROMPT_APPLICATION_STALE_COPY)
+            return False
+
+        store = self._ensure_console_chat_store()
+        session_id = store.active_session_id
+        composer = self._console_composer_or_none()
+        if (
+            session_id != application.target_session_id
+            or composer is None
+            or captured_snapshot is None
+            or captured_snapshot.fingerprint != application.composer_fingerprint
+        ):
+            self._warn_prompt_application(self._PROMPT_APPLICATION_STALE_COPY)
+            return False
+        settings = store.session_settings(session_id)
+        if settings is None:
+            self._warn_prompt_application(self._PROMPT_APPLICATION_STALE_COPY)
+            return False
+        if application.apply_system and (
+            fingerprint_system_text(str(settings.system_prompt or ""))
+            != application.system_fingerprint
+        ):
+            self._warn_prompt_application(self._PROMPT_APPLICATION_STALE_COPY)
+            return False
+
+        live_before = composer.capture_draft_snapshot()
+        if live_before != captured_snapshot:
+            self._warn_prompt_application(self._PROMPT_APPLICATION_STALE_COPY)
+            return False
+        replacement_text = (
+            application.user_text
+            if application.apply_user and application.user_text is not None
+            else ""
+        )
+
+        try:
+            composer.replace_snapshot_as_paste(captured_snapshot, replacement_text)
+            store.set_session_draft(session_id, composer.draft_text())
+            persisted = True
+            if application.apply_system:
+                _session, persisted = store.set_session_system_prompt(
+                    session_id,
+                    application.system_text,
+                )
+                self._sync_console_system_prompt_surfaces()
+        except ComposerTransactionValidationError:
+            self._warn_prompt_application(self._PROMPT_APPLICATION_STALE_COPY)
+            return False
+        except Exception:
+            try:
+                composer.restore_snapshot(captured_snapshot)
+                store.set_session_draft(session_id, composer.draft_text())
+            except Exception:
+                pass
+            if application.apply_system:
+                try:
+                    store.replace_session_settings(session_id, settings)
+                    self._sync_console_system_prompt_surfaces()
+                except Exception:
+                    pass
+            self._warn_prompt_application(self._PROMPT_APPLICATION_FAILED_COPY)
+            return False
+
+        if not persisted:
+            self._warn_prompt_application(self._PROMPT_SYSTEM_PERSISTENCE_FAILED_COPY)
+        else:
+            self._focus_console_composer_if_needed(force=True)
+        return True
+
+    def _launch_prompt_application(
+        self,
+        record: Mapping[str, Any],
+        target: _ConsolePromptReplaceTarget,
+    ) -> None:
+        """Route one resolved Prompt through the shared dialog or fast path."""
+        raw_system = record.get("system_prompt")
+        system_text = (
+            raw_system if isinstance(raw_system, str) and raw_system.strip() else None
+        )
+        raw_user = record.get("user_prompt")
+        user_source = raw_user if isinstance(raw_user, str) else ""
+        user_text = (
+            None if system_text is not None and not user_source.strip() else user_source
+        )
+        plan = compile_prompt_variables(
+            system_text=system_text,
+            user_text=user_text,
+        )
+
+        if system_text is None and plan.is_valid and not plan.variables:
+            application = PromptVariableApplication(
+                system_text=None,
+                user_text=user_text,
+                apply_system=False,
+                apply_user=True,
+                destination="replace_snapshot",
+                target_session_id=target.session_id,
+                composer_fingerprint=target.composer_snapshot.fingerprint,
+                system_fingerprint=None,
+            )
+            self._apply_prompt_application(
+                application,
+                captured_snapshot=target.composer_snapshot,
+            )
+            return
+
+        request = PromptVariablesDialogRequest(
+            system_text=system_text,
+            user_text=user_text,
+            destination="replace_snapshot",
+            target_session_id=target.session_id,
+            composer_fingerprint=target.composer_snapshot.fingerprint,
+            system_fingerprint=(
+                target.system_fingerprint if system_text is not None else None
+            ),
+        )
+
+        def _apply_dialog_result(
+            application: PromptVariableApplication | None,
+        ) -> None:
+            if application is not None:
+                self._apply_prompt_application(
+                    application,
+                    captured_snapshot=target.composer_snapshot,
+                )
+            else:
+                self._focus_console_composer_if_needed(force=True)
+
+        self.push_screen(
+            PromptVariablesDialog(request),
+            callback=_apply_dialog_result,
+        )
+
     async def _console_command_insert_prompt(self, parse: CommandParse) -> None:
         """Resolve and insert a saved prompt's ``user_prompt`` for `/prompt`.
 
@@ -1200,6 +1421,9 @@ class ConsolePromptsController:
         its result) via paste semantics, so an oversized body still
         collapses to a token exactly like a real paste would.
         """
+        target = self._capture_prompt_replace_target()
+        if target is None:
+            return
         query = parse.args.strip()
         resolved = await self._resolve_console_prompt_by_name(query) if query else None
         if resolved is not None:
@@ -1208,14 +1432,21 @@ class ConsolePromptsController:
                     self._RECIPE_EXECUTION_BLOCKED_COPY
                 )
                 return
-            self._insert_prompt_text_into_composer(
-                str(resolved.get("user_prompt") or ""), replace=True
-            )
+            self._launch_prompt_application(resolved, target)
             return
-        await self._open_console_prompt_picker_for_insert(query)
+        await self._open_console_prompt_picker_for_insert(query, target=target)
 
-    async def _open_console_prompt_picker_for_insert(self, initial_query: str) -> None:
+    async def _open_console_prompt_picker_for_insert(
+        self,
+        initial_query: str,
+        *,
+        target: _ConsolePromptReplaceTarget | None = None,
+    ) -> None:
         """Open the prompt picker for `/prompt`, inserting whatever is chosen."""
+
+        captured_target = target or self._capture_prompt_replace_target()
+        if captured_target is None:
+            return
 
         def _apply_picker_choice(record: Optional[Mapping[str, Any]]) -> None:
             self._focus_console_composer_if_needed(force=True)
@@ -1227,9 +1458,7 @@ class ConsolePromptsController:
                     severity="warning",
                 )
                 return
-            self._insert_prompt_text_into_composer(
-                str(record.get("user_prompt") or ""), replace=True
-            )
+            self._launch_prompt_application(record, captured_target)
 
         self.push_screen(
             ConsolePromptPickerModal(

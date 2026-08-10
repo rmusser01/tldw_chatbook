@@ -123,8 +123,8 @@ def build_composer_menu_entries(
             (
                 ComposerMenuEntry(
                     ACTION_UNDO_PROMPT_IMPROVEMENT,
-                    "Undo prompt improvement",
-                    "Restore the draft captured before the latest prompt improvement",
+                    "Undo Prompt change",
+                    "Restore the draft captured before the latest Prompt change.",
                 ),
             )
             if improvement_undo_available
