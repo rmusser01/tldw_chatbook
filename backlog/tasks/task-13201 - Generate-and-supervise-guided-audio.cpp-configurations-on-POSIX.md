@@ -1,11 +1,11 @@
 ---
 id: TASK-13201
 title: Generate and supervise guided audio.cpp configurations on POSIX
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-09 17:38'
-updated_date: '2026-08-10 19:04'
+updated_date: '2026-08-10 19:16'
 labels:
   - tts
   - audio-cpp
@@ -64,11 +64,16 @@ Project accepted guided settings into immutable generation-local server configur
 - Corrected real-package revalidation so an aggregate ambiguous discovery does
   not erase two explicitly accepted exact candidates sharing one package root;
   added the corresponding regression and testing lesson.
+- Addressed PR review by applying the centralized arbitrary-path policy to the
+  selected executable, completing the public materializer docstring, and
+  retaining bounded allowlisted internal-failure diagnostics without raw
+  exception text or type names.
 - Verification at implementation commit
-  `52e178ea2696c7d910e9f282b6a558e5f1acf6fe`: 1,106 affected tests passed;
+  `df8268a6b682ca1a6c2fe32d7c404c3788995331`: 1,109 affected tests passed;
   Ruff check/format, scoped mypy, compileall, privacy/boundary checks, and diff
   integrity passed; pinned audio.cpp 0.5.1 CPU journeys passed on native macOS
-  arm64 and provisioned Linux arm64 with audible macOS playback confirmed.
+  arm64 and provisioned Linux arm64. The final WAV was byte-identical to the
+  audibly confirmed retained macOS sample.
 - ADR check: no new ADR was required. The implementation follows and extends
   the existing ownership decisions in ADR-023 and ADR-050.
 <!-- SECTION:NOTES:END -->
