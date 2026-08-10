@@ -317,4 +317,11 @@ against dev @ 3dd3e7431 — 2026-08-09 (fleet PR-1: driven live — Console
 delegated to a real named definition, the transcript showed the
 `[researcher]` sub-agent marker, and the reply visibly honored the
 definition's instructions; the rest of this page's content unchanged from
-the prior stamp).*
+the prior stamp). Parallel sub-agents section, concurrent-approval-card
+scoping, and the `max_live_subagents` knob added @ d21a91649 — 2026-08-10
+(fleet PR2a Task 8: driven live — a single reply spawned two sub-agents at
+once, both appeared in the Agent rail with their own handle ids and
+results, the reply incorporated both, `sqlite3` showed two terminal child
+run rows, and Stop mid-fleet cancelled two live children with zero rows
+left `running`; the rest of this page's content unchanged from the prior
+stamp).*
