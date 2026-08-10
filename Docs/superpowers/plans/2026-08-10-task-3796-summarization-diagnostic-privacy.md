@@ -175,7 +175,19 @@ Expected at the approved base: inventory `14 passed`, lint green, Local formatte
 
 - [ ] **Step 1: Write synthetic failing tests for stable identity and failure modes**
 
-Add tests named:
+Import the not-yet-created helper inside a small loader that converts `ModuleNotFoundError` into an intentional assertion failure; do not use a top-level import that aborts collection:
+
+```python
+def _load_guard_module():
+    try:
+        return importlib.import_module(
+            "Tests.LLM_Calls.summarization_diagnostic_guard"
+        )
+    except ModuleNotFoundError:
+        pytest.fail("summarization diagnostic guard is not implemented")
+```
+
+Use that loader in tests named:
 
 ```python
 def test_guard_finds_stdlib_loguru_nested_and_bound_calls() -> None: ...
@@ -198,7 +210,7 @@ Run:
 ../../.venv/bin/python -B -m pytest -q Tests/LLM_Calls/test_summarization_diagnostic_privacy.py -k 'guard_' -vv
 ```
 
-Expected: collection/import failure because the helper does not exist.
+Expected: collected tests fail with the exact assertion `summarization diagnostic guard is not implemented`. A collection error, syntax error, or unrelated failure does not count as RED.
 
 - [ ] **Step 3: Implement the minimal test-only extractor**
 
