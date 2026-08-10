@@ -352,6 +352,75 @@ def test_cancelled_source_mutation_preserves_config_and_service_state(
     service.close()
 
 
+def test_newer_external_commit_wins_after_blocked_managed_preference(
+    tmp_path: Path,
+) -> None:
+    """A newer exact intent waits for and then supersedes activation preference."""
+
+    import threading
+
+    key = ParakeetSourceKey.V2_INT8
+    prior_root = (tmp_path / "prior").absolute()
+    replacement_root = (tmp_path / "replacement").absolute()
+    _materialize(prior_root)
+    _materialize(replacement_root)
+    config = _Config(
+        {
+            key.value: {
+                "model_id": key.model_id,
+                "precision": key.precision,
+                "directory": str(prior_root),
+                "preferred_source": "external",
+            }
+        }
+    )
+    write_started = threading.Event()
+    release_write = threading.Event()
+    write_count = 0
+
+    def blocked_writer(values) -> bool:
+        nonlocal write_count
+        write_count += 1
+        if write_count == 1:
+            write_started.set()
+            assert release_write.wait(3)
+        return config.write(values)
+
+    service = _service(config, write_settings=blocked_writer)
+    replacement = service.prepare_external(key, replacement_root)
+    errors: list[BaseException] = []
+
+    def run(operation) -> None:
+        try:
+            operation()
+        except BaseException as exc:
+            errors.append(exc)
+
+    preference_thread = threading.Thread(
+        target=run, args=(lambda: service.prefer_managed(key),)
+    )
+    preference_thread.start()
+    assert write_started.wait(3)
+    replacement_thread = threading.Thread(
+        target=run,
+        args=(lambda: service.commit_external(replacement),),
+    )
+    replacement_thread.start()
+    replacement_thread.join(0.05)
+    assert replacement_thread.is_alive()
+
+    release_write.set()
+    preference_thread.join(3)
+    replacement_thread.join(3)
+
+    assert errors == []
+    record = service.records()[key]
+    assert record.directory == replacement_root
+    assert record.preferred_source is ParakeetSourcePreference.EXTERNAL
+    assert service._parse_records(config.table) == dict(service.records())
+    service.close()
+
+
 def test_explicit_override_wins_over_preferred_managed(tmp_path: Path) -> None:
     key = ParakeetSourceKey.V2_INT8
     root = tmp_path / "override"

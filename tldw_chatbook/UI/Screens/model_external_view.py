@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Static
@@ -203,9 +204,19 @@ class ExternalModelView(Widget):
 
         self._operation_status = text
         self._operation_error = error
+        active_changed = active is not None and active != self._operation_active
         if active is not None:
             self._operation_active = active
-        self.refresh(recompose=True)
+        if active_changed:
+            self.refresh(recompose=True)
+            return
+        try:
+            status = self.query_one("#external-model-operation-status", Static)
+        except NoMatches:
+            return
+        status.update(text)
+        status.display = bool(text)
+        status.set_class(error, "-error")
 
     @on(Button.Pressed, ".external-model-actions Button")
     def _action_pressed(self, event: Button.Pressed) -> None:

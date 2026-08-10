@@ -1440,6 +1440,48 @@ async def test_successful_curated_install_persists_managed_preference_off_loop()
 
 
 @pytest.mark.asyncio
+async def test_successful_curated_preference_survives_immediate_screen_unmount():
+    from textual.screen import Screen
+
+    from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
+        parakeet_reference,
+    )
+    from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V2_MODEL
+    from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
+
+    service = _FakeExternalSourceService(block_prefer=True)
+    app = _app()
+    app._parakeet_source_service = service
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _models_screen(app)
+        assert await _wait_for(
+            lambda: bool(screen.query("#external-models-view")), pilot
+        )
+        reference = parakeet_reference(PARAKEET_V2_MODEL, "int8")
+        screen._model_install_kind = "curated"
+        screen._model_install_reference = reference
+        screen._model_install_service = MagicMock()
+        screen._model_install_registry = MagicMock()
+        screen._model_install_sources = {}
+        screen._model_install_pending_report = object()
+        screen.notify = MagicMock()
+
+        screen._apply_curated_provision_result(None)
+        assert screen._model_install_worker is not None
+        assert await _wait_for(service.prefer_started.is_set, pilot)
+        await app.switch_screen(Screen())
+        await pilot.pause()
+        assert screen not in app.screen_stack
+        assert screen.is_attached is False
+        service.release_prefer.set()
+
+        assert await _wait_for(lambda: bool(service.preferred), pilot)
+        assert service.preferred == [ParakeetSourceKey.V2_INT8]
+        await pilot.pause()
+        screen.notify.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_the_inspector_rows_refresh_alongside_the_status_chip():
     """Regression test: `refresh_lab_status` used to update only the chip.
 
@@ -2636,18 +2678,22 @@ class _FakeExternalSourceService:
         records=None,
         block_verification: bool = False,
         block_copy: bool = False,
+        block_prefer: bool = False,
     ) -> None:
         import threading
 
         self._records = dict(records or {})
         self.block_verification = block_verification
         self.block_copy = block_copy
+        self.block_prefer = block_prefer
         self.progress_seen = threading.Event()
         self.release_verification = threading.Event()
         self.copy_started = threading.Event()
         self.copy_cancelled = threading.Event()
         self.release_copy = threading.Event()
         self.copy_continued = threading.Event()
+        self.prefer_started = threading.Event()
+        self.release_prefer = threading.Event()
         self.vad_ready = True
         self.prepare_threads: list[int] = []
         self.commit_threads: list[int] = []
@@ -2677,6 +2723,9 @@ class _FakeExternalSourceService:
     def prefer_managed(self, key, *, cancelled=lambda: False):
         import threading
 
+        self.prefer_started.set()
+        if self.block_prefer:
+            self.release_prefer.wait(3)
         if cancelled():
             return
         self.prefer_threads.append(threading.get_ident())
@@ -2763,6 +2812,125 @@ class _FakeExternalSourceService:
             self.copy_continued.set()
         self.copied.append((verified, consent))
         return verified.reference
+
+
+@pytest.mark.parametrize(
+    ("code", "message", "is_error"),
+    (
+        (
+            "MISSING",
+            "Required model files are missing. Choose a complete model directory.",
+            True,
+        ),
+        (
+            "IRREGULAR",
+            "Model files must be regular files without links. Choose a safe model directory.",
+            True,
+        ),
+        (
+            "CHANGED",
+            "Model files changed during verification. Wait for file changes to finish, then retry.",
+            True,
+        ),
+        (
+            "CORRUPT",
+            "Model files do not match the curated model. Choose an unmodified model directory.",
+            True,
+        ),
+        (
+            "UNSUPPORTED",
+            "This curated model does not support an external directory.",
+            True,
+        ),
+        (
+            "CANCELLED",
+            "Verification cancelled. The prior source is unchanged.",
+            False,
+        ),
+    ),
+)
+def test_external_verification_codes_have_distinct_path_free_recovery_copy(
+    tmp_path,
+    monkeypatch,
+    code,
+    message,
+    is_error,
+):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.STT.parakeet_external import (
+        ExternalParakeetErrorCode,
+        ExternalParakeetVerificationError,
+    )
+    from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
+    from tldw_chatbook.UI.Screens import llm_screen as module
+
+    selected = (tmp_path / "private-model-root").absolute()
+    service = MagicMock()
+    service.prepare_external.side_effect = ExternalParakeetVerificationError(
+        ExternalParakeetErrorCode[code]
+    )
+    fake_app = MagicMock()
+    fake_app._ensure_parakeet_source_service.return_value = service
+    monkeypatch.setattr(module.LLMScreen, "app", property(lambda _self: fake_app))
+    monkeypatch.setattr(
+        module,
+        "get_current_worker",
+        lambda: SimpleNamespace(is_cancelled=False),
+    )
+    fake_logger = MagicMock()
+    monkeypatch.setattr(module, "logger", fake_logger)
+    screen = module.LLMScreen.__new__(module.LLMScreen)
+    token = (1, id(screen))
+
+    module.LLMScreen._verify_external_source.__wrapped__(
+        screen,
+        token,
+        ParakeetSourceKey.V2_INT8,
+        selected,
+        "commit",
+    )
+
+    callback = fake_app.call_from_thread.call_args.args
+    assert callback[:4] == (
+        screen._apply_external_verification_result,
+        token,
+        "commit",
+        None,
+    )
+    assert callback[4:] == (message, is_error)
+    assert str(selected) not in message
+    if code == "CANCELLED":
+        fake_logger.warning.assert_not_called()
+    else:
+        fake_logger.warning.assert_called_once()
+
+
+def test_external_verification_cancellation_is_information_not_error():
+    screen = LLMScreen.__new__(LLMScreen)
+    screen._external_selection_worker = object()
+    screen._owns_external_token = MagicMock(return_value=True)
+    screen._release_external_scope = MagicMock()
+    screen._set_external_status = MagicMock()
+    screen.notify = MagicMock()
+    token = (1, id(screen))
+    message = "Verification cancelled. The prior source is unchanged."
+
+    screen._apply_external_verification_result(
+        token,
+        "commit",
+        None,
+        message,
+        False,
+    )
+
+    screen._release_external_scope.assert_called_once_with(token)
+    screen._set_external_status.assert_called_once_with(
+        message,
+        error=False,
+        active=False,
+    )
+    screen.notify.assert_called_once_with(message, severity="information")
 
 
 async def _wait_for(condition, pilot, *, attempts: int = 120) -> bool:

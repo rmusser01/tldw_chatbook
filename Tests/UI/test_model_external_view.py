@@ -34,9 +34,13 @@ class _SourceService:
 class _ViewApp(App[None]):
     CSS_PATH = str(_BUNDLED_STYLESHEET)
 
-    def __init__(self, service: _SourceService) -> None:
+    def __init__(self, service: _SourceService, *, runtime_ready: bool = True) -> None:
         self.requests: list[object] = []
-        self.view = ExternalModelView(service, id="external-models-view")
+        self.view = ExternalModelView(
+            service,
+            runtime_ready=lambda: runtime_ready,
+            id="external-models-view",
+        )
         super().__init__()
 
     def compose(self) -> ComposeResult:
@@ -45,6 +49,7 @@ class _ViewApp(App[None]):
     @on(ExternalModelView.ChangeRequested)
     @on(ExternalModelView.StopRequested)
     @on(ExternalModelView.CopyRequested)
+    @on(ExternalModelView.CancelRequested)
     def _capture(self, event) -> None:
         self.requests.append(event)
 
@@ -97,18 +102,9 @@ async def test_external_view_lists_only_records_with_user_owned_directories(
 @pytest.mark.asyncio
 async def test_fresh_production_css_view_persists_runtime_required(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A reopened External view derives runtime readiness from the runtime."""
 
-    from tldw_chatbook.UI.Screens import model_external_view as module
-
-    monkeypatch.setattr(
-        module,
-        "parakeet_onnx_deps_installed",
-        lambda: False,
-        raising=False,
-    )
     service = _SourceService(
         {
             ParakeetSourceKey.V2_INT8: ParakeetSourceRecord(
@@ -121,7 +117,7 @@ async def test_fresh_production_css_view_persists_runtime_required(
     )
 
     for _ in range(2):
-        app = _ViewApp(service)
+        app = _ViewApp(service, runtime_ready=False)
         async with app.run_test(size=(80, 24)) as pilot:
             await pilot.pause()
             status = app.query_one(".external-model-status", Static)
@@ -269,3 +265,61 @@ async def test_external_operation_error_is_path_safe_and_does_not_replace_edit_p
         assert str(selected) in str(
             app.query_one(".external-model-path", Static).renderable
         )
+
+
+@pytest.mark.parametrize("configured", (False, True))
+@pytest.mark.asyncio
+async def test_external_progress_preserves_physical_cancel_focus_at_80_columns(
+    tmp_path: Path,
+    configured: bool,
+) -> None:
+    """Progress-only updates retain the mounted cancellation control and focus."""
+
+    key = ParakeetSourceKey.V2_INT8
+    records = (
+        {
+            key: ParakeetSourceRecord(
+                model_id=PARAKEET_V2_MODEL,
+                precision="int8",
+                directory=(tmp_path / "model").absolute(),
+                preferred_source=ParakeetSourcePreference.EXTERNAL,
+            )
+        }
+        if configured
+        else {}
+    )
+    app = _ViewApp(_SourceService(records))
+    selector = (
+        f"#external-model-stop-{key.value}"
+        if configured
+        else "#external-model-cancel-operation"
+    )
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.view.apply_operation_status("Verifying model files…", active=True)
+        await pilot.pause()
+        cancel = app.query_one(selector, Button)
+        cancel.focus()
+        await pilot.pause()
+        assert app.focused is cancel
+
+        for status in (
+            "Verifying model files · 1 / 4 bytes",
+            "Verifying model files · 2 / 4 bytes",
+            "Verifying model files · 4 / 4 bytes",
+        ):
+            app.view.apply_operation_status(status, active=True)
+            await pilot.pause()
+            assert app.query_one(selector, Button) is cancel
+            assert app.focused is cancel
+            assert cancel.region.width > 0 and cancel.region.height > 0
+
+        await pilot.click(selector)
+        await pilot.pause()
+
+    expected = (
+        ExternalModelView.StopRequested
+        if configured
+        else ExternalModelView.CancelRequested
+    )
+    assert [type(request) for request in app.requests] == [expected]

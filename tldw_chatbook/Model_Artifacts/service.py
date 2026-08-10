@@ -3204,6 +3204,7 @@ class ModelArtifactService:
                         )
                     self._assert_managed_path(staging)
                     self._assert_managed_path(destination.parent)
+                    _raise_if_install_cancelled(cancelled)
                     self._promote(staging, destination)
                     self._assert_managed_path(destination)
                     staging = None

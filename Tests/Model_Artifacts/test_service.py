@@ -1662,6 +1662,48 @@ def test_install_rechecks_cancellation_immediately_before_publication(
     assert tuple(service.staging_path.iterdir()) == ()
 
 
+def test_install_rechecks_cancellation_adjacent_to_promotion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancellation after the final destination probe still prevents publish."""
+
+    payload = b"model"
+    service, item, source = install_inputs(tmp_path, {"model.onnx": payload})
+    destination = service.artifact_path(item.reference)
+    real_exists = service._managed_path_exists
+    destination_probes = 0
+
+    def cancel_after_second_destination_probe(path: Path) -> bool:
+        nonlocal destination_probes
+        exists = real_exists(path)
+        if path == destination:
+            destination_probes += 1
+        return exists
+
+    monkeypatch.setattr(
+        service,
+        "_managed_path_exists",
+        cancel_after_second_destination_probe,
+    )
+
+    with pytest.raises(
+        service_module.ArtifactStateError,
+        match="^artifact installation cancelled$",
+    ) as caught:
+        service.install(
+            item,
+            source,
+            cancelled=lambda: destination_probes >= 2,
+        )
+
+    assert destination_probes == 2
+    assert str(source) not in str(caught.value)
+    assert (source / "model.onnx").read_bytes() == payload
+    assert destination.exists() is False
+    assert tuple(service.staging_path.iterdir()) == ()
+
+
 # ---------------------------------------------------------------------------
 # TASK-1694: service-owned download-stage seam.
 #

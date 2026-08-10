@@ -27,6 +27,10 @@ from ...STT.parakeet_sources import (
     ParakeetSourceKey,
     PreparedExternalSelection,
 )
+from ...STT.parakeet_external import (
+    ExternalParakeetErrorCode,
+    ExternalParakeetVerificationError,
+)
 from ...Third_Party.textual_fspicker import SelectDirectory
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Widgets.ModelArtifacts import (
@@ -93,6 +97,33 @@ MODELS_RAIL_SECTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
 #: process -- the event handler assigns it from an async worker -- so a
 #: press-triggered read would report "stopped".
 LAB_SERVER_POLL_SECONDS = 2.0
+
+_EXTERNAL_VERIFICATION_RECOVERY = {
+    ExternalParakeetErrorCode.MISSING: (
+        "Required model files are missing. Choose a complete model directory.",
+        True,
+    ),
+    ExternalParakeetErrorCode.IRREGULAR: (
+        "Model files must be regular files without links. Choose a safe model directory.",
+        True,
+    ),
+    ExternalParakeetErrorCode.CHANGED: (
+        "Model files changed during verification. Wait for file changes to finish, then retry.",
+        True,
+    ),
+    ExternalParakeetErrorCode.CORRUPT: (
+        "Model files do not match the curated model. Choose an unmodified model directory.",
+        True,
+    ),
+    ExternalParakeetErrorCode.UNSUPPORTED: (
+        "This curated model does not support an external directory.",
+        True,
+    ),
+    ExternalParakeetErrorCode.CANCELLED: (
+        "Verification cancelled. The prior source is unchanged.",
+        False,
+    ),
+}
 
 #: Back-compat alias for the (app attribute, display name) server-process
 #: table; ``LAB_SERVER_SOURCES`` in ``lab_server_status`` is the canonical
@@ -779,6 +810,22 @@ class LLMScreen(LabScreen):
                 cancelled=lambda: worker.is_cancelled,
                 progress=progress,
             )
+        except ExternalParakeetVerificationError as exc:
+            message, is_error = _EXTERNAL_VERIFICATION_RECOVERY[exc.code]
+            if is_error:
+                logger.warning(
+                    "External Parakeet verification failed; error_type={}",
+                    type(exc).__name__,
+                )
+            self.app.call_from_thread(
+                self._apply_external_verification_result,
+                token,
+                action,
+                None,
+                message,
+                is_error,
+            )
+            return
         except Exception as exc:
             logger.warning(
                 "External Parakeet verification failed; error_type={}",
@@ -790,6 +837,7 @@ class LLMScreen(LabScreen):
                 action,
                 None,
                 "The selected model could not be verified. Choose the directory again.",
+                True,
             )
             return
         self.app.call_from_thread(
@@ -817,6 +865,7 @@ class LLMScreen(LabScreen):
         action: str,
         prepared: PreparedExternalSelection | None,
         error: str | None,
+        error_is_failure: bool = True,
     ) -> None:
         """Commit, request VAD consent, or plan an optional managed copy."""
 
@@ -826,8 +875,15 @@ class LLMScreen(LabScreen):
         if error is not None or prepared is None:
             self._release_external_scope(token)
             message = error or "The selected model could not be verified."
-            self._set_external_status(message, error=True, active=False)
-            self.notify(message, severity="error")
+            self._set_external_status(
+                message,
+                error=error_is_failure,
+                active=False,
+            )
+            self.notify(
+                message,
+                severity="error" if error_is_failure else "information",
+            )
             return
         if action == "copy":
             self._review_external_copy(token, prepared)
@@ -1543,24 +1599,9 @@ class LLMScreen(LabScreen):
     ) -> None:
         """Persist the post-install managed preference off the UI thread."""
 
-        worker = get_current_worker()
-        if (
-            worker.is_cancelled
-            or not self.is_mounted
-            or self._model_install_kind != "curated"
-            or self._model_install_reference != reference
-        ):
-            return
+        app = self.app
         try:
-            self.app._ensure_parakeet_source_service().prefer_managed(
-                key,
-                cancelled=lambda: (
-                    worker.is_cancelled
-                    or not self.is_mounted
-                    or self._model_install_kind != "curated"
-                    or self._model_install_reference != reference
-                ),
-            )
+            app._ensure_parakeet_source_service().prefer_managed(key)
         except Exception as exc:
             logger.warning(
                 "Activated Parakeet source preference update failed; error_type={}",
@@ -1571,7 +1612,7 @@ class LLMScreen(LabScreen):
             )
         else:
             error = None
-        self.app.call_from_thread(
+        app.call_from_thread(
             self._apply_curated_preference_result,
             reference,
             error,
@@ -1583,7 +1624,7 @@ class LLMScreen(LabScreen):
         error: str | None,
     ) -> None:
         if (
-            not self.is_mounted
+            not self.is_attached
             or self._model_install_kind != "curated"
             or self._model_install_reference != reference
         ):
