@@ -175,6 +175,24 @@ def _signature_to_input_schema(fn: ast.AsyncFunctionDef | ast.FunctionDef) -> di
     }
 
 
+def _signature_to_prompt_arguments(
+    fn: ast.AsyncFunctionDef | ast.FunctionDef,
+) -> list[dict[str, Any]]:
+    """Describe prompt arguments without exposing Python annotations."""
+    positional = [*fn.args.posonlyargs, *fn.args.args]
+    first_default_index = len(positional) - len(fn.args.defaults)
+    arguments = [
+        {"name": arg.arg, "required": index < first_default_index}
+        for index, arg in enumerate(positional)
+        if arg.arg not in ("self", "cls")
+    ]
+    arguments.extend(
+        {"name": arg.arg, "required": default is None}
+        for arg, default in zip(fn.args.kwonlyargs, fn.args.kw_defaults)
+    )
+    return arguments
+
+
 def _extract_registered_entries(
     method_name: str, decorator_name: str
 ) -> list[dict[str, Any]]:
@@ -198,7 +216,7 @@ def _extract_registered_entries(
                         or func.attr != decorator_name
                     ):
                         continue
-                    entry = {
+                    entry: dict[str, Any] = {
                         "name": nested.name,
                         "description": _first_doc_line(ast.get_docstring(nested)),
                     }
@@ -210,6 +228,8 @@ def _extract_registered_entries(
                             entry["uri"] = first_arg.value
                     if decorator_name == "tool":
                         entry["inputSchema"] = _signature_to_input_schema(nested)
+                    elif decorator_name == "prompt":
+                        entry["arguments"] = _signature_to_prompt_arguments(nested)
                     entries.append(entry)
                     break
             return entries

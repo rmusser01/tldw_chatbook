@@ -15,6 +15,7 @@ from tldw_chatbook.MCP.local_runtime_delegate import LocalMCPRuntimeDelegate
 from tldw_chatbook.MCP.local_store import LocalExternalMCPProfile, LocalMCPStore
 from tldw_chatbook.MCP.server import (
     _signature_to_input_schema,
+    _signature_to_prompt_arguments,
     describe_local_mcp_capabilities,
 )
 
@@ -642,12 +643,12 @@ def test_local_manifest_helper_stays_aligned_with_registered_server_surface():
 
     def _registered_entries(
         method_name: str, decorator_name: str
-    ) -> list[dict[str, str]]:
+    ) -> list[dict[str, object]]:
         for node in module_node.body:
             if isinstance(node, ast.ClassDef) and node.name == "TldwMCPServer":
                 for child in node.body:
                     if isinstance(child, ast.FunctionDef) and child.name == method_name:
-                        entries: list[dict[str, str]] = []
+                        entries: list[dict[str, object]] = []
                         for nested in child.body:
                             if not isinstance(nested, ast.AsyncFunctionDef):
                                 continue
@@ -660,7 +661,7 @@ def test_local_manifest_helper_stays_aligned_with_registered_server_surface():
                                     or func.attr != decorator_name
                                 ):
                                     continue
-                                entry = {
+                                entry: dict[str, object] = {
                                     "name": nested.name,
                                     "description": (ast.get_docstring(nested) or "")
                                     .strip()
@@ -677,6 +678,10 @@ def test_local_manifest_helper_stays_aligned_with_registered_server_surface():
                                     # re-deriving the schema mapping rules a
                                     # second time.
                                     entry["inputSchema"] = _signature_to_input_schema(
+                                        nested
+                                    )
+                                elif decorator_name == "prompt":
+                                    entry["arguments"] = _signature_to_prompt_arguments(
                                         nested
                                     )
                                 entries.append(entry)

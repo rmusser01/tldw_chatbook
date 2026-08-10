@@ -11,9 +11,19 @@ import json
 import math
 import re
 import sys
+import types
 from collections.abc import Awaitable, Callable, Iterable
 from binascii import Error as Base64Error
-from typing import TYPE_CHECKING, Any, NoReturn, overload
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    NoReturn,
+    Union,
+    get_args,
+    get_origin,
+    get_type_hints,
+    overload,
+)
 from urllib.parse import parse_qsl, quote, unquote, urlencode, urlsplit, urlunsplit
 
 from jsonschema import Draft7Validator, Draft202012Validator
@@ -45,6 +55,7 @@ _ToolHandler = Callable[..., Awaitable[GatewayJSONValue]]
 _LocalToolHandler = Callable[[dict[str, Any]], ToolResult]
 _ResourceHandler = Callable[..., Awaitable[dict[str, Any]]]
 _ResourceListHandler = Callable[[], Awaitable[list[dict[str, Any]]]]
+_PromptHandler = Callable[..., Awaitable[list[dict[str, str]]]]
 
 MAX_RESOURCE_CHUNK_BYTES = 256 * 1024
 CONTINUATION_QUERY_KEY = "tldw_continue"
@@ -69,6 +80,15 @@ _RESOURCE_TEMPLATE_MATCHERS = {
     )
     for template, variable in _RESOURCE_TEMPLATE_VARIABLES.items()
 }
+_PROMPT_NAMES = (
+    "summarize_conversation",
+    "generate_document",
+    "analyze_media",
+    "search_and_synthesize",
+    "character_writing",
+)
+_PROMPT_INTEGER = re.compile(r"-?(?:0|[1-9][0-9]*)\Z")
+_MAX_PROMPT_INTEGER_CHARS = 128
 
 
 def _encode_continuation_state(
@@ -193,6 +213,9 @@ class ChatbookGatewayRuntime:
         ] = {}
         self._resource_template_descriptors: dict[str, dict[str, str]] = {}
         self._resource_list_handler: _ResourceListHandler | None = None
+        self._prompt_handlers: dict[str, _PromptHandler] = {}
+        self._prompt_descriptors: dict[str, dict[str, Any]] = {}
+        self._prompt_parameter_kinds: dict[str, dict[str, tuple[str, bool]]] = {}
         self._finalized = False
 
     @staticmethod
@@ -398,6 +421,223 @@ class ChatbookGatewayRuntime:
             return handler
 
         return decorator
+
+    def prompt(
+        self, *, name: str | None = None
+    ) -> Callable[[_PromptHandler], _PromptHandler]:
+        """Return a decorator that records one typed async prompt handler."""
+        if self._finalized:
+            raise RuntimeError("runtime is finalized")
+
+        def decorator(handler: _PromptHandler) -> _PromptHandler:
+            if self._finalized:
+                raise RuntimeError("runtime is finalized")
+            handler_name = getattr(handler, "__name__", None) if name is None else name
+            if (
+                not isinstance(handler_name, str)
+                or _TOOL_NAME.fullmatch(handler_name) is None
+            ):
+                raise ValueError("prompt handler name is invalid")
+            if handler_name in self._prompt_handlers:
+                raise ValueError(f"duplicate prompt handler: {handler_name}")
+            if not inspect.iscoroutinefunction(handler):
+                raise ValueError("prompt handler must be async")
+
+            descriptor, parameter_kinds = self._describe_prompt(handler_name, handler)
+            self._prompt_handlers[handler_name] = handler
+            self._prompt_descriptors[handler_name] = descriptor
+            self._prompt_parameter_kinds[handler_name] = parameter_kinds
+            return handler
+
+        return decorator
+
+    @classmethod
+    def _describe_prompt(
+        cls, name: str, handler: _PromptHandler
+    ) -> tuple[dict[str, Any], dict[str, tuple[str, bool]]]:
+        try:
+            type_hints = get_type_hints(handler)
+        except Exception:
+            raise ValueError("prompt parameter type is invalid") from None
+        arguments: list[dict[str, Any]] = []
+        parameter_kinds: dict[str, tuple[str, bool]] = {}
+        for parameter in inspect.signature(handler).parameters.values():
+            if _TOOL_NAME.fullmatch(parameter.name) is None:
+                raise ValueError("prompt argument name is invalid")
+            if parameter.kind not in {
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.KEYWORD_ONLY,
+            }:
+                raise ValueError("prompt parameter kind is invalid")
+            kind = cls._prompt_parameter_kind(type_hints.get(parameter.name))
+            required = parameter.default is inspect.Parameter.empty
+            if not required and not cls._valid_prompt_default(parameter.default, kind):
+                raise ValueError("prompt parameter default is invalid")
+            arguments.append({"name": parameter.name, "required": required})
+            parameter_kinds[parameter.name] = (kind, required)
+
+        descriptor: dict[str, Any] = {"name": name}
+        doc = inspect.getdoc(handler)
+        if doc:
+            description = doc.splitlines()[0].strip()
+            if not description or len(description) > 4_096:
+                raise ValueError("prompt description is invalid")
+            descriptor["description"] = description
+        descriptor["arguments"] = arguments
+        return descriptor, parameter_kinds
+
+    @staticmethod
+    def _prompt_parameter_kind(annotation: object) -> str:
+        if annotation is str:
+            return "str"
+        if annotation is int:
+            return "int"
+        if get_origin(annotation) in {Union, types.UnionType} and set(
+            get_args(annotation)
+        ) == {str, type(None)}:
+            return "optional_str"
+        raise ValueError("prompt parameter type is unsupported")
+
+    @staticmethod
+    def _valid_prompt_default(value: object, kind: str) -> bool:
+        if kind == "str":
+            return isinstance(value, str)
+        if kind == "int":
+            return isinstance(value, int) and not isinstance(value, bool)
+        return value is None or isinstance(value, str)
+
+    async def list_prompts(
+        self, context: GatewayRequestContext
+    ) -> list[dict[str, Any]]:
+        """Return detached prompt descriptors in registration order."""
+        self._require_finalized()
+        return copy.deepcopy(list(self._prompt_descriptors.values()))
+
+    async def get_prompt(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        context: GatewayRequestContext,
+    ) -> dict[str, Any]:
+        """Validate arguments, invoke one prompt, and map its messages."""
+        self._require_finalized()
+        handler = self._prompt_handlers.get(name)
+        if handler is None:
+            raise GatewayApplicationError(
+                "Prompt not found.",
+                reason_code="prompt_not_found",
+                kind="prompt",
+            ) from None
+        normalized = self._normalize_prompt_arguments(
+            arguments, self._prompt_parameter_kinds[name]
+        )
+        return self._canonical_prompt_result(await handler(**normalized))
+
+    @classmethod
+    def _normalize_prompt_arguments(
+        cls,
+        arguments: object,
+        parameter_kinds: dict[str, tuple[str, bool]],
+    ) -> dict[str, object]:
+        if not isinstance(arguments, dict) or any(
+            not isinstance(key, str) for key in arguments
+        ):
+            cls._raise_invalid_prompt_arguments()
+        if not set(arguments) <= set(parameter_kinds):
+            cls._raise_invalid_prompt_arguments()
+        if any(
+            required and name not in arguments
+            for name, (_kind, required) in parameter_kinds.items()
+        ):
+            cls._raise_invalid_prompt_arguments()
+
+        normalized: dict[str, object] = {}
+        for name, value in arguments.items():
+            kind = parameter_kinds[name][0]
+            if kind == "str":
+                if not isinstance(value, str):
+                    cls._raise_invalid_prompt_arguments()
+                normalized[name] = value
+            elif kind == "optional_str":
+                if value is not None and not isinstance(value, str):
+                    cls._raise_invalid_prompt_arguments()
+                normalized[name] = value
+            elif isinstance(value, bool):
+                cls._raise_invalid_prompt_arguments()
+            elif isinstance(value, int):
+                normalized[name] = value
+            elif (
+                isinstance(value, str)
+                and len(value) <= _MAX_PROMPT_INTEGER_CHARS
+                and _PROMPT_INTEGER.fullmatch(value) is not None
+            ):
+                normalized[name] = int(value)
+            else:
+                cls._raise_invalid_prompt_arguments()
+        return normalized
+
+    @classmethod
+    def _canonical_prompt_result(cls, raw_result: object) -> dict[str, Any]:
+        if not isinstance(raw_result, list) or not raw_result:
+            cls._raise_invalid_prompt_result()
+
+        messages: list[tuple[str, str]] = []
+        for raw_message in raw_result:
+            if not isinstance(raw_message, dict) or set(raw_message) != {
+                "role",
+                "content",
+            }:
+                cls._raise_invalid_prompt_result()
+            role = raw_message["role"]
+            content = raw_message["content"]
+            if role not in {"system", "user", "assistant"} or not isinstance(
+                content, str
+            ):
+                cls._raise_invalid_prompt_result()
+            messages.append((role, content))
+
+        leading_system: list[str] = []
+        while messages and messages[0][0] == "system":
+            leading_system.append(messages.pop(0)[1])
+        if leading_system:
+            if not messages or messages[0][0] != "user":
+                cls._raise_invalid_prompt_result()
+            user_text = messages[0][1]
+            messages[0] = (
+                "user",
+                "System instructions:\n"
+                + "\n\n".join(leading_system)
+                + "\n\nUser request:\n"
+                + user_text,
+            )
+        if any(role == "system" for role, _content in messages):
+            cls._raise_invalid_prompt_result()
+
+        return {
+            "messages": [
+                {
+                    "role": role,
+                    "content": {"type": "text", "text": content},
+                }
+                for role, content in messages
+            ]
+        }
+
+    @staticmethod
+    def _raise_invalid_prompt_arguments() -> NoReturn:
+        raise GatewayApplicationError(
+            "Invalid prompt arguments.",
+            reason_code="invalid_prompt_arguments",
+            kind="prompt",
+        ) from None
+
+    @staticmethod
+    def _raise_invalid_prompt_result() -> NoReturn:
+        raise GatewayApplicationError(
+            "Prompt handler returned an invalid result.",
+            reason_code="invalid_prompt_result",
+            kind="prompt",
+        ) from None
 
     async def _list_resources(
         self, context: GatewayRequestContext
@@ -874,6 +1114,8 @@ class ChatbookGatewayRuntime:
             raise ValueError(
                 "resource templates and dynamic resource catalog must be registered together"
             )
+        if self._prompt_handlers and set(self._prompt_handlers) != set(_PROMPT_NAMES):
+            raise ValueError("all five Chatbook prompts must be registered together")
         self._finalized = True
 
     def _require_finalized(self) -> None:

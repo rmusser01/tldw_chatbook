@@ -253,7 +253,7 @@ class MCPPrompts:
 
             rag_service = SimplifiedRAGSearchService(self.media_db)
 
-            results = rag_service.keyword_search(query, limit=num_sources)
+            results = await rag_service.keyword_search(query=query, limit=num_sources)
 
             if not results:
                 return [
