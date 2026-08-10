@@ -446,10 +446,13 @@ LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS = 5.0
 LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS = 2.0
 LIBRARY_NOTES_AUTOSAVE_SECONDS = 2.0
 LIBRARY_NOTE_CONTENT_MAX_CHARS = 2_000_000
-# The literal title a just-created "Blank note" row is seeded with (LIB-14).
-# The editor presents it placeholder-only (empty Input, "Untitled"
-# placeholder), and the untouched-blank GC gate treats it as blank -- both
-# must agree with the create seed in ``handle_library_notes_create_blank``.
+# The literal title a just-created "Blank note" row is seeded with (LIB-14,
+# task-4021). The editor presents it placeholder-only (empty Input,
+# "Untitled" placeholder -- see ``_library_note_pending_blank_gc_id``), and
+# the untouched-blank GC gate (``_flush_library_note_save``) treats a
+# snapshot title equal to this literal as blank too -- both call sites and
+# the create seed in ``handle_library_notes_create_blank`` must agree on
+# the one constant rather than three independently-typed string literals.
 LIBRARY_NOTE_BLANK_SEED_TITLE = "Untitled"
 
 
@@ -705,6 +708,9 @@ class _LibraryDatabaseNoteSessionPort:
                 # ``_patch_library_note_list_from_session`` applies the
                 # same one to the snapshot, so the row name the session
                 # reports and the row name on disk can no longer disagree.
+                # (rebase note: task-4021's untouched-blank GC gate depends
+                # on this same fallback -- both features now share the one
+                # helper instead of two independently-typed literals.)
                 title=library_note_persisted_title(payload.title),
                 content=payload.body,
                 note_id=note_id,
@@ -2393,7 +2399,33 @@ class LibraryScreen(BaseAppScreen):
         # second worker would decrement it again for ids already gone from
         # ``_local_source_records``. Checked at the very top of the confirm
         # button handler, before it even reads the selection.
+        #
+        # P1 re-critique finding 3: this flag now ALSO guards
+        # ``_undo_library_media_bulk_delete`` -- a single shared flag for
+        # both directions, not one flag per direction. Delete and Undo were
+        # previously gated by two independent flags AND scheduled into two
+        # different exclusive worker groups, so nothing stopped one from
+        # starting while the other was still awaiting its own per-item
+        # service calls; both mutate the same shared state
+        # (``_local_source_records["media"]``, ``_local_source_counts
+        # ["media"]``, ``_library_media_delete_receipt_ids``), so an
+        # interleaving let Undo finish LAST and clobber a newer delete's
+        # writes with its own stale snapshot (or vice versa). Sharing one
+        # flag (checked at the top of BOTH button handlers, before either
+        # reads any state) makes the two mutually exclusive: whichever
+        # press lands first runs to completion in the ``finally`` below
+        # before the other can even schedule its worker, and the losing
+        # press is a silent no-op rather than a second worker racing the
+        # first over the same mutable state.
         self._library_media_bulk_delete_in_flight: bool = False
+        # task-4022 AC2: the ids from the most recently completed bulk
+        # delete, rendered as a "✓ deleted · N items" receipt (with
+        # Undo/Dismiss) until acted on or replaced by a newer bulk-delete
+        # action. Empty tuple means no receipt to show. Cleared when a new
+        # bulk-delete confirmation is armed or select mode is freshly
+        # entered, set to the succeeded subset when a delete completes, and
+        # narrowed to only the still-failed ids by a partial Undo.
+        self._library_media_delete_receipt_ids: tuple[str, ...] = ()
         self._library_media_view: str = "list"
         self._library_media_detail: Mapping[str, Any] | None = None
         self._library_media_editing: bool = False
@@ -7901,6 +7933,7 @@ class LibraryScreen(BaseAppScreen):
             select_mode=self._library_media_select_mode,
             selected_ids=self._library_media_row_selection.ids,
             confirming_bulk_delete=self._library_media_confirming_bulk_delete,
+            delete_receipt_count=len(self._library_media_delete_receipt_ids),
         )
         if self._library_media_select_mode:
             self._library_media_row_selection.reconcile(r.media_id for r in state.rows)
@@ -10467,6 +10500,12 @@ class LibraryScreen(BaseAppScreen):
                 # cannot tell the create seam's default from the same
                 # letters typed by a human, so the provenance marker
                 # decides. An emptied-out title is blank either way.
+                # (rebase note: task-4021 independently re-derived this
+                # same root cause -- the literal seed must count as blank
+                # too, or this GC branch is unreachable -- but its version
+                # lacked the ``_library_note_title_user_edited`` provenance
+                # guard below; dev's fuller check is kept as-is and covers
+                # task-4021's reachability claim too.)
                 title_blank = not raw_title.strip() or (
                     raw_title == LIBRARY_NOTE_BLANK_SEED_TITLE
                     and not self._library_note_title_user_edited
@@ -11873,6 +11912,10 @@ class LibraryScreen(BaseAppScreen):
         else:
             self._library_media_select_mode = True
             self._library_media_row_selection.clear()
+            # task-4022: a fresh Select session starts clean -- a receipt
+            # from a previous, unrelated bulk delete shouldn't linger
+            # underneath a new one.
+            self._library_media_delete_receipt_ids = ()
         _sync_library_canvas(self, "media")
 
     def _exit_library_media_select_mode(self, *, announce_discard: bool) -> None:
@@ -11958,6 +12001,10 @@ class LibraryScreen(BaseAppScreen):
         if not self._library_media_row_selection.count:
             return
         self._library_media_confirming_bulk_delete = True
+        # task-4022: a new confirmation supersedes any receipt still
+        # showing from a previous bulk delete -- this action's own
+        # completion will set a fresh one.
+        self._library_media_delete_receipt_ids = ()
         _sync_library_canvas(self, "media")
         # task-3020 AC2: arming/cancelling the confirmation flips which
         # footer set ``_library_footer_shortcuts_for_current_state``
@@ -12017,6 +12064,12 @@ class LibraryScreen(BaseAppScreen):
         a second line of defense, matching this screen's other single-
         flight workers (e.g. ``library_note_save``).
 
+        P1 re-critique finding 3: the same flag and the same worker
+        ``group`` are now shared with ``handle_library_media_bulk_delete_
+        undo`` -- see the flag's own declaration for why. A press here
+        while an Undo is still running is refused exactly like a double-
+        press on this same button always was.
+
         Args:
             event: Button press event emitted by the confirm row's "Delete".
         """
@@ -12074,6 +12127,14 @@ class LibraryScreen(BaseAppScreen):
         naming the failure count, mirroring
         ``_notify_library_media_delete_warning``'s single-item wording.
 
+        task-4022 AC2: on any success, ``_library_media_delete_receipt_ids``
+        is set to the succeeded subset, which the canvas renders as a
+        "✓ deleted · N items" row with Undo/Dismiss
+        (``handle_library_media_bulk_delete_undo`` /
+        ``_undo_library_media_bulk_delete``) -- the confirm copy's promise
+        that the action is reversible now has an actual affordance behind
+        it, at the point of action, instead of silence.
+
         task-3020 AC1: ``_library_media_bulk_delete_in_flight`` (set
         synchronously by the caller before this coroutine was even
         scheduled) is cleared in a ``finally`` so a legitimate NEXT bulk
@@ -12123,6 +12184,12 @@ class LibraryScreen(BaseAppScreen):
                     for record in self._local_source_records["media"]
                 )
 
+            # task-4022 AC2: the receipt for THIS action -- already cleared
+            # at arm-time (``handle_library_media_delete_selected``), so
+            # this always reflects only what just happened, never a stale
+            # earlier batch.
+            self._library_media_delete_receipt_ids = tuple(succeeded)
+
             self._library_media_confirming_bulk_delete = False
             if failed:
                 # task-3020 AC6: pluralize off the denominator (``media_
@@ -12170,6 +12237,151 @@ class LibraryScreen(BaseAppScreen):
                 # selected. On the full-success path the selection was
                 # already cleared just above, so that extension is a
                 # no-op there and behavior is unchanged from before.
+                self._arm_library_list_entry_focus()
+        finally:
+            self._library_media_bulk_delete_in_flight = False
+
+    @on(Button.Pressed, "#library-media-bulk-delete-undo")
+    def handle_library_media_bulk_delete_undo(self, event: Button.Pressed) -> None:
+        """Restore every item named by the current bulk-delete receipt (task-4022 AC2).
+
+        Reads the receipt's frozen id tuple synchronously (mirroring how
+        the confirm button reads the selection before scheduling
+        ``_delete_library_media_selection``) and hands off to a worker.
+
+        P1 re-critique finding 3: guarded by the SAME
+        ``_library_media_bulk_delete_in_flight`` flag and scheduled into
+        the SAME exclusive worker ``group`` as the delete path, not a
+        separate flag/group of its own -- a previous version used two
+        independent flags reasoning that "Undo and a fresh bulk delete...
+        could otherwise race on the same ids", which was backwards: two
+        independent flags is exactly what let them race, since neither
+        blocked the other and both mutate the same shared state
+        (``_local_source_records["media"]``, ``_local_source_counts
+        ["media"]``, ``_library_media_delete_receipt_ids``). Sharing one
+        flag means a delete press while Undo is running (or vice versa) is
+        refused outright rather than racing to completion in whichever
+        order the two workers happen to finish.
+
+        Args:
+            event: Button press event emitted by the receipt row's "Undo".
+        """
+        event.stop()
+        if self._library_media_bulk_delete_in_flight:
+            return
+        media_ids = self._library_media_delete_receipt_ids
+        if not media_ids:
+            return
+        self._library_media_bulk_delete_in_flight = True
+        self.run_worker(
+            self._undo_library_media_bulk_delete(media_ids),
+            exclusive=True,
+            group="library_media_bulk_delete",
+        )
+
+    @on(Button.Pressed, "#library-media-bulk-delete-receipt-dismiss")
+    def handle_library_media_bulk_delete_receipt_dismiss(
+        self, event: Button.Pressed
+    ) -> None:
+        """Clear the bulk-delete receipt without restoring anything.
+
+        Args:
+            event: Button press event emitted by the receipt row's "Dismiss".
+        """
+        event.stop()
+        self._library_media_delete_receipt_ids = ()
+        _sync_library_canvas(self, "media")
+
+    async def _undo_library_media_bulk_delete(
+        self, media_ids: tuple[str, ...]
+    ) -> None:
+        """Restore every item named by the bulk-delete receipt (task-4022 AC2).
+
+        Mirrors ``_delete_library_media_selection``'s own per-id
+        try/except loop through ``media_reading_scope_service``, calling
+        ``restore_media_item`` (mode="local") instead of
+        ``delete_media_item``. That service call is the same seam
+        ``MediaDatabase.restore_from_trash`` is reached through everywhere
+        else (never raw SQL), and returns the freshly restored row, which
+        is inserted straight back into ``_local_source_records["media"]``
+        -- no second DB round trip is needed to repopulate the list.
+
+        On any success, ``_local_source_counts["media"]`` is incremented
+        back up by the number actually restored (the rail's "Media N"
+        count stays in step, symmetric with the delete path). A partial
+        failure narrows the receipt down to just the still-failed ids (so
+        Undo can be retried on them) rather than clearing it outright;
+        full success clears it.
+
+        Args:
+            media_ids: The exact ids from the receipt being undone, read
+                by the caller before any recompose could change it.
+        """
+        try:
+            service = getattr(self.app_instance, "media_reading_scope_service", None)
+            restore_media_item = getattr(service, "restore_media_item", None)
+            restored_records: list[Mapping[str, Any]] = []
+            failed: list[str] = []
+            if callable(restore_media_item):
+                for media_id in media_ids:
+                    try:
+                        result = await self._run_library_service_call(
+                            restore_media_item,
+                            mode="local",
+                            media_id=media_id,
+                            isolate_in_worker=True,
+                        )
+                        if isinstance(result, Mapping):
+                            restored_records.append(result)
+                    except Exception:
+                        logger.opt(exception=True).warning(
+                            f"Failed to restore Library media item {media_id!r} "
+                            "in bulk-delete undo."
+                        )
+                        failed.append(media_id)
+            else:
+                failed = list(media_ids)
+
+            if restored_records:
+                existing_ids = {
+                    self._source_record_id(record)
+                    for record in self._local_source_records.get("media", ())
+                }
+                new_records = tuple(
+                    record
+                    for record in restored_records
+                    if self._source_record_id(record) not in existing_ids
+                )
+                self._local_source_records["media"] = self._local_source_records.get(
+                    "media", ()
+                ) + new_records
+                self._local_source_counts["media"] = self._local_source_counts.get(
+                    "media", 0
+                ) + len(new_records)
+
+            self._library_media_delete_receipt_ids = tuple(failed)
+            if failed:
+                item_word = "item" if len(media_ids) == 1 else "items"
+                self._notify_library_media_delete_warning(
+                    f"Could not restore {len(failed)} of {len(media_ids)} "
+                    f"{item_word}."
+                )
+
+            if self.is_mounted:
+                # Full recompose, mirroring ``_delete_library_media_selection``'s
+                # own tail: the rail's "Media N" count just changed too, and
+                # the canvas-scoped ``_sync_library_canvas`` deliberately
+                # skips the rail.
+                self.refresh(recompose=True)
+                # task-4022 review round 1: ``recompose=True`` unconditionally
+                # destroys and remounts the receipt row, taking the focused
+                # "Undo" button with it -- on EVERY completion path, not just
+                # full success (a partial failure still narrows the receipt
+                # and re-renders it with a brand-new "Undo" button instance).
+                # Mirrors ``_delete_library_media_selection``'s own tail,
+                # which arms this unconditionally for the identical reason
+                # (its "now armed on EVERY completion path" comment, task-3020
+                # AC3 review round 2).
                 self._arm_library_list_entry_focus()
         finally:
             self._library_media_bulk_delete_in_flight = False

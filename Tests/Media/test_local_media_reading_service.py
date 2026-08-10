@@ -2549,3 +2549,67 @@ def test_library_media_detail_read_runs_inside_transaction(memory_db_factory):
         conn.set_trace_callback(None)
 
     assert observed == [True]
+
+
+# ---------------------------------------------------------------------------
+# task-4022 (review round 2, I1b): the trash-restore fix
+# (Client_Media_DB_v2.add_media_with_keywords) made restoring a trashed
+# match opt-in (``restore_trashed=True``). ``_materialize_reading_import_row``
+# guards its OWN existing-check on the url leg only
+# (``db.get_media_by_url(url)``, which excludes trashed rows by default),
+# but its fallback ``add_media_with_keywords`` call can still match a
+# trashed row via the content-hash leg (a different url, identical bytes).
+# Since this caller never passes ``restore_trashed=True``, that match must
+# stay untouched -- not silently resurrected. Real file-backed
+# ``MediaDatabase`` (not ``memory_db_factory``'s ``:memory:`` instance),
+# per this programme's DB-layer testing requirement.
+# ---------------------------------------------------------------------------
+
+
+def test_reading_import_content_hash_match_does_not_resurrect_trashed_row(tmp_path):
+    db_path = tmp_path / "reading_import.sqlite"
+    db = Database(db_path=str(db_path), client_id="reading_import_test")
+    service = LocalMediaReadingService(db)
+
+    content = "identical body text, different saved url"
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Saved A",
+        media_type="article",
+        content=content,
+        keywords=["kept"],
+        url="https://example.com/a",
+    )
+    assert db.mark_as_trash(media_id) is True
+
+    import_path = tmp_path / "reading.jsonl"
+    import_path.write_text(
+        json.dumps(
+            {
+                # A DIFFERENT url -- the url-leg existing-check
+                # (get_media_by_url) will find nothing, so this falls
+                # through to add_media_with_keywords, which then matches
+                # the trashed row via the content-hash fallback leg.
+                "title": "Saved A (re-saved)",
+                "url": "https://example.com/a-mirror",
+                "text": content,
+                "tags": ["new-tag"],
+                "status": "saved",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = service.import_reading_items(str(import_path), source="jsonl")
+    assert result["status"] == "completed"
+    assert result["result"]["skipped"] == 1, result["result"]
+    assert result["result"]["imported"] == 0
+    assert result["result"]["updated"] == 0
+
+    row = db.get_media_by_id(media_id, include_trash=True)
+    assert row["is_trash"] == 1, "content-hash match must not resurrect a trashed row"
+    assert row["url"] == "https://example.com/a"
+    # No second row was created for the mirror url either.
+    cursor = db.execute_query("SELECT COUNT(*) FROM Media")
+    assert cursor.fetchone()[0] == 1
+    db.close_connection()

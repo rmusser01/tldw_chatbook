@@ -1573,6 +1573,29 @@ def persist_parsed_media(
             split, wrapped both the parse and the DB-write steps with this
             same message shape) so composed callers see identical error
             text regardless of which stage failed.
+
+    task-4022 (review round 2): this is the ONE caller in the codebase
+    that wants "re-importing this file un-trashes it" -- it's the real
+    Library ingest writer, and the user re-importing a file they
+    previously deleted is asking for exactly that. It passes
+    ``restore_trashed=True`` explicitly. Every other
+    ``add_media_with_keywords`` caller (chatbook SKIP-conflict imports,
+    reading-list bulk imports, Console "save message as media", ...)
+    leaves the flag at its default ``False`` and a trashed match is left
+    untouched, same as before task-4022 ever existed.
+
+    P1 re-critique finding 2: ``parse_local_file_for_ingest`` always
+    normalizes ``payload["keywords"]`` to a list (``[]`` when the user
+    typed none and nothing was auto-extracted -- see its own ``if
+    keywords is None: keywords = []``), never ``None``. The DB layer now
+    distinguishes "keywords argument omitted" (preserve existing curated
+    keywords on a restore) from "keywords argument is an explicit empty
+    list" (clear them) -- so passing ``payload["keywords"]`` through
+    unchanged would silently WIPE a restored row's curated keywords on
+    every plain re-import where the user didn't retype them, which is
+    exactly the data loss task-4022 was written to prevent. ``or None``
+    below restores the "nothing to contribute" signal this caller always
+    means whenever the list is empty.
     """
     file_type = payload["file_type"]
     _reject_empty_extraction(payload, file_type)
@@ -1583,7 +1606,7 @@ def persist_parsed_media(
             title=payload["title"],
             media_type=payload["media_type"],
             content=payload["content"],
-            keywords=payload["keywords"],
+            keywords=payload["keywords"] or None,
             url=payload["url"],
             analysis_content=payload["analysis_content"],
             author=payload["author"],
@@ -1592,6 +1615,7 @@ def persist_parsed_media(
             ingestion_date=datetime.now().strftime("%Y-%m-%d"),
             chunks=payload["chunks"],
             chunk_options=payload["chunk_options"],
+            restore_trashed=True,
         )
         logger.info(f"Successfully ingested {file_type} file with media_id: {media_id}")
         return media_id, media_uuid, message

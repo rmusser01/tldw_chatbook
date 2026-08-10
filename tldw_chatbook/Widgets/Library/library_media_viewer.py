@@ -164,8 +164,13 @@ class LibraryMediaViewer(Vertical):
             # A single full-width Static above the toolbar, not inside it --
             # mixing a Static with the toolbar's Buttons is the known
             # non-rendering failure mode called out on ``compose`` above.
+            # task-4022 AC3: no browsable Trash surface exists anywhere in
+            # the product, so this no longer implies one -- the one real
+            # way back for this path is re-importing the same file, which
+            # (as of task-4022) restores the item instead of refusing.
             yield Static(
-                "Delete this media? This moves it to trash.",
+                "Delete this media? Re-import the same file later to "
+                "bring it back — there's no Trash view to browse.",
                 id="library-media-delete-confirm-copy",
                 markup=False,
             )

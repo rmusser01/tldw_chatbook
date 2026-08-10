@@ -17,6 +17,8 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 from tldw_chatbook.Chatbooks.chatbook_importer import ChatbookImporter, ImportStatus
 import tldw_chatbook.Chatbooks.chatbook_importer as importer_module
 from tldw_chatbook.Chatbooks.conflict_resolver import ConflictResolution
+from tldw_chatbook.Chatbooks.chatbook_models import ChatbookManifest, ChatbookVersion
+from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 
 
 class TestChatbookImporter:
@@ -821,3 +823,79 @@ class TestChatbookImporterKeyCasingMismatch:
         # contract rather than raising.
         assert status.successful_items == 0
         assert status.errors == ["ChaChaNotes database path not configured"]
+
+
+# ---------------------------------------------------------------------------
+# task-4022 (review round 2, I1a): the DB-layer trash-restore fix
+# (Client_Media_DB_v2.add_media_with_keywords) made restoring a trashed
+# match on re-import OPT-IN (``restore_trashed=True``) rather than
+# unconditional. ``ChatbookImporter._import_media`` never passes that flag,
+# so a trashed row must stay exactly as inert as it was before task-4022
+# existed -- even though its own conflict check (``get_media_by_url``,
+# which excludes trashed rows by default) can't see the trashed row and
+# therefore never even reaches the SKIP/RENAME branch for it. Real,
+# file-backed ``MediaDatabase`` throughout -- no mocks -- per this
+# programme's DB-layer testing requirement.
+# ---------------------------------------------------------------------------
+
+
+def test_import_media_skip_conflict_leaves_trashed_row_untouched(tmp_path):
+    target_path = tmp_path / "target.sqlite"
+    target = MediaDatabase(target_path, client_id="target")
+    url = "https://example.com/trashed-article"
+    media_id, _, _ = target.add_media_with_keywords(
+        title="Original title",
+        media_type="article",
+        content="original content",
+        url=url,
+    )
+    assert target.mark_as_trash(media_id) is True
+    target.close_connection()
+
+    extract_dir = tmp_path / "export"
+    media_dir = extract_dir / "content" / "media"
+    metadata_dir = media_dir / "metadata"
+    metadata_dir.mkdir(parents=True)
+    export_media_id = "999"
+    (metadata_dir / f"media_{export_media_id}.json").write_text(
+        json.dumps(
+            {
+                "title": "Reimported title",
+                "url": url,
+                "media_type": "article",
+                "metadata": {"media_keywords": []},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (media_dir / f"media_{export_media_id}.txt").write_text(
+        "reimported content", encoding="utf-8"
+    )
+
+    manifest = ChatbookManifest(
+        version=ChatbookVersion.V1, name="skip-conflict", description="test"
+    )
+    importer = ChatbookImporter(db_paths={"Media": str(target_path)})
+    status = ImportStatus()
+    importer._import_media(
+        extract_dir, manifest, [export_media_id], ConflictResolution.SKIP, status
+    )
+
+    # Its OWN existing-check (get_media_by_url, include_trash=False) can't
+    # see the trashed row, so this is NOT `status.skipped_items` -- it
+    # falls through to `add_media_with_keywords`, which (without
+    # `restore_trashed=True`) reports the trashed match as an ordinary
+    # duplicate-skip: `media_id=None` -> `status.failed_items += 1`. The
+    # important behavior under test is what happens to the ROW, not which
+    # counter absorbs it.
+    assert status.successful_items == 0
+    assert status.failed_items == 1
+
+    verify = MediaDatabase(target_path, client_id="verify")
+    row = verify.get_media_by_id(media_id, include_trash=True)
+    assert row["is_trash"] == 1, "SKIP must not resurrect a trashed row"
+    assert row["title"] == "Original title"
+    assert row["content"] == "original content"
+    cursor = verify.execute_query("SELECT COUNT(*) FROM Media")
+    assert cursor.fetchone()[0] == 1, "no second row must have been created either"
+    verify.close_connection()

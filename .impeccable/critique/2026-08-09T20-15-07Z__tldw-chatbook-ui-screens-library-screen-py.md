@@ -4,11 +4,30 @@ total_score: 22
 max_score: 40
 na_heuristics: 
 p0_count: 1
-p1_count: 9
+p1_count: 8
 timestamp: 2026-08-09T20-15-07Z
 slug: tldw-chatbook-ui-screens-library-screen-py
 ---
 Method: dual-agent (A: design-director live walkthrough · B: mechanical probes/detector) — isolated tmux instances (`rcritA6729`/`rcritB6729`), scratch profiles, identity-verified on every launch; dev `4d0232358` (all three fix arcs merged), read-only worktree.
+
+> **CORRECTION (2026-08-09, after task-4020's investigation): RC-02 is WITHDRAWN — it was a measurement artifact, not a defect.**
+> B's nav probe (V7) used colorless `tmux capture-pane -p`, which cannot distinguish a genuinely
+> mid-word-clipped label from a correctly ghosted one: ghosting paints foreground **equal to**
+> background, so the characters remain in the buffer while being invisible on screen. Direct ANSI
+> decoding at 80/100/120 cols with early and late active tabs shows fg `(18,18,18)` == bg
+> `(18,18,18)` for every fragment B quoted (`⌃6 Watc`, `⌃9 M`, the `‹ …` lead-ins). **Nav ghosting
+> was never broken.**
+> B's own evidence corroborates this in hindsight: its click at col 78 landed on what it called a
+> "blank" cell and did not navigate — that cell was a ghosted tab, exactly as designed.
+> **Assessment A contradicted B here** ("the nav collapses to `More ▾` rather than hard-cutting
+> mid-word") and A was right; the synthesis resolved the conflict toward the mechanical arm without
+> flagging the disagreement. Two synthesis lessons: (1) a plain capture is not evidence about a
+> colour-based mechanism — use `-e` whenever the mechanism under test IS colour; (2) an explicit
+> A-vs-B contradiction must be named and adjudicated in the report, never silently resolved.
+> What task-4020 *did* find and fix was real but different: task-3200's tests only ever exercised
+> `MainNavigationBar.DEFAULT_CSS`, never the bundled-CSS tier that actually wins live — a genuine
+> coverage gap, now closed. The score is unchanged (RC-02 was not scored as its own heuristic
+> deduction), but **p1_count should be read as 8, not 9.**
 
 # Re-critique — Library screen + all subscreens (2026-08-09)
 
@@ -59,7 +78,7 @@ Two aggravators: the footer on that canvas advertises `Esc Notes` as the way out
 - **RC-01 — Escape from the Notes editor kills the app.** See headline. Fix in flight.
 
 ### P1
-- **RC-02 — Our own nav ghosting is not producing its intended outcome at dev tip.** B measured tab labels cut **mid-word at 80 AND 120** (`⌃6 Watc`, `⌃9 M`, scroll fragments `‹ oleplay…`, `‹ edules…`) and found **no ghosted tabs** — the bar scrolls instead. The ghost machinery IS present (10 references in `main_navigation.py`, 2 in `_navigation.tcss`), so this is a failure of effect, not missing code. Leading hypothesis: dev replaced the in-strip pager with `NavOverflowMenu` during our arc, and the polish batch's rebase reconciliation kept the ghosting while the scroll/paging model beneath it changed. Task-3200's entire four-round arc was about this exact defect. **Re-verify and re-root-cause against the new overflow model.** (Mitigating: no ghost was clickable-while-invisible — B's blank-cell click did not navigate.)
+- **RC-02 — WITHDRAWN (see correction at the top of this document).** ~~Our own nav ghosting is not producing its intended outcome at dev tip.~~ B measured tab labels cut **mid-word at 80 AND 120** (`⌃6 Watc`, `⌃9 M`, scroll fragments `‹ oleplay…`, `‹ edules…`) and found **no ghosted tabs** — the bar scrolls instead. The ghost machinery IS present (10 references in `main_navigation.py`, 2 in `_navigation.tcss`), so this is a failure of effect, not missing code. Leading hypothesis: dev replaced the in-strip pager with `NavOverflowMenu` during our arc, and the polish batch's rebase reconciliation kept the ghosting while the scroll/paging model beneath it changed. Task-3200's entire four-round arc was about this exact defect. ~~Re-verify and re-root-cause against the new overflow model.~~ (Mitigating: no ghost was clickable-while-invisible — B's blank-cell click did not navigate.) **This was a measurement artifact of colourless `tmux capture-pane -p`: direct ANSI decoding shows the ghosted fragments have fg==bg, i.e. nav ghosting was never broken. Not counted in `p1_count` (read as 8, not 9).**
 - **RC-03 — Blank notes still persist; the GC exists but its predicate never fires.** B: opening the blank editor bumps `Notes (2)→(3)` and shows `Saved` before any keystroke; exiting via `‹ Notes` retains it; typing then deleting everything also retains it (`Notes (4)`, four indistinguishable `Untitled` rows). The session-blank GC from the P2 batch IS present and IS wired to ~7 exit paths including this one. Leading hypothesis, worth checking first: the title field carries the **literal string "Untitled"** rather than a placeholder, so `_flush_library_note_save`'s emptiness test (`any(value.strip() for value in (title, content, keywords))`) sees a truthy title and takes the save branch. Contrast: empty **prompt** and **skill** drafts discard correctly — the right behavior exists twice in the same screen.
 - **RC-04 — Soft-deleted media becomes permanently un-importable.** B: bulk-delete 2 items → re-import the same files → `≡ matched · Already in Library — matched an existing item; nothing new was imported.` while the items are absent from the list and the count stays down. Dedup matches soft-deleted rows, so the file can never be re-added and the "trash" is unreachable. **Data-loss-shaped**: the user's content is neither present nor restorable through the UI.
 - **RC-05 — Bulk delete has no receipt, no undo, and the promised trash does not exist.** The confirm earns consent by promising reversibility; nothing in the rail, the `type:` filter, or any canvas reaches a trash. Creation gets `✓ done · file · 1s` + a jump link; destruction gets silence. (Compounds RC-04.)
@@ -85,7 +104,7 @@ Escape still inert on Export, Collections, and the Study staging canvas; the sta
 ## What the arcs actually bought
 Eight of ten prior findings are genuinely fixed with evidence, and heuristics 1, 5, 7, 9 improved on real machinery. The score didn't move because **the fixes cast three shadows** (Files mode's lost door, the invisible bulk buttons, jargon replacing a lie) and because the *source* of inconsistency migrated rather than reduced: the old fracture was vocabulary, and we fixed it; the new fracture is grammar — four footer dialects, three active-state markers, three toolbar layouts, one glyph with two meanings. **Fixing the words did not fix the system.**
 
-Two of our own shipped fixes (nav ghosting, blank-note GC) are present in code but not producing their intended effect at dev tip — both worth re-rooting before anything new is built on them.
+One of our own shipped fixes (blank-note GC) is present in code but not producing its intended effect at dev tip — worth re-rooting before anything new is built on it. (Nav ghosting is NOT in this category — see the RC-02 withdrawal correction above: it was a colourless-capture measurement artifact, not a broken fix.)
 
 ## Questions
 1. The last critique's headline demanded Escape work; the remediation wired it to a method that doesn't exist, behind a state branch no mount-time test enters. What test shape would have caught it — and why does a codebase with mutation-tested guards elsewhere have none on the exit path of its most-used editor?
