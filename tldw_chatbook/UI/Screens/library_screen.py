@@ -20888,6 +20888,18 @@ class LibraryScreen(BaseAppScreen):
             getattr(self, "_library_external_submit_generation", 0) + 1
         )
         worker = getattr(self, "_library_external_submit_worker", None)
+        scope_id = getattr(self, "_library_external_submit_scope_id", None)
+        owner = getattr(self, "_library_model_install_progress_owner", None)
+        had_non_status_state = bool(
+            worker is not None
+            or scope_id
+            or getattr(self, "_library_external_submit_backend", None)
+            or owner == "external-vad"
+            or (
+                owner is None
+                and getattr(self, "_parakeet_v2_install_progress", None) is not None
+            )
+        )
         if worker is not None:
             try:
                 if not worker.is_finished:
@@ -20895,7 +20907,6 @@ class LibraryScreen(BaseAppScreen):
             except Exception:
                 pass
         self._library_external_submit_worker = None
-        scope_id = getattr(self, "_library_external_submit_scope_id", None)
         self._library_external_submit_scope_id = None
         self._library_external_submit_backend = None
         if scope_id:
@@ -20905,22 +20916,39 @@ class LibraryScreen(BaseAppScreen):
                 )
             except Exception:
                 logger.warning("Could not release a provisional Library model scope.")
-        self._set_library_external_status("", busy=False)
+        status_changed = self._set_library_external_status("", busy=False)
         self._clear_library_external_vad_progress()
+        if (
+            had_non_status_state
+            and not status_changed
+            and getattr(self, "_is_mounted", False)
+        ):
+            self.refresh(recompose=True)
 
-    def _set_library_external_status(self, status: str, *, busy: bool) -> None:
+    def _set_library_external_status(self, status: str, *, busy: bool) -> bool:
         """Set path-free preparation state and refresh the mounted canvas."""
 
+        changed = (
+            getattr(self, "_library_external_submit_status", "") != status
+            or getattr(self, "_library_external_submit_busy", False) != busy
+        )
         self._library_external_submit_status = status
         self._library_external_submit_busy = busy
-        if getattr(self, "_is_mounted", False):
+        if changed and getattr(self, "_is_mounted", False):
             self.refresh(recompose=True)
+        return changed
 
     def _clear_library_external_vad_progress(self) -> None:
         """Hide shared progress only when it belongs to external VAD setup."""
 
         owner = getattr(self, "_library_model_install_progress_owner", None)
         if owner not in (None, "external-vad"):
+            return
+        if (
+            owner is None
+            and getattr(self, "_parakeet_v2_install_progress", None) is None
+            and not getattr(self, "_library_model_install_progress_label", "")
+        ):
             return
         self._parakeet_v2_install_progress = None
         self._library_model_install_progress_label = ""

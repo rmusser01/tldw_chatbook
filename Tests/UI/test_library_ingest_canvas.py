@@ -19,6 +19,16 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Checkbox, Collapsible, Input, Select, Static
 
+from Tests.UI.app_factory import _build_test_app
+from Tests.UI.test_library_shell import (
+    LIBRARY_TEST_SIZE,
+    LibraryHarness,
+    _active_library_screen,
+    _seed_conversations,
+    _wait_for_library_shell,
+    _wait_for_selector,
+)
+from tldw_chatbook.Constants import LIBRARY_NAV_CONTEXT_INGEST
 from tldw_chatbook.Library.ingest_types import PreflightResult
 from tldw_chatbook.Library.library_ingest_jobs import IngestJobState, LibraryIngestJob
 from tldw_chatbook.Library.library_ingest_state import (
@@ -27,6 +37,7 @@ from tldw_chatbook.Library.library_ingest_state import (
     build_library_ingest_state,
 )
 from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
+from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library.library_ingest_canvas import (
     LibraryIngestCanvas,
@@ -1304,6 +1315,56 @@ async def test_parakeet_model_directory_picker_updates_only_the_submission_form(
     screen.app_instance._ensure_parakeet_source_service.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_idle_external_fence_preserves_focused_form_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Idle semantic edits fence stale callbacks without remounting the form."""
+
+    monkeypatch.setattr(
+        library_screen_module, "get_cli_setting", lambda *_args, **_kwargs: None
+    )
+    app = _build_test_app()
+    _seed_conversations(app, ())
+    screen = LibraryScreen(app)
+    screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_INGEST: True})
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-title")
+
+        title = screen.query_one("#library-ingest-title", Input)
+        title.focus()
+        await pilot.pause()
+        refresh = MagicMock(wraps=screen.refresh)
+        screen.refresh = refresh
+
+        title.value = "Atlas notes"
+        title.cursor_position = 5
+        await pilot.pause()
+        screen.post_message(
+            LibraryIngestCanvas.OptionValueChanged("pdf", "ocr_language", "fr")
+        )
+        screen.post_message(
+            LibraryIngestCanvas.OptionValueChanged("generic", "chunk_size", "2048")
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_ingest_form.title == "Atlas notes"
+        assert screen._library_ingest_form.type_options["pdf"]["ocr_language"] == "fr"
+        assert (
+            screen._library_ingest_form.type_options["generic"]["chunk_size"]
+            == "2048"
+        )
+        assert screen.query_one("#library-ingest-title", Input) is title
+        assert screen.app.focused is title
+        assert title.cursor_position == 5
+        refresh.assert_not_called()
+
+
 def test_external_override_defers_submit_until_preparation_finishes() -> None:
     screen = object.__new__(LibraryScreen)
     submit = MagicMock()
@@ -1926,6 +1987,7 @@ def test_external_invalidation_clears_busy_status_and_shared_vad_progress() -> N
     assert screen._library_external_submit_status == ""
     assert screen._parakeet_v2_install_progress is None
     assert progress_widget.display is False
+    screen.refresh.assert_called_once_with(recompose=True)
 
 
 def test_physical_external_cancel_releases_scope_and_preserves_form() -> None:
