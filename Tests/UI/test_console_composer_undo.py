@@ -317,6 +317,10 @@ def test_composer_transaction_checkpoint_restores_all_user_undo_state():
         {"undo_stack": ("not history",)},
         {"redo_stack": []},
         {"coalescing_active": 1},
+        {"undo_stack": (_DraftHistorySnapshot(text=object(), cursor_index=-99),)},
+        {"undo_stack": (_DraftHistorySnapshot(text="valid", cursor_index=True),)},
+        {"redo_stack": (_DraftHistorySnapshot(text="valid", cursor_index=-1),)},
+        {"redo_stack": (_DraftHistorySnapshot(text="valid", cursor_index=6),)},
     ],
 )
 def test_composer_transaction_checkpoint_rejects_forged_internal_shapes(
@@ -325,6 +329,7 @@ def test_composer_transaction_checkpoint_rejects_forged_internal_shapes(
     composer = ConsoleComposerBar()
     composer.insert_text("unchanged")
     before = composer.capture_draft_snapshot()
+    history_before = composer.export_undo_history()
     checkpoint = replace(
         composer.capture_transaction_checkpoint(),
         **forged_fields,
@@ -334,6 +339,7 @@ def test_composer_transaction_checkpoint_rejects_forged_internal_shapes(
         composer.rollback_transaction(checkpoint)
 
     assert composer.capture_draft_snapshot() == before
+    assert composer.export_undo_history() == history_before
 
 
 def test_composer_restore_undo_history_none_gives_empty_stacks():

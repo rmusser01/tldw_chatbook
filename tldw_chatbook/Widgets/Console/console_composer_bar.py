@@ -875,10 +875,17 @@ class ConsoleComposerBar(Horizontal):
             type(checkpoint.undo_stack) is not tuple
             or type(checkpoint.redo_stack) is not tuple
             or type(checkpoint.coalescing_active) is not bool
-            or any(
-                not isinstance(entry, _DraftHistorySnapshot)
-                for entry in (*checkpoint.undo_stack, *checkpoint.redo_stack)
+        ):
+            raise ComposerTransactionValidationError(
+                "Composer transaction checkpoint history is invalid."
             )
+        history_entries = (*checkpoint.undo_stack, *checkpoint.redo_stack)
+        if any(
+            not isinstance(entry, _DraftHistorySnapshot)
+            or type(entry.text) is not str
+            or type(entry.cursor_index) is not int
+            or not 0 <= entry.cursor_index <= len(entry.text)
+            for entry in history_entries
         ):
             raise ComposerTransactionValidationError(
                 "Composer transaction checkpoint history is invalid."
