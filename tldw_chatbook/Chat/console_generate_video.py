@@ -19,15 +19,22 @@ has no ``@`` token yet.)
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass
+import tempfile
+from contextlib import suppress
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import BinaryIO, Literal
 
 from tldw_chatbook.Chat.console_command_grammar import (
     COMMAND_PREFIX,
     GENERATE_VIDEO_COMMAND_NAME,
 )
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
-from tldw_chatbook.Video_Generation.video_store import VideoStore
+from tldw_chatbook.Video_Generation.video_store import (
+    VideoCapacityExceeded,
+    VideoStore,
+    VideoStoreSaveError,
+)
 
 GENERATE_VIDEO_COMMAND_WORD = COMMAND_PREFIX + GENERATE_VIDEO_COMMAND_NAME
 """The full leading command word (``"/generate-video"``), as registered."""
@@ -38,6 +45,68 @@ GENERATE_VIDEO_USAGE_TEXT = "Usage: /generate-video [:backend] <prompt>"
 #: Backends billed per generated second (for the cost-confirm gate). Local
 #: backends (comfyui, stable_diffusion_cpp) are free at the margin.
 _PAID_BACKENDS = frozenset({"minimax"})
+
+PendingReason = Literal["over_capacity", "store_failure"]
+
+
+@dataclass
+class PendingVideoArtifact:
+    """One generated video awaiting a user-selected storage outcome."""
+
+    metadata: VideoGenerationMetadata
+    message_id: str
+    slug: str
+    extension: str
+    size_bytes: int
+    max_bytes: int
+    reason: PendingReason
+    stream: BinaryIO = field(repr=False)
+    error_type: str | None = None
+
+    def rewind(self) -> None:
+        """Position the owned payload stream at its beginning."""
+        self.stream.seek(0)
+
+    def close(self) -> None:
+        """Release the owned payload stream; repeated calls are harmless."""
+        if not self.stream.closed:
+            self.stream.close()
+
+
+def _stage_pending_video(
+    *,
+    metadata: VideoGenerationMetadata,
+    message_id: str,
+    slug: str,
+    extension: str,
+    content: bytes,
+    max_bytes: int,
+    reason: PendingReason,
+    error_type: str | None = None,
+) -> PendingVideoArtifact:
+    """Move an unstored generation into an auto-deleting temporary stream."""
+    stream = tempfile.TemporaryFile(mode="w+b")
+    try:
+        written = stream.write(content)
+        if written != len(content):
+            raise OSError("pending video staging was incomplete")
+        artifact = PendingVideoArtifact(
+            metadata=metadata,
+            message_id=message_id,
+            slug=slug,
+            extension=extension,
+            size_bytes=len(content),
+            max_bytes=max_bytes,
+            reason=reason,
+            stream=stream,
+            error_type=error_type,
+        )
+        artifact.rewind()
+    except Exception:
+        with suppress(Exception):
+            stream.close()
+        raise
+    return artifact
 
 
 @dataclass(frozen=True)
@@ -126,7 +195,7 @@ def run_video_generation(
     model: str | None = None,
     cancel_event: threading.Event | None = None,
     video_store: VideoStore | None = None,
-) -> tuple[VideoGenerationMetadata, Path]:
+) -> tuple[VideoGenerationMetadata, Path] | PendingVideoArtifact:
     """Run one video generation and persist the bytes to the VideoStore.
 
     Blocking: must run off the UI loop. Allocates the slug BEFORE saving so
@@ -147,10 +216,12 @@ def run_video_generation(
         video_store: Injected store (tests); defaults to a live-config store.
 
     Returns:
-        ``(metadata, path)`` -- the persisted video facts and file path.
+        ``(metadata, path)`` for a managed save, or a temporary-file-backed
+        :class:`PendingVideoArtifact` when storage needs a user decision.
 
     Raises:
         VideoGenerationError: Propagated from validation/dispatch/adapter.
+        OSError: Temporary staging failed after managed storage failed.
     """
     if (
         style_negative_prompt
@@ -190,7 +261,6 @@ def run_video_generation(
     # dispatch seam; adapters that don't declare cancel_event support are
     # called without it (signature-detected there, never TypeError-sniffed).
     result = run_generation(request, cancel_event=cancel_event)
-    path = store.save(message_id, slug, result.content, extension="mp4")
     metadata = VideoGenerationMetadata(
         name=slug,
         prompt=prompt,
@@ -206,4 +276,33 @@ def run_video_generation(
         height=result.height or height,
         ratio=ratio,
     )
-    return metadata, path
+    extension = "mp4"
+    try:
+        outcome = store.save(
+            message_id,
+            slug,
+            result.content,
+            extension=extension,
+        )
+    except VideoStoreSaveError as exc:
+        return _stage_pending_video(
+            metadata=metadata,
+            message_id=message_id,
+            slug=slug,
+            extension=extension,
+            content=result.content,
+            max_bytes=store.capacity_bytes,
+            reason="store_failure",
+            error_type=type(exc).__name__,
+        )
+    if isinstance(outcome, VideoCapacityExceeded):
+        return _stage_pending_video(
+            metadata=metadata,
+            message_id=message_id,
+            slug=slug,
+            extension=extension,
+            content=result.content,
+            max_bytes=outcome.max_bytes,
+            reason="over_capacity",
+        )
+    return metadata, outcome
