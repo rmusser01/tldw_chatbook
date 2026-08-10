@@ -16830,6 +16830,8 @@ class ChatScreen(BaseAppScreen):
     @staticmethod
     def _close_pending_console_video(artifact: PendingVideoArtifact) -> None:
         """Close one artifact without letting cleanup interrupt its caller."""
+        if getattr(getattr(artifact, "stream", None), "closed", False):
+            return
         try:
             artifact.close()
         except Exception as exc:  # noqa: BLE001 - teardown must continue
@@ -16909,53 +16911,104 @@ class ChatScreen(BaseAppScreen):
             deferred.pop(artifact.message_id, None)
             ChatScreen._close_pending_console_video(artifact)
 
+    @staticmethod
+    async def _await_shielded_console_video_task(
+        task,
+        *,
+        cancelled_result_callback=None,
+    ) -> Any:
+        """Wait for a child operation to finish before propagating cancellation."""
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError as cancellation:
+            while not task.done():
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    continue
+                except BaseException:
+                    break
+            try:
+                result = task.result()
+            except BaseException:
+                raise cancellation
+            if cancelled_result_callback is not None:
+                cancelled_result_callback(result)
+            raise cancellation
+
     async def _run_pending_console_video_operation(
         self,
         artifact: PendingVideoArtifact,
         function,
         *args,
-        cancelled_result_callback=None,
+        result_callback=None,
         **kwargs,
     ) -> tuple[bool, Any]:
-        """Run one blocking artifact operation while deferring teardown close."""
+        """Run and finalize one artifact operation before releasing ownership."""
         gate = self._begin_pending_console_video_operation(artifact)
         if gate is None:
             return False, None
-        executor_task = asyncio.create_task(
-            asyncio.to_thread(
+
+        async def _run_and_finalize() -> Any:
+            result = await asyncio.to_thread(
                 function,
                 *args,
                 publication_gate=gate,
                 **kwargs,
             )
-        )
+            if result_callback is not None:
+                result = await result_callback(result)
+            return result
+
+        operation_task = asyncio.create_task(_run_and_finalize())
         try:
-            try:
-                result = await asyncio.shield(executor_task)
-            except asyncio.CancelledError as cancellation:
-                while not executor_task.done():
-                    try:
-                        await asyncio.shield(executor_task)
-                    except asyncio.CancelledError:
-                        continue
-                try:
-                    result = executor_task.result()
-                except BaseException:
-                    raise cancellation
-                if cancelled_result_callback is not None:
-                    finalizer_task = asyncio.create_task(
-                        cancelled_result_callback(result)
-                    )
-                    while not finalizer_task.done():
-                        try:
-                            await asyncio.shield(finalizer_task)
-                        except asyncio.CancelledError:
-                            continue
-                    finalizer_task.result()
-                raise cancellation
+            result = await ChatScreen._await_shielded_console_video_task(
+                operation_task
+            )
             return True, result
         finally:
             self._end_pending_console_video_operation(artifact)
+
+    async def _run_console_video_generation_operation(
+        self,
+        *,
+        session_id: str,
+        message_id: str,
+        **generation_kwargs,
+    ) -> None:
+        """Run generation and make every committed tuple durable in one child."""
+
+        async def _generate_and_finalize() -> Any:
+            outcome = await asyncio.to_thread(
+                run_video_generation,
+                message_id=message_id,
+                **generation_kwargs,
+            )
+            if not isinstance(outcome, PendingVideoArtifact):
+                await ChatScreen._resolve_generated_video_outcome(
+                    self,
+                    outcome,
+                    session_id=session_id,
+                    message_id=message_id,
+                )
+            return outcome
+
+        def _close_cancelled_pending(outcome: Any) -> None:
+            if isinstance(outcome, PendingVideoArtifact):
+                ChatScreen._close_pending_console_video(outcome)
+
+        operation_task = asyncio.create_task(_generate_and_finalize())
+        outcome = await ChatScreen._await_shielded_console_video_task(
+            operation_task,
+            cancelled_result_callback=_close_cancelled_pending,
+        )
+        if isinstance(outcome, PendingVideoArtifact):
+            await ChatScreen._resolve_generated_video_outcome(
+                self,
+                outcome,
+                session_id=session_id,
+                message_id=message_id,
+            )
 
     def _drain_pending_console_videos(self) -> None:
         """Atomically detach and close every staged video owned by the screen."""
@@ -17522,9 +17575,9 @@ class ChatScreen(BaseAppScreen):
                 try:
                     video_store = self._ensure_console_video_store()
 
-                    async def _finalize_cancelled_managed_result(
+                    async def _finalize_managed_result(
                         managed_path,
-                    ) -> None:
+                    ) -> Path | None:
                         resolved_path = await asyncio.to_thread(
                             video_store.resolve,
                             artifact.message_id,
@@ -17541,6 +17594,8 @@ class ChatScreen(BaseAppScreen):
                                 persist=True,
                                 message_id=artifact.message_id,
                             )
+                            return Path(managed_path)
+                        return None
 
                     if artifact.reason == "over_capacity":
                         started, managed_path = (
@@ -17552,9 +17607,7 @@ class ChatScreen(BaseAppScreen):
                                 artifact.stream,
                                 artifact.size_bytes,
                                 extension=artifact.extension,
-                                cancelled_result_callback=(
-                                    _finalize_cancelled_managed_result
-                                ),
+                                result_callback=_finalize_managed_result,
                             )
                         )
                     else:
@@ -17563,9 +17616,7 @@ class ChatScreen(BaseAppScreen):
                                 artifact,
                                 self._retry_pending_console_video,
                                 artifact,
-                                cancelled_result_callback=(
-                                    _finalize_cancelled_managed_result
-                                ),
+                                result_callback=_finalize_managed_result,
                             )
                         )
                     if not started:
@@ -17587,16 +17638,7 @@ class ChatScreen(BaseAppScreen):
                 terminal = getattr(self, "_pending_video_artifacts_closed", False)
                 if not self._owns_pending_console_video(artifact) and not terminal:
                     return
-                resolved_path = await asyncio.to_thread(
-                    video_store.resolve,
-                    artifact.message_id,
-                    artifact.slug,
-                    extension=artifact.extension,
-                )
-                terminal = getattr(self, "_pending_video_artifacts_closed", False)
-                if not self._owns_pending_console_video(artifact) and not terminal:
-                    return
-                if resolved_path is None or Path(resolved_path) != Path(managed_path):
+                if managed_path is None:
                     if terminal:
                         return
                     self.app_instance.notify(
@@ -17605,13 +17647,7 @@ class ChatScreen(BaseAppScreen):
                         severity="error",
                     )
                     continue
-                chat_store.append_video_message(
-                    session_id,
-                    video_metadata=artifact.metadata,
-                    persist=True,
-                    message_id=artifact.message_id,
-                )
-                if getattr(self, "_pending_video_artifacts_closed", False):
+                if terminal:
                     return
                 await self._sync_native_console_chat_ui()
                 return
@@ -17746,8 +17782,10 @@ class ChatScreen(BaseAppScreen):
                 f"⏳ Generating video on {backend}… (Stop cancels)",
                 session_id=session.id,
             )
-            outcome = await asyncio.to_thread(
-                run_video_generation,
+            await ChatScreen._run_console_video_generation_operation(
+                self,
+                session_id=session.id,
+                message_id=message_id,
                 backend=backend,
                 prompt=prompt_text,
                 negative_prompt=negative_text or None,
@@ -17755,16 +17793,9 @@ class ChatScreen(BaseAppScreen):
                 duration_seconds=style_params.get("duration_seconds"),
                 fps=style_params.get("fps"),
                 ratio=style_params.get("ratio"),
-                message_id=message_id,
                 cancel_event=cancel_event,
                 publication_gate=publication_gate,
                 video_store=self._ensure_console_video_store(),
-            )
-            await ChatScreen._resolve_generated_video_outcome(
-                self,
-                outcome,
-                session_id=session.id,
-                message_id=message_id,
             )
         except Exception as exc:  # noqa: BLE001 - reported to the user, never a bare crash
             if composer is not None and saved_draft:
@@ -17942,8 +17973,10 @@ class ChatScreen(BaseAppScreen):
             self, new_message_id
         )
         try:
-            outcome = await asyncio.to_thread(
-                run_video_generation,
+            await ChatScreen._run_console_video_generation_operation(
+                self,
+                session_id=session_id,
+                message_id=new_message_id,
                 backend=meta.backend,
                 prompt=meta.prompt,
                 negative_prompt=meta.negative_prompt or None,
@@ -17956,16 +17989,9 @@ class ChatScreen(BaseAppScreen):
                 ratio=meta.ratio,
                 seed=-1,
                 model=meta.model,
-                message_id=new_message_id,
                 cancel_event=cancel_event,
                 publication_gate=publication_gate,
                 video_store=self._ensure_console_video_store(),
-            )
-            await ChatScreen._resolve_generated_video_outcome(
-                self,
-                outcome,
-                session_id=session_id,
-                message_id=new_message_id,
             )
         except Exception as exc:  # noqa: BLE001 - reported, never a bare crash
             logger.error(

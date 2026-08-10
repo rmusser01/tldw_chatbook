@@ -1999,6 +1999,324 @@ async def test_resolver_cancellation_finalizes_managed_commit_before_stream_clos
     assert cast(_TrackingStream, artifact.stream).close_calls == 1
 
 
+@pytest.mark.parametrize("caller", ["initial", "regenerate"])
+@pytest.mark.asyncio
+async def test_generation_cancellation_after_commit_persists_before_child_finishes(
+    caller: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+    from tldw_chatbook.Video_Generation import adapter_registry
+
+    generated_meta = VideoGenerationMetadata(
+        name="generated", prompt="generate me", backend="comfyui"
+    )
+    original_meta = VideoGenerationMetadata(
+        name="original", prompt="generate me", backend="comfyui"
+    )
+    managed_path = tmp_path / f"{caller}-cancelled-after-commit.mp4"
+    commit_finished = threading.Event()
+    release_generation = threading.Event()
+    generation_finished = threading.Event()
+    captured_message_ids: list[str] = []
+    inflight: set[str] = set()
+    adapter_cancels: dict = {}
+    harness = _OutcomeHarness(actions=[], video_store=object())
+    harness._console_videogen_inflight_sessions = lambda: inflight
+    harness._console_videogen_cancel_events = lambda: adapter_cancels
+    harness._append_native_console_system_message = (
+        lambda *_args, **_kwargs: _completed_async()
+    )
+    harness.app_instance = SimpleNamespace(notify=lambda *_args, **_kwargs: None)
+
+    if caller == "initial":
+        harness.chat_store.workspace_context = SimpleNamespace(
+            active_workspace_id="workspace"
+        )
+        harness.chat_store.ensure_session = lambda **_kwargs: SimpleNamespace(
+            id="session"
+        )
+        harness._session = SimpleNamespace(
+            _default_console_session_settings=lambda: object()
+        )
+        harness._console_composer_or_none = lambda: None
+        harness._clear_console_composer_draft = lambda: None
+    else:
+        harness.chat_store.get_message = lambda _message_id: SimpleNamespace(
+            video_metadata=original_meta
+        )
+        harness.chat_store.session_id_for_message = lambda _message_id: "session"
+
+    class Registry:
+        @staticmethod
+        def resolve_backend(_backend):
+            return object()
+
+    def commit_then_block_generation(**kwargs):
+        gate = kwargs["publication_gate"]
+        captured_message_ids.append(kwargs["message_id"])
+        with gate.claim_publication() as active:
+            assert active
+            managed_path.write_bytes(b"committed generation")
+        commit_finished.set()
+        assert release_generation.wait(5)
+        generation_finished.set()
+        return generated_meta, managed_path
+
+    monkeypatch.setattr(
+        chat_screen_module,
+        "get_video_generation_config",
+        lambda: SimpleNamespace(
+            default_backend="comfyui", confirm_cost_estimate=False
+        ),
+    )
+    monkeypatch.setattr(adapter_registry, "get_registry", lambda: Registry())
+    monkeypatch.setattr(
+        chat_screen_module, "run_video_generation", commit_then_block_generation
+    )
+
+    if caller == "initial":
+        operation = asyncio.create_task(
+            ChatScreen._console_command_generate_video(
+                harness, SimpleNamespace(args="generate me")
+            )
+        )
+    else:
+        operation = asyncio.create_task(
+            ChatScreen._regenerate_console_video_message(harness, "old-message")
+        )
+    while not commit_finished.is_set():
+        await asyncio.sleep(0)
+
+    harness._drain_pending_console_videos()
+    operation.cancel()
+    for _ in range(3):
+        await asyncio.sleep(0)
+    cancellation_waited = not operation.done()
+    release_generation.set()
+    while not generation_finished.is_set():
+        await asyncio.sleep(0)
+    with pytest.raises(asyncio.CancelledError):
+        await operation
+
+    assert cancellation_waited
+    assert managed_path.read_bytes() == b"committed generation"
+    assert len(captured_message_ids) == 1
+    assert len(harness.appended) == 1
+    assert harness.appended[0][1]["message_id"] == captured_message_ids[0]
+    assert harness.appended[0][1]["persist"] is True
+    assert harness.sync_count == 0
+    assert inflight == set()
+    assert adapter_cancels == {}
+
+
+@pytest.mark.asyncio
+async def test_initial_generation_cancellation_closes_late_pending_without_modal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+    from tldw_chatbook.Video_Generation import adapter_registry
+
+    worker_started = threading.Event()
+    release_worker = threading.Event()
+    worker_finished = threading.Event()
+    pending: list[PendingVideoArtifact] = []
+    inflight: set[str] = set()
+    adapter_cancels: dict = {}
+    harness = _OutcomeHarness(actions=[], video_store=object())
+    harness._console_videogen_inflight_sessions = lambda: inflight
+    harness._console_videogen_cancel_events = lambda: adapter_cancels
+    harness._append_native_console_system_message = (
+        lambda *_args, **_kwargs: _completed_async()
+    )
+    harness.app_instance = SimpleNamespace(notify=lambda *_args, **_kwargs: None)
+    harness.chat_store.workspace_context = SimpleNamespace(
+        active_workspace_id="workspace"
+    )
+    harness.chat_store.ensure_session = lambda **_kwargs: SimpleNamespace(
+        id="session"
+    )
+    harness._session = SimpleNamespace(
+        _default_console_session_settings=lambda: object()
+    )
+    harness._console_composer_or_none = lambda: None
+    harness._clear_console_composer_draft = lambda: None
+
+    class Registry:
+        @staticmethod
+        def resolve_backend(_backend):
+            return object()
+
+    def return_pending_after_cancel(**kwargs):
+        worker_started.set()
+        assert release_worker.wait(5)
+        try:
+            artifact = _artifact(
+                reason="store_failure", message_id=kwargs["message_id"]
+            )
+            pending.append(artifact)
+            return artifact
+        finally:
+            worker_finished.set()
+
+    monkeypatch.setattr(
+        chat_screen_module,
+        "get_video_generation_config",
+        lambda: SimpleNamespace(
+            default_backend="comfyui", confirm_cost_estimate=False
+        ),
+    )
+    monkeypatch.setattr(adapter_registry, "get_registry", lambda: Registry())
+    monkeypatch.setattr(
+        chat_screen_module, "run_video_generation", return_pending_after_cancel
+    )
+
+    operation = asyncio.create_task(
+        ChatScreen._console_command_generate_video(
+            harness, SimpleNamespace(args="generate me")
+        )
+    )
+    while not worker_started.is_set():
+        await asyncio.sleep(0)
+
+    harness._drain_pending_console_videos()
+    operation.cancel()
+    for _ in range(3):
+        await asyncio.sleep(0)
+    cancellation_waited = not operation.done()
+    release_worker.set()
+    while not worker_finished.is_set():
+        await asyncio.sleep(0)
+    with pytest.raises(asyncio.CancelledError):
+        await operation
+
+    assert cancellation_waited
+    assert len(pending) == 1
+    assert pending[0].stream.closed
+    assert cast(_TrackingStream, pending[0].stream).close_calls == 1
+    assert harness.waited_screens == []
+    assert harness.appended == []
+    assert harness.sync_count == 0
+    assert inflight == set()
+    assert adapter_cancels == {}
+
+
+@pytest.mark.asyncio
+async def test_pending_cancellation_during_managed_resolve_persists_before_close(
+    tmp_path: Path,
+) -> None:
+    payload = b"pending commit before blocked resolve"
+    artifact = _artifact(payload, message_id="pending-blocked-resolve")
+    managed_path = tmp_path / "pending-blocked-resolve.mp4"
+    resolve_started = threading.Event()
+    release_resolve = threading.Event()
+    resolve_finished = threading.Event()
+
+    class ResolveBlockingStore:
+        def adopt_oversized(self, *_args, **kwargs):
+            stream = _args[2]
+            stream.seek(0)
+            copied = stream.read()
+            stream.seek(0)
+            with kwargs["publication_gate"].claim_publication() as active:
+                assert active
+                managed_path.write_bytes(copied)
+            return managed_path
+
+        def resolve(self, *_args, **_kwargs):
+            resolve_started.set()
+            assert release_resolve.wait(5)
+            resolve_finished.set()
+            return managed_path
+
+    harness = _OutcomeHarness(actions=["keep"], video_store=ResolveBlockingStore())
+    resolver = asyncio.create_task(
+        harness._resolve_generated_video_outcome(
+            artifact, session_id="session", message_id=artifact.message_id
+        )
+    )
+    while not resolve_started.is_set():
+        await asyncio.sleep(0)
+
+    harness._drain_pending_console_videos()
+    resolver.cancel()
+    for _ in range(3):
+        await asyncio.sleep(0)
+    cancellation_waited = not resolver.done()
+    stream_open_during_resolve = not artifact.stream.closed
+    release_resolve.set()
+    while not resolve_finished.is_set():
+        await asyncio.sleep(0)
+    with pytest.raises(asyncio.CancelledError):
+        await resolver
+
+    assert cancellation_waited
+    assert stream_open_during_resolve
+    assert managed_path.read_bytes() == payload
+    assert len(harness.appended) == 1
+    assert harness.appended[0][1]["message_id"] == artifact.message_id
+    assert harness.appended[0][1]["persist"] is True
+    assert harness.sync_count == 0
+    assert artifact.stream.closed
+    assert cast(_TrackingStream, artifact.stream).close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_pending_cancellation_before_managed_commit_leaves_no_path_or_message(
+    tmp_path: Path,
+) -> None:
+    payload = b"cancel before pending commit"
+    artifact = _artifact(payload, message_id="pending-cancel-before-commit")
+    managed_path = tmp_path / "must-not-publish.mp4"
+    worker_started = threading.Event()
+    release_worker = threading.Event()
+    worker_finished = threading.Event()
+
+    class CancelWinningStore:
+        def adopt_oversized(self, *_args, **kwargs):
+            worker_started.set()
+            assert release_worker.wait(5)
+            try:
+                with kwargs["publication_gate"].claim_publication() as active:
+                    if not active:
+                        raise VideoStoreSaveError("publication cancelled")
+                    managed_path.write_bytes(payload)
+            finally:
+                worker_finished.set()
+            return managed_path
+
+        def resolve(self, *_args, **_kwargs):
+            return managed_path if managed_path.exists() else None
+
+    harness = _OutcomeHarness(actions=["keep"], video_store=CancelWinningStore())
+    resolver = asyncio.create_task(
+        harness._resolve_generated_video_outcome(
+            artifact, session_id="session", message_id=artifact.message_id
+        )
+    )
+    while not worker_started.is_set():
+        await asyncio.sleep(0)
+
+    harness._drain_pending_console_videos()
+    resolver.cancel()
+    for _ in range(3):
+        await asyncio.sleep(0)
+    cancellation_waited = not resolver.done()
+    assert cancellation_waited
+    release_worker.set()
+    while not worker_finished.is_set():
+        await asyncio.sleep(0)
+    with pytest.raises(asyncio.CancelledError):
+        await resolver
+
+    assert not managed_path.exists()
+    assert harness.appended == []
+    assert harness.sync_count == 0
+    assert artifact.stream.closed
+    assert cast(_TrackingStream, artifact.stream).close_calls == 1
+
+
 def test_pending_drain_contains_close_failure_and_closes_remaining_artifacts() -> None:
     logged: list[str] = []
 
