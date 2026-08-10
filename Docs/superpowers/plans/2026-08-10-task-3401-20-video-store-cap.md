@@ -468,6 +468,6 @@ git diff --cached --check
 git commit -m "docs: complete generated video capacity task"
 ```
 
-- [ ] **Step 7: Push and update the existing draft PR**
+- [x] **Step 7: Push and update the existing draft PR**
 
 Push `codex/task-3401-14-h3-generation-uat`, update draft PR #1460 with TASK-3401.20 behavior/evidence/commits, and leave it draft if later work-stream tasks remain. Verify remote HEAD matches local HEAD and the worktree is clean.
