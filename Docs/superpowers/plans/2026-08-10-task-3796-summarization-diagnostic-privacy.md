@@ -231,15 +231,19 @@ Emit the extractor snapshot to stdout, then add the reviewed JSON with `apply_pa
   "starting_classification": "private",
   "category": "credential",
   "starting": {
+    "method": "debug",
     "event": "Custom OpenAI API: Using API Key: ...",
     "occurrence": 0,
-    "expressions": ["custom_openai_api_key[:5]", "custom_openai_api_key[-5:]"]
+    "expressions": ["custom_openai_api_key[:5]", "custom_openai_api_key[-5:]"],
+    "captures_exception": false
   },
   "outcome": "pending",
   "current": {
+    "method": "debug",
     "event": "Custom OpenAI API: Using API Key: ...",
     "occurrence": 0,
-    "expressions": ["custom_openai_api_key[:5]", "custom_openai_api_key[-5:]"]
+    "expressions": ["custom_openai_api_key[:5]", "custom_openai_api_key[-5:]"],
+    "captures_exception": false
   },
   "navigation_line": 1515
 }
@@ -265,13 +269,14 @@ def test_ledger_retains_all_523_starting_sites() -> None:
         "private": 199,
         "reviewed_safe": 324,
     }
+    assert starting_projection_digest(ledger) == STARTING_PROJECTION_SHA256
 
 
 def test_ledger_current_state_matches_sources() -> None:
     assert_ledger_matches_source(load_review_ledger(), scan_reviewed_modules())
 ```
 
-The matcher compares each non-deleted `current` record to source and each deleted outcome to explicit absence. It must fail on additions, undeclared deletions, label/method changes, expression changes, duplicate loss, unclassified calls, or exception capture in a `frozen`/`metadata` record. A known-private `pending` record may temporarily match its inventoried starting traceback shape; it cannot survive a batch completion gate or the final zero-pending gate. The immutable `starting` record remains evidence after current source changes.
+Compute `STARTING_PROJECTION_SHA256` once from canonical JSON containing only site ID, module, qualname, group, starting classification/category, and the complete `starting` record; hard-code that digest in the test module. Outcome/current/navigation edits do not participate. The matcher compares each non-deleted `current` record to source and each deleted outcome to explicit absence. It must fail on additions, undeclared deletions, label/method changes, expression changes, duplicate loss, unclassified calls, or exception capture in a `frozen`/`metadata` record. A known-private `pending` record may temporarily match its inventoried starting traceback shape; it cannot survive a batch completion gate or the final zero-pending gate. The immutable projection digest preserves starting evidence after current source changes.
 
 - [ ] **Step 6: Run the guard foundation GREEN**
 
@@ -535,6 +540,11 @@ Restore the one baseline statement with `apply_patch`, then run:
 ../../.venv/bin/python -m ruff check tldw_chatbook/LLM_Calls/Summarization_General_Lib.py Tests/LLM_Calls/test_summarization_diagnostic_privacy.py
 ../../.venv/bin/python -m ruff format --check Tests/LLM_Calls/test_summarization_diagnostic_privacy.py
 ../../.venv/bin/python -m ruff format --check --diff tldw_chatbook/LLM_Calls/Summarization_General_Lib.py
+```
+
+Expected: the last command exits nonzero with exactly the recorded one-hunk baseline. After verifying that output, commit in a separate command block:
+
+```bash
 git add tldw_chatbook/LLM_Calls/Summarization_General_Lib.py Tests/LLM_Calls/test_summarization_diagnostic_privacy.py Tests/fixtures/summarization_diagnostic_review.json
 git commit -m "fix(security): redact general provider diagnostics"
 ```
@@ -572,6 +582,11 @@ Restore the one baseline statement with `apply_patch`, then run:
 ../../.venv/bin/python -m ruff check tldw_chatbook/LLM_Calls/Summarization_General_Lib.py Tests/LLM_Calls/test_summarization_diagnostic_privacy.py
 ../../.venv/bin/python -m ruff format --check Tests/LLM_Calls/test_summarization_diagnostic_privacy.py
 ../../.venv/bin/python -m ruff format --check --diff tldw_chatbook/LLM_Calls/Summarization_General_Lib.py
+```
+
+Expected: the last command exits nonzero with only the known baseline hunk. Then commit separately:
+
+```bash
 git add tldw_chatbook/LLM_Calls/Summarization_General_Lib.py Tests/LLM_Calls/test_summarization_diagnostic_privacy.py Tests/fixtures/summarization_diagnostic_review.json
 git commit -m "fix(security): redact streaming provider diagnostics"
 ```
@@ -632,6 +647,11 @@ Restore the one baseline statement with `apply_patch`, then run:
 ../../.venv/bin/python -m ruff check tldw_chatbook/LLM_Calls/Summarization_General_Lib.py Tests/LLM_Calls/test_summarization_diagnostic_privacy.py
 ../../.venv/bin/python -m ruff format --check Tests/LLM_Calls/test_summarization_diagnostic_privacy.py
 ../../.venv/bin/python -m ruff format --check --diff tldw_chatbook/LLM_Calls/Summarization_General_Lib.py
+```
+
+Expected: the last command exits nonzero with only the known baseline hunk. Then commit separately:
+
+```bash
 git add tldw_chatbook/LLM_Calls/Summarization_General_Lib.py Tests/LLM_Calls/test_summarization_diagnostic_privacy.py Tests/fixtures/summarization_diagnostic_review.json
 git commit -m "fix(security): finish general summarizer diagnostic privacy"
 ```
@@ -754,6 +774,11 @@ Restore the one baseline statement with `apply_patch`, then run:
 
 ```bash
 ../../.venv/bin/python -m ruff format --check --diff tldw_chatbook/LLM_Calls/Summarization_General_Lib.py
+```
+
+Expected: nonzero with exactly the known baseline hunk. After comparing that output, run the remaining green gates separately:
+
+```bash
 ../../.venv/bin/python -m py_compile tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py tldw_chatbook/LLM_Calls/Summarization_General_Lib.py Tests/LLM_Calls/summarization_diagnostic_guard.py Tests/LLM_Calls/test_summarization_diagnostic_privacy.py
 git diff --check
 ```
