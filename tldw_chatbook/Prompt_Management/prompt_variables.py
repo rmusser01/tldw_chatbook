@@ -4,18 +4,165 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from hashlib import sha256
+import math
+import re
+import time
 from typing import Literal, TypeAlias
 
 
 MAX_VARIABLES = 64
 MAX_VARIABLE_NAME_LENGTH = 64
+APPLICATION_TTL_SECONDS = 120.0
 
 PromptLane: TypeAlias = Literal["system", "user"]
 PromptVariableIssueCode: TypeAlias = Literal["name_too_long", "too_many_variables"]
+PromptApplicationDestination: TypeAlias = Literal["replace_snapshot", "append_active"]
+
+_COMPOSER_FINGERPRINT = re.compile(r"[0-9a-f]{64}")
+_SYSTEM_FINGERPRINT = re.compile(r"sha256:[0-9a-f]{64}")
 
 
 class PromptVariableValidationError(ValueError):
     """Report that a Prompt variable plan cannot be rendered safely."""
+
+
+@dataclass(frozen=True, slots=True)
+class PromptVariableApplication:
+    """Carry one guarded, memory-only Prompt application.
+
+    Attributes:
+        system_text: Final selected System payload, or ``None`` when inactive.
+        user_text: Final selected User payload, or ``None`` when inactive.
+        apply_system: Whether to replace the authorized System lane.
+        apply_user: Whether to apply the selected User lane.
+        destination: Composer replacement or active-draft append behavior.
+        target_session_id: Exact Console session authorized by the caller.
+        composer_fingerprint: Captured composer snapshot digest for replacement.
+        system_fingerprint: Authorized System text digest when System applies.
+        created_monotonic: Monotonic request creation time.
+        expires_monotonic: Derived exact application expiry time.
+    """
+
+    system_text: str | None = field(repr=False)
+    user_text: str | None = field(repr=False)
+    apply_system: bool
+    apply_user: bool
+    destination: PromptApplicationDestination
+    target_session_id: str
+    composer_fingerprint: str | None = field(repr=False)
+    system_fingerprint: str | None = field(repr=False)
+    created_monotonic: float = field(default_factory=time.monotonic)
+    expires_monotonic: float = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if type(self.apply_system) is not bool or type(self.apply_user) is not bool:
+            raise TypeError("Prompt application lane flags must be booleans")
+        if not self.apply_system and not self.apply_user:
+            raise ValueError("Prompt application requires at least one lane")
+        _validate_lane_payload("System", self.system_text, self.apply_system)
+        _validate_lane_payload("User", self.user_text, self.apply_user)
+        if type(self.destination) is not str or self.destination not in (
+            "replace_snapshot",
+            "append_active",
+        ):
+            raise ValueError("Prompt application destination is invalid")
+        if (
+            type(self.target_session_id) is not str
+            or not self.target_session_id.strip()
+            or self.target_session_id != self.target_session_id.strip()
+        ):
+            raise ValueError("Prompt application target session is invalid")
+
+        if self.destination == "replace_snapshot":
+            if not _is_composer_fingerprint(self.composer_fingerprint):
+                raise ValueError("Prompt application composer fingerprint is invalid")
+        elif self.composer_fingerprint is not None:
+            raise ValueError("Append application forbids a composer fingerprint")
+
+        if self.apply_system:
+            if not _is_system_fingerprint(self.system_fingerprint):
+                raise ValueError("Prompt application System fingerprint is invalid")
+        elif self.system_fingerprint is not None:
+            raise ValueError("Inactive System lane forbids a System fingerprint")
+
+        created = _finite_monotonic(
+            self.created_monotonic,
+            message="Prompt application creation time is invalid",
+        )
+        expires = created + APPLICATION_TTL_SECONDS
+        if not math.isfinite(expires):
+            raise ValueError("Prompt application creation time is invalid")
+        object.__setattr__(self, "created_monotonic", created)
+        object.__setattr__(self, "expires_monotonic", expires)
+
+    def is_expired(self, *, now_monotonic: float | None = None) -> bool:
+        """Return whether the application reached its exact expiry boundary.
+
+        Args:
+            now_monotonic: Caller-supplied monotonic time, or the current clock.
+
+        Returns:
+            ``True`` when current time is at or beyond the stored expiry.
+
+        Raises:
+            ValueError: If the supplied/current monotonic time is not finite.
+        """
+        now = time.monotonic() if now_monotonic is None else now_monotonic
+        current = _finite_monotonic(
+            now,
+            message="Prompt application current monotonic time is invalid",
+        )
+        return current >= self.expires_monotonic
+
+
+def fingerprint_system_text(text: str) -> str:
+    """Return the existing canonical one-way System text fingerprint.
+
+    Args:
+        text: Exact current System text, including blank text.
+
+    Returns:
+        ``sha256:`` followed by the full lowercase hexadecimal digest.
+
+    Raises:
+        TypeError: If ``text`` is not a string.
+    """
+    if not isinstance(text, str):
+        raise TypeError("System fingerprint input must be text")
+    return f"sha256:{sha256(text.encode('utf-8')).hexdigest()}"
+
+
+def _validate_lane_payload(
+    lane: str,
+    payload: str | None,
+    applies: bool,
+) -> None:
+    if applies:
+        if payload is None:
+            raise ValueError(f"{lane} payload is required for an active lane")
+        if not isinstance(payload, str):
+            raise TypeError(f"{lane} payload must be text")
+    elif payload is not None:
+        raise ValueError(f"{lane} payload must be absent for an inactive lane")
+
+
+def _is_composer_fingerprint(value: object) -> bool:
+    return isinstance(value, str) and _COMPOSER_FINGERPRINT.fullmatch(value) is not None
+
+
+def _is_system_fingerprint(value: object) -> bool:
+    return isinstance(value, str) and _SYSTEM_FINGERPRINT.fullmatch(value) is not None
+
+
+def _finite_monotonic(value: object, *, message: str) -> float:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+    ):
+        raise ValueError(message)
+    return float(value)
 
 
 @dataclass(frozen=True, slots=True)

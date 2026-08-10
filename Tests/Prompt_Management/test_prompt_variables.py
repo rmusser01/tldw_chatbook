@@ -1,16 +1,43 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import FrozenInstanceError, fields, replace
+import logging
+import time
+from typing import Any
 
 import pytest
 from hypothesis import given, settings, strategies as st
 
 from tldw_chatbook.Prompt_Management.prompt_variables import (
+    APPLICATION_TTL_SECONDS,
     MAX_VARIABLE_NAME_LENGTH,
     MAX_VARIABLES,
+    PromptVariableApplication,
     PromptVariableValidationError,
     compile_prompt_variables,
+    fingerprint_system_text,
 )
+
+
+_COMPOSER_FINGERPRINT = "a" * 64
+_SYSTEM_FINGERPRINT = "sha256:" + "b" * 64
+
+
+def _application(**overrides: Any) -> PromptVariableApplication:
+    values: dict[str, Any] = {
+        "system_text": "private rendered system",
+        "user_text": "private rendered user",
+        "apply_system": True,
+        "apply_user": True,
+        "destination": "replace_snapshot",
+        "target_session_id": "session-1",
+        "composer_fingerprint": _COMPOSER_FINGERPRINT,
+        "system_fingerprint": _SYSTEM_FINGERPRINT,
+        "created_monotonic": 10.0,
+    }
+    values.update(overrides)
+    return PromptVariableApplication(**values)
 
 
 @pytest.mark.parametrize(
@@ -225,3 +252,270 @@ def test_plan_and_rendered_lane_representations_hide_prompt_content() -> None:
     assert "private source" not in repr(plan)
     assert "private value" not in repr(rendered)
     assert "another private source" not in repr(rendered)
+
+
+def test_prompt_application_contains_only_the_guarded_final_payload() -> None:
+    application = _application()
+
+    assert tuple(item.name for item in fields(application)) == (
+        "system_text",
+        "user_text",
+        "apply_system",
+        "apply_user",
+        "destination",
+        "target_session_id",
+        "composer_fingerprint",
+        "system_fingerprint",
+        "created_monotonic",
+        "expires_monotonic",
+    )
+    assert application.system_text == "private rendered system"
+    assert application.user_text == "private rendered user"
+    assert not hasattr(application, "__dict__")
+    for forbidden in (
+        "values",
+        "variable_values",
+        "source_body",
+        "system_source",
+        "user_source",
+        "to_dict",
+        "serialize",
+        "persist",
+    ):
+        assert not hasattr(application, forbidden)
+    with pytest.raises(FrozenInstanceError):
+        application.apply_user = False  # type: ignore[misc]
+
+
+def test_prompt_application_hides_payloads_and_fingerprints_from_repr() -> None:
+    application = _application()
+    rendered = repr(application)
+
+    assert "private rendered system" not in rendered
+    assert "private rendered user" not in rendered
+    assert _COMPOSER_FINGERPRINT not in rendered
+    assert _SYSTEM_FINGERPRINT not in rendered
+
+
+def test_blank_selected_final_payloads_are_valid() -> None:
+    application = _application(system_text="", user_text="")
+
+    assert application.system_text == ""
+    assert application.user_text == ""
+
+
+def test_system_only_replace_is_a_valid_application() -> None:
+    application = _application(
+        user_text=None,
+        apply_user=False,
+    )
+
+    assert application.apply_system is True
+    assert application.system_text == "private rendered system"
+    assert application.apply_user is False
+    assert application.user_text is None
+    assert application.composer_fingerprint == _COMPOSER_FINGERPRINT
+
+
+@pytest.mark.parametrize("field_name", ["apply_system", "apply_user"])
+@pytest.mark.parametrize("value", [0, 1, None, "true"])
+def test_prompt_application_lane_flags_require_true_booleans(
+    field_name: str,
+    value: object,
+) -> None:
+    with pytest.raises(TypeError, match="lane flags must be booleans"):
+        _application(**{field_name: value})
+
+
+def test_prompt_application_requires_at_least_one_active_lane() -> None:
+    with pytest.raises(ValueError, match="at least one lane"):
+        _application(
+            system_text=None,
+            user_text=None,
+            apply_system=False,
+            apply_user=False,
+            system_fingerprint=None,
+        )
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"system_text": None}, "System payload"),
+        (
+            {
+                "system_text": "inactive body",
+                "apply_system": False,
+                "system_fingerprint": None,
+            },
+            "System payload",
+        ),
+        ({"user_text": None}, "User payload"),
+        ({"user_text": "inactive body", "apply_user": False}, "User payload"),
+    ],
+)
+def test_prompt_application_payload_presence_matches_lane_flags(
+    overrides: dict[str, object],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        _application(**overrides)
+
+
+@pytest.mark.parametrize("payload_field", ["system_text", "user_text"])
+def test_prompt_application_active_payloads_must_be_text(
+    payload_field: str,
+) -> None:
+    with pytest.raises(TypeError, match="payload must be text"):
+        _application(**{payload_field: object()})
+
+
+@pytest.mark.parametrize("destination", ["", "replace", "append", None, 1, []])
+def test_prompt_application_rejects_unknown_destinations(destination: object) -> None:
+    with pytest.raises(ValueError, match="destination"):
+        _application(destination=destination)
+
+
+def test_replace_requires_a_composer_fingerprint() -> None:
+    with pytest.raises(ValueError, match="composer fingerprint"):
+        _application(composer_fingerprint=None)
+
+
+def test_append_forbids_a_composer_fingerprint() -> None:
+    with pytest.raises(ValueError, match="composer fingerprint"):
+        _application(
+            destination="append_active",
+            composer_fingerprint=_COMPOSER_FINGERPRINT,
+        )
+
+
+def test_append_without_a_composer_fingerprint_is_valid() -> None:
+    application = _application(
+        destination="append_active",
+        composer_fingerprint=None,
+    )
+
+    assert application.destination == "append_active"
+    assert application.composer_fingerprint is None
+
+
+def test_system_fingerprint_is_required_exactly_when_system_applies() -> None:
+    with pytest.raises(ValueError, match="System fingerprint"):
+        _application(system_fingerprint=None)
+    with pytest.raises(ValueError, match="System fingerprint"):
+        _application(
+            system_text=None,
+            apply_system=False,
+            system_fingerprint=_SYSTEM_FINGERPRINT,
+        )
+
+
+@pytest.mark.parametrize(
+    "target_session_id",
+    ["", "   ", " session-1", "session-1 ", None, 1],
+)
+def test_prompt_application_requires_a_target_session_id(
+    target_session_id: object,
+) -> None:
+    with pytest.raises(ValueError, match="target session"):
+        _application(target_session_id=target_session_id)
+
+
+@pytest.mark.parametrize(
+    "composer_fingerprint",
+    ["", "a" * 63, "a" * 65, "A" * 64, "sha256:" + "a" * 64, None, 1],
+)
+def test_replace_requires_the_real_composer_fingerprint_shape(
+    composer_fingerprint: object,
+) -> None:
+    with pytest.raises(ValueError, match="composer fingerprint"):
+        _application(composer_fingerprint=composer_fingerprint)
+
+
+@pytest.mark.parametrize(
+    "system_fingerprint",
+    ["", "b" * 64, "sha256:" + "b" * 63, "sha256:" + "B" * 64, None, 1],
+)
+def test_system_lane_requires_the_real_system_fingerprint_shape(
+    system_fingerprint: object,
+) -> None:
+    with pytest.raises(ValueError, match="System fingerprint"):
+        _application(system_fingerprint=system_fingerprint)
+
+
+@pytest.mark.parametrize(
+    "created_monotonic",
+    [float("nan"), float("inf"), float("-inf"), True, "10"],
+)
+def test_prompt_application_requires_finite_monotonic_creation_time(
+    created_monotonic: object,
+) -> None:
+    with pytest.raises(ValueError, match="creation time"):
+        _application(created_monotonic=created_monotonic)
+
+
+def test_prompt_application_derives_exact_expiry_and_expires_at_boundary() -> None:
+    application = _application(created_monotonic=75.25)
+
+    assert application.expires_monotonic == 75.25 + APPLICATION_TTL_SECONDS
+    assert application.is_expired(now_monotonic=195.249999) is False
+    assert application.is_expired(now_monotonic=195.25) is True
+    assert application.is_expired(now_monotonic=196.0) is True
+
+
+def test_prompt_application_uses_current_monotonic_time_by_default() -> None:
+    before = time.monotonic()
+    application = PromptVariableApplication(
+        system_text=None,
+        user_text="payload",
+        apply_system=False,
+        apply_user=True,
+        destination="append_active",
+        target_session_id="session-1",
+        composer_fingerprint=None,
+        system_fingerprint=None,
+    )
+    after = time.monotonic()
+
+    assert before <= application.created_monotonic <= after
+
+
+def test_prompt_application_expiry_uses_current_or_injected_caller_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    application = _application(created_monotonic=10.0)
+    monkeypatch.setattr(
+        "tldw_chatbook.Prompt_Management.prompt_variables.time.monotonic",
+        lambda: 130.0,
+    )
+
+    assert application.is_expired() is True
+    assert application.is_expired(now_monotonic=129.999) is False
+    with pytest.raises(ValueError, match="current monotonic time"):
+        application.is_expired(now_monotonic=float("nan"))
+
+
+def test_system_fingerprint_is_one_way_and_uses_the_real_shape() -> None:
+    secret = "SYSTEM-BODY-SECRET-4d781"
+    fingerprint = fingerprint_system_text(secret)
+
+    assert fingerprint.startswith("sha256:")
+    assert len(fingerprint) == 71
+    assert secret not in fingerprint
+    with pytest.raises(TypeError, match="System fingerprint input"):
+        fingerprint_system_text(1)  # type: ignore[arg-type]
+
+
+def test_application_validation_and_expiry_never_log_or_raise_payload(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    secret = "PROMPT-APPLICATION-SECRET-99cb"
+    caplog.set_level(logging.DEBUG)
+    application = _application(system_text=secret, user_text=secret)
+
+    assert application.is_expired(now_monotonic=application.expires_monotonic)
+    with pytest.raises(ValueError) as caught:
+        replace(application, destination="invalid")
+
+    assert secret not in str(caught.value)
+    assert secret not in caplog.text
