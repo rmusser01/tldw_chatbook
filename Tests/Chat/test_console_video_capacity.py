@@ -1234,6 +1234,111 @@ async def test_external_success_opens_file_and_appends_no_card(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
+async def test_external_transient_sibling_unlink_failure_still_reports_saved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifact = _artifact(b"committed external bytes")
+    target = tmp_path / "transient-unlink.mp4"
+    harness = _OutcomeHarness(
+        actions=["save_external", target, "discard"], video_store=object()
+    )
+    real_unlink = os.unlink
+    real_cleanup_identity = ChatScreen._external_video_cleanup_identity
+    sibling_unlinks = 0
+    cleanup_identity_calls = 0
+
+    def track_cleanup_identity(metadata):
+        nonlocal cleanup_identity_calls
+        cleanup_identity_calls += 1
+        return real_cleanup_identity(metadata)
+
+    def fail_first_sibling_unlink(path, *args, **kwargs):
+        nonlocal sibling_unlinks
+        if str(path).startswith(".") and str(path).endswith(".tmp"):
+            sibling_unlinks += 1
+            if cleanup_identity_calls < 2:
+                raise OSError("PRIVATE-TRANSIENT-UNLINK")
+        return real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(
+        ChatScreen,
+        "_external_video_cleanup_identity",
+        staticmethod(track_cleanup_identity),
+    )
+    monkeypatch.setattr(os, "unlink", fail_first_sibling_unlink)
+    monkeypatch.setattr(
+        os,
+        "supports_dir_fd",
+        set(os.supports_dir_fd) | {fail_first_sibling_unlink},
+    )
+
+    await harness._resolve_generated_video_outcome(
+        artifact, session_id="session", message_id=artifact.message_id
+    )
+
+    assert cleanup_identity_calls == 2
+    assert sibling_unlinks == 1
+    assert target.read_bytes() == b"committed external bytes"
+    assert not list(tmp_path.glob(".*.tmp"))
+    assert len(harness.waited_screens) == 2
+    assert harness.actions == ["discard"]
+    assert harness.opened == [target]
+    assert harness.appended == []
+    assert harness.notifications == []
+    assert artifact.stream.closed
+    assert cast(_TrackingStream, artifact.stream).close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_external_ultimate_sibling_unlink_failure_keeps_saved_outcome(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifact = _artifact(b"committed despite cleanup")
+    target = tmp_path / "ultimate-unlink.mp4"
+    harness = _OutcomeHarness(
+        actions=["save_external", target, "discard"], video_store=object()
+    )
+    real_unlink = os.unlink
+    sibling_unlinks = 0
+    logged: list[str] = []
+
+    def fail_sibling_unlink(path, *args, **kwargs):
+        nonlocal sibling_unlinks
+        if str(path).startswith(".") and str(path).endswith(".tmp"):
+            sibling_unlinks += 1
+            raise OSError("PRIVATE-ULTIMATE-UNLINK")
+        return real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "unlink", fail_sibling_unlink)
+    monkeypatch.setattr(
+        os,
+        "supports_dir_fd",
+        set(os.supports_dir_fd) | {fail_sibling_unlink},
+    )
+    sink_id = __import__("loguru").logger.add(logged.append, format="{message}")
+    try:
+        await harness._resolve_generated_video_outcome(
+            artifact, session_id="session", message_id=artifact.message_id
+        )
+    finally:
+        __import__("loguru").logger.remove(sink_id)
+
+    assert sibling_unlinks >= 1
+    assert target.read_bytes() == b"committed despite cleanup"
+    assert len(list(tmp_path.glob(".*.tmp"))) == 1
+    assert len(harness.waited_screens) == 2
+    assert harness.actions == ["discard"]
+    assert harness.opened == [target]
+    assert harness.appended == []
+    assert harness.notifications == []
+    assert artifact.stream.closed
+    assert cast(_TrackingStream, artifact.stream).close_calls == 1
+    assert any("external_stage_cleanup" in message for message in logged)
+    assert any("OSError" in message for message in logged)
+    assert all("PRIVATE-ULTIMATE-UNLINK" not in message for message in logged)
+
+
+@pytest.mark.asyncio
 async def test_external_copy_failure_reoffers_choices_with_artifact_live(
     tmp_path: Path,
 ) -> None:

@@ -17182,8 +17182,6 @@ class ChatScreen(BaseAppScreen):
                         )
                     except FileExistsError:
                         return "confirm"
-                    os.unlink(sibling, dir_fd=parent_fd)
-                    sibling_name = None
                     return "saved"
 
                 try:
