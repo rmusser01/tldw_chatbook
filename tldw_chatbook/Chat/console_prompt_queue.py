@@ -1108,6 +1108,33 @@ class ConsolePromptQueueRegistry:
         self._bump(state)
         return self._result(QueueMutationStatus.APPLIED, session_id, state=state)
 
+    def adopt_recovery_context_baseline(
+        self,
+        session_id: str,
+        *,
+        context_epoch: int,
+        expected_revision: int,
+    ) -> PromptQueueMutationResult:
+        """Adopt an epoch changed by one coordinator-authorized recovery turn."""
+
+        context_epoch = self._context_epoch(context_epoch)
+        session_id, state, refusal = self._check(session_id, expected_revision)
+        if refusal is not None:
+            return refusal
+        assert state is not None
+        if (
+            state.mode is not PromptQueueMode.DRAINING
+            or state.reservation is not PromptQueueReservation.HELD
+            or state.claimed is not None
+            or state.total_count == 0
+        ):
+            return self._result(QueueMutationStatus.INVALID, session_id, state=state)
+        if state.expected_context_epoch == context_epoch:
+            return self._result(QueueMutationStatus.UNCHANGED, session_id, state=state)
+        state.expected_context_epoch = context_epoch
+        self._bump(state)
+        return self._result(QueueMutationStatus.APPLIED, session_id, state=state)
+
     def finalize_empty_chain(
         self,
         session_id: str,

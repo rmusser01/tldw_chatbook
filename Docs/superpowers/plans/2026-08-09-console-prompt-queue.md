@@ -250,48 +250,48 @@ provider, widget, or persistence side effect.
 
 ### Implementation steps
 
-- [ ] Add explicit manual/queued submission origin and an accepted-turn outcome that
+- [x] Add explicit manual/queued submission origin and an accepted-turn outcome that
       records session ID, assistant/user identities, terminal result, and committed
       conversation epoch without carrying prompt text into UI events.
-- [ ] Preserve `on_submission_accepted()` for accepted manual origin only. Add a
+- [x] Preserve `on_submission_accepted()` for accepted manual origin only. Add a
       separate content-free queued-acceptance event keyed by session and entry ID.
-- [ ] Add coordinator admission behind an accepted live turn or existing queue. Reuse
+- [x] Add coordinator admission behind an accepted live turn or existing queue. Reuse
       canonical draft validation, refuse attachments/manual staged evidence intact,
       and leave recognized slash commands on their existing path.
-- [ ] Implement one per-session `run_prompt_chain` that awaits the active turn,
+- [x] Implement one per-session `run_prompt_chain` that awaits the active turn,
       evaluates the terminal result, honors pause-after-turn, compares context epoch,
       claims FIFO, resolves one immutable turn context, rechecks riders, submits, and
       repeats.
-- [ ] Retain the original global agent reservation across successful queued turns.
+- [x] Retain the original global agent reservation across successful queued turns.
       Release it when empty or paused; Resume/Retry must reacquire visibly and must not
       register a hidden global waiter.
-- [ ] Implement failure, Stop, context-review, pre-accept refusal, and unexpected
+- [x] Implement failure, Stop, context-review, pre-accept refusal, and unexpected
       exception pauses. Wire Retry, Skip and resume, Resume next, Retry stopped turn,
       Keep draining, and Use current context and resume to the exact approved
       transitions.
-- [ ] Authorize queue recovery through a narrow typed internal capability at the
+- [x] Authorize queue recovery through a narrow typed internal capability at the
       existing generation gate. Do not add a general `force=True` bypass available
       to unrelated controller actions.
-- [ ] Make queued RAG capture session-targeted and origin-aware. Auto-RAG may generate
+- [x] Make queued RAG capture session-targeted and origin-aware. Auto-RAG may generate
       owning-session evidence; manually staged evidence remains screen-owned and is
       never read or cleared by queued origin.
-- [ ] Add one immutable controller activity projection and migrate busy count, cap,
+- [x] Add one immutable controller activity projection and migrate busy count, cap,
       markers, fleet summary, polling, navigation warnings, and notification
       eligibility to it. Distinguish slot occupancy, validation/preparation, accepted
       live work, approval wait, queue presence, and pause state. Intermediate
       completions remain running and do not toast.
-- [ ] Gate competing Continue, Regenerate, Edit and resend, Summarize, transcript
+- [x] Gate competing Continue, Regenerate, Edit and resend, Summarize, transcript
       recovery, and hands-free entry points through the coordinator whenever future
       queue work exists.
-- [ ] Tombstone a closing session or global shutdown before Stop/cancel. Verify
+- [x] Tombstone a closing session or global shutdown before Stop/cancel. Verify
       cancellation-driven terminal callbacks cannot claim another prompt.
-- [ ] Add joined async tests for three ordered turns, queue-empty/admission races,
+- [x] Add joined async tests for three ordered turns, queue-empty/admission races,
       refusal before and exception after acceptance, approval waits, global cap
       reacquisition, cross-session concurrency, context review staleness, and shutdown.
-- [ ] Prove accepted queued prompts enter normal persistence and prompt history once,
+- [x] Prove accepted queued prompts enter normal persistence and prompt history once,
       in accepted order; admission, edit, reorder, and refused starts write neither.
       Assert the queue-empty/admission race emits exactly one final notification.
-- [ ] Mutation-check legacy-hook isolation, owning-session context, shutdown
+- [x] Mutation-check legacy-hook isolation, owning-session context, shutdown
       suppression, and intermediate notification suppression. Complete task notes and
       DoD.
 
