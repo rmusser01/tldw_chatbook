@@ -278,6 +278,8 @@ outside the queue coordinator's ordinary linear turn append:
 - Deletion that changes the active path.
 - Editing user or assistant content on the active path.
 - Selecting a different textual response variant on the active path.
+- Adding, removing, reordering, or selecting message attachments on the active
+  path when that changes the payload seen by a future provider turn.
 - Changing or clearing the active conversation summary boundary.
 
 Ordinary linear message appends, streaming updates, status changes, persistence,
@@ -290,10 +292,12 @@ variant, writing identical content, and reapplying the same summary are stable.
 This keeps harmless UI re-selection from spuriously pausing a queue.
 
 A queue-authorized failed retry or stopped regeneration may legitimately change
-the epoch. On successful recovery the coordinator adopts the resulting epoch
-before draining continues. Any unrelated mismatch pauses for review. Store
-mutation tests must cover every provider-relevant mutation seam so a new edit or
-branch feature cannot silently bypass this invariant.
+the epoch. A failed-row retry advances when it becomes provider-visible complete
+or stopped history; another failed/refused attempt remains excluded and stable.
+On successful recovery the coordinator adopts the resulting epoch before
+draining continues. Any unrelated mismatch pauses for review. Store mutation
+tests must cover every provider-relevant mutation seam so a new edit, attachment,
+or branch feature cannot silently bypass this invariant.
 
 ## 6. Architecture and ownership
 
@@ -638,6 +642,8 @@ inside the viewport.
 - Conversation-context epoch behavior: ordinary linear appends stay stable;
   active-path edit, selected textual variant, summary, deletion, and lineage
   mutations increment; off-path and display-only changes stay stable.
+- Active-path attachment-set/order changes increment; the same mutations on an
+  off-path generation message remain stable.
 - Idempotent re-selection or identical-value writes do not increment the
   context epoch.
 - The first queued entry inherits the active turn's committed payload epoch;

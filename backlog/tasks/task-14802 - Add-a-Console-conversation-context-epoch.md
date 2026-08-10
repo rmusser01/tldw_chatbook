@@ -1,7 +1,7 @@
 ---
 id: TASK-14802
 title: Add a Console conversation-context epoch
-status: In Progress
+status: Done
 created_date: 2026-08-10 06:04
 labels:
 - console
@@ -14,7 +14,12 @@ references:
 documentation:
 - Docs/superpowers/specs/2026-08-09-console-prompt-queue-design.md
 - Docs/superpowers/plans/2026-08-09-console-prompt-queue.md
-updated_date: 2026-08-10 06:25
+updated_date: 2026-08-10 07:02
+modified_files:
+- tldw_chatbook/Chat/console_chat_store.py
+- Tests/Chat/test_console_conversation_context_epoch.py
+- Docs/superpowers/specs/2026-08-09-console-prompt-queue-design.md
+- Docs/superpowers/plans/2026-08-09-console-prompt-queue.md
 ---
 
 ## Description
@@ -25,12 +30,13 @@ Give Console a store-owned, per-session signal for detecting provider-relevant c
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 ConsoleChatStore exposes an isolated monotonic conversation-context epoch for every live session and removes its state when the session closes.
-- [ ] #2 The epoch advances for effective active-path content, lineage, selected textual variant, summary-boundary, rewind, delete, edit-resend, and regeneration changes.
-- [ ] #3 The epoch remains stable for ordinary linear appends, streaming and terminal status updates, persistence, feedback, display overlays, off-path edits, and idempotent same-value selections or writes.
-- [ ] #4 The epoch is process-memory-only and introduces no schema, persistence, snapshot, configuration, or logging changes.
-- [ ] #5 Focused store tests cover every provider-relevant mutation seam, session isolation, lifecycle cleanup, and mutation checks that prove the guards can fail.
-- [ ] #6 A successful failed-assistant retry advances the epoch exactly once when the row becomes provider-visible history, including same-text recovery; a failed or refused retry does not advance or authorize adoption.
+- [x] #1 ConsoleChatStore exposes an isolated monotonic conversation-context epoch for every live session and removes its state when the session closes.
+- [x] #2 The epoch advances for effective active-path content, lineage, selected textual variant, summary-boundary, rewind, delete, edit-resend, and regeneration changes.
+- [x] #3 The epoch remains stable for ordinary linear appends, streaming and terminal status updates, persistence, feedback, display overlays, off-path edits, and idempotent same-value selections or writes.
+- [x] #4 The epoch is process-memory-only and introduces no schema, persistence, snapshot, configuration, or logging changes.
+- [x] #5 Focused store tests cover every provider-relevant mutation seam, session isolation, lifecycle cleanup, and mutation checks that prove the guards can fail.
+- [x] #6 A failed-assistant retry advances the epoch exactly once when the row becomes provider-visible complete or stopped history, including same-text recovery; a failed or refused retry remains excluded and does not advance or authorize adoption.
+- [x] #7 Adding, removing, reordering, or selecting attachments on an active-path message advances the epoch when the future provider payload changes; equivalent off-path attachment mutations remain stable.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -52,15 +58,13 @@ Reason: This is a direct implementation of the accepted store-owned conversation
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+Implemented a process-local, store-owned per-session conversation-context epoch with lifecycle initialization and cleanup. Semantic guards advance it only for effective active-path text, branch/leaf, summary, variant, failed-retry recovery, and generation-attachment changes; ordinary append/stream/status, off-path changes, metadata, persistence, and same-value operations remain stable. Added 16 focused contract tests plus manual mutation checks proving the active-path and same-value guards fail when inverted. Verification: 699 focused/reached tests passed; Ruff and git diff --check passed. The broader RuntimePolicy run had 343 passes and 12 skips plus six unrelated ambient failures (four MediaScreen mount timeouts and two AppleDouble source-scan decode failures). Full-tree collection is independently blocked by two existing Confluence imports requiring the absent optional playwright dependency. ADR: backlog/decisions/046-visible-bounded-console-prompt-queue.md. No schema, persistence, snapshot, configuration, or logging changes.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
-
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-
+Added and verified the Console conversation-context epoch required for safe deferred prompt adoption, including active-path semantic guards, failed-retry visibility handling, attachment changes, lifecycle cleanup, and focused regression coverage.
 <!-- SECTION:FINAL_SUMMARY:END -->
-
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->

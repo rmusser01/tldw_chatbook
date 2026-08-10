@@ -104,20 +104,21 @@ ownership and keybindings.
 ### Implementation steps
 
 - [ ] Characterize every mutation seam with red tests. Pin the exact distinction:
-      active-path content/lineage/variant/summary changes advance; ordinary append,
-      streaming/status/persistence/feedback, off-path edits, and idempotent writes do
-      not.
+      active-path content/lineage/text-variant/attachment/summary changes advance;
+      ordinary append, streaming/status/persistence/feedback, off-path edits, and
+      idempotent writes do not.
 - [ ] Characterize failed-message retry separately: a successful retry changes an
-      existing failed row into provider-visible history and advances once; a failed
-      retry does not authorize unrelated epoch adoption. Stopped regeneration keeps
-      its existing sibling/branch semantics.
+      existing failed row into provider-visible history and advances once; a stopped
+      retry does likewise because its partial becomes history, while a failed retry
+      remains excluded and does not authorize unrelated epoch adoption. Stopped
+      regeneration keeps its existing sibling/branch semantics.
 - [ ] Add a private per-session epoch map, a read-only
       `conversation_context_epoch(session_id)` API, and one internal increment seam.
       Initialize on create/restore and purge on close.
 - [ ] Add semantic before/after guards to `update_message_content`,
       `set_active_leaf`, `set_session_context_summary`, `select_variant`, branch
-      creation, and deletion. Avoid double increments when a higher-level mutation
-      delegates to another instrumented seam.
+      creation, deletion, and generation-attachment mutations. Avoid double increments
+      when a higher-level mutation delegates to another instrumented seam.
 - [ ] Verify edit-resend, regeneration, sibling selection, and rewind obtain their
       increments through the store operations they already use; do not add a second
       controller-owned epoch.
