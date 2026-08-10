@@ -131,6 +131,54 @@ async def test_modal_escape_dismisses_as_discard() -> None:
     assert results == ["discard"]
 
 
+@pytest.mark.parametrize(
+    ("reason", "expected_focus", "expected_result"),
+    [
+        ("over_capacity", "video-capacity-save", "save_external"),
+        ("store_failure", "video-capacity-keep", "keep"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_modal_enter_uses_reason_specific_safe_default(
+    reason: str,
+    expected_focus: str,
+    expected_result: CapacityAction,
+) -> None:
+    app = _ModalHost()
+    results: list[CapacityAction] = []
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = await _mount_modal(app, reason=reason, results=results)
+        await pilot.pause()
+
+        assert modal.focused is not None
+        assert modal.focused.id == expected_focus
+        assert isinstance(modal.focused, Button)
+        assert modal.focused.variant == "primary"
+        other_id = (
+            "video-capacity-keep"
+            if expected_focus == "video-capacity-save"
+            else "video-capacity-save"
+        )
+        assert modal.query_one(f"#{other_id}", Button).variant == "default"
+        await pilot.press("enter")
+        await pilot.pause()
+
+    assert results == [expected_result]
+
+
+def test_modal_rejects_unknown_reason_without_reflecting_private_value() -> None:
+    private_reason = "PRIVATE-PATH:/Users/alice/generated.mp4"
+
+    with pytest.raises(ValueError) as raised:
+        ConsoleVideoCapacityModal(
+            reason=cast(CapacityReason, private_reason),
+            size_bytes=1,
+            max_bytes=1,
+        )
+
+    assert private_reason not in str(raised.value)
+
+
 @pytest.mark.asyncio
 async def test_modal_copy_is_plain_and_contains_no_private_sentinels() -> None:
     app = _ModalHost()
@@ -156,24 +204,36 @@ async def test_modal_copy_is_plain_and_contains_no_private_sentinels() -> None:
 
 
 @pytest.mark.asyncio
-async def test_modal_buttons_fit_inside_ninety_column_screen() -> None:
+async def test_modal_widgets_fit_inside_ninety_by_fourteen_screen() -> None:
     app = _ModalHost()
     results: list[CapacityAction] = []
-    async with app.run_test(size=(90, 32)) as pilot:
+    async with app.run_test(size=(90, 14)) as pilot:
         modal = await _mount_modal(app, reason="over_capacity", results=results)
         await pilot.pause()
 
         dialog = modal.query_one("#video-capacity-dialog")
-        assert 0 <= dialog.region.x
-        assert dialog.region.right <= modal.size.width
-        assert dialog.region.width <= modal.size.width
-        for button_id in (
-            "video-capacity-keep",
-            "video-capacity-save",
-            "video-capacity-discard",
-        ):
-            button = modal.query_one(f"#{button_id}", Button)
+        widgets = [
+            dialog,
+            modal.query_one("#video-capacity-summary", Static),
+            modal.query_one("#video-capacity-guidance", Static),
+        ]
+        widgets.extend(
+            modal.query_one(f"#{button_id}", Button)
+            for button_id in (
+                "video-capacity-keep",
+                "video-capacity-save",
+                "video-capacity-discard",
+            )
+        )
+        for widget in widgets:
+            assert widget.display
+            assert widget.region.width > 0
+            assert widget.region.height > 0
+            assert 0 <= widget.region.x < widget.region.right <= modal.size.width
+            assert 0 <= widget.region.y < widget.region.bottom <= modal.size.height
+
+        for button in widgets[-3:]:
+            assert isinstance(button, Button)
             assert dialog.region.x <= button.region.x
             assert button.region.right <= dialog.region.right
-            assert button.region.right <= modal.size.width
             assert button.region.width >= len(_button_label(button)) + 2

@@ -82,6 +82,8 @@ class ConsoleVideoCapacityModal(ModalScreen[CapacityAction]):
             size_bytes: Size of the generated payload.
             max_bytes: Configured managed-store capacity.
         """
+        if reason not in ("over_capacity", "store_failure"):
+            raise ValueError("Unsupported generated-video storage reason.")
         super().__init__()
         self._reason = reason
         self._size_bytes = size_bytes
@@ -95,12 +97,16 @@ class ConsoleVideoCapacityModal(ModalScreen[CapacityAction]):
                 "here by removing other videos, save it to disk, or discard it."
             )
             keep_label = "Keep here (remove other videos)"
+            keep_variant = "default"
+            save_variant = "primary"
         else:
             guidance = (
                 "This generated video could not be stored here. Retry, save it to "
                 "disk, or discard it."
             )
             keep_label = "Retry"
+            keep_variant = "primary"
+            save_variant = "default"
 
         with Vertical(id="video-capacity-dialog"):
             yield Static("Generated video", classes="console-modal-header", markup=False)
@@ -120,10 +126,23 @@ class ConsoleVideoCapacityModal(ModalScreen[CapacityAction]):
                 yield Button(
                     keep_label,
                     id="video-capacity-keep",
-                    variant="primary",
+                    variant=keep_variant,
                 )
-                yield Button("Save to disk", id="video-capacity-save")
+                yield Button(
+                    "Save to disk",
+                    id="video-capacity-save",
+                    variant=save_variant,
+                )
                 yield Button("Discard", id="video-capacity-discard")
+
+    def on_mount(self) -> None:
+        """Focus the safest reason-specific default action."""
+        button_id = (
+            "video-capacity-save"
+            if self._reason == "over_capacity"
+            else "video-capacity-keep"
+        )
+        self.query_one(f"#{button_id}", Button).focus()
 
     def action_discard(self) -> None:
         """Treat Escape as an explicit discard decision."""
