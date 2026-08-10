@@ -117,6 +117,31 @@ candidates over the golden set, and ships the winner with its numbers.
   slim always-on regression pin, not a combinatorial test suite. The runner
   itself stays (gated) for future retunes — it is small and rides P1's
   existing runtime.
+- **Parameterization prerequisites (code-verified, second review):**
+  - `rrf_k` is hard-coded at the engine call site
+    (`_fuse_hybrid_results` passes `rrf_k=DEFAULT_RRF_K`) while
+    `fusion.resolve_rrf_k` — the validator for a config knob — already
+    exists, unconsumed. Before the harness can measure k variants, add
+    `config.search.rrf_k` (validated via `resolve_rrf_k`, default 60) and
+    make the call site read it. One authoritative site; it doubles as the
+    shipping site if k wins. Same treatment for the pool multiplier
+    (`SEARCH_RESULT_MULTIPLIER` is a module constant) if pool widening is
+    measured: a config field with the current default.
+  - **Metadata-honesty trap:** the `hybrid_fusion` metadata block records
+    the alpha/rrf_k used, and P1's citation capture (`_reliable_rrf`)
+    RE-DERIVES the fused score from those recorded values — threading a
+    config k without recording the ACTUAL value silently degrades every
+    hybrid row to the LEGACY score-kind (the exact silent-failure class
+    the P1 arc fixed once already). The block must record the values
+    actually used; the re-derivation then doubles as an arithmetic guard
+    that any k/alpha drift breaks loudly. A test pins metadata-recorded k
+    == configured k.
+  - **Measurement cost asymmetry (YAGNI ordering):** k, alpha, and
+    multiplier variants are parameter sweeps over existing code once the
+    knobs exist; the slot quota requires BUILDING a mechanism first. The
+    harness measures the parameter strategies first; the quota mechanism
+    is implemented only if no parameter strategy satisfies the decision
+    rule.
 - Decision rule, stated before measuring (no post-hoc goalpost moves).
   Two distinct rescue senses, both required (self-review catch — the
   fixture doc is vector-POOR, at vector rank ~22 below the 2k cutoff, not
@@ -219,8 +244,14 @@ candidates over the golden set, and ships the winner with its numbers.
 3. The comparison runner's cheapest honest form: reuse `run_eval`'s
    per-mode machinery with a parameterized service config, or a narrower
    hybrid-only loop; pick whichever avoids duplicating the report format.
-4. Where alpha/rrf_k/multiplier actually live (config.search.hybrid_alpha
-   resolution chain, DEFAULT_RRF_K import sites, SEARCH_RESULT_MULTIPLIER
-   consumers) — the winner must change ONE authoritative site.
+4. RESOLVED at spec time (second review): alpha is config-threaded
+   (`config.search.hybrid_alpha` via `resolve_hybrid_alpha`); rrf_k is
+   hard-coded at the call site with `resolve_rrf_k` existing unconsumed;
+   `SEARCH_RESULT_MULTIPLIER` is a module constant. The plan adds
+   `config.search.rrf_k` (and, if measured, a multiplier field) before the
+   harness measures. Remaining to verify: every OTHER `DEFAULT_RRF_K` /
+   `SEARCH_RESULT_MULTIPLIER` import site (the semantic leg also uses the
+   multiplier — a pool-widening knob must widen the HYBRID legs without
+   silently changing semantic-mode behavior).
 5. TASK-3994 `#2b`'s exact wording so the closing tick quotes its own
    criterion.
