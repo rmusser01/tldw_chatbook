@@ -84,7 +84,8 @@ tldw_chatbook/MCP/
 ## Components
 
 ### Server (`server.py`)
-The main MCP server implementation using FastMCP framework:
+The main MCP server implementation uses the public `mcp-unified==0.2.1`
+gateway:
 - Initializes database connections
 - Registers tools, resources, and prompts
 - Handles transport (stdio for Claude Desktop, HTTP planned)
@@ -117,6 +118,56 @@ MCP client for connecting to external MCP servers:
 - Discovers server capabilities
 - Provides unified interface for tool/resource access
 - Handles connection lifecycle
+
+## Standalone stdio contract
+
+Install the packaged optional extra and launch the server from the same Python
+environment:
+
+```bash
+pip install "tldw_chatbook[mcp]"
+python -m tldw_chatbook.MCP
+```
+
+The standalone server uses strict JSON-RPC over stdio. It supports legacy
+revision `2025-03-26`, revision `2025-11-25`, and the current `2026-07-28`
+profile. Batch requests are accepted only with `2025-03-26`; `2025-11-25` and
+`2026-07-28` reject them.
+
+The standalone catalog contains exactly 10 built-in tools:
+`chat_with_llm`, `chat_with_character`, `search_rag`,
+`search_conversations`, `create_note`, `search_notes`, `list_characters`,
+`get_conversation_history`, `export_conversation`, and `ingest_media`.
+It contains exactly 5 resource templates: `conversation://{conversation_id}`,
+`note://{note_id}`, `character://{character_id}`, `media://{media_id}`, and
+`rag-chunk://{chunk_uuid}`. It contains exactly 5 prompts:
+`summarize_conversation`, `generate_document`, `analyze_media`,
+`search_and_synthesize`, and `character_writing`.
+
+The separate in-process Library runtime owns these 18 tools:
+`library_list_media`, `library_get_media`, `library_search_media`,
+`library_list_notes`, `library_get_note`, `library_search_notes`,
+`library_list_prompts`, `library_get_prompt`, `library_search_prompts`,
+`library_list_skills`, `library_get_skill`, `library_search_skills`,
+`library_list_conversations`, `library_get_conversation`,
+`library_search_conversations`, `library_list_collections`,
+`library_get_collection`, and `library_search_collections`. All 18 are
+excluded from the standalone stdio catalog; they remain available only through
+the app's gated, logged direct Library execution path, whose raw in-app
+`tools/call` route is refused.
+
+Resource reads return at most 256 KiB of UTF-8 text at a time. Follow the
+opaque `nextUri` in `_meta["tldw.chatbook/continuation"]`; handler metadata,
+when present, is namespaced under `_meta["tldw.chatbook/resource"]`.
+
+Workspace-local filesystem, git, and web tools are off by default with
+`[mcp] expose_local_tools = false`. When enabled, they retain workspace
+confinement, consult the shared `mcp_permissions.json` permission store on
+each call, and honor its kill switch. An external `ask` state is refused
+because an stdio client cannot display Chatbook's operator approval card.
+
+> [!WARNING]
+> An external MCP client runs with the user's OS access. It can read private local Library content through exposed tools, resources, and prompts, and it may send that content off-device to a cloud model. Enable only the surface you intend to disclose and trust the client and its model provider.
 
 ## MCP Tools
 
@@ -213,8 +264,8 @@ Ingest media from URLs or files (placeholder).
 
 ### Library Tools (read-only, descriptor-backed)
 
-In addition to the legacy tools above, the local MCP surface exposes 18
-read-only `library_*` tools — `library_list_*`, `library_get_*`, and
+In addition to the standalone tools above, the in-process local MCP surface
+exposes 18 read-only `library_*` tools — `library_list_*`, `library_get_*`, and
 `library_search_*` for each of Media, Notes, Prompts, Skills, Conversations,
 and Collections. The same shared service and all 18 tools are also callable by
 Console agents when `[console].direct_library_tools` is enabled. They answer
@@ -224,14 +275,13 @@ the RAG/embedding pipeline.
 - **Registration**: appended to the capability manifest from the descriptor
   table in `Library/library_tool_contract.py`
   (`_describe_local_library_tools` in `server.py`); dispatched in-process by
-  `LocalMCPRuntimeDelegate` to the shared synchronous service. This
-  descriptor-backed Library-tool dispatch path is FastMCP-free; the legacy
-  standalone server described above remains FastMCP-based.
+  `LocalMCPRuntimeDelegate` to the shared synchronous service. The standalone
+  server deliberately does not consume this combined manifest.
 - **Semantics**: bounded pages with exact totals; opaque stable IDs
   (`type:<base64url>`); literal keyword-only search (no semantic/embedding);
   get tools read bounded windows with revision-checked continuation cursors;
   every serialized response fits within 32 KiB.
-- **Compatibility**: the legacy tools above are unchanged; the `library_*`
+- **Compatibility**: the standalone tools above are unchanged; the `library_*`
   namespace is additive and independent of the Console
   `[console].direct_library_tools` toggle.
 
@@ -384,7 +434,7 @@ max_prompt_length = 10000  # Maximum prompt length
 
 1. **Install with MCP support**:
    ```bash
-   pip install tldw-chatbook[mcp]
+   pip install "tldw_chatbook[mcp]"
    ```
    Or for development:
    ```bash
@@ -415,32 +465,18 @@ python -m tldw_chatbook.MCP
 
 ### Claude Desktop Integration
 
-1. **Install as MCP server**:
-   ```bash
-   mcp install /path/to/tldw_chatbook/MCP/server.py
-   ```
-
-2. **Or add to Claude Desktop config manually**:
+1. **Add the packaged module command to the client configuration**:
    Edit Claude Desktop's MCP config to include:
    ```json
    {
      "mcpServers": {
        "tldw_chatbook": {
          "command": "python",
-         "args": ["-m", "tldw_chatbook.MCP"],
-         "env": {
-           "PYTHONPATH": "/path/to/tldw_chatbook"
-         }
+         "args": ["-m", "tldw_chatbook.MCP"]
        }
      }
    }
    ```
-
-### Development Mode
-Use MCP Inspector for testing:
-```bash
-mcp dev /path/to/tldw_chatbook/MCP/server.py
-```
 
 ### Verification
 Check server is running:
@@ -624,7 +660,7 @@ await client.disconnect_from_server("my_server")
 ### Common Issues
 
 1. **MCP not available error**:
-   - Ensure MCP dependencies are installed: `pip install mcp[cli]`
+   - Ensure MCP dependencies are installed: `pip install "tldw_chatbook[mcp]"`
    - Check Python version is 3.11+
 
 2. **Server won't start**:

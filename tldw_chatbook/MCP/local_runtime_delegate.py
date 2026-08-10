@@ -147,7 +147,7 @@ class RawToolCallRefusedError(PermissionError):
 
 
 class LocalMCPRuntimeDelegate:
-    """Direct local MCP runtime adapter that avoids loopback FastMCP dependency."""
+    """Direct in-process runtime kept separate from the standalone gateway."""
 
     _PROTOCOL_VERSION = "2025-03-26"
     _REQUEST_METHODS = (
@@ -706,9 +706,9 @@ class LocalMCPRuntimeDelegate:
     def _get_library_service(self):
         """Lazily compose the shared Library tool service (built once, cached).
 
-        Uses the same single construction site as the standalone server
-        (``server.build_local_library_tool_service``) so the direct runtime
-        and the FastMCP surface can never drift in backend wiring.
+        Uses the server module's single service construction site
+        (``server.build_local_library_tool_service``) so direct Library
+        execution and standalone-server backend wiring cannot drift.
         """
         if self._library_service is None:
             from .server import build_local_library_tool_service

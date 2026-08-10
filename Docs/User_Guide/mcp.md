@@ -15,7 +15,54 @@ organized into four modes: Servers, Tools, Permissions, and Audit.
 
 - Press **Ctrl+9**, click **⌃9 MCP** in the nav bar, or press **Ctrl+P** →
   "Tab Navigation: Switch to MCP".
- 
+
+## Running Chatbook as a standalone MCP server
+
+Install the packaged optional extra, then configure the external client to
+launch the module from that same Python environment:
+
+```bash
+pip install "tldw_chatbook[mcp]"
+python -m tldw_chatbook.MCP
+```
+
+The stdio server supports revision `2025-03-26`, revision `2025-11-25`, and
+the current `2026-07-28` profile. Batch requests are accepted only with
+`2025-03-26`; `2025-11-25` and `2026-07-28` reject them.
+
+Its standalone catalog has exactly 10 built-in tools: `chat_with_llm`,
+`chat_with_character`, `search_rag`, `search_conversations`, `create_note`,
+`search_notes`, `list_characters`, `get_conversation_history`,
+`export_conversation`, and `ingest_media`. It has exactly 5 resource
+templates: `conversation://{conversation_id}`, `note://{note_id}`,
+`character://{character_id}`, `media://{media_id}`, and
+`rag-chunk://{chunk_uuid}`. It has exactly 5 prompts:
+`summarize_conversation`, `generate_document`, `analyze_media`,
+`search_and_synthesize`, and `character_writing`.
+
+Chatbook's separate in-app Library runtime owns `library_list_media`,
+`library_get_media`, `library_search_media`, `library_list_notes`,
+`library_get_note`, `library_search_notes`, `library_list_prompts`,
+`library_get_prompt`, `library_search_prompts`, `library_list_skills`,
+`library_get_skill`, `library_search_skills`, `library_list_conversations`,
+`library_get_conversation`, `library_search_conversations`,
+`library_list_collections`, `library_get_collection`, and
+`library_search_collections`. All 18 are excluded from the standalone stdio
+catalog. They remain behind the in-app gated and logged direct Library action;
+raw in-app `tools/call` is refused.
+
+Large resource reads return at most 256 KiB of UTF-8 text. Use the opaque
+`nextUri` in `_meta["tldw.chatbook/continuation"]` to read the next chunk.
+Resource-specific metadata is under `_meta["tldw.chatbook/resource"]`.
+
+Local filesystem, git, and web tools are off by default:
+`[mcp] expose_local_tools = false`. If enabled, every call retains workspace
+confinement, reads the shared `mcp_permissions.json` permission store, and
+honors its kill switch. An external `ask` state is refused because an
+external client cannot show Chatbook's approval card.
+
+> [!WARNING]
+> An external MCP client runs with the user's OS access. It can read private local Library content through exposed tools, resources, and prompts, and it may send that content off-device to a cloud model. Enable only what you mean to disclose, and trust both the client and the model provider.
 
 ## Configuring local and web tools (Tools mode)
 
