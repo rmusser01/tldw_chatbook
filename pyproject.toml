@@ -291,6 +291,7 @@ dev = [
     "hypothesis",
     "pytest-asyncio",
     "build",  # For building distributions
+    "uv>=0.8.0,<1",  # Isolated wheel/sdist test environments
     "twine",  # For uploading to PyPI
     "wheel",  # For building wheel distributions
     "prometheus_client",  # For metrics collection during development

@@ -372,47 +372,20 @@ Character-based creative writing.
 
 ## Configuration
 
-MCP is configured through the `[mcp]` section in config.toml:
+The standalone gateway is stdio-only. It reads the local-tool exposure switch
+from config.toml:
 
 ```toml
 [mcp]
-# Basic settings
-enabled = false  # Enable MCP server functionality
-server_name = "tldw_chatbook"
-server_version = "0.1.0"
-transport = "stdio"  # "stdio" for Claude Desktop, "http" for web
-http_port = 3000  # Port for HTTP transport
-allowed_clients = ["claude-desktop", "localhost"]
-
-# Feature toggles
-expose_tools = true  # Expose tools (chat, search, etc.)
-expose_resources = true  # Expose resources (conversations, notes, etc.)
-expose_prompts = true  # Expose prompt templates
-
-# Security settings
-require_auth = false  # Require authentication (not implemented yet)
-rate_limit = 100  # Max requests per minute per client
-max_concurrent_requests = 10  # Max concurrent requests
-
-# Tool-specific settings
-[mcp.tools]
-chat_default_provider = "openai"
-chat_default_temperature = 0.7
-chat_default_max_tokens = 4096
-search_default_limit = 10
-enable_media_ingestion = true
-
-# Resource-specific settings
-[mcp.resources]
-max_list_limit = 100  # Maximum items in list operations
-default_list_limit = 10  # Default items in list operations
-enable_binary_resources = false  # Allow binary resources
-
-# Prompt-specific settings
-[mcp.prompts]
-enable_custom_prompts = true  # Allow custom prompts
-max_prompt_length = 10000  # Maximum prompt length
+expose_local_tools = false
 ```
+
+The shipped entry point does not open an HTTP listener and does not implement
+standalone authentication or client allowlisting. `mcp-unified` applies its
+fixed `GatewayLimits` defaults: 600 requests per minute and 16 in-flight
+requests. Those limits are not Chatbook config keys. When local tools are
+enabled, workspace confinement comes from `[console] workspace_root` and each
+call still uses the shared permission store and kill switch described above.
 
 ## Installation and Setup
 
@@ -526,9 +499,10 @@ await client.disconnect_from_server("my_server")
 - Path traversal prevention for file operations
 
 ### Access Control
-- Client allowlisting via `allowed_clients` config
-- Rate limiting per client
-- Maximum concurrent request limits
+- The standalone server inherits the launching client's OS access over stdio;
+  it has no network authentication or client-allowlisting layer.
+- The gateway enforces its fixed request-rate and in-flight limits.
+- Enabled local tools remain permission-gated and workspace-confined.
 
 ### Data Security
 - Database operations use existing tldw_chatbook security

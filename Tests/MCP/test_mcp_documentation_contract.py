@@ -20,6 +20,7 @@ TASK_2511 = (
     / "tasks"
     / "task-2511 - Smoke-test-FastMCP-local-tool-binding-with-the-mcp-extra.md"
 )
+DESIGN_DOCUMENT = DOCUMENTS[0]
 BUILTIN_TOOLS = (
     "chat_with_llm",
     "chat_with_character",
@@ -217,6 +218,25 @@ def test_documents_warn_about_external_local_data_and_cloud_egress(
     assert "tools, resources, and prompts" in normalized, path
     assert "off-device" in normalized, path
     assert "cloud model" in normalized, path
+
+
+def test_design_does_not_advertise_unimplemented_standalone_controls() -> None:
+    text = DESIGN_DOCUMENT.read_text(encoding="utf-8")
+    stale_claims = (
+        'transport = "stdio"',
+        "http_port = ",
+        "allowed_clients = ",
+        "require_auth = ",
+        "rate_limit = 100",
+        "max_concurrent_requests = 10",
+        "Client allowlisting via",
+    )
+    assert all(claim not in text for claim in stale_claims)
+    normalized = " ".join(text.split())
+    assert "standalone gateway is stdio-only" in normalized
+    assert "600 requests per minute" in normalized
+    assert "16 in-flight requests" in normalized
+    assert "`[mcp] expose_local_tools = false`" in text
 
 
 def test_task_2511_records_truthful_supersession_instead_of_fastmcp_completion():

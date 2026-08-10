@@ -8,12 +8,15 @@ import json
 import os
 from pathlib import Path
 from queue import Empty, Queue
+import signal
 import shutil
 import subprocess
 import sys
 import tarfile
 import threading
-from typing import Any, BinaryIO
+import time
+import tomllib
+from typing import Any
 import zipfile
 
 from packaging.requirements import Requirement
@@ -30,6 +33,7 @@ built_distributions = _built_distributions
 pytestmark = pytest.mark.integration
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+UV_EXECUTABLE = Path(sys.executable).with_name("uv.exe" if os.name == "nt" else "uv")
 BUILTIN_TOOL_NAMES = {
     "chat_with_llm",
     "chat_with_character",
@@ -271,7 +275,7 @@ def _metadata_and_license(artifact: Path, artifact_kind: str) -> tuple[Any, bool
             for member in members
             if member.isfile() and member.name.endswith("/PKG-INFO")
         )
-        stream: BinaryIO | None = archive.extractfile(pkg_info)
+        stream = archive.extractfile(pkg_info)
         assert stream is not None
         metadata = Parser().parsestr(stream.read().decode("utf-8"))
         sdist_root = pkg_info.name.rsplit("/", maxsplit=1)[0]
@@ -306,8 +310,14 @@ def _assert_metadata_contract(metadata: Any, *, has_license: bool) -> None:
     }
 
 
-def _assert_tool_inventory(tool_names: set[str]) -> None:
-    assert tool_names == BUILTIN_TOOL_NAMES | LOCAL_TOOL_NAMES
+def _assert_exact_wire_inventory(names: list[str], expected: set[str]) -> None:
+    assert len(names) == len(expected)
+    assert len(names) == len(set(names))
+    assert set(names) == expected
+
+
+def _assert_tool_inventory(tool_names: list[str]) -> None:
+    _assert_exact_wire_inventory(tool_names, BUILTIN_TOOL_NAMES | LOCAL_TOOL_NAMES)
     assert not any(name.startswith("library_") for name in tool_names)
 
 
@@ -318,6 +328,15 @@ def _assert_private_stderr(stderr: str, *, secret: str, path: str) -> None:
     assert "Traceback" not in stderr
 
 
+def _assert_private_wire_responses(
+    responses: list[dict[str, Any]], *, secret: str, path: str
+) -> None:
+    serialized = json.dumps(responses, ensure_ascii=False, sort_keys=True)
+    for private_value in (secret, path):
+        encoded = json.dumps(private_value, ensure_ascii=False)[1:-1]
+        assert encoded not in serialized
+
+
 def _test_metadata(*requirements: str) -> Any:
     headers = [
         "License-Expression: AGPL-3.0-or-later",
@@ -325,6 +344,243 @@ def _test_metadata(*requirements: str) -> Any:
         *(f"Requires-Dist: {requirement}" for requirement in requirements),
     ]
     return Parser().parsestr("\n".join(headers) + "\n\n")
+
+
+def test_uv_is_declared_in_both_test_dependency_surfaces() -> None:
+    pyproject = tomllib.loads(
+        (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    dev = [
+        Requirement(value)
+        for value in pyproject["project"]["optional-dependencies"]["dev"]
+        if canonicalize_name(Requirement(value).name) == "uv"
+    ]
+    requirement_lines = [
+        line.strip()
+        for line in (REPO_ROOT / "requirements-test.txt")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    test_requirements = [
+        Requirement(value)
+        for value in requirement_lines
+        if canonicalize_name(Requirement(value).name) == "uv"
+    ]
+    assert [str(requirement) for requirement in dev] == ["uv<1,>=0.8.0"]
+    assert [str(requirement) for requirement in test_requirements] == ["uv<1,>=0.8.0"]
+
+
+def test_uv_executable_is_owned_by_the_test_environment_without_path() -> None:
+    assert UV_EXECUTABLE.is_file()
+    completed = subprocess.run(
+        [str(UV_EXECUTABLE), "--version"],
+        env={"PATH": "", "SYSTEMROOT": os.environ.get("SYSTEMROOT", "")},
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert completed.returncode == 0
+    assert completed.stdout.startswith("uv ")
+
+
+PROCESS_TREE_SCRIPT = r"""
+from pathlib import Path
+import os
+import subprocess
+import sys
+import time
+
+child_stdio = {
+    "stdin": subprocess.DEVNULL,
+    "stdout": subprocess.DEVNULL,
+    "stderr": subprocess.DEVNULL,
+}
+child = subprocess.Popen(
+    [sys.executable, "-c", "import time; time.sleep(120)"], **child_stdio
+)
+Path(sys.argv[1]).write_text(f"{os.getpid()} {child.pid}", encoding="utf-8")
+if sys.argv[2] == "invalid-json":
+    print("not-json", flush=True)
+if sys.argv[2] == "nonzero":
+    raise SystemExit(7)
+time.sleep(120)
+"""
+
+
+def _pid_exists(pid: int) -> bool:
+    if os.name == "nt":
+        completed = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        return str(pid) in completed.stdout
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def _force_stop_test_processes(pids: list[int]) -> None:
+    for pid in pids:
+        if not _pid_exists(pid):
+            continue
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+        else:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+def _wait_for_processes_to_exit(pids: list[int], timeout: float = 3) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not any(_pid_exists(pid) for pid in pids):
+            return True
+        time.sleep(0.02)
+    return not any(_pid_exists(pid) for pid in pids)
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_error", "timeout"),
+    [
+        ("timeout", subprocess.TimeoutExpired, 0.25),
+        ("nonzero", AssertionError, 5),
+    ],
+)
+def test_run_cleans_the_owned_process_tree_and_root_on_failure(
+    tmp_path: Path,
+    mode: str,
+    expected_error: type[BaseException],
+    timeout: float,
+) -> None:
+    root = tmp_path / f"{mode}-root"
+    root.mkdir()
+    pid_file = root / "pids"
+    pids: list[int] = []
+    try:
+        with pytest.raises(expected_error):
+            try:
+                _run(
+                    [sys.executable, "-c", PROCESS_TREE_SCRIPT, str(pid_file), mode],
+                    cwd=root,
+                    env=os.environ.copy(),
+                    timeout=timeout,
+                )
+            finally:
+                if pid_file.exists():
+                    pids = [int(value) for value in pid_file.read_text().split()]
+                shutil.rmtree(root, ignore_errors=True)
+                assert not root.exists()
+        assert len(pids) == 2
+        assert _wait_for_processes_to_exit(pids)
+    finally:
+        _force_stop_test_processes(pids)
+        assert _wait_for_processes_to_exit(pids)
+
+
+def test_server_failure_cleans_descendants_reader_and_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "server-root"
+    root.mkdir()
+    pid_file = root / "pids"
+    pids: list[int] = []
+    real_spawn = _spawn_owned_process
+
+    def spawn_adversarial_server(*_args: Any, **kwargs: Any) -> subprocess.Popen[str]:
+        return real_spawn(
+            [
+                sys.executable,
+                "-c",
+                PROCESS_TREE_SCRIPT,
+                str(pid_file),
+                "invalid-json",
+            ],
+            **kwargs,
+        )
+
+    try:
+        with monkeypatch.context() as context:
+            context.setattr(
+                sys.modules[__name__],
+                "_spawn_owned_process",
+                spawn_adversarial_server,
+            )
+            with pytest.raises(json.JSONDecodeError):
+                _exercise_server(Path(sys.executable), root, os.environ.copy())
+        pids = [int(value) for value in pid_file.read_text().split()]
+        assert len(pids) == 2
+        assert _wait_for_processes_to_exit(pids)
+        assert not any(
+            thread.name == "packaged-mcp-stdout" and thread.is_alive()
+            for thread in threading.enumerate()
+        )
+    finally:
+        _force_stop_test_processes(pids)
+        assert _wait_for_processes_to_exit(pids)
+        shutil.rmtree(root, ignore_errors=True)
+        assert not root.exists()
+
+
+WIRE_INVENTORIES = {
+    "tools": BUILTIN_TOOL_NAMES | LOCAL_TOOL_NAMES,
+    "resource_templates": RESOURCE_TEMPLATES,
+    "resources": {"conversation://7", "note://artifact-note"},
+    "prompts": PROMPT_NAMES,
+}
+
+
+def test_exact_wire_inventory_accepts_sequences_without_duplicates() -> None:
+    _assert_tool_inventory(list(WIRE_INVENTORIES["tools"]))
+    for category in ("resource_templates", "resources", "prompts"):
+        _assert_exact_wire_inventory(
+            list(WIRE_INVENTORIES[category]), WIRE_INVENTORIES[category]
+        )
+
+
+@pytest.mark.parametrize(("category", "expected"), WIRE_INVENTORIES.items())
+def test_exact_wire_inventory_rejects_a_duplicate(
+    category: str, expected: set[str]
+) -> None:
+    names = [*expected, next(iter(expected))]
+    if category == "tools":
+        with pytest.raises(AssertionError):
+            _assert_tool_inventory(names)
+    else:
+        with pytest.raises(AssertionError):
+            _assert_exact_wire_inventory(names, expected)
+
+
+@pytest.mark.parametrize("leak_location", ("result", "result._meta"))
+def test_wire_privacy_rejects_result_and_metadata_leaks(
+    leak_location: str,
+) -> None:
+    secret = "wire-secret"
+    checkout_path = "/private/checkout-sentinel"
+    response: dict[str, Any] = {
+        "jsonrpc": "2.0",
+        "id": "mutation",
+        "result": (
+            {"content": secret}
+            if leak_location == "result"
+            else {"_meta": {"debug": checkout_path}}
+        ),
+    }
+    with pytest.raises(AssertionError):
+        _assert_private_wire_responses([response], secret=secret, path=checkout_path)
 
 
 def test_sdist_license_must_be_at_the_project_root(tmp_path: Path) -> None:
@@ -472,20 +728,82 @@ def _run(
     env: dict[str, str],
     timeout: float,
 ) -> subprocess.CompletedProcess[str]:
-    completed = subprocess.run(
+    process = _spawn_owned_process(
         command,
         cwd=cwd,
         env=env,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
         encoding="utf-8",
-        timeout=timeout,
-        check=False,
     )
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except BaseException:
+        _terminate_process_tree(process)
+        try:
+            process.communicate(timeout=5)
+        except (subprocess.TimeoutExpired, ValueError):
+            pass
+        raise
+    completed = subprocess.CompletedProcess(
+        command,
+        process.returncode,
+        stdout,
+        stderr,
+    )
+    if completed.returncode != 0:
+        _terminate_process_tree(process)
     assert completed.returncode == 0, (
         f"command: {command}\nstdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
     )
     return completed
+
+
+def _spawn_owned_process(command: list[str], **kwargs: Any) -> subprocess.Popen[str]:
+    if os.name == "nt":
+        kwargs["creationflags"] = kwargs.get("creationflags", 0) | getattr(
+            subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+        )
+    else:
+        kwargs["start_new_session"] = True
+    return subprocess.Popen(command, **kwargs)
+
+
+def _terminate_process_tree(
+    process: subprocess.Popen[str], *, timeout: float = 5
+) -> None:
+    if os.name == "nt":
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            if process.poll() is None:
+                process.kill()
+        if process.poll() is None:
+            process.wait(timeout=timeout)
+        return
+
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    if process.poll() is None:
+        try:
+            process.wait(timeout=min(timeout, 1))
+        except subprocess.TimeoutExpired:
+            pass
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    if process.poll() is None:
+        process.wait(timeout=max(0.1, timeout - 1))
 
 
 def _request(
@@ -515,7 +833,7 @@ def _legacy_request(
 def _exercise_server(python: Path, run_root: Path, env: dict[str, str]) -> None:
     secret = "TASK2512_ARTIFACT_SECRET_SENTINEL"
     checkout_sentinel = str(REPO_ROOT / secret / "private-source-sentinel")
-    process = subprocess.Popen(
+    process = _spawn_owned_process(
         [str(python), "-I", "-m", "tldw_chatbook.MCP"],
         cwd=run_root,
         env=env,
@@ -543,6 +861,7 @@ def _exercise_server(python: Path, run_root: Path, env: dict[str, str]) -> None:
             ),
         )
         assert initialized["result"]["protocolVersion"] == "2025-03-26"
+        responses.append(initialized)
         assert process.stdin is not None
         process.stdin.write(
             '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}\n'
@@ -550,7 +869,7 @@ def _exercise_server(python: Path, run_root: Path, env: dict[str, str]) -> None:
         process.stdin.flush()
 
         tools = _request(process, reader, _legacy_request("tools", "tools/list"))
-        tool_names = {item["name"] for item in tools["result"]["tools"]}
+        tool_names = [item["name"] for item in tools["result"]["tools"]]
         _assert_tool_inventory(tool_names)
         responses.append(tools)
 
@@ -559,22 +878,26 @@ def _exercise_server(python: Path, run_root: Path, env: dict[str, str]) -> None:
             reader,
             _legacy_request("templates", "resources/templates/list"),
         )
-        assert {
-            item["uriTemplate"] for item in templates["result"]["resourceTemplates"]
-        } == RESOURCE_TEMPLATES
+        _assert_exact_wire_inventory(
+            [item["uriTemplate"] for item in templates["result"]["resourceTemplates"]],
+            RESOURCE_TEMPLATES,
+        )
         responses.append(templates)
 
         resources = _request(
             process, reader, _legacy_request("resources", "resources/list")
         )
-        assert {item["uri"] for item in resources["result"]["resources"]} == {
-            "conversation://7",
-            "note://artifact-note",
-        }
+        _assert_exact_wire_inventory(
+            [item["uri"] for item in resources["result"]["resources"]],
+            {"conversation://7", "note://artifact-note"},
+        )
         responses.append(resources)
 
         prompts = _request(process, reader, _legacy_request("prompts", "prompts/list"))
-        assert {item["name"] for item in prompts["result"]["prompts"]} == PROMPT_NAMES
+        _assert_exact_wire_inventory(
+            [item["name"] for item in prompts["result"]["prompts"]],
+            PROMPT_NAMES,
+        )
         responses.append(prompts)
 
         characters = _request(
@@ -668,15 +991,18 @@ def _exercise_server(python: Path, run_root: Path, env: dict[str, str]) -> None:
         assert process.stderr is not None
         stderr = process.stderr.read()
     finally:
-        if process.poll() is None:
-            process.kill()
-            process.wait(timeout=5)
+        _terminate_process_tree(process)
+        if process.stdin is not None and not process.stdin.closed:
+            process.stdin.close()
         reader.close(timeout=5)
+        if process.stderr is not None:
+            process.stderr.close()
 
     assert process.returncode == 0
     assert trailing == []
     assert responses
     _assert_private_stderr(stderr, secret=secret, path=checkout_sentinel)
+    _assert_private_wire_responses(responses, secret=secret, path=checkout_sentinel)
 
 
 @pytest.mark.parametrize("artifact_kind", ["wheel", "sdist"])
@@ -700,11 +1026,11 @@ def test_mcp_extra_installs_and_runs_from_each_isolated_artifact(
         env = _isolated_env(root, config, built_distributions.source_root)
         _run(
             [
-                "uv",
+                str(UV_EXECUTABLE),
                 "venv",
                 "--no-project",
                 "--python",
-                sys._base_executable,
+                getattr(sys, "_base_executable", sys.executable),
                 str(venv_root),
             ],
             cwd=run_root,
@@ -715,7 +1041,7 @@ def test_mcp_extra_installs_and_runs_from_each_isolated_artifact(
 
         _run(
             [
-                "uv",
+                str(UV_EXECUTABLE),
                 "pip",
                 "install",
                 "--link-mode",
@@ -744,5 +1070,4 @@ def test_mcp_extra_installs_and_runs_from_each_isolated_artifact(
         _exercise_server(python, run_root, env)
     finally:
         shutil.rmtree(root, ignore_errors=True)
-
-    assert not root.exists()
+        assert not root.exists()
