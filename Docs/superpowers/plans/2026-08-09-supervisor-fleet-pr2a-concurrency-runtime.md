@@ -750,10 +750,14 @@ weakening.
 
 - [ ] **Step 3: Re-pin the two default-dependent fleet tests**
 
-`test_without_a_coordinator_spawn_stays_inline` and
-`test_fleet_tools_are_not_offered_without_a_coordinator` currently rely on default==1.
-Re-pin them on an explicit `max_live_subagents=1` (monkeypatched config or injected
-`None`), so they keep guarding the inline branch after the default moves.
+`test_without_a_coordinator_spawn_stays_inline`,
+`test_fleet_tools_are_not_offered_without_a_coordinator`, and
+`test_config_of_one_or_junk_keeps_the_inline_path` (its `"nonsense"`/`None` cases resolve
+through `DEFAULT_MAX_LIVE_SUBAGENTS`, so they flip meaning when the default does) all rely
+on default==1. Re-pin each on an explicit `max_live_subagents=1` (monkeypatched config or
+injected `None`), so they keep guarding the inline branch after the default moves. Sweep
+for any other test whose expectation is "no coordinator" without saying so explicitly —
+grep `_coerce_max_live_subagents` and `DEFAULT_MAX_LIVE_SUBAGENTS` in Tests/.
 
 - [ ] **Step 4: Retire the contradicted bridge test**
 
