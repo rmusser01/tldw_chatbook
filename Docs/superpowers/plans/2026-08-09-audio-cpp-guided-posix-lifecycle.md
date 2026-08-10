@@ -96,4 +96,4 @@
 - [x] Prove direct argv/no shell, generated endpoint, multi-model lazy registration, first synthesis, staged replacement, crash recovery, exact shutdown, and zero artifact/orphan leakage on POSIX.
 - [x] Run the complete affected TTS surface outside the sandbox for real loopback/process fixtures.
 - [x] Run Ruff, format check, compileall, scoped mypy, privacy/boundary gates, and `git diff --check`.
-- [ ] Update the module guide, task acceptance checklist, implementation notes, ADR reference, and status only after verification is green.
+- [x] Update the module guide, task acceptance checklist, implementation notes, ADR reference, and status only after verification is green.
