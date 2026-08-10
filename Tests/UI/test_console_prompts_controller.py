@@ -799,6 +799,15 @@ async def test_prompt_application_reports_durable_system_failure_separately(
             "set_session_system_prompt",
             apply_but_report_unsaved,
         )
+
+        def fail_popup_sync() -> None:
+            raise RuntimeError("popup exception secret")
+
+        monkeypatch.setattr(
+            console,
+            "_sync_console_command_popup",
+            fail_popup_sync,
+        )
         notify = Mock()
         app.notify = notify
 
@@ -811,10 +820,185 @@ async def test_prompt_application_reports_durable_system_failure_separately(
         )
         assert composer.draft_text() == "user after"
         assert store.session_settings(session_id).system_prompt == "system after"
-        notify.assert_called_once_with(
+        assert [item.args[0] for item in notify.call_args_list] == [
+            ConsolePromptsController._PROMPT_DISPLAY_SYNC_FAILED_COPY,
             ConsolePromptsController._PROMPT_SYSTEM_PERSISTENCE_FAILED_COPY,
+        ]
+        assert all(
+            item.kwargs == {"severity": "warning"} for item in notify.call_args_list
+        )
+        assert "secret" not in str(notify.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_prompt_application_keeps_durable_system_when_surface_sync_fails(
+    monkeypatch,
+) -> None:
+    class RecordingPersistence:
+        def __init__(self) -> None:
+            self.system_updates: list[tuple[str, str | None]] = []
+
+        def update_conversation_system_prompt(
+            self,
+            *,
+            conversation_id: str,
+            system_prompt: str | None,
+        ) -> bool:
+            self.system_updates.append((conversation_id, system_prompt))
+            return True
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        assert session_id is not None
+        session = next(item for item in store.sessions() if item.id == session_id)
+        persistence = RecordingPersistence()
+        session.persisted_conversation_id = "conversation-1"
+        store.persistence = persistence
+        composer.load_draft("draft before")
+        snapshot = composer.capture_draft_snapshot()
+        application = _replacement_application(
+            snapshot=snapshot,
+            session_id=session_id,
+            user_text="user after",
+            system_text="system after",
+            system_fingerprint=fingerprint_system_text(""),
+        )
+        notify = Mock()
+        app.notify = notify
+
+        def fail_surface_sync() -> None:
+            raise RuntimeError("surface exception secret")
+
+        monkeypatch.setattr(
+            console,
+            "_sync_console_chat_core_state",
+            fail_surface_sync,
+        )
+
+        assert (
+            console._prompts._apply_prompt_application(
+                application,
+                captured_snapshot=snapshot,
+            )
+            is True
+        )
+        assert composer.draft_text() == "user after"
+        assert store.session_draft(session_id) == "user after"
+        assert store.session_settings(session_id).system_prompt == "system after"
+        assert persistence.system_updates == [("conversation-1", "system after")]
+        notify.assert_called_once_with(
+            ConsolePromptsController._PROMPT_DISPLAY_SYNC_FAILED_COPY,
             severity="warning",
         )
+        assert "secret" not in str(notify.call_args)
+
+
+@pytest.mark.parametrize(
+    ("system_fails", "expected_applied", "expected_undo"),
+    [(False, True, False), (True, False, True)],
+)
+@pytest.mark.asyncio
+async def test_system_only_empty_apply_settles_prior_prompt_undo(
+    monkeypatch,
+    system_fails: bool,
+    expected_applied: bool,
+    expected_undo: bool,
+) -> None:
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        assert session_id is not None
+        composer.load_draft("unrelated older draft")
+        prior_snapshot = composer.capture_draft_snapshot()
+        composer.replace_snapshot_as_paste(prior_snapshot, "")
+        empty_snapshot = composer.capture_draft_snapshot()
+        application = _replacement_application(
+            snapshot=empty_snapshot,
+            session_id=session_id,
+            user_text=None,
+            system_text="new system",
+            system_fingerprint=fingerprint_system_text(""),
+        )
+
+        if system_fails:
+
+            def fail_system(*_args, **_kwargs):
+                raise RuntimeError("system mutation failed")
+
+            monkeypatch.setattr(store, "set_session_system_prompt", fail_system)
+
+        assert (
+            console._prompts._apply_prompt_application(
+                application,
+                captured_snapshot=empty_snapshot,
+            )
+            is expected_applied
+        )
+        assert composer.draft_text() == ""
+        assert store.session_settings(session_id).system_prompt == (
+            "new system" if expected_applied else None
+        )
+        assert composer.improvement_undo_available is expected_undo
+        assert composer.undo_improvement() is expected_undo
+        assert composer.draft_text() == (
+            "unrelated older draft" if expected_undo else ""
+        )
+
+
+@pytest.mark.asyncio
+async def test_prompt_application_handles_composer_failure_without_secondary_error(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        assert session_id is not None
+        composer.load_draft("draft before")
+        snapshot = composer.capture_draft_snapshot()
+        application = _replacement_application(
+            snapshot=snapshot,
+            session_id=session_id,
+            user_text="replacement",
+        )
+        notify = Mock()
+        app.notify = notify
+
+        def fail_composer(*_args, **_kwargs):
+            raise RuntimeError("composer exception secret")
+
+        monkeypatch.setattr(composer, "replace_snapshot_as_paste", fail_composer)
+
+        assert (
+            console._prompts._apply_prompt_application(
+                application,
+                captured_snapshot=snapshot,
+            )
+            is False
+        )
+        assert composer.draft_text() == "draft before"
+        assert "secret" not in str(notify.call_args)
 
 
 @pytest.mark.asyncio

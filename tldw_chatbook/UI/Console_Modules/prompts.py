@@ -25,7 +25,7 @@ fan-in; restated briefly here):
    matters concretely here: `Tests/UI/test_console_workbench_contract.py`
    replaces `_open_console_provider_recovery` and `_console_provider_
    blocker_copy` on the SCREEN INSTANCE and then calls the modal opener,
-   and eleven of the sixteen dependencies below are monkeypatched by name
+   and twelve of the seventeen dependencies below are monkeypatched by name
    somewhere in the pre-existing suite. A constructor snapshot would
    silently stop observing every one of those.
 3. `app_instance` is a plain snapshot, for the same reason `dictation.py`
@@ -36,7 +36,7 @@ fan-in; restated briefly here):
 **Zero DOM.** No `query_one`/`query` traffic reaches through `screen` here.
 That is why `_insert_prompt_text_into_composer` -- which does a raw
 `self.query_one("#console-native-composer", ConsoleComposerBar)` -- did NOT
-move and is instead one of the sixteen injected callables, even though it
+move and is instead one of the seventeen injected callables, even though it
 is the single most prompt-shaped helper on the screen. (Six pre-existing
 test sites also replace it on the screen by name, so it has to keep
 resolving through the screen either way.)
@@ -766,6 +766,9 @@ class ConsolePromptsController:
         "System prompt applied for this session, but the change could not be "
         "saved -- it may not survive a reload."
     )
+    _PROMPT_DISPLAY_SYNC_FAILED_COPY = (
+        "Prompt applied, but some Console displays could not be refreshed."
+    )
 
     def __init__(
         self,
@@ -788,6 +791,7 @@ class ConsolePromptsController:
         clear_console_composer_draft: Callable[[], None],
         append_native_console_system_message: Callable[[str], Any],
         sync_console_system_prompt_surfaces: Callable[[], None],
+        sync_console_command_popup: Callable[[], None],
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -802,8 +806,8 @@ class ConsolePromptsController:
         `_open_console_prompts_modal`, whose closures task 2766 moved into
         `_ConsolePromptSource` and `_ConsolePromptImprovementFlow`.
 
-        Sixteen named dependencies is squarely in the band waves 1-3 have
-        established (dictation: 12; message: 19). Thirteen of the sixteen
+        Seventeen named dependencies is squarely in the band waves 1-3 have
+        established (dictation: 12; message: 19). Thirteen of the seventeen
         are needed by `_open_console_prompts_modal` alone -- it is the
         cluster's whole fan-in, not a sprawl across many methods. The count
         was eighteen until task 2766 collapsed the post-apply re-sync trio
@@ -888,6 +892,9 @@ class ConsolePromptsController:
                 individually. Task 2766 collapsed them; `wiring.py` still
                 reaches each screen method by name at CALL time, so the
                 late-binding property every one of them had is unchanged.
+            sync_console_command_popup: The existing screen-owned command
+                suggestion refresh, called after a draft replacement or
+                rollback so programmatic mutations cannot leave stale rows.
         """
         self._screen = screen
         self.app_instance = app_instance
@@ -919,6 +926,7 @@ class ConsolePromptsController:
         self._sync_console_system_prompt_surfaces_fn = (
             sync_console_system_prompt_surfaces
         )
+        self._sync_console_command_popup_fn = sync_console_command_popup
 
         # This cluster's own state, moved verbatim from `ChatScreen.__init__`.
         # Nothing outside this cluster ever read the attribute directly (only
@@ -1019,6 +1027,10 @@ class ConsolePromptsController:
     @property
     def _sync_console_system_prompt_surfaces(self) -> Any:
         return self._sync_console_system_prompt_surfaces_fn
+
+    @property
+    def _sync_console_command_popup(self) -> Any:
+        return self._sync_console_command_popup_fn
 
     # -- Moved bodies -------------------------------------------------------
 
@@ -1267,7 +1279,8 @@ class ConsolePromptsController:
         Replacement is coordinated in memory: every guard is checked before
         either lane changes, and an unexpected System mutation error restores
         the exact captured composer state and its stored draft. Durable System
-        persistence remains a separately reported outcome.
+        persistence and post-commit display refresh remain separately
+        reported outcomes.
         """
         if not isinstance(application, PromptVariableApplication):
             self._warn_prompt_application(self._PROMPT_APPLICATION_STALE_COPY)
@@ -1311,8 +1324,12 @@ class ConsolePromptsController:
             else ""
         )
 
+        replaced_snapshot: ComposerDraftSnapshot | None = None
         try:
-            composer.replace_snapshot_as_paste(captured_snapshot, replacement_text)
+            replaced_snapshot = composer.replace_snapshot_as_paste(
+                captured_snapshot,
+                replacement_text,
+            )
             store.set_session_draft(session_id, composer.draft_text())
             persisted = True
             if application.apply_system:
@@ -1320,16 +1337,19 @@ class ConsolePromptsController:
                     session_id,
                     application.system_text,
                 )
-                self._sync_console_system_prompt_surfaces()
+                if replaced_snapshot is None:
+                    composer.invalidate_improvement_undo()
         except ComposerTransactionValidationError:
             self._warn_prompt_application(self._PROMPT_APPLICATION_STALE_COPY)
             return False
         except Exception:
-            try:
-                composer.restore_snapshot(captured_snapshot)
-                store.set_session_draft(session_id, composer.draft_text())
-            except Exception:
-                pass
+            if replaced_snapshot is not None:
+                try:
+                    composer.restore_snapshot(captured_snapshot)
+                    store.set_session_draft(session_id, composer.draft_text())
+                    self._sync_console_command_popup()
+                except Exception:
+                    pass
             if application.apply_system:
                 try:
                     store.replace_session_settings(session_id, settings)
@@ -1339,9 +1359,22 @@ class ConsolePromptsController:
             self._warn_prompt_application(self._PROMPT_APPLICATION_FAILED_COPY)
             return False
 
+        display_sync_failed = False
+        if application.apply_system:
+            try:
+                self._sync_console_system_prompt_surfaces()
+            except Exception:
+                display_sync_failed = True
+
+        try:
+            self._sync_console_command_popup()
+        except Exception:
+            display_sync_failed = True
+        if display_sync_failed:
+            self._warn_prompt_application(self._PROMPT_DISPLAY_SYNC_FAILED_COPY)
         if not persisted:
             self._warn_prompt_application(self._PROMPT_SYSTEM_PERSISTENCE_FAILED_COPY)
-        else:
+        if not display_sync_failed and persisted:
             self._focus_console_composer_if_needed(force=True)
         return True
 

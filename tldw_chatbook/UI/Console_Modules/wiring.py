@@ -546,7 +546,7 @@ def build_console_controllers(
     #: shared prompt-history store (wave-3 console decomposition, task
     #: 3). Every dependency below is a LATE-BINDING lambda (or, for the
     #: post-apply re-sync trio, a nested function that reads the same
-    #: way), never a bound method: eleven of the sixteen are replaced by
+    #: way), never a bound method: twelve of the seventeen are replaced by
     #: name on the screen instance somewhere in the pre-existing suite,
     #: and a constructor snapshot would silently stop observing every one
     #: of those. See `Console_Modules/prompts.py`'s `__init__` docstring
@@ -629,6 +629,7 @@ def build_console_controllers(
             lambda text: screen._append_native_console_system_message(text)
         ),
         sync_console_system_prompt_surfaces=_sync_console_system_prompt_surfaces,
+        sync_console_command_popup=lambda: screen._sync_console_command_popup(),
     )
     #: The agent runtime's screen-side cluster -- the lazily-built
     #: `ConsoleAgentBridge`, the Agent rail section's text derivation, the

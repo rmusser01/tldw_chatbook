@@ -25,7 +25,7 @@ from tldw_chatbook.Prompt_Management.prompt_scope_service import (
 )
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 from tldw_chatbook.UI.Console_Modules.prompts import ConsolePromptsController
-from tldw_chatbook.Widgets.Console import ConsoleComposerBar
+from tldw_chatbook.Widgets.Console import ConsoleCommandPopup, ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_prompt_picker_modal import (
     FILTER_INPUT_ID,
     ROW_ID_PREFIX,
@@ -455,6 +455,39 @@ async def test_console_prompt_command_unique_exact_name_replaces_draft(tmp_path)
         assert len(host.screen_stack) == baseline_depth, (
             "no picker should have opened for a unique match"
         )
+
+
+@pytest.mark.asyncio
+async def test_console_prompt_replacement_resyncs_stale_command_popup(tmp_path):
+    db, service = _real_prompt_scope_service(tmp_path)
+    db.add_prompt(
+        name="Summarize",
+        author="",
+        details="",
+        system_prompt="",
+        user_prompt="Body.",
+        keywords=[],
+    )
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.prompt_scope_service = service
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        popup = console.query_one("#console-command-popup", ConsoleCommandPopup)
+        composer.load_draft("/prompt")
+        console._sync_console_command_popup()
+        assert popup.is_open is True
+        composer.load_draft("/prompt Summarize")
+        assert popup.is_open is True
+
+        await console._console_command_insert_prompt(SimpleNamespace(args="Summarize"))
+
+        assert composer.draft_text() == "Body."
+        assert popup.is_open is False
 
 
 @pytest.mark.asyncio
