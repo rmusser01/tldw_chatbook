@@ -50,8 +50,8 @@ from Tests.UI.test_product_maturity_phase1_first_run import (
 )
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Constants import TAB_CHAT, TAB_HOME
+from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
 from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
-    FirstRunSetupWizard,
     SetupWizardContainer,
     _SettlingGuardedConfirmationDialog,
 )
@@ -644,8 +644,6 @@ async def test_summary_exit_buttons_visible_at_120x40_full_track(
 
             exit_chat = app.screen.query_one("#setup-exit-chat", Button)
             exit_home = app.screen.query_one("#setup-exit-home", Button)
-            from textual.widgets import Button as _B
-            all_buttons = [w for w in app.screen._compositor.visible_widgets if isinstance(w, _B)]
             strips = app.screen._compositor.render_strips()
             rendered_text = "\n".join(
                 "".join(segment.text for segment in strip) for strip in strips
@@ -716,20 +714,39 @@ async def test_speech_step_install_button_visible_at_120x40_without_scrolling(
             # mounted (query finds it) a beat before Textual's own layout
             # pass gives it a non-empty region, so wait for the region too
             # -- otherwise this flakes with Region(0, 0, 0, 0).
-            def _install_button_laid_out() -> bool:
-                buttons = app.screen.query("#setup-speech-install")
-                return bool(buttons) and buttons[0].region.height > 0
+            def _speech_actions_laid_out() -> bool:
+                install = app.screen.query("#setup-speech-install")
+                disk = app.screen.query("#setup-speech-use-from-disk")
+                return (
+                    bool(install)
+                    and install[0].region.height > 0
+                    and bool(disk)
+                    and disk[0].region.height > 0
+                )
 
-            await _wait_until(pilot, _install_button_laid_out, timeout_seconds=10.0)
+            await _wait_until(pilot, _speech_actions_laid_out, timeout_seconds=10.0)
 
             install_button = app.screen.query_one("#setup-speech-install", Button)
-            region = install_button.region
-            assert region.width > 0 and region.height > 0, (
-                f"install button has an empty region at 120x40: {region}"
-            )
-            assert region.y >= 0, f"install button clipped above row 0: {region}"
-            assert region.bottom <= 40, f"install button clipped past row 40: {region}"
-            assert region.right <= 120, f"install button clipped past column 120: {region}"
+            disk_button = app.screen.query_one("#setup-speech-use-from-disk", Button)
+            for button, label in (
+                (disk_button, "Use model from disk"),
+                (install_button, "Review and install"),
+            ):
+                region = button.region
+                assert region.width > 0 and region.height > 0, (
+                    f"{label} button has an empty region at 120x40: {region}"
+                )
+                assert region.y >= 0, f"{label} button clipped above row 0: {region}"
+                assert region.bottom <= 40, (
+                    f"{label} button clipped past row 40: {region}"
+                )
+                assert region.right <= 120, (
+                    f"{label} button clipped past column 120: {region}"
+                )
+                assert button in app.screen._compositor.visible_widgets, (
+                    f"{label} button's region looked on-screen, but the compositor "
+                    "never painted it"
+                )
 
             # Cross-check against the actual compositor output -- region
             # alone does not prove the compositor painted it (see this
@@ -743,9 +760,18 @@ async def test_speech_step_install_button_visible_at_120x40_without_scrolling(
             rendered_text = "\n".join(
                 "".join(segment.text for segment in strip) for strip in strips
             )
+            assert "Use model from disk" in rendered_text, (
+                "external-directory button's label never reached the rendered frame"
+            )
             assert "Review and install" in rendered_text, (
                 "install button's label never reached the rendered frame"
             )
+
+            # Mounted production flow: the real affordance must push the real
+            # directory picker, not a test-only stand-in.
+            disk_button.press()
+            await _wait_until(pilot, lambda: isinstance(app.screen, SelectDirectory))
+            assert isinstance(app.screen, SelectDirectory)
 
 
 # ---------------------------------------------------------------------------

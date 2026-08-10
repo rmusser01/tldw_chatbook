@@ -99,6 +99,11 @@ class SpeechSelection:
     precision: str
 
 
+# Task 8 names the pending wizard state explicitly while preserving the
+# existing public selection type and every caller that already uses it.
+SpeechSetupState = SpeechSelection
+
+
 def speech_language_options(
     *, curated_model_ids: frozenset[str]
 ) -> tuple[SpeechLanguageOption, ...]:
@@ -271,6 +276,40 @@ def build_speech_transcription_commit(
     }
 
 
+def speech_config_patch(
+    state: SpeechSetupState,
+    source_commit: Any,
+) -> dict[str, object]:
+    """Merge speech defaults with a prepared external-source config patch.
+
+    This helper is deliberately write-free. The wizard submits its result to
+    its existing single config transaction, then accepts the source commit
+    only after that transaction succeeds.
+
+    Args:
+        state: Exact provider/model/language/precision selected in First Run.
+        source_commit: A source-service prepared commit whose section values
+            contain the complete external-source table.
+
+    Returns:
+        One complete ``transcription`` section mutation.
+    """
+
+    speech_values = build_speech_transcription_commit(
+        provider_id=state.provider_id,
+        model_id=state.model_id,
+        language=state.language,
+        precision=state.precision,
+    )[TRANSCRIPTION_SECTION]
+    source_values = source_commit.section_values[TRANSCRIPTION_SECTION]
+    return {
+        TRANSCRIPTION_SECTION: {
+            **speech_values,
+            **source_values,
+        }
+    }
+
+
 @dataclass(frozen=True)
 class SpeechPrefill:
     """Persisted ``[transcription]`` defaults for re-run prefill (no secrets)."""
@@ -418,8 +457,10 @@ __all__ = [
     "SpeechPrecisionOption",
     "SpeechPrefill",
     "SpeechSelection",
+    "SpeechSetupState",
     "build_speech_transcription_commit",
     "read_speech_prefill",
+    "speech_config_patch",
     "should_persist_speech_config",
     "speech_prefill_status",
     "recommended_speech_selection",

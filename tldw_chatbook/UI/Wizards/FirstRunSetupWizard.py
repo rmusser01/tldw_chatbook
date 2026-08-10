@@ -7,6 +7,7 @@ this module renders them and owns persistence via one exclusive worker.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from pathlib import Path
@@ -21,21 +22,40 @@ from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.widget import Widget
 from textual.widgets import Button, Input, Label, RadioButton, RadioSet, Static, Switch
+from textual.worker import Worker, get_current_worker
 
 from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
     active_managed_parakeet_dir,
     parakeet_descriptor,
     parakeet_v2_managed_service,
     parakeet_reference,
+    parakeet_vad_descriptor,
+    parakeet_vad_reference,
     run_parakeet_preflight,
     run_parakeet_provision,
+    run_parakeet_vad_preflight,
+    run_parakeet_vad_provision,
 )
 from tldw_chatbook.Model_Artifacts.store import managed_model_artifact_root
 from tldw_chatbook.STT.transcribe_cpp_config import (
     configure_model_path as configure_transcribe_cpp_model_path,
     is_gguf_file,
 )
-from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, Filters
+from tldw_chatbook.STT.parakeet_external import (
+    ExternalParakeetErrorCode,
+    ExternalParakeetVerificationError,
+)
+from tldw_chatbook.STT.parakeet_sources import (
+    ParakeetSourceError,
+    ParakeetSourceErrorCode,
+    ParakeetSourceKey,
+    PreparedExternalSelection,
+)
+from tldw_chatbook.Third_Party.textual_fspicker import (
+    FileOpen,
+    Filters,
+    SelectDirectory,
+)
 from tldw_chatbook.UI.Screens.model_browser_state import install_failure_message
 from tldw_chatbook.UI.Screens.model_installed_view import lifecycle_failure_message
 from tldw_chatbook.UI.Wizards import first_run_speech_step_state as speech_state
@@ -59,6 +79,34 @@ from tldw_chatbook.Widgets.ModelArtifacts import (
 )
 from tldw_chatbook.Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+
+_EXTERNAL_VERIFICATION_RECOVERY = {
+    ExternalParakeetErrorCode.MISSING: (
+        "Required model files are missing. Choose a complete model directory.",
+        True,
+    ),
+    ExternalParakeetErrorCode.IRREGULAR: (
+        "Model files must be regular files without links. Choose a safe model directory.",
+        True,
+    ),
+    ExternalParakeetErrorCode.CHANGED: (
+        "Model files changed during verification. Wait for changes to finish, then retry.",
+        True,
+    ),
+    ExternalParakeetErrorCode.CORRUPT: (
+        "Model files do not match the curated model. Choose an unmodified model directory.",
+        True,
+    ),
+    ExternalParakeetErrorCode.UNSUPPORTED: (
+        "This curated model does not support an external directory.",
+        True,
+    ),
+    ExternalParakeetErrorCode.CANCELLED: (
+        "Verification cancelled. The prior source is unchanged.",
+        False,
+    ),
+}
 
 
 class SetupRadioButton(RadioButton):
@@ -1169,6 +1217,13 @@ class SpeechSetupStep(SetupStep):
         self._operation: Optional[str] = None
         self._pending_report: Any = None
         self._progress: Any = None
+        self._external_selection_generation = 0
+        self._external_selection_token: tuple[int, int] | None = None
+        self._external_scope_ids: dict[tuple[int, int], str] = {}
+        self._external_selection_worker: Worker | None = None
+        self._external_busy = False
+        self._external_status = ""
+        self._pending_external_selection: PreparedExternalSelection | None = None
         # Review Important 3: set only by a SUCCESSFUL install/activation
         # made THROUGH THIS STEP during this run -- see commit()'s use via
         # first_run_speech_step_state.should_persist_speech_config.
@@ -1251,6 +1306,20 @@ class SpeechSetupStep(SetupStep):
             progress = ModelInstallProgress(self._progress, id="setup-speech-install-progress")
             progress.display = self._operation == "install" and self._progress is not None
             yield progress
+            yield Button(
+                "Use model from disk…",
+                id="setup-speech-use-from-disk",
+                variant="primary" if action_widget is None else "default",
+                disabled=self._external_busy or self._lifecycle_pending,
+            )
+            external_status = Static(
+                self._external_status,
+                id="setup-speech-external-status",
+                classes="setup-subtitle",
+                markup=False,
+            )
+            external_status.display = bool(self._external_status)
+            yield external_status
             if action_widget is not None:
                 yield action_widget
             if self._use_as_default_offer():
@@ -1400,6 +1469,7 @@ class SpeechSetupStep(SetupStep):
             and selection.precision == self._selected_precision
         ):
             return
+        self._discard_external_selection()
         self._selected_language = selection.language
         self._selected_precision = selection.precision
         self._installed_item = None
@@ -1493,7 +1563,7 @@ class SpeechSetupStep(SetupStep):
         the reload's own callback replaces it (InstalledView's own pending
         computation includes its loading flag for the identical reason).
         """
-        return self._operation is not None or self._loading
+        return self._operation is not None or self._loading or self._external_busy
 
     def _status_and_action(self) -> tuple[str, Optional[Widget]]:
         # Review Important 4: gate BEFORE the installed-state load so a
@@ -1542,6 +1612,490 @@ class SpeechSetupStep(SetupStep):
             ready=item.ready,
             pending=self._lifecycle_pending,
         )
+
+    # -- user-owned external roots ---------------------------------------
+    def _source_service(self) -> Any:
+        """Return the app-owned source service shared with Lab and Library."""
+
+        return self.wizard.app_instance._ensure_parakeet_source_service()
+
+    def _source_key(self) -> ParakeetSourceKey:
+        selection = self._selection()
+        return ParakeetSourceKey.from_values(selection.model_id, selection.precision)
+
+    def _next_external_token(self) -> tuple[int, int]:
+        """Fence picker and worker callbacks to one exact mounted generation."""
+
+        prior = self._external_selection_token
+        if prior is not None:
+            self._release_external_scope(prior)
+        worker = self._external_selection_worker
+        if worker is not None and not worker.is_finished:
+            worker.cancel()
+        self._external_selection_generation += 1
+        token = (self._external_selection_generation, id(self))
+        self._external_selection_token = token
+        self._external_scope_ids[token] = f"setup-speech-{token[1]}-{token[0]}"
+        self._external_selection_worker = None
+        self._pending_external_selection = None
+        return token
+
+    def _owns_external_token(self, token: tuple[int, int]) -> bool:
+        return (
+            token == self._external_selection_token
+            and token[1] == id(self)
+            and self.is_mounted
+        )
+
+    def _release_external_scope(self, token: tuple[int, int]) -> None:
+        scope_id = self._external_scope_ids.pop(token, None)
+        if scope_id is None:
+            return
+        service = getattr(
+            self.wizard.app_instance,
+            "_parakeet_source_service",
+            None,
+        )
+        if service is not None:
+            service.release_scope(scope_id)
+
+    def _discard_external_selection(self) -> None:
+        """Cancel pending external work without changing persisted source state."""
+
+        token = self._external_selection_token
+        worker = self._external_selection_worker
+        if worker is not None and not worker.is_finished:
+            worker.cancel()
+        self._external_selection_generation += 1
+        self._external_selection_token = None
+        self._external_selection_worker = None
+        self._external_busy = False
+        self._external_status = ""
+        self._pending_external_selection = None
+        if token is not None:
+            self._release_external_scope(token)
+
+    def _set_external_status(
+        self,
+        text: str,
+        *,
+        busy: bool | None = None,
+    ) -> None:
+        self._external_status = text
+        if busy is not None:
+            self._external_busy = busy
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#setup-speech-use-from-disk")
+    def _use_external_pressed(self) -> None:
+        if self._lifecycle_pending:
+            return
+        token = self._next_external_token()
+        key = self._source_key()
+        self.app.push_screen(
+            SelectDirectory(
+                str(Path.home()),
+                title=f"Choose {key.model_id} {key.precision.upper()} directory",
+            ),
+            lambda selected: self._external_directory_selected(
+                token,
+                key,
+                selected,
+            ),
+        )
+
+    def _external_directory_selected(
+        self,
+        token: tuple[int, int],
+        key: ParakeetSourceKey,
+        selected: Path | None,
+    ) -> None:
+        if not self._owns_external_token(token):
+            self._release_external_scope(token)
+            return
+        if selected is None:
+            self._discard_external_selection()
+            return
+        self._set_external_status("Verifying model files…", busy=True)
+        self._external_selection_worker = self._verify_external_source(
+            token,
+            key,
+            Path(selected),
+        )
+
+    @work(
+        thread=True,
+        group="setup-speech-external-verify",
+        exclusive=True,
+        exit_on_error=False,
+        description="Verify external Parakeet source",
+    )
+    def _verify_external_source(
+        self,
+        token: tuple[int, int],
+        key: ParakeetSourceKey,
+        directory: Path,
+    ) -> None:
+        """Hash one exact external root outside the Textual event loop."""
+
+        worker = get_current_worker()
+        scope_id = self._external_scope_ids.get(token, "")
+
+        def cancelled() -> bool:
+            return worker.is_cancelled or not self._owns_external_token(token)
+
+        def progress(done: int, total: int) -> None:
+            self.app.call_from_thread(
+                self._apply_external_hash_progress,
+                token,
+                done,
+                total,
+            )
+
+        try:
+            prepared = self._source_service().prepare_external(
+                key,
+                directory,
+                owner=("scope", scope_id),
+                cancelled=cancelled,
+                progress=progress,
+            )
+        except ExternalParakeetVerificationError as exc:
+            message, is_error = _EXTERNAL_VERIFICATION_RECOVERY[exc.code]
+            if is_error:
+                logger.warning(
+                    "External Parakeet verification failed; error_type={}",
+                    type(exc).__name__,
+                )
+            self.app.call_from_thread(
+                self._apply_external_verification_result,
+                token,
+                None,
+                message,
+                is_error,
+            )
+            return
+        except Exception as exc:
+            logger.warning(
+                "External Parakeet verification failed; error_type={}",
+                type(exc).__name__,
+            )
+            self.app.call_from_thread(
+                self._apply_external_verification_result,
+                token,
+                None,
+                "The selected model could not be verified. Choose the directory again.",
+                True,
+            )
+            return
+        self.app.call_from_thread(
+            self._apply_external_verification_result,
+            token,
+            prepared,
+            None,
+            False,
+        )
+
+    def _apply_external_hash_progress(
+        self,
+        token: tuple[int, int],
+        done: int,
+        total: int,
+    ) -> None:
+        if self._owns_external_token(token):
+            self._set_external_status(
+                f"Verifying model files · {done:,} / {total:,} bytes",
+                busy=True,
+            )
+
+    def _apply_external_verification_result(
+        self,
+        token: tuple[int, int],
+        prepared: PreparedExternalSelection | None,
+        error: str | None,
+        error_is_failure: bool = True,
+    ) -> None:
+        if not self._owns_external_token(token):
+            self._release_external_scope(token)
+            return
+        self._external_selection_worker = None
+        if error is not None or prepared is None:
+            self._release_external_scope(token)
+            message = error or "The selected model could not be verified."
+            self._set_external_status(
+                message,
+                busy=False,
+            )
+            self.notify(
+                message,
+                severity="error" if error_is_failure else "information",
+            )
+            return
+        self._set_external_status(
+            "Checking the managed VAD dependency…",
+            busy=True,
+        )
+        self._external_selection_worker = self._prepare_external_readiness(
+            token,
+            prepared,
+        )
+
+    @work(
+        thread=True,
+        group="setup-speech-external-ready",
+        exclusive=True,
+        exit_on_error=False,
+        description="Prepare external Parakeet configuration",
+    )
+    def _prepare_external_readiness(
+        self,
+        token: tuple[int, int],
+        prepared: PreparedExternalSelection,
+    ) -> None:
+        """Recheck root/VAD and prepare a write-free config patch off-loop."""
+
+        worker = get_current_worker()
+        if worker.is_cancelled or not self._owns_external_token(token):
+            return
+        try:
+            self._source_service().prepare_config_commit(prepared)
+        except ParakeetSourceError as exc:
+            outcome = (
+                "vad"
+                if exc.code is ParakeetSourceErrorCode.VAD_UNAVAILABLE
+                else "error"
+            )
+        except Exception as exc:
+            logger.warning(
+                "External Parakeet readiness failed; error_type={}",
+                type(exc).__name__,
+            )
+            outcome = "error"
+        else:
+            outcome = "ready"
+        self.app.call_from_thread(
+            self._apply_external_readiness_result,
+            token,
+            prepared,
+            outcome,
+        )
+
+    def _apply_external_readiness_result(
+        self,
+        token: tuple[int, int],
+        prepared: PreparedExternalSelection,
+        outcome: str,
+    ) -> None:
+        if not self._owns_external_token(token):
+            self._release_external_scope(token)
+            return
+        self._external_selection_worker = None
+        if outcome == "vad":
+            self._set_external_status(
+                "Preparing the managed VAD dependency…",
+                busy=True,
+            )
+            self._external_selection_worker = self._preflight_external_vad(
+                token,
+                prepared,
+            )
+            return
+        if outcome != "ready":
+            self._release_external_scope(token)
+            message = (
+                "The external source could not be prepared. "
+                "The prior source is unchanged."
+            )
+            self._set_external_status(message, busy=False)
+            self.notify(message, severity="error")
+            return
+        self._pending_external_selection = prepared
+        message = (
+            "External model verified. Continue to save."
+            if self._runtime_installed()
+            else "Runtime required"
+        )
+        self._set_external_status(message, busy=False)
+
+    @work(
+        thread=True,
+        group="setup-speech-external-vad-preflight",
+        exclusive=True,
+        exit_on_error=False,
+        description="Check managed VAD dependency",
+    )
+    def _preflight_external_vad(
+        self,
+        token: tuple[int, int],
+        prepared: PreparedExternalSelection,
+    ) -> None:
+        try:
+            report = asyncio.run(run_parakeet_vad_preflight())
+        except Exception as exc:
+            logger.warning(
+                "Managed VAD preflight failed; error_type={}",
+                type(exc).__name__,
+            )
+            self.app.call_from_thread(
+                self._apply_external_vad_preflight_result,
+                token,
+                prepared,
+                None,
+                "The managed VAD dependency could not be prepared.",
+            )
+            return
+        self.app.call_from_thread(
+            self._apply_external_vad_preflight_result,
+            token,
+            prepared,
+            report,
+            None,
+        )
+
+    def _apply_external_vad_preflight_result(
+        self,
+        token: tuple[int, int],
+        prepared: PreparedExternalSelection,
+        report: Any,
+        error: str | None,
+    ) -> None:
+        if not self._owns_external_token(token):
+            self._release_external_scope(token)
+            return
+        self._external_selection_worker = None
+        vad_reference = parakeet_vad_reference()
+        vad_source_url = parakeet_vad_descriptor().source_url
+        if (
+            error is not None
+            or report is None
+            or report.root != vad_reference
+            or not report.entries
+            or any(
+                entry.ref != vad_reference or entry.source_url != vad_source_url
+                for entry in report.entries
+            )
+        ):
+            self._release_external_scope(token)
+            message = error or "The managed VAD plan changed. Choose the model again."
+            self._set_external_status(message, busy=False)
+            self.notify(message, severity="error")
+            return
+        self.app.push_screen(
+            ModelInstallModal(report, model_label="Silero VAD dependency"),
+            lambda confirmed: self._confirm_external_vad(
+                bool(confirmed),
+                token,
+                prepared,
+                report,
+            ),
+        )
+
+    def _confirm_external_vad(
+        self,
+        confirmed: bool,
+        token: tuple[int, int],
+        prepared: PreparedExternalSelection,
+        report: Any,
+    ) -> None:
+        if not self._owns_external_token(token):
+            return
+        if not confirmed:
+            self._discard_external_selection()
+            self._set_external_status(
+                "VAD install cancelled. The prior source is unchanged.",
+                busy=False,
+            )
+            return
+        self._set_external_status(
+            "Installing the managed VAD dependency…",
+            busy=True,
+        )
+        self._external_selection_worker = self._provision_external_vad(
+            token,
+            prepared,
+            report,
+        )
+
+    @work(
+        thread=True,
+        group="setup-speech-external-vad-install",
+        exclusive=True,
+        exit_on_error=False,
+        description="Install managed VAD dependency",
+    )
+    def _provision_external_vad(
+        self,
+        token: tuple[int, int],
+        prepared: PreparedExternalSelection,
+        report: Any,
+    ) -> None:
+        def progress(event: Any) -> None:
+            self.app.call_from_thread(
+                self._apply_external_vad_progress,
+                token,
+                event.bytes_done,
+                event.bytes_total,
+            )
+
+        try:
+            asyncio.run(run_parakeet_vad_provision(report, progress=progress))
+        except Exception as exc:
+            logger.warning(
+                "Managed VAD installation failed; error_type={}",
+                type(exc).__name__,
+            )
+            self.app.call_from_thread(
+                self._apply_external_vad_provision_result,
+                token,
+                prepared,
+                "The managed VAD dependency could not be installed.",
+            )
+            return
+        self.app.call_from_thread(
+            self._apply_external_vad_provision_result,
+            token,
+            prepared,
+            None,
+        )
+
+    def _apply_external_vad_progress(
+        self,
+        token: tuple[int, int],
+        done: int,
+        total: int,
+    ) -> None:
+        if self._owns_external_token(token):
+            self._set_external_status(
+                f"Installing managed VAD dependency · {done:,} / {total:,} bytes",
+                busy=True,
+            )
+
+    def _apply_external_vad_provision_result(
+        self,
+        token: tuple[int, int],
+        prepared: PreparedExternalSelection,
+        error: str | None,
+    ) -> None:
+        if not self._owns_external_token(token):
+            self._release_external_scope(token)
+            return
+        self._external_selection_worker = None
+        if error is not None:
+            self._release_external_scope(token)
+            self._set_external_status(error, busy=False)
+            self.notify(error, severity="error")
+            return
+        self._set_external_status(
+            "Rechecking model files and managed VAD…",
+            busy=True,
+        )
+        self._external_selection_worker = self._prepare_external_readiness(
+            token,
+            prepared,
+        )
+
+    def on_unmount(self) -> None:
+        self._discard_external_selection()
 
     # -- lazy installed-state load ----------------------------------------
     def on_show(self) -> None:
@@ -1767,6 +2321,7 @@ class SpeechSetupStep(SetupStep):
                     progress=make_progress_callback(self.post_message),
                 )
             )
+            self._source_service().prefer_managed(self._source_key())
         except Exception as exc:
             logger.opt(exception=True).error("Speech model installation failed")
             self.app.call_from_thread(
@@ -1801,6 +2356,7 @@ class SpeechSetupStep(SetupStep):
             # step this run is the engagement commit()'s no-clobber gate
             # requires -- see should_persist_speech_config.
             self._acted_this_run = True
+            self._discard_external_selection()
             self.notify("Speech model installed and activated.", severity="information")
         # AC#6: failures never trap -- always refresh installed state so the
         # step reflects reality (and drops the disabled "installing…" affordance)
@@ -1821,6 +2377,7 @@ class SpeechSetupStep(SetupStep):
     def _activate_model(self) -> None:
         try:
             self._service_for_worker().activate(self._reference)
+            self._source_service().prefer_managed(self._source_key())
         except Exception as exc:
             logger.opt(exception=True).error("Speech model activation failed")
             self.app.call_from_thread(
@@ -1879,6 +2436,7 @@ class SpeechSetupStep(SetupStep):
         else:
             if operation == "activate":
                 self._acted_this_run = True
+                self._discard_external_selection()
             self.notify("Speech model updated.", severity="information")
         self._ensure_loaded(force=True)
 
@@ -1886,7 +2444,11 @@ class SpeechSetupStep(SetupStep):
     async def commit(self) -> tuple[bool, str]:
         """Persist ``[transcription]`` defaults, but only when it is safe to.
 
-        Called by the wizard on Next/Finish. Writes nothing -- returns the
+        A verified external selection is the exception to the managed-runtime
+        gate: its source and speech defaults are written atomically even when
+        the optional runtime is absent, so setup can finish before installation.
+
+        For managed selections, writes nothing -- returns the
         ok-but-skip result ``(True, "")`` -- unless ALL of the following
         hold, each freshly re-verified rather than trusted from stale
         widget state:
@@ -1918,10 +2480,13 @@ class SpeechSetupStep(SetupStep):
 
         Returns:
             ``(True, "")`` when nothing needed writing, or the write
-            succeeded; ``(False, <message>)`` only when a write was
-            attempted and ``wizard.commit_config`` reported failure.
+            succeeded; ``(False, <message>)`` when work is still pending or
+            preparing, writing, or accepting an external selection failed.
         """
-        import asyncio
+        if self._external_busy:
+            return False, "Wait for external model verification to finish."
+        if self._pending_external_selection is not None:
+            return await self._commit_external_selection()
 
         # Important 4: never persist a provider the runtime cannot execute,
         # even if somehow both active and acted (belt-and-suspenders; the
@@ -1955,6 +2520,80 @@ class SpeechSetupStep(SetupStep):
             )
         )
         return (True, "") if ok else (False, "Saving the speech transcription choice failed.")
+
+    async def _commit_external_selection(self) -> tuple[bool, str]:
+        """Atomically write speech defaults plus one prepared external source."""
+
+        prepared = self._pending_external_selection
+        if prepared is None:
+            return True, ""
+        selection = speech_state.resolve_speech_selection(
+            selected_language=self._effective_language(),
+            selected_precision=self._effective_precision(),
+            curated_selections=self._curated_selections(),
+        )
+        if selection is None:
+            return False, "The selected speech model is no longer available."
+        try:
+            expected_key = ParakeetSourceKey.from_values(
+                selection.model_id,
+                selection.precision,
+            )
+        except ValueError:
+            return False, "The selected speech model cannot use an external directory."
+        if prepared.key is not expected_key:
+            return (
+                False,
+                "The external model selection changed. Choose the directory again.",
+            )
+
+        loop = asyncio.get_running_loop()
+        try:
+            source_commit = await loop.run_in_executor(
+                None,
+                self._source_service().prepare_config_commit,
+                prepared,
+            )
+        except Exception as exc:
+            logger.warning(
+                "External Parakeet config preparation failed; error_type={}",
+                type(exc).__name__,
+            )
+            return (
+                False,
+                "The external model or managed VAD changed. Choose the directory again.",
+            )
+
+        patch = speech_state.speech_config_patch(selection, source_commit)
+        if not await self.wizard.commit_config(patch):
+            return False, "Saving the speech transcription choice failed."
+        try:
+            await loop.run_in_executor(
+                None,
+                self._source_service().accept_committed,
+                source_commit,
+            )
+        except Exception as exc:
+            logger.warning(
+                "External Parakeet commit acceptance failed; error_type={}",
+                type(exc).__name__,
+            )
+            return (
+                False,
+                "The saved external model could not be activated in this session.",
+            )
+
+        token = self._external_selection_token
+        if token is not None:
+            self._release_external_scope(token)
+        self._pending_external_selection = None
+        self._external_status = (
+            "External source ready."
+            if self._runtime_installed()
+            else "Runtime required"
+        )
+        self.refresh(recompose=True)
+        return True, ""
 
     def _check_active(self, selection: speech_state.SpeechSelection) -> Any:
         try:
