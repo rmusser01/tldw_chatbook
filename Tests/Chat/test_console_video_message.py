@@ -182,6 +182,42 @@ def test_screen_state_round_trip_preserves_video_metadata(store_with_session):
     assert parse_video_marker(restored.content) == "dusk-over-neon-tokyo"
 
 
+def test_console_video_store_prefers_explicit_test_override(tmp_path):
+    app_store = VideoStore(root=tmp_path / "app")
+    override = VideoStore(root=tmp_path / "override")
+    screen = ChatScreen(_build_test_app())
+    screen.app_instance.generated_video_store = app_store
+    screen._console_video_store = override
+
+    assert screen._ensure_console_video_store() is override
+
+
+def test_console_video_store_borrows_app_owner_without_cleanup(
+    monkeypatch,
+    tmp_path,
+):
+    store = VideoStore(root=tmp_path / "app")
+    screen = ChatScreen(_build_test_app())
+    screen.app_instance.generated_video_store = store
+    monkeypatch.setattr(
+        store,
+        "enforce_retention",
+        lambda: pytest.fail("screen must not run retention"),
+    )
+
+    assert screen._ensure_console_video_store() is store
+    assert screen._ensure_console_video_store() is store
+
+
+def test_console_video_store_fails_loudly_without_app_owner():
+    app = _build_test_app()
+    del app.generated_video_store
+    screen = ChatScreen(app)
+
+    with pytest.raises(RuntimeError, match="app-owned generated video store"):
+        screen._ensure_console_video_store()
+
+
 def test_video_card_uses_persisted_id_for_storage_resolution(tmp_path):
     video_store = VideoStore(root=tmp_path / "generated_videos", config=_ttl_config())
     persisted_id = "persisted-video-message"

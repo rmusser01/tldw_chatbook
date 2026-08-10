@@ -245,11 +245,25 @@ def test_video_retention_startup_failure_is_bounded(
     assert private_message_id not in diagnostic
     assert private_media_name not in diagnostic
 
+    first_screen = ChatScreen(app)
+    second_screen = ChatScreen(app)
+    assert first_screen._ensure_console_video_store() is app.generated_video_store
+    assert second_screen._ensure_console_video_store() is app.generated_video_store
+    assert retention_calls == [app.generated_video_store]
+
 
 @pytest.mark.asyncio
 async def test_registered_chat_route_uses_only_native_console_and_restores_snapshot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    real_enforce_retention = VideoStore.enforce_retention
+    retention_calls: list[VideoStore] = []
+
+    def enforce_retention_spy(self: VideoStore):
+        retention_calls.append(self)
+        return real_enforce_retention(self)
+
+    monkeypatch.setattr(VideoStore, "enforce_retention", enforce_retention_spy)
     app = _production_app(monkeypatch)
     draft = "TASK-649 native Console snapshot"
 
@@ -267,6 +281,26 @@ async def test_registered_chat_route_uses_only_native_console_and_restores_snaps
             assert not hasattr(chat, "chat_window")
             with pytest.raises(NoMatches):
                 chat.query_one("#chat-window")
+
+            message_id = "current-run-video"
+            metadata = VideoGenerationMetadata(
+                name="current-run-clip",
+                prompt="current run",
+                backend="comfyui",
+            )
+            stored = app.generated_video_store.save(
+                message_id,
+                metadata.name,
+                b"current-run-bytes",
+            )
+            message = ConsoleChatMessage(
+                id=message_id,
+                role=ConsoleMessageRole.ASSISTANT,
+                content="[video] current-run-clip",
+                video_metadata=metadata,
+            )
+            assert chat._ensure_console_video_store() is app.generated_video_store
+            assert chat._build_video_card_specs([message])[message_id].status == "ready"
 
             composer.load_draft(draft)
             await pilot.click("#console-composer-collapse")
@@ -293,6 +327,16 @@ async def test_registered_chat_route_uses_only_native_console_and_restores_snaps
                 ConsoleComposerBar,
             )
             assert restored_composer.draft_text() == draft
+            assert restored_chat is not chat
+            assert (
+                restored_chat._ensure_console_video_store()
+                is app.generated_video_store
+            )
+            spec = restored_chat._build_video_card_specs([message])[message_id]
+            assert spec.status == "ready"
+            assert spec.file_path == str(stored)
+            assert stored.read_bytes() == b"current-run-bytes"
+            assert retention_calls == [app.generated_video_store]
             assert not hasattr(restored_chat, "chat_window")
             with pytest.raises(NoMatches):
                 restored_chat.query_one("#chat-window")

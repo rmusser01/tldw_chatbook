@@ -16763,20 +16763,13 @@ class ChatScreen(BaseAppScreen):
         return events
 
     def _ensure_console_video_store(self) -> VideoStore:
-        """Return the Console VideoStore, driving the ADR-044 startup sweep once.
-
-        ``session`` retention wipes last run's files; ``ttl`` applies its
-        age/cap. A sweep failure degrades to "every video renders expired",
-        never a boot-time crash.
-        """
-        store = getattr(self, "_console_video_store", None)
+        """Return an explicit test override or the app-owned VideoStore."""
+        override = getattr(self, "_console_video_store", None)
+        if override is not None:
+            return override
+        store = getattr(self.app_instance, "generated_video_store", None)
         if store is None:
-            store = VideoStore()
-            self._console_video_store = store
-            try:
-                store.enforce_retention()
-            except Exception:
-                logger.warning("Console video store retention sweep failed.")
+            raise RuntimeError("Console requires the app-owned generated video store")
         return store
 
     def _build_video_card_specs(self, messages) -> dict[str, ConsoleVideoCardSpec]:
