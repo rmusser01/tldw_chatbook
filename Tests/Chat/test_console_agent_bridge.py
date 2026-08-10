@@ -3660,3 +3660,139 @@ def test_run_reply_rebuilds_registry_when_a_library_provider_is_present(
     assert outcome.status == "done"
     assert len(compose_calls) == 1
     assert compose_calls[0]["library_provider"] is provider
+
+
+# -- PR2b Task 1: ConsoleAgentBridge.fleet_snapshot ----------------------
+
+
+class _FleetTwoChildGateway:
+    """Drives one primary-agent script while gating every SUB-AGENT turn on
+    a shared ``threading.Event`` -- used to pin a live, in-flight
+    ``FleetCoordinator`` snapshot mid-run.
+
+    The gate is awaited via ``loop.run_in_executor`` rather than a bare
+    synchronous ``.wait()``. That distinction matters here: `chat_call`
+    (see ``_StreamingModelAdapter``) submits every turn -- the parent's and
+    each child's -- as a coroutine on the SAME shared event loop, driven by
+    ONE OS thread. A coroutine only truly yields that thread at an
+    ``await`` point; a bare ``.wait()`` inside a coroutine body would
+    block that one thread outright, starving every other queued coroutine
+    on the loop -- including the parent's own next turn -- and deadlock
+    this test (the second spawn can never happen while the first child
+    holds the loop hostage). ``run_in_executor`` hands the actual wait to a
+    thread-pool thread and only ``await``s its future, so the loop stays
+    free to run the parent's and the sibling child's turns while this one
+    is paused.
+    """
+
+    def __init__(self, parent_script, child_result, gate: threading.Event, needed: int = 2):
+        self._parent = list(parent_script)
+        self._child_result = list(child_result)
+        self._gate = gate
+        self._needed = needed
+        self._parent_lock = threading.Lock()
+        self._count_lock = threading.Lock()
+        self.child_calls = 0
+        self.entered_event = threading.Event()
+
+    async def stream_chat(self, resolution, messages, tools=None, **kwargs):
+        system = str(messages[0].get("content", "")) if messages else ""
+        is_child = system.startswith(SUBAGENT_PROMPT_PREFIX)
+        if is_child:
+            with self._count_lock:
+                self.child_calls += 1
+                if self.child_calls >= self._needed:
+                    self.entered_event.set()
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, self._gate.wait)
+            for chunk in self._child_result:
+                yield chunk
+            return
+        with self._parent_lock:
+            assert self._parent, "parent script exhausted"
+            chunks = self._parent.pop(0)
+        for chunk in chunks:
+            yield chunk
+
+
+def test_fleet_snapshot_returns_empty_for_unknown_conversation(tmp_path):
+    """No run has ever touched this conversation id -- `fleet_snapshot`
+    must degrade to `[]` rather than raise (e.g. a KeyError)."""
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=None)
+    assert bridge.fleet_snapshot("never-seen-conversation") == []
+
+
+def test_fleet_snapshot_reflects_two_live_handles_in_flight_then_empty_after_run_completes(
+    tmp_path,
+):
+    """PR2b Task 1: `fleet_snapshot` must expose the REAL, live
+    `FleetCoordinator` state while a run is still in flight -- not a
+    reconstruction from DB rows, which is exactly the staleness this task
+    exists to fix.
+
+    Two children are reserved (spawn budget default is 2 -- see
+    `agent_models.RunBudget.max_subagents`) and gated so both are
+    provably still ``"running"`` when this test peeks mid-run. Pinned
+    choice (brief Step 1): once `run_reply` returns -- success, in this
+    test -- the per-run entry is popped in the SAME `finally` that tears
+    the run's event loop down, so a completed run's snapshot goes back to
+    `[]`, NOT the run's terminal handles.
+    """
+    gate = threading.Event()
+    gateway = _FleetTwoChildGateway(
+        parent_script=[
+            [_fence("spawn_subagent", {"task": "task A"})],  # primary turn 1
+            [_fence("spawn_subagent", {"task": "task B"})],  # primary turn 2
+            ["parent final"],  # primary turn 3
+        ],
+        child_result=["child answer"],
+        gate=gate,
+    )
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=gateway
+    )
+
+    result: dict = {}
+
+    def do_run():
+        result["outcome"] = _run(
+            bridge, store, session, assistant.id, conversation_id="conv-fleet-peek"
+        )
+
+    runner = threading.Thread(target=do_run, name="test-fleet-snapshot-run")
+    runner.start()
+    try:
+        assert gateway.entered_event.wait(5), (
+            "both children never reached their gated turn -- run_reply "
+            "never got far enough to reserve two handles"
+        )
+        live = bridge.fleet_snapshot("conv-fleet-peek")
+        assert len(live) == 2, f"expected 2 live handles, got {live!r}"
+        assert {h.status for h in live} == {"running"}
+        assert {h.task for h in live} == {"task A", "task B"}
+        assert all(h.handle_id for h in live)
+        # A copy, not the live coordinator -- mutating it must not be able
+        # to reach back into the coordinator's own state (Task 1: "keep
+        # the coordinator itself private").
+        live[0].status = "tampered"
+        live_again = bridge.fleet_snapshot("conv-fleet-peek")
+        assert "tampered" not in {h.status for h in live_again}
+        # Unrelated conversation ids never see this run's fleet.
+        assert bridge.fleet_snapshot("some-other-conversation") == []
+    finally:
+        gate.set()
+    runner.join(10)
+    assert not runner.is_alive(), "run_reply never returned"
+
+    assert result["outcome"].status == "done"
+    assert result["outcome"].final_text == "parent final"
+    assert bridge.fleet_snapshot("conv-fleet-peek") == []

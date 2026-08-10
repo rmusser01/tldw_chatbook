@@ -52,6 +52,7 @@ from tldw_chatbook.Agents.agent_models import (
 )
 from tldw_chatbook.Agents.agent_service import SUBAGENT_SYSTEM_PROMPT, AgentService
 from tldw_chatbook.Agents.agent_stream import StreamGate
+from tldw_chatbook.Agents.fleet_coordinator import FleetHandle
 from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
     SkillToolProvider,
@@ -1539,6 +1540,33 @@ class ConsoleAgentBridge:
         )
         self._live: dict[str, AgentLiveSnapshot] = {}
         self._historical_cache: dict[str, AgentLiveSnapshot] = {}
+        # PR2b Task 1: published for the DURATION of one `run_reply` call
+        # -- set right before `service.run_turn(...)` is invoked (below),
+        # popped in the same `finally` that already tears that run down.
+        # `AgentService.run_turn` mints (or, at `[agents]
+        # max_live_subagents <= 1`, leaves `None`) a fresh
+        # `FleetCoordinator` on `service._fleet` as literally its first
+        # act, and does not return until every fleet child has settled --
+        # so a reader here always sees either "no coordinator (yet or at
+        # all)" or the real, in-flight one. `fleet_snapshot` reads
+        # `service._fleet` fresh on every call rather than caching it,
+        # since the attribute itself is set once per `run_turn` but this
+        # dict entry spans the whole call.
+        #
+        # Thread-safety: written here on the run's own worker thread,
+        # read from the UI thread by `fleet_snapshot` -- no lock. Same
+        # unguarded-dict convention `self._live`/`self._historical_cache`
+        # just above already use for the identical cross-thread shape (set
+        # on the worker thread inside `run_reply`, read via
+        # `live_snapshot`/`historical_snapshot` from the UI). A single
+        # `dict[key] = value` / `.pop(key, None)` / `.get(key)` is one
+        # atomic bytecode-level dict operation under the GIL -- there is
+        # no window where a reader observes a partially-written entry.
+        # `service._fleet` is likewise a single attribute (also
+        # GIL-atomic), and `FleetCoordinator.snapshot()` is separately
+        # lock-guarded for its own multi-field reads -- so no additional
+        # lock is needed on top of either.
+        self._fleet_services: dict[str, AgentService] = {}
 
     def native_tool_schemas(self) -> list[dict[str, Any]]:
         """Return the native tool schemas available to this bridge.
@@ -2184,6 +2212,10 @@ class ConsoleAgentBridge:
             run_skill_script_tool=run_skill_script_tool,
             revoke_approvals=revoke_approvals,
         )
+        # PR2b Task 1: publish BEFORE `run_turn` is called (below) -- see
+        # `self._fleet_services`'s own docstring in `__init__` for the
+        # lifetime/thread-safety contract this relies on.
+        self._fleet_services[conversation_id] = service
 
         supersede_run_id = (
             self._previous_primary_run_id(conversation_id)
@@ -2257,6 +2289,15 @@ class ConsoleAgentBridge:
                 supersede_run_id=supersede_run_id,
             )
         finally:
+            # PR2b Task 1: clear the published service in the SAME
+            # teardown path that already tears this run down -- not a
+            # second one. From this point `fleet_snapshot` reverts to `[]`
+            # for this conversation, even on a raised/cancelled run (this
+            # `finally` always runs). Pinned choice: a completed run's
+            # snapshot goes back to `[]`, not the run's terminal handles
+            # (see `test_fleet_snapshot_reflects_two_live_handles_in_
+            # flight_then_empty_after_run_completes`).
+            self._fleet_services.pop(conversation_id, None)
             # PR2a Task 6.5: stop the driver thread before closing, and
             # join it -- `close()` on a still-running loop raises, and a
             # loop closed out from under its own thread is undefined. By
@@ -2364,6 +2405,37 @@ class ConsoleAgentBridge:
 
     def live_snapshot(self, conversation_id: str) -> AgentLiveSnapshot:
         return self._live.get(conversation_id, AgentLiveSnapshot())
+
+    def fleet_snapshot(self, conversation_id: str) -> list[FleetHandle]:
+        """Read-only view of the REAL, live fleet for one conversation.
+
+        PR2b Task 1: PR2a's ``FleetCoordinator`` (``Agents/
+        fleet_coordinator.py``) already owns every live child's real
+        status, but until this method it lived only on the ``AgentService``
+        local ``run_reply`` builds and discards -- nothing outside that one
+        call could ever see it, so a UI wanting fleet state had no live
+        source at all (only DB rows, which lag behind an in-flight run
+        exactly as much as ``historical_snapshot`` already does for the
+        primary run).
+
+        Returns ``[]`` -- never raises -- for a conversation id with no run
+        currently published (never run, no run in flight right now, the
+        run's own fleet is off at ``[agents] max_live_subagents <= 1``, or
+        the published run simply hasn't spawned anything yet). Returns
+        copies (``FleetCoordinator.snapshot()``'s own contract): the
+        coordinator itself is never exposed, so a caller can read but never
+        mutate live fleet state -- confirmed by
+        ``test_fleet_snapshot_reflects_two_live_handles_in_flight_then_
+        empty_after_run_completes``, which mutates a returned handle and
+        asserts the change never reaches a second read.
+        """
+        service = self._fleet_services.get(conversation_id)
+        if service is None:
+            return []
+        coordinator = service._fleet
+        if coordinator is None:
+            return []
+        return coordinator.snapshot()
 
     def historical_snapshot(self, conversation_id: str) -> AgentLiveSnapshot:
         """Rail summary derived from ``AgentRunsDB`` for a conversation this
