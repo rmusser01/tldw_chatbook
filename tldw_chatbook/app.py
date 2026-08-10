@@ -2779,6 +2779,13 @@ class LibraryIngestQueueMixin:
                 "retry_of_job_id": job.retry_of_job_id,
                 "retry_source_failure_provenance": failed_attempt,
             }
+            external_scope_id = str(
+                flat_opts.get("transcription_external_scope_id") or ""
+            ).strip()
+            if external_scope_id:
+                options["transcription_context"]["external_scope_id"] = (
+                    external_scope_id
+                )
             if route.provider == "transcribe-cpp":
                 configured_path = get_cli_setting(
                     "transcription.transcribe_cpp.model_path"
@@ -3103,12 +3110,22 @@ class LibraryIngestQueueMixin:
         provider: str,
         error: BaseException,
     ) -> tuple[TranscriptionFailureCode, tuple[str, ...]]:
-        unavailable = isinstance(error, (ExecutorBusyError, ExecutorUnavailableError))
-        code = (
-            TranscriptionFailureCode.PROVIDER_UNAVAILABLE
-            if unavailable
-            else TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE
+        from tldw_chatbook.STT.parakeet_sources import (
+            ParakeetSourceError,
+            ParakeetSourceErrorCode,
         )
+
+        missing_model = isinstance(error, ParakeetSourceError) and error.code in {
+            ParakeetSourceErrorCode.VAD_UNAVAILABLE,
+            ParakeetSourceErrorCode.MANAGED_UNAVAILABLE,
+        }
+        unavailable = isinstance(error, (ExecutorBusyError, ExecutorUnavailableError))
+        if missing_model:
+            code = TranscriptionFailureCode.MODEL_NOT_INSTALLED
+        elif unavailable:
+            code = TranscriptionFailureCode.PROVIDER_UNAVAILABLE
+        else:
+            code = TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE
         actions = ["retry_faster_whisper"]
         if provider == "transcribe-cpp":
             actions.insert(0, "choose_another_gguf")

@@ -8,6 +8,7 @@ import inspect
 import re
 import threading
 import time
+import uuid
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
 from functools import partial
@@ -27,7 +28,7 @@ from textual.css.query import NoMatches, QueryError
 from textual.geometry import Region
 from textual.timer import Timer
 from textual.widget import Widget
-from textual.worker import Worker
+from textual.worker import Worker, get_current_worker
 from textual.widgets import Button, Checkbox, Collapsible, Input, Static, TextArea
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
@@ -264,9 +265,14 @@ from ...Library.library_shell_state import (
     library_disabled_action_label,
 )
 from ...Local_Ingestion.parakeet_v2_artifact import (
+    parakeet_vad_descriptor,
+    parakeet_vad_reference,
+    run_parakeet_vad_preflight,
+    run_parakeet_vad_provision,
     run_parakeet_v2_preflight,
     run_parakeet_v2_provision,
 )
+from ...Local_Ingestion.stt_batch_routing import resolve_batch_stt_route
 from ...Library.row_selection import RowSelection
 from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
 from ...runtime_policy.types import PolicyDeniedError, RuntimeSourceState
@@ -278,6 +284,12 @@ from ...Skills_Interop.skill_remote_fetch import (
 from ...STT.transcribe_cpp_config import (
     configure_model_path as configure_transcribe_cpp_model_path,
     is_gguf_file,
+)
+from ...STT.parakeet_sources import (
+    ParakeetSourceError,
+    ParakeetSourceErrorCode,
+    ParakeetSourceKey,
+    PreparedExternalSelection,
 )
 from ...Sync_Interop.sync_promotion_state import build_sync_promotion_state
 from ...Sync_Interop.sync_readiness import (
@@ -3047,6 +3059,11 @@ class LibraryScreen(BaseAppScreen):
         # `_apply_library_ingest_preflight_result` drops any result whose
         # generation is no longer current (task-2011).
         self._library_ingest_preflight_generation: int = 0
+        # One provisional external-root scope exists only while its captured
+        # submission is being verified or awaiting VAD consent.
+        self._library_external_submit_generation: int = 0
+        self._library_external_submit_scope_id: str | None = None
+        self._library_external_submit_worker: Worker | None = None
         # (task-2015) While-typing validation: each path edit restarts this
         # timer; its fire runs the pre-flight so feedback no longer waits
         # for blur.
@@ -5172,6 +5189,7 @@ class LibraryScreen(BaseAppScreen):
         self._invalidate_library_prompts_browse()
         self._library_prompt_collections_controller.invalidate()
         self._cancel_library_notes_auto_sync_timer()
+        self._invalidate_library_external_submission()
         super().on_unmount()
         registry = self._library_ingest_registry()
         if registry is not None:
@@ -9049,6 +9067,7 @@ class LibraryScreen(BaseAppScreen):
         fresh form -- task-2011).
         """
         self._invalidate_library_ingest_preflight()
+        self._invalidate_library_external_submission()
         timer = self._library_ingest_path_debounce_timer
         if timer is not None:
             timer.stop()
@@ -9075,6 +9094,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_ingest_path_debounce_timer = None
         self._library_ingest_preflight_generation += 1
         self._cancel_library_ingest_preflight()
+        self._invalidate_library_external_submission()
         self._library_ingest_clear_finished_armed = False
         # (task-3314) Same hygiene for the pending Start consent: changing
         # canvases mid-consent is not a "yes".
@@ -20030,6 +20050,7 @@ class LibraryScreen(BaseAppScreen):
             # just-started worker for no reason (task-2015 review; same
             # family as the canvas's ``_reported_option_values`` guard).
             return
+        self._invalidate_library_external_submission()
         self._library_ingest_form.path = event.value
         # (task-3314) A genuine path edit invalidates the forecast a
         # pending Start consent was armed against; the trailing gate
@@ -20123,18 +20144,21 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_ingest_title_changed(self, event: Input.Changed) -> None:
         """Track the ingest title text as the user types it (state only)."""
         event.stop()
+        self._invalidate_library_external_submission()
         self._library_ingest_form.title = event.value
 
     @on(Input.Changed, "#library-ingest-author")
     def handle_library_ingest_author_changed(self, event: Input.Changed) -> None:
         """Track the ingest author text as the user types it (state only)."""
         event.stop()
+        self._invalidate_library_external_submission()
         self._library_ingest_form.author = event.value
 
     @on(Input.Changed, "#library-ingest-keywords")
     def handle_library_ingest_keywords_changed(self, event: Input.Changed) -> None:
         """Track the ingest keywords text as the user types it (state only)."""
         event.stop()
+        self._invalidate_library_external_submission()
         self._library_ingest_form.keywords = event.value
 
     @on(Button.Pressed, "#library-ingest-backend-switch")
@@ -20167,6 +20191,7 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the "Clear" action.
         """
         event.stop()
+        self._invalidate_library_external_submission()
         self._invalidate_library_ingest_preflight()
         self._library_ingest_form.path = ""
         # (task-2100) In place: the whole-screen recompose this used to run
@@ -20364,6 +20389,7 @@ class LibraryScreen(BaseAppScreen):
         async def browse_callback(selected_path: Path | None) -> None:
             if selected_path is None:
                 return
+            self._invalidate_library_external_submission()
             self._remember_library_ingest_location(selected_path)
             self._adopt_library_ingest_path(str(selected_path))
             self.refresh(recompose=True)
@@ -20473,6 +20499,7 @@ class LibraryScreen(BaseAppScreen):
         would remount the Input and lose cursor position mid-typing).
         """
         event.stop()
+        self._invalidate_library_external_submission()
         # (task-3314) An option edit changes what the submission will do --
         # a pending Start consent no longer covers it. Both downstream
         # paths (recompose / in-place gate update) re-render the line.
@@ -20528,6 +20555,38 @@ class LibraryScreen(BaseAppScreen):
             else:
                 field_input.set_class(bool(message), "-ingest-option-invalid")
             self._update_library_ingest_gate(self._build_library_ingest_state())
+
+    @on(LibraryIngestCanvas.DirectoryBrowseRequested)
+    def handle_library_ingest_directory_browse(
+        self,
+        event: LibraryIngestCanvas.DirectoryBrowseRequested,
+    ) -> None:
+        """Open a real directory picker for one capability-backed option."""
+
+        event.stop()
+        if (event.group, event.name) != (
+            "audio_video",
+            "transcription_model_dir",
+        ):
+            return
+
+        async def picker_callback(selected_path: Path | None) -> None:
+            if selected_path is None:
+                return
+            self._invalidate_library_external_submission()
+            self._library_ingest_form.type_options.setdefault(event.group, {})[
+                event.name
+            ] = str(selected_path)
+            if getattr(self, "_is_mounted", False):
+                self.refresh(recompose=True)
+
+        self.app.push_screen(
+            SelectDirectory(
+                str(Path.home()),
+                title="Choose Parakeet model directory",
+            ),
+            picker_callback,
+        )
 
     @on(LibraryIngestCanvas.ParakeetInstallRequested)
     def handle_parakeet_v2_install_requested(
@@ -20757,14 +20816,54 @@ class LibraryScreen(BaseAppScreen):
                 severity="error",
             )
             return
+        try:
+            self.app_instance._ensure_parakeet_source_service().prefer_managed(
+                ParakeetSourceKey.V2_INT8
+            )
+        except Exception as exc:
+            logger.warning(
+                "Could not prefer the installed Library Parakeet source "
+                "(error_type={}).",
+                type(exc).__name__,
+            )
+            self.app_instance.notify(
+                "Parakeet v2 installed, but its source preference could not be updated.",
+                severity="error",
+            )
+            return
         options = self._library_ingest_form.type_options.setdefault("audio_video", {})
         options["transcription_provider"] = "parakeet-onnx"
-        options["transcription_model_dir"] = str(installed)
+        options["transcription_precision"] = "int8"
+        options.pop("transcription_model_dir", None)
         self.app_instance.notify(
             "Parakeet v2 INT8 installed and selected for this batch.",
             severity="information",
         )
         self.refresh(recompose=True)
+
+    def _invalidate_library_external_submission(self) -> None:
+        """Fence and release any not-yet-enqueued external-root submission."""
+
+        self._library_external_submit_generation = (
+            getattr(self, "_library_external_submit_generation", 0) + 1
+        )
+        worker = getattr(self, "_library_external_submit_worker", None)
+        if worker is not None:
+            try:
+                if not worker.is_finished:
+                    worker.cancel()
+            except Exception:
+                pass
+        self._library_external_submit_worker = None
+        scope_id = getattr(self, "_library_external_submit_scope_id", None)
+        self._library_external_submit_scope_id = None
+        if scope_id:
+            try:
+                self.app_instance._ensure_parakeet_source_service().release_scope(
+                    scope_id
+                )
+            except Exception:
+                logger.warning("Could not release a provisional Library model scope.")
 
     def _cancel_library_ingest_preflight(self) -> None:
         """Cancel any in-flight pre-flight worker, ignoring a finished one."""
@@ -21163,7 +21262,7 @@ class LibraryScreen(BaseAppScreen):
             return
         form = self._library_ingest_form
         snapshot = self._build_ingest_options_snapshot()
-        submit(
+        submit_kwargs = dict(
             source_path=submitted_source,
             ingest_options=snapshot,
             title=self._safe_text(form.title, max_length=300),
@@ -21173,24 +21272,359 @@ class LibraryScreen(BaseAppScreen):
             chunk_enabled=form.chunk,
             chunk_size=clamp_chunk_size(form.chunk_size),
         )
+        audio_options = snapshot.get("audio_video", {})
+        external_directory = str(
+            audio_options.get("transcription_model_dir") or ""
+        ).strip()
+        if (
+            audio_options.get("transcription_provider") == "parakeet-onnx"
+            and external_directory
+        ):
+            route = resolve_batch_stt_route(
+                provider="parakeet-onnx",
+                language=audio_options.get("language"),
+                target_language=(
+                    audio_options.get("translation_target_language")
+                    or audio_options.get("target_language")
+                ),
+                precision=audio_options.get("transcription_precision"),
+            )
+            if getattr(self, "_library_external_submit_scope_id", None):
+                self._invalidate_library_external_submission()
+            generation = getattr(self, "_library_external_submit_generation", 0) + 1
+            scope_id = f"library-external-{uuid.uuid4().hex}"
+            self._library_external_submit_generation = generation
+            self._library_external_submit_scope_id = scope_id
+            self._library_external_submit_worker = (
+                self._prepare_library_external_submission(
+                    generation,
+                    scope_id,
+                    ParakeetSourceKey.from_values(route.model, route.precision),
+                    Path(external_directory),
+                    submit_kwargs,
+                )
+            )
+            return
+        self._enqueue_library_ingest_snapshot(submit_kwargs)
+
+    @work(
+        thread=True,
+        group="library_external_parakeet_prepare",
+        exclusive=True,
+        exit_on_error=False,
+    )
+    def _prepare_library_external_submission(
+        self,
+        generation: int,
+        scope_id: str,
+        key: ParakeetSourceKey,
+        directory: Path,
+        submit_kwargs: dict[str, Any],
+    ) -> None:
+        """Verify a user-owned root and managed VAD before queue creation."""
+
+        worker = get_current_worker()
+        service = self.app_instance._ensure_parakeet_source_service()
+        prepared: PreparedExternalSelection | None = None
+        try:
+            prepared = service.prepare_external(
+                key,
+                directory,
+                owner=("scope", scope_id),
+                cancelled=lambda: worker.is_cancelled,
+            )
+            service.prepare_config_commit(prepared)
+            service.retain_prepared(scope_id, prepared)
+        except ParakeetSourceError as exc:
+            if (
+                exc.code is ParakeetSourceErrorCode.VAD_UNAVAILABLE
+                and prepared is not None
+                and not worker.is_cancelled
+            ):
+                try:
+                    report = asyncio.run(  # policy-exception: worker-thread loop
+                        run_parakeet_vad_preflight()
+                    )
+                except Exception as preflight_error:
+                    logger.warning(
+                        "Library VAD preflight failed (error_type={}).",
+                        type(preflight_error).__name__,
+                    )
+                else:
+                    self.app.call_from_thread(
+                        self._apply_library_external_preparation,
+                        generation,
+                        scope_id,
+                        prepared,
+                        submit_kwargs,
+                        report,
+                        None,
+                    )
+                    return
+            logger.warning(
+                "Library external model verification failed (error_type={}).",
+                type(exc).__name__,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Library external model verification failed (error_type={}).",
+                type(exc).__name__,
+            )
+        else:
+            if not worker.is_cancelled:
+                self.app.call_from_thread(
+                    self._apply_library_external_preparation,
+                    generation,
+                    scope_id,
+                    prepared,
+                    submit_kwargs,
+                    None,
+                    None,
+                )
+                return
+        service.release_scope(scope_id)
+        if not worker.is_cancelled:
+            self.app.call_from_thread(
+                self._apply_library_external_preparation,
+                generation,
+                scope_id,
+                prepared,
+                submit_kwargs,
+                None,
+                "validation_failed",
+            )
+
+    def _apply_library_external_preparation(
+        self,
+        generation: int,
+        scope_id: str,
+        prepared: PreparedExternalSelection | None,
+        submit_kwargs: dict[str, Any],
+        vad_report: "PreflightReport | None",
+        error: str | None,
+    ) -> None:
+        """Apply only the current generation's path-free verification result."""
+
+        if (
+            generation != self._library_external_submit_generation
+            or scope_id != self._library_external_submit_scope_id
+        ):
+            self.app_instance._ensure_parakeet_source_service().release_scope(scope_id)
+            return
+        self._library_external_submit_worker = None
+        if error is not None or prepared is None:
+            self._library_external_submit_scope_id = None
+            self.app_instance._ensure_parakeet_source_service().release_scope(scope_id)
+            self.app_instance.notify(
+                "That Parakeet model directory could not be verified.",
+                severity="error",
+            )
+            return
+        if vad_report is not None:
+            vad_reference = parakeet_vad_reference()
+            vad_source_url = parakeet_vad_descriptor().source_url
+            if (
+                vad_report.root != vad_reference
+                or not vad_report.entries
+                or any(
+                    entry.ref != vad_reference or entry.source_url != vad_source_url
+                    for entry in vad_report.entries
+                )
+            ):
+                self._library_external_submit_scope_id = None
+                self.app_instance._ensure_parakeet_source_service().release_scope(
+                    scope_id
+                )
+                self.app_instance.notify(
+                    "The managed VAD plan changed. Choose the model again.",
+                    severity="error",
+                )
+                return
+            self.app.push_screen(
+                ModelInstallModal(
+                    vad_report,
+                    model_label="Silero VAD dependency",
+                    container_id="library-parakeet-vad-modal",
+                    confirm_id="library-parakeet-vad-confirm",
+                    cancel_id="library-parakeet-vad-cancel",
+                ),
+                partial(
+                    self._confirm_library_external_vad,
+                    generation,
+                    scope_id,
+                    prepared,
+                    submit_kwargs,
+                    vad_report,
+                ),
+            )
+            return
+        self._enqueue_library_ingest_snapshot(
+            submit_kwargs,
+            generation=generation,
+            scope_id=scope_id,
+        )
+
+    def _confirm_library_external_vad(
+        self,
+        generation: int,
+        scope_id: str,
+        prepared: PreparedExternalSelection,
+        submit_kwargs: dict[str, Any],
+        report: "PreflightReport",
+        confirmed: bool,
+    ) -> None:
+        """Provision only the VAD after consent, or release the scope."""
+
+        if (
+            generation != self._library_external_submit_generation
+            or scope_id != self._library_external_submit_scope_id
+        ):
+            self.app_instance._ensure_parakeet_source_service().release_scope(scope_id)
+            return
+        if not confirmed:
+            self._invalidate_library_external_submission()
+            return
+        self._library_external_submit_worker = self._provision_library_external_vad(
+            generation,
+            scope_id,
+            prepared,
+            submit_kwargs,
+            report,
+        )
+
+    @work(
+        thread=True,
+        group="library_external_parakeet_vad",
+        exclusive=True,
+        exit_on_error=False,
+    )
+    def _provision_library_external_vad(
+        self,
+        generation: int,
+        scope_id: str,
+        prepared: PreparedExternalSelection,
+        submit_kwargs: dict[str, Any],
+        report: "PreflightReport",
+    ) -> None:
+        """Provision VAD, then perform the final snapshot check and retain."""
+
+        worker = get_current_worker()
+        service = self.app_instance._ensure_parakeet_source_service()
+        try:
+            asyncio.run(  # policy-exception: worker-thread loop
+                run_parakeet_vad_provision(
+                    report,
+                    progress=make_progress_callback(self.post_message),
+                )
+            )
+            service.prepare_config_commit(prepared)
+            service.retain_prepared(scope_id, prepared)
+        except Exception as exc:
+            logger.warning(
+                "Library VAD provision failed (error_type={}).",
+                type(exc).__name__,
+            )
+            service.release_scope(scope_id)
+            if not worker.is_cancelled:
+                self.app.call_from_thread(
+                    self._apply_library_external_preparation,
+                    generation,
+                    scope_id,
+                    prepared,
+                    submit_kwargs,
+                    None,
+                    "vad_failed",
+                )
+            return
+        if not worker.is_cancelled:
+            self.app.call_from_thread(
+                self._apply_library_external_preparation,
+                generation,
+                scope_id,
+                prepared,
+                submit_kwargs,
+                None,
+                None,
+            )
+        else:
+            service.release_scope(scope_id)
+
+    def _enqueue_library_ingest_snapshot(
+        self,
+        submit_kwargs: dict[str, Any],
+        *,
+        generation: int | None = None,
+        scope_id: str | None = None,
+    ) -> None:
+        """Enqueue one captured snapshot and transfer any retained scope."""
+
+        if generation is not None and (
+            generation != self._library_external_submit_generation
+            or scope_id != self._library_external_submit_scope_id
+        ):
+            if scope_id:
+                self.app_instance._ensure_parakeet_source_service().release_scope(
+                    scope_id
+                )
+            return
+        snapshot = submit_kwargs["ingest_options"]
+        if scope_id is not None:
+            snapshot.setdefault("audio_video", {})[
+                "transcription_external_scope_id"
+            ] = scope_id
+        registry = self._library_ingest_registry()
+        prior_job_ids = (
+            {job.job_id for job in registry.jobs()} if registry is not None else set()
+        )
+        submit = self.app_instance.submit_library_ingest_job
+        try:
+            submit(**submit_kwargs)
+        except Exception as exc:
+            current_job_ids = (
+                {job.job_id for job in registry.jobs()}
+                if registry is not None
+                else set()
+            )
+            if scope_id and current_job_ids == prior_job_ids:
+                self.app_instance._ensure_parakeet_source_service().release_scope(
+                    scope_id
+                )
+            logger.warning(
+                "Library ingest submission failed (error_type={}).",
+                type(exc).__name__,
+            )
+            self._library_external_submit_worker = None
+            self._library_external_submit_scope_id = None
+            self.app_instance.notify(
+                "The import could not be queued. Your form is still available.",
+                severity="error",
+            )
+            return
+        if scope_id is not None:
+            self._library_external_submit_worker = None
+            self._library_external_submit_scope_id = None
         # One batched write. Saving key-by-key re-read and re-parsed the whole
         # config file and invalidated the global settings cache once per
         # option -- roughly six full reload cycles for a single submitted file,
         # growing with every option and every submission.
-        option_settings = {
-            f"library.ingest_options.{group}": dict(values)
-            for group, values in snapshot.items()
-            if values
-        }
+        option_settings: dict[str, dict[str, Any]] = {}
+        for group, values in snapshot.items():
+            persisted = dict(values)
+            if group == "audio_video":
+                persisted.pop("transcription_model_dir", None)
+                persisted.pop("transcription_external_scope_id", None)
+            if persisted:
+                option_settings[f"library.ingest_options.{group}"] = persisted
         if option_settings:
             save_settings_to_cli_config(option_settings)
+        form = self._library_ingest_form
         # (task-3313) Session-scoped snapshot of what was just submitted,
         # captured BEFORE the form clears, so "Retry this batch" can
         # re-stage the exact same source with its options and metadata.
         # Values are copied (not aliased) so later form edits never mutate
         # the record of what actually ran.
         self._library_ingest_last_submission = LibraryIngestLastSubmission(
-            source=submitted_source,
+            source=str(submit_kwargs["source_path"]),
             title=form.title,
             author=form.author,
             keywords=form.keywords,

@@ -1033,6 +1033,14 @@ class LibraryIngestCanvas(VerticalScroll):
             super().__init__()
             self.expanded = expanded
 
+    class DirectoryBrowseRequested(Message):
+        """A directory-backed text option requested a native picker."""
+
+        def __init__(self, group: str, name: str) -> None:
+            super().__init__()
+            self.group = group
+            self.name = name
+
     class ParakeetInstallRequested(Message):
         """The user requested the curated Parakeet v2 installer."""
 
@@ -1188,17 +1196,34 @@ class LibraryIngestCanvas(VerticalScroll):
                         markup=False,
                     )
                 )
-                children.append(
-                    Input(
-                        value=str(value),
-                        # (task-3305) Example content when the schema
-                        # provides it; a placeholder repeating the label
-                        # line directly above is stutter.
-                        placeholder=field.placeholder or field.label,
-                        id=widget_id,
-                        disabled=disabled,
-                    )
+                input_widget = Input(
+                    value=str(value),
+                    # (task-3305) Example content when the schema
+                    # provides it; a placeholder repeating the label
+                    # line directly above is stutter.
+                    placeholder=field.placeholder or field.label,
+                    id=widget_id,
+                    disabled=disabled,
                 )
+                if field.directory_picker:
+                    children.append(
+                        Horizontal(
+                            input_widget,
+                            Button(
+                                "Browse…",
+                                id=f"{widget_id}-browse",
+                                classes=(
+                                    "library-canvas-action "
+                                    "library-ingest-directory-browse"
+                                ),
+                                compact=True,
+                                disabled=disabled,
+                            ),
+                            classes="library-ingest-path-actions",
+                        )
+                    )
+                else:
+                    children.append(input_widget)
                 # (task-2130) Inline validation message -- a text line, not a
                 # color-only border. Display-managed so typing updates it in
                 # place without recomposing the panel.
@@ -1210,7 +1235,7 @@ class LibraryIngestCanvas(VerticalScroll):
                 if error_message:
                     # (task-2230 a11y) Persistent marker: the stock invalid
                     # border only paints while focused.
-                    children[-1].add_class("-ingest-option-invalid")
+                    input_widget.add_class("-ingest-option-invalid")
                 error_line = Static(
                     error_message,
                     id=f"{widget_id}-error",
@@ -1641,6 +1666,19 @@ class LibraryIngestCanvas(VerticalScroll):
         """Request explicit install confirmation from the owning screen."""
         event.stop()
         self.post_message(self.ParakeetInstallRequested())
+
+    @on(Button.Pressed, ".library-ingest-directory-browse")
+    def _request_directory_browse(self, event: Button.Pressed) -> None:
+        """Bubble an adjacent directory picker request to the screen."""
+
+        event.stop()
+        button_id = event.button.id or ""
+        suffix = "-browse"
+        if not button_id.startswith("opt-") or not button_id.endswith(suffix):
+            return
+        group, separator, name = button_id[4 : -len(suffix)].partition("-")
+        if separator and group and name:
+            self.post_message(self.DirectoryBrowseRequested(group, name))
 
     @on(Button.Pressed, "#opt-audio_video-choose-transcribe-cpp-gguf")
     def _request_transcribe_cpp_gguf(self, event: Button.Pressed) -> None:

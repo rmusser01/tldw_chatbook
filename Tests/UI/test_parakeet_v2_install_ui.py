@@ -29,6 +29,7 @@ from tldw_chatbook.Model_Artifacts.acquisition import (
     PreflightReport,
     TransferError,
 )
+from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
 from tldw_chatbook.UI.Screens.model_browser_state import install_failure_message
 from tldw_chatbook.UI.Screens.library_screen import (
     LibraryScreen,
@@ -471,7 +472,14 @@ def test_preflight_result_notify_text_uses_mapped_message_not_raw_exception() ->
 def test_install_result_notify_text_uses_mapped_message_not_raw_exception() -> None:
     mapped = _failure(GatedRepositoryError(_RAW_MARKER))
     screen = object.__new__(LibraryScreen)
-    screen._library_ingest_form = LibraryIngestFormState()
+    screen._library_ingest_form = LibraryIngestFormState(
+        type_options={
+            "audio_video": {
+                "transcription_provider": "parakeet-onnx",
+                "transcription_model_dir": "/prior/external-parakeet",
+            }
+        }
+    )
     screen._parakeet_v2_install_worker = MagicMock()
     screen.app_instance = MagicMock()
     screen.refresh = MagicMock()
@@ -482,19 +490,30 @@ def test_install_result_notify_text_uses_mapped_message_not_raw_exception() -> N
     notify_text = screen.app_instance.notify.call_args[0][0]
     assert mapped in notify_text
     assert _RAW_MARKER not in notify_text
+    assert screen._library_ingest_form.type_options["audio_video"] == {
+        "transcription_provider": "parakeet-onnx",
+        "transcription_model_dir": "/prior/external-parakeet",
+    }
+    screen.app_instance._ensure_parakeet_source_service.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
-# Post-install batch selection: unchanged contract.
+# Post-install batch selection: activate managed only after success.
 # ---------------------------------------------------------------------------
 
 
-def test_successful_install_populates_current_batch_model_folder(
+def test_successful_install_prefers_managed_and_clears_external_override(
     tmp_path: Path,
 ) -> None:
     installed = tmp_path / "parakeet-v2"
     screen = object.__new__(LibraryScreen)
-    screen._library_ingest_form = LibraryIngestFormState()
+    screen._library_ingest_form = LibraryIngestFormState(
+        type_options={
+            "audio_video": {
+                "transcription_model_dir": "/prior/external-parakeet",
+            }
+        }
+    )
     screen._parakeet_v2_install_worker = MagicMock()
     screen.app_instance = MagicMock()
     screen.refresh = MagicMock()
@@ -504,6 +523,9 @@ def test_successful_install_populates_current_batch_model_folder(
 
     options = screen._library_ingest_form.type_options["audio_video"]
     assert options["transcription_provider"] == "parakeet-onnx"
-    assert options["transcription_model_dir"] == str(installed)
+    assert options["transcription_precision"] == "int8"
+    assert "transcription_model_dir" not in options
+    service = screen.app_instance._ensure_parakeet_source_service.return_value
+    service.prefer_managed.assert_called_once_with(ParakeetSourceKey.V2_INT8)
     screen.app_instance.notify.assert_called_once()
     screen.refresh.assert_called_once_with(recompose=True)

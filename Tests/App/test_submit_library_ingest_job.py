@@ -501,6 +501,100 @@ def test_preferred_source_failure_is_path_private_and_does_not_fall_back(
     assert selected_path not in "".join(logged)
 
 
+def test_headless_missing_vad_is_model_not_installed_without_acquisition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.STT.parakeet_sources import (
+        ParakeetSourceError,
+        ParakeetSourceErrorCode,
+    )
+
+    app = _minimal_stt_app()
+    selected_path = "/private/user/parakeet"
+
+    class _SourceService:
+        def resolve(self, _key: object, **_kwargs: object) -> object:
+            raise ParakeetSourceError(ParakeetSourceErrorCode.VAD_UNAVAILABLE)
+
+    app._ensure_parakeet_source_service = lambda: _SourceService()  # type: ignore[method-assign]
+    job = app.library_ingest_jobs.submit(
+        source_path="/tmp/audio.wav",
+        detected_type="audio",
+        ingest_options={
+            "audio_video": {
+                "transcription_provider": "parakeet-onnx",
+                "transcription_model_dir": selected_path,
+            }
+        },
+    )
+    options = {
+        "transcription_provider": "parakeet-onnx",
+        "transcription_model": "nemo-parakeet-tdt-0.6b-v2",
+        "transcription_precision": "int8",
+        "transcription_model_dir": selected_path,
+    }
+    monkeypatch.setattr(
+        "tldw_chatbook.Local_Ingestion.parakeet_v2_artifact.run_parakeet_vad_preflight",
+        lambda **_kwargs: pytest.fail("headless submission must not preflight"),
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Local_Ingestion.parakeet_v2_artifact.run_parakeet_vad_provision",
+        lambda *_args, **_kwargs: pytest.fail("headless submission must not download"),
+    )
+    attempt_id = f"{job.job_id}-attempt-1"
+    app._ingest_local_stt_jobs[job.job_id] = (0, attempt_id)
+    app._marshal_local_stt_call = lambda callback, *args: callback(*args)  # type: ignore[method-assign]
+
+    app._dispatch_local_stt_job(job, options, attempt_id)
+
+    failed = app.library_ingest_jobs.get_job(job.job_id)
+    assert failed is not None
+    assert failed.state is IngestJobState.FAILED
+    assert failed.error_detail is not None
+    assert failed.error_detail["code"] == "model_not_installed"
+    assert failed.error_detail["actions"] == ["retry_faster_whisper"]
+    assert selected_path not in str(failed.error_detail)
+
+
+def test_folder_and_retry_context_keep_one_external_scope(tmp_path: Path) -> None:
+    app = _minimal_app(media_db=object())
+    folder = tmp_path / "batch"
+    folder.mkdir()
+    for name in ("one.wav", "two.wav"):
+        (folder / name).write_bytes(b"audio")
+    scope_id = "library-external-batch-scope"
+    model_dir = str(tmp_path / "user-owned-parakeet")
+    ingest_options = {
+        "audio_video": {
+            "transcription_provider": "parakeet-onnx",
+            "transcription_model_dir": model_dir,
+            "transcription_external_scope_id": scope_id,
+            "language": "en",
+        }
+    }
+
+    app.submit_library_ingest_job(
+        source_path=str(folder),
+        ingest_options=ingest_options,
+    )
+
+    siblings = app.library_ingest_jobs.jobs()
+    assert len(siblings) == 2
+    assert len({job.batch_id for job in siblings}) == 1
+    for job in siblings:
+        options = app._ingest_job_options(job)
+        assert options["transcription_model_dir"] == model_dir
+        assert options["transcription_context"]["external_scope_id"] == scope_id
+
+    failed = app.library_ingest_jobs.mark_failed(siblings[0].job_id, error="failed")
+    assert failed is not None
+    retry = app.retry_library_ingest_job(failed.job_id)
+    assert retry is not None
+    retry_options = app._ingest_job_options(retry)
+    assert retry_options["transcription_model_dir"] == model_dir
+    assert retry_options["transcription_context"]["external_scope_id"] == scope_id
+
+
 class _ScopeTrackingSourceService:
     def __init__(self, events: list[str] | None = None) -> None:
         self.observed: set[str] = set()

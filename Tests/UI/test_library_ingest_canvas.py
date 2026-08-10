@@ -7,7 +7,10 @@ render-only: all state is supplied by ``build_library_ingest_state``.
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from copy import deepcopy
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 from textual import on
@@ -21,6 +24,8 @@ from tldw_chatbook.Library.library_ingest_state import (
     LibraryIngestFormState,
     build_library_ingest_state,
 )
+from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
+from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library.library_ingest_canvas import (
     LibraryIngestCanvas,
 )
@@ -47,6 +52,7 @@ class _MessageRecordingHost(App):
             LibraryIngestCanvas.ToolingDetailToggled
         ] = []
         self.parakeet_install_requests = 0
+        self.directory_browse_requests: list[tuple[str, str]] = []
         self.transcribe_cpp_gguf_requests = 0
 
     def compose(self) -> ComposeResult:
@@ -77,6 +83,9 @@ class _MessageRecordingHost(App):
         self, _event: LibraryIngestCanvas.TranscribeCppGGUFRequested
     ) -> None:
         self.transcribe_cpp_gguf_requests += 1
+
+    def on_library_ingest_canvas_directory_browse_requested(self, event) -> None:
+        self.directory_browse_requests.append((event.group, event.name))
 
 
 def _default_form() -> LibraryIngestFormState:
@@ -1042,6 +1051,426 @@ async def test_explicit_parakeet_enables_model_dir_and_verified_installer():
             install.press()
             await pilot.pause()
             assert app.parakeet_install_requests == 1
+
+
+@pytest.mark.asyncio
+async def test_parakeet_model_directory_has_adjacent_browse_action():
+    form = _default_form()
+    form.expanded_type_groups.add("audio_video")
+    form.type_options = {"audio_video": {"transcription_provider": "parakeet-onnx"}}
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        preflight=PreflightResult(
+            type_groups={"audio_video": ["/tmp/a.mp3"]},
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    app = _MessageRecordingHost(state)
+    with patch(
+        "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed",
+        return_value=True,
+    ):
+        async with app.run_test() as pilot:
+            model_dir = pilot.app.query_one(
+                "#opt-audio_video-transcription_model_dir", Input
+            )
+            browse = pilot.app.query_one(
+                "#opt-audio_video-transcription_model_dir-browse", Button
+            )
+
+            assert model_dir.parent is browse.parent
+            assert browse.disabled is False
+            browse.press()
+            await pilot.pause()
+
+    assert app.directory_browse_requests == [("audio_video", "transcription_model_dir")]
+
+
+@pytest.mark.asyncio
+async def test_parakeet_model_directory_picker_updates_only_the_submission_form(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fake_app = MagicMock()
+    monkeypatch.setattr(LibraryScreen, "app", property(lambda self: fake_app))
+    screen = object.__new__(LibraryScreen)
+    screen.app_instance = MagicMock()
+    screen._library_ingest_form = LibraryIngestFormState(
+        type_options={
+            "audio_video": {
+                "transcription_provider": "parakeet-onnx",
+                "language": "en",
+            }
+        }
+    )
+    prior = deepcopy(screen._library_ingest_form.type_options)
+    event = SimpleNamespace(
+        group="audio_video",
+        name="transcription_model_dir",
+        stop=MagicMock(),
+    )
+
+    LibraryScreen.handle_library_ingest_directory_browse(screen, event)
+
+    event.stop.assert_called_once_with()
+    fake_app.push_screen.assert_called_once()
+    picker, callback = fake_app.push_screen.call_args.args
+    assert isinstance(picker, SelectDirectory)
+    selected = tmp_path / "user-owned-parakeet"
+    selected.mkdir()
+    await callback(selected)
+
+    assert screen._library_ingest_form.type_options == {
+        **prior,
+        "audio_video": {
+            **prior["audio_video"],
+            "transcription_model_dir": str(selected),
+        },
+    }
+    screen.app_instance._ensure_parakeet_source_service.assert_not_called()
+
+
+def test_external_override_defers_submit_until_preparation_finishes() -> None:
+    screen = object.__new__(LibraryScreen)
+    submit = MagicMock()
+    source_service = MagicMock()
+    screen.app_instance = SimpleNamespace(
+        submit_library_ingest_job=submit,
+        _ensure_parakeet_source_service=lambda: source_service,
+    )
+    screen._library_ingest_form = LibraryIngestFormState(
+        path="/tmp/speech.wav",
+        type_options={
+            "audio_video": {
+                "transcription_provider": "parakeet-onnx",
+                "transcription_model_dir": "/user-owned/parakeet-v2",
+                "transcription_precision": "int8",
+                "language": "en",
+            }
+        },
+    )
+    screen._library_external_submit_generation = 0
+    screen._library_external_submit_scope_id = None
+    screen._library_external_submit_worker = None
+    pending_worker = MagicMock()
+    screen._prepare_library_external_submission = MagicMock(return_value=pending_worker)
+
+    LibraryScreen._do_submit_ingest(screen, "/tmp/speech.wav")
+
+    submit.assert_not_called()
+    source_service.records.assert_not_called()
+    assert screen._library_external_submit_worker is pending_worker
+    args = screen._prepare_library_external_submission.call_args.args
+    generation, scope_id, key, directory, submit_kwargs = args
+    assert generation == 1
+    assert scope_id.startswith("library-external-")
+    assert "/user-owned/parakeet-v2" not in scope_id
+    assert key.value == "v2_int8"
+    assert directory == Path("/user-owned/parakeet-v2")
+    assert (
+        "transcription_external_scope_id"
+        not in submit_kwargs["ingest_options"]["audio_video"]
+    )
+
+
+def _vad_only_report(tmp_path: Path):
+    from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
+        parakeet_vad_descriptor,
+        parakeet_vad_reference,
+    )
+    from tldw_chatbook.Model_Artifacts import ProvenanceClass
+    from tldw_chatbook.Model_Artifacts.acquisition import (
+        ArtifactPreflightEntry,
+        PreflightReport,
+    )
+
+    reference = parakeet_vad_reference()
+    descriptor = parakeet_vad_descriptor()
+    entry = ArtifactPreflightEntry(
+        ref=reference,
+        source_url=descriptor.source_url,
+        repository=descriptor.upstream_repository,
+        revision=descriptor.upstream_revision,
+        license_id=descriptor.license_id,
+        license_url=descriptor.license_url,
+        precision=descriptor.precision,
+        total_bytes=descriptor.expected_installed_bytes,
+        file_count=len(descriptor.files),
+        already_installed=False,
+        provenance=(ProvenanceClass.CHATBOOK_CURATED,),
+    )
+    return PreflightReport(
+        root=reference,
+        closure_fingerprint="f" * 64,
+        entries=(entry,),
+        download_bytes=descriptor.expected_installed_bytes,
+        already_staged_bytes=0,
+        staging_overhead_bytes=0,
+        retained_bytes=0,
+        destination=tmp_path / "managed",
+        free_bytes=10**12,
+        required_bytes=descriptor.expected_installed_bytes,
+        sufficient_space=True,
+        gating_errors=(),
+    )
+
+
+def test_external_prepare_retains_before_enqueue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    prepared = MagicMock()
+    service = MagicMock()
+    service.prepare_external.side_effect = lambda *_args, **_kwargs: (
+        events.append("prepare") or prepared
+    )
+    service.prepare_config_commit.side_effect = lambda _prepared: events.append(
+        "readiness"
+    )
+    service.retain_prepared.side_effect = lambda *_args: events.append("retain")
+    submit = MagicMock(side_effect=lambda **_kwargs: events.append("enqueue"))
+    saved_settings: list[dict[str, object]] = []
+    fake_app = SimpleNamespace(
+        call_from_thread=lambda callback, *args: callback(*args),
+    )
+    monkeypatch.setattr(LibraryScreen, "app", property(lambda self: fake_app))
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.library_screen.get_current_worker",
+        lambda: SimpleNamespace(is_cancelled=False),
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.library_screen.save_settings_to_cli_config",
+        lambda values: saved_settings.append(values),
+    )
+    screen = object.__new__(LibraryScreen)
+    screen.app_instance = SimpleNamespace(
+        submit_library_ingest_job=submit,
+        _ensure_parakeet_source_service=lambda: service,
+    )
+    screen._library_ingest_form = LibraryIngestFormState(path="/tmp/speech.wav")
+    screen._library_external_submit_generation = 1
+    screen._library_external_submit_scope_id = "library-external-scope"
+    screen._library_external_submit_worker = None
+    screen._library_ingest_registry = lambda: None
+    screen._invalidate_library_ingest_preflight = MagicMock()
+    screen.refresh = MagicMock()
+    screen.call_after_refresh = MagicMock()
+    submit_kwargs = {
+        "source_path": "/tmp/speech.wav",
+        "ingest_options": {
+            "audio_video": {
+                "transcription_provider": "parakeet-onnx",
+                "transcription_model_dir": "/private/parakeet",
+            }
+        },
+    }
+
+    LibraryScreen._prepare_library_external_submission.__wrapped__(
+        screen,
+        1,
+        "library-external-scope",
+        MagicMock(),
+        Path("/private/parakeet"),
+        submit_kwargs,
+    )
+
+    assert events == ["prepare", "readiness", "retain", "enqueue"]
+    assert (
+        submit.call_args.kwargs["ingest_options"]["audio_video"][
+            "transcription_external_scope_id"
+        ]
+        == "library-external-scope"
+    )
+    assert "/private/parakeet" not in str(saved_settings)
+    assert "transcription_external_scope_id" not in str(saved_settings)
+
+
+def test_external_vad_plan_is_exact_and_cancel_releases_without_jobs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fake_app = MagicMock()
+    monkeypatch.setattr(LibraryScreen, "app", property(lambda self: fake_app))
+    service = MagicMock()
+    submit = MagicMock()
+    screen = object.__new__(LibraryScreen)
+    screen.app_instance = SimpleNamespace(
+        submit_library_ingest_job=submit,
+        _ensure_parakeet_source_service=lambda: service,
+    )
+    screen._library_ingest_form = LibraryIngestFormState(path="/tmp/speech.wav")
+    prior = deepcopy(screen._library_ingest_form)
+    screen._library_external_submit_generation = 4
+    screen._library_external_submit_scope_id = "library-external-vad"
+    screen._library_external_submit_worker = None
+    report = _vad_only_report(tmp_path)
+
+    LibraryScreen._apply_library_external_preparation(
+        screen,
+        4,
+        "library-external-vad",
+        MagicMock(),
+        {"source_path": "/tmp/speech.wav", "ingest_options": {}},
+        report,
+        None,
+    )
+
+    submit.assert_not_called()
+    modal, callback = fake_app.push_screen.call_args.args
+    assert modal.report.root == report.root
+    assert {entry.ref for entry in modal.report.entries} == {report.root}
+    callback(False)
+    service.release_scope.assert_called_once_with("library-external-vad")
+    assert screen._library_ingest_form == prior
+    submit.assert_not_called()
+
+
+def test_external_vad_plan_rejects_any_non_vad_entry(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from dataclasses import replace
+    from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
+        parakeet_reference,
+    )
+    from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V2_MODEL
+
+    fake_app = MagicMock()
+    monkeypatch.setattr(LibraryScreen, "app", property(lambda self: fake_app))
+    service = MagicMock()
+    screen = object.__new__(LibraryScreen)
+    screen.app_instance = SimpleNamespace(
+        submit_library_ingest_job=MagicMock(),
+        _ensure_parakeet_source_service=lambda: service,
+        notify=MagicMock(),
+    )
+    screen._library_external_submit_generation = 2
+    screen._library_external_submit_scope_id = "library-external-changed-plan"
+    screen._library_external_submit_worker = None
+    report = _vad_only_report(tmp_path)
+    changed_entry = replace(
+        report.entries[0],
+        ref=parakeet_reference(PARAKEET_V2_MODEL, "int8"),
+    )
+
+    LibraryScreen._apply_library_external_preparation(
+        screen,
+        2,
+        "library-external-changed-plan",
+        MagicMock(),
+        {"source_path": "/tmp/speech.wav", "ingest_options": {}},
+        replace(report, entries=report.entries + (changed_entry,)),
+        None,
+    )
+
+    fake_app.push_screen.assert_not_called()
+    service.release_scope.assert_called_once_with("library-external-changed-plan")
+
+
+def test_stale_external_result_releases_scope_without_enqueue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_app = MagicMock()
+    monkeypatch.setattr(LibraryScreen, "app", property(lambda self: fake_app))
+    service = MagicMock()
+    submit = MagicMock()
+    screen = object.__new__(LibraryScreen)
+    screen.app_instance = SimpleNamespace(
+        submit_library_ingest_job=submit,
+        _ensure_parakeet_source_service=lambda: service,
+    )
+    screen._library_external_submit_generation = 8
+    screen._library_external_submit_scope_id = "library-external-current"
+
+    LibraryScreen._apply_library_external_preparation(
+        screen,
+        7,
+        "library-external-stale",
+        MagicMock(),
+        {"source_path": "/tmp/speech.wav", "ingest_options": {}},
+        None,
+        None,
+    )
+
+    service.release_scope.assert_called_once_with("library-external-stale")
+    submit.assert_not_called()
+    fake_app.push_screen.assert_not_called()
+
+
+def test_external_validation_failure_releases_and_preserves_form(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_app = MagicMock()
+    monkeypatch.setattr(LibraryScreen, "app", property(lambda self: fake_app))
+    service = MagicMock()
+    submit = MagicMock()
+    screen = object.__new__(LibraryScreen)
+    screen.app_instance = SimpleNamespace(
+        submit_library_ingest_job=submit,
+        _ensure_parakeet_source_service=lambda: service,
+        notify=MagicMock(),
+    )
+    screen._library_ingest_form = LibraryIngestFormState(path="/tmp/speech.wav")
+    prior = deepcopy(screen._library_ingest_form)
+    screen._library_external_submit_generation = 3
+    screen._library_external_submit_scope_id = "library-external-failed"
+    screen._library_external_submit_worker = MagicMock()
+
+    LibraryScreen._apply_library_external_preparation(
+        screen,
+        3,
+        "library-external-failed",
+        None,
+        {"source_path": "/tmp/speech.wav", "ingest_options": {}},
+        None,
+        "validation_failed",
+    )
+
+    service.release_scope.assert_called_once_with("library-external-failed")
+    assert screen._library_ingest_form == prior
+    submit.assert_not_called()
+
+
+def test_external_submit_exception_releases_before_any_registry_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_app = MagicMock()
+    monkeypatch.setattr(LibraryScreen, "app", property(lambda self: fake_app))
+    service = MagicMock()
+    registry = MagicMock()
+    registry.jobs.return_value = ()
+    submit = MagicMock(side_effect=RuntimeError("submit failed"))
+    screen = object.__new__(LibraryScreen)
+    screen.app_instance = SimpleNamespace(
+        submit_library_ingest_job=submit,
+        _ensure_parakeet_source_service=lambda: service,
+        notify=MagicMock(),
+    )
+    screen._library_ingest_form = LibraryIngestFormState(path="/tmp/speech.wav")
+    prior = deepcopy(screen._library_ingest_form)
+    screen._library_ingest_registry = lambda: registry
+    screen._library_external_submit_generation = 5
+    screen._library_external_submit_scope_id = "library-external-submit-error"
+    screen._library_external_submit_worker = MagicMock()
+
+    LibraryScreen._enqueue_library_ingest_snapshot(
+        screen,
+        {
+            "source_path": "/tmp/speech.wav",
+            "ingest_options": {"audio_video": {}},
+        },
+        generation=5,
+        scope_id="library-external-submit-error",
+    )
+
+    service.release_scope.assert_called_once_with("library-external-submit-error")
+    assert registry.jobs.call_count == 2
+    assert screen._library_ingest_form == prior
 
 
 @pytest.mark.asyncio
