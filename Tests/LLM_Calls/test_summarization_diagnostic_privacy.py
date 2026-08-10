@@ -249,6 +249,36 @@ def test_guard_imported_exception_callable_captures_exception() -> None:
         _guard().assert_review_outcome(call, call, outcome="metadata")
 
 
+def test_guard_finds_imported_getlogger_factory_results() -> None:
+    source = """
+from logging import getLogger, getLogger as factory
+
+direct = getLogger(__name__)
+aliased = factory(__name__)
+direct.warning("direct event", direct_private)
+aliased.error("aliased event", aliased_private)
+"""
+
+    calls = _guard().discover_diagnostic_calls(source, module="synthetic.py")
+
+    assert [(call.method, call.event, call.expressions) for call in calls] == [
+        ("warning", "direct event", ("direct_private",)),
+        ("error", "aliased event", ("aliased_private",)),
+    ]
+
+
+def test_guard_does_not_follow_arbitrary_factory_results() -> None:
+    source = """
+def factory(name):
+    return object()
+
+audit = factory(__name__)
+audit.error("fixed", private)
+"""
+
+    assert _guard().discover_diagnostic_calls(source, module="synthetic.py") == []
+
+
 def test_guard_finds_bind_and_opt_derived_logger_aliases() -> None:
     source = """
 from loguru import logger
@@ -524,6 +554,23 @@ def test_guard_metadata_accepts_index_arithmetic_and_sanitized_tokens(
     current = _single_call(f'logger.error("Fixed failure; field=%s", {expression})\n')
 
     _guard().assert_review_outcome(starting, current, outcome="metadata")
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "safe_metadata_token(*private_values)",
+        "safe_metadata_token(*(event_type, provider_name))",
+    ],
+)
+def test_guard_metadata_rejects_starred_sanitizer_arguments(
+    expression: str,
+) -> None:
+    starting = _single_call('logger.error(f"Legacy failure: {private}")\n')
+    current = _single_call(f'logger.error("Fixed failure; field=%s", {expression})\n')
+
+    with pytest.raises(AssertionError, match="approved metadata expression"):
+        _guard().assert_review_outcome(starting, current, outcome="metadata")
 
 
 @pytest.mark.parametrize("expression", ["i", "index", "idx"])

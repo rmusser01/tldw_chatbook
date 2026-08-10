@@ -185,6 +185,16 @@ def _imported_log_methods(tree: ast.AST) -> dict[str, str]:
     return methods
 
 
+def _imported_get_logger_factories(tree: ast.AST) -> set[str]:
+    return {
+        alias.asname or alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module == "logging"
+        for alias in node.names
+        if alias.name == "getLogger"
+    }
+
+
 def _opt_captures_exception(node: ast.AST) -> bool:
     return any(
         isinstance(candidate, ast.Call)
@@ -199,7 +209,7 @@ def _opt_captures_exception(node: ast.AST) -> bool:
 
 
 def _derived_logger_aliases(
-    tree: ast.AST, symbols: set[str]
+    tree: ast.AST, symbols: set[str], factories: set[str]
 ) -> tuple[dict[str, tuple[str, ...]], dict[str, bool]]:
     fields: dict[str, tuple[str, ...]] = {}
     captures: dict[str, bool] = {}
@@ -209,6 +219,21 @@ def _derived_logger_aliases(
     assignments.sort(key=lambda node: (node.lineno, node.col_offset))
     for assignment in assignments:
         value = assignment.value
+        targets = (
+            assignment.targets
+            if isinstance(assignment, ast.Assign)
+            else [assignment.target]
+        )
+        if (
+            isinstance(value, ast.Call)
+            and isinstance(value.func, ast.Name)
+            and value.func.id in factories
+        ):
+            for target in targets:
+                if isinstance(target, ast.Name):
+                    fields[target.id] = ()
+                    captures[target.id] = False
+            continue
         if (
             not isinstance(value, ast.Call)
             or not isinstance(value.func, ast.Attribute)
@@ -223,11 +248,6 @@ def _derived_logger_aliases(
             and not root.casefold().endswith("_logger")
         ):
             continue
-        targets = (
-            assignment.targets
-            if isinstance(assignment, ast.Assign)
-            else [assignment.target]
-        )
         alias_fields = (
             *fields.get(root, ()),
             *_receiver_field_expressions(value),
@@ -278,7 +298,10 @@ def discover_diagnostic_calls(source: str, *, module: str) -> list[DiagnosticCal
     tree = ast.parse(source, filename=module)
     symbols = _logger_symbols(tree)
     imported_methods = _imported_log_methods(tree)
-    alias_fields, alias_captures = _derived_logger_aliases(tree, symbols)
+    logger_factories = _imported_get_logger_factories(tree)
+    alias_fields, alias_captures = _derived_logger_aliases(
+        tree, symbols, logger_factories
+    )
     symbols.update(alias_fields)
     scopes = _scope_names(tree)
     nodes = sorted(
@@ -419,6 +442,7 @@ def _is_approved_metadata_expression(expression: str) -> bool:
             isinstance(node.func, ast.Name)
             and node.func.id == "safe_metadata_token"
             and len(node.args) == 1
+            and not isinstance(node.args[0], ast.Starred)
             and not node.keywords
         )
     if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Sub)):
