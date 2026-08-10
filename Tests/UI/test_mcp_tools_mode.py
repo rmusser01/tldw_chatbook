@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button, DataTable, Input, Select, Static
+from textual.widgets import Button, Checkbox, DataTable, Input, Select, Static
 
 import tldw_chatbook
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
@@ -58,10 +58,95 @@ class ToolsModeApp(App):
     def on_mcp_tools_mode_empty_action_requested(self, event) -> None:
         self.events.append(event)
 
+    def on_mcp_tools_mode_local_tools_enabled_changed(self, event) -> None:
+        self.events.append(event)
+
+    def on_mcp_tools_mode_workspace_root_save_requested(self, event) -> None:
+        self.events.append(event)
+
+
+class ToolsModeBundledCSSApp(ToolsModeApp):
+    CSS_PATH = str(_BUNDLED_STYLESHEET)
+
 
 def _row_texts(table: DataTable, row_index: int) -> list[str]:
     row = table.get_row_at(row_index)
     return [cell.plain if hasattr(cell, "plain") else str(cell) for cell in row]
+
+
+@pytest.mark.asyncio
+async def test_local_tool_controls_are_visible_and_emit_configuration_requests():
+    app = ToolsModeApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        canvas = app.query_one(MCPToolsMode)
+        canvas.update_local_config(
+            enabled=True,
+            workspace_root="C:/work/notes",
+            visible=True,
+        )
+        await pilot.pause()
+
+        checkbox = app.query_one("#mcp-tools-local-enabled", Checkbox)
+        root_input = app.query_one("#mcp-tools-workspace-root", Input)
+        assert checkbox.value is True
+        assert root_input.value == "C:/work/notes"
+        assert "Enabled" in str(
+            app.query_one("#mcp-tools-local-enabled-state", Static).renderable
+        )
+        assert "Ask" in str(
+            app.query_one("#mcp-tools-local-config-help", Static).renderable
+        )
+
+        checkbox.value = False
+        root_input.value = "C:/other/notes"
+        app.query_one("#mcp-tools-workspace-save", Button).press()
+        await pilot.pause()
+
+        enabled_events = [
+            event
+            for event in app.events
+            if isinstance(event, MCPToolsMode.LocalToolsEnabledChanged)
+        ]
+        root_events = [
+            event
+            for event in app.events
+            if isinstance(event, MCPToolsMode.WorkspaceRootSaveRequested)
+        ]
+        assert enabled_events[-1].enabled is False
+        assert root_events[-1].workspace_root == "C:/other/notes"
+
+
+@pytest.mark.asyncio
+async def test_local_tool_controls_can_hide_for_server_source():
+    app = ToolsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPToolsMode)
+        canvas.update_local_config(enabled=True, workspace_root="", visible=False)
+        await pilot.pause()
+
+        assert app.query_one("#mcp-tools-local-config").display is False
+
+
+@pytest.mark.asyncio
+async def test_local_tool_controls_render_with_bundled_css_at_100x30():
+    app = ToolsModeBundledCSSApp()
+    async with app.run_test(size=(100, 30)) as pilot:
+        canvas = app.query_one(MCPToolsMode)
+        canvas.update_local_config(
+            enabled=True,
+            workspace_root="C:/workspace/notes",
+            visible=True,
+        )
+        await pilot.pause()
+
+        rendered = "\n".join(
+            "".join(segment.text for segment in strip)
+            for strip in app.screen._compositor.render_strips()
+        )
+        assert "Local workspace + web tools" in rendered
+        assert "Save root" in rendered
+        assert "C:/workspace/notes" in rendered
+        assert app.query_one("#mcp-tools-filter-text", Input).region.height > 0
 
 
 @pytest.mark.asyncio

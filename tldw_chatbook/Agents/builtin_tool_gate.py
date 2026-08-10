@@ -442,6 +442,7 @@ class ToolGate:
 #: as a literal at every call/comparison site (the enumerator itself, and
 #: the Servers-mode UI's master-vs-dependent branching).
 LOCAL_TOOLS_MASTER_KEY = "local_tools_enabled"
+LOCAL_TOOLS_DEFAULT_ENABLED = True
 
 #: Hand-written description for the local group's master switch -- it has
 #: no corresponding Tool instance to read a description off of (it gates a
@@ -457,7 +458,8 @@ LOCAL_TOOLS_MASTER_KEY = "local_tools_enabled"
 _LOCAL_TOOLS_MASTER_DESCRIPTION = (
     "Master switch for standard web research (web_search, web_fetch, "
     "web_crawl) and local workspace tools (fs_*/git_*/todo_*) in the "
-    "Console/agent path. Off by default; web_deep_search also needs its "
+    "Console/agent path. On by default; every call still follows the MCP "
+    "permission state, and web_deep_search also needs its "
     "individual gate. Does NOT govern exposure to external MCP clients -- "
     "that's the separate [mcp] expose_local_tools switch."
 )
@@ -527,7 +529,10 @@ def all_tool_gates() -> list[ToolGate]:
             tool_name=LOCAL_TOOLS_MASTER_KEY,
             description=_LOCAL_TOOLS_MASTER_DESCRIPTION,
             enabled=coerce_bool_setting(
-                get_cli_setting("console", LOCAL_TOOLS_MASTER_KEY, False), False
+                get_cli_setting(
+                    "console", LOCAL_TOOLS_MASTER_KEY, LOCAL_TOOLS_DEFAULT_ENABLED
+                ),
+                LOCAL_TOOLS_DEFAULT_ENABLED,
             ),
             group="local",
         )
@@ -574,8 +579,13 @@ def _off_tool_gate_status() -> tuple[int, bool]:
     off = 0
     local_master_off = False
     for section, key in _gate_key_pairs():
+        default = (
+            LOCAL_TOOLS_DEFAULT_ENABLED
+            if section == "console" and key == LOCAL_TOOLS_MASTER_KEY
+            else False
+        )
         enabled = coerce_bool_setting(
-            get_cli_setting(section, key, False), False
+            get_cli_setting(section, key, default), default
         )
         if enabled:
             continue
@@ -621,11 +631,12 @@ def tool_gate_breadcrumb(gates: list[ToolGate] | None = None) -> str | None:
     if local_master_off:
         return (
             "Standard web tools (web_search, web_fetch, web_crawl) and local "
-            "workspace tools are off — enable 'Local workspace + web tools' "
-            "in the built-in server's detail (Servers mode), then restart "
-            f"the app. {off} tool gate(s) are off in total."
+            "workspace tools are off. Enable 'Local workspace + web tools' "
+            "in Tools mode; the next Console agent run will use it. "
+            f"{off} tool gate(s) are off in total."
         )
     return (
-        f"{off} tool gate(s) are off — enable them in the built-in "
-        "server's detail (Servers mode)."
+        f"{off} tool gate(s) are off. Configure the local/web master switch "
+        "in Tools mode; other registration gates remain in the built-in "
+        "server detail."
     )

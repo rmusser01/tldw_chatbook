@@ -12,8 +12,8 @@ searches multiple angles with `web_search`, fetches primary sources with
 
 ### Requirements
 
-- `[console] local_tools_enabled = true` in `~/.config/tldw_cli/config.toml`
-  (the skill's tools, `web_search`/`web_fetch`, are local agent tools).
+- Local workspace + web tools enabled in **MCP → Tools**. This is the shipped
+  default; an explicit `[console] local_tools_enabled = false` opts out.
 - Web tools default to the permission store's global `ask` state — expect an
   approval prompt the first time the skill searches or fetches (approve for
   the session or always to skip subsequent prompts).

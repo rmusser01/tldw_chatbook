@@ -27,6 +27,19 @@ sub-agent runs so nested invocations re-check permissions. Refusal strings are
 pinned constants from spec §3.3: `LOCAL_DENY_REFUSAL`, `LOCAL_TIMEOUT_REFUSAL`,
 and `LOCAL_KILL_SWITCH_REFUSAL`.
 
+**Addendum (TASK-14807, 2026-08-10): catalog availability defaults on.** The
+Console registers the standard local provider (workspace file, read-only Git,
+and standard web tools) for fresh profiles and profiles where
+`[console] local_tools_enabled` is absent. Registration only makes tool schemas
+available to the model; it does not authorize a call. The permission store's
+fresh and missing-state default remains `ask`, mutating tools retain their risk
+floor, the global kill switch remains authoritative, and every path-taking tool
+remains confined to `[console] workspace_root`. An explicit
+`local_tools_enabled = false` remains a supported opt-out and removes the
+provider on the next Console agent run. This separates discoverability from
+authorization: users can see and select the tools by default without granting
+silent filesystem access, writes, or network egress.
+
 **Addendum (PR-T3 review, Fix Round H, 2026-08-06):** a fourth pinned
 constant, `LOCAL_GATE_ERROR_REFUSAL`, distinguishes a permission-resolver
 CRASH from a genuine configured deny. `_verdict_for()`'s `resolve_state`
@@ -77,6 +90,8 @@ root confinement with hidden components explicitly allowed under it.
 | Self-hosted MCP server consumed via the in-process delegate | JSON-RPC plumbing for local file reads, and the runtime would depend on the MCP lifecycle for basic capabilities. |
 | Separate local permission store | Duplicates the audit trail and approval UX, and two stores would drift in precedence, session-grant, and kill-switch behavior. |
 | Config-flag-only gating | No interactive approval and no per-tool persistence; the weakest safety story for exactly the tools that need it most. |
+| Keep catalog registration off by default | Reproduces the discoverability failure where Console agents and the Tools catalog report that capabilities do not exist, despite a separate fail-closed permission layer already governing every invocation. |
+| Default every registered tool to Allow | Would turn schema availability into implicit filesystem/network authorization and bypass the consent boundary this ADR establishes. |
 
 ## Consequences
 
@@ -94,6 +109,10 @@ root confinement with hidden components explicitly allowed under it.
 
 - The permission store gains a synthetic server key that is not a real MCP
   server; UI that enumerates servers must special-case or filter it.
+- Tool schemas are visible to Console models by default, so prompts may propose
+  calls before the user has configured a workspace root; the first call still
+  requires the resolved permission verdict and remains confined to the current
+  default root.
 - `validate_path` grows an `allow_hidden` parameter whose default must remain
   the current strict behavior for existing callers.
 - `workspace_root` defaults to the app cwd, so the confinement boundary moves

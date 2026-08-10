@@ -1217,8 +1217,8 @@ def load_settings(force_reload: bool = False) -> Dict:
         maximum=MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
     )
     final_console_settings_cli["local_tools_enabled"] = coerce_bool_setting(
-        final_console_settings_cli.get("local_tools_enabled", False),
-        False,
+        final_console_settings_cli.get("local_tools_enabled", True),
+        True,
     )
     workspace_root = final_console_settings_cli.get("workspace_root", "")
     if not isinstance(workspace_root, str):
@@ -2589,7 +2589,7 @@ users_name = "default_user" # Default user name for the TUI
 collapse_large_pastes = true  # Display large pasted chunks compactly in Console composer
 stack_collapsed_rail_labels = false  # Use compact stacked labels on collapsed Console rails
 paste_collapse_threshold = 50  # Collapse pasted/inserted chunks only when longer than this many characters
-# local_tools_enabled = false   # workspace-local agent tools (fs_*); approvals via MCP permission store
+local_tools_enabled = true      # standard web + workspace agent tools; every call still uses MCP Ask/Allow/Off permissions
 # workspace_root = ""           # confinement root for fs_* tools; empty = app cwd at startup
 
 [console.background_effects]

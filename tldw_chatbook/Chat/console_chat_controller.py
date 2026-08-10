@@ -86,7 +86,10 @@ from tldw_chatbook.Chat.console_skill_resolver import (
 )
 from tldw_chatbook.Chat.prompt_history import PromptHistory
 
-from tldw_chatbook.Agents.builtin_tool_gate import build_builtin_gate
+from tldw_chatbook.Agents.builtin_tool_gate import (
+    LOCAL_TOOLS_DEFAULT_ENABLED,
+    build_builtin_gate,
+)
 from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall, MCPToolProvider
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
@@ -3359,7 +3362,10 @@ class ConsoleChatController:
         # in get_cli_setting() itself, which reads the raw bootstrap
         # config. coerce_bool_setting is the arc's sixth such site.
         if not coerce_bool_setting(
-            get_cli_setting("console", "local_tools_enabled", False), False
+            get_cli_setting(
+                "console", "local_tools_enabled", LOCAL_TOOLS_DEFAULT_ENABLED
+            ),
+            LOCAL_TOOLS_DEFAULT_ENABLED,
         ):
             return None, None
         service = getattr(self.app, "unified_mcp_service", None)

@@ -170,6 +170,25 @@ def test_compose_local_provider_disabled_flag(monkeypatch, tmp_path):
     assert controller._compose_local_provider() == (None, None)
 
 
+def test_compose_local_provider_missing_master_key_defaults_enabled(
+    monkeypatch, tmp_path
+):
+    values = {("console", "workspace_root"): str(tmp_path)}
+
+    def missing_master_setting(section, key=None, default=None):
+        return values.get((section, key), default)
+
+    monkeypatch.setattr(controller_mod, "get_cli_setting", missing_master_setting)
+    controller = _bare_controller(
+        SimpleNamespace(unified_mcp_service=_FakeService())
+    )
+
+    local_provider, hook = controller._compose_local_provider()
+
+    assert isinstance(local_provider, LocalToolProvider)
+    assert callable(hook)
+
+
 def test_compose_local_provider_coerces_quoted_false_to_disabled(monkeypatch, tmp_path):
     """task-3240 fix round 1 (Critical 2). `get_cli_setting` returns the
     RAW TOML value -- a hand-typed quoted "false" is a non-empty string
@@ -275,6 +294,7 @@ def test_compose_local_provider_tilde_workspace_root_expands_home(
     home = tmp_path / "home"
     (home / "repo").mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.setattr(
         controller_mod,
         "get_cli_setting",

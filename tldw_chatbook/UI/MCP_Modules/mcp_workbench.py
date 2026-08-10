@@ -22,7 +22,11 @@ from textual.reactive import reactive
 from textual.widgets import ContentSwitcher
 from textual.worker import Worker
 
-from tldw_chatbook.Agents.builtin_tool_gate import builtin_permission_rows, tool_gate_breadcrumb
+from tldw_chatbook.Agents.builtin_tool_gate import (
+    LOCAL_TOOLS_DEFAULT_ENABLED,
+    builtin_permission_rows,
+    tool_gate_breadcrumb,
+)
 from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 from tldw_chatbook.config import (
     coerce_bool_setting,
@@ -1608,9 +1612,42 @@ class MCPWorkbench(Container):
         input.
         """
         diagnosis = None if tools else self._empty_tools_diagnosis()
-        await self.query_one(MCPToolsMode).update_tools(
+        canvas = self.query_one(MCPToolsMode)
+        enabled, workspace_root = self._local_tools_config_values()
+        canvas.update_local_config(
+            enabled=enabled,
+            workspace_root=workspace_root,
+            visible=self._source == "local",
+        )
+        await canvas.update_tools(
             tools, empty_diagnosis=diagnosis, states=states
         )
+
+    @staticmethod
+    def _local_tools_config_values() -> tuple[bool, str]:
+        """Read the persisted values rendered by Tools mode."""
+        enabled = coerce_bool_setting(
+            get_cli_setting(
+                "console", "local_tools_enabled", LOCAL_TOOLS_DEFAULT_ENABLED
+            ),
+            LOCAL_TOOLS_DEFAULT_ENABLED,
+        )
+        raw_root = get_cli_setting("console", "workspace_root", "")
+        workspace_root = raw_root.strip() if isinstance(raw_root, str) else ""
+        return enabled, workspace_root
+
+    def _refresh_local_tools_controls(self) -> MCPToolsMode | None:
+        """Reset Tools-mode controls to persisted config after a failed save."""
+        if not self.query(MCPToolsMode):
+            return None
+        canvas = self.query_one(MCPToolsMode)
+        enabled, workspace_root = self._local_tools_config_values()
+        canvas.update_local_config(
+            enabled=enabled,
+            workspace_root=workspace_root,
+            visible=self._source == "local",
+        )
+        return canvas
 
     def _collect_hub_tools(self) -> list[HubTool]:
         """Derive the current source's cross-server `HubTool` catalog.
@@ -1700,7 +1737,10 @@ class MCPWorkbench(Container):
         time: a quoted ``"false"`` in the TOML must not fail this OPEN.
         """
         if not coerce_bool_setting(
-            get_cli_setting("console", "local_tools_enabled", False), False
+            get_cli_setting(
+                "console", "local_tools_enabled", LOCAL_TOOLS_DEFAULT_ENABLED
+            ),
+            LOCAL_TOOLS_DEFAULT_ENABLED,
         ):
             return []
         try:
@@ -2952,6 +2992,124 @@ class MCPWorkbench(Container):
     ) -> None:
         event.stop()
         await self._open_add_server(notify_if_gated=False)
+
+    def on_mcp_tools_mode_local_tools_enabled_changed(
+        self, event: MCPToolsMode.LocalToolsEnabledChanged
+    ) -> None:
+        """Persist the Tools-mode local/web master switch without blocking UI."""
+        event.stop()
+        self.run_worker(
+            self._save_tools_mode_local_enabled(event.enabled),
+            group="mcp-tools-local-enabled",
+            exclusive=True,
+        )
+
+    async def _save_tools_mode_local_enabled(self, enabled: bool) -> None:
+        try:
+            saved = await asyncio.to_thread(
+                save_setting_to_cli_config,
+                "console",
+                "local_tools_enabled",
+                enabled,
+            )
+        except Exception as exc:
+            logger.warning(f"MCP Tools-mode local master save failed: {exc}")
+            canvas = self._refresh_local_tools_controls()
+            if canvas is not None:
+                canvas.set_local_config_status(
+                    "Save failed. The persisted setting is shown.", error=True
+                )
+            self.app.notify(
+                _toast(f"Failed to save local tool setting: {exc}"),
+                severity="error",
+            )
+            return
+        if not saved:
+            canvas = self._refresh_local_tools_controls()
+            if canvas is not None:
+                canvas.set_local_config_status(
+                    "Save failed. The persisted setting is shown.", error=True
+                )
+            self.app.notify("Failed to save local tool setting.", severity="error")
+            return
+
+        self._snapshots = await self._collect_snapshots()
+        await self._sync_children()
+        canvas = self.query_one(MCPToolsMode)
+        state = "Enabled" if enabled else "Disabled"
+        canvas.set_local_config_status(
+            f"{state}. The next Console agent run will use this setting; "
+            "calls still follow Ask, Allow, or Off permissions.",
+            error=False,
+        )
+
+    def on_mcp_tools_mode_workspace_root_save_requested(
+        self, event: MCPToolsMode.WorkspaceRootSaveRequested
+    ) -> None:
+        """Validate and persist Tools mode's workspace confinement root."""
+        event.stop()
+        self.run_worker(
+            self._save_tools_mode_workspace_root(event.workspace_root),
+            group="mcp-tools-workspace-root",
+            exclusive=True,
+        )
+
+    async def _save_tools_mode_workspace_root(self, raw_root: str) -> None:
+        requested = raw_root.strip()
+        stored = ""
+        display = "the app folder"
+        if requested:
+            try:
+                resolved = Path(requested).expanduser().resolve()
+                if not resolved.is_dir():
+                    raise ValueError("path is not an existing directory")
+            except (OSError, RuntimeError, ValueError) as exc:
+                canvas = self.query_one(MCPToolsMode)
+                canvas.set_local_config_status(
+                    f"Workspace root not saved: {exc}.", error=True
+                )
+                self.app.notify(
+                    _toast(f"Workspace root not saved: {exc}."), severity="error"
+                )
+                return
+            stored = str(resolved)
+            display = stored
+
+        try:
+            saved = await asyncio.to_thread(
+                save_setting_to_cli_config,
+                "console",
+                "workspace_root",
+                stored,
+            )
+        except Exception as exc:
+            logger.warning(f"MCP Tools-mode workspace root save failed: {exc}")
+            canvas = self._refresh_local_tools_controls()
+            if canvas is not None:
+                canvas.set_local_config_status(
+                    "Save failed. The persisted workspace root is shown.",
+                    error=True,
+                )
+            self.app.notify(
+                _toast(f"Failed to save workspace root: {exc}"), severity="error"
+            )
+            return
+        if not saved:
+            canvas = self._refresh_local_tools_controls()
+            if canvas is not None:
+                canvas.set_local_config_status(
+                    "Save failed. The persisted workspace root is shown.",
+                    error=True,
+                )
+            self.app.notify("Failed to save workspace root.", severity="error")
+            return
+
+        self._snapshots = await self._collect_snapshots()
+        await self._sync_children()
+        self.query_one(MCPToolsMode).set_local_config_status(
+            f"Saved. The next Console agent run is confined to {display}.",
+            error=False,
+        )
 
     async def on_mcp_tools_mode_empty_action_requested(
         self, event: MCPToolsMode.EmptyActionRequested
