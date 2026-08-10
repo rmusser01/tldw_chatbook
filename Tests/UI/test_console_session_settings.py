@@ -1,13 +1,18 @@
+import asyncio
 from dataclasses import replace
+import gc
 from pathlib import Path
+import threading
+import time
 from types import SimpleNamespace
+import weakref
 
 import pytest
 from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, ScrollableContainer
 from textual.geometry import Region
-from textual.widgets import Button, Input, Select, Static
+from textual.widgets import Button, Input, Select, Static, TextArea
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -39,6 +44,7 @@ from tldw_chatbook.Widgets.Console.console_settings_modal import (
     MODEL_DISCOVER_STATUS_ID,
     ConsoleSettingsInput,
     ConsoleSettingsModal,
+    ConsoleSettingsResult,
     _settings_screen_region,
 )
 from tldw_chatbook.Widgets.Console import (
@@ -46,6 +52,10 @@ from tldw_chatbook.Widgets.Console import (
 )
 from tldw_chatbook.Widgets.Console.console_settings_summary import (
     ConsoleSettingsSummary,
+)
+from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
+    APPLY_BUTTON_ID as SYSTEM_PROMPT_APPLY_BUTTON_ID,
+    TEXT_AREA_ID as SYSTEM_PROMPT_TEXT_AREA_ID,
 )
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
     MergedModelEntry,
@@ -101,9 +111,11 @@ class ModalHarness(App[None]):
             },
         }
         self.saved_settings: ConsoleSessionSettings | None = None
+        self.saved_result: ConsoleSettingsResult | None = None
 
-    def capture_saved_settings(self, settings: ConsoleSessionSettings | None) -> None:
-        self.saved_settings = settings
+    def capture_saved_settings(self, result: ConsoleSettingsResult | None) -> None:
+        self.saved_result = result
+        self.saved_settings = result.settings if result is not None else None
 
 
 class StyledModalHarness(ModalHarness):
@@ -1020,6 +1032,9 @@ async def test_console_settings_modal_save_returns_validated_settings() -> None:
         )
         app.screen.query_one("#console-settings-temperature", Input).value = "0.42"
         app.screen.query_one("#console-settings-top-p", Input).value = "0.88"
+        app.screen.query_one("#console-settings-user-display-name", Input).value = (
+            "  Captain Rowan  "
+        )
         await pilot.click("#console-settings-save")
 
     assert app.saved_settings is not None
@@ -1027,6 +1042,97 @@ async def test_console_settings_modal_save_returns_validated_settings() -> None:
     assert app.saved_settings.model == "model-a"
     assert app.saved_settings.temperature == 0.42
     assert app.saved_settings.top_p == 0.88
+    assert app.saved_result is not None
+    assert app.saved_result.user_display_name_override == "Captain Rowan"
+    assert not hasattr(app.saved_result.settings, "user_display_name_override")
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_renders_current_chat_identity() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                user_display_name_override="Captain Rowan",
+                global_user_display_name="Default Name",
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        identity = app.screen.query_one(
+            "#console-settings-user-display-name", Input
+        )
+        assert identity.value == "Captain Rowan"
+        assert identity.placeholder == "Default Name"
+        assert "Chat identity" in _visible_text(app)
+        assert "Leave blank to use the global default." in _visible_text(app)
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_blank_name_returns_separate_none_override() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            _basic_modal(
+                settings,
+                app,
+                user_display_name_override="Captain Rowan",
+                global_user_display_name="Default Name",
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+        app.screen.query_one("#console-settings-user-display-name", Input).value = "   "
+        await pilot.click("#console-settings-save")
+
+    assert app.saved_result is not None
+    assert app.saved_result.user_display_name_override is None
+    assert app.saved_result.settings == app.saved_settings
+    assert not hasattr(app.saved_result.settings, "user_display_name_override")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("invalid_name", "expected_error"),
+    [
+        ("界" * 25, "Display name must fit within 48 terminal cells."),
+        ("Captain\x07Rowan", "Display name cannot contain control characters."),
+        ("Captain\u202eRowan", "Display name cannot contain control characters."),
+    ],
+)
+async def test_console_settings_modal_invalid_name_prevents_dismissal(
+    invalid_name, expected_error
+) -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            _basic_modal(settings, app), callback=app.capture_saved_settings
+        )
+        await pilot.pause()
+        app.screen.query_one("#console-settings-user-display-name", Input).value = (
+            invalid_name
+        )
+        await pilot.click("#console-settings-save")
+        await pilot.pause()
+
+        assert app.screen.query_one("#console-settings-modal")
+        assert expected_error in str(
+            app.screen.query_one("#console-settings-error", Static).renderable
+        )
+
+    assert app.saved_result is None
 
 
 @pytest.mark.asyncio
@@ -3060,7 +3166,12 @@ async def test_console_settings_modal_save_updates_active_summary_only() -> None
         settings_button = await _visible_console_settings_button(console, pilot)
         settings_button.press()
         modal_screen = await _wait_for_console_settings_modal(host, pilot)
-        modal_screen.dismiss(ConsoleSessionSettings(provider="openai", model="gpt-4.1"))
+        modal_screen.dismiss(
+            ConsoleSettingsResult(
+                settings=ConsoleSessionSettings(provider="openai", model="gpt-4.1"),
+                user_display_name_override=None,
+            )
+        )
         await _wait_for_console_top_screen(host, console, pilot)
         await _wait_for_selector(console, pilot, "#console-settings-summary")
         await _visible_console_settings_button(console, pilot)
@@ -3078,6 +3189,1203 @@ async def test_console_settings_modal_save_updates_active_summary_only() -> None
         summary_text = _summary_text(console)
         assert "Provider: llama_cpp" in summary_text
         assert "Model: model-a" in summary_text
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_result_stays_bound_to_opening_session() -> None:
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "model-a"
+    app.app_config["chat_defaults"] = {
+        "provider": "llama_cpp",
+        "model": "model-a",
+        "user_display_name": "User",
+    }
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:9099", "model": "model-a"},
+        "openai": {"api_key": "test-key", "model": "gpt-4.1"},
+    }
+    app.providers_models = {"llama_cpp": ["model-a"], "openai": ["gpt-4.1"]}
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session()
+        store.replace_session_settings(
+            first.id,
+            ConsoleSessionSettings(
+                provider="llama_cpp", model="model-a", system_prompt="First prompt"
+            ),
+        )
+        second_id = await _press_new_console_tab(console, store, pilot)
+        store.replace_session_settings(
+            second_id,
+            ConsoleSessionSettings(
+                provider="llama_cpp", model="model-a", system_prompt="Second prompt"
+            ),
+        )
+        await console._sync_native_console_chat_ui()
+
+        settings_button = await _visible_console_settings_button(console, pilot)
+        settings_button.press()
+        modal_screen = await _wait_for_console_settings_modal(host, pilot)
+        store.switch_session(first.id)
+        modal_screen.dismiss(
+            ConsoleSettingsResult(
+                settings=ConsoleSessionSettings(provider="openai", model="gpt-4.1"),
+                user_display_name_override="Captain Rowan",
+            )
+        )
+        await _wait_for_console_top_screen(host, console, pilot)
+        await pilot.pause()
+
+        assert store.active_session_id == first.id
+        assert store.session_settings(first.id) == ConsoleSessionSettings(
+            provider="llama_cpp", model="model-a", system_prompt="First prompt"
+        )
+        second = next(session for session in store.sessions() if session.id == second_id)
+        assert store.session_settings(second_id) == ConsoleSessionSettings(
+            provider="openai",
+            model="gpt-4.1",
+            system_prompt="Second prompt",
+            source="user",
+        )
+        assert second.user_display_name_override == "Captain Rowan"
+
+
+@pytest.mark.asyncio
+async def test_console_settings_save_preserves_omitted_system_prompt_and_source() -> None:
+    """The real general-settings draft omits prompt ownership entirely."""
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "model-a"
+    app.app_config["chat_defaults"] = {
+        "provider": "llama_cpp",
+        "model": "model-a",
+    }
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:9099", "model": "model-a"},
+    }
+    app.providers_models = {"llama_cpp": ["model-a"]}
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        session.assistant_kind = "character"
+        session.character_name = "Alraune"
+        store.replace_session_settings(
+            session.id,
+            ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+        )
+        store.seed_character_roleplay(
+            session.id,
+            system_template="Protect {{user}}.",
+            greeting_template="",
+            global_default="User",
+        )
+        system_prompt_writes: list[str | None] = []
+        roleplay_writes: list[str | None] = []
+        store.persistence = SimpleNamespace(
+            update_conversation_system_prompt=lambda **kwargs: (
+                system_prompt_writes.append(kwargs["system_prompt"]) or True
+            ),
+            update_conversation_roleplay_context=lambda **kwargs: (
+                roleplay_writes.append(kwargs["character_system_template"]) or True
+            ),
+        )
+        session.persisted_conversation_id = "conv-1"
+        assert session.character_system_template == "Protect {{user}}."
+
+        settings_button = await _visible_console_settings_button(console, pilot)
+        settings_button.press()
+        modal_screen = await _wait_for_console_settings_modal(host, pilot)
+        modal_screen.query_one("#console-settings-temperature", Input).value = "0.5"
+        await pilot.click("#console-settings-save")
+        await _wait_for_console_top_screen(host, console, pilot)
+        await pilot.pause()
+
+        settings = store.session_settings(session.id)
+        assert settings.temperature == 0.5
+        assert settings.system_prompt == "Protect User."
+        assert session.character_system_template == "Protect {{user}}."
+        assert system_prompt_writes == []
+        assert roleplay_writes == []
+
+
+def test_console_settings_result_applies_name_override_without_losing_prompt_source(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"user_display_name": "Default Name"}
+    notifications: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(
+        app,
+        "notify",
+        lambda message, **kwargs: notifications.append(
+            (message, kwargs.get("severity"))
+        ),
+    )
+    console = ChatScreen(app)
+    store = console._ensure_console_chat_store()
+    session = store.ensure_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+    )
+    session.assistant_kind = "character"
+    session.character_name = "Alraune"
+    store.seed_character_roleplay(
+        session.id,
+        system_template="Protect {{user}}.",
+        greeting_template="",
+        global_default="Default Name",
+    )
+    session.persisted_conversation_id = "conv-1"
+    store.persistence = SimpleNamespace(
+        update_conversation_system_prompt=lambda **_kwargs: True,
+        update_conversation_roleplay_context=lambda **_kwargs: False,
+    )
+    monkeypatch.setattr(console, "_sync_console_identity_surfaces", lambda: None)
+    monkeypatch.setattr(
+        console,
+        "run_worker",
+        lambda coroutine, **_kwargs: coroutine.close(),
+    )
+
+    console._apply_console_settings_result(
+        ConsoleSettingsResult(
+            settings=ConsoleSessionSettings(
+                provider="llama_cpp", model="model-a", temperature=0.5
+            ),
+            user_display_name_override="Captain Rowan",
+        )
+    )
+
+    assert store.session_settings(session.id).temperature == 0.5
+    assert store.session_settings(session.id).system_prompt == "Protect Captain Rowan."
+    assert session.character_system_template == "Protect {{user}}."
+    assert session.user_display_name_override == "Captain Rowan"
+    assert (
+        "Name changed for this session, but it may not survive reopening.",
+        "warning",
+    ) in notifications
+
+
+@pytest.mark.asyncio
+async def test_console_global_name_refresh_coalesces_and_respects_session_override(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"user_display_name": "Default One"}
+    console = ChatScreen(app)
+    store = console._ensure_console_chat_store()
+    inherited = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+        assistant_kind="character",
+        character_name="Alraune",
+    )
+    store.seed_character_roleplay(
+        inherited.id,
+        system_template="Protect {{user}}.",
+        greeting_template="Hello {{user}}.",
+        global_default="Default One",
+    )
+    overridden = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+        assistant_kind="character",
+        character_name="Alraune",
+    )
+    store.seed_character_roleplay(
+        overridden.id,
+        system_template="Protect {{user}}.",
+        greeting_template="Hello {{user}}.",
+        global_default="Default One",
+    )
+    store.set_session_user_display_name_override(
+        overridden.id,
+        "Captain Rowan",
+        global_default="Default One",
+    )
+    queued = []
+    surface_syncs = []
+    monkeypatch.setattr(
+        console,
+        "run_worker",
+        lambda coroutine, **_kwargs: queued.append(coroutine),
+    )
+    monkeypatch.setattr(
+        console,
+        "_sync_console_identity_surfaces",
+        lambda: surface_syncs.append(store.active_session_id),
+    )
+
+    app.app_config["chat_defaults"]["user_display_name"] = "Default Two"
+    store.switch_session(inherited.id)
+    assert console._dispatch_active_console_roleplay_refresh() is True
+    assert surface_syncs == [inherited.id]
+    assert console._dispatch_active_console_roleplay_refresh() is False
+    assert queued == []
+
+    assert store.presentation_context(inherited.id, "Default Two").user_name == (
+        "Default Two"
+    )
+    assert store.session_settings(inherited.id).system_prompt == "Protect Default Two."
+
+    store.switch_session(overridden.id)
+    assert console._dispatch_active_console_roleplay_refresh() is True
+    assert surface_syncs[-1] == overridden.id
+    assert queued == []
+    assert store.presentation_context(overridden.id, "Default Two").user_name == (
+        "Captain Rowan"
+    )
+    assert store.session_settings(overridden.id).system_prompt == (
+        "Protect Captain Rowan."
+    )
+
+    store.set_session_user_display_name_override(
+        overridden.id,
+        None,
+        global_default="Default Two",
+    )
+    assert store.presentation_context(overridden.id, "Default Two").user_name == (
+        "Default Two"
+    )
+    assert store.session_settings(overridden.id).system_prompt == "Protect Default Two."
+    assert surface_syncs == [
+        inherited.id,
+        overridden.id,
+    ]
+
+
+def test_console_identity_refresh_request_dispatches_without_transcript_tick(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"user_display_name": "Default One"}
+    console = ChatScreen(app)
+    store = console._ensure_console_chat_store()
+    session = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+        assistant_kind="character",
+        character_name="Alraune",
+    )
+    greeting = store.seed_character_roleplay(
+        session.id,
+        system_template="Protect {{user}}.",
+        greeting_template="Hello {{user}}.",
+        global_default="Default One",
+    )
+    assert greeting is not None
+    monkeypatch.setattr(
+        console,
+        "_sync_console_identity_surfaces",
+        console._sync_console_chat_core_state,
+    )
+
+    app.app_config["chat_defaults"]["user_display_name"] = "Default Two"
+    assert console.request_console_identity_refresh(1) is True
+    assert console.request_console_identity_refresh(1) is False
+
+    assert store.session_settings(session.id).system_prompt == "Protect Default Two."
+    assert store.get_message(greeting.id).content == "Hello Default Two."
+
+
+@pytest.mark.asyncio
+async def test_real_inactive_console_tab_activation_dispatches_identity_refresh(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "model-a"
+    app.app_config["chat_defaults"] = {
+        "provider": "llama_cpp",
+        "model": "model-a",
+        "user_display_name": "Default One",
+    }
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session()
+        first.assistant_kind = "character"
+        first.character_name = "Alraune"
+        greeting = store.seed_character_roleplay(
+            first.id,
+            system_template="Protect {{user}}.",
+            greeting_template="Hello {{user}}.",
+            global_default="Default One",
+        )
+        assert greeting is not None
+        await _press_new_console_tab(console, store, pilot)
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(
+            console,
+            pilot,
+            f"#console-session-tab-{first.id}",
+        )
+        dispatches = []
+        original_dispatch = console._dispatch_active_console_roleplay_refresh
+
+        def audited_dispatch():
+            result = original_dispatch()
+            dispatches.append(
+                (
+                    store.active_session_id,
+                    console._global_chat_display_name(),
+                    result,
+                )
+            )
+            return result
+
+        monkeypatch.setattr(
+            console,
+            "_dispatch_active_console_roleplay_refresh",
+            audited_dispatch,
+        )
+
+        app.app_config["chat_defaults"]["user_display_name"] = "Default Two"
+        await _click_console_session_tab(console, store, pilot, first.id)
+        for _ in range(40):
+            if store.session_settings(first.id).system_prompt == "Protect Default Two.":
+                break
+            await pilot.pause(0.05)
+
+        assert (first.id, "Default Two", True) in dispatches
+        assert store.session_settings(first.id).system_prompt == "Protect Default Two."
+        assert store.get_message(greeting.id).content == "Hello Default Two."
+
+
+@pytest.mark.asyncio
+async def test_console_roleplay_refresh_serializes_blocked_b_then_c_without_stale_win(
+    monkeypatch,
+) -> None:
+    class BlockingPersistence:
+        def __init__(self) -> None:
+            self.system_started = threading.Event()
+            self.release_system = threading.Event()
+            self.durable_system = "Speak with User."
+            self.durable_greeting = "Hello User."
+            self.writer_threads: list[int] = []
+
+        def create_message(self, **kwargs):
+            self.durable_greeting = kwargs["content"]
+            return "msg-1"
+
+        def update_conversation_roleplay_context(self, **_kwargs):
+            return True
+
+        def update_conversation_system_prompt(
+            self, *, conversation_id, system_prompt
+        ):
+            self.writer_threads.append(threading.get_ident())
+            if system_prompt == "Speak with Bravo.":
+                self.system_started.set()
+                assert self.release_system.wait(5)
+            self.durable_system = system_prompt
+            return True
+
+        def update_message_content(self, **kwargs):
+            self.writer_threads.append(threading.get_ident())
+            self.durable_greeting = kwargs["content"]
+            return True
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"user_display_name": "User"}
+    console = ChatScreen(app)
+    store = console._ensure_console_chat_store()
+    persistence = BlockingPersistence()
+    store.persistence = persistence
+    session = store.create_session(
+        settings=ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="model-a",
+            system_prompt="Speak with User.",
+        ),
+        assistant_kind="character",
+        character_name="Alraune",
+    )
+    session.persisted_conversation_id = "conv-1"
+    greeting = store.seed_character_roleplay(
+        session.id,
+        system_template="Speak with {{user}}.",
+        greeting_template="Hello {{user}}.",
+        global_default="User",
+    )
+    assert greeting is not None
+    controller = console._ensure_console_chat_controller()
+    queued = []
+    owner_thread = threading.get_ident()
+    prepare_threads: list[int] = []
+    original_prepare = store.prepare_session_roleplay_projection_refresh
+
+    def audited_prepare(*args, **kwargs):
+        prepare_threads.append(threading.get_ident())
+        return original_prepare(*args, **kwargs)
+
+    monkeypatch.setattr(
+        store, "prepare_session_roleplay_projection_refresh", audited_prepare
+    )
+    monkeypatch.setattr(
+        console,
+        "run_worker",
+        lambda coroutine, **_kwargs: queued.append(coroutine),
+    )
+    monkeypatch.setattr(
+        console,
+        "_sync_console_identity_surfaces",
+        console._sync_console_chat_core_state,
+    )
+
+    app.app_config["chat_defaults"]["user_display_name"] = "Bravo"
+    assert console._dispatch_active_console_roleplay_refresh() is True
+    assert store.session_settings(session.id).system_prompt == "Speak with Bravo."
+    assert store.get_message(greeting.id).content == "Hello Bravo."
+    provider_system = controller._provider_messages_for_session(session.id)[0]["content"]
+    assert provider_system.startswith("Speak with Bravo.")
+    assert provider_system.endswith("Hello Bravo.")
+    assert await asyncio.to_thread(persistence.system_started.wait, 5)
+    assert len(queued) == 1
+    waiter = asyncio.create_task(queued.pop(0)())
+    waiter.cancel()
+    await asyncio.sleep(0)
+    assert waiter.done() is True
+
+    names = [f"Commander {index}" for index in range(25)]
+    for name in names:
+        app.app_config["chat_defaults"]["user_display_name"] = name
+        assert console._dispatch_active_console_roleplay_refresh() is True
+    assert console._dispatch_active_console_roleplay_refresh() is False
+    assert store.session_settings(session.id).system_prompt == (
+        "Speak with Commander 24."
+    )
+    assert store.get_message(greeting.id).content == "Hello Commander 24."
+    provider_system = controller._provider_messages_for_session(session.id)[0]["content"]
+    assert provider_system.startswith("Speak with Commander 24.")
+    assert provider_system.endswith("Hello Commander 24.")
+    assert queued == []
+    drain = console._console_roleplay_persistence_task
+    assert drain is not None
+    assert console._console_roleplay_active_plan is not None
+    assert console._console_roleplay_pending_plan is not None
+    assert console._console_roleplay_pending_plan.generation == session.identity_revision
+    assert persistence.durable_system == "Speak with User."
+
+    persistence.release_system.set()
+    await drain
+
+    assert console._console_roleplay_persistence_task is None
+    assert console._console_roleplay_active_plan is None
+    assert console._console_roleplay_pending_plan is None
+    assert persistence.durable_system == "Speak with Commander 24."
+    assert persistence.durable_greeting == "Hello Commander 24."
+    assert prepare_threads == [owner_thread] * 26
+    assert persistence.writer_threads
+    assert all(thread_id != owner_thread for thread_id in persistence.writer_threads)
+
+
+@pytest.mark.asyncio
+async def test_console_roleplay_refresh_skips_plan_stale_before_writer() -> None:
+    class RecordingPersistence:
+        def __init__(self) -> None:
+            self.system_writes: list[str | None] = []
+            self.message_writes: list[str] = []
+
+        def create_message(self, **_kwargs):
+            return "msg-1"
+
+        def update_conversation_roleplay_context(self, **_kwargs):
+            return True
+
+        def update_conversation_system_prompt(self, **kwargs):
+            self.system_writes.append(kwargs["system_prompt"])
+            return True
+
+        def update_message_content(self, **kwargs):
+            self.message_writes.append(kwargs["content"])
+            return True
+
+    app = _build_test_app()
+    console = ChatScreen(app)
+    store = console._ensure_console_chat_store()
+    persistence = RecordingPersistence()
+    store.persistence = persistence
+    session = store.create_session(
+        settings=ConsoleSessionSettings(
+            provider="llama_cpp", model="model-a", system_prompt="Speak with Alpha."
+        ),
+        assistant_kind="character",
+        character_name="Alraune",
+    )
+    session.persisted_conversation_id = "conv-1"
+    greeting = store.seed_character_roleplay(
+        session.id,
+        system_template="Speak with {{user}}.",
+        greeting_template="Hello {{user}}.",
+        global_default="Alpha",
+    )
+    assert greeting is not None
+    persistence.system_writes.clear()
+    persistence.message_writes.clear()
+    plan_b = store.prepare_session_roleplay_projection_refresh(
+        session.id, global_default="Bravo"
+    )
+    plan_c = store.prepare_session_roleplay_projection_refresh(
+        session.id, global_default="Cecelia"
+    )
+    assert plan_b is not None and plan_c is not None
+    console._sync_console_identity_surfaces = lambda: None
+
+    await console._refresh_console_roleplay_projections(plan_b)
+    assert persistence.system_writes == []
+    assert persistence.message_writes == []
+
+    await console._refresh_console_roleplay_projections(plan_c)
+    assert persistence.system_writes == ["Speak with Cecelia."]
+    assert persistence.message_writes == ["Hello Cecelia."]
+
+
+@pytest.mark.asyncio
+async def test_cancelled_unmounted_drain_finishes_latest_plan(
+    monkeypatch,
+) -> None:
+    class BlockingPersistence:
+        def __init__(self) -> None:
+            self.started = threading.Event()
+            self.release = threading.Event()
+            self.durable_system = "Speak with Alpha."
+            self.durable_greeting = "Hello Alpha."
+
+        def create_message(self, **kwargs):
+            self.durable_greeting = kwargs["content"]
+            return "msg-1"
+
+        def update_conversation_roleplay_context(self, **_kwargs):
+            return True
+
+        def update_conversation_system_prompt(self, **kwargs):
+            self.started.set()
+            assert self.release.wait(5)
+            self.durable_system = kwargs["system_prompt"]
+            return True
+
+        def update_message_content(self, **kwargs):
+            self.durable_greeting = kwargs["content"]
+            return True
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"user_display_name": "Alpha"}
+    console = ChatScreen(app)
+    queued = []
+    monkeypatch.setattr(
+        console, "run_worker", lambda coroutine, **_kwargs: queued.append(coroutine)
+    )
+    monkeypatch.setattr(console, "_sync_console_identity_surfaces", lambda: None)
+    store = console._ensure_console_chat_store()
+    persistence = BlockingPersistence()
+    store.persistence = persistence
+    session = store.create_session(
+        settings=ConsoleSessionSettings(
+            provider="llama_cpp", system_prompt="Speak with Alpha."
+        ),
+        assistant_kind="character",
+        character_name="Alraune",
+    )
+    session.persisted_conversation_id = "conv-1"
+    store.seed_character_roleplay(
+        session.id,
+        system_template="Speak with {{user}}.",
+        greeting_template="Hello {{user}}.",
+        global_default="Alpha",
+    )
+
+    app.app_config["chat_defaults"]["user_display_name"] = "Cecelia"
+    assert console._dispatch_active_console_roleplay_refresh() is True
+    assert await asyncio.to_thread(persistence.started.wait, 5)
+    drain = console._console_roleplay_persistence_task
+    assert drain is not None
+    drain.cancel()
+    await asyncio.sleep(0)
+    assert drain.done() is False
+    persistence.release.set()
+    await drain
+
+    assert console._console_roleplay_persistence_task is None
+    assert console._console_roleplay_pending_plan is None
+    assert persistence.durable_system == "Speak with Cecelia."
+    assert persistence.durable_greeting == "Hello Cecelia."
+
+
+@pytest.mark.asyncio
+async def test_mounted_console_cancel_latest_waiter_keeps_durable_c() -> None:
+    class BlockingPersistence:
+        def __init__(self) -> None:
+            self.started = threading.Event()
+            self.release = threading.Event()
+            self.durable_system = "Speak with Alpha."
+            self.durable_greeting = "Hello Alpha."
+
+        def create_message(self, **kwargs):
+            self.durable_greeting = kwargs["content"]
+            return "msg-1"
+
+        def update_conversation_roleplay_context(self, **_kwargs):
+            return True
+
+        def update_conversation_system_prompt(self, **kwargs):
+            value = kwargs["system_prompt"]
+            if value == "Speak with Bravo.":
+                self.started.set()
+                assert self.release.wait(5)
+            self.durable_system = value
+            return True
+
+        def update_message_content(self, **kwargs):
+            self.durable_greeting = kwargs["content"]
+            return True
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"user_display_name": "Alpha"}
+    host = ConsoleHarness(app)
+    persistence = BlockingPersistence()
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.persistence = persistence
+        session.assistant_kind = "character"
+        session.character_name = "Alraune"
+        session.persisted_conversation_id = "conv-1"
+        greeting = store.seed_character_roleplay(
+            session.id,
+            system_template="Speak with {{user}}.",
+            greeting_template="Hello {{user}}.",
+            global_default="Alpha",
+        )
+        assert greeting is not None
+
+        app.app_config["chat_defaults"]["user_display_name"] = "Bravo"
+        assert console._dispatch_active_console_roleplay_refresh() is True
+        assert await asyncio.to_thread(persistence.started.wait, 5)
+        app.app_config["chat_defaults"]["user_display_name"] = "Cecelia"
+        assert console._dispatch_active_console_roleplay_refresh() is True
+        console.workers.cancel_group(console, "console-roleplay-refresh")
+        await pilot.pause(0.05)
+        persistence.release.set()
+        for _ in range(100):
+            if console._console_roleplay_persistence_task is None:
+                break
+            await pilot.pause(0.02)
+
+        assert console._console_roleplay_persistence_task is None
+        assert console._console_roleplay_active_plan is None
+        assert console._console_roleplay_pending_plan is None
+        assert persistence.durable_system == "Speak with Cecelia."
+        assert persistence.durable_greeting == "Hello Cecelia."
+
+
+@pytest.mark.asyncio
+async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_resume():
+    class RecordingPersistence:
+        def __init__(self) -> None:
+            self.durable_system = "Speak with Alpha."
+            self.durable_greeting = "Hello Alpha."
+
+        def create_message(self, **kwargs):
+            self.durable_greeting = kwargs["content"]
+            return "msg-base"
+
+        def update_conversation_roleplay_context(self, **_kwargs):
+            return True
+
+        def update_conversation_system_prompt(self, **kwargs):
+            self.durable_system = kwargs["system_prompt"]
+            return True
+
+        def update_message_content(self, **kwargs):
+            self.durable_greeting = kwargs["content"]
+            return True
+
+    class HungPersistence(RecordingPersistence):
+        def __init__(self) -> None:
+            super().__init__()
+            self.started = threading.Event()
+            self.release = threading.Event()
+            self.finished = threading.Event()
+
+        def create_message(self, **kwargs):
+            self.durable_greeting = kwargs["content"]
+            return "msg-hung"
+
+        def update_conversation_system_prompt(self, **kwargs):
+            self.started.set()
+            try:
+                assert self.release.wait(10)
+                return super().update_conversation_system_prompt(**kwargs)
+            finally:
+                self.finished.set()
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"user_display_name": "Alpha"}
+    app.app_config.setdefault("console", {})[
+        "roleplay_refresh_teardown_timeout_seconds"
+    ] = 0.05
+    host = ConsoleHarness(app)
+    repair_persistence = RecordingPersistence()
+    hung_persistence = HungPersistence()
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        resumed = host.screen_stack[-1]
+        await _wait_for_selector(resumed, pilot, "#console-settings-summary")
+        resumed_store = resumed._ensure_console_chat_store()
+        resumed_store.persistence = repair_persistence
+        resumed_session = resumed_store.ensure_session()
+        resumed_session.settings = ConsoleSessionSettings(
+            provider="llama_cpp", system_prompt="Speak with Alpha."
+        )
+        resumed_session.assistant_kind = "character"
+        resumed_session.character_name = "Alraune"
+        resumed_session.persisted_conversation_id = "conv-base"
+        resumed_store.seed_character_roleplay(
+            resumed_session.id,
+            system_template="Speak with {{user}}.",
+            greeting_template="Hello {{user}}.",
+            global_default="Alpha",
+        )
+
+        hung = ChatScreen(app)
+        await host.push_screen(hung)
+        await _wait_for_selector(hung, pilot, "#console-settings-summary")
+        hung_store = hung._ensure_console_chat_store()
+        hung_store.persistence = hung_persistence
+        hung_session = hung_store.ensure_session()
+        hung_session.settings = ConsoleSessionSettings(
+            provider="llama_cpp", system_prompt="Speak with Alpha."
+        )
+        hung_session.assistant_kind = "character"
+        hung_session.character_name = "Alraune"
+        hung_session.persisted_conversation_id = "conv-hung"
+        hung_store.seed_character_roleplay(
+            hung_session.id,
+            system_template="Speak with {{user}}.",
+            greeting_template="Hello {{user}}.",
+            global_default="Alpha",
+        )
+
+        app.app_config["chat_defaults"]["user_display_name"] = "Cecelia"
+        assert hung._dispatch_active_console_roleplay_refresh() is True
+        assert await asyncio.to_thread(hung_persistence.started.wait, 5)
+        writer_thread = hung._console_roleplay_writer_thread
+        assert writer_thread is not None
+        assert writer_thread.daemon is True
+        old_screen = weakref.ref(hung)
+        event_loop = asyncio.get_running_loop()
+        loop_errors: list[dict[str, object]] = []
+        previous_exception_handler = event_loop.get_exception_handler()
+        event_loop.set_exception_handler(
+            lambda _loop, context: loop_errors.append(context)
+        )
+        try:
+            started_at = asyncio.get_running_loop().time()
+            await host.pop_screen()
+
+            elapsed = asyncio.get_running_loop().time() - started_at
+            assert elapsed < 0.5
+            assert app._console_roleplay_repair_generation == 1
+            assert app._console_roleplay_repair_global_name == "Cecelia"
+            for _ in range(100):
+                if (
+                    getattr(
+                        app,
+                        "_console_roleplay_repair_consumed_generation",
+                        0,
+                    )
+                    == 1
+                    and repair_persistence.durable_system
+                    == "Speak with Cecelia."
+                    and repair_persistence.durable_greeting == "Hello Cecelia."
+                ):
+                    break
+                await pilot.pause(0.01)
+            assert app._console_roleplay_repair_consumed_generation == 1
+            assert host.screen_stack[-1] is resumed
+            assert repair_persistence.durable_system == "Speak with Cecelia."
+            assert repair_persistence.durable_greeting == "Hello Cecelia."
+
+            del hung, hung_store, hung_session
+            for _ in range(50):
+                gc.collect()
+                if old_screen() is None:
+                    break
+                await pilot.pause(0.01)
+            assert old_screen() is None
+        finally:
+            hung_persistence.release.set()
+            assert await asyncio.to_thread(hung_persistence.finished.wait, 5)
+            await pilot.pause(0.05)
+            event_loop.set_exception_handler(previous_exception_handler)
+        assert loop_errors == []
+
+
+def test_mounted_hung_roleplay_writer_does_not_delay_event_loop_close():
+    class HungPersistence:
+        def __init__(self) -> None:
+            self.started = threading.Event()
+            self.release = threading.Event()
+
+        def create_message(self, **_kwargs):
+            return "msg-hung"
+
+        def update_conversation_roleplay_context(self, **_kwargs):
+            return True
+
+        def update_conversation_system_prompt(self, **_kwargs):
+            self.started.set()
+            assert self.release.wait(10)
+            return True
+
+        def update_message_content(self, **_kwargs):
+            return True
+
+    persistence = HungPersistence()
+    state: dict[str, object] = {}
+
+    async def exercise() -> None:
+        app = _build_test_app()
+        app.app_config["chat_defaults"] = {"user_display_name": "Alpha"}
+        app.app_config.setdefault("console", {})[
+            "roleplay_refresh_teardown_timeout_seconds"
+        ] = 0.05
+        host = ConsoleHarness(app)
+        async with host.run_test(size=(160, 48)) as pilot:
+            base = host.screen_stack[-1]
+            await _wait_for_selector(base, pilot, "#console-settings-summary")
+            hung = ChatScreen(app)
+            await host.push_screen(hung)
+            await _wait_for_selector(hung, pilot, "#console-settings-summary")
+            store = hung._ensure_console_chat_store()
+            store.persistence = persistence
+            session = store.ensure_session()
+            session.settings = ConsoleSessionSettings(
+                provider="llama_cpp", system_prompt="Speak with Alpha."
+            )
+            session.assistant_kind = "character"
+            session.character_name = "Alraune"
+            session.persisted_conversation_id = "conv-hung"
+            store.seed_character_roleplay(
+                session.id,
+                system_template="Speak with {{user}}.",
+                greeting_template="Hello {{user}}.",
+                global_default="Alpha",
+            )
+            app.app_config["chat_defaults"]["user_display_name"] = "Cecelia"
+            assert hung._dispatch_active_console_roleplay_refresh() is True
+            for _ in range(500):
+                if persistence.started.is_set():
+                    break
+                await pilot.pause(0.01)
+            assert persistence.started.is_set()
+            writer_thread = hung._console_roleplay_writer_thread
+            assert writer_thread is not None
+            state["writer_thread"] = writer_thread
+            state["screen_ref"] = weakref.ref(hung)
+            state["shutdown_started_at"] = time.monotonic()
+            await host.pop_screen()
+            del hung, store, session
+
+    try:
+        asyncio.run(exercise())
+        state["close_elapsed"] = time.monotonic() - float(
+            state["shutdown_started_at"]
+        )
+        for _ in range(50):
+            gc.collect()
+            screen_ref = state.get("screen_ref")
+            if callable(screen_ref) and screen_ref() is None:
+                break
+    finally:
+        persistence.release.set()
+        writer_thread = state.get("writer_thread")
+        if isinstance(writer_thread, threading.Thread):
+            writer_thread.join(5)
+
+    assert float(state["close_elapsed"]) < 1.5
+    writer_thread = state["writer_thread"]
+    assert isinstance(writer_thread, threading.Thread)
+    assert writer_thread.daemon is True
+    screen_ref = state["screen_ref"]
+    assert callable(screen_ref)
+    assert screen_ref() is None
+
+
+@pytest.mark.asyncio
+async def test_roleplay_repair_marker_retries_partial_then_consumes(monkeypatch):
+    class PartialPersistence:
+        def __init__(self) -> None:
+            self.fail_messages = True
+            self.durable_system = "Speak with Alpha."
+            self.durable_greeting = "Hello Alpha."
+
+        def create_message(self, **kwargs):
+            self.durable_greeting = kwargs["content"]
+            return "msg-1"
+
+        def update_conversation_roleplay_context(self, **_kwargs):
+            return True
+
+        def update_conversation_system_prompt(self, **kwargs):
+            self.durable_system = kwargs["system_prompt"]
+            return True
+
+        def update_message_content(self, **kwargs):
+            if self.fail_messages:
+                return False
+            self.durable_greeting = kwargs["content"]
+            return True
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"user_display_name": "Cecelia"}
+    app._console_roleplay_repair_generation = 1
+    app._console_roleplay_repair_global_name = "Cecelia"
+    notifications: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(
+        app,
+        "notify",
+        lambda message, **kwargs: notifications.append(
+            (message, kwargs.get("severity"))
+        ),
+    )
+    console = ChatScreen(app)
+    persistence = PartialPersistence()
+    store = console._ensure_console_chat_store()
+    store.persistence = persistence
+    session = store.ensure_session()
+    session.settings = ConsoleSessionSettings(
+        provider="llama_cpp", system_prompt="Speak with Cecelia."
+    )
+    session.assistant_kind = "character"
+    session.character_name = "Alraune"
+    session.persisted_conversation_id = "conv-1"
+    greeting = store.seed_character_roleplay(
+        session.id,
+        system_template="Speak with {{user}}.",
+        greeting_template="Hello {{user}}.",
+        global_default="Cecelia",
+    )
+    assert greeting is not None
+    monkeypatch.setattr(console, "_sync_console_identity_surfaces", lambda: None)
+    queued = []
+    monkeypatch.setattr(
+        console,
+        "run_worker",
+        lambda coroutine, **_kwargs: queued.append(coroutine),
+    )
+
+    assert console._consume_pending_console_roleplay_repair() is True
+    await queued.pop(0)()
+    assert getattr(app, "_console_roleplay_repair_consumed_generation", 0) == 0
+    assert console._console_roleplay_repair_inflight_generation == 0
+    assert len([note for note in notifications if note[1] == "warning"]) == 1
+
+    persistence.fail_messages = False
+    assert console._consume_pending_console_roleplay_repair() is True
+    await queued.pop(0)()
+    assert app._console_roleplay_repair_consumed_generation == 1
+    assert persistence.durable_system == "Speak with Cecelia."
+    assert persistence.durable_greeting == "Hello Cecelia."
+    assert len([note for note in notifications if note[1] == "warning"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_console_global_name_refresh_failure_notifies_once(monkeypatch) -> None:
+    class RefusingPersistence:
+        def __init__(self) -> None:
+            self.system_writes: list[str | None] = []
+            self.message_writes: list[str] = []
+
+        def create_message(self, **_kwargs):
+            return "msg-1"
+
+        def update_conversation_roleplay_context(self, **_kwargs):
+            return True
+
+        def update_conversation_system_prompt(self, **kwargs):
+            self.system_writes.append(kwargs["system_prompt"])
+            return False
+
+        def update_message_content(self, **kwargs):
+            self.message_writes.append(kwargs["content"])
+            return False
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"user_display_name": "Default Name"}
+    notifications: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(
+        app,
+        "notify",
+        lambda message, **kwargs: notifications.append(
+            (message, kwargs.get("severity"))
+        ),
+    )
+    console = ChatScreen(app)
+    store = console._ensure_console_chat_store()
+    persistence = RefusingPersistence()
+    store.persistence = persistence
+    session = store.create_session(
+        settings=ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="model-a",
+            system_prompt="Protect Default Name.",
+        ),
+        assistant_kind="character",
+        character_name="Alraune",
+    )
+    session.persisted_conversation_id = "conv-1"
+    greeting = store.seed_character_roleplay(
+        session.id,
+        system_template="Protect {{user}}.",
+        greeting_template="Hello {{user}}.",
+        global_default="Default Name",
+    )
+    assert greeting is not None
+    persistence.system_writes.clear()
+    persistence.message_writes.clear()
+    controller = console._ensure_console_chat_controller()
+    queued = []
+    estimate_calls = []
+
+    def estimate(messages, provider, model, **kwargs):
+        estimate_calls.append((messages, provider, model, kwargs["system_prompt"]))
+        return ConsoleSettingsContextEstimate(
+            used_tokens=17,
+            token_limit=4096,
+            label="17 / 4096 tokens",
+        )
+
+    monkeypatch.setattr(chat_screen_module, "build_console_context_estimate", estimate)
+    monkeypatch.setattr(
+        console,
+        "run_worker",
+        lambda coroutine, **_kwargs: queued.append(coroutine),
+    )
+    monkeypatch.setattr(
+        console,
+        "_sync_console_identity_surfaces",
+        console._sync_console_chat_core_state,
+    )
+
+    app.app_config["chat_defaults"]["user_display_name"] = "Captain Rowan"
+    assert console._dispatch_active_console_roleplay_refresh() is True
+    assert console._dispatch_active_console_roleplay_refresh() is False
+    assert store.session_settings(session.id).system_prompt == "Protect Captain Rowan."
+    assert store.get_message(greeting.id).content == "Hello Captain Rowan."
+    provider_system = controller._provider_messages_for_session(session.id)[0]["content"]
+    assert provider_system.startswith("Protect Captain Rowan.")
+    assert provider_system.endswith("Hello Captain Rowan.")
+    estimate_result = console._active_console_settings_context_estimate()
+    assert estimate_result.used_tokens == 17
+    assert estimate_calls[-1][0][-1]["content"] == "Hello Captain Rowan."
+    assert estimate_calls[-1][3] == "Protect Captain Rowan."
+    await queued.pop(0)()
+
+    expected = (
+        "Your chat name is active, but updated character templates may not survive "
+        "reopening."
+    )
+    assert notifications.count((expected, "warning")) == 1
+    assert persistence.system_writes == ["Protect Captain Rowan."]
+    assert persistence.message_writes == ["Hello Captain Rowan."]
+    assert store.session_settings(session.id).system_prompt == "Protect Captain Rowan."
+    assert store.get_message(greeting.id).content == "Hello Captain Rowan."
+    provider_system = controller._provider_messages_for_session(session.id)[0]["content"]
+    assert provider_system.startswith("Protect Captain Rowan.")
+    assert provider_system.endswith("Hello Captain Rowan.")
+    assert store.active_session_id == session.id
+
+
+@pytest.mark.asyncio
+async def test_system_prompt_editor_clears_character_template_source() -> None:
+    """The dedicated prompt editor owns explicit prompt replacement."""
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "model-a"
+    app.app_config["chat_defaults"] = {
+        "provider": "llama_cpp",
+        "model": "model-a",
+    }
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:9099", "model": "model-a"},
+    }
+    app.providers_models = {"llama_cpp": ["model-a"]}
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        session.assistant_kind = "character"
+        session.character_name = "Alraune"
+        store.replace_session_settings(
+            session.id,
+            ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+        )
+        store.seed_character_roleplay(
+            session.id,
+            system_template="Protect {{user}}.",
+            greeting_template="",
+            global_default="User",
+        )
+
+        console.run_worker(
+            console._open_console_system_prompt_editor(), exclusive=False
+        )
+        await pilot.pause(0.2)
+        modal = host.screen_stack[-1]
+        modal.query_one(f"#{SYSTEM_PROMPT_TEXT_AREA_ID}", TextArea).text = (
+            "Manual prompt."
+        )
+        modal.query_one(f"#{SYSTEM_PROMPT_APPLY_BUTTON_ID}", Button).press()
+        await pilot.pause(0.2)
+
+        assert store.session_settings(session.id).system_prompt == "Manual prompt."
+        assert session.character_system_template is None
+
+
+def test_system_prompt_command_clears_character_template_through_store(
+    monkeypatch,
+) -> None:
+    """The `/system` apply path must retain the store's provenance revocation."""
+    app = _build_test_app()
+    console = ChatScreen(app)
+    store = console._ensure_console_chat_store()
+    session = store.ensure_session()
+    session.assistant_kind = "character"
+    session.character_name = "Alraune"
+    store.replace_session_settings(
+        session.id,
+        ConsoleSessionSettings(provider="openai", model="gpt-4.1"),
+    )
+    store.seed_character_roleplay(
+        session.id,
+        system_template="Protect {{user}}.",
+        greeting_template="",
+        global_default="User",
+    )
+    monkeypatch.setattr(console, "_sync_console_chat_core_state", lambda: None)
+    monkeypatch.setattr(console, "_sync_console_settings_summary", lambda: None)
+    monkeypatch.setattr(console, "_sync_console_control_bar", lambda: None)
+
+    console._session._apply_console_session_system_prompt("Manual slash prompt.")
+
+    assert store.session_settings(session.id).system_prompt == "Manual slash prompt."
+    assert session.character_system_template is None
 
 
 @pytest.mark.asyncio
@@ -3111,7 +4419,12 @@ async def test_console_settings_are_isolated_between_native_tabs() -> None:
         settings_button = await _visible_console_settings_button(console, pilot)
         settings_button.press()
         modal_screen = await _wait_for_console_settings_modal(host, pilot)
-        modal_screen.dismiss(ConsoleSessionSettings(provider="openai", model="gpt-4.1"))
+        modal_screen.dismiss(
+            ConsoleSettingsResult(
+                settings=ConsoleSessionSettings(provider="openai", model="gpt-4.1"),
+                user_display_name_override=None,
+            )
+        )
         await _wait_for_console_top_screen(host, console, pilot)
         await _click_console_session_tab(console, store, pilot, first.id)
         await _wait_for_selector(console, pilot, "#console-settings-summary")

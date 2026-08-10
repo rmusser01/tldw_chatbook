@@ -341,3 +341,60 @@ def test_chat_defaults_streaming_uses_legacy_fallback(monkeypatch, tmp_path):
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
 
     assert config_module.get_chat_defaults_streaming(default=True) is False
+
+
+def test_chat_display_name_uses_chat_defaults_not_general_users_name(
+    monkeypatch, tmp_path
+):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[general]\nusers_name = 'storage-owner'\n"
+        "[chat_defaults]\nuser_display_name = 'Rowan'\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    assert config_module.get_chat_defaults_user_display_name() == "Rowan"
+
+
+def test_blank_chat_display_name_falls_back_to_user(monkeypatch, tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[chat_defaults]\nuser_display_name = '   '\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    assert config_module.get_chat_defaults_user_display_name() == "User"
+
+
+def test_invalid_chat_display_name_warns_without_echoing_value(
+    monkeypatch, tmp_path
+):
+    config_path = tmp_path / "config.toml"
+    invalid_value = "unsafe-secret\u202e"
+    config_path.write_text(
+        f'[chat_defaults]\nuser_display_name = "{invalid_value}"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    messages = []
+    sink_id = logger.add(
+        lambda message: messages.append(message.record["message"]),
+        level="WARNING",
+    )
+
+    try:
+        assert config_module.get_chat_defaults_user_display_name() == "User"
+    finally:
+        logger.remove(sink_id)
+
+    joined_messages = "\n".join(messages)
+    assert "chat display name" in joined_messages.lower()
+    assert invalid_value not in joined_messages
+
+
+def test_config_template_has_neutral_chat_display_name_default():
+    template = tomllib.loads(config_module.CONFIG_TOML_CONTENT)
+
+    assert template["chat_defaults"]["user_display_name"] == "User"

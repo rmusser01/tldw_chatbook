@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -102,6 +104,12 @@ class SyncStateRepository(BaseDB):
         if self._memory_conn is not None:
             self._memory_conn.close()
             self._memory_conn = None
+
+    @contextmanager
+    def transaction(self) -> Iterator[sqlite3.Connection]:
+        """Yield an atomic repository connection with commit/rollback handling."""
+        with self._get_connection() as conn:
+            yield conn
 
     def _initialize_schema(self) -> None:
         with self._get_connection() as conn:
@@ -842,7 +850,7 @@ class SyncStateRepository(BaseDB):
             workspace_scope=workspace_scope,
         )
         now = _utc_now()
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO sync_v2_local_outbox (
@@ -866,10 +874,26 @@ class SyncStateRepository(BaseDB):
                 DO UPDATE SET
                     envelope = excluded.envelope,
                     domain = excluded.domain,
-                    status = 'pending',
+                    status = CASE
+                        WHEN sync_v2_local_outbox.status = 'dispatched'
+                         AND json_extract(
+                                sync_v2_local_outbox.envelope,
+                                '$.payload_hash'
+                             ) = json_extract(excluded.envelope, '$.payload_hash')
+                        THEN 'dispatched'
+                        ELSE 'pending'
+                    END,
                     last_error = NULL,
                     updated_at = excluded.updated_at,
-                    dispatched_at = NULL
+                    dispatched_at = CASE
+                        WHEN sync_v2_local_outbox.status = 'dispatched'
+                         AND json_extract(
+                                sync_v2_local_outbox.envelope,
+                                '$.payload_hash'
+                             ) = json_extract(excluded.envelope, '$.payload_hash')
+                        THEN sync_v2_local_outbox.dispatched_at
+                        ELSE NULL
+                    END
                 """,
                 (
                     source_scope_key,
@@ -884,17 +908,24 @@ class SyncStateRepository(BaseDB):
                     now,
                 ),
             )
-            conn.commit()
-        entries = self.list_sync_v2_outbox_entries(
-            server_profile_id=server_profile_id,
-            authenticated_principal_id=authenticated_principal_id,
-            workspace_scope=workspace_scope,
-            dataset_id=dataset_id,
-            client_envelope_ids=[parsed.client_envelope_id],
-        )
-        if not entries:
-            raise RuntimeError("failed to persist Sync v2 outbox envelope")
-        return entries[0]
+            row = conn.execute(
+                """
+                SELECT *
+                FROM sync_v2_local_outbox
+                WHERE source_scope_key = ?
+                  AND dataset_id = ?
+                  AND client_envelope_id = ?
+                """,
+                (
+                    source_scope_key,
+                    dataset_id,
+                    parsed.client_envelope_id,
+                ),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("failed to persist Sync v2 outbox envelope")
+            entry = self._outbox_from_row(row)
+        return entry
 
     def list_pending_sync_v2_outbox_envelopes(
         self,

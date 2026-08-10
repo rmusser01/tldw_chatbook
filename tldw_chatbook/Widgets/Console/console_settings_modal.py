@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Mapping
 
 from textual import events
@@ -14,6 +15,10 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Select, Static
 
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
+from tldw_chatbook.Chat.console_roleplay_identity import (
+    ChatDisplayNameError,
+    normalize_chat_display_name,
+)
 from tldw_chatbook.Chat.console_provider_endpoints import (
     first_configured_endpoint,
     normalize_generic_endpoint_for_compare,
@@ -60,6 +65,16 @@ MODEL_DISCOVER_INVALID_URL_COPY = (
 ModelProber = Callable[[str, str], Awaitable[LocalModelProbeResult]]
 STREAMING_TOGGLE_WIDTH = 12
 PROVIDER_CHOICE_INPUT_MAX_LENGTH = 64
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleSettingsResult:
+    """Provider settings plus the separately owned per-chat display name."""
+
+    settings: ConsoleSessionSettings
+    user_display_name_override: str | None
+
+
 # (label, input id, accepted-values placeholder) - placeholders mirror the
 # Settings screen's enumerated hints for these provider-specific fields.
 PROVIDER_CHOICE_INPUTS = (
@@ -173,7 +188,7 @@ class ConsoleSettingsInput(Input):
         self.release_mouse()
 
 
-class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
+class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
     """Edit a draft of the current Console session settings."""
 
     DEFAULT_CSS = f"""
@@ -224,6 +239,8 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         self,
         *,
         settings: ConsoleSessionSettings,
+        user_display_name_override: str | None = None,
+        global_user_display_name: str = "User",
         app_config: Mapping[str, object],
         providers_models: Mapping[str, list[str]],
         context_estimate: ConsoleSettingsContextEstimate,
@@ -233,6 +250,21 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
     ) -> None:
         super().__init__()
         self._settings = settings
+        try:
+            self._user_display_name_override = normalize_chat_display_name(
+                user_display_name_override, blank_means_none=True
+            )
+        except ChatDisplayNameError:
+            self._user_display_name_override = None
+        try:
+            self._global_user_display_name = (
+                normalize_chat_display_name(
+                    global_user_display_name, blank_means_none=False
+                )
+                or "User"
+            )
+        except ChatDisplayNameError:
+            self._global_user_display_name = "User"
         self._app_config = app_config
         self._providers_models = providers_models
         self._context_estimate = context_estimate
@@ -405,6 +437,23 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                         )
                         base_url_input.display = uses_base_url
                         yield base_url_input
+
+                with Vertical(classes="console-settings-modal-section"):
+                    yield Static("Chat identity", classes="destination-section")
+                    with Horizontal(classes="console-settings-modal-row"):
+                        yield self._modal_label("Your name in this chat")
+                        yield ConsoleSettingsInput(
+                            value=self._user_display_name_override or "",
+                            placeholder=self._global_user_display_name,
+                            id="console-settings-user-display-name",
+                            classes="console-settings-control",
+                        )
+                    yield Static(
+                        "Leave blank to use the global default.",
+                        id="console-settings-user-display-name-help",
+                        classes="console-settings-modal-row",
+                        markup=False,
+                    )
 
                 with Vertical(classes="console-settings-modal-section"):
                     yield Static("Sampling", classes="destination-section")
@@ -692,20 +741,22 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
     @on(Button.Pressed, "#console-settings-save")
     def _save(self, event: Button.Pressed) -> None:
         event.stop()
-        draft = self._validated_draft_or_show_errors()
-        if draft is None:
+        result = self._validated_result_or_show_errors()
+        if result is None:
             return
-        self.dismiss(draft)
+        self.dismiss(result)
 
     @on(Button.Pressed, "#console-settings-save-default")
     def _save_as_default(self, event: Button.Pressed) -> None:
         """Apply the draft to the session and write it through to config defaults."""
         event.stop()
-        draft = self._validated_draft_or_show_errors()
-        if draft is None:
+        result = self._validated_result_or_show_errors()
+        if result is None:
             return
         try:
-            saved = save_settings_to_cli_config(self._default_persist_sections(draft))
+            saved = save_settings_to_cli_config(
+                self._default_persist_sections(result.settings)
+            )
         except Exception:
             saved = False
         if not saved:
@@ -713,12 +764,22 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                 CONSOLE_SETTINGS_SAVE_DEFAULT_FAILED_COPY
             )
             return
-        self.dismiss(draft)
+        self.dismiss(result)
 
-    def _validated_draft_or_show_errors(self) -> ConsoleSessionSettings | None:
-        """Build the draft, surfacing validation errors in the modal when invalid."""
+    def _validated_result_or_show_errors(self) -> ConsoleSettingsResult | None:
+        """Build the result, surfacing validation errors without dismissing."""
         draft = self._build_draft()
+        identity_errors: list[str] = []
+        try:
+            user_display_name_override = normalize_chat_display_name(
+                self.query_one("#console-settings-user-display-name", Input).value,
+                blank_means_none=True,
+            )
+        except ChatDisplayNameError as exc:
+            user_display_name_override = None
+            identity_errors.append(str(exc))
         errors = [
+            *identity_errors,
             *self._required_sampling_errors(),
             *self._provider_choice_input_errors(),
             *validate_console_session_settings(draft, app_config=self._app_config),
@@ -731,7 +792,10 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             error_banner.update("\n".join(errors))
             error_banner.scroll_visible()
             return None
-        return draft
+        return ConsoleSettingsResult(
+            settings=draft,
+            user_display_name_override=user_display_name_override,
+        )
 
     def _default_persist_sections(
         self,

@@ -69,6 +69,12 @@ from tldw_chatbook.Chat.console_history_budget import (
     count_console_messages_tokens,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_roleplay_identity import (
+    ConsoleMessagePresentation,
+    ConsolePresentationContext,
+    expand_character_template,
+    resolve_console_message_presentation,
+)
 from tldw_chatbook.Chat.console_skill_resolver import (
     MENTION_SIGIL,
     SKILL_MENTION_SKIPPED_NOTE,
@@ -1015,6 +1021,7 @@ class ConsoleChatController:
         rag_capture_provider: "Callable[[str], Awaitable[Any]] | None" = None,
         default_session_settings: "Callable[[], ConsoleSessionSettings] | None" = None,
         library_provider_factory: "Callable[[], Any | None] | None" = None,
+        global_user_display_name: Callable[[], str] | None = None,
     ) -> None:
         self.store = store
         self.provider_gateway = provider_gateway
@@ -1068,6 +1075,7 @@ class ConsoleChatController:
         #: rebuilding this controller or the cached bridge. ``None`` (the
         #: default) means no Library tools are offered at all.
         self._library_provider_factory = library_provider_factory
+        self._global_user_display_name = global_user_display_name or (lambda: "User")
         # Parallel-agents spec §2: run state is a PER-SESSION map, not a
         # single global slot -- two sessions can each have their own
         # in-flight/terminal run without stamping each other. `run_state`/
@@ -4794,7 +4802,11 @@ class ConsoleChatController:
                 continue
             if _is_empty_transcript_row(message):
                 continue
-            content = str(getattr(message, "content", "") or "").strip()
+            content = self._context_content_for(
+                session_id,
+                message,
+                fallback=str(getattr(message, "content", "") or ""),
+            ).strip()
             if not content:
                 continue
             if role is ConsoleMessageRole.USER:
@@ -4812,7 +4824,7 @@ class ConsoleChatController:
             "words, in their voice, no quotation marks, no narration, no "
             "preamble, and never as the assistant."
         )
-        greeting = self._seeded_greeting_text(session_messages)
+        greeting = self._seeded_greeting_text(session_id, session_messages)
         if greeting:
             instruction = (
                 f"{instruction}\n\nThe conversation opened with this "
@@ -5037,9 +5049,12 @@ class ConsoleChatController:
                 attachments=anchor_attachments,
             )
         )
-        provider_messages = self._leading_system_message() + (
+        provider_messages = self._leading_system_message(session_id=session_id) + (
             self._provider_message_payloads(
-                ancestors, skip_failed=True, annotate_ids=True
+                ancestors,
+                skip_failed=True,
+                annotate_ids=True,
+                session_id=session_id,
             )
         )
         self._ensure_user_continuation_instruction(provider_messages)
@@ -5147,6 +5162,7 @@ class ConsoleChatController:
                         )
                     ],
                     skip_failed=True,
+                    session_id=session_id,
                 )
                 provider_messages.extend(synthetic_user)
 
@@ -5213,12 +5229,14 @@ class ConsoleChatController:
                 [provider_messages[0]]
                 if provider_messages
                 and provider_messages[0].get("role") == ConsoleMessageRole.SYSTEM.value
-                else self._leading_system_message()
+                else self._leading_system_message(session_id=session_id)
             )
             redacted_system = self._redact_secrets(leading_system)
 
             # Deep-copy messages so the snapshot is independent of the store.
-            copied_messages = copy.deepcopy(current_messages)
+            copied_messages = self._presented_message_snapshots(
+                session_id, current_messages
+            )
 
             next_send_payload: dict[str, Any] = {
                 "model": self.model or self.configured_model,
@@ -5268,9 +5286,13 @@ class ConsoleChatController:
                     ]
                 )
             )
-            degraded_system = self._redact_secrets(self._leading_system_message())
+            degraded_system = self._redact_secrets(
+                self._leading_system_message(session_id=session_id)
+            )
             return ConsoleContextSnapshot(
-                current_messages=copy.deepcopy(current_messages),
+                current_messages=self._presented_message_snapshots(
+                    session_id, current_messages
+                ),
                 next_send_payload={
                     "model": self.model or self.configured_model,
                     "messages": degraded_messages,
@@ -8005,8 +8027,86 @@ class ConsoleChatController:
             return f"Agent run stuck: {reason or 'budget or loop limit reached'}."
         return f"Agent run failed: {reason or outcome.status}."
 
+    def _presentation_context_for(self, session_id: str) -> ConsolePresentationContext:
+        """Return one session's presentation context with a safe global fallback."""
+        try:
+            global_default = self._global_user_display_name()
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Console global user display-name accessor failed."
+            )
+            global_default = "User"
+        return self.store.presentation_context(session_id, global_default)
+
+    def _presentation_for(
+        self, session_id: str, message: ConsoleChatMessage
+    ) -> ConsoleMessagePresentation:
+        """Resolve one provider-facing message from its live session identity."""
+        return resolve_console_message_presentation(
+            message, self._presentation_context_for(session_id)
+        )
+
+    def _presented_message_snapshots(
+        self,
+        session_id: str,
+        messages: Iterable[ConsoleChatMessage],
+    ) -> list[ConsoleChatMessage]:
+        """Deep-copy transcript rows and apply their current visible content."""
+        copied_messages = copy.deepcopy(list(messages))
+        for copied_message in copied_messages:
+            copied_message.content = self._presentation_for(
+                session_id, copied_message
+            ).content
+        return copied_messages
+
+    def _context_content_for(
+        self,
+        session_id: str,
+        message: ConsoleChatMessage,
+        *,
+        fallback: str,
+    ) -> str:
+        """Project only explicitly trusted template content for model context."""
+        metadata = message.metadata
+        if (
+            metadata is not None
+            and metadata.template_kind == "character_greeting"
+            and isinstance(metadata.template_source, str)
+            and metadata.template_source.strip()
+        ):
+            return self._presentation_for(session_id, message).content
+        return fallback
+
+    def _resolved_system_prompt(self, session_id: str | None) -> str | None:
+        """Resolve a trusted character system template for the current identity."""
+        if session_id is None:
+            return self.system_prompt
+        session = next(
+            (
+                candidate
+                for candidate in self.store.sessions()
+                if candidate.id == session_id
+            ),
+            None,
+        )
+        if (
+            session is None
+            or session.assistant_kind != "character"
+            or not isinstance(session.character_name, str)
+            or not session.character_name.strip()
+            or not isinstance(session.character_system_template, str)
+            or not session.character_system_template.strip()
+        ):
+            return self.system_prompt
+        context = self._presentation_context_for(session_id)
+        return expand_character_template(
+            session.character_system_template,
+            user_name=context.user_name,
+            character_name=session.character_name.strip(),
+        )
+
     def _leading_system_message(
-        self, *, greeting: str = ""
+        self, *, greeting: str = "", session_id: str | None = None
     ) -> list[dict[str, str]]:
         """Return a single-item system message list when a system prompt is set.
 
@@ -8026,7 +8126,7 @@ class ConsoleChatController:
                 when no system prompt is set, since the message array itself
                 must stay user-first for strict providers (task-427).
         """
-        raw_system_prompt = self.system_prompt
+        raw_system_prompt = self._resolved_system_prompt(session_id)
         if not isinstance(raw_system_prompt, str) or not raw_system_prompt.strip():
             raw_system_prompt = ""
         content = fold_greeting_into_system_prompt(raw_system_prompt, greeting)
@@ -8034,8 +8134,9 @@ class ConsoleChatController:
             return []
         return [{"role": ConsoleMessageRole.SYSTEM.value, "content": content}]
 
-    @staticmethod
     def _seeded_greeting_text(
+        self,
+        session_id: str,
         session_messages: list[ConsoleChatMessage],
     ) -> str:
         """Return the text of leading assistant turns (the seeded greeting).
@@ -8053,7 +8154,11 @@ class ConsoleChatController:
                 continue
             if message.status == "failed":
                 continue
-            text = (message.content or "").strip()
+            text = self._context_content_for(
+                session_id,
+                message,
+                fallback=message.content or "",
+            ).strip()
             if text:
                 collected.append(text)
         return "\n\n".join(collected)
@@ -8155,9 +8260,13 @@ class ConsoleChatController:
                 break
             collected.append(message)
         return self._leading_system_message(
-            greeting=self._seeded_greeting_text(collected)
+            greeting=self._seeded_greeting_text(session_id, collected),
+            session_id=session_id,
         ) + self._provider_message_payloads(
-            collected, skip_failed=True, annotate_ids=annotate_ids
+            collected,
+            skip_failed=True,
+            annotate_ids=annotate_ids,
+            session_id=session_id,
         )
 
     def _provider_messages_through_message(
@@ -8173,12 +8282,14 @@ class ConsoleChatController:
             if message.id == message_id:
                 break
         return self._leading_system_message(
-            greeting=self._seeded_greeting_text(collected)
+            greeting=self._seeded_greeting_text(session_id, collected),
+            session_id=session_id,
         ) + self._provider_message_payloads(
             collected,
             skip_failed=False,
             use_variant_content=True,
             annotate_ids=annotate_ids,
+            session_id=session_id,
         )
 
     def _provider_message_payloads(
@@ -8188,6 +8299,7 @@ class ConsoleChatController:
         skip_failed: bool,
         use_variant_content: bool = False,
         annotate_ids: bool = False,
+        session_id: str | None = None,
     ) -> list[dict[str, Any]]:
         model = self.model or self.configured_model
         vision = bool(model) and is_vision_capable(self.provider, model or "")
@@ -8267,10 +8379,19 @@ class ConsoleChatController:
                 continue
             if message.role is ConsoleMessageRole.USER:
                 seen_user = True
-            text = (
+            base_text = (
                 message.variants.current.content
                 if use_variant_content and message.variants is not None
                 else message.content
+            )
+            text = (
+                self._context_content_for(
+                    session_id,
+                    message,
+                    fallback=base_text,
+                )
+                if session_id is not None
+                else base_text
             )
             take = allowed_counts.get(message.id, 0)
             if take > 0:

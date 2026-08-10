@@ -113,7 +113,7 @@ otherwise suggest belong here, for the reasons noted:
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from typing import Any, Optional, TYPE_CHECKING
 import asyncio
 import re
@@ -126,9 +126,14 @@ from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
     DEFAULT_CONSOLE_SESSION_TITLE,
-    ConsoleMessageRole,
 )
 from ...Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from ...Chat.console_roleplay_identity import (
+    ChatDisplayNameError,
+    effective_user_display_name,
+    expand_character_template,
+    normalize_chat_display_name,
+)
 from ...Chat.console_prefill import pinned_prefill_from_conversation_metadata
 from ...Chat.console_session_settings import (
     ConsoleSessionSettings,
@@ -246,10 +251,21 @@ def _character_session_identity_from_handoff(
     return runtime_backend, character_id, character_name, character_id_text
 
 
+@dataclass(frozen=True, slots=True)
+class CharacterSessionPromptSeed:
+    """Trusted character sources and their current safe projections."""
+
+    name: str
+    system_template: str
+    system_prompt: str
+    greeting_template: str
+    greeting: str
+
+
 def _character_session_prompt_seed(
-    card: Mapping[str, Any], name_hint: str = ""
-) -> tuple[str, str, str]:
-    """Return ``(name, system_prompt, greeting)`` seeded from a character card.
+    card: Mapping[str, Any], name_hint: str = "", *, user_name: str = "User"
+) -> CharacterSessionPromptSeed:
+    """Return trusted sources and safe projections from a character card.
 
     Joins the card's prompt-bearing fields into the Console session's system
     prompt and picks the seeded greeting from ``first_message``.
@@ -269,14 +285,13 @@ def _character_session_prompt_seed(
         name_hint: Fallback display name when the card has none.
 
     Returns:
-        The character name, session system prompt, and greeting text.
+        The character name, exact templates, and current safe projections.
     """
     # Local import matches this module's existing convention of deferring
     # Character_Chat submodule imports (they pull in Pillow and
     # CharactersRAGDB) rather than importing them at module scope.
     from ...Character_Chat.Character_Chat_Lib import (
-        compose_character_card_text,
-        replace_placeholders,
+        compose_character_card_template,
     )
 
     name = str(card.get("name") or name_hint or "").strip() or "Character"
@@ -289,8 +304,8 @@ def _character_session_prompt_seed(
     # composer, owns that fallback, since it is not meaningful to the eval
     # engine's own empty-card handling (an intentionally blank system
     # message, see compose_system_prompt).
-    system_prompt = (
-        compose_character_card_text(
+    system_template = (
+        compose_character_card_template(
             name=name,
             system_prompt=str(card.get("system_prompt") or ""),
             personality=str(card.get("personality") or ""),
@@ -298,12 +313,41 @@ def _character_session_prompt_seed(
             scenario=str(card.get("scenario") or ""),
             message_example=str(card.get("message_example") or ""),
             post_history_instructions=str(card.get("post_history_instructions") or ""),
-            user_name="User",
         )
         or "Stay in character."
     )
-    greeting = replace_placeholders(str(card.get("first_message") or ""), name, "User")
-    return name, system_prompt, greeting
+    greeting_template = str(card.get("first_message") or "")
+    return CharacterSessionPromptSeed(
+        name=name,
+        system_template=system_template,
+        system_prompt=expand_character_template(
+            system_template,
+            user_name=user_name,
+            character_name=name,
+        ),
+        greeting_template=greeting_template,
+        greeting=expand_character_template(
+            greeting_template,
+            user_name=user_name,
+            character_name=name,
+        ),
+    )
+
+
+def _console_global_user_display_name(app_config: object) -> str:
+    """Resolve the current global chat label before Task 5 adds its getter."""
+    chat_defaults = (
+        app_config.get("chat_defaults") if isinstance(app_config, Mapping) else None
+    )
+    raw_name = (
+        chat_defaults.get("user_display_name")
+        if isinstance(chat_defaults, Mapping)
+        else None
+    )
+    try:
+        return effective_user_display_name(None, raw_name)
+    except ChatDisplayNameError:
+        return "User"
 
 
 class ConsoleSessionController:
@@ -1171,9 +1215,9 @@ class ConsoleSessionController:
         self,
         store: Any,
         character_id: int,
-        name: str,
-        system_prompt: str,
-        greeting: str,
+        seed: CharacterSessionPromptSeed,
+        *,
+        global_default: str,
     ) -> bool:
         """Rebind the active session to ``character_id`` in place.
 
@@ -1184,11 +1228,8 @@ class ConsoleSessionController:
         Args:
             store: The Console chat store.
             character_id: The picked character's local id.
-            name: Display name for the session/chip.
-            system_prompt: The card's macro-resolved system prompt, which
-                must reach the session settings or the model keeps talking
-                as the previous character (cubic PR #1153 P1).
-            greeting: The card's greeting, seeded only into an empty chat.
+            seed: The character identity, trusted sources, and safe projections.
+            global_default: Current global user display name.
 
         Returns:
             True when the active session was rebound.
@@ -1205,7 +1246,6 @@ class ConsoleSessionController:
             ("assistant_id", str(character_id)),
             ("assistant_authority_id", None),
             ("character_id", character_id),
-            ("character_name", name),
         ):
             try:
                 object.__setattr__(session, field, value)
@@ -1214,35 +1254,34 @@ class ConsoleSessionController:
                     "Character swap: could not set {}.", field
                 )
                 return False
-        current_settings = store.session_settings(session_id)
-        if current_settings is not None:
-            store.replace_session_settings(
-                session_id, replace(current_settings, system_prompt=system_prompt)
+        try:
+            greeting_template = (
+                seed.greeting_template
+                if not store.messages_for_session(session_id)
+                else ""
             )
-        if greeting and not store.messages_for_session(session_id):
-            try:
-                store.append_message(
-                    session_id,
-                    role=ConsoleMessageRole.ASSISTANT,
-                    content=greeting,
-                    persist=True,
-                )
-            except Exception:
-                logger.opt(exception=True).warning(
-                    "Character swap: greeting seed failed; continuing."
-                )
-        # cubic PR #1153 P2: an already-saved conversation kept the old
-        # prompt after reload because the swap only touched memory.
-        conversation_id = getattr(session, "persisted_conversation_id", None)
-        if conversation_id:
-            try:
-                store.update_conversation_system_prompt(
-                    conversation_id=conversation_id, system_prompt=system_prompt
-                )
-            except Exception:
-                logger.opt(exception=True).warning(
-                    "Character swap: persisting the system prompt failed."
-                )
+            _updated, _greeting, persisted = store.swap_session_character_roleplay(
+                session_id,
+                character_name=seed.name,
+                system_template=seed.system_template,
+                greeting_template=greeting_template,
+                global_default=global_default,
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Character swap: roleplay template seed failed."
+            )
+            self.app_instance.notify(
+                "Character changed for this session, but the change could not be saved.",
+                severity="warning",
+            )
+            return False
+        if not persisted:
+            self.app_instance.notify(
+                "Character changed for this session, but the change could not be saved.",
+                severity="warning",
+            )
+            return False
         return True
 
     async def _start_character_console_session(
@@ -1401,15 +1440,20 @@ class ConsoleSessionController:
             ):
                 return False
 
-        name, system_prompt, greeting = _character_session_prompt_seed(
-            card, name_hint=str(name_hint or "")
+        global_name = _console_global_user_display_name(
+            self._provider_readiness_app_config()
+        )
+        seed = _character_session_prompt_seed(
+            card,
+            name_hint=str(name_hint or ""),
+            user_name=global_name,
         )
 
         store = self._ensure_console_chat_store()
         settings = replace(
             self._default_console_session_settings(),
-            system_prompt=system_prompt,
-            character_label=name,
+            system_prompt=seed.system_prompt,
+            character_label=seed.name,
         )
         if runtime_backend == "server" and (
             not exact_server_context_is_current()
@@ -1418,7 +1462,7 @@ class ConsoleSessionController:
         ):
             return False
         session = store.create_session(
-            title=f"Chat with {name}",
+            title=f"Chat with {seed.name}",
             workspace_id=CONSOLE_GLOBAL_WORKSPACE_ID,
             settings=settings,
             runtime_backend=runtime_backend,
@@ -1426,20 +1470,19 @@ class ConsoleSessionController:
             assistant_id=assistant_id,
             assistant_authority_id=assistant_authority_id,
             character_id=local_character_id,
-            character_name=name,
+            character_name=seed.name,
         )
-        if greeting:
-            try:
-                store.append_message(
-                    session.id,
-                    role=ConsoleMessageRole.ASSISTANT,
-                    content=greeting,
-                    persist=True,
-                )
-            except Exception:
-                logger.opt(exception=True).warning(
-                    "Start Chat: greeting seed/persist failed; continuing."
-                )
+        try:
+            store.seed_character_roleplay(
+                session.id,
+                system_template=seed.system_template,
+                greeting_template=seed.greeting_template,
+                global_default=global_name,
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Start Chat: roleplay template seed/persist failed; continuing."
+            )
         try:
             await self._sync_native_console_chat_ui()
             self._focus_console_composer_if_needed(force=True)
@@ -1737,6 +1780,9 @@ class ConsoleSessionController:
             "assistant_authority_id": session.assistant_authority_id,
             "character_id": session.local_character_id(),
             "character_name": session.character_name,
+            "user_display_name_override": session.user_display_name_override,
+            "character_system_template": session.character_system_template,
+            "identity_revision": session.identity_revision,
             # Temporary conversations: without this key a temporary chat
             # comes back as a persisting one after any screen navigation,
             # and the next send writes it to the DB.
@@ -1832,6 +1878,34 @@ class ConsoleSessionController:
         raw_character_name = raw_session.get("character_name")
         if raw_character_name is not None:
             session_kwargs["character_name"] = str(raw_character_name)
+        raw_user_display_name_override = raw_session.get(
+            "user_display_name_override"
+        )
+        try:
+            session_kwargs["user_display_name_override"] = (
+                normalize_chat_display_name(
+                    raw_user_display_name_override,
+                    blank_means_none=True,
+                )
+            )
+        except ChatDisplayNameError:
+            session_kwargs["user_display_name_override"] = None
+        raw_character_system_template = raw_session.get(
+            "character_system_template"
+        )
+        session_kwargs["character_system_template"] = (
+            raw_character_system_template
+            if isinstance(raw_character_system_template, str)
+            else None
+        )
+        raw_identity_revision = raw_session.get("identity_revision")
+        session_kwargs["identity_revision"] = (
+            raw_identity_revision
+            if isinstance(raw_identity_revision, int)
+            and not isinstance(raw_identity_revision, bool)
+            and raw_identity_revision >= 0
+            else 0
+        )
         # Legacy payloads predate the key; absent means saved, never temporary.
         session_kwargs["ephemeral"] = raw_session.get("ephemeral") is True
         return ConsoleChatSession(**session_kwargs)

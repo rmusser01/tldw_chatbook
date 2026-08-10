@@ -43,6 +43,11 @@ from tldw_chatbook.Chat.console_onboarding_state import (
     CONSOLE_QUIET_EMPTY_COPY,
     ConsoleSetupCardState,
 )
+from tldw_chatbook.Chat.console_roleplay_identity import (
+    ConsoleMessagePresentation,
+    ConsolePresentationContext,
+    resolve_console_message_presentation,
+)
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
 from tldw_chatbook.Widgets.Console.console_generation_card import (
     ConsoleGenerationCard,
@@ -162,8 +167,13 @@ def _message_role_label(message: ConsoleChatMessage) -> str:
     return role.title()
 
 
-def _message_body(message: ConsoleChatMessage) -> str:
-    if message.variants is not None:
+def _message_body(
+    message: ConsoleChatMessage,
+    presentation: ConsoleMessagePresentation | None = None,
+) -> str:
+    if presentation is not None:
+        content = presentation.content
+    elif message.variants is not None:
         content = message.variants.current.content
     else:
         content = message.content
@@ -390,7 +400,23 @@ def _markdown_body_spans(body: str) -> list:
     return segments
 
 
-def _message_render_text(message: ConsoleChatMessage, *, selected: bool) -> Content:
+def _speaker_label(
+    message: ConsoleChatMessage,
+    presentation: ConsoleMessagePresentation,
+) -> str:
+    """Return the literal resolved speaker label plus any sibling position."""
+    label = presentation.speaker_label
+    if message.sibling_count > 1:
+        label = f"{label} ({message.sibling_index + 1}/{message.sibling_count})"
+    return label
+
+
+def _message_render_text(
+    message: ConsoleChatMessage,
+    *,
+    selected: bool,
+    presentation: ConsoleMessagePresentation | None = None,
+) -> Content:
     """Return the compact transcript row renderable for a message.
 
     The role label is styled ``"dim"`` while the body keeps full contrast
@@ -406,12 +432,12 @@ def _message_render_text(message: ConsoleChatMessage, *, selected: bool) -> Cont
     Textual's ``Visual`` protocol, so it is used as-is without touching
     ``self.app``.
     """
-    role_label = _message_role_label(message)
-    if message.sibling_count > 1:
-        role_label = (
-            f"{role_label} ({message.sibling_index + 1}/{message.sibling_count})"
+    if presentation is None:
+        presentation = resolve_console_message_presentation(
+            message, ConsolePresentationContext()
         )
-    body = _message_body(message)
+    role_label = _speaker_label(message, presentation)
+    body = _message_body(message, presentation)
     chips = _message_attachment_chips(message)
     if chips:
         chip_lines = "\n".join(chips)
@@ -439,6 +465,33 @@ def _message_render_text(message: ConsoleChatMessage, *, selected: bool) -> Cont
         body_segments.extend(("\n", (status_line, "dim")))
     separator = "  " if not selected and "\n" not in body and len(body) <= 120 else "\n"
     return Content.assemble((role_label, "dim"), separator, *body_segments)
+
+
+def _message_body_render_text(
+    message: ConsoleChatMessage,
+    presentation: ConsoleMessagePresentation,
+) -> Content:
+    """Render the plain row body while keeping labels in a dedicated child."""
+    body = _message_body(message, presentation)
+    chips = _message_attachment_chips(message)
+    if chips:
+        chip_lines = "\n".join(chips)
+        body = f"{body}\n{chip_lines}" if body else chip_lines
+    if _is_generating_placeholder_body(message, body) or _is_failed_placeholder_body(
+        message, body
+    ):
+        body_segments: list = [(body, "dim")]
+    elif message.role is ConsoleMessageRole.ASSISTANT:
+        body_segments = _markdown_body_spans(body)
+    else:
+        body_segments = [body]
+    citation_notice = _citation_notice(message)
+    if citation_notice:
+        body_segments.extend(("\n", (citation_notice, "dim")))
+    status_line = _message_status_line(message)
+    if status_line and not _is_generating_placeholder_body(message, body):
+        body_segments.extend(("\n", (status_line, "dim")))
+    return Content.assemble(*body_segments)
 
 
 @dataclass(frozen=True)
@@ -492,28 +545,36 @@ def get_console_assistant_markdown(app_config: Mapping[str, object] | None) -> b
     return value if isinstance(value, bool) else True
 
 
-def _assistant_markdown_body(message: ConsoleChatMessage) -> str:
+def _assistant_markdown_body(
+    message: ConsoleChatMessage,
+    presentation: ConsoleMessagePresentation | None = None,
+) -> str:
     """Return the raw markdown body for a markdown row (no status suffix).
 
     The plain-text renderer appends ``" [streaming]"`` to the body; a suffix
     would defeat prefix-diffed appends, so the markdown row keeps status in
     its header line and feeds the Markdown widget content only.
     """
+    if presentation is not None:
+        return presentation.content
     if message.variants is not None:
         return message.variants.current.content
     return message.content
 
 
-def _assistant_markdown_header(message: ConsoleChatMessage) -> Content:
+def _assistant_markdown_header(
+    message: ConsoleChatMessage,
+    presentation: ConsoleMessagePresentation | None = None,
+) -> Content:
     """Return the dim one-line role/status header for a markdown row."""
-    role_label = _message_role_label(message)
-    if message.sibling_count > 1:
-        role_label = (
-            f"{role_label} ({message.sibling_index + 1}/{message.sibling_count})"
+    if presentation is None:
+        presentation = resolve_console_message_presentation(
+            message, ConsolePresentationContext()
         )
+    role_label = _speaker_label(message, presentation)
     suffix = ""
     if message.status == "streaming":
-        body = _assistant_markdown_body(message)
+        body = _assistant_markdown_body(message, presentation)
         # task-2154.16 (FB-01): same wording as the plain renderer's dim
         # status line -- never the raw "[streaming]" content token.
         suffix = (
@@ -521,7 +582,7 @@ def _assistant_markdown_header(message: ConsoleChatMessage) -> Content:
         )
     elif message.status in {"stopped", "failed"}:
         suffix = f"  {_MESSAGE_STATUS_LINES[message.status]}"
-    return Content.assemble((f"{role_label}{suffix}", "dim"))
+    return Content.assemble(role_label, (suffix, "dim"))
 
 
 def _assistant_markdown_footer(message: ConsoleChatMessage) -> Content | None:
@@ -538,6 +599,66 @@ def _assistant_markdown_footer(message: ConsoleChatMessage) -> Content | None:
     if not lines:
         return None
     return Content.assemble(("\n".join(lines), "dim"))
+
+
+_MANAGED_MESSAGE_CLASSES = frozenset(
+    {
+        "console-transcript-message-selected",
+        "console-transcript-message-tool",
+        "console-transcript-message-system",
+        "console-transcript-message-failed",
+        "console-transcript-message-roleplay-user",
+        "console-transcript-message-roleplay-character",
+    }
+)
+
+
+def _message_row_classes(
+    message: ConsoleChatMessage,
+    presentation: ConsoleMessagePresentation,
+    *,
+    selected: bool,
+    markdown: bool,
+) -> list[str]:
+    classes = ["console-transcript-message"]
+    if markdown:
+        classes.append("console-transcript-message-markdown")
+    if presentation.row_class:
+        classes.append(presentation.row_class)
+    if message.role is ConsoleMessageRole.TOOL:
+        classes.append("console-transcript-message-tool")
+    elif message.role is ConsoleMessageRole.SYSTEM:
+        classes.append("console-transcript-message-system")
+    if message.status == "failed":
+        classes.append("console-transcript-message-failed")
+    if selected:
+        classes.append("console-transcript-message-selected")
+    return classes
+
+
+def _speaker_label_classes(presentation: ConsoleMessagePresentation) -> list[str]:
+    classes = ["console-transcript-speaker-label"]
+    if presentation.row_class == "console-transcript-message-roleplay-user":
+        classes.append("console-transcript-roleplay-user-label")
+    elif presentation.row_class == "console-transcript-message-roleplay-character":
+        classes.append("console-transcript-roleplay-character-label")
+    return classes
+
+
+def _sync_message_classes(
+    widget: Widget,
+    message: ConsoleChatMessage,
+    presentation: ConsoleMessagePresentation,
+    *,
+    selected: bool,
+    markdown: bool,
+) -> None:
+    for class_name in _MANAGED_MESSAGE_CLASSES:
+        widget.remove_class(class_name)
+    for class_name in _message_row_classes(
+        message, presentation, selected=selected, markdown=markdown
+    ):
+        widget.add_class(class_name)
 
 
 class ConsoleMarkdownMessage(Vertical):
@@ -570,19 +691,33 @@ class ConsoleMarkdownMessage(Vertical):
     }
     """
 
-    def __init__(self, message: ConsoleChatMessage, *, selected: bool = False) -> None:
+    def __init__(
+        self,
+        message: ConsoleChatMessage,
+        presentation: ConsoleMessagePresentation | None = None,
+        *,
+        selected: bool = False,
+    ) -> None:
         self.message_id = message.id
-        classes = "console-transcript-message console-transcript-message-markdown"
-        if selected:
-            classes = f"{classes} console-transcript-message-selected"
+        self._presentation = presentation or resolve_console_message_presentation(
+            message, ConsolePresentationContext()
+        )
+        classes = " ".join(
+            _message_row_classes(
+                message, self._presentation, selected=selected, markdown=True
+            )
+        )
         super().__init__(id=f"console-message-{message.id}", classes=classes)
         self._message = message
-        self._body_text = _assistant_markdown_body(message)
+        self._body_text = _assistant_markdown_body(message, self._presentation)
 
     def compose(self) -> ComposeResult:
         yield Static(
-            _assistant_markdown_header(self._message),
-            classes="console-markdown-header",
+            _assistant_markdown_header(self._message, self._presentation),
+            classes=" ".join(
+                ["console-markdown-header", *_speaker_label_classes(self._presentation)]
+            ),
+            markup=False,
         )
         yield Markdown(self._body_text, open_links=False)
         footer_content = _assistant_markdown_footer(self._message)
@@ -594,26 +729,40 @@ class ConsoleMarkdownMessage(Vertical):
         yield footer
 
     def sync_message(
-        self, message: ConsoleChatMessage, *, selected: bool = False
+        self,
+        message: ConsoleChatMessage,
+        presentation: ConsoleMessagePresentation | None = None,
+        *,
+        selected: bool = False,
     ) -> None:
         """Update header/body/footer in place; append-only growth avoids re-parse."""
+        presentation = presentation or self._presentation
         self.message_id = message.id
         self._message = message
-        if selected:
-            self.add_class("console-transcript-message-selected")
-        else:
-            self.remove_class("console-transcript-message-selected")
+        self._presentation = presentation
+        _sync_message_classes(
+            self,
+            message,
+            presentation,
+            selected=selected,
+            markdown=True,
+        )
         try:
             header = self.query_one(".console-markdown-header", Static)
             markdown = self.query_one(Markdown)
             footer = self.query_one(".console-markdown-footer", Static)
         except NoMatches:
             return
-        header.update(_assistant_markdown_header(message))
+        header.set_classes(
+            " ".join(
+                ["console-markdown-header", *_speaker_label_classes(presentation)]
+            )
+        )
+        header.update(_assistant_markdown_header(message, presentation))
         footer_content = _assistant_markdown_footer(message)
         footer.update(footer_content or "")
         footer.display = footer_content is not None
-        new_body = _assistant_markdown_body(message)
+        new_body = _assistant_markdown_body(message, presentation)
         if new_body == self._body_text:
             return
         if new_body.startswith(self._body_text):
@@ -648,37 +797,88 @@ class ConsoleMarkdownMessage(Vertical):
             transcript.toggle_message_selection(self.message_id)
 
 
-class ConsoleTranscriptMessage(Static):
+class ConsoleTranscriptMessage(Vertical):
     """Clickable native Console transcript message row."""
 
     can_focus = False
 
-    def __init__(self, message: ConsoleChatMessage, *, selected: bool = False) -> None:
+    def __init__(
+        self,
+        message: ConsoleChatMessage,
+        presentation: ConsoleMessagePresentation | None = None,
+        *,
+        selected: bool = False,
+    ) -> None:
         self.message_id = message.id
-        classes = "console-transcript-message"
-        if selected:
-            classes = f"{classes} console-transcript-message-selected"
-        role = message.role
-        if role is ConsoleMessageRole.TOOL:
-            classes = f"{classes} console-transcript-message-tool"
-        elif role is ConsoleMessageRole.SYSTEM:
-            classes = f"{classes} console-transcript-message-system"
+        self._message = message
+        self._presentation = presentation or resolve_console_message_presentation(
+            message, ConsolePresentationContext()
+        )
+        self._selected = selected
         super().__init__(
-            _message_render_text(message, selected=selected),
             id=f"console-message-{message.id}",
-            classes=classes,
+            classes=" ".join(
+                _message_row_classes(
+                    message,
+                    self._presentation,
+                    selected=selected,
+                    markdown=False,
+                )
+            ),
         )
 
+    @property
+    def renderable(self) -> Content:
+        """Compatibility projection for unmounted row-level assertions."""
+        return _message_render_text(
+            self._message,
+            selected=self._selected,
+            presentation=self._presentation,
+        )
+
+    def compose(self) -> ComposeResult:
+        yield Static(
+            Content(self._speaker_label()),
+            classes=" ".join(_speaker_label_classes(self._presentation)),
+            markup=False,
+        )
+        yield Static(
+            _message_body_render_text(self._message, self._presentation),
+            classes="console-transcript-message-body",
+            markup=False,
+        )
+
+    def _speaker_label(self) -> str:
+        return _speaker_label(self._message, self._presentation)
+
     def sync_message(
-        self, message: ConsoleChatMessage, *, selected: bool = False
+        self,
+        message: ConsoleChatMessage,
+        presentation: ConsoleMessagePresentation | None = None,
+        *,
+        selected: bool = False,
     ) -> None:
         """Update row content and selection styling without remounting the row."""
+        presentation = presentation or self._presentation
         self.message_id = message.id
-        self.update(_message_render_text(message, selected=selected))
-        if selected:
-            self.add_class("console-transcript-message-selected")
-        else:
-            self.remove_class("console-transcript-message-selected")
+        self._message = message
+        self._presentation = presentation
+        self._selected = selected
+        _sync_message_classes(
+            self,
+            message,
+            presentation,
+            selected=selected,
+            markdown=False,
+        )
+        try:
+            label = self.query_one(".console-transcript-speaker-label", Static)
+            body = self.query_one(".console-transcript-message-body", Static)
+        except NoMatches:
+            return
+        label.set_classes(" ".join(_speaker_label_classes(presentation)))
+        label.update(Content(self._speaker_label()))
+        body.update(_message_body_render_text(message, presentation))
 
     def on_click(self, event: Click) -> None:
         event.stop()
@@ -1001,6 +1201,7 @@ class ConsoleTranscript(VerticalScroll):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
+        self._presentation_context = ConsolePresentationContext()
         self._messages: list[ConsoleChatMessage] = []
         self.selected_message_id: str | None = None
         #: task-501: a selection to apply on the NEXT message ingest that
@@ -1193,6 +1394,23 @@ class ConsoleTranscript(VerticalScroll):
         # TASK-371: surface the jump pill the moment the reader detaches, rather
         # than waiting for the next 0.2s sync tick.
         self.sync_jump_indicator(self._last_run_status)
+
+    def set_presentation_context(self, context: ConsolePresentationContext) -> None:
+        """Apply live display identity without remounting transcript rows."""
+        if context == self._presentation_context:
+            return
+        self._presentation_context = context
+        # Every cached signature includes the presentation revision and names.
+        # Dropping the old entries forces exactly the current message rows to
+        # resolve again while reconciliation keeps their widget objects.
+        self._message_signature_cache.clear()
+        if self.is_mounted:
+            self.call_later(self.refresh_messages)
+
+    def _message_presentation(
+        self, message: ConsoleChatMessage
+    ) -> ConsoleMessagePresentation:
+        return resolve_console_message_presentation(message, self._presentation_context)
 
     def set_messages(self, messages: Iterable[ConsoleChatMessage]) -> None:
         """Replace transcript messages and refresh mounted rows when possible.
@@ -1618,18 +1836,19 @@ class ConsoleTranscript(VerticalScroll):
         rule = "─" * max(1, width)
         lines: list[str] = []
         for message in self._messages:
+            presentation = self._message_presentation(message)
             lines.append(rule)
             if message.id == self.summary_boundary_message_id:
                 lines.append(CONSOLE_SUMMARY_BANNER_COPY)
             lines.extend(
                 [
-                    _message_role_label(message),
-                    _message_body(message),
+                    _speaker_label(message, presentation),
+                    _message_body(message, presentation),
                 ]
             )
             status_line = _message_status_line(message)
             if status_line and not _is_generating_placeholder_body(
-                message, _message_body(message)
+                message, _message_body(message, presentation)
             ):
                 lines.append(status_line)
             if message.id == self.selected_message_id:
@@ -2111,12 +2330,17 @@ class ConsoleTranscript(VerticalScroll):
                 classes="console-transcript-original-attempt",
             )
         if row.kind == "message" and row.message is not None:
+            presentation = self._message_presentation(row.message)
             if (
                 row.message.role is ConsoleMessageRole.ASSISTANT
                 and self._assistant_markdown_enabled()
             ):
-                return ConsoleMarkdownMessage(row.message, selected=row.selected)
-            return ConsoleTranscriptMessage(row.message, selected=row.selected)
+                return ConsoleMarkdownMessage(
+                    row.message, presentation, selected=row.selected
+                )
+            return ConsoleTranscriptMessage(
+                row.message, presentation, selected=row.selected
+            )
         if (
             row.kind == "diff"
             and row.message is not None
@@ -2195,14 +2419,22 @@ class ConsoleTranscript(VerticalScroll):
             and row.message is not None
             and isinstance(widget, ConsoleMarkdownMessage)
         ):
-            widget.sync_message(row.message, selected=row.selected)
+            widget.sync_message(
+                row.message,
+                self._message_presentation(row.message),
+                selected=row.selected,
+            )
             return widget
         if (
             row.kind == "message"
             and row.message is not None
             and isinstance(widget, ConsoleTranscriptMessage)
         ):
-            widget.sync_message(row.message, selected=row.selected)
+            widget.sync_message(
+                row.message,
+                self._message_presentation(row.message),
+                selected=row.selected,
+            )
             return widget
         if row.kind == "empty" and isinstance(widget, ConsoleTranscriptEmptyPanel):
             assert row.card_state is not None
@@ -2218,9 +2450,8 @@ class ConsoleTranscript(VerticalScroll):
     def _row_widget_id(row: _TranscriptRow) -> str:
         return "console-transcript-row-" + row.key.replace(":", "-")
 
-    @staticmethod
     def _message_signature_token(
-        message: ConsoleChatMessage, *, selected: bool
+        self, message: ConsoleChatMessage, *, selected: bool
     ) -> tuple:
         """Return a cheap change-token covering every render-signature input.
 
@@ -2259,6 +2490,7 @@ class ConsoleTranscript(VerticalScroll):
             )
             for attachment in (getattr(message, "attachments", ()) or ())
         )
+        presentation = self._message_presentation(message)
         return (
             message.role,
             message.status,
@@ -2270,6 +2502,7 @@ class ConsoleTranscript(VerticalScroll):
             message.image_mime_type,
             None if message.image_data is None else len(message.image_data),
             message.citation_presentation,
+            presentation.revision_token,
         )
 
     def _cached_message_row_signature(
@@ -2350,8 +2583,9 @@ class ConsoleTranscript(VerticalScroll):
             self._expanded_tool_output_ids.add(message_id)
         self.call_later(self.refresh_messages)
 
-    @staticmethod
-    def _message_row_signature(message: ConsoleChatMessage, *, selected: bool) -> tuple:
+    def _message_row_signature(
+        self, message: ConsoleChatMessage, *, selected: bool
+    ) -> tuple:
         variants_signature = None
         if message.variants is not None:
             variants_signature = (
@@ -2360,7 +2594,11 @@ class ConsoleTranscript(VerticalScroll):
             )
         return (
             "message",
-            _message_render_text(message, selected=selected),
+            _message_render_text(
+                message,
+                selected=selected,
+                presentation=self._message_presentation(message),
+            ),
             message.status,
             selected,
             variants_signature,

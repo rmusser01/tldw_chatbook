@@ -34,6 +34,14 @@ from tldw_chatbook.Chat.console_chat_models import (
     MessageAttachment,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_roleplay_identity import (
+    ConsolePresentationContext,
+    effective_user_display_name,
+    expand_character_template,
+    normalize_chat_display_name,
+    resolve_console_message_presentation,
+)
+from tldw_chatbook.Chat.console_roleplay_metadata import ConsoleRoleplayContext
 from tldw_chatbook.Chat.console_speech import (
     ConsoleSpeechSnapshotRejected,
     ConsoleSpeechSnapshotRejectionCode,
@@ -53,6 +61,11 @@ MAX_PENDING_ATTACHMENTS = 5
 TerminalCitationFinalizer = Callable[[str], SealedCitationWrite | None]
 
 
+def _refuse_roleplay_projection_write(**_kwargs: object) -> bool:
+    """Represent a missing durable projection seam in an immutable plan."""
+    return False
+
+
 @dataclass(frozen=True)
 class _VariantStreamBase:
     """Pre-regenerate snapshot captured by ``begin_variant_stream``.
@@ -69,6 +82,86 @@ class _VariantStreamBase:
     content: str
     prior_status: ConsoleMessageStatus
     prior_usage: "ProviderUsage | None" = None
+
+
+@dataclass(frozen=True, slots=True)
+class _RoleplaySystemPromptWrite:
+    writer: Callable[..., object] = field(repr=False, compare=False)
+    conversation_id: str
+    system_prompt: str | None
+    expected_roleplay_context: ConsoleRoleplayContext
+    expected_system_prompts: tuple[str | None, ...]
+    accepts_roleplay_context_guard: bool
+    accepts_system_prompt_guard: bool
+    accepts_source_owned_repair: bool
+    source_owned_repair: bool
+    accepts_roleplay_version_guard: bool
+    expected_roleplay_version: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class _RoleplaySyncWrite:
+    writer: Callable[..., object] = field(repr=False, compare=False)
+    stable_key: str
+    kwargs: tuple[tuple[str, object], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _RoleplayMessageProjectionWrite:
+    writer: Callable[..., object] = field(repr=False, compare=False)
+    native_message_id: str
+    message_id: str
+    content: str
+    image_data: bytes | None
+    image_mime_type: str | None
+    feedback: ConsoleMessageFeedback | None
+    metadata_json: str | None
+    accepts_attachments: bool
+    accepts_metadata_json: bool
+    expected_roleplay_template_source: str
+    expected_message_contents: tuple[str, ...]
+    accepts_template_source_guard: bool
+    accepts_message_contents_guard: bool
+    accepts_source_owned_repair: bool
+    source_owned_repair: bool
+    accepts_roleplay_version_guard: bool
+    expected_roleplay_version: int | None
+    sync_write: _RoleplaySyncWrite | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _RoleplayMessageProjectionPersistenceOutcome:
+    """One durable greeting outcome plus its owner-accepted Sync intent."""
+
+    native_message_id: str
+    content: str
+    persisted: bool
+    sync_write: _RoleplaySyncWrite | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleRoleplayProjectionPersistencePlan:
+    """Immutable durable writes prepared after owner-thread materialization."""
+
+    session_id: str
+    generation: int
+    system_prompt_write: _RoleplaySystemPromptWrite | None
+    message_writes: tuple[_RoleplayMessageProjectionWrite, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleRoleplayProjectionPersistenceResult:
+    """Immutable outcome returned by an off-thread projection-plan consumer."""
+
+    session_id: str
+    generation: int
+    persisted: bool
+    system_prompt_attempted: bool
+    system_prompt: str | None
+    system_prompt_persisted: bool
+    message_outcomes: tuple[
+        _RoleplayMessageProjectionPersistenceOutcome, ...
+    ] = ()
 
 
 class ConsoleChatPersistence(Protocol):
@@ -205,6 +298,9 @@ class ConsoleChatPersistence(Protocol):
             cannot provide a trustworthy version fence.
         """
 
+    def get_conversation_version(self, conversation_id: str) -> int | None:
+        """Return the current positive durable conversation row version."""
+
     def update_conversation_system_prompt(
         self,
         *,
@@ -212,6 +308,15 @@ class ConsoleChatPersistence(Protocol):
         system_prompt: str | None,
     ) -> bool:
         """Persist a changed system prompt for an already-saved conversation."""
+
+    def update_conversation_roleplay_context(
+        self,
+        *,
+        conversation_id: str,
+        user_name_override: str | None,
+        character_system_template: str | None,
+    ) -> bool:
+        """Persist Console-owned roleplay identity context for a conversation."""
 
     def update_conversation_pinned_prefill(
         self,
@@ -339,6 +444,12 @@ class ConsoleChatSession:
     #: IDs remain opaque in ``assistant_id`` and never populate this field.
     character_id: int | None = None
     character_name: str | None = None
+    #: Per-chat human label, independently persisted in conversation metadata.
+    user_display_name_override: str | None = None
+    #: Trusted character system source; materialized into ``settings.system_prompt``.
+    character_system_template: str | None = None
+    #: Monotonic identity projection fence for labels and trusted templates.
+    identity_revision: int = 0
     #: Temporary conversation (spec 2026-07-31): this session is never written
     #: to local storage. Enforced in exactly one place --
     #: ``persist_session_if_needed`` refuses to mint a
@@ -484,6 +595,12 @@ class ConsoleChatStore:
         self._stream_chunks_by_message: dict[str, list[str]] = {}
         self._stream_materialized_counts: dict[str, int] = {}
         self._sync_v2_message_versions: dict[str, str] = {}
+        self._roleplay_system_projection_candidates: dict[
+            str, tuple[str | None, ...]
+        ] = {}
+        self._roleplay_message_projection_candidates: dict[
+            str, tuple[str, ...]
+        ] = {}
         self._variant_stream_bases: dict[str, _VariantStreamBase] = {}
         # Messages whose CURRENT content was RESTORED from a pre-regenerate
         # base by a stopped/failed terminal mark. Their content belongs to
@@ -828,6 +945,7 @@ class ConsoleChatStore:
             self._variant_restored_message_ids.discard(message_id)
             self._message_speech_revisions.pop(message_id, None)
             self._native_parent_by_message.pop(message_id, None)
+            self._roleplay_message_projection_candidates.pop(message_id, None)
 
         self._messages_by_session.pop(session_id, None)
         self._tool_markers_by_session.pop(session_id, None)
@@ -835,6 +953,7 @@ class ConsoleChatStore:
         self._children_by_parent.pop(session_id, None)
         self._active_leaf_by_session.pop(session_id, None)
         self._context_summary_by_session.pop(session_id, None)
+        self._roleplay_system_projection_candidates.pop(session_id, None)
         self._sessions.pop(session_id, None)
 
         if self.active_session_id != session_id:
@@ -1045,6 +1164,8 @@ class ConsoleChatStore:
         self._stream_chunks_by_message.clear()
         self._stream_materialized_counts.clear()
         self._sync_v2_message_versions.clear()
+        self._roleplay_system_projection_candidates.clear()
+        self._roleplay_message_projection_candidates.clear()
         # Pre-existing bug fixed while here: the regenerate base snapshots were
         # never cleared on restore, leaking across a state replacement.
         self._variant_stream_bases.clear()
@@ -1628,11 +1749,15 @@ class ConsoleChatStore:
     def issue_tts_message_speech_snapshot(
         self,
         message_id: str,
+        *,
+        presentation_context: ConsolePresentationContext | None = None,
     ) -> TTSMessageSpeechSnapshot:
         """Issue a trusted snapshot for one speakable active-path message.
 
         Args:
             message_id: Native Console message selected by the user.
+            presentation_context: Optional live identity used to resolve trusted
+                character-template content. ``None`` preserves neutral callers.
 
         Returns:
             An immutable snapshot bound to the exact selected text and
@@ -1670,6 +1795,14 @@ class ConsoleChatStore:
                 ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
             )
         raw_content, selected_variant_id = self._speech_selection(message)
+        if presentation_context is not None:
+            if not isinstance(presentation_context, ConsolePresentationContext):
+                raise ValueError(
+                    "presentation_context must be ConsolePresentationContext or None"
+                )
+            raw_content = resolve_console_message_presentation(
+                self._snapshot(message), presentation_context
+            ).content
         if (
             message.role is not ConsoleMessageRole.ASSISTANT
             or message.status != "complete"
@@ -1709,11 +1842,15 @@ class ConsoleChatStore:
     def validate_tts_message_speech_snapshot(
         self,
         snapshot: TTSMessageSpeechSnapshot,
+        *,
+        presentation_context: ConsolePresentationContext | None = None,
     ) -> str:
         """Revalidate an issued Console speech snapshot against live state.
 
         Args:
             snapshot: Immutable snapshot previously issued by this store.
+            presentation_context: Optional fresh identity used to re-resolve
+                trusted character-template content before comparison.
 
         Returns:
             The captured exact raw content after every identity, state,
@@ -1764,6 +1901,14 @@ class ConsoleChatStore:
                 ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
             )
         raw_content, selected_variant_id = self._speech_selection(message)
+        if presentation_context is not None:
+            if not isinstance(presentation_context, ConsolePresentationContext):
+                raise ValueError(
+                    "presentation_context must be ConsolePresentationContext or None"
+                )
+            raw_content = resolve_console_message_presentation(
+                self._snapshot(message), presentation_context
+            ).content
         if (
             message.role is not ConsoleMessageRole.ASSISTANT
             or message.status != "complete"
@@ -1878,6 +2023,19 @@ class ConsoleChatStore:
         self._materialize_stream_buffer(message)
         if message.status in {"pending", "streaming"}:
             raise ValueError("Wait for response to finish before editing this message.")
+        provenance_cleared = (
+            message.metadata is not None
+            and message.metadata.template_kind == "character_greeting"
+        )
+        if provenance_cleared:
+            # An edit turns the row into ordinary user-owned content. Never
+            # infer provenance later from matching text; clear it at the one
+            # explicit ownership-transfer boundary.
+            message.metadata = replace(
+                message.metadata,
+                template_kind="",
+                template_source="",
+            )
         if message.variants is None:
             message.content = content
         else:
@@ -1888,9 +2046,816 @@ class ConsoleChatStore:
             )
             message.content = message.variants.current.content
         self._bump_message_speech_revision(message.id)
-        self._bump_payload_revision(self._message_session_index[message.id])
-        self._persist_existing_message(message)
+        if provenance_cleared:
+            self._bump_identity_revision(self._message_session_index[message.id])
+        else:
+            self._bump_payload_revision(self._message_session_index[message.id])
+        self._persist_existing_message(
+            message, force_metadata_write=provenance_cleared
+        )
         return self._snapshot(message)
+
+    def presentation_context(
+        self, session_id: str, global_default: object
+    ) -> ConsolePresentationContext:
+        """Resolve live display identity for one session without storing a copy."""
+        session = self._session_or_raise(session_id)
+        return ConsolePresentationContext(
+            user_name=effective_user_display_name(
+                session.user_display_name_override, global_default
+            ),
+            assistant_kind=session.assistant_kind,
+            character_name=session.character_name,
+            revision=session.identity_revision,
+        )
+
+    def set_session_user_display_name_override(
+        self,
+        session_id: str,
+        value: object,
+        *,
+        global_default: object,
+    ) -> tuple[ConsoleChatSession, bool]:
+        """Set a per-chat human name and rematerialize trusted projections."""
+        session = self._session_or_raise(session_id)
+        normalized = normalize_chat_display_name(value, blank_means_none=True)
+        if session.user_display_name_override == normalized:
+            return session, True
+        session.user_display_name_override = normalized
+        self._bump_identity_revision(session_id)
+        context_persisted = self._persist_roleplay_context(session)
+        persisted = self._materialize_roleplay_projections(
+            session_id, global_default=global_default
+        )
+        if not context_persisted:
+            persisted = False
+        return session, persisted
+
+    def refresh_session_roleplay_projections(
+        self,
+        session_id: str,
+        *,
+        global_default: object,
+    ) -> bool:
+        """Refresh trusted character projections when the effective name changes."""
+        plan = self.prepare_session_roleplay_projection_refresh(
+            session_id,
+            global_default=global_default,
+        )
+        if plan is None:
+            return True
+        plan = self.rebase_roleplay_projection_plan_sync(plan)
+        result = self.persist_roleplay_projection_plan(plan)
+        self.accept_roleplay_projection_persistence_result(result)
+        return result.persisted
+
+    def prepare_session_roleplay_projection_refresh(
+        self,
+        session_id: str,
+        *,
+        global_default: object,
+        force_persistence: bool = False,
+    ) -> ConsoleRoleplayProjectionPersistencePlan | None:
+        """Materialize live projections and snapshot their durable writes.
+
+        This owner-thread seam is deliberately separate from
+        :meth:`persist_roleplay_projection_plan`: callers may move only the
+        returned frozen plan off-thread, never this store or its live session
+        and message objects.
+        """
+        session = self._session_or_raise(session_id)
+        projection_is_stale = self._roleplay_projection_is_stale(
+            session, global_default
+        )
+        if not projection_is_stale and not force_persistence:
+            return None
+        if projection_is_stale:
+            self._bump_identity_revision(session_id)
+        return self._materialize_roleplay_projections_live(
+            session_id,
+            global_default=global_default,
+            force_persistence=force_persistence,
+        )
+
+    def seed_character_roleplay(
+        self,
+        session_id: str,
+        *,
+        system_template: str,
+        greeting_template: str,
+        global_default: object,
+    ) -> ConsoleChatMessage | None:
+        """Seed trusted character system/greeting sources into a fresh session."""
+        session = self._session_or_raise(session_id)
+        source = (
+            system_template if isinstance(system_template, str) and system_template.strip() else None
+        )
+        source_changed = session.character_system_template != source
+        session.character_system_template = source
+        if source_changed:
+            self._bump_identity_revision(session_id)
+        context_persisted = self._persist_roleplay_context(session)
+        self._materialize_roleplay_projections(session_id, global_default=global_default)
+        if not context_persisted:
+            logger.bind(session_id=session_id).warning(
+                "Failed to persist seeded Console roleplay context."
+            )
+        return self._append_character_greeting(
+            session_id,
+            greeting_template=greeting_template,
+            global_default=global_default,
+            source_changed=source_changed,
+        )
+
+    def swap_session_character_roleplay(
+        self,
+        session_id: str,
+        *,
+        character_name: str | None,
+        system_template: str,
+        greeting_template: str,
+        global_default: object,
+    ) -> tuple[ConsoleChatSession, ConsoleChatMessage | None, bool]:
+        """Swap character identity and trusted sources before materializing once.
+
+        The live mutation is intentionally not rolled back when a durable write
+        fails. The returned status lets the UI surface that partial outcome
+        without ever persisting an old-template/new-character projection.
+
+        Args:
+            session_id: Native Console session to rebind.
+            character_name: New character display name.
+            system_template: Trusted raw character system source.
+            greeting_template: Trusted greeting source, or blank to skip seeding.
+            global_default: Current global human display name.
+
+        Returns:
+            The live session, any newly seeded greeting, and whether every
+            required durable write succeeded.
+        """
+        session = self._session_or_raise(session_id)
+        normalized_name = (
+            character_name.strip() if isinstance(character_name, str) else ""
+        )
+        new_name = normalized_name or None
+        source = (
+            system_template
+            if isinstance(system_template, str) and system_template.strip()
+            else None
+        )
+        identity_changed = (
+            session.character_name != new_name
+            or session.character_system_template != source
+        )
+        source_changed = session.character_system_template != source
+        session.character_name = new_name
+        session.character_system_template = source
+        if identity_changed:
+            self._bump_identity_revision(session_id)
+
+        context_persisted = self._persist_roleplay_context(session)
+        persisted = self._materialize_roleplay_projections(
+            session_id,
+            global_default=global_default,
+        )
+        if not context_persisted:
+            persisted = False
+        greeting = self._append_character_greeting(
+            session_id,
+            greeting_template=greeting_template,
+            global_default=global_default,
+            source_changed=source_changed,
+        )
+        if (
+            greeting is not None
+            and self.persistence is not None
+            and not session.ephemeral
+            and greeting.persisted_message_id is None
+        ):
+            persisted = False
+        return session, greeting, persisted
+
+    def _append_character_greeting(
+        self,
+        session_id: str,
+        *,
+        greeting_template: str,
+        global_default: object,
+        source_changed: bool,
+    ) -> ConsoleChatMessage | None:
+        """Append one trusted greeting projection when a source is present."""
+        session = self._session_or_raise(session_id)
+        if not isinstance(greeting_template, str) or not greeting_template.strip():
+            return None
+        context = self.presentation_context(session_id, global_default)
+        greeting = expand_character_template(
+            greeting_template,
+            user_name=context.user_name,
+            character_name=(session.character_name or "").strip(),
+        )
+        if not source_changed and any(
+            message.role is ConsoleMessageRole.ASSISTANT
+            and message.content == greeting
+            and message.metadata is not None
+            and message.metadata.template_kind == "character_greeting"
+            and message.metadata.template_source == greeting_template
+            for message in self._nodes_by_session.get(session_id, {}).values()
+        ):
+            return None
+        return self.append_message(
+            session_id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content=greeting,
+            persist=True,
+            metadata=MessageMetadata(
+                template_kind="character_greeting",
+                template_source=greeting_template,
+            ),
+        )
+
+    def set_session_character_name(
+        self,
+        session_id: str,
+        character_name: str | None,
+        *,
+        global_default: object,
+    ) -> tuple[ConsoleChatSession, bool]:
+        """Set character identity through the projection revision seam."""
+        session = self._session_or_raise(session_id)
+        normalized = character_name.strip() if isinstance(character_name, str) else ""
+        new_name = normalized or None
+        if session.character_name == new_name:
+            return session, True
+        session.character_name = new_name
+        self._bump_identity_revision(session_id)
+        persisted = self._materialize_roleplay_projections(
+            session_id, global_default=global_default
+        )
+        return session, persisted
+
+    def _bump_identity_revision(self, session_id: str) -> None:
+        session = self._session_or_raise(session_id)
+        session.identity_revision += 1
+        self._bump_payload_revision(session_id)
+
+    def _clear_character_greeting_provenance(
+        self, message: ConsoleChatMessage
+    ) -> bool:
+        """Revoke trusted greeting provenance after a generated replacement wins."""
+        if (
+            message.metadata is None
+            or message.metadata.template_kind != "character_greeting"
+        ):
+            return False
+        message.metadata = replace(
+            message.metadata,
+            template_kind="",
+            template_source="",
+        )
+        self._bump_identity_revision(self._message_session_index[message.id])
+        return True
+
+    @staticmethod
+    def _is_named_character_session(session: ConsoleChatSession) -> bool:
+        return (
+            session.assistant_kind == "character"
+            and isinstance(session.character_name, str)
+            and bool(session.character_name.strip())
+        )
+
+    def _roleplay_projection_is_stale(
+        self, session: ConsoleChatSession, global_default: object
+    ) -> bool:
+        if not self._is_named_character_session(session):
+            return False
+        context = self.presentation_context(session.id, global_default)
+        character_name = (session.character_name or "").strip()
+        template = session.character_system_template
+        if template and session.settings is not None:
+            if session.settings.system_prompt != expand_character_template(
+                template,
+                user_name=context.user_name,
+                character_name=character_name,
+            ):
+                return True
+        for message in self._nodes_by_session.get(session.id, {}).values():
+            metadata = message.metadata
+            if (
+                metadata is not None
+                and metadata.template_kind == "character_greeting"
+                and metadata.template_source.strip()
+                and message.content
+                != expand_character_template(
+                    metadata.template_source,
+                    user_name=context.user_name,
+                    character_name=character_name,
+                )
+            ):
+                return True
+        return False
+
+    def _materialize_roleplay_projections(
+        self, session_id: str, *, global_default: object
+    ) -> bool:
+        """Materialize and synchronously persist trusted projections."""
+        plan = self._materialize_roleplay_projections_live(
+            session_id,
+            global_default=global_default,
+        )
+        if plan is None:
+            return True
+        result = self.persist_roleplay_projection_plan(plan)
+        self.accept_roleplay_projection_persistence_result(result)
+        return result.persisted
+
+    def _materialize_roleplay_projections_live(
+        self,
+        session_id: str,
+        *,
+        global_default: object,
+        force_persistence: bool = False,
+    ) -> ConsoleRoleplayProjectionPersistencePlan | None:
+        """Update owner-thread state and return frozen durable call arguments."""
+        session = self._session_or_raise(session_id)
+        if not self._is_named_character_session(session):
+            return None
+        context = self.presentation_context(session_id, global_default)
+        character_name = (session.character_name or "").strip()
+        system_prompt_write: _RoleplaySystemPromptWrite | None = None
+        message_writes: list[_RoleplayMessageProjectionWrite] = []
+        if session.character_system_template and session.settings is not None:
+            projected_system = expand_character_template(
+                session.character_system_template,
+                user_name=context.user_name,
+                character_name=character_name,
+            )
+            if session.settings.system_prompt != projected_system:
+                prior_system_prompt = session.settings.system_prompt
+                session.settings = replace(session.settings, system_prompt=projected_system)
+                system_prompt_write = self._snapshot_roleplay_system_prompt_write(
+                    session,
+                    projected_system,
+                    prior_system_prompt=prior_system_prompt,
+                )
+            elif force_persistence:
+                system_prompt_write = self._snapshot_roleplay_system_prompt_write(
+                    session,
+                    projected_system,
+                    prior_system_prompt=projected_system,
+                    source_owned_repair=True,
+                )
+        for message in self._nodes_by_session.get(session_id, {}).values():
+            metadata = message.metadata
+            if (
+                metadata is None
+                or metadata.template_kind != "character_greeting"
+                or not metadata.template_source.strip()
+            ):
+                continue
+            projected = expand_character_template(
+                metadata.template_source,
+                user_name=context.user_name,
+                character_name=character_name,
+            )
+            if message.content == projected and not force_persistence:
+                continue
+            prior_content = message.content
+            if message.content != projected:
+                message.content = projected
+                if message.variants is not None:
+                    selected = message.variants.selected_index
+                    message.variants.variants[selected] = replace(
+                        message.variants.variants[selected], content=projected
+                    )
+                self._bump_message_speech_revision(message.id)
+            message_write = self._snapshot_roleplay_message_projection_write(
+                session,
+                message,
+                prior_content=prior_content,
+                source_owned_repair=force_persistence,
+            )
+            if message_write is not None:
+                message_writes.append(message_write)
+        if system_prompt_write is None and not message_writes:
+            return None
+        return ConsoleRoleplayProjectionPersistencePlan(
+            session_id=session.id,
+            generation=session.identity_revision,
+            system_prompt_write=system_prompt_write,
+            message_writes=tuple(message_writes),
+        )
+
+    def _snapshot_roleplay_system_prompt_write(
+        self,
+        session: ConsoleChatSession,
+        system_prompt: str | None,
+        *,
+        prior_system_prompt: str | None,
+        source_owned_repair: bool = False,
+    ) -> _RoleplaySystemPromptWrite | None:
+        if self.persistence is None or session.persisted_conversation_id is None:
+            return None
+        writer = getattr(self.persistence, "update_conversation_system_prompt", None)
+        if not callable(writer):
+            writer = _refuse_roleplay_projection_write
+        accepts_roleplay_version_guard = self._persistence_accepts_kwarg(
+            writer, "expected_roleplay_version"
+        )
+        expected_roleplay_version = None
+        if source_owned_repair and accepts_roleplay_version_guard:
+            reader = getattr(self.persistence, "get_conversation_version", None)
+            if callable(reader):
+                expected_roleplay_version = reader(session.persisted_conversation_id)
+            if expected_roleplay_version is None:
+                expected_roleplay_version = 0
+        previous_candidates = self._roleplay_system_projection_candidates.get(
+            session.id, ()
+        )
+        expected_system_prompts = tuple(
+            dict.fromkeys((*previous_candidates, prior_system_prompt))
+        )
+        self._roleplay_system_projection_candidates[session.id] = tuple(
+            dict.fromkeys((*expected_system_prompts, system_prompt))
+        )
+        return _RoleplaySystemPromptWrite(
+            writer=writer,
+            conversation_id=session.persisted_conversation_id,
+            system_prompt=system_prompt,
+            expected_roleplay_context=ConsoleRoleplayContext(
+                user_name_override=session.user_display_name_override,
+                character_system_template=session.character_system_template,
+            ),
+            expected_system_prompts=expected_system_prompts,
+            accepts_roleplay_context_guard=self._persistence_accepts_kwarg(
+                writer, "expected_roleplay_context"
+            ),
+            accepts_system_prompt_guard=self._persistence_accepts_kwarg(
+                writer, "expected_system_prompts"
+            ),
+            accepts_source_owned_repair=self._persistence_accepts_kwarg(
+                writer, "allow_source_owned_repair"
+            ),
+            source_owned_repair=source_owned_repair,
+            accepts_roleplay_version_guard=accepts_roleplay_version_guard,
+            expected_roleplay_version=expected_roleplay_version,
+        )
+
+    def _snapshot_roleplay_message_projection_write(
+        self,
+        session: ConsoleChatSession,
+        message: ConsoleChatMessage,
+        *,
+        prior_content: str,
+        source_owned_repair: bool = False,
+    ) -> _RoleplayMessageProjectionWrite | None:
+        if self.persistence is None or message.persisted_message_id is None:
+            return None
+        writer = getattr(self.persistence, "update_message_content", None)
+        if not callable(writer):
+            return None
+        accepts_roleplay_version_guard = self._persistence_accepts_kwarg(
+            writer, "expected_roleplay_version"
+        )
+        expected_roleplay_version = None
+        if source_owned_repair and accepts_roleplay_version_guard:
+            reader = getattr(self.persistence, "get_message_version", None)
+            if callable(reader):
+                expected_roleplay_version = reader(message.persisted_message_id)
+            if expected_roleplay_version is None:
+                expected_roleplay_version = 0
+        metadata_json = (
+            message.metadata.to_json()
+            if message.metadata is not None and not message.metadata.is_empty
+            else None
+        )
+        metadata = message.metadata
+        if metadata is None or metadata.template_kind != "character_greeting":
+            return None
+        previous_candidates = self._roleplay_message_projection_candidates.get(
+            message.id, ()
+        )
+        expected_message_contents = tuple(
+            dict.fromkeys((*previous_candidates, prior_content))
+        )
+        self._roleplay_message_projection_candidates[message.id] = tuple(
+            dict.fromkeys((*expected_message_contents, message.content))
+        )
+        return _RoleplayMessageProjectionWrite(
+            writer=writer,
+            native_message_id=message.id,
+            message_id=message.persisted_message_id,
+            content=message.content,
+            image_data=message.image_data,
+            image_mime_type=message.image_mime_type,
+            feedback=message.feedback,
+            metadata_json=metadata_json,
+            accepts_attachments=self._persistence_accepts_kwarg(
+                writer, "attachments"
+            ),
+            accepts_metadata_json=self._persistence_accepts_kwarg(
+                writer, "metadata_json"
+            ),
+            expected_roleplay_template_source=metadata.template_source,
+            expected_message_contents=expected_message_contents,
+            accepts_template_source_guard=self._persistence_accepts_kwarg(
+                writer, "expected_roleplay_template_source"
+            ),
+            accepts_message_contents_guard=self._persistence_accepts_kwarg(
+                writer, "expected_message_contents"
+            ),
+            accepts_source_owned_repair=self._persistence_accepts_kwarg(
+                writer, "allow_source_owned_repair"
+            ),
+            source_owned_repair=source_owned_repair,
+            accepts_roleplay_version_guard=accepts_roleplay_version_guard,
+            expected_roleplay_version=expected_roleplay_version,
+            sync_write=self._snapshot_roleplay_sync_write(session, message),
+        )
+
+    def is_roleplay_projection_plan_current(
+        self, plan: ConsoleRoleplayProjectionPersistencePlan
+    ) -> bool:
+        """Return whether a queued plan still owns the session generation."""
+        session = self._sessions.get(plan.session_id)
+        return session is not None and session.identity_revision == plan.generation
+
+    def rebase_roleplay_projection_plan_sync(
+        self, plan: ConsoleRoleplayProjectionPersistencePlan
+    ) -> ConsoleRoleplayProjectionPersistencePlan:
+        """Rebase frozen Sync writes from the latest serialized predecessor."""
+        rebased_messages: list[_RoleplayMessageProjectionWrite] = []
+        for message_write in plan.message_writes:
+            sync_write = message_write.sync_write
+            if sync_write is None:
+                rebased_messages.append(message_write)
+                continue
+            kwargs = dict(sync_write.kwargs)
+            kwargs["base_version"] = self._sync_v2_message_versions.get(
+                sync_write.stable_key
+            )
+            rebased_messages.append(
+                replace(
+                    message_write,
+                    sync_write=replace(sync_write, kwargs=tuple(kwargs.items())),
+                )
+            )
+        return replace(plan, message_writes=tuple(rebased_messages))
+
+    def _snapshot_roleplay_sync_write(
+        self,
+        session: ConsoleChatSession,
+        message: ConsoleChatMessage,
+    ) -> _RoleplaySyncWrite | None:
+        if (
+            self.sync_v2_chat_producer is None
+            or self.sync_v2_server_profile_id is None
+            or session.persisted_conversation_id is None
+            or message.persisted_message_id is None
+            or message.status != "complete"
+            or not message.content
+        ):
+            return None
+        writer = getattr(self.sync_v2_chat_producer, "enqueue_chat_message", None)
+        if not callable(writer):
+            return None
+        variant_metadata = self._sync_variant_metadata(message)
+        stable_key = (
+            f"{session.persisted_conversation_id}:{message.persisted_message_id}"
+        )
+        kwargs = {
+            "server_profile_id": self.sync_v2_server_profile_id,
+            "authenticated_principal_id": self.sync_v2_authenticated_principal_id,
+            "workspace_scope": self.sync_v2_workspace_scope,
+            "conversation_id": session.persisted_conversation_id,
+            "message_id": message.persisted_message_id,
+            "role": message.role.value,
+            "content": message.content,
+            "parent_message_id": self._previous_persisted_message_id(message),
+            "sequence": self._sync_message_sequence(message),
+            "variant_turn_id": variant_metadata["variant_turn_id"],
+            "variant_index": variant_metadata["variant_index"],
+            "variant_count": variant_metadata["variant_count"],
+            "selected_variant_id": variant_metadata["selected_variant_id"],
+            "base_version": self._sync_v2_message_versions.get(stable_key),
+            "entity_version": None,
+        }
+        return _RoleplaySyncWrite(
+            writer=writer,
+            stable_key=stable_key,
+            kwargs=tuple(kwargs.items()),
+        )
+
+    @staticmethod
+    def persist_roleplay_projection_plan(
+        plan: ConsoleRoleplayProjectionPersistencePlan,
+    ) -> ConsoleRoleplayProjectionPersistenceResult:
+        """Consume one frozen plan without reading or mutating a live store."""
+        persisted = True
+        system_write = plan.system_prompt_write
+        system_prompt_persisted = True
+        if system_write is not None:
+            try:
+                system_kwargs: dict[str, object] = {
+                    "conversation_id": system_write.conversation_id,
+                    "system_prompt": system_write.system_prompt,
+                }
+                if system_write.accepts_roleplay_context_guard:
+                    system_kwargs["expected_roleplay_context"] = (
+                        system_write.expected_roleplay_context
+                    )
+                if system_write.accepts_system_prompt_guard:
+                    system_kwargs["expected_system_prompts"] = (
+                        system_write.expected_system_prompts
+                    )
+                if system_write.accepts_source_owned_repair:
+                    system_kwargs["allow_source_owned_repair"] = (
+                        system_write.source_owned_repair
+                    )
+                if system_write.accepts_roleplay_version_guard:
+                    system_kwargs["expected_roleplay_version"] = (
+                        system_write.expected_roleplay_version
+                    )
+                if not system_write.writer(
+                    **system_kwargs,
+                ):
+                    system_prompt_persisted = False
+                    persisted = False
+            except Exception:
+                system_prompt_persisted = False
+                persisted = False
+                logger.bind(session_id=plan.session_id).exception(
+                    "Failed to persist Console roleplay system prompt projection."
+                )
+        message_outcomes: list[_RoleplayMessageProjectionPersistenceOutcome] = []
+        for message_write in plan.message_writes:
+            kwargs: dict[str, object] = {
+                "message_id": message_write.message_id,
+                "content": message_write.content,
+                "image_data": message_write.image_data,
+                "image_mime_type": message_write.image_mime_type,
+                "parent_message_id": None,
+                "feedback": message_write.feedback,
+                "update_parent": False,
+                "update_feedback": False,
+            }
+            if message_write.accepts_attachments:
+                kwargs["attachments"] = None
+            if (
+                message_write.accepts_metadata_json
+                and message_write.metadata_json is not None
+            ):
+                kwargs["metadata_json"] = message_write.metadata_json
+            if message_write.accepts_template_source_guard:
+                kwargs["expected_roleplay_template_source"] = (
+                    message_write.expected_roleplay_template_source
+                )
+            if message_write.accepts_message_contents_guard:
+                kwargs["expected_message_contents"] = (
+                    message_write.expected_message_contents
+                )
+            if message_write.accepts_source_owned_repair:
+                kwargs["allow_source_owned_repair"] = (
+                    message_write.source_owned_repair
+                )
+            if message_write.accepts_roleplay_version_guard:
+                kwargs["expected_roleplay_version"] = (
+                    message_write.expected_roleplay_version
+                )
+            try:
+                message_persisted = bool(message_write.writer(**kwargs))
+            except Exception:
+                message_persisted = False
+                logger.bind(message_id=message_write.message_id).exception(
+                    "Failed to persist Console roleplay message projection."
+                )
+            if not message_persisted:
+                persisted = False
+            message_outcomes.append(
+                _RoleplayMessageProjectionPersistenceOutcome(
+                    native_message_id=message_write.native_message_id,
+                    content=message_write.content,
+                    persisted=message_persisted,
+                    sync_write=(
+                        message_write.sync_write if message_persisted else None
+                    ),
+                )
+            )
+        return ConsoleRoleplayProjectionPersistenceResult(
+            session_id=plan.session_id,
+            generation=plan.generation,
+            persisted=persisted,
+            system_prompt_attempted=system_write is not None,
+            system_prompt=(
+                system_write.system_prompt if system_write is not None else None
+            ),
+            system_prompt_persisted=system_prompt_persisted,
+            message_outcomes=tuple(message_outcomes),
+        )
+
+    def accept_roleplay_projection_persistence_result(
+        self,
+        result: ConsoleRoleplayProjectionPersistenceResult,
+    ) -> bool:
+        """Apply completion bookkeeping only for the still-current generation."""
+        session = self._sessions.get(result.session_id)
+        if session is None or session.identity_revision != result.generation:
+            return False
+        if result.system_prompt_attempted and result.system_prompt_persisted:
+            self._roleplay_system_projection_candidates[session.id] = (
+                result.system_prompt,
+            )
+        for outcome in result.message_outcomes:
+            if not outcome.persisted:
+                continue
+            self._roleplay_message_projection_candidates[
+                outcome.native_message_id
+            ] = (outcome.content,)
+            self._enqueue_accepted_roleplay_sync(outcome)
+        return True
+
+    def _enqueue_accepted_roleplay_sync(
+        self, outcome: _RoleplayMessageProjectionPersistenceOutcome
+    ) -> None:
+        """Emit Sync only after this owner accepts the projection generation."""
+        sync_write = outcome.sync_write
+        if sync_write is None:
+            return
+        kwargs = dict(sync_write.kwargs)
+        kwargs["base_version"] = self._sync_v2_message_versions.get(
+            sync_write.stable_key
+        )
+        try:
+            sync_result = sync_write.writer(**kwargs)
+            if not (
+                isinstance(sync_result, dict)
+                and sync_result.get("status") == "enqueued"
+            ):
+                return
+            entry = sync_result.get("outbox_entry")
+            envelope = entry.get("envelope") if isinstance(entry, dict) else None
+            payload_hash = (
+                envelope.get("payload_hash") if isinstance(envelope, dict) else None
+            )
+            if isinstance(payload_hash, str) and payload_hash:
+                self._sync_v2_message_versions[sync_write.stable_key] = payload_hash
+        except Exception:
+            logger.bind(message_id=outcome.native_message_id).exception(
+                "Failed to enqueue Sync v2 chat message after local mutation"
+            )
+
+    def _persist_message_projection(self, message: ConsoleChatMessage) -> bool:
+        if self.persistence is None or message.persisted_message_id is None:
+            return True
+        try:
+            return self._persist_existing_message(message)
+        except Exception:
+            logger.bind(message_id=message.id).exception(
+                "Failed to persist Console roleplay message projection."
+            )
+            return False
+
+    def _persist_session_system_prompt(
+        self, session: ConsoleChatSession, system_prompt: str | None
+    ) -> bool:
+        if self.persistence is None or session.persisted_conversation_id is None:
+            return True
+        writer = getattr(self.persistence, "update_conversation_system_prompt", None)
+        if not callable(writer):
+            return False
+        try:
+            return bool(
+                writer(
+                    conversation_id=session.persisted_conversation_id,
+                    system_prompt=system_prompt,
+                )
+            )
+        except Exception:
+            logger.bind(session_id=session.id).exception(
+                "Failed to persist Console roleplay system prompt projection."
+            )
+            return False
+
+    def _persist_roleplay_context(
+        self, session: ConsoleChatSession
+    ) -> bool:
+        if self.persistence is None or session.persisted_conversation_id is None:
+            return True
+        writer = getattr(self.persistence, "update_conversation_roleplay_context", None)
+        if not callable(writer):
+            return False
+        try:
+            return bool(
+                writer(
+                    conversation_id=session.persisted_conversation_id,
+                    user_name_override=session.user_display_name_override,
+                    character_system_template=session.character_system_template,
+                )
+            )
+        except Exception:
+            logger.bind(session_id=session.id).exception(
+                "Failed to persist Console roleplay identity context."
+            )
+            return False
 
     def delete_message(self, message_id: str) -> ConsoleChatMessage:
         """Remove a complete Console message from the local transcript."""
@@ -2438,8 +3403,12 @@ class ConsoleChatStore:
             message.variants.selected_index = len(message.variants.variants) - 1
         message.content = message.variants.current.content
         self._bump_message_speech_revision(message.id)
-        self._bump_payload_revision(self._message_session_index[message.id])
-        self._persist_existing_message(message)
+        provenance_cleared = self._clear_character_greeting_provenance(message)
+        if not provenance_cleared:
+            self._bump_payload_revision(self._message_session_index[message.id])
+        self._persist_existing_message(
+            message, force_metadata_write=provenance_cleared
+        )
         return self._snapshot(message)
 
     def begin_variant_stream(self, message_id: str) -> ConsoleChatMessage:
@@ -2508,8 +3477,12 @@ class ConsoleChatStore:
         message.content = message.variants.current.content
         message.status = "complete"
         self._bump_message_speech_revision(message.id)
-        self._bump_payload_revision(self._message_session_index[message.id])
-        self._persist_existing_message(message)
+        provenance_cleared = self._clear_character_greeting_provenance(message)
+        if not provenance_cleared:
+            self._bump_payload_revision(self._message_session_index[message.id])
+        self._persist_existing_message(
+            message, force_metadata_write=provenance_cleared
+        )
         return self._snapshot(message)
 
     def select_variant(
@@ -2529,7 +3502,9 @@ class ConsoleChatStore:
         self._persist_existing_message(message)
         return self._snapshot(message)
 
-    def persist_session_if_needed(self, session_id: str) -> str | None:
+    def persist_session_if_needed(
+        self, session_id: str, *, strict_roleplay_context: bool = False
+    ) -> str | None:
         """Persist a session once, returning its persisted conversation ID.
 
         Returns:
@@ -2587,6 +3562,19 @@ class ConsoleChatStore:
             else None,
             **identity_kwargs,
         )
+        if (
+            session.user_display_name_override is not None
+            or session.character_system_template is not None
+        ) and not self._persist_roleplay_context(session):
+            logger.bind(
+                session_id=session_id,
+                conversation_id=session.persisted_conversation_id,
+            ).warning("Failed to flush Console roleplay context on first persist.")
+            if strict_roleplay_context:
+                raise RuntimeError(
+                    "Failed to flush Console roleplay context while promoting "
+                    "a temporary session."
+                )
         pinned_prefill = (
             session.settings.pinned_prefill if session.settings is not None else None
         )
@@ -2726,7 +3714,9 @@ class ConsoleChatStore:
         held_scope = session.rag_scope_holder.scope
 
         def _write() -> str:
-            conversation_id = self.persist_session_if_needed(session_id)
+            conversation_id = self.persist_session_if_needed(
+                session_id, strict_roleplay_context=True
+            )
             if conversation_id is None:
                 # Unreachable today: persist_session_if_needed's only
                 # None-return branches (ephemeral, already-persisted,
@@ -2858,12 +3848,23 @@ class ConsoleChatStore:
             else None
         )
         session.settings = replace(session.settings, system_prompt=normalized)
-        self._bump_payload_revision(session_id)
+        cleared_character_template = session.character_system_template is not None
+        if cleared_character_template:
+            # A manual system-prompt edit revokes the trusted source rather
+            # than allowing a later name refresh to overwrite user content.
+            session.character_system_template = None
+            self._bump_identity_revision(session_id)
+        else:
+            self._bump_payload_revision(session_id)
         persisted = True
         if (
             session.persisted_conversation_id is not None
             and self.persistence is not None
         ):
+            if cleared_character_template and not self._persist_roleplay_context(
+                session
+            ):
+                persisted = False
             update_system_prompt = getattr(
                 self.persistence,
                 "update_conversation_system_prompt",
@@ -2871,10 +3872,11 @@ class ConsoleChatStore:
             )
             if callable(update_system_prompt):
                 try:
-                    update_system_prompt(
+                    if not update_system_prompt(
                         conversation_id=session.persisted_conversation_id,
                         system_prompt=normalized,
-                    )
+                    ):
+                        persisted = False
                 except Exception:
                     persisted = False
                     logger.bind(
@@ -3346,12 +4348,13 @@ class ConsoleChatStore:
         message: ConsoleChatMessage,
         *,
         update_feedback: bool = False,
-    ) -> None:
+        force_metadata_write: bool = False,
+    ) -> bool:
         if self.persistence is None:
-            return
+            return True
         if message.persisted_message_id is None:
             self._persist_pending_message_if_ready(message)
-            return
+            return True
         update_kwargs: dict[str, Any] = dict(
             message_id=message.persisted_message_id,
             content=message.content,
@@ -3392,14 +4395,16 @@ class ConsoleChatStore:
             update_kwargs["metadata_json"] = message.video_metadata.to_json()
         elif (
             message.metadata is not None
-            and not message.metadata.is_empty
+            and (force_metadata_write or not message.metadata.is_empty)
             and self._persistence_accepts_kwarg(
                 self.persistence.update_message_content, "metadata_json"
             )
         ):
             update_kwargs["metadata_json"] = message.metadata.to_json()
-        self.persistence.update_message_content(**update_kwargs)
+        if not self.persistence.update_message_content(**update_kwargs):
+            return False
         self._enqueue_sync_v2_message_if_ready(message)
+        return True
 
     def _persist_pending_message_if_ready(self, message: ConsoleChatMessage) -> None:
         if (

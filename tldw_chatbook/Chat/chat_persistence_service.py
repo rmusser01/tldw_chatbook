@@ -5,12 +5,18 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, cast
 from loguru import logger as _logger
 
 from tldw_chatbook.Chat.console_prefill import PINNED_PREFILL_METADATA_KEY
+from tldw_chatbook.Chat.console_roleplay_metadata import (
+    ConsoleRoleplayContext,
+    merge_console_roleplay_context,
+    parse_console_roleplay_context,
+)
+from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.Chat.citation_trace_models import SealedCitationWrite
 from tldw_chatbook.Chat.citation_trace_repository import (
     CitationPersistenceUnavailable,
     CitationTraceRepository,
 )
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 
 logger = _logger.bind(module="ChatPersistenceService")
 _ASSISTANT_AUTHORITY_UNSET = cast(Optional[str], object())
@@ -60,6 +66,22 @@ class ChatPersistenceService:
             return None
         version = message.get("version")
         if type(version) is not int or version < 1:
+            return None
+        return version
+
+    def get_conversation_version(self, conversation_id: str) -> int | None:
+        """Return the current positive version for one active conversation."""
+        if not isinstance(conversation_id, str) or not conversation_id:
+            return None
+        conversation = self.db.get_conversation_by_id(conversation_id)
+        if conversation is None or conversation.get("deleted"):
+            return None
+        version = conversation.get("version")
+        if (
+            not isinstance(version, int)
+            or isinstance(version, bool)
+            or version < 1
+        ):
             return None
         return version
 
@@ -283,6 +305,10 @@ class ChatPersistenceService:
         *,
         conversation_id: str,
         system_prompt: Optional[str],
+        expected_roleplay_context: ConsoleRoleplayContext | None = None,
+        expected_system_prompts: tuple[str | None, ...] | None = None,
+        allow_source_owned_repair: bool = False,
+        expected_roleplay_version: int | None = None,
     ) -> bool:
         """Update the persisted system prompt for an existing conversation.
 
@@ -299,6 +325,24 @@ class ChatPersistenceService:
         current_conversation = self.db.get_conversation_by_id(conversation_id)
         if not current_conversation:
             raise ValueError(f"Conversation {conversation_id} not found")
+        if (
+            expected_roleplay_version is not None
+            and current_conversation.get("version") != expected_roleplay_version
+        ):
+            return False
+        if (
+            expected_roleplay_context is not None
+            and parse_console_roleplay_context(current_conversation.get("metadata"))
+            != expected_roleplay_context
+        ):
+            return False
+        if (
+            expected_system_prompts is not None
+            and not allow_source_owned_repair
+            and current_conversation.get("system_prompt")
+            not in expected_system_prompts
+        ):
+            return False
 
         return bool(
             self.db.update_conversation(
@@ -307,6 +351,43 @@ class ChatPersistenceService:
                 expected_version=current_conversation["version"],
             )
         )
+
+    def update_conversation_roleplay_context(
+        self,
+        *,
+        conversation_id: str,
+        user_name_override: str | None,
+        character_system_template: str | None,
+    ) -> bool:
+        """Merge Console-owned roleplay identity context with one retry.
+
+        Re-reading the conversation before each bounded optimistic attempt is
+        essential: a concurrent metadata writer can add unrelated sibling
+        keys after our first read. Merging only the fresh record preserves
+        those keys while this method changes its owned context.
+        """
+        for attempt in range(2):
+            record = self.db.get_conversation_by_id(str(conversation_id))
+            if record is None:
+                return False
+            metadata = merge_console_roleplay_context(
+                record.get("metadata"),
+                ConsoleRoleplayContext(
+                    user_name_override=user_name_override,
+                    character_system_template=character_system_template,
+                ),
+            )
+            try:
+                self.db.update_conversation(
+                    str(conversation_id),
+                    {"metadata": metadata},
+                    expected_version=record["version"],
+                )
+                return True
+            except ConflictError:
+                if attempt == 1:
+                    raise
+        return False
 
     def update_conversation_pinned_prefill(
         self,
@@ -389,6 +470,10 @@ class ChatPersistenceService:
         attachments: Optional[Sequence[Mapping[str, Any]]] = None,
         usage_json: Optional[str] = None,
         metadata_json: Optional[str] = None,
+        expected_roleplay_template_source: str | None = None,
+        expected_message_contents: tuple[str, ...] | None = None,
+        allow_source_owned_repair: bool = False,
+        expected_roleplay_version: int | None = None,
     ) -> bool:
         """Update a message's content, optionally its parent/feedback, and its images.
 
@@ -460,6 +545,28 @@ class ChatPersistenceService:
         current_message = self.db.get_message_by_id(message_id)
         if not current_message:
             raise ValueError(f"Message {message_id} not found")
+        if (
+            expected_roleplay_version is not None
+            and current_message.get("version") != expected_roleplay_version
+        ):
+            return False
+        if expected_roleplay_template_source is not None:
+            current_metadata = MessageMetadata.from_json(
+                current_message.get("metadata_json")
+            )
+            if (
+                current_metadata is None
+                or current_metadata.template_kind != "character_greeting"
+                or current_metadata.template_source
+                != expected_roleplay_template_source
+            ):
+                return False
+        if (
+            expected_message_contents is not None
+            and not allow_source_owned_repair
+            and current_message.get("content") not in expected_message_contents
+        ):
+            return False
 
         update_data: Dict[str, Any] = {"content": content}
         # Only include the image columns when new image bytes are supplied.

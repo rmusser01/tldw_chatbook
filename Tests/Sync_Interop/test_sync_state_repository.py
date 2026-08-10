@@ -644,6 +644,132 @@ def test_sync_v2_outbox_persists_pending_entries_and_push_results(tmp_path):
     assert pending_after[1]["last_error"]["error_code"] == "conflict"
 
 
+def test_sync_v2_outbox_readback_failure_rolls_back_uncommitted_insert(
+    tmp_path, monkeypatch
+):
+    db_path = tmp_path / "sync_state.db"
+    dataset_key = generate_dataset_key()
+    envelope = SyncEnvelopeBuilder(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        dataset_key=dataset_key,
+    ).build_note_metadata_update(note_id="note-1", status="active")
+    repo = SyncStateRepository(db_path)
+
+    def refuse_readback(_row):
+        raise RuntimeError("injected outbox readback failure")
+
+    monkeypatch.setattr(
+        SyncStateRepository,
+        "_outbox_from_row",
+        staticmethod(refuse_readback),
+    )
+
+    with pytest.raises(RuntimeError, match="injected outbox readback failure"):
+        repo.enqueue_sync_v2_outbox_envelope(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            dataset_id="dataset-1",
+            envelope=envelope,
+        )
+
+    with sqlite3.connect(db_path) as verification:
+        committed = verification.execute(
+            "SELECT COUNT(*) FROM sync_v2_local_outbox"
+        ).fetchone()[0]
+    assert committed == 0
+
+
+def test_sync_v2_outbox_atomic_enqueue_returns_committed_payload_hash(tmp_path):
+    db_path = tmp_path / "sync_state.db"
+    dataset_key = generate_dataset_key()
+    envelope = SyncEnvelopeBuilder(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        dataset_key=dataset_key,
+    ).build_note_metadata_update(note_id="note-1", status="active")
+    repo = SyncStateRepository(db_path)
+
+    entry = repo.enqueue_sync_v2_outbox_envelope(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+        envelope=envelope,
+    )
+
+    assert entry["envelope"]["payload_hash"] == envelope.payload_hash
+    assert repo.list_pending_sync_v2_outbox_envelopes(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+    )[0]["envelope"]["payload_hash"] == envelope.payload_hash
+
+
+def test_sync_v2_identical_reenqueue_preserves_dispatched_outbox_state(tmp_path):
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        dataset_key=generate_dataset_key(),
+    )
+    dispatched_envelope = builder.build_note_upsert(
+        note_id="note-1", title="Title", body="Body"
+    )
+    scope = {
+        "server_profile_id": "server-a",
+        "authenticated_principal_id": "user-a",
+        "workspace_scope": "workspace-1",
+        "dataset_id": "dataset-1",
+    }
+    repo.enqueue_sync_v2_outbox_envelope(
+        **scope, envelope=dispatched_envelope
+    )
+    assert repo.mark_sync_v2_outbox_push_results(
+        **scope,
+        accepted=[
+            {"client_envelope_id": dispatched_envelope.client_envelope_id}
+        ],
+        rejected=[],
+        conflicts=[],
+    ) == {"dispatched": 1, "retained": 0}
+    dispatched_before = repo.list_sync_v2_outbox_entries(
+        **scope, status="dispatched"
+    )[0]
+
+    same_payload_envelope = builder.build_note_upsert(
+        note_id="note-1", title="Title", body="Body"
+    )
+    assert (
+        same_payload_envelope.client_envelope_id
+        == dispatched_envelope.client_envelope_id
+    )
+    assert same_payload_envelope.payload_hash == dispatched_envelope.payload_hash
+
+    same_entry = repo.enqueue_sync_v2_outbox_envelope(
+        **scope, envelope=same_payload_envelope
+    )
+
+    assert same_entry["status"] == "dispatched"
+    assert same_entry["dispatched_at"] == dispatched_before["dispatched_at"]
+    assert same_entry["attempt_count"] == 1
+    assert repo.list_pending_sync_v2_outbox_envelopes(**scope) == []
+    changed_envelope = builder.build_note_upsert(
+        note_id="note-1", title="Title", body="Changed body"
+    )
+    assert changed_envelope.payload_hash != dispatched_envelope.payload_hash
+    changed_entry = repo.enqueue_sync_v2_outbox_envelope(
+        **scope, envelope=changed_envelope
+    )
+    assert changed_entry["status"] == "pending"
+    assert [
+        entry["client_envelope_id"]
+        for entry in repo.list_pending_sync_v2_outbox_envelopes(**scope)
+    ] == [changed_envelope.client_envelope_id]
+
+
 def test_sync_v2_profile_summary_aggregates_state_counts_and_status(tmp_path):
     db_path = tmp_path / "sync_state.db"
     dataset_key = generate_dataset_key()
