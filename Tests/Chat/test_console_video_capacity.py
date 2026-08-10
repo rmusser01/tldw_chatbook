@@ -397,6 +397,35 @@ async def test_normal_result_appends_and_syncs_through_shared_resolver(tmp_path:
 
 
 @pytest.mark.asyncio
+async def test_normal_commit_winning_before_unmount_persists_without_ui_sync(
+    tmp_path: Path,
+) -> None:
+    harness = _OutcomeHarness(actions=[], video_store=object())
+    metadata = VideoGenerationMetadata(
+        name="committed", prompt="prompt", backend="comfyui"
+    )
+    harness._drain_pending_console_videos()
+
+    await harness._resolve_generated_video_outcome(
+        (metadata, tmp_path / "committed.mp4"),
+        session_id="session",
+        message_id="committed-message",
+    )
+
+    assert harness.appended == [
+        (
+            ("session",),
+            {
+                "video_metadata": metadata,
+                "persist": True,
+                "message_id": "committed-message",
+            },
+        )
+    ]
+    assert harness.sync_count == 0
+
+
+@pytest.mark.asyncio
 async def test_pending_discard_registers_then_closes_without_card() -> None:
     artifact = _artifact()
     harness = _OutcomeHarness(actions=["discard"], video_store=object())
@@ -525,6 +554,7 @@ async def test_over_capacity_keep_adopts_real_store_as_sole_file_and_then_append
     assert {spec.status for spec in after_specs.values()} == {"expired"}
     assert len(harness.appended) == 1
     assert harness.sync_count == 1
+    assert harness._pending_video_operation_cancels == {}
     assert artifact.stream.closed
 
 
@@ -588,7 +618,7 @@ async def test_managed_adoption_appends_only_after_store_resolves_target(
 
 
 @pytest.mark.asyncio
-async def test_unmount_during_managed_resolve_cannot_append_late(
+async def test_unmount_during_managed_resolve_persists_without_sync(
     tmp_path: Path,
 ) -> None:
     artifact = _artifact()
@@ -610,7 +640,8 @@ async def test_unmount_during_managed_resolve_cannot_append_late(
         artifact, session_id="session", message_id=artifact.message_id
     )
 
-    assert harness.appended == []
+    assert len(harness.appended) == 1
+    assert harness.sync_count == 0
     assert artifact.stream.closed
 
 
@@ -704,6 +735,14 @@ def test_external_new_target_commit_never_clobbers_concurrent_creator(
         return real_link(source, destination, **kwargs)
 
     monkeypatch.setattr(os, "link", racing_link)
+    monkeypatch.setattr(
+        os, "supports_dir_fd", set(os.supports_dir_fd) | {racing_link}
+    )
+    monkeypatch.setattr(
+        os,
+        "supports_follow_symlinks",
+        set(os.supports_follow_symlinks) | {racing_link},
+    )
 
     result = ChatScreen._copy_pending_video_external(artifact, target, None)
 
@@ -753,7 +792,9 @@ def test_external_commit_error_keeps_existing_destination_and_cleans_sibling(
     target.write_bytes(b"old")
     identity = ChatScreen._external_video_target_identity(target)
 
-    def fail_replace(_source, _target, **_kwargs):
+    def fail_replace(
+        _source, _target, *, src_dir_fd=None, dst_dir_fd=None
+    ):
         raise OSError("commit failed")
 
     monkeypatch.setattr(os, "replace", fail_replace)
@@ -831,6 +872,127 @@ def test_external_parent_swap_fails_closed_and_cleans_pinned_sibling(
     assert not list(moved_parent.glob(".*.tmp"))
     artifact.rewind()
     assert artifact.stream.read() == b"safe bytes"
+    artifact.close()
+
+
+@pytest.mark.asyncio
+async def test_external_save_fails_closed_when_pinned_primitives_are_unsupported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifact = _artifact(b"retained bytes")
+    target = tmp_path / "unsupported.mp4"
+    harness = _OutcomeHarness(
+        actions=["save_external", target, "discard"], video_store=object()
+    )
+    opened_paths = []
+    real_open = os.open
+
+    def tracking_open(path, *args, **kwargs):
+        opened_paths.append(path)
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", tracking_open)
+    monkeypatch.setattr(
+        os,
+        "supports_dir_fd",
+        set(os.supports_dir_fd) - {os.link},
+    )
+
+    await harness._resolve_generated_video_outcome(
+        artifact, session_id="session", message_id=artifact.message_id
+    )
+
+    assert opened_paths == []
+    assert not target.exists()
+    assert not list(tmp_path.glob(".*.tmp"))
+    assert len(harness.waited_screens) == 3
+    assert harness.appended == []
+    assert any(severity == "error" for _, severity in harness.notifications)
+    assert artifact.stream.closed
+
+
+def test_external_fdopen_failure_closes_stage_fd_and_cleans_sibling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifact = _artifact(b"retained")
+    target = tmp_path / "fdopen.mp4"
+    real_open = os.open
+    staged_fds: list[int] = []
+
+    def tracking_open(path, *args, **kwargs):
+        fd = real_open(path, *args, **kwargs)
+        if kwargs.get("dir_fd") is not None:
+            staged_fds.append(fd)
+        return fd
+
+    def fail_fdopen(fd, *_args, **_kwargs):
+        assert fd in staged_fds
+        raise OSError("PRIVATE-FDOPEN")
+
+    monkeypatch.setattr(os, "open", tracking_open)
+    monkeypatch.setattr(
+        os, "supports_dir_fd", set(os.supports_dir_fd) | {tracking_open}
+    )
+    monkeypatch.setattr(os, "fdopen", fail_fdopen)
+
+    try:
+        with pytest.raises(OSError):
+            ChatScreen._copy_pending_video_external(artifact, target, None)
+        assert staged_fds
+        for fd in staged_fds:
+            with pytest.raises(OSError):
+                os.fstat(fd)
+        assert not target.exists()
+        assert not list(tmp_path.glob(".*.tmp"))
+    finally:
+        for fd in staged_fds:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        artifact.close()
+
+
+def test_external_parent_fd_close_failure_does_not_mask_saved_outcome(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifact = _artifact(b"saved")
+    target = tmp_path / "saved.mp4"
+    parent_fds: list[int] = []
+    logged: list[str] = []
+    real_open = os.open
+    real_close = os.close
+
+    def tracking_open(path, *args, **kwargs):
+        fd = real_open(path, *args, **kwargs)
+        if Path(path) == tmp_path and kwargs.get("dir_fd") is None:
+            parent_fds.append(fd)
+        return fd
+
+    def close_then_fail(fd):
+        real_close(fd)
+        if fd in parent_fds:
+            raise OSError("PRIVATE-PARENT-CLOSE")
+
+    monkeypatch.setattr(os, "open", tracking_open)
+    monkeypatch.setattr(
+        os, "supports_dir_fd", set(os.supports_dir_fd) | {tracking_open}
+    )
+    monkeypatch.setattr(os, "close", close_then_fail)
+    sink_id = __import__("loguru").logger.add(logged.append, format="{message}")
+    try:
+        result = ChatScreen._copy_pending_video_external(artifact, target, None)
+    finally:
+        __import__("loguru").logger.remove(sink_id)
+
+    assert result == "saved"
+    assert target.read_bytes() == b"saved"
+    for fd in parent_fds:
+        with pytest.raises(OSError):
+            os.fstat(fd)
+    assert any("external_parent_close" in message for message in logged)
+    assert any("OSError" in message for message in logged)
+    assert all("PRIVATE-PARENT-CLOSE" not in message for message in logged)
     artifact.close()
 
 
@@ -985,6 +1147,14 @@ async def test_concurrent_external_creator_is_confirmed_and_never_overwritten(
         return real_link(source, destination, **kwargs)
 
     monkeypatch.setattr(os, "link", racing_link)
+    monkeypatch.setattr(
+        os, "supports_dir_fd", set(os.supports_dir_fd) | {racing_link}
+    )
+    monkeypatch.setattr(
+        os,
+        "supports_follow_symlinks",
+        set(os.supports_follow_symlinks) | {racing_link},
+    )
     harness = _OutcomeHarness(
         actions=["save_external", target, False, None], video_store=object()
     )
@@ -1030,6 +1200,16 @@ async def test_confirmed_target_disappearing_requires_fresh_confirmation_before_
         return result
 
     monkeypatch.setattr(os, "stat", disappear_during_pre_replace)
+    monkeypatch.setattr(
+        os,
+        "supports_dir_fd",
+        set(os.supports_dir_fd) | {disappear_during_pre_replace},
+    )
+    monkeypatch.setattr(
+        os,
+        "supports_follow_symlinks",
+        set(os.supports_follow_symlinks) | {disappear_during_pre_replace},
+    )
     harness._wait_for_console_screen_result = MethodType(checking_wait, harness)
 
     await harness._resolve_generated_video_outcome(
@@ -1320,6 +1500,61 @@ async def test_unmount_defers_close_and_cancels_managed_precommit(
     assert harness.appended == []
 
 
+@pytest.mark.asyncio
+async def test_pending_managed_commit_winning_before_unmount_persists_without_sync(
+    tmp_path: Path,
+) -> None:
+    artifact = _artifact(b"committed", message_id="committed-pending")
+    published = tmp_path / "committed.mp4"
+    commit_claimed = threading.Event()
+    release_commit = threading.Event()
+
+    class CommitWinningStore:
+        def adopt_oversized(self, *_args, **kwargs):
+            gate = kwargs["publication_gate"]
+            with gate.claim_publication() as active:
+                assert active
+                commit_claimed.set()
+                assert release_commit.wait(5)
+                published.write_bytes(b"committed")
+            return published
+
+        def resolve(self, *_args, **_kwargs):
+            return published if published.exists() else None
+
+    harness = _OutcomeHarness(actions=["keep"], video_store=CommitWinningStore())
+    resolver = asyncio.create_task(
+        harness._resolve_generated_video_outcome(
+            artifact, session_id="session", message_id=artifact.message_id
+        )
+    )
+    while not commit_claimed.is_set():
+        await asyncio.sleep(0)
+
+    drained = threading.Event()
+
+    def drain():
+        harness._drain_pending_console_videos()
+        drained.set()
+
+    teardown = threading.Thread(target=drain, daemon=True)
+    teardown.start()
+    while not getattr(harness, "_pending_video_artifacts_closed", False):
+        await asyncio.sleep(0)
+    assert not drained.is_set()
+    release_commit.set()
+    teardown.join(5)
+    await resolver
+
+    assert not teardown.is_alive()
+    assert drained.is_set()
+    assert published.read_bytes() == b"committed"
+    assert len(harness.appended) == 1
+    assert harness.appended[0][1]["message_id"] == artifact.message_id
+    assert harness.sync_count == 0
+    assert artifact.stream.closed
+
+
 def test_pending_drain_contains_close_failure_and_closes_remaining_artifacts() -> None:
     logged: list[str] = []
 
@@ -1344,6 +1579,50 @@ def test_pending_drain_contains_close_failure_and_closes_remaining_artifacts() -
     assert any("artifact_close" in message for message in logged)
     assert any("RuntimeError" in message for message in logged)
     assert all("PRIVATE-CLOSE-SENTINEL" not in message for message in logged)
+
+
+def test_pending_drain_contains_each_cancel_failure_and_finishes_cleanup() -> None:
+    logged: list[str] = []
+    adapter_cancelled = threading.Event()
+    later_gate = VideoPublicationGate()
+    artifact = _artifact(message_id="cleanup-survivor")
+
+    class FailingAdapterCancel:
+        def set(self):
+            raise RuntimeError("PRIVATE-ADAPTER-CANCEL")
+
+    class FailingPublicationCancel:
+        def cancel(self):
+            raise ValueError("PRIVATE-GATE-CANCEL")
+
+    fake = SimpleNamespace(
+        _pending_video_artifacts={artifact.message_id: artifact},
+        _console_videogen_cancels={
+            "failing": FailingAdapterCancel(),
+            "later": adapter_cancelled,
+        },
+        _pending_video_operation_cancels={
+            "failing": FailingPublicationCancel(),
+            "later": later_gate,
+        },
+    )
+    sink_id = __import__("loguru").logger.add(logged.append, format="{message}")
+    try:
+        ChatScreen._drain_pending_console_videos(fake)
+    finally:
+        __import__("loguru").logger.remove(sink_id)
+
+    assert adapter_cancelled.is_set()
+    with later_gate.claim_publication() as active:
+        assert not active
+    assert fake._pending_video_artifacts == {}
+    assert fake._pending_video_operation_cancels == {}
+    assert artifact.stream.closed
+    assert any("adapter_cancel" in message for message in logged)
+    assert any("publication_cancel" in message for message in logged)
+    assert any("RuntimeError" in message for message in logged)
+    assert any("ValueError" in message for message in logged)
+    assert all("PRIVATE-" not in message for message in logged)
 
 
 def test_real_unmount_path_invokes_pending_artifact_drain() -> None:
@@ -1431,3 +1710,114 @@ async def test_regenerate_pending_discard_closes_stage_and_clears_bookkeeping(
     assert artifact.stream.closed
     assert inflight == set()
     assert cancels == {}
+
+
+@pytest.mark.parametrize("caller", ["initial", "regenerate"])
+@pytest.mark.parametrize(
+    "ordering", ["cancel_wins", "commit_wins", "generation_fails"]
+)
+@pytest.mark.asyncio
+async def test_generation_publication_gate_linearizes_teardown_for_both_callers(
+    caller: str,
+    ordering: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+    from tldw_chatbook.Video_Generation import adapter_registry
+
+    generated_meta = VideoGenerationMetadata(
+        name="generated", prompt="generate me", backend="comfyui"
+    )
+    original_meta = VideoGenerationMetadata(
+        name="original", prompt="generate me", backend="comfyui"
+    )
+    managed_path = tmp_path / f"{caller}-{ordering}.mp4"
+    pending: list[PendingVideoArtifact] = []
+    captured_gates: list[VideoPublicationGate] = []
+    inflight: set[str] = set()
+    adapter_cancels: dict = {}
+    harness = _OutcomeHarness(actions=[], video_store=object())
+    harness._console_videogen_inflight_sessions = lambda: inflight
+    harness._console_videogen_cancel_events = lambda: adapter_cancels
+    harness._append_native_console_system_message = (
+        lambda *_args, **_kwargs: _completed_async()
+    )
+    harness.app_instance = SimpleNamespace(notify=lambda *_args, **_kwargs: None)
+
+    if caller == "initial":
+        harness.chat_store.workspace_context = SimpleNamespace(
+            active_workspace_id="workspace"
+        )
+        harness.chat_store.ensure_session = lambda **_kwargs: SimpleNamespace(
+            id="session"
+        )
+        harness._session = SimpleNamespace(
+            _default_console_session_settings=lambda: object()
+        )
+        harness._console_composer_or_none = lambda: None
+        harness._clear_console_composer_draft = lambda: None
+    else:
+        harness.chat_store.get_message = lambda _message_id: SimpleNamespace(
+            video_metadata=original_meta
+        )
+        harness.chat_store.session_id_for_message = lambda _message_id: "session"
+
+    class Registry:
+        @staticmethod
+        def resolve_backend(_backend):
+            return object()
+
+    async def fake_to_thread(_function, **kwargs):
+        gate = kwargs["publication_gate"]
+        message_id = kwargs["message_id"]
+        captured_gates.append(gate)
+        assert isinstance(gate, VideoPublicationGate)
+        assert harness._pending_video_operation_cancels[message_id] is gate
+        if ordering == "generation_fails":
+            raise RuntimeError("PRIVATE-GENERATION-FAILURE")
+        if ordering == "cancel_wins":
+            harness._drain_pending_console_videos()
+            with gate.claim_publication() as active:
+                assert not active
+            artifact = _artifact(message_id=message_id)
+            pending.append(artifact)
+            return artifact
+        with gate.claim_publication() as active:
+            assert active
+            managed_path.write_bytes(b"committed")
+        harness._drain_pending_console_videos()
+        return generated_meta, managed_path
+
+    monkeypatch.setattr(
+        chat_screen_module,
+        "get_video_generation_config",
+        lambda: SimpleNamespace(
+            default_backend="comfyui", confirm_cost_estimate=False
+        ),
+    )
+    monkeypatch.setattr(adapter_registry, "get_registry", lambda: Registry())
+    monkeypatch.setattr("asyncio.to_thread", fake_to_thread)
+
+    if caller == "initial":
+        await ChatScreen._console_command_generate_video(
+            harness, SimpleNamespace(args="generate me")
+        )
+    else:
+        await ChatScreen._regenerate_console_video_message(harness, "old-message")
+
+    assert len(captured_gates) == 1
+    assert inflight == set()
+    assert adapter_cancels == {}
+    assert harness._pending_video_operation_cancels == {}
+    if ordering == "cancel_wins":
+        assert not managed_path.exists()
+        assert harness.appended == []
+        assert len(pending) == 1 and pending[0].stream.closed
+    elif ordering == "commit_wins":
+        assert managed_path.read_bytes() == b"committed"
+        assert len(harness.appended) == 1
+        assert harness.sync_count == 0
+    else:
+        assert not managed_path.exists()
+        assert harness.appended == []

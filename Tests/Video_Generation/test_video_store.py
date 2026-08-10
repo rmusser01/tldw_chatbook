@@ -356,9 +356,16 @@ def test_publication_gate_commit_wins_before_later_cancel(
 ):
     commit_started = threading.Event()
     release_commit = threading.Event()
+    cancel_attempted = threading.Event()
     cancel_finished = threading.Event()
     errors = []
-    gate = video_store_module.VideoPublicationGate()
+
+    class SignalingGate(video_store_module.VideoPublicationGate):
+        def cancel(self):
+            cancel_attempted.set()
+            super().cancel()
+
+    gate = SignalingGate()
     original_commit = store._commit_sibling
 
     def blocking_commit(sibling, target):
@@ -382,7 +389,8 @@ def test_publication_gate_commit_wins_before_later_cancel(
     assert commit_started.wait(5)
     canceller = threading.Thread(target=cancel, daemon=True)
     canceller.start()
-    assert not cancel_finished.wait(0.05)
+    assert cancel_attempted.wait(5)
+    assert not cancel_finished.is_set()
     release_commit.set()
     worker.join(5)
     canceller.join(5)

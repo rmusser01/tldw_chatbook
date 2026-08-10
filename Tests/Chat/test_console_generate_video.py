@@ -20,7 +20,11 @@ from tldw_chatbook.Chat.console_generate_video import (
     run_video_generation,
 )
 from tldw_chatbook.Video_Generation.adapters import comfyui_video_adapter as cva
-from tldw_chatbook.Video_Generation.video_store import VideoStore, VideoStoreSaveError
+from tldw_chatbook.Video_Generation.video_store import (
+    VideoPublicationGate,
+    VideoStore,
+    VideoStoreSaveError,
+)
 
 
 # -- parsing ------------------------------------------------------------------
@@ -181,6 +185,30 @@ def test_run_video_generation_saves_and_returns_metadata(tmp_path):
     assert meta.duration_seconds == 6.0
     assert meta.width == 1920 and meta.height == 1080
     assert store.resolve("msg-42", "a-red-dragon") == path
+
+
+def test_run_video_generation_passes_publication_gate_to_store(tmp_path):
+    _register_fake()
+    received = []
+
+    class CapturingStore(VideoStore):
+        def save(self, *args, **kwargs):
+            received.append(kwargs.get("publication_gate"))
+            return super().save(*args, **kwargs)
+
+    gate = VideoPublicationGate()
+    store = CapturingStore(root=tmp_path / "gv")
+
+    _meta, path = run_video_generation(
+        backend="fakevid",
+        prompt="publication gate",
+        message_id="gated-message",
+        publication_gate=gate,
+        video_store=store,
+    )
+
+    assert received == [gate]
+    assert path.read_bytes() == b"vid-bytes"
 
 
 def test_run_video_generation_cancel_event_threaded_when_supported(tmp_path):

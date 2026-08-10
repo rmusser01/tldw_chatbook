@@ -128,7 +128,12 @@ class VideoStoreBusyError(VideoStoreSaveError):
 
 
 class VideoPublicationGate:
-    """Linearize cancellation against one managed-file publication."""
+    """Linearize cancellation against one managed-file publication.
+
+    A caller that claims the gate holds it through the final commit. Cancellation
+    therefore either prevents publication or observes a publication that already
+    linearized; it can never interleave with the commit itself.
+    """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()

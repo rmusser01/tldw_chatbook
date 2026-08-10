@@ -32,6 +32,7 @@ from tldw_chatbook.Chat.console_command_grammar import (
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 from tldw_chatbook.Video_Generation.video_store import (
     VideoCapacityExceeded,
+    VideoPublicationGate,
     VideoStore,
     VideoStoreSaveError,
 )
@@ -194,6 +195,7 @@ def run_video_generation(
     seed: int | None = None,
     model: str | None = None,
     cancel_event: threading.Event | None = None,
+    publication_gate: VideoPublicationGate | None = None,
     video_store: VideoStore | None = None,
 ) -> tuple[VideoGenerationMetadata, Path] | PendingVideoArtifact:
     """Run one video generation and persist the bytes to the VideoStore.
@@ -213,6 +215,8 @@ def run_video_generation(
         duration_seconds/fps/width/height/ratio/seed/model: Optional params.
         cancel_event: Optional cooperative-cancellation event, threaded to
             adapters that support it (minimax).
+        publication_gate: Optional gate that linearizes managed publication
+            against owning-screen teardown.
         video_store: Injected store (tests); defaults to a live-config store.
 
     Returns:
@@ -283,6 +287,7 @@ def run_video_generation(
             slug,
             result.content,
             extension=extension,
+            publication_gate=publication_gate,
         )
     except VideoStoreSaveError as exc:
         return _stage_pending_video(
