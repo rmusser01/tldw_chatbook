@@ -31,6 +31,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_DEFAULT_MAX_PARALLEL_RUNS,
     ConsoleChatMessage,
     ConsoleControllerActivity,
+    ConsoleLifecycleImpact,
     ConsoleCitationNoticeCode,
     ConsoleCitationPhase,
     ConsoleCitationPresentation,
@@ -1236,6 +1237,13 @@ class ConsoleChatController:
         #: `mark_session_visited`), never from a worker thread, so they
         #: carry no cross-thread hazard this lock needs to close.
         self._approval_state_lock = threading.Lock()
+        # Revision tokens fence destructive lifecycle confirmations without
+        # mirroring any activity values. Counts remain derived on demand from
+        # ``ConsoleControllerActivity``; these integers only reveal that one
+        # of its existing authorities changed while a dialog was open.
+        self._lifecycle_revision_lock = threading.Lock()
+        self._lifecycle_revision = 0
+        self._session_lifecycle_revisions: dict[str, int] = {}
         #: Optional owner hook invoked once a submit is accepted (user message
         #: persisted, run about to start) so the composer can clear immediately
         #: instead of holding the sent text for the whole run.
@@ -1263,6 +1271,7 @@ class ConsoleChatController:
             can_reacquire_slot=self._queue_can_reacquire_slot,
             on_queued_accepted=self._notify_queued_submission_accepted,
             on_chain_terminal=self._publish_queue_chain_terminal,
+            on_activity_changed=self._note_controller_activity_changed,
         )
         # Task 3b: PER-SESSION maps, mirroring `_run_states`' own keying --
         # two sessions can each have their own in-flight stream/cancel state
@@ -1531,6 +1540,58 @@ class ConsoleChatController:
 
         return self.prompt_queue_coordinator.activity(session_id)
 
+    def _advance_lifecycle_revision(self, session_id: str) -> None:
+        """Advance content-free fleet and owning-session confirmation fences."""
+
+        with self._lifecycle_revision_lock:
+            self._lifecycle_revision += 1
+            if session_id:
+                self._session_lifecycle_revisions[session_id] = (
+                    self._session_lifecycle_revisions.get(session_id, 0) + 1
+                )
+
+    def _note_controller_activity_changed(self, session_id: str) -> None:
+        """Receive queue-owner changes without copying its state."""
+
+        self._advance_lifecycle_revision(session_id)
+
+    def _lifecycle_revision_for(self, session_id: str | None) -> int:
+        with self._lifecycle_revision_lock:
+            if session_id is None:
+                return self._lifecycle_revision
+            return self._session_lifecycle_revisions.get(session_id, 0)
+
+    def lifecycle_impact(
+        self, *, session_id: str | None = None
+    ) -> ConsoleLifecycleImpact:
+        """Derive exact loss counts for one session or the whole live fleet.
+
+        The optimistic revision read prevents a worker-thread approval change
+        from producing counts paired with an older token. Queue state itself
+        remains owner-thread confined and is read through the coordinator's
+        immutable activity projection.
+        """
+
+        while True:
+            revision = self._lifecycle_revision_for(session_id)
+            live_ids = {session.id for session in self.store.sessions()}
+            if session_id is not None:
+                target_ids = (session_id,) if session_id in live_ids else ()
+            else:
+                target_ids = tuple(sorted(live_ids))
+            activities = tuple(self.activity_for(target_id) for target_id in target_ids)
+            if revision == self._lifecycle_revision_for(session_id):
+                break
+        return ConsoleLifecycleImpact(
+            revision=revision,
+            live_run_count=sum(
+                bool(activity.occupies_slot or activity.needs_approval)
+                for activity in activities
+            ),
+            queued_session_count=sum(activity.has_queued_work for activity in activities),
+            unsent_prompt_count=sum(activity.queued_count for activity in activities),
+        )
+
     def queue_prompt(
         self,
         session_id: str,
@@ -1735,7 +1796,11 @@ class ConsoleChatController:
         # via `fleet_summary_counts` -- guard the mutation with the shared
         # lock so iteration never observes a torn add/discard.
         with self._approval_state_lock:
-            self._pending_approvals.setdefault(session_id, set()).add(round_id)
+            rounds = self._pending_approvals.setdefault(session_id, set())
+            changed = round_id not in rounds
+            rounds.add(round_id)
+        if changed:
+            self._advance_lifecycle_revision(session_id)
 
     def discard_pending_round(self, session_id: str, round_id: str) -> None:
         """Clear ``round_id`` from ``session_id``'s outstanding approval-like rounds.
@@ -1754,13 +1819,17 @@ class ConsoleChatController:
             round_id: The round's own unique id, as passed to the matching
                 ``add_pending_round`` call.
         """
+        changed = False
         with self._approval_state_lock:
             rounds = self._pending_approvals.get(session_id)
             if rounds is None:
                 return
+            changed = round_id in rounds
             rounds.discard(round_id)
             if not rounds:
                 self._pending_approvals.pop(session_id, None)
+        if changed:
+            self._advance_lifecycle_revision(session_id)
 
     def has_pending_approval_round(self, session_id: str) -> bool:
         """Return whether ``session_id`` currently has ANY outstanding approval-like round.
@@ -4796,10 +4865,7 @@ class ConsoleChatController:
         its own, unset ``_shutdown_requested`` -- so the permanently-set
         flag on the old instance can never poison it.
         """
-        # Tombstone queue chains before any cancellation can resume their
-        # awaiting drain coroutine and claim another prompt.
-        self.prompt_queue_coordinator.shutdown()
-        self._shutdown_requested.set()
+        self.begin_shutdown()
         for message_id in tuple(self._original_attempts):
             self.clear_original_attempt(message_id)
         tasks = dict(self._active_stream_tasks)
@@ -4851,6 +4917,12 @@ class ConsoleChatController:
                 self._active_stream_tasks.pop(session_id, None)
                 self._active_assistant_message_ids.pop(session_id, None)
                 self._active_cancel_events.pop(session_id, None)
+
+    def begin_shutdown(self) -> None:
+        """Tombstone future queue work before any teardown cancellation."""
+
+        self.prompt_queue_coordinator.shutdown()
+        self._shutdown_requested.set()
 
     def _active_streaming_assistant_message_id(self) -> str | None:
         """Return the visible streaming assistant message for the active session."""
@@ -10076,6 +10148,7 @@ class ConsoleChatController:
         previous_status = self.run_state_for(target).status
         self._run_states[target] = run_state
         self.run_state_history_for(target).append(run_state.status)
+        self._advance_lifecycle_revision(target)
         terminal_notification_eligible = self.activity_for(
             target
         ).terminal_notification_eligible

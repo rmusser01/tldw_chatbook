@@ -13872,69 +13872,27 @@ class ChatScreen(BaseAppScreen):
         )
 
     async def confirm_navigation(self) -> bool:
-        """Confirm leaving Console while the agent fleet still has live work.
+        """Delegate revision-pinned Console loss confirmation."""
 
-        TASK-1143 (F5): navigating away from Console unmounts this screen,
-        and ``on_unmount`` awaits ``ConsoleChatController.shutdown()`` --
-        cancelling every in-flight stream and denying every pending/parked
-        approval round for EVERY session this controller owns, not just
-        the one being viewed (see ``ConsoleChatController.shutdown``'s own
-        docstring). That is correct, by-design teardown -- screens are
-        never cached, so nothing could resolve those rounds through this
-        instance again regardless -- but it was previously silent. This
-        hook is the ``flush_pending_work`` sibling seam
-        ``TldwCli.handle_screen_navigation`` awaits before the switch
-        commits: returning ``False`` keeps this screen (and its
-        controller, and its fleet) mounted exactly like a flush veto.
-
-        Returns:
-            ``True`` when navigation may proceed -- an idle fleet (the
-            common case: no dialog, no delay), or the user chose "Leave"
-            in the confirmation dialog. ``False`` when the user chose
-            "Stay": the screen and its controller are left exactly as
-            they were, nothing cancelled, nothing denied.
-        """
         controller = self._console_chat_controller
         if controller is None:
             return True
-        busy_count = controller.busy_fleet_session_count()
-        if busy_count <= 0:
+        return await self._session.confirm_navigation(controller)
+
+    async def confirm_quit(self) -> bool:
+        """Delegate revision-pinned Console loss confirmation for app quit."""
+
+        controller = self._console_chat_controller
+        if controller is None:
             return True
-        noun = "run" if busy_count == 1 else "runs"
-        dialog = ConfirmationDialog(
-            title="Leave Console?",
-            message=(
-                f"{busy_count} agent {noun} will be cancelled if you "
-                "leave Console. Leave anyway?\n\n"
-                "Tab/Shift+Tab selects Stay or Leave, Enter activates the "
-                "selected button, Esc stays."
-            ),
-            confirm_label="Leave",
-            cancel_label="Stay",
-        )
-        # `push_screen_wait` (the usual way to await a dialog's result) may
-        # ONLY be called from within a worker -- `App.push_screen` raises
-        # `NoActiveWorker` otherwise, since blocking a bare Future-await
-        # for a result only a LATER message resolves is exactly the
-        # deadlock shape workers exist to make safe. `confirm_navigation`
-        # itself runs on `TldwCli.handle_screen_navigation`'s own call
-        # stack -- which TASK-1230 made a worker's call stack (see
-        # `TldwCli._dispatch_screen_navigation`), specifically so this
-        # await can never starve the App's own event routing for the
-        # dialog's lifetime -- but the wait is still delegated to its own
-        # worker here (rather than a bare `await push_screen_wait(...)`)
-        # so `confirm_navigation` keeps working correctly even if some
-        # future caller ever invokes it outside that worker context --
-        # `exit_on_error=False` so a broken dialog fails this navigation
-        # closed (see the caller's except branch) rather than crashing the
-        # app.
-        worker = self.run_worker(
-            self.app_instance.push_screen_wait(dialog),
-            exclusive=False,
-            exit_on_error=False,
-        )
-        proceed = await worker.wait()
-        return bool(proceed)
+        return await self._session.confirm_quit(controller)
+
+    def prepare_for_quit(self) -> None:
+        """Tombstone Console future work before application cleanup."""
+
+        controller = self._console_chat_controller
+        if controller is not None:
+            controller.begin_shutdown()
 
     async def on_unmount(self) -> None:
         """Release Console-native resources owned by this screen."""
@@ -19675,7 +19633,7 @@ class ChatScreen(BaseAppScreen):
             return
         if button_id and button_id.startswith("console-close-session-tab-"):
             event.stop()
-            await self._session._close_console_session_tab(
+            self._session.start_close_console_session_tab(
                 button_id.removeprefix("console-close-session-tab-")
             )
             return

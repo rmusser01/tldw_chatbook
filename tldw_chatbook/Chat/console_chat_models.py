@@ -73,6 +73,26 @@ class ConsoleControllerActivity:
         return self.queued_count > 0
 
 
+@dataclass(frozen=True, slots=True)
+class ConsoleLifecycleImpact:
+    """Revisioned, content-free loss impact derived from Console activity."""
+
+    revision: int
+    live_run_count: int
+    queued_session_count: int
+    unsent_prompt_count: int
+
+    @property
+    def has_loss_risk(self) -> bool:
+        """Return whether leaving would discard or cancel Console work."""
+
+        return bool(
+            self.live_run_count
+            or self.queued_session_count
+            or self.unsent_prompt_count
+        )
+
+
 class ConsoleRunMarker(str, Enum):
     """Fleet-visible run marker for a session (parallel-agents spec §6).
 

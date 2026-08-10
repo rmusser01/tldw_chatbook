@@ -4955,6 +4955,7 @@ class TldwCli(
 
         self._ui_ready = False  # Track if UI is fully composed
         self._shutting_down = False  # Track if app is shutting down
+        self._quit_in_progress = False
 
         # --- Assign DB instances for event handlers ---
         if self.prompts_service_initialized:
@@ -10327,80 +10328,151 @@ class TldwCli(
         )
 
     def action_quit(self) -> None:
-        """Handle application quit - save persistent caches before exiting."""
-        loguru_logger.info("Application quit initiated")
+        """Dispatch one guarded asynchronous pre-quit confirmation worker."""
 
-        # Set flag to prevent new operations
-        self._shutting_down = True
-
-        # Force stop any playing audio and cleanup
-        if hasattr(self, "audio_player"):
-            try:
-                import asyncio
-
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    # Create cleanup tasks
-                    async def cleanup_audio():
-                        try:
-                            await asyncio.wait_for(
-                                self.audio_player.stop(), timeout=0.5
-                            )
-                        except asyncio.TimeoutError:
-                            loguru_logger.warning("Audio stop timed out")
-                        try:
-                            await asyncio.wait_for(
-                                self.audio_player.cleanup(), timeout=0.5
-                            )
-                        except asyncio.TimeoutError:
-                            loguru_logger.warning("Audio cleanup timed out")
-
-                    # Schedule cleanup
-                    asyncio.create_task(cleanup_audio())
-                else:
-                    # Synchronous cleanup if no event loop
-                    loop = asyncio.new_event_loop()
-                    loop.run_until_complete(self.audio_player.cleanup())
-                    loop.close()
-                loguru_logger.info("Audio player stopped and cleaned up")
-            except Exception as e:
-                loguru_logger.error(f"Error stopping audio during quit: {e}")
-
-        # Cancel media cleanup timer if it exists
-        if hasattr(self, "_media_cleanup_timer") and self._media_cleanup_timer:
-            self._media_cleanup_timer.stop()
-
-        # Note autosave is owned by the Library notes editor; no legacy quit-save path remains.
-
-        # Try to save caches but don't let it block quitting
+        if self._quit_in_progress:
+            return
+        self._quit_in_progress = True
+        quit_flow = self._confirm_and_quit()
         try:
-            # Import with timeout protection
-            import threading
+            self.run_worker(
+                quit_flow,
+                group="application-quit",
+                exclusive=True,
+                exit_on_error=False,
+            )
+        except Exception:
+            quit_flow.close()
+            self._quit_in_progress = False
+            loguru_logger.opt(exception=True).warning(
+                "Application quit worker could not start; staying in the app"
+            )
 
-            def save_caches_with_timeout():
-                # Note: The old cache service is deprecated
-                # The simplified RAG service handles caching internally
-                # and doesn't require explicit save on shutdown
-                loguru_logger.debug(
-                    "Cache saving skipped - handled by simplified RAG service"
+    async def _confirm_and_quit(self) -> None:
+        """Confirm the active screen, then execute one approved cleanup pass."""
+
+        loguru_logger.info("Application quit initiated")
+        try:
+            current_screen = self.screen
+            confirm_quit = getattr(current_screen, "confirm_quit", None)
+            if callable(confirm_quit):
+                decision = confirm_quit()
+                if inspect.isawaitable(decision):
+                    decision = await decision
+                if decision is False:
+                    self._quit_in_progress = False
+                    return
+        except Exception:
+            loguru_logger.opt(exception=True).warning(
+                "Pre-quit confirmation failed; staying in the app"
+            )
+            self._quit_in_progress = False
+            try:
+                self.notify(
+                    "Couldn't confirm quitting; staying in Chatbook.",
+                    severity="warning",
                 )
+            except Exception:
+                pass
+            return
 
-            # Run cache saving in a separate thread with timeout
-            save_thread = threading.Thread(target=save_caches_with_timeout)
-            save_thread.daemon = True  # Don't let this thread prevent app exit
+        try:
+            prepare_for_quit = getattr(current_screen, "prepare_for_quit", None)
+            if callable(prepare_for_quit):
+                preparation = prepare_for_quit()
+                if inspect.isawaitable(preparation):
+                    await preparation
+        except Exception:
+            loguru_logger.opt(exception=True).warning(
+                "Pre-quit shutdown guard failed; staying in the app"
+            )
+            self._quit_in_progress = False
+            try:
+                self.notify(
+                    "Couldn't prepare a safe shutdown; staying in Chatbook.",
+                    severity="warning",
+                )
+            except Exception:
+                pass
+            return
+
+        self._shutting_down = True
+        await self._run_approved_quit_cleanup()
+
+    async def _run_approved_quit_cleanup(self) -> None:
+        """Preserve quit ordering without blocking the Textual event loop."""
+
+        try:
+            await self._cleanup_audio_for_quit()
+            media_timer = getattr(self, "_media_cleanup_timer", None)
+            if media_timer is not None:
+                try:
+                    media_timer.stop()
+                except Exception:
+                    loguru_logger.opt(exception=True).warning(
+                        "Media cleanup timer could not stop during quit"
+                    )
+            try:
+                await asyncio.to_thread(self._run_blocking_quit_persistence)
+            except Exception:
+                loguru_logger.opt(exception=True).warning(
+                    "Blocking quit persistence failed"
+                )
+        finally:
+            self.exit()
+
+    async def _cleanup_audio_for_quit(self) -> None:
+        """Stop and release app-owned audio before the final exit."""
+
+        audio_player = getattr(self, "audio_player", None)
+        if audio_player is None:
+            return
+        try:
+            await asyncio.wait_for(audio_player.stop(), timeout=0.5)
+        except asyncio.TimeoutError:
+            loguru_logger.warning("Audio stop timed out")
+        except Exception:
+            loguru_logger.opt(exception=True).warning("Audio stop failed during quit")
+        try:
+            await asyncio.wait_for(audio_player.cleanup(), timeout=0.5)
+        except asyncio.TimeoutError:
+            loguru_logger.warning("Audio cleanup timed out")
+        except Exception:
+            loguru_logger.opt(exception=True).warning(
+                "Audio cleanup failed during quit"
+            )
+
+    @staticmethod
+    def _save_shutdown_caches_with_timeout() -> None:
+        """Retain the existing bounded cache-save compatibility pass."""
+
+        loguru_logger.debug("Cache saving skipped - handled by simplified RAG service")
+
+    def _run_blocking_quit_persistence(self) -> None:
+        """Run timed joins and configuration persistence off the app loop."""
+
+        try:
+            save_thread = threading.Thread(
+                target=self._save_shutdown_caches_with_timeout,
+                name="chatbook-quit-cache-save",
+                daemon=True,
+            )
             save_thread.start()
-            save_thread.join(timeout=2.0)  # Wait max 2 seconds
-
+            save_thread.join(timeout=2.0)
             if save_thread.is_alive():
                 loguru_logger.warning("Cache save timed out - proceeding with quit")
-        except Exception as e:
-            loguru_logger.error(f"Error in quit handler: {e}")
+        except Exception:
+            loguru_logger.opt(exception=True).warning("Error in quit cache handler")
 
-        if not persist_cli_config_for_shutdown():
-            loguru_logger.warning("Configuration shutdown persistence failed")
-
-        # Always call the parent quit method
-        self.exit()
+        try:
+            persisted = persist_cli_config_for_shutdown()
+        except Exception:
+            loguru_logger.opt(exception=True).warning(
+                "Configuration shutdown persistence raised an error"
+            )
+        else:
+            if not persisted:
+                loguru_logger.warning("Configuration shutdown persistence failed")
 
     ########################################################
     # --- End of Watchers and Helper Methods ---

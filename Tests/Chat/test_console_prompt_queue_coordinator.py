@@ -10,6 +10,7 @@ from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     ConsoleRunMarker,
+    ConsoleRunState,
     ConsoleRunStatus,
     ConsoleSubmissionOrigin,
 )
@@ -147,6 +148,84 @@ def _queue(controller: ConsoleChatController, session_id: str, text: str) -> str
     assert result.applied
     assert result.entry_id is not None
     return result.entry_id
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_impact_counts_claimed_entries_without_prompt_content():
+    gateway = BlockSecondReadinessGateway()
+    controller, _store, session_id = _arm_controller(gateway)
+
+    initial = controller.lifecycle_impact()
+    assert initial.live_run_count == 0
+    assert initial.queued_session_count == 0
+    assert initial.unsent_prompt_count == 0
+
+    task = asyncio.create_task(
+        controller.run_prompt_chain("manual", session_id=session_id)
+    )
+    await gateway.started[0].wait()
+    _queue(controller, session_id, "private first follow-up")
+    _queue(controller, session_id, "private second follow-up")
+
+    gateway.release[0].set()
+    await gateway.second_resolve_started.wait()
+
+    snapshot = controller.prompt_queue_registry.snapshot(session_id)
+    impact = controller.lifecycle_impact()
+    assert snapshot.claimed_count == 1
+    assert impact.revision > initial.revision
+    assert impact.live_run_count == 1
+    assert impact.queued_session_count == 1
+    assert impact.unsent_prompt_count == 2
+    assert "private first follow-up" not in repr(impact)
+    assert "private second follow-up" not in repr(impact)
+
+    gateway.release_second_resolve.set()
+    await gateway.started[1].wait()
+    gateway.release[1].set()
+    await gateway.started[2].wait()
+    gateway.release[2].set()
+    await task
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_impact_does_not_describe_paused_queue_as_live_run():
+    gateway = SequencedGateway(fail_call=0)
+    controller, _store, session_id = _arm_controller(gateway)
+
+    task = asyncio.create_task(
+        controller.run_prompt_chain("manual", session_id=session_id)
+    )
+    await gateway.started[0].wait()
+    _queue(controller, session_id, "wait until recovery")
+    gateway.release[0].set()
+    await task
+
+    activity = controller.activity_for(session_id)
+    impact = controller.lifecycle_impact()
+    assert activity.queue_paused is True
+    assert impact.live_run_count == 0
+    assert impact.queued_session_count == 1
+    assert impact.unsent_prompt_count == 1
+
+
+def test_session_lifecycle_impact_is_revisioned_independently():
+    gateway = SequencedGateway()
+    controller, _store, session_id = _arm_controller(gateway)
+    other = controller.new_session(title="Other")
+
+    session_before = controller.lifecycle_impact(session_id=session_id)
+    fleet_before = controller.lifecycle_impact()
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.STREAMING),
+        session_id=other.id,
+    )
+
+    session_after = controller.lifecycle_impact(session_id=session_id)
+    fleet_after = controller.lifecycle_impact()
+    assert session_after == session_before
+    assert fleet_after.revision > fleet_before.revision
+    assert fleet_after.live_run_count == 1
 
 
 @pytest.mark.asyncio
@@ -467,6 +546,23 @@ async def test_shutdown_during_claimed_readiness_cannot_accept_or_dispatch_it():
         if message.role is ConsoleMessageRole.USER and message.content == "two"
     )
     assert queued_echo.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_close_tombstones_before_cancel_and_never_starts_next_prompt():
+    gateway = SequencedGateway()
+    controller, _store, session_id = _arm_controller(gateway)
+    chain_task = asyncio.create_task(
+        controller.run_prompt_chain("one", session_id=session_id)
+    )
+    await gateway.started[0].wait()
+    _queue(controller, session_id, "two")
+
+    controller.close_session(session_id)
+    await asyncio.gather(chain_task, return_exceptions=True)
+
+    assert gateway.user_turns == ["one"]
+    assert controller.prompt_queue_registry.snapshot(session_id).total_count == 0
 
 
 @pytest.mark.asyncio

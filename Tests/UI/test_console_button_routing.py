@@ -24,9 +24,11 @@ rows and already have coverage in their owning feature's test file.
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
+from textual.css.query import NoMatches
 from textual.widgets import Button
 
 from Tests.UI.app_factory import _build_test_app
@@ -39,6 +41,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_prompt_queue import PromptQueuePauseReason
 from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
 )
@@ -73,6 +76,24 @@ async def _mounted_console(host, pilot, selector: str = "#console-workspace-cont
     console = host.screen_stack[-1]
     await _wait_for_selector(console, pilot, selector)
     return console
+
+
+async def _wait_for_confirmation(
+    host, *, previous: ConfirmationDialog | None = None
+) -> ConfirmationDialog:
+    """Wait for a close worker to mount its confirmation without fixed sleeps."""
+
+    for _ in range(200):
+        candidate = host.screen_stack[-1]
+        if isinstance(candidate, ConfirmationDialog) and candidate is not previous:
+            try:
+                candidate.query_one("#confirm-button", Button)
+            except NoMatches:
+                pass
+            else:
+                return candidate
+        await asyncio.sleep(0.01)
+    raise AssertionError("Console close confirmation did not mount")
 
 
 async def _sync_tray(console, pilot, state) -> ConsoleWorkspaceContextTray:
@@ -354,17 +375,106 @@ async def test_close_tab_button_confirms_before_dropping_a_session_with_messages
 
         close = console.query_one(f"#console-close-session-tab-{doomed.id}", Button)
         close.press()
-        await pilot.pause()
+        dialog = await _wait_for_confirmation(host)
 
-        assert isinstance(host.screen_stack[-1], ConfirmationDialog)
+        assert dialog.message.startswith("Closing this session will discard or cancel:")
+        assert "Transcript messages: 1" in dialog.message
+        assert "Live agent turns: 0" in dialog.message
+        assert "Unsent queued prompts: 0" in dialog.message
         # Still open: the confirmation is a gate, not a notification.
         assert doomed.id in {session.id for session in store.sessions()}
 
-        host.screen_stack[-1].query_one("#confirm-button", Button).press()
+        dialog.query_one("#confirm-button", Button).press()
         await pilot.pause()
         await pilot.pause()
 
         assert doomed.id not in {session.id for session in store.sessions()}
+
+
+@pytest.mark.asyncio
+async def test_close_empty_session_with_queue_warns_without_exposing_prompt_text():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=_ROUTING_SIZE) as pilot:
+        console = await _mounted_console(host, pilot, "#console-native-composer")
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        keeper_id = store.active_session_id
+        doomed = store.create_session()
+        store.switch_session(keeper_id)
+
+        registry = controller.prompt_queue_registry
+        snapshot = registry.snapshot(doomed.id)
+        started = registry.begin_chain(
+            doomed.id,
+            context_epoch=store.conversation_context_epoch(doomed.id),
+            expected_revision=snapshot.revision,
+        )
+        assert started.applied
+        controller.prompt_queue_coordinator._changed(doomed.id)
+        queued = controller.queue_prompt(
+            doomed.id,
+            text="secret queued close text",
+            expected_revision=started.snapshot.revision,
+        )
+        assert queued.applied
+        paused = registry.pause(
+            doomed.id,
+            reason=PromptQueuePauseReason.MANUAL,
+            expected_revision=queued.snapshot.revision,
+        )
+        assert paused.applied
+        controller.prompt_queue_coordinator._changed(doomed.id)
+
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+        console.query_one(
+            f"#console-close-session-tab-{doomed.id}", Button
+        ).press()
+        dialog = await _wait_for_confirmation(host)
+
+        assert "Transcript messages: 0" in dialog.message
+        assert "Live agent turns: 0" in dialog.message
+        assert "Unsent queued prompts: 1" in dialog.message
+        assert "secret queued close text" not in dialog.message
+
+        dialog.query_one("#cancel-button", Button).press()
+        await pilot.pause()
+        assert doomed.id in {session.id for session in store.sessions()}
+        assert registry.snapshot(doomed.id).total_count == 1
+
+
+@pytest.mark.asyncio
+async def test_close_revalidates_changed_impact_and_presents_updated_dialog():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=_ROUTING_SIZE) as pilot:
+        console = await _mounted_console(host, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        keeper_id = store.active_session_id
+        doomed = store.create_session()
+        store.switch_session(keeper_id)
+        store.append_message(doomed.id, role=ConsoleMessageRole.USER, content="one")
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+
+        console.query_one(
+            f"#console-close-session-tab-{doomed.id}", Button
+        ).press()
+        first = await _wait_for_confirmation(host)
+        assert "Transcript messages: 1" in first.message
+
+        store.append_message(doomed.id, role=ConsoleMessageRole.USER, content="two")
+        first.query_one("#confirm-button", Button).press()
+        second = await _wait_for_confirmation(host, previous=first)
+
+        assert "Transcript messages: 2" in second.message
+        assert doomed.id in {session.id for session in store.sessions()}
+        second.query_one("#cancel-button", Button).press()
+        await pilot.pause()
+        assert doomed.id in {session.id for session in store.sessions()}
 
 
 @pytest.mark.asyncio

@@ -319,35 +319,35 @@ new visible shelf or manager is mounted until TASK-14806 also supplies loss guar
 
 ### Implementation steps
 
-- [ ] Derive one content-free, revisioned lifecycle aggregate from TASK-14805's
+- [x] Derive one content-free, revisioned lifecycle aggregate from TASK-14805's
       controller activity projection. Report exact live-run, queued-session, and
       unsent-prompt counts, including claimed pre-accept entries. Do not introduce a
       second mutable projection; keep paused queues distinct from running agents.
-- [ ] Replace session close with one combined transcript/live/queue confirmation.
+- [x] Replace session close with one combined transcript/live/queue confirmation.
       Extend Console leave warnings to separate live-run, queued-session, and queued-
       prompt counts, including an empty transcript with live/queued work.
-- [ ] Pin session-close confirmation to the requested session ID and capture the
+- [x] Pin session-close confirmation to the requested session ID and capture the
       lifecycle revision. After any close, leave, or quit approval, re-read the
       impact; if its revision or counts changed, fail closed and present updated copy
       instead of destroying newly admitted or newly live work.
-- [ ] Make `TldwCli.action_quit()` dispatch one exclusive async confirmation worker
+- [x] Make `TldwCli.action_quit()` dispatch one exclusive async confirmation worker
       guarded by `_quit_in_progress`. Set shutdown state and run cleanup only after
       approval; Stay or errors fail closed and preserve all Console state.
-- [ ] Split approved quit cleanup so blocking cache/config persistence and timed
+- [x] Split approved quit cleanup so blocking cache/config persistence and timed
       joins run off the Textual event loop, while app state, timers, audio ownership,
       and final `exit()` remain on or marshal back to the app thread. Preserve current
       cleanup ordering and exactly-once behavior.
-- [ ] Inventory every user-initiated app exit entry point and route it through that
+- [x] Inventory every user-initiated app exit entry point and route it through that
       guard. Keep startup password cancellation and signal/forced termination outside
       the interactive guarantee and document those exclusions in tests.
-- [ ] Add lifecycle tests for repeated quit, confirmation failure, Stay preservation,
+- [x] Add lifecycle tests for repeated quit, confirmation failure, Stay preservation,
       combined close, cancellation-after-tombstone, and absence from persistence,
       snapshots, history, diagnostics, and logs. Prove the app loop remains responsive
       while approved blocking persistence is in progress.
-- [ ] Prove the controller shutdown/tombstone ordering by waking the real terminal
+- [x] Prove the controller shutdown/tombstone ordering by waking the real terminal
       transition after cancellation and observing that no subsequent queue claim or
       provider submission occurs.
-- [ ] Run the reached application navigation, screen teardown, session-close,
+- [x] Run the reached application navigation, screen teardown, session-close,
       controller shutdown, and configuration-encryption exit suites plus the screen
       ratchet. Complete task notes and DoD.
 
