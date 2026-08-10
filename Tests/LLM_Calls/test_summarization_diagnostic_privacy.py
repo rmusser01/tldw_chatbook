@@ -2247,7 +2247,7 @@ def test_tabby_empty_configured_credential_reports_resolved_state_truthfully(
     assert "TabbyAPI: Credential configured" not in captured.text
 
 
-def test_vllm_success_hides_input_prompt_credential_and_response(
+def test_vllm_success_hides_input_prompt_and_response(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -2256,7 +2256,7 @@ def test_vllm_success_hides_input_prompt_credential_and_response(
     )
     settings_calls = _install_signature_bound_settings(
         monkeypatch,
-        _vllm_settings(api_key=VLLM_CREDENTIAL_CANARY),
+        _vllm_settings(),
     )
     transport_calls = _install_signature_bound_session_post(monkeypatch, response)
 
@@ -2273,14 +2273,13 @@ def test_vllm_success_hides_input_prompt_credential_and_response(
     assert len(transport_calls) == 1
     args, kwargs = transport_calls[0]
     assert args == ("http://vllm.invalid/v1/chat/completions",)
-    assert kwargs["headers"]["Authorization"] == f"Bearer {VLLM_CREDENTIAL_CANARY}"
+    assert kwargs["headers"]["Authorization"] == "Bearer fixed-vllm-key"
     assert kwargs["json"]["messages"][1]["content"] == (
         f"{VLLM_INPUT_CANARY} \n\n\n\n{VLLM_PROMPT_CANARY}"
     )
     for canary in (
         VLLM_INPUT_CANARY,
         VLLM_PROMPT_CANARY,
-        VLLM_CREDENTIAL_CANARY,
         VLLM_RESPONSE_CANARY,
     ):
         assert canary not in captured.text
@@ -2290,6 +2289,41 @@ def test_vllm_success_hides_input_prompt_credential_and_response(
     assert "vLLM Summarize: Text extraction completed" in captured.text
     assert "vLLM Summarize: Custom prompt received" in captured.text
     assert "vLLM Summarization: Summary produced; character_count=" in captured.text
+
+
+def test_vllm_credential_fragments_are_not_logged(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    response = _FakeResponse(
+        json_data={"choices": [{"message": {"content": "fixed summary"}}]}
+    )
+    settings_calls = _install_signature_bound_settings(
+        monkeypatch,
+        _vllm_settings(api_key=VLLM_CREDENTIAL_CANARY),
+    )
+    transport_calls = _install_signature_bound_session_post(monkeypatch, response)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = local_summarization.summarize_with_vllm(
+            None,
+            "fixed input",
+            "fixed prompt",
+            system_message="fixed system message",
+        )
+
+    assert result == "fixed summary"
+    assert settings_calls
+    assert len(transport_calls) == 1
+    args, kwargs = transport_calls[0]
+    assert args == ("http://vllm.invalid/v1/chat/completions",)
+    assert kwargs["headers"]["Authorization"] == f"Bearer {VLLM_CREDENTIAL_CANARY}"
+    assert kwargs["json"]["messages"][1]["content"] == (
+        "fixed input \n\n\n\nfixed prompt"
+    )
+    assert VLLM_CREDENTIAL_CANARY[:5] not in captured.text
+    assert VLLM_CREDENTIAL_CANARY[-5:] not in captured.text
+    assert "vLLM Summarize: Credential loaded from config" in captured.text
 
 
 def test_vllm_error_response_hides_body_and_preserves_status_contract(
