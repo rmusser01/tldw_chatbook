@@ -78,7 +78,7 @@ A repaired diagnostic may contain only fields justified by the event:
 - a bounded exception class name, never an exception instance or message;
 - another bounded identifier only when it passes the existing `safe_metadata_token()` boundary.
 
-Prefer fixed labels and numeric/boolean fields. Do not add a dynamic provider/model/type token merely to preserve the shape of an old log. If a dynamic token is operationally necessary, pass it through `safe_metadata_token()` with a fixed fallback before it reaches the logger. Raw `type(value).__name__`, model names, provider names, object class names, and arbitrary string values are not automatically trusted metadata.
+Prefer fixed labels and numeric/boolean fields. Do not add a dynamic provider/model/type token merely to preserve the shape of an old log. If a dynamic token is operationally necessary, pass it through `safe_metadata_token()` before it reaches the logger; the helper's fixed `invalid` result is the only fallback. Raw `type(value).__name__`, model names, provider names, object class names, and arbitrary string values are not automatically trusted metadata.
 
 ### Forbidden values and operations
 
@@ -240,7 +240,7 @@ Rejected. TASK-2118 demonstrated that such a search missed private diagnostics w
 | A replacement leaks during eager formatting | Reject dynamic message construction and forbidden pre-formatting before the logger boundary |
 | Removing exception text changes user-visible behavior | Assert logging separately from the existing return/raise/yield contract |
 | A streaming test never reaches the leaking code | Fully consume the real generator and mutation-test the exact path |
-| A dynamic metadata token contains user text | Prefer fixed/numeric metadata; otherwise require `safe_metadata_token()` with a fixed fallback |
+| A dynamic metadata token contains user text | Prefer fixed/numeric metadata; otherwise require `safe_metadata_token()` and accept its fixed `invalid` result |
 | Manifest regeneration blesses unrelated drift | Compare exact current-dev and branch inventories, permitting only the two owner entries |
 | Line-number churn invalidates the guard | Key by module/function/event/category/occurrence; retain lines only as navigation aids |
 | A test passes without observing the changed call | Independently restore each category/module leak and require the owning assertion to fail |
