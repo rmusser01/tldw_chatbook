@@ -1066,7 +1066,7 @@ def summarize_with_vllm(
             logging.info("vLLM Summarize: Attempting to use API key from config file")
             loaded_config_data = load_settings()
             api_key = loaded_config_data.get("vllm_api", {}).get("api_key", "")
-            logging.debug("vLLM Summarize: Credential loaded from config")
+            logging.debug("vLLM Summarize: Credential config lookup completed")
 
         if not api_key or api_key.strip() == "":
             logging.error("vLLM Summarize: API key not found or is empty")
@@ -1135,7 +1135,7 @@ def summarize_with_vllm(
             "Content-Type": "application/json",
         }
 
-        logging.debug("vLLM Summarize: Credential applied to request")
+        logging.debug("vLLM Summarize: Authorization header prepared")
         logging.debug("vLLM Summarize: Preparing data + prompt for submittal")
         user_prompt = f"{text} \n\n\n\n{custom_prompt_arg}"
         if temp is None:

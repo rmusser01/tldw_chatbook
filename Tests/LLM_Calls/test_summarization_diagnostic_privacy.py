@@ -2283,7 +2283,7 @@ def test_vllm_success_hides_input_prompt_and_response(
         VLLM_RESPONSE_CANARY,
     ):
         assert canary not in captured.text
-    assert "vLLM Summarize: Credential loaded from config" in captured.text
+    assert "vLLM Summarize: Credential config lookup completed" in captured.text
     assert "vLLM Summarize: Raw input received" in captured.text
     assert "vLLM Summarize: Input processing completed" in captured.text
     assert "vLLM Summarize: Text extraction completed" in captured.text
@@ -2323,7 +2323,52 @@ def test_vllm_credential_fragments_are_not_logged(
     )
     assert VLLM_CREDENTIAL_CANARY[:5] not in captured.text
     assert VLLM_CREDENTIAL_CANARY[-5:] not in captured.text
-    assert "vLLM Summarize: Credential loaded from config" in captured.text
+    assert "vLLM Summarize: Credential config lookup completed" in captured.text
+
+
+def test_vllm_empty_configured_credential_reports_state_neutrally(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    response = _FakeResponse(
+        json_data={"choices": [{"message": {"content": "fixed empty-key summary"}}]}
+    )
+    settings_calls = _install_signature_bound_settings(
+        monkeypatch,
+        _vllm_settings(api_key=""),
+    )
+    transport_calls = _install_signature_bound_session_post(monkeypatch, response)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = local_summarization.summarize_with_vllm(
+            "",
+            "fixed input",
+            "fixed prompt",
+            system_message="fixed system message",
+        )
+
+    assert result == "fixed empty-key summary"
+    assert settings_calls
+    assert len(transport_calls) == 1
+    args, kwargs = transport_calls[0]
+    assert args == ("http://vllm.invalid/v1/chat/completions",)
+    assert kwargs["headers"]["Authorization"] == "Bearer "
+    assert kwargs["json"]["messages"][1]["content"] == (
+        "fixed input \n\n\n\nfixed prompt"
+    )
+    misleading_events = {
+        event
+        for event in (
+            "vLLM Summarize: Credential loaded from config",
+            "vLLM Summarize: Credential applied to request",
+        )
+        if event in captured.text
+    }
+    assert not misleading_events, (
+        f"empty credential emitted misleading state: {sorted(misleading_events)}"
+    )
+    assert "vLLM Summarize: Credential config lookup completed" in captured.text
+    assert "vLLM Summarize: Authorization header prepared" in captured.text
 
 
 def test_vllm_error_response_hides_body_and_preserves_status_contract(
