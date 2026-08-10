@@ -81,11 +81,11 @@
 
 ## Task 6: Integrate Exact Slash and Picker Replacement
 
-- [ ] Add red `Tests/UI/test_console_command_composer.py` and `Tests/UI/test_console_prompt_picker.py` cases that capture the entire segment-aware composer snapshot at `/prompt` dispatch or picker opening, before any awaited resolution/selection, and replace exactly all snapshot draft segments on Apply/Use original.
-- [ ] Cancel must leave the command/draft intact. A changed composer fingerprint, session change, or expired request must apply neither lane and warn.
-- [ ] When a resolved Prompt has no variables and no System lane, retain the direct replacement fast path through the same safe application helper. A System-only Prompt still opens authorization dialog.
-- [ ] Ensure selecting a Recipe still enters the existing unsaved Prompt-copy path before variables can be applied.
-- [ ] Refactor `ConsolePromptsController`'s two hosts to call one dialog-launch/helper and one Console application transaction rather than duplicate parsing/rendering or adding a second ChatScreen-owned path.
+- [x] Add red `Tests/UI/test_console_command_composer.py` and `Tests/UI/test_console_prompt_picker.py` cases that capture the entire segment-aware composer snapshot at `/prompt` dispatch or picker opening, before any awaited resolution/selection, and replace exactly all snapshot draft segments on Apply/Use original.
+- [x] Cancel must leave the command/draft intact. A changed composer fingerprint, session change, or expired request must apply neither lane and warn.
+- [x] When a resolved Prompt has no variables and no System lane, retain the direct replacement fast path through the same safe application helper. A System-only Prompt still opens authorization dialog.
+- [x] Ensure selecting a Recipe still enters the existing unsaved Prompt-copy path before variables can be applied.
+- [x] Refactor `ConsolePromptsController`'s two hosts to call one dialog-launch/helper and one Console application transaction rather than duplicate parsing/rendering or adding a second ChatScreen-owned path.
 
 ## Task 7: Integrate Library Append and Optional System Replacement
 
