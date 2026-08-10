@@ -89,6 +89,8 @@ _PROMPT_NAMES = (
 )
 _PROMPT_INTEGER = re.compile(r"-?(?:0|[1-9][0-9]*)\Z")
 _MAX_PROMPT_INTEGER_CHARS = 128
+_MAX_PROMPT_INTEGER_VALUE = 10**_MAX_PROMPT_INTEGER_CHARS - 1
+_MIN_PROMPT_INTEGER_VALUE = -(10 ** (_MAX_PROMPT_INTEGER_CHARS - 1) - 1)
 
 
 def _encode_continuation_state(
@@ -575,6 +577,8 @@ class ChatbookGatewayRuntime:
             elif isinstance(value, bool):
                 cls._raise_invalid_prompt_arguments()
             elif type(value) is int:
+                if not _MIN_PROMPT_INTEGER_VALUE <= value <= _MAX_PROMPT_INTEGER_VALUE:
+                    cls._raise_invalid_prompt_arguments()
                 normalized[name] = value
             elif (
                 isinstance(value, str)

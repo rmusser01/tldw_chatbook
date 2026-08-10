@@ -18,6 +18,7 @@ GatewayApplicationError = gateway.GatewayApplicationError
 GatewayLimits = gateway.GatewayLimits
 GatewayRequestContext = gateway.GatewayRequestContext
 
+from tldw_chatbook.MCP import gateway_runtime as gateway_runtime_module  # noqa: E402
 from tldw_chatbook.MCP.gateway_runtime import ChatbookGatewayRuntime  # noqa: E402
 from tldw_chatbook.MCP.server import _describe_local_prompts  # noqa: E402
 
@@ -417,6 +418,59 @@ def test_prompt_integer_subclasses_are_rejected_without_conversion() -> None:
     assert state["calls"] == []
 
 
+@pytest.mark.parametrize(
+    "wire_value",
+    [
+        10**gateway_runtime_module._MAX_PROMPT_INTEGER_CHARS - 1,
+        -(10 ** (gateway_runtime_module._MAX_PROMPT_INTEGER_CHARS - 1) - 1),
+    ],
+    ids=["positive-128-digits", "negative-128-characters"],
+)
+def test_prompt_exact_integers_accept_the_string_domain_limits(wire_value: int) -> None:
+    runtime, state = _ready_runtime()
+
+    asyncio.run(
+        runtime.get_prompt(
+            "summarize_conversation",
+            {"conversation_id": wire_value},
+            _context(),
+        )
+    )
+
+    assert state["calls"][0][0] == wire_value
+
+
+@pytest.mark.parametrize(
+    "wire_value",
+    [
+        10**gateway_runtime_module._MAX_PROMPT_INTEGER_CHARS,
+        -(10 ** (gateway_runtime_module._MAX_PROMPT_INTEGER_CHARS - 1)),
+        10**10_000,
+    ],
+    ids=["positive-one-over", "negative-one-over", "very-large-no-conversion"],
+)
+def test_prompt_exact_integers_reject_values_outside_the_string_domain(
+    wire_value: int,
+) -> None:
+    runtime, state = _ready_runtime()
+
+    with pytest.raises(GatewayApplicationError) as exc_info:
+        asyncio.run(
+            runtime.get_prompt(
+                "summarize_conversation",
+                {"conversation_id": wire_value},
+                _context(),
+            )
+        )
+
+    _assert_prompt_error(
+        exc_info,
+        message="Invalid prompt arguments.",
+        reason_code="invalid_prompt_arguments",
+    )
+    assert state["calls"] == []
+
+
 def test_absent_optional_arguments_are_omitted_so_python_defaults_apply() -> None:
     runtime, state = _ready_runtime()
     handler = state["summarize"]
@@ -675,6 +729,46 @@ def test_prompt_result_accepts_exact_byte_budget_and_rejects_one_over() -> None:
 
 
 @pytest.mark.parametrize(
+    ("unit", "serialized_unit_bytes"),
+    [("é", 2), ("\x00", 6)],
+    ids=["multibyte-utf8", "json-escaped-control"],
+)
+def test_prompt_result_budget_uses_compact_utf8_json_bytes(
+    unit: str, serialized_unit_bytes: int
+) -> None:
+    limit = GatewayLimits().max_result_bytes
+    overhead = _serialized_prompt_bytes("")
+    assert _serialized_prompt_bytes(unit) - overhead == serialized_unit_bytes
+    repetitions, remainder = divmod(limit - overhead, serialized_unit_bytes)
+    exact_text = unit * repetitions + "x" * remainder
+    exact_runtime, _state = _ready_runtime(
+        summarize_result=[{"role": "user", "content": exact_text}]
+    )
+    over_runtime, _state = _ready_runtime(
+        summarize_result=[{"role": "user", "content": exact_text + "x"}]
+    )
+
+    exact = asyncio.run(
+        exact_runtime.get_prompt(
+            "summarize_conversation", {"conversation_id": 1}, _context()
+        )
+    )
+    assert _serialized_prompt_bytes(exact["messages"][0]["content"]["text"]) == limit
+
+    with pytest.raises(GatewayApplicationError) as exc_info:
+        asyncio.run(
+            over_runtime.get_prompt(
+                "summarize_conversation", {"conversation_id": 1}, _context()
+            )
+        )
+    _assert_prompt_error(
+        exc_info,
+        message="Prompt handler returned an invalid result.",
+        reason_code="invalid_prompt_result",
+    )
+
+
+@pytest.mark.parametrize(
     "raw_result",
     [
         [],
@@ -833,3 +927,73 @@ def test_prompt_fallbacks_never_expose_internal_exception_text(
         ]
     )
     assert all("Traceback" not in message for message, _exception in records)
+
+
+def test_real_keyword_search_failure_stays_private_through_prompt_gateway(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+    from tldw_chatbook.MCP.prompts import MCPPrompts
+    from tldw_chatbook.MCP.server import TldwMCPServer
+    from tldw_chatbook.RAG_Search.simplified import search_service
+
+    private_fragments = ("SENTINEL", "/private/path", "API_KEY", "secret")
+    private_sentinel = "SENTINEL /private/path API_KEY=secret"
+    calls: list[tuple[str, object, int]] = []
+    media_db = MediaDatabase(tmp_path / "prompt-search.sqlite", client_id="test")
+
+    def fail_search(
+        *, search_query: str, media_types: object, results_per_page: int
+    ) -> tuple[list[dict[str, object]], int]:
+        calls.append((search_query, media_types, results_per_page))
+        raise RuntimeError(private_sentinel)
+
+    monkeypatch.setattr(media_db, "search_media_db", fail_search)
+    monkeypatch.setattr(search_service, "create_rag_service", lambda **_kwargs: None)
+
+    runtime = _runtime()
+    server = TldwMCPServer.__new__(TldwMCPServer)
+    server.mcp = runtime
+    server.prompts = MCPPrompts(object(), media_db)  # type: ignore[arg-type]
+    server._register_prompts()
+    runtime.finalize()
+
+    records: list[tuple[str, object]] = []
+    sink_id = logger.add(
+        lambda message: records.append((str(message), message.record["exception"]))
+    )
+    try:
+        result = asyncio.run(
+            runtime.get_prompt(
+                "search_and_synthesize",
+                {"query": "private query", "num_sources": 5},
+                _context(),
+            )
+        )
+    finally:
+        logger.remove(sink_id)
+        media_db.close_connection()
+
+    captured = capsys.readouterr()
+    assert calls == [("private query", None, 5)]
+    assert result == {
+        "messages": [
+            {
+                "role": "user",
+                "content": {"type": "text", "text": "Unable to create prompt."},
+            }
+        ]
+    }
+    assert records
+    assert all(exception is None for _message, exception in records)
+    public_values = [
+        json.dumps(result),
+        *(message for message, _exception in records),
+        captured.out,
+        captured.err,
+    ]
+    assert all(
+        fragment not in value
+        for fragment in private_fragments
+        for value in public_values
+    )
