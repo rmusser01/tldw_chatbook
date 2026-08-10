@@ -98,20 +98,20 @@
 
 ## Task 8: Documentation and Verification
 
-- [ ] Document grammar/escaping examples, limits, blank values, System authorization, Use original, destination behaviors, expiry, and non-persistence in Library and Console guides.
-- [ ] Run focused/affected suites.
+- [x] Document grammar/escaping examples, limits, blank values, System authorization, Use original, destination behaviors, expiry, and non-persistence in Library and Console guides.
+- [x] Run focused/affected suites.
 
 ```bash
 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Prompt_Management/test_prompt_variables.py Tests/State/test_pending_handoff_store.py Tests/State/test_screen_state_store.py Tests/UI/test_prompt_variables_dialog.py Tests/UI/test_console_command_composer.py Tests/UI/test_console_prompt_picker.py Tests/UI/test_console_native_chat_flow.py Tests/UI/test_library_prompts_canvas.py Tests/test_application_state_ownership.py Tests/ProductionApp/test_chat_composition_retirement.py -q
 git diff --check
 ```
 
-- [ ] Render and inspect shared dialog at narrow/normal sizes, with 0/1/64 variables, System toggled, limit error, and all three destination disclosures.
-- [ ] Run the full suite, self-review for secret logging/stale mutation/parser ambiguity, request independent review, and address all valid findings.
+- [x] Render and inspect shared dialog at narrow/normal sizes, with 0/1/64 variables, System toggled, limit error, and all three destination disclosures.
+- [x] Run the full suite, self-review for secret logging/stale mutation/parser ambiguity, request independent review, and address all valid findings.
 
 ```bash
 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest
 ```
 
-- [ ] Complete TASK-199 criteria/notes with ADR link and verification; mark Done only after DoD.
+- [x] Complete TASK-199 criteria/notes with ADR link and verification; mark Done only after DoD.
 - [ ] Open one ready PR against `dev`, resolve CI/review, merge, and verify on `origin/dev`. Do not begin TASK-197 implementation before confirmation.

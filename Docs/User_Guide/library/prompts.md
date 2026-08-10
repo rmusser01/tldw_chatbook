@@ -194,19 +194,67 @@ and selected retained row unchanged so you can correct the issue or retry.
 | Control | What it does |
 |---|---|
 | Save Prompt / Save Recipe / Update original | Saves the current Prompt or Recipe (explicit save only) |
-| Use in Console | For a saved, clean Prompt, appends its compiled User text to the Console composer and switches there. For an editable Recipe, creates a detached unsaved Prompt copy in the editor; nothing is applied. |
+| Use in Console | For a saved, clean Prompt, opens the shared variable/System authorization dialog when needed, then appends the selected User text to the Console composer and optionally replaces the session System prompt. For an editable Recipe, creates a detached unsaved Prompt copy in the editor; nothing is applied. |
 | Export… | Saves a representable Prompt or Recipe as a Markdown file ("Export Prompt as Markdown" dialog). Compatibility or legacy Recipes that would lose their type fail closed and require **Convert and save as a new Prompt** first. |
 | Copy Markdown | Copies the exact live Markdown working copy, including unsaved create, duplicate, conversion, and block edits: System/User text plus applicable structured Prompt/Recipe metadata. Success follows a clipboard write; unavailable or failed clipboard support shows a warning or error. Compatibility or legacy Recipes that would flatten to Prompt-looking Markdown require **Convert and save as a new Prompt** first. |
 | Duplicate prompt | Opens a new unsaved copy named "<name> (copy)" with all fields prefilled. Compatibility or legacy Recipes that cannot retain Recipe identity require **Convert and save as a new Prompt** first. |
 | Delete | Opens a confirmation before discarding the saved Prompt or Recipe; the copy states the deletion cannot be undone from Library, and if the editor is dirty it also warns that the unsaved working copy will be discarded |
 
 For a Prompt, **Use in Console** works differently from the notes and media
-actions: instead of staging a source for retrieval, it appends compiled User
+actions: instead of staging a source for retrieval, it appends selected User
 text to the current Console draft — never replacing it. It refuses a dirty
-Prompt ("Save your changes before using this prompt in Console.") and a
-system-only Prompt. For an editable Recipe, the action stays in Library and
-converts the Recipe into a detached unsaved Prompt copy for review; it does not
-stage text, change the saved Recipe, or switch to Console.
+Prompt ("Save your changes before using this prompt in Console."). A System-only
+Prompt is allowed only through the explicit System authorization described
+below. For an editable Recipe, the action stays in Library and converts the
+Recipe into a detached unsaved Prompt copy for review; it does not stage text,
+change the saved Recipe, or switch to Console.
+
+### Prompt variables at insertion time
+
+System and User lanes may contain variables such as `{customer}`. Names are
+case-sensitive and must match `[A-Za-z_][A-Za-z0-9_]*`; `{customer}` and
+`{Customer}` are different names. The shared **Prompt variables** dialog lists
+each name once, in first-occurrence order across System then User, and uses the
+one entered value for every occurrence in both lanes. Blank values are valid,
+and braces inside an entered value stay literal rather than becoming another
+variable.
+
+Use `{{` for a literal `{` and `}}` for a literal `}`. Thus
+`{{customer}}` inserts `{customer}`, while `{{{customer}}}` inserts the value
+inside literal braces. Invalid and unmatched forms such as `{first-name}`,
+`{ name }`, `{name`, and ordinary JSON object braces remain literal. Names are
+limited to 64 characters and one insertion to 64 unique variables. If a limit
+is exceeded, **Apply** is disabled and the dialog shows the specific bounded
+message `A Prompt variable name exceeds 64 characters.` or
+`This Prompt has more than 64 variables.`; **Use original placeholders** stays
+enabled.
+
+A System lane is always a separate choice. The checkbox reads
+`Replace the current session System prompt with this System lane` and starts
+**Off**. Turning it on may add System-only fields without discarding values you
+already entered. **Apply** fills all active lanes; **Use original placeholders**
+applies the selected lanes unchanged; **Cancel** applies nothing. A System-only
+Prompt, including one whose User lane is blank, has no active lane until you
+turn on System replacement. A Prompt with no applicable User text and no
+authorized System lane makes no change.
+
+Library appends to the active Console draft settled when Console consumes the
+handoff; `/prompt` and Console's picker instead replace the complete draft they
+captured when their flow opened. Library never guesses a destination: if it has
+no prior Console target, it says `Open Console once, then retry Use in Console.`
+If the target session or authorized System prompt changes, the application is
+refused without modifying either lane. A transient composer remount is retried
+only while the handoff is valid.
+
+The 120-second expiry starts when you confirm **Apply** or **Use original
+placeholders**, not while you are filling the dialog. If Console has not
+consumed the application by the boundary, it expires and must be retried.
+Variable values and pending applications remain memory-only and are never saved
+as reusable defaults. Applied draft/System text then follows its normal
+lifecycle. **Menu → Undo Prompt change** restores only the prior draft, not the
+System prompt. If the live System replacement succeeds but durable persistence
+fails, Console warns: `System prompt applied for this session, but the change
+could not be saved -- it may not survive a reload.`
 
 ### Where prompts surface in Console
 
@@ -225,8 +273,9 @@ prompt to the Library. See
    path into "File or folder path…" (Browse… only picks single files),
    press **Import**, and read the "N imported · N skipped" outcome.
 3. **Use a prompt in Console** — open it, press **Use in Console**; you
-   land in Console with its user text added to the composer. (Or, from
-   Console, type `/prompt <name>`.)
+   land in Console with its selected User text appended to the composer (and
+   its System lane applied only if you explicitly authorize it). Or, from
+   Console, type `/prompt <name>` to replace the current draft.
 4. **Duplicate and tweak** — open a Prompt or losslessly representable Recipe,
    press **Duplicate prompt**, rename the "<name> (copy)" editor that opens,
    adjust the blocks, then use the enabled save action — the original is untouched.
