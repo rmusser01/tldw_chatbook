@@ -372,8 +372,8 @@ Character-based creative writing.
 
 ## Configuration
 
-The standalone gateway is stdio-only. It reads the local-tool exposure switch
-from config.toml:
+The standalone gateway is stdio-only. The only `[mcp]` configuration key
+consumed by the standalone gateway is `expose_local_tools`. Its default is:
 
 ```toml
 [mcp]
@@ -405,14 +405,7 @@ call still uses the shared permission store and kill switch described above.
    pip install -e ".[mcp]"
    ```
 
-2. **Enable MCP in configuration**:
-   Edit `~/.config/tldw_cli/config.toml`:
-   ```toml
-   [mcp]
-   enabled = true
-   ```
-
-3. **Configure API keys** (if using chat tools):
+2. **Configure API keys** (if using chat tools):
    ```toml
    [API]
    openai_api_key = "your-api-key"
@@ -629,7 +622,6 @@ await client.disconnect_from_server("my_server")
    - Check Python version is 3.11+
 
 2. **Server won't start**:
-   - Check config.toml has `mcp.enabled = true`
    - Verify database paths are correct
    - Check logs for initialization errors
 

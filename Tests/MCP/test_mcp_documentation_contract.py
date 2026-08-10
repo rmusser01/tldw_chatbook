@@ -230,6 +230,8 @@ def test_design_does_not_advertise_unimplemented_standalone_controls() -> None:
         "rate_limit = 100",
         "max_concurrent_requests = 10",
         "Client allowlisting via",
+        "mcp.enabled",
+        "enabled = true",
     )
     assert all(claim not in text for claim in stale_claims)
     normalized = " ".join(text.split())
@@ -237,6 +239,10 @@ def test_design_does_not_advertise_unimplemented_standalone_controls() -> None:
     assert "600 requests per minute" in normalized
     assert "16 in-flight requests" in normalized
     assert "`[mcp] expose_local_tools = false`" in text
+    assert (
+        "The only `[mcp]` configuration key consumed by the standalone gateway "
+        "is `expose_local_tools`."
+    ) in normalized
 
 
 def test_task_2511_records_truthful_supersession_instead_of_fastmcp_completion():

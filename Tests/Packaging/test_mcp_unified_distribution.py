@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from email.parser import Parser
 import io
 import json
@@ -16,6 +17,7 @@ import tarfile
 import threading
 import time
 import tomllib
+import traceback
 from typing import Any
 import zipfile
 
@@ -91,6 +93,7 @@ SAFE_HOST_ENV_KEYS = (
     "WINDIR",
 )
 PROCESS_EOF = object()
+CLEANUP_FAILURE_MESSAGE = "artifact cleanup failed"
 PATH_PROBE = r"""
 from pathlib import Path
 import json
@@ -322,10 +325,8 @@ def _assert_tool_inventory(tool_names: list[str]) -> None:
 
 
 def _assert_private_stderr(stderr: str, *, secret: str, path: str) -> None:
-    assert secret not in stderr
-    assert path not in stderr
-    assert '"jsonrpc"' not in stderr
-    assert "Traceback" not in stderr
+    if any(value in stderr for value in (secret, path, '"jsonrpc"', "Traceback")):
+        raise AssertionError("artifact stderr privacy violation") from None
 
 
 def _assert_private_wire_responses(
@@ -334,7 +335,8 @@ def _assert_private_wire_responses(
     serialized = json.dumps(responses, ensure_ascii=False, sort_keys=True)
     for private_value in (secret, path):
         encoded = json.dumps(private_value, ensure_ascii=False)[1:-1]
-        assert encoded not in serialized
+        if encoded in serialized:
+            raise AssertionError("artifact response privacy violation") from None
 
 
 def _test_metadata(*requirements: str) -> Any:
@@ -453,6 +455,28 @@ def _wait_for_processes_to_exit(pids: list[int], timeout: float = 3) -> bool:
     return not any(_pid_exists(pid) for pid in pids)
 
 
+def _assert_private_exception_surface(
+    error: BaseException,
+    captured: pytest.CaptureFixture[str],
+    private_values: tuple[str, ...],
+) -> None:
+    streams = captured.readouterr()
+    rendered = "".join(traceback.format_exception(error))
+    if error.__cause__ is not None:
+        rendered += "".join(traceback.format_exception(error.__cause__))
+    if error.__context__ is not None:
+        rendered += "".join(traceback.format_exception(error.__context__))
+    rendered += streams.out + streams.err
+    if any(private_value in rendered for private_value in private_values):
+        raise AssertionError(
+            "private failure rendering exposed protected data"
+        ) from None
+
+
+def _cleanup_failure() -> RuntimeError:
+    return RuntimeError("sk-task2512-API_KEY=/private/cleanup-sentinel")
+
+
 @pytest.mark.parametrize(
     ("mode", "expected_error", "timeout"),
     [
@@ -491,14 +515,89 @@ def test_run_cleans_the_owned_process_tree_and_root_on_failure(
         assert _wait_for_processes_to_exit(pids)
 
 
+@pytest.mark.parametrize(
+    ("mode", "expected_error", "timeout"),
+    [
+        ("timeout", subprocess.TimeoutExpired, 0.25),
+        ("nonzero", AssertionError, 5),
+    ],
+)
+def test_run_preserves_primary_failure_when_process_cleanup_raises(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    mode: str,
+    expected_error: type[BaseException],
+    timeout: float,
+) -> None:
+    root = tmp_path / f"{mode}-cleanup-error-root"
+    root.mkdir()
+    pid_file = root / "pids"
+    command = [sys.executable, "-c", PROCESS_TREE_SCRIPT, str(pid_file), mode]
+    pids: list[int] = []
+    real_terminate = _terminate_process_tree
+
+    def terminate_then_raise(process: subprocess.Popen[str]) -> None:
+        real_terminate(process)
+        raise _cleanup_failure()
+
+    error: BaseException | None = None
+    try:
+        with monkeypatch.context() as context:
+            context.setattr(
+                sys.modules[__name__],
+                "_terminate_process_tree",
+                terminate_then_raise,
+            )
+            try:
+                _run(command, cwd=root, env=os.environ.copy(), timeout=timeout)
+            except BaseException as caught:
+                error = caught
+        if pid_file.exists():
+            pids = [int(value) for value in pid_file.read_text().split()]
+        if not isinstance(error, expected_error):
+            raise AssertionError(
+                "process cleanup replaced the primary failure"
+            ) from None
+        if mode == "timeout":
+            expected_message = str(subprocess.TimeoutExpired(command, timeout))
+        else:
+            expected_message = f"command: {command}\nstdout:\n\nstderr:\n"
+        if str(error) != expected_message:
+            raise AssertionError(
+                "process cleanup changed the primary failure"
+            ) from None
+        if getattr(error, "__notes__", None) != ["artifact cleanup failed"]:
+            raise AssertionError("process cleanup failure note is not fixed") from None
+        _assert_private_exception_surface(
+            error,
+            capsys,
+            (
+                "sk-task2512",
+                "API_KEY",
+                "/private/cleanup-sentinel",
+            ),
+        )
+        assert len(pids) == 2
+        assert _wait_for_processes_to_exit(pids)
+    finally:
+        _force_stop_test_processes(pids)
+        assert _wait_for_processes_to_exit(pids)
+        shutil.rmtree(root, ignore_errors=True)
+        assert not root.exists()
+
+
 def test_server_failure_cleans_descendants_reader_and_root(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     root = tmp_path / "server-root"
     root.mkdir()
     pid_file = root / "pids"
     pids: list[int] = []
     real_spawn = _spawn_owned_process
+    real_terminate = _terminate_process_tree
 
     def spawn_adversarial_server(*_args: Any, **kwargs: Any) -> subprocess.Popen[str]:
         return real_spawn(
@@ -512,6 +611,11 @@ def test_server_failure_cleans_descendants_reader_and_root(
             **kwargs,
         )
 
+    def terminate_then_raise(process: subprocess.Popen[str]) -> None:
+        real_terminate(process)
+        raise _cleanup_failure()
+
+    error: BaseException | None = None
     try:
         with monkeypatch.context() as context:
             context.setattr(
@@ -519,8 +623,32 @@ def test_server_failure_cleans_descendants_reader_and_root(
                 "_spawn_owned_process",
                 spawn_adversarial_server,
             )
-            with pytest.raises(json.JSONDecodeError):
+            context.setattr(
+                sys.modules[__name__],
+                "_terminate_process_tree",
+                terminate_then_raise,
+            )
+            try:
                 _exercise_server(Path(sys.executable), root, os.environ.copy())
+            except BaseException as caught:
+                error = caught
+        if not isinstance(error, json.JSONDecodeError):
+            raise AssertionError(
+                "server cleanup replaced the primary failure"
+            ) from None
+        if str(error) != "Expecting value: line 1 column 1 (char 0)":
+            raise AssertionError("server cleanup changed the primary failure") from None
+        if getattr(error, "__notes__", None) != ["artifact cleanup failed"]:
+            raise AssertionError("server cleanup failure note is not fixed") from None
+        _assert_private_exception_surface(
+            error,
+            capsys,
+            (
+                "sk-task2512",
+                "API_KEY",
+                "/private/cleanup-sentinel",
+            ),
+        )
         pids = [int(value) for value in pid_file.read_text().split()]
         assert len(pids) == 2
         assert _wait_for_processes_to_exit(pids)
@@ -533,6 +661,64 @@ def test_server_failure_cleans_descendants_reader_and_root(
         assert _wait_for_processes_to_exit(pids)
         shutil.rmtree(root, ignore_errors=True)
         assert not root.exists()
+
+
+@pytest.mark.parametrize("has_primary_failure", (False, True))
+def test_artifact_root_cleanup_never_exposes_or_replaces_cleanup_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    has_primary_failure: bool,
+) -> None:
+    root = tmp_path / "root-cleanup-error"
+    root.mkdir()
+    real_rmtree = shutil.rmtree
+
+    def remove_then_raise(*args: Any, **kwargs: Any) -> None:
+        real_rmtree(*args, **kwargs)
+        raise _cleanup_failure()
+
+    error: BaseException | None = None
+    try:
+        with monkeypatch.context() as context:
+            context.setattr(shutil, "rmtree", remove_then_raise)
+            try:
+                if has_primary_failure:
+                    try:
+                        raise ValueError("primary artifact failure")
+                    finally:
+                        _cleanup_artifact_root(root)
+                _cleanup_artifact_root(root)
+            except BaseException as caught:
+                error = caught
+        expected_type = ValueError if has_primary_failure else AssertionError
+        expected_message = (
+            "primary artifact failure"
+            if has_primary_failure
+            else "artifact cleanup failed"
+        )
+        if not isinstance(error, expected_type) or str(error) != expected_message:
+            raise AssertionError(
+                "artifact root cleanup failure was not fixed"
+            ) from None
+        expected_notes = ["artifact cleanup failed"] if has_primary_failure else None
+        if getattr(error, "__notes__", None) != expected_notes:
+            raise AssertionError(
+                "artifact root cleanup failure note is not fixed"
+            ) from None
+        _assert_private_exception_surface(
+            error,
+            capsys,
+            (
+                "sk-task2512",
+                "API_KEY",
+                "/private/cleanup-sentinel",
+                str(root),
+            ),
+        )
+        assert not root.exists()
+    finally:
+        real_rmtree(root, ignore_errors=True)
 
 
 WIRE_INVENTORIES = {
@@ -567,9 +753,10 @@ def test_exact_wire_inventory_rejects_a_duplicate(
 @pytest.mark.parametrize("leak_location", ("result", "result._meta"))
 def test_wire_privacy_rejects_result_and_metadata_leaks(
     leak_location: str,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    secret = "wire-secret"
-    checkout_path = "/private/checkout-sentinel"
+    secret = "sk-task2512-wire-API_KEY"
+    checkout_path = "/private/task2512-checkout-sentinel"
     response: dict[str, Any] = {
         "jsonrpc": "2.0",
         "id": "mutation",
@@ -579,8 +766,44 @@ def test_wire_privacy_rejects_result_and_metadata_leaks(
             else {"_meta": {"debug": checkout_path}}
         ),
     }
-    with pytest.raises(AssertionError):
+    error: BaseException | None = None
+    try:
         _assert_private_wire_responses([response], secret=secret, path=checkout_path)
+    except BaseException as caught:
+        error = caught
+    if not isinstance(error, AssertionError) or str(error) != (
+        "artifact response privacy violation"
+    ):
+        raise AssertionError("response privacy rejection was not fixed") from None
+    _assert_private_exception_surface(
+        error,
+        capsys,
+        (secret, checkout_path, "sk-task2512", "API_KEY", "checkout-sentinel"),
+    )
+
+
+@pytest.mark.parametrize("leak_kind", ("secret", "path"))
+def test_stderr_privacy_rejection_does_not_render_private_values(
+    leak_kind: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    secret = "sk-task2512-stderr-API_KEY"
+    checkout_path = "/private/task2512-stderr-checkout-sentinel"
+    stderr = secret if leak_kind == "secret" else checkout_path
+    error: BaseException | None = None
+    try:
+        _assert_private_stderr(stderr, secret=secret, path=checkout_path)
+    except BaseException as caught:
+        error = caught
+    if not isinstance(error, AssertionError) or str(error) != (
+        "artifact stderr privacy violation"
+    ):
+        raise AssertionError("stderr privacy rejection was not fixed") from None
+    _assert_private_exception_surface(
+        error,
+        capsys,
+        (secret, checkout_path, "sk-task2512", "API_KEY", "checkout-sentinel"),
+    )
 
 
 def test_sdist_license_must_be_at_the_project_root(tmp_path: Path) -> None:
@@ -740,11 +963,10 @@ def _run(
     try:
         stdout, stderr = process.communicate(timeout=timeout)
     except BaseException:
-        _terminate_process_tree(process)
-        try:
-            process.communicate(timeout=5)
-        except (subprocess.TimeoutExpired, ValueError):
-            pass
+        _cleanup_preserving_primary(
+            lambda: _terminate_process_tree(process),
+            lambda: _reap_process(process),
+        )
         raise
     completed = subprocess.CompletedProcess(
         command,
@@ -753,11 +975,58 @@ def _run(
         stderr,
     )
     if completed.returncode != 0:
-        _terminate_process_tree(process)
-    assert completed.returncode == 0, (
-        f"command: {command}\nstdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
-    )
+        try:
+            raise AssertionError(
+                f"command: {command}\n"
+                f"stdout:\n{completed.stdout}\n"
+                f"stderr:\n{completed.stderr}"
+            ) from None
+        finally:
+            _cleanup_preserving_primary(
+                lambda: _terminate_process_tree(process),
+                lambda: _reap_process(process),
+            )
     return completed
+
+
+def _cleanup_preserving_primary(*cleanups: Callable[[], None]) -> None:
+    primary = sys.exception()
+    cleanup_failed = False
+    for cleanup in cleanups:
+        try:
+            cleanup()
+        except BaseException:
+            cleanup_failed = True
+    if not cleanup_failed:
+        return
+    if primary is not None:
+        primary.add_note(CLEANUP_FAILURE_MESSAGE)
+        return
+    raise AssertionError(CLEANUP_FAILURE_MESSAGE) from None
+
+
+def _reap_process(process: subprocess.Popen[str]) -> None:
+    try:
+        process.communicate(timeout=5)
+    except (subprocess.TimeoutExpired, ValueError):
+        pass
+
+
+def _close_stream(stream: Any) -> None:
+    if stream is not None and not stream.closed:
+        stream.close()
+
+
+def _require_root_absent(root: Path) -> None:
+    if root.exists():
+        raise AssertionError(CLEANUP_FAILURE_MESSAGE) from None
+
+
+def _cleanup_artifact_root(root: Path) -> None:
+    _cleanup_preserving_primary(
+        lambda: shutil.rmtree(root, ignore_errors=True),
+        lambda: _require_root_absent(root),
+    )
 
 
 def _spawn_owned_process(command: list[str], **kwargs: Any) -> subprocess.Popen[str]:
@@ -991,12 +1260,12 @@ def _exercise_server(python: Path, run_root: Path, env: dict[str, str]) -> None:
         assert process.stderr is not None
         stderr = process.stderr.read()
     finally:
-        _terminate_process_tree(process)
-        if process.stdin is not None and not process.stdin.closed:
-            process.stdin.close()
-        reader.close(timeout=5)
-        if process.stderr is not None:
-            process.stderr.close()
+        _cleanup_preserving_primary(
+            lambda: _terminate_process_tree(process),
+            lambda: _close_stream(process.stdin),
+            lambda: reader.close(timeout=5),
+            lambda: _close_stream(process.stderr),
+        )
 
     assert process.returncode == 0
     assert trailing == []
@@ -1069,5 +1338,4 @@ def test_mcp_extra_installs_and_runs_from_each_isolated_artifact(
         )
         _exercise_server(python, run_root, env)
     finally:
-        shutil.rmtree(root, ignore_errors=True)
-        assert not root.exists()
+        _cleanup_artifact_root(root)
