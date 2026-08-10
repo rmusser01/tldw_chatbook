@@ -1,8 +1,8 @@
-# TASK-3795: Roleplay chat identity and speaker theming design
+# TASK-14801: Roleplay chat identity and speaker theming design
 
 - Date: 2026-08-08
 - Status: approved in user brainstorming; self-review complete
-- Backlog: TASK-3795
+- Backlog: TASK-14801
 - ADR: `backlog/decisions/046-roleplay-chat-display-identity-and-template-provenance.md`
 
 ## Goal

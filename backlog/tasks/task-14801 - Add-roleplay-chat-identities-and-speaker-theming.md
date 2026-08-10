@@ -1,5 +1,5 @@
 ---
-id: TASK-3795
+id: TASK-14801
 title: Add roleplay chat identities and speaker theming
 status: Done
 assignee:
@@ -13,8 +13,8 @@ dependencies: []
 references:
   - backlog/decisions/046-roleplay-chat-display-identity-and-template-provenance.md
 documentation:
-  - Docs/superpowers/specs/2026-08-08-task-3795-roleplay-chat-identity-design.md
-  - Docs/superpowers/plans/2026-08-08-task-3795-roleplay-chat-identity.md
+  - Docs/superpowers/specs/2026-08-08-task-14801-roleplay-chat-identity-design.md
+  - Docs/superpowers/plans/2026-08-08-task-14801-roleplay-chat-identity.md
 priority: high
 type: feature
 ---
@@ -63,3 +63,4 @@ Reason: the feature adds persisted display identity ownership, source/projection
 - Live harness: with `TLDW_CONFIG_PATH`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `HOME`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `TEMP`, and `TMP` all rooted under `.task8-live-scratch-20260809-{d,f,h}` and `TLDW_TEST_MODE=1`, the repository interpreter `..\..\.venv\Scripts\python.exe` ran an ad hoc Textual probe against the real app and scratch SQLite store. The probe was deleted after execution and its filename was not retained, so no unreproducible placeholder is presented as an exact command; this is a documented evidence-recording deviation. No developer config or data was used.
 - Live evidence: `textual-dark` at 160x48 and `textual-light` at 80x24 with character id `2`, `Alraune`, confirmed avatar rendering; `Global Rowan` -> per-chat `Captain Rowan` -> inherited `Global Rowan` -> global `Global Cecelia`; immediate transcript/template/context reprojection; literal manual `{{user}}`; edit-clears-provenance; selection and streaming/failure/tool/system legibility; Copy and Save As Note/Media/Prompt/Chatbook all projecting `Welcome, Captain Rowan.`; durable override/source reopen; and a provenance-free safe projection remaining readable and sendable. `app._notifications` was `[]`.
 - Provider verification used the local/fake controller seam and inspected exact payloads; it made no network request and no real provider call. This intentionally substitutes deterministic provider-boundary evidence for the plan's live send. Pre-existing Ruff findings, inaccessible/aborted temporary basetemps, and unrelated tests were not changed or claimed as feature evidence. No new lessons entry was added because the encountered base-comparison and compositor-capture incidents are already covered by the repository's testing and live-verification lessons.
+- Rebase integration renumbered this completed task from TASK-3795 to TASK-14801 because `dev` independently completed a different TASK-3795 first. The canonical task filename/frontmatter, spec, plan, and ADR links were updated together; the duplicate-ID CI check then reported no local duplicates.

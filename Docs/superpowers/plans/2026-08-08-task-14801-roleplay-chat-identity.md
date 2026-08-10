@@ -1,4 +1,4 @@
-# TASK-3795 Roleplay Chat Identity Implementation Plan
+# TASK-14801 Roleplay Chat Identity Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -1154,7 +1154,7 @@ git commit -m "feat: theme named roleplay transcript rows"
 ### Task 8: Focused integration, live verification, and documentation closeout
 
 **Files:**
-- Modify: `backlog/tasks/task-3795 - Add-roleplay-chat-identities-and-speaker-theming.md`
+- Modify: `backlog/tasks/task-14801 - Add-roleplay-chat-identities-and-speaker-theming.md`
 - Modify only if an incident produced a reusable lesson: one relevant file under `backlog/docs/lessons-*.md`
 
 **Interfaces:**
@@ -1200,7 +1200,7 @@ Record the exact scratch-profile command, terminal sizes, themes, character id/n
 
 - [x] **Step 4: Perform a fresh self-review against the spec**
 
-Review every requirement in `Docs/superpowers/specs/2026-08-08-task-3795-roleplay-chat-identity-design.md`. Specifically grep the diff for:
+Review every requirement in `Docs/superpowers/specs/2026-08-08-task-14801-roleplay-chat-identity-design.md`. Specifically grep the diff for:
 
 ```powershell
 rg -n "role\.title\(\)|users_name|replace_placeholders|console_roleplay_context|template_kind|template_source|user_display_name" tldw_chatbook Tests
@@ -1215,7 +1215,7 @@ Add concise Implementation Notes covering approach, decisions, modified files, f
 Then run:
 
 ```powershell
-npx --yes backlog.md task edit 3795 -s Done --notes "Implemented named and theme-aware character chat identities with global/per-chat human display names, safe trusted-template provenance, shared presentation across transcript/actions/provider context, focused tests, and live dark/light verification. ADR: backlog/decisions/046-roleplay-chat-display-identity-and-template-provenance.md"
+npx --yes backlog.md task edit 14801 -s Done --notes "Implemented named and theme-aware character chat identities with global/per-chat human display names, safe trusted-template provenance, shared presentation across transcript/actions/provider context, focused tests, and live dark/light verification. ADR: backlog/decisions/046-roleplay-chat-display-identity-and-template-provenance.md"
 ```
 
 - [x] **Step 6: Request final code review before integration**
@@ -1225,7 +1225,7 @@ Use `superpowers:requesting-code-review`, address verified findings with `superp
 - [x] **Step 7: Commit documentation closeout**
 
 ```powershell
-git add "backlog/tasks/task-3795 - Add-roleplay-chat-identities-and-speaker-theming.md" backlog/docs Docs/superpowers backlog/decisions
+git add "backlog/tasks/task-14801 - Add-roleplay-chat-identities-and-speaker-theming.md" backlog/docs Docs/superpowers backlog/decisions
 git commit -m "docs: close roleplay chat identity task"
 ```
 

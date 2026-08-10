@@ -2,8 +2,8 @@
 
 Status: Accepted
 Date: 2026-08-08
-Related Task: [TASK-3795](../tasks/task-3795%20-%20Add-roleplay-chat-identities-and-speaker-theming.md)
-Related Spec: [Roleplay Chat Identity and Speaker Theming Design](../../Docs/superpowers/specs/2026-08-08-task-3795-roleplay-chat-identity-design.md)
+Related Task: [TASK-14801](../tasks/task-14801%20-%20Add-roleplay-chat-identities-and-speaker-theming.md)
+Related Spec: [Roleplay Chat Identity and Speaker Theming Design](../../Docs/superpowers/specs/2026-08-08-task-14801-roleplay-chat-identity-design.md)
 Extends: ADR-037
 
 ## Decision
@@ -122,7 +122,7 @@ Visual verification must use the real stylesheet or the real app compositor.
 Both dark and light themes must show readable user and character rows, with
 selected, streaming, failed, system, and tool states retaining precedence.
 
-Only tests related to the files and behavior changed by TASK-3795 are part of
+Only tests related to the files and behavior changed by TASK-14801 are part of
 the implementation gate.
 
 ## Links
