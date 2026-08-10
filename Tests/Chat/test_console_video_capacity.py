@@ -1335,6 +1335,54 @@ async def test_external_ultimate_sibling_unlink_failure_keeps_saved_outcome(
 
 
 @pytest.mark.asyncio
+async def test_managed_save_copy_failure_logs_and_notifies_without_private_details(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    private_path = tmp_path / "PRIVATE-SENTINEL-managed-video.mp4"
+    private_error = f"PRIVATE-SENTINEL failure at {private_path}"
+    notifications: list[tuple[str, str | None]] = []
+    logged: list[str] = []
+    message = SimpleNamespace(video_metadata=SimpleNamespace(name="private-video"))
+
+    class Harness:
+        app_instance = SimpleNamespace(
+            notify=lambda text, *, severity=None: notifications.append(
+                (text, severity)
+            )
+        )
+
+        @staticmethod
+        def _ensure_console_chat_store():
+            return SimpleNamespace(get_message=lambda _message_id: message)
+
+        @staticmethod
+        def _ensure_console_video_store():
+            return SimpleNamespace(resolve=lambda *_args, **_kwargs: private_path)
+
+        @staticmethod
+        def _video_storage_message_id(_message):
+            return "managed-message"
+
+    async def fail_copy_thread(*_args, **_kwargs):
+        raise OSError(private_error)
+
+    monkeypatch.setattr(asyncio, "to_thread", fail_copy_thread)
+    sink_id = __import__("loguru").logger.add(logged.append, format="{message}")
+    try:
+        await ChatScreen._save_console_video_copy(Harness(), "managed-message")
+    finally:
+        __import__("loguru").logger.remove(sink_id)
+
+    assert notifications == [("Could not save the video.", "error")]
+    assert any("managed_copy" in entry for entry in logged)
+    assert any("OSError" in entry for entry in logged)
+    assert all("PRIVATE-SENTINEL" not in entry for entry in logged)
+    assert all(str(private_path) not in entry for entry in logged)
+    assert all("PRIVATE-SENTINEL" not in text for text, _ in notifications)
+    assert all(str(private_path) not in text for text, _ in notifications)
+
+
+@pytest.mark.asyncio
 async def test_external_copy_failure_reoffers_choices_with_artifact_live(
     tmp_path: Path,
 ) -> None:
@@ -1825,6 +1873,130 @@ async def test_pending_managed_commit_winning_before_unmount_persists_without_sy
     assert harness.appended[0][1]["message_id"] == artifact.message_id
     assert harness.sync_count == 0
     assert artifact.stream.closed
+
+
+@pytest.mark.asyncio
+async def test_resolver_cancellation_waits_for_external_copy_before_closing_stream(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = b"cancelled external copy"
+    artifact = _artifact(payload, message_id="cancel-external-copy")
+    target = tmp_path / "cancelled-external.mp4"
+    harness = _OutcomeHarness(
+        actions=["save_external", target], video_store=object()
+    )
+    copy_started = threading.Event()
+    release_copy = threading.Event()
+    copy_finished = threading.Event()
+    observed_payloads: list[bytes | None] = []
+
+    def blocking_copy(source, destination, *_args, **_kwargs):
+        copy_started.set()
+        assert release_copy.wait(5)
+        try:
+            if source.closed:
+                observed_payloads.append(None)
+                return
+            copied = source.read()
+            observed_payloads.append(copied)
+            destination.write(copied)
+        finally:
+            copy_finished.set()
+
+    monkeypatch.setattr(shutil, "copyfileobj", blocking_copy)
+    resolver = asyncio.create_task(
+        harness._resolve_generated_video_outcome(
+            artifact, session_id="session", message_id=artifact.message_id
+        )
+    )
+    while not copy_started.is_set():
+        await asyncio.sleep(0)
+
+    resolver.cancel()
+    for _ in range(3):
+        await asyncio.sleep(0)
+    cancellation_waited = not resolver.done()
+    stream_open_while_worker_active = not artifact.stream.closed
+    release_copy.set()
+    while not copy_finished.is_set():
+        await asyncio.sleep(0)
+    with pytest.raises(asyncio.CancelledError):
+        await resolver
+
+    assert cancellation_waited
+    assert stream_open_while_worker_active
+    assert observed_payloads == [payload]
+    assert target.read_bytes() == payload
+    assert harness.opened == []
+    assert harness.appended == []
+    assert harness.sync_count == 0
+    assert artifact.stream.closed
+    assert cast(_TrackingStream, artifact.stream).close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_resolver_cancellation_finalizes_managed_commit_before_stream_close(
+    tmp_path: Path,
+) -> None:
+    payload = b"cancelled managed commit"
+    artifact = _artifact(payload, message_id="cancel-managed-commit")
+    managed_path = tmp_path / "managed.mp4"
+    commit_finished = threading.Event()
+    release_worker = threading.Event()
+    worker_finished = threading.Event()
+    observed_stream_open: list[bool] = []
+
+    class CommitWinningStore:
+        def adopt_oversized(self, *_args, **kwargs):
+            stream = _args[2]
+            stream.seek(0)
+            copied = stream.read()
+            stream.seek(0)
+            gate = kwargs["publication_gate"]
+            with gate.claim_publication() as active:
+                assert active
+                managed_path.write_bytes(copied)
+            commit_finished.set()
+            assert release_worker.wait(5)
+            try:
+                observed_stream_open.append(not stream.closed)
+            finally:
+                worker_finished.set()
+            return managed_path
+
+        def resolve(self, *_args, **_kwargs):
+            return managed_path if managed_path.exists() else None
+
+    harness = _OutcomeHarness(actions=["keep"], video_store=CommitWinningStore())
+    resolver = asyncio.create_task(
+        harness._resolve_generated_video_outcome(
+            artifact, session_id="session", message_id=artifact.message_id
+        )
+    )
+    while not commit_finished.is_set():
+        await asyncio.sleep(0)
+
+    resolver.cancel()
+    for _ in range(3):
+        await asyncio.sleep(0)
+    cancellation_waited = not resolver.done()
+    stream_open_while_worker_active = not artifact.stream.closed
+    release_worker.set()
+    while not worker_finished.is_set():
+        await asyncio.sleep(0)
+    with pytest.raises(asyncio.CancelledError):
+        await resolver
+
+    assert cancellation_waited
+    assert stream_open_while_worker_active
+    assert observed_stream_open == [True]
+    assert managed_path.read_bytes() == payload
+    assert len(harness.appended) == 1
+    assert harness.appended[0][1]["message_id"] == artifact.message_id
+    assert harness.sync_count == 0
+    assert harness.opened == []
+    assert artifact.stream.closed
+    assert cast(_TrackingStream, artifact.stream).close_calls == 1
 
 
 def test_pending_drain_contains_close_failure_and_closes_remaining_artifacts() -> None:

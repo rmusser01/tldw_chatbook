@@ -248,8 +248,13 @@ class VideoStore:
             raise ValueError("slug uses reserved internal stage namespace")
         safe_ext = re.sub(r"[^a-z0-9]", "", extension.lower()) or "mp4"
         candidate = (self._message_dir(message_id) / f"{slug}.{safe_ext}")
-        resolved_root = self._root.resolve()
-        resolved = candidate.resolve()
+        try:
+            resolved_root = self._root.resolve()
+            resolved = candidate.resolve()
+        except (OSError, RuntimeError) as exc:
+            raise VideoStoreSaveError(
+                "managed video path resolution failed"
+            ) from exc
         if resolved != resolved_root and resolved_root not in resolved.parents:
             raise ValueError(f"path escapes store root: {candidate}")
         return candidate
@@ -352,7 +357,6 @@ class VideoStore:
                         "managed video capacity enforcement failed"
                     ) from exc
 
-        logger.debug("VideoStore: saved {} bytes", size_bytes)
         return path
 
     def adopt_oversized(
@@ -372,13 +376,21 @@ class VideoStore:
         """
         if size_bytes <= 0:
             raise ValueError("refusing to adopt an empty video payload")
-        path = self._video_path(message_id, slug, extension)
         try:
-            stream.seek(0)
-        except (OSError, ValueError) as exc:
-            raise VideoStoreSaveError("managed video source is not rewindable") from exc
-
+            path = self._video_path(message_id, slug, extension)
+        except VideoStoreSaveError:
+            try:
+                stream.seek(0)
+            except (OSError, ValueError):
+                pass
+            raise
         try:
+            try:
+                stream.seek(0)
+            except (OSError, ValueError) as exc:
+                raise VideoStoreSaveError(
+                    "managed video source is not rewindable"
+                ) from exc
             with self._transaction_lock:
                 with self._root_lease():
                     self._ensure_safe_root(create=True)
@@ -434,7 +446,7 @@ class VideoStore:
         """
         try:
             path = self._video_path(message_id, slug, extension)
-        except ValueError:
+        except (ValueError, VideoStoreSaveError):
             return None
         return path if self._is_safe_regular_file(path) else None
 

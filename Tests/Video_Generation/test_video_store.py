@@ -412,6 +412,77 @@ def test_resolve_missing_is_none_not_error(store):
     assert store.resolve("msg-1", "../../etc/passwd") is None
 
 
+def _make_symlink_loop_root(tmp_path: Path) -> Path:
+    root = tmp_path / "PRIVATE-MALFORMED-ROOT"
+    try:
+        root.symlink_to(root.name)
+    except OSError:
+        pytest.skip("symlink loops are unavailable on this platform")
+    return root
+
+
+@pytest.mark.parametrize("operation", ["save", "adopt"])
+def test_malformed_root_public_write_translates_resolution_failure(
+    tmp_path: Path, operation: str
+) -> None:
+    root = _make_symlink_loop_root(tmp_path)
+    store = VideoStore(root=root)
+    stream = io.BytesIO(b"exact adopted bytes")
+    stream.seek(len(stream.getvalue()))
+    logged: list[str] = []
+    sink_id = video_store_module.logger.add(logged.append, format="{message}")
+    try:
+        with pytest.raises(video_store_module.VideoStoreSaveError) as raised:
+            if operation == "save":
+                store.save("message", "clip", b"exact saved bytes")
+            else:
+                store.adopt_oversized(
+                    "message",
+                    "clip",
+                    stream,
+                    size_bytes=len(stream.getvalue()),
+                )
+    finally:
+        video_store_module.logger.remove(sink_id)
+
+    assert str(raised.value) == "managed video path resolution failed"
+    if operation == "adopt":
+        assert stream.tell() == 0
+    assert all("PRIVATE-MALFORMED-ROOT" not in message for message in logged)
+    assert all(str(root) not in message for message in logged)
+
+
+def test_malformed_root_read_resolution_fails_closed(tmp_path: Path) -> None:
+    root = _make_symlink_loop_root(tmp_path)
+    store = VideoStore(root=root)
+
+    assert store.resolve("message", "clip") is None
+
+
+def test_successful_save_debug_log_omits_size_and_prompt_derived_name(
+    tmp_path: Path,
+) -> None:
+    store = VideoStore(root=tmp_path / "generated-videos")
+    payload = b"x" * 123_457
+    logged: list[str] = []
+    sink_id = video_store_module.logger.add(
+        logged.append, level="DEBUG", format="{message}"
+    )
+    try:
+        saved = store.save(
+            "PRIVATE-MESSAGE",
+            "private-prompt-derived-name",
+            payload,
+        )
+    finally:
+        video_store_module.logger.remove(sink_id)
+
+    assert saved.read_bytes() == payload
+    assert all("123457" not in message for message in logged)
+    assert all("private-prompt-derived-name" not in message for message in logged)
+    assert all("PRIVATE-MESSAGE" not in message for message in logged)
+
+
 def test_save_refuses_empty_and_unsafe(store):
     with pytest.raises(ValueError, match="empty"):
         store.save("msg-1", "clip", b"")
