@@ -111,6 +111,18 @@ def test_publish_and_restore_return_detached_console_target_projections() -> Non
     assert second is not first
 
 
+def test_replacing_snapshot_invalidates_the_existing_console_target() -> None:
+    store = ScreenStateStore()
+    identity = _local_identity()
+    store.save("chat", {"conversation_id": "session-1"}, identity)
+    store.publish_console_prompt_target("chat", _projection(), identity)
+
+    store.save("chat", {"conversation_id": "session-2"}, identity)
+
+    assert store.restore_console_prompt_target("chat", identity) is None
+    assert store.restore("chat", identity) == {"conversation_id": "session-2"}
+
+
 def test_console_target_is_route_scoped_and_absent_before_publication() -> None:
     store = ScreenStateStore()
     identity = _local_identity()

@@ -112,6 +112,7 @@ class ScreenStateStore:
             snapshot=detached_snapshot,
             runtime_identity=runtime_identity,
         )
+        self._console_prompt_targets.pop(canonical_route, None)
 
     def restore(
         self,
