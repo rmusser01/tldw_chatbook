@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-08-10 01:37'
+updated_date: '2026-08-10 02:15'
 labels: []
 dependencies: []
 priority: medium
@@ -22,4 +23,5 @@ Follow-up from supervisor-fleet PR 2a Task 7 review. Revocation sweeps rounds th
 - [ ] #1 A revoked-run registry is consulted at arm time so a card armed after revocation resolves all-deny immediately
 - [ ] #2 The sibling retained-payload rule has a regression test (unconditional pop must fail it)
 - [ ] #3 Arming a round with an empty run-id owner logs a warning
+- [ ] #4 _revoke_skill_script_rounds' cross-lock window is closed: it snapshots still_armed under _pending_skill_script_lock, releases it, then pops _parked_skill_script_payloads under _approval_state_lock — a sibling confirm armed in that window has its payload popped (TASK-1050 Defect B: card unrecoverable on switch-away/back, badge lit until timeout). Fix with an identity-guarded pop (only when the stored payload's request_id is among the revoked ids), matching _clear_pending_skill_script_if_round_is_current. Note the same window pre-exists in request_skill_script_confirm's own teardown.
 <!-- AC:END -->
