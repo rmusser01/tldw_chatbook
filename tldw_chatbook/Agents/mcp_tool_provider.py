@@ -26,6 +26,13 @@ cross-thread round trip for each one.
 documented to run ON the main loop at registration time (T6 awaits it
 directly, before spawning the worker thread), so it is declared ``async def``
 and does not need any cross-thread submission of its own.
+
+PR2a Task 8: with the fleet, this ONE provider instance's ``invoke()`` can
+now be called from several worker threads at once (a parent run and its
+live children). ``invoke()`` serializes every call to this provider
+instance behind ``self._invoke_lock`` -- see its docstring (and
+``_invoke_locked``'s) for exactly what that protects and what would let a
+future task remove it.
 """
 
 from __future__ import annotations
@@ -209,7 +216,8 @@ class MCPToolProvider:
         self._init_decision_state()
 
     def _init_decision_state(self) -> None:
-        """Initialize the per-turn verdict stamps and their lock.
+        """Initialize the per-turn verdict stamps, their lock, and the
+        provider-wide execution lock.
 
         Called from ``__init__``. Factored out so a test can build a bare
         instance (``MCPToolProvider.__new__``) and exercise the stamp
@@ -239,6 +247,14 @@ class MCPToolProvider:
         # deadlock loudly instead of silently permitting a non-atomic
         # critical section.
         self._decisions_lock = threading.Lock()
+        # PR2a Task 8 (provider thread-safety audit): a SEPARATE lock,
+        # entirely unrelated to `_decisions_lock` above -- see `invoke()`'s
+        # own docstring for what it protects and why. Defined here (not
+        # only in `__init__`) for the same bare-instance-test reason
+        # `_decisions_lock` is: a double it constructs via
+        # `MCPToolProvider.__new__` + `_init_decision_state()` must not
+        # `AttributeError` if it goes on to call `invoke()`.
+        self._invoke_lock = threading.Lock()
 
     # -- composition (main loop, once per registration) -------------------
 
@@ -595,6 +611,11 @@ class MCPToolProvider:
         to `self._approval_callback` as a single-call list (no callback ->
         fail closed to deny).
 
+        PR2a Task 8 (provider thread-safety audit): this whole call runs
+        under `self._invoke_lock`, so at most ONE call into this provider
+        instance executes at a time, fleet-wide -- see `_invoke_locked`
+        (just below) for why.
+
         Args:
             tool_id: The LLM-facing tool id to invoke (a
                 `ToolCatalogEntry.id`/`.name`).
@@ -605,6 +626,51 @@ class MCPToolProvider:
             length-capped result content on success; `ok=False` with a
             length-capped, always-non-empty `error` on refusal or
             failure. Never raises.
+        """
+        with self._invoke_lock:
+            return self._invoke_locked(tool_id, args)
+
+    def _invoke_locked(self, tool_id: str, args: dict) -> ToolResult:
+        """``invoke()``'s actual body -- entered ONLY while holding
+        `self._invoke_lock`. Do not call this directly; call `invoke()`.
+
+        Per spec (Docs/superpowers/specs/2026-08-08-supervisor-agent-fleet-
+        design.md) §5's corrections table: "Tool providers were written
+        under one-run-at-a-time dispatch ... Phase-2 thread-safety audit
+        (MCP control-plane client, local tools, gated builtins). Unaudited
+        provider => per-provider execution lock on invoke (throttle, not
+        break). MCP starts locked until proven otherwise." PR2a Task 8's
+        audit (see that task's report) found `BuiltinToolProvider` and
+        `LocalToolProvider` safe under concurrent `invoke()` by inspection
+        (read-only/immutable per-instance state, or state already guarded
+        by its own lock) and left them unlocked; THIS provider is the one
+        the spec calls out by name, for a reason the audit could not rule
+        out by reading Python alone: `_execute()` below hands off to
+        `self._service.execute_hub_tool(...)`, which for a LOCAL external
+        MCP server ultimately reads/writes that server's own stdio pipe
+        through an `MCPClient` session -- a request/response protocol this
+        codebase has never exercised with two requests in flight on the
+        same session at once (server-source tools are explicitly out of
+        scope per this module's own docstring, i.e. genuinely unaudited,
+        not merely unlikely to be a problem). Two concurrent fleet agents
+        both calling an MCP tool is exactly the scenario the fleet makes
+        routine.
+
+        This lock SERIALIZES every call into this ONE provider instance
+        across the whole fleet -- a throughput throttle on MCP tool calls
+        specifically (a call blocks for up to the provider's own timeout
+        plus its result-wait slack while holding the lock), not a break in
+        concurrency: builtin, local, and Library tool calls from the same
+        fleet turn have their own provider instances and are unaffected,
+        and a queued MCP call still eventually runs rather than failing.
+
+        What would let a future task remove this: proving (not assuming)
+        that `MCPClient`'s local-server transport safely multiplexes
+        concurrent request/response pairs on one session -- e.g. a
+        request-id-keyed reader loop in `MCPClient` itself -- or giving
+        each concurrently-live run its own subprocess/session instead of
+        sharing this provider's one `self._service`. Absent either, this
+        lock is the correctness boundary, not merely a performance choice.
         """
         entry = self._entry_by_llm_name.get(tool_id)
         if entry is None:
