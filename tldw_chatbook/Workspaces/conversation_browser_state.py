@@ -185,6 +185,8 @@ class ConsoleConversationBrowserInputRow:
     #: the caller building this row, so the display layer needs no enum/model
     #: import to render it.
     run_marker: str = ""
+    #: Content-free count of unsent prompts for a live native session.
+    queued_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -227,6 +229,8 @@ class ConsoleConversationBrowserRow:
     openable: bool = True
     #: Parallel-agents spec PA-T8: resolved fleet run-marker glyph, or "".
     run_marker: str = ""
+    #: Content-free count of unsent prompts for a live native session.
+    queued_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -544,6 +548,7 @@ def _normalize_input_row(
         updated_sort=str(row.updated_sort or ""),
         openable=bool(row.openable),
         run_marker=str(row.run_marker or ""),
+        queued_count=max(0, int(row.queued_count)),
     )
 
 
@@ -569,6 +574,7 @@ def _to_browser_row(
         subagent_count=subagent_count,
         openable=bool(row.openable),
         run_marker=str(row.run_marker or ""),
+        queued_count=max(0, int(row.queued_count)),
     )
 
 

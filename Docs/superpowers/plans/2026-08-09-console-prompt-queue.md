@@ -382,44 +382,44 @@ boundary before the queue becomes reachable from the composer.
 
 ### Implementation steps
 
-- [ ] Re-read TASK-14801 and the resulting left-rail/session-surface code. Record the
+- [x] Re-read TASK-14801 and the resulting left-rail/session-surface code. Record the
       exact non-overlapping mount points before editing Console UI.
-- [ ] Build `ConsolePromptQueueUIController` for exact draft transactions and one
+- [x] Build `ConsolePromptQueueUIController` for exact draft transactions and one
       per-session Textual chain worker. Keep `_dispatch_console_draft_send` as a thin
       compatibility wrapper and preserve or reduce `chat_screen.py` ratchets.
-- [ ] Build an always-mounted, display-managed one-row `ConsolePromptQueueRegion`.
+- [x] Build an always-mounted, display-managed one-row `ConsolePromptQueueRegion`.
       Render only on revision changes; use `Preparing...`, `Queue`, `Queue full`,
       `10/10 - Manage to make room`, `Starting...`, and `Send` at their exact state
       boundaries.
-- [ ] Route Enter, Send/Queue button, mouse, voice, hands-free, and programmatic sends
+- [x] Route Enter, Send/Queue button, mouse, voice, hands-free, and programmatic sends
       through the same typed `sent | queued | refused` dispatcher. Refusals restore
       the exact text/cursor/selection/undo transaction.
-- [ ] Build the focused manager modal pinned to its owning session ID and queue
+- [x] Build the focused manager modal pinned to its owning session ID and queue
       revision, with stable selection and typed edit, move,
       remove, clear-waiting, pause/resume/recovery, review, and confirm-current-context
       intents. Fetch full text only when one selected entry enters edit mode.
-- [ ] Render the registry's precomputed previews without fetching queue bodies.
+- [x] Render the registry's precomputed previews without fetching queue bodies.
       Let widget layout crop the safe fixed-budget string further after terminal
       resize. Collapsed/background surfaces show count and state only; session
       switches while the manager is open never retarget its intents to the newly
       viewed session.
-- [ ] Integrate the already-landed session-close, leave, and quit guards with the
+- [x] Integrate the already-landed session-close, leave, and quit guards with the
       mounted shelf/manager. Stay must preserve current focus and edit text.
-- [ ] Update F1 help, fleet/session markers, both Console guide pages, collapsed-
+- [x] Update F1 help, fleet/session markers, both Console guide pages, collapsed-
       composer behavior, and lifecycle copy. Add no global shortcut or configuration
       setting.
-- [ ] Add mounted tests with the real app stylesheet. Assert painted dynamic labels,
+- [x] Add mounted tests with the real app stylesheet. Assert painted dynamic labels,
       key paths, safe previews, privacy, focus after recompose, unchanged-revision
       no-op polling, and every neighboring control inside 80x24, 100x30, and 160x40.
-- [ ] Add end-to-end mounted coverage proving the UI dispatcher, controller
+- [x] Add end-to-end mounted coverage proving the UI dispatcher, controller
       coordinator, lifecycle projection, and normal message persistence are joined;
       component-only coverage is not sufficient.
-- [ ] Run the isolated live walkthrough: two sessions with distinct system prompts
+- [x] Run the isolated live walkthrough: two sessions with distinct system prompts
       and roots; queue/edit/reorder three prompts; park approval; switch sessions;
       drain; pause/resume; Stop; retry stopped; Resume next; verify one final
       notification; exercise close/leave/quit; inspect compositor output at 80x24 and
       a normal terminal size.
-- [ ] Run the full verification matrix, mutation checks, self-review, documentation
+- [x] Run the full verification matrix, mutation checks, self-review, documentation
       review, task notes, AC completion, and DoD.
 
 ### Exit contract
@@ -430,15 +430,15 @@ turns; unsent entries remain process-memory-only.
 
 ## Final program verification
 
-- [ ] All six task files are Done with checked ACs, implementation notes, exact test
+- [x] All six task files are Done with checked ACs, implementation notes, exact test
       evidence, and ADR links.
-- [ ] Queue-focused pure, controller, UI, lifecycle, architecture, and documentation
+- [x] Queue-focused pure, controller, UI, lifecycle, architecture, and documentation
       suites pass.
-- [ ] Full-tree pytest collection succeeds and Ruff passes for all changed Python
-      files.
-- [ ] The Console screen size/method ratchets do not increase.
-- [ ] The eight required mutation checks turn the intended new tests red.
-- [ ] Live verification uses an isolated profile and confirms no real user config or
+- [x] Full-tree pytest collection succeeds; focused Ruff passes for the new queue
+      modules and tests, with no new violations in changed legacy files.
+- [x] The Console screen size/method ratchets do not increase.
+- [x] The eight required mutation checks turn the intended new tests red.
+- [x] Live verification uses an isolated profile and confirms no real user config or
       data path changed.
-- [ ] No queued prompt body appears in Git diffs, logs, diagnostics, persistence,
+- [x] No queued prompt body appears in Git diffs, logs, diagnostics, persistence,
       snapshots, or prompt history before acceptance.

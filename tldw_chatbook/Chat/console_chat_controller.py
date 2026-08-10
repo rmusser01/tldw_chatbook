@@ -115,6 +115,7 @@ from tldw_chatbook.Chat.console_turn_context import ConsoleTurnExecutionContext
 from tldw_chatbook.Chat.console_prompt_queue import (
     ConsolePromptQueueRegistry,
     PromptQueueMutationResult,
+    QueueMutationStatus,
 )
 from tldw_chatbook.Chat.console_prompt_queue_coordinator import (
     ConsolePromptQueueCoordinator,
@@ -1601,11 +1602,91 @@ class ConsoleChatController:
     ) -> PromptQueueMutationResult:
         """Attempt atomic text-only admission behind queue-owned work."""
 
+        clean_text, validation_error = self._validated_draft(text)
+        if validation_error is not None:
+            return PromptQueueMutationResult(
+                QueueMutationStatus.INVALID,
+                self.prompt_queue_registry.snapshot(session_id),
+                detail=validation_error,
+            )
         return self.prompt_queue_coordinator.admit(
             session_id,
-            text=text,
+            text=clean_text,
             expected_revision=expected_revision,
         )
+
+    def edit_queued_prompt(
+        self,
+        session_id: str,
+        *,
+        entry_id: str,
+        text: str,
+        expected_revision: int,
+    ) -> PromptQueueMutationResult:
+        """Edit one waiting prompt and publish the queue activity revision."""
+
+        clean_text, validation_error = self._validated_draft(text)
+        if validation_error is not None:
+            return PromptQueueMutationResult(
+                QueueMutationStatus.INVALID,
+                self.prompt_queue_registry.snapshot(session_id),
+                detail=validation_error,
+            )
+        result = self.prompt_queue_registry.edit(
+            session_id,
+            entry_id=entry_id,
+            text=clean_text,
+            expected_revision=expected_revision,
+        )
+        if result.applied:
+            self.prompt_queue_coordinator.publish_registry_change(session_id)
+        return result
+
+    def move_queued_prompt(
+        self,
+        session_id: str,
+        *,
+        entry_id: str,
+        new_index: int,
+        expected_revision: int,
+    ) -> PromptQueueMutationResult:
+        """Reorder one waiting prompt and publish the queue activity revision."""
+
+        result = self.prompt_queue_registry.move(
+            session_id,
+            entry_id=entry_id,
+            new_index=new_index,
+            expected_revision=expected_revision,
+        )
+        if result.applied:
+            self.prompt_queue_coordinator.publish_registry_change(session_id)
+        return result
+
+    def remove_queued_prompt(
+        self, session_id: str, *, entry_id: str, expected_revision: int
+    ) -> PromptQueueMutationResult:
+        """Remove one waiting prompt and publish the queue activity revision."""
+
+        result = self.prompt_queue_registry.remove(
+            session_id,
+            entry_id=entry_id,
+            expected_revision=expected_revision,
+        )
+        if result.applied:
+            self.prompt_queue_coordinator.publish_registry_change(session_id)
+        return result
+
+    def clear_queued_prompts(
+        self, session_id: str, *, expected_revision: int
+    ) -> PromptQueueMutationResult:
+        """Clear waiting prompts and publish the queue activity revision."""
+
+        result = self.prompt_queue_registry.clear_waiting(
+            session_id, expected_revision=expected_revision
+        )
+        if result.applied:
+            self.prompt_queue_coordinator.publish_registry_change(session_id)
+        return result
 
     async def run_prompt_chain(
         self,
@@ -1631,7 +1712,6 @@ class ConsoleChatController:
             lambda: self.submit_draft(
                 draft,
                 session_id=target_id,
-                origin=ConsoleSubmissionOrigin.MANUAL,
             ),
         )
 
@@ -4948,17 +5028,24 @@ class ConsoleChatController:
         queue_authorization: QueueGenerationAuthorization | None = None,
     ) -> ConsoleSubmitResult:
         """Retry a failed assistant message using the original turn context."""
+        active_session_id = self.store.active_session_id
+        if active_session_id is None and queue_authorization is None:
+            return ConsoleSubmitResult(False, False, "No active Console session.")
+        message_session_id = self.store.session_id_for_message(message_id)
+        queue_authorized = self.prompt_queue_coordinator.authorizes(
+            queue_authorization, message_session_id
+        )
+        session_id = message_session_id if queue_authorized else active_session_id
+        if session_id is None:
+            return ConsoleSubmitResult(False, False, "No active Console session.")
         active_rejection = self._active_run_rejection(
-            queue_authorization=queue_authorization
+            session_id=session_id,
+            queue_authorization=queue_authorization,
         )
         if active_rejection is not None:
             return active_rejection
 
-        session_id = self.store.active_session_id
-        if session_id is None:
-            return ConsoleSubmitResult(False, False, "No active Console session.")
         message = self.store.get_message(message_id)
-        message_session_id = self.store.session_id_for_message(message_id)
         if message_session_id != session_id:
             visible_copy = "Open the original session before retrying this message."
             self._set_run_state(
@@ -5205,21 +5292,29 @@ class ConsoleChatController:
         intended node-model behavior, not a regression: the anchor is a
         completely separate node and was never touched.
         """
+        active_session_id = self.store.active_session_id
+        if active_session_id is None and queue_authorization is None:
+            return ConsoleSubmitResult(False, False, "No active Console session.")
+        message_session_id = self.store.session_id_for_message(message_id)
+        queue_authorized = self.prompt_queue_coordinator.authorizes(
+            queue_authorization, message_session_id
+        )
+        session_id = message_session_id if queue_authorized else active_session_id
+        if session_id is None:
+            return ConsoleSubmitResult(False, False, "No active Console session.")
         active_rejection = self._active_run_rejection(
-            queue_authorization=queue_authorization
+            session_id=session_id,
+            queue_authorization=queue_authorization,
         )
         if active_rejection is not None:
             return active_rejection
 
-        session_id = self.store.active_session_id
-        if session_id is None:
-            return ConsoleSubmitResult(False, False, "No active Console session.")
         message = self.store.get_message(message_id)
         if message.role is not ConsoleMessageRole.ASSISTANT:
             return self._block(
                 session_id, "Only assistant messages can be regenerated."
             )
-        if self.store.session_id_for_message(message_id) != session_id:
+        if message_session_id != session_id:
             visible_copy = "Open the original session before regenerating this message."
             self._set_run_state(
                 ConsoleRunState.blocked(visible_copy), session_id=session_id

@@ -67,6 +67,7 @@ from ..Console_Modules.dictation import (
 from ..Console_Modules.hands_free import (
     ConsoleHandsFreeSession,
 )
+from ..Console_Modules.prompt_queue import ConsolePromptDispatchStatus, ConsolePromptQueueRegion
 from ..Console_Modules.left_rail import ConsoleLeftRail
 from ..Console_Modules.message import ConsoleMessageController
 from ..Console_Modules.right_rail import ConsoleInspectorRail
@@ -515,6 +516,7 @@ from ...Widgets.Console.console_generate_image_modal import (
     ConsoleGenerateImageModal,
 )
 from ...Widgets.Console.console_scope_picker_modal import ConsoleScopePickerModal
+from ...Widgets.Console.console_prompt_queue_modal import ConsolePromptQueueModal
 from ...Widgets.Console.console_model_popover import (
     CONSOLE_POPOVER_OPEN_FULL_SETTINGS,
     ConsoleModelPopover,
@@ -1156,7 +1158,7 @@ CONSOLE_WORKBENCH_SHORTCUTS = (
     ("F6", "next pane"),
     ("Shift+F6", "previous pane"),
     ("F1", "help"),
-    ("Enter", "send"),
+    ("Enter", "send / queue"),
     ("Ctrl+K", "switch session"),
     ("Ctrl+T", "new tab"),
     ("Ctrl+P", "palette"),
@@ -1167,7 +1169,7 @@ CONSOLE_WORKBENCH_SHORTCUTS = (
 #: action instead. The blocked variant hides the send hint and names the real
 #: action. `_register_console_footer_shortcuts` swaps between the two.
 CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED = tuple(
-    ("Enter", "continue setup") if pair == ("Enter", "send") else pair
+    ("Enter", "continue setup") if pair == ("Enter", "send / queue") else pair
     for pair in CONSOLE_WORKBENCH_SHORTCUTS
 )
 
@@ -1200,7 +1202,8 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
     (
         "Composer",
         (
-            ("Enter", "send"),
+            ("Enter", "send now or queue after an accepted turn"),
+            ("Queue shelf", "manage, pause, resume, and recover queued prompts"),
             ("Ctrl+J", "insert a newline (works in any terminal)"),
             ("Shift+Enter", "insert a newline (where the terminal delivers it)"),
             ("Ctrl+Z", "undo the last draft edit"),
@@ -1275,7 +1278,7 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
 #: change what a glyph MEANS, update both.
 CONSOLE_FLEET_MARKER_LEGEND = (
     "Status markers: ● running · ◆ needs approval · ✓ finished · ✗ failed "
-    "— clears once you visit that tab."
+    "— clears once you visit that tab. Qn is the unsent prompt count."
 )
 
 
@@ -1304,6 +1307,8 @@ def _console_workbench_agents_notes(max_parallel_runs: int) -> tuple[str, ...]:
         "(change in Settings > Console Behavior).",
         "Built-in tools ask before running; a background session that "
         "needs approval parks with a ◆ badge and a toast.",
+        "Accepted turns can hold up to 10 queued prompts per tab; use the "
+        "queue shelf to manage or pause them.",
         CONSOLE_FLEET_MARKER_LEGEND,
         "Leaving Console cancels any runs still in progress -- you'll be asked first.",
     )
@@ -9695,6 +9700,11 @@ class ChatScreen(BaseAppScreen):
                 if controller is not None
                 else ""
             )
+            queued_count = (
+                controller.activity_for(session.id).queued_count
+                if controller is not None
+                else 0
+            )
             row = ConsoleConversationBrowserInputRow(
                 row_key=row_key,
                 conversation_id=persisted_id or None,
@@ -9710,6 +9720,7 @@ class ChatScreen(BaseAppScreen):
                 source_kind="native",
                 updated_sort=str(session.updated_at or ""),
                 run_marker=run_marker,
+                queued_count=queued_count,
             )
             rows.append(self._apply_console_browser_star_state(row, starred_ids))
         return rows
@@ -13750,6 +13761,29 @@ class ChatScreen(BaseAppScreen):
                 id="console-staged-evidence-strip",
                 classes="ds-panel",
             )
+            yield ConsolePromptQueueRegion(
+                id="console-prompt-queue",
+                on_manage_requested=(
+                    lambda session_id, revision: self.app.push_screen(
+                        ConsolePromptQueueModal(
+                            session_id=session_id,
+                            revision=revision,
+                            queue_controller=self._prompt_queue,
+                        )
+                    )
+                ),
+                on_primary_requested=(
+                    lambda session_id, revision, action: self.run_worker(
+                        self._prompt_queue.handle_primary_intent(
+                            session_id,
+                            action=action,
+                            expected_revision=revision,
+                        ),
+                        exclusive=True,
+                        group="console-prompt-queue-shelf",
+                    )
+                ),
+            )
             composer = ConsoleComposerBar(
                 id="console-native-composer",
                 classes="ds-panel",
@@ -15129,12 +15163,21 @@ class ChatScreen(BaseAppScreen):
             if controller is not None
             else None
         )
+        queue_counts = (
+            {
+                session.id: controller.activity_for(session.id).queued_count
+                for session in sessions
+            }
+            if controller is not None
+            else None
+        )
         self._maybe_show_fleet_coachmark(sessions, surface)
         await surface.sync_sessions(
             sessions=sessions,
             active_session_id=store.active_session_id,
             streaming_session_id=streaming_session_id,
             run_markers=run_markers,
+            queue_counts=queue_counts,
         )
 
     async def _append_native_console_system_message(
@@ -15235,7 +15278,7 @@ class ChatScreen(BaseAppScreen):
             # racing the scheduling gap between `run_worker(...)` and this
             # coroutine body actually running could submit into whichever
             # session the user switched TO instead of the dispatching one.
-            result = await controller.submit_draft(draft, session_id=session_id)
+            result = await controller.run_prompt_chain(draft, session_id=session_id)
         except Exception:
             # An unexpected submit crash must not eat the keypress-cleared
             # draft — and must not escape the worker (exit_on_error would
@@ -15592,88 +15635,10 @@ class ChatScreen(BaseAppScreen):
     async def _dispatch_console_draft_send(
         self, draft: str, stash: "ConsoleDraftStash | None" = None
     ) -> bool:
-        """Run the send-blocked/readiness gate, then queue ``draft`` as the
-        user turn (the normal-text-send tail, shared with the skill-picker
-        `$name` submit path so both go through the exact same gating).
+        """Compatibility delegate for the one typed queue-aware dispatcher."""
 
-        ``stash`` is the keypress-captured draft of a keyboard send
-        (TASK-340): restored on every blocked path here, handed to the
-        in-flight slot on queue so the accept/refuse sites can consume it.
-
-        Returns:
-            ``True`` once the submit has actually been queued via
-            ``run_worker`` (a caller-visible "this is really going out"
-            signal); ``False`` when blocked or when a run is already in
-            progress, in which case nothing is queued and an explanatory
-            row/toast was already shown.
-        """
-        if blocked_reason := self._console_send_blocked_reason():
-            self._restore_console_send_stash(stash)
-            setup_blocked_reason = self._console_setup_blocked_reason()
-            if setup_blocked_reason and not blocked_reason.startswith(
-                "Console send blocked: Library Search/RAG"
-            ):
-                await self._append_native_console_system_message(setup_blocked_reason)
-                self.app_instance.notify(
-                    setup_blocked_reason,
-                    severity="warning",
-                )
-                self._focus_console_composer_if_needed(force=True)
-                return False
-            await self._append_native_console_system_message(blocked_reason)
-            self._focus_console_composer_if_needed(force=True)
-            return False
-        controller = self._ensure_console_chat_controller()
-        # Task 4 (D2 fix wave): resolve/create the session to submit into
-        # HERE, before `target_session_id` is read, rather than leaving that
-        # as an implicit side effect of the `_console_send_blocked_reason()`
-        # call above (which happens to already do this via
-        # `_active_console_settings_readiness` -> `_ensure_active_console_
-        # session_settings`, whenever it doesn't return early). Making the
-        # call explicit means a fresh profile's FIRST send never keys the
-        # stash map / worker group / double-send gate below on `""` even if
-        # that upstream call's own internals ever change -- the invariant
-        # is asserted right at the point that matters, not inherited
-        # incidentally from an unrelated gate a few lines up. This is a
-        # synchronous call (no `await` before `target_session_id` is read),
-        # so there is no scheduling gap for the store's active session to
-        # change out from under it.
-        self._session._ensure_active_console_session_settings()
-        # Fix round 1 (minor): normalize the same way the controller side
-        # already does (`store.active_session_id or ""`) -- `None` is a
-        # valid (if unlikely, post-mount) dict key, but every other
-        # per-session map in this train keys on the normalized string, so
-        # a stray `None` here would silently start a SEPARATE bucket for
-        # "no session" instead of colliding predictably. After the call
-        # above, this is never actually `""` for a real send -- the `or ""`
-        # stays only as a defensive normalization, not a live code path.
-        target_session_id = controller.store.active_session_id or ""
-        refusal = controller.send_refusal_copy(target_session_id)
-        if refusal:
-            self._restore_console_send_stash(stash)
-            self.app_instance.notify(refusal, severity="warning")
-            return False
-        # Task 3b: keyed by THIS dispatch's own session -- a bare `= stash`
-        # assignment (the old singular slot) would let a DIFFERENT
-        # session's concurrent dispatch either clobber this entry with its
-        # own stash, or wipe it to None before this session's worker ever
-        # reads it (Task 3 made two dispatches genuinely interleave).
-        if stash is not None:
-            self._console_inflight_send_stashes[target_session_id] = stash
-        else:
-            self._console_inflight_send_stashes.pop(target_session_id, None)
-        self._note_console_follow_intent()
-        # group=f"console-run-{session_id}": a PER-SESSION group (parallel-
-        # agents spec Sec2) so UI-sync kicks -- and sends in OTHER sessions --
-        # can never cancel this session's in-flight run (TASK-228 originated
-        # the dedicated group; scoping it per session keeps concurrent
-        # sessions' exclusive workers from cancelling each other).
-        self.run_worker(
-            self._submit_console_native_draft(draft, target_session_id),
-            exclusive=True,
-            group=f"console-run-{target_session_id}",
-        )
-        return True
+        result = await self._prompt_queue.dispatch(draft, stash=stash)
+        return result.status is not ConsolePromptDispatchStatus.REFUSED
 
     def _note_console_follow_intent(self) -> None:
         """Stamp a programmatic jump-to-tail intent on the transcript (TASK-336).
@@ -18280,10 +18245,30 @@ class ChatScreen(BaseAppScreen):
         run_active = False
         send_blocked = False
         controller = self._console_chat_controller
+        queue_presentation = None
         if controller is not None:
             run_state = getattr(controller, "run_state", None)
             run_active = bool(getattr(run_state, "is_stop_allowed", False))
             send_blocked = not bool(getattr(run_state, "is_send_allowed", True))
+            active_id = controller.store.active_session_id or ""
+            if active_id:
+                queue_presentation = self._prompt_queue.presentation_for(
+                    active_id,
+                    composer_collapsed=composer.collapsed,
+                )
+                send_blocked = not queue_presentation.send_enabled
+                try:
+                    queue_region = self.query_one(
+                        "#console-prompt-queue", ConsolePromptQueueRegion
+                    )
+                except QueryError:
+                    pass
+                else:
+                    queue_region.sync_presentation(active_id, queue_presentation)
+                composer.sync_prompt_queue_state(
+                    count=queue_presentation.count,
+                    paused=queue_presentation.paused,
+                )
         # task-3401.5: an in-flight video generation shows the same Stop
         # affordance (it sets the adapter's cooperative cancel event).
         store_for_videogen = self._console_chat_store
@@ -18312,8 +18297,22 @@ class ChatScreen(BaseAppScreen):
             run_active=run_active,
             can_save_chatbook=can_save_chatbook,
             send_blocked=send_blocked,
-            setup_blocked_reason=setup_blocked_reason or attachment_blocked_reason,
+            setup_blocked_reason=(
+                setup_blocked_reason
+                or attachment_blocked_reason
+                or (
+                    queue_presentation.send_tooltip
+                    if queue_presentation is not None
+                    and not queue_presentation.send_enabled
+                    else ""
+                )
+            ),
             ephemeral=self._console_active_session_is_ephemeral(),
+            send_label=(
+                queue_presentation.send_label
+                if queue_presentation is not None
+                else "Send"
+            ),
         )
         composer.sync_dictation_state(self._console_dictation_state)
         # sync_action_state resets the attach button's tooltip to generic copy
@@ -18661,7 +18660,7 @@ class ChatScreen(BaseAppScreen):
                     "Console send is unavailable.", severity="error"
                 )
                 return
-            if send_button.disabled:
+            if send_button.disabled and send_button.display:
                 # TASK-2154.6 (FR-04): Send is now genuinely disabled
                 # while blocked/empty, and `Button.press()` is a no-op
                 # on a disabled control — a plain press here would

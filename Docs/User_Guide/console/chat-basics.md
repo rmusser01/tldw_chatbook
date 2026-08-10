@@ -58,7 +58,9 @@ style unchanged.
 
 - Printable keys go straight into the draft; click anywhere in the draft to
   place the caret; Left/Right and Home/End move it.
-- **Enter sends.** For a newline inside the draft use **Ctrl+J** (works in
+- **Enter sends or queues.** During an accepted agent turn, **Send** becomes
+  **Queue** and Enter adds the exact text draft after that turn. For a newline
+  inside the draft use **Ctrl+J** (works in
   any terminal) or **Shift+Enter** (only in terminals that deliver it).
 - The draft area grows from one row up to four as your text wraps.
 - **Ctrl+A** selects the whole draft; with that full selection active,
@@ -68,8 +70,9 @@ style unchanged.
   paging keys.
 - **"Composer ▾"** collapses the composer to a one-row strip for more
   transcript space. The strip reads "Composer hidden", joined with " · " to
-  whichever of "Generating", "Draft retained", "Attachment retained" apply —
-  your draft text is never shown while collapsed. Click **"Expand ▴"** (or
+  whichever of "Generating", "Draft retained", "Attachment retained",
+  "Queued N", or "Paused N" apply. Queued prompt text is never shown while
+  collapsed. Click **"Expand ▴"** (or
   press **Esc**) to restore it; the caret returns to your draft.
 
 ### Large pastes
@@ -102,6 +105,31 @@ in **Settings > Console Behavior**.
   "▼ checking citations below — jump to latest".
 - Assistant replies render markdown (headings, bold, code, italics); your
   own messages — and System/Tool rows — stay exactly as you typed them.
+
+### Prompt queue
+
+After the current turn is accepted, **Send** changes to **Queue**. Each Console
+tab can hold up to 10 text-only follow-up prompts. The one-row shelf above the
+composer shows `Queue N/10`, whether it is draining or paused, a safe preview
+of the next prompt, and **Manage** plus a state-specific action such as
+**Pause**, **Retry**, **Resume next**, **Review**, or **Try again**.
+
+- **Preparing...** means the turn has not crossed the accepted boundary yet;
+  the draft stays in the composer.
+- **Queue full** preserves the draft and asks you to manage the existing 10.
+- Attachments and staged evidence are never captured by a queued text turn.
+  Remove them or wait and send the complete message normally.
+- Recognized slash commands still run immediately and are never queued.
+- **Manage** opens a modal pinned to this tab. You can edit, move, remove, or
+  clear waiting prompts; a prompt marked **Starting...** is already locked.
+  Remove and Clear ask for confirmation. Only the prompt actively opened for
+  editing has its full body loaded.
+- A failed or stopped turn pauses the queue. Use **Retry failed**, **Retry
+  stopped**, or **Resume next**. Context changes require **Review** followed by
+  **Use current** before draining resumes.
+
+Queue text is process-memory-only until its turn is accepted. It is not saved
+to conversation history, prompt history, screen snapshots, or the database.
 
 ### Selecting a message and its actions
 
@@ -165,7 +193,7 @@ Composer:
 
 | Key | Action |
 |---|---|
-| Enter | Send the draft (or advance a focused paste token) |
+| Enter | Send now, queue after an accepted turn, or advance a focused paste token |
 | Ctrl+J | Insert a newline (works in any terminal) |
 | Shift+Enter | Insert a newline (where the terminal delivers it) |
 | Ctrl+A | Select the whole draft |

@@ -1402,15 +1402,17 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             name_lines = _marker_prefixed_name_lines(row.title, row.run_marker, budget)
             status = self._conversation_status(row.status)
             detail = self._conversation_detail_status(row.status)
-            secondary = truncate_console_row_cells(
+            secondary_copy = (
                 self._conversation_row_secondary(
                     detail,
                     row.updated_label,
                     workspace_label=row.workspace_label if show_workspace else "",
                 )
-                or "conversation",
-                budget,
+                or "conversation"
             )
+            if row.queued_count:
+                secondary_copy = f"{secondary_copy} · Queue {row.queued_count}"
+            secondary = truncate_console_row_cells(secondary_copy, budget)
             status_suffix = f" [{status}]" if status else ""
             # TASK-1233 AC#1 (review round 1): `tooltip_label` here is the
             # PRE-escape, pre-period sentence body -- `_conversation_button`

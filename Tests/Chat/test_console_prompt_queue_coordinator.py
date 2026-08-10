@@ -150,6 +150,26 @@ def _queue(controller: ConsoleChatController, session_id: str, text: str) -> str
     return result.entry_id
 
 
+def test_controller_refuses_unsafe_queue_text_before_admission() -> None:
+    controller, store, session_id = _arm_controller(SequencedGateway())
+    snapshot = controller.prompt_queue_registry.snapshot(session_id)
+    snapshot = controller.prompt_queue_registry.begin_chain(
+        session_id,
+        context_epoch=store.conversation_context_epoch(session_id),
+        expected_revision=snapshot.revision,
+    ).snapshot
+
+    result = controller.queue_prompt(
+        session_id,
+        text="<script>alert('queued')</script>",
+        expected_revision=snapshot.revision,
+    )
+
+    assert not result.applied
+    assert result.status.value == "invalid"
+    assert controller.prompt_queue_registry.snapshot(session_id).total_count == 0
+
+
 @pytest.mark.asyncio
 async def test_lifecycle_impact_counts_claimed_entries_without_prompt_content():
     gateway = BlockSecondReadinessGateway()
@@ -478,6 +498,41 @@ async def test_failed_retry_adopts_authorized_epoch_then_drains_next_prompt():
 
     assert gateway.user_turns == ["one", "one", "two"]
     assert controller.prompt_queue_registry.snapshot(session_id).total_count == 0
+
+
+@pytest.mark.asyncio
+async def test_failed_retry_stays_on_queue_owner_after_viewed_session_switch():
+    gateway = SequencedGateway(fail_call=0)
+    controller, store, session_id = _arm_controller(gateway)
+    task = asyncio.create_task(
+        controller.run_prompt_chain("owner turn", session_id=session_id)
+    )
+    await gateway.started[0].wait()
+    _queue(controller, session_id, "owner follow-up")
+    gateway.release[0].set()
+    await task
+    failed = next(
+        message
+        for message in store.messages_for_session(session_id)
+        if message.role is ConsoleMessageRole.ASSISTANT
+        and message.status == "failed"
+    )
+
+    viewed = controller.new_session(title="Viewed elsewhere")
+    assert store.active_session_id == viewed.id
+    recovery = asyncio.create_task(controller.retry_failed_queue_turn(failed.id))
+    await gateway.started[1].wait()
+    gateway.release[1].set()
+    await gateway.started[2].wait()
+    gateway.release[2].set()
+    await recovery
+
+    assert gateway.user_turns == [
+        "owner turn",
+        "owner turn",
+        "owner follow-up",
+    ]
+    assert not store.messages_for_session(viewed.id)
 
 
 @pytest.mark.asyncio

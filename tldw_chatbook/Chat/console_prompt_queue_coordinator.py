@@ -679,6 +679,11 @@ class ConsolePromptQueueCoordinator:
         for session_id in session_ids:
             self._changed(session_id)
 
+    def publish_registry_change(self, session_id: str) -> None:
+        """Publish a UI-owned registry mutation through the activity cache."""
+
+        self._changed(session_id)
+
     def _changed(self, session_id: str) -> None:
         if session_id and not self._shutting_down:
             try:

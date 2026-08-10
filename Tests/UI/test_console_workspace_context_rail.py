@@ -200,6 +200,7 @@ def _browser_row(
     starred_sort: str = "",
     updated_sort: str = "",
     run_marker: str = "",
+    queued_count: int = 0,
 ) -> ConsoleConversationBrowserInputRow:
     return ConsoleConversationBrowserInputRow(
         row_key=row_key,
@@ -218,6 +219,7 @@ def _browser_row(
         starred_sort=starred_sort,
         updated_sort=updated_sort,
         run_marker=run_marker,
+        queued_count=queued_count,
     )
 
 
@@ -464,6 +466,33 @@ async def test_console_workspace_context_renders_grouped_conversation_browser() 
         assert star_button.row_key == "conv-starred"
         assert star_button.conversation_id == "conv-starred"
         assert star_button.starred is True
+
+
+@pytest.mark.asyncio
+async def test_background_conversation_row_shows_content_free_queue_count() -> None:
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    row = _browser_row(
+        "native-queued",
+        "Background work",
+        native_session_id="session-background",
+        source_kind="native",
+        queued_count=3,
+    )
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(_base_grouped_workspace_state(rows=(row,)))
+        await pilot.pause()
+
+        row_button = console.query_one(
+            "#console-workspace-conversation-0", Button
+        )
+        assert "Queue 3" in str(row_button.label)
 
 
 @pytest.mark.asyncio
