@@ -598,12 +598,12 @@ def summarize_with_oobabooga(
 
         if not api_url:
             api_url = loaded_config_data["ooba_api"]["api_ip"]
-            logging.debug(f"Oobabooga: Using API URL from config file: {api_url}")
+            logging.debug("Oobabooga: API endpoint configured")
 
         if not isinstance(api_url, str) or not api_url.startswith(
             ("http://", "https://")
         ):
-            logging.error(f"Invalid API URL configured: {api_url}")
+            logging.error("Oobabooga: Invalid API URL configured")
             return "Oobabooga: Invalid API URL configured"
         headers = {
             "accept": "application/json",
@@ -611,9 +611,7 @@ def summarize_with_oobabooga(
         }
         if ooba_api_key:
             headers["Authorization"] = f"Bearer {ooba_api_key}"
-            logging.debug(
-                f"Oobabooga: Using API Key: {ooba_api_key[:5]}...{ooba_api_key[-5:]}"
-            )
+            logging.debug("Oobabooga: Credential configured")
         else:
             logging.debug("Oobabooga: No API key provided")
 
@@ -624,7 +622,10 @@ def summarize_with_oobabooga(
                     data = json.loads(input_data)
                     logging.debug("Oobabooga: Parsed JSON string input")
                 except json.JSONDecodeError as e:
-                    logging.error(f"Oobabooga: Error parsing JSON string: {str(e)}")
+                    logging.error(
+                        "Oobabooga: Failed to parse JSON input; exception_type=%s",
+                        safe_metadata_token(type(e).__name__),
+                    )
                     return f"Oobabooga: Error parsing JSON input: {str(e)}"
             else:
                 data = input_data
@@ -659,7 +660,9 @@ def summarize_with_oobabooga(
         if custom_prompt is None:
             custom_prompt = summarizer_prompt
         ooba_prompt = f"{text}\n\n\n\n{custom_prompt}"
-        logging.debug(f"Oobabooga: Prompt being sent is {ooba_prompt[:500]}...")
+        logging.debug(
+            "Oobabooga: Prompt prepared; character_count=%s", len(ooba_prompt)
+        )
 
         # System message handling
         if system_message is None:
@@ -734,12 +737,20 @@ def summarize_with_oobabooga(
                                             collected_messages += chunk
                                             yield chunk
                                 except json.JSONDecodeError as e:
-                                    logging.error(f"JSON decode error: {str(e)}")
+                                    logging.error(
+                                        "Oobabooga: Failed to decode streamed JSON; "
+                                        "exception_type=%s; line_length=%s",
+                                        safe_metadata_token(type(e).__name__),
+                                        len(content),
+                                    )
                                     continue
 
                 return stream_generator()
             except requests.RequestException as e:
-                logging.error(f"Error streaming summary with Oobabooga: {e}")
+                logging.error(
+                    "Oobabooga: Streaming request failed; exception_type=%s",
+                    safe_metadata_token(type(e).__name__),
+                )
                 return f"Error summarizing with Oobabooga: {str(e)}"
         else:
             # Create a session
@@ -768,32 +779,43 @@ def summarize_with_oobabooga(
             if response.status_code == 200:
                 response_data = response.json()
                 logging.debug("Ooba API request successful")
-                logging.debug(response_data)
                 if "choices" in response_data and response_data["choices"]:
                     logging.debug("Ooba API: Summarization successful")
                     summary = response_data["choices"][0]["message"]["content"].strip()
-                    logging.debug(
-                        f"Ooba API: Summary (first 500 chars): {summary[:500]}..."
-                    )
                     return summary
                 else:
                     error_msg = f"Ooba API request failed: {response.status_code} - {response.text}"
-                    logging.error(error_msg)
+                    logging.error(
+                        "Ooba API: Response missing choices; status_code=%s",
+                        response.status_code,
+                    )
                     return error_msg
             else:
                 logging.error(
                     f"Ooba API: Summarization failed with status code {response.status_code}"
                 )
-                logging.error(f"Ooba API: Error response: {response.text}")
+                logging.error(
+                    "Ooba API: Error response received; status_code=%s",
+                    response.status_code,
+                )
                 return f"Ooba API: Failed to process summary. Status code: {response.status_code}"
     except json.JSONDecodeError as e:
-        logging.error(f"Ooba API: Error decoding JSON: {str(e)}", exc_info=True)
+        logging.error(
+            "Ooba API: Failed to decode JSON; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Ooba API: Error decoding JSON input: {str(e)}"
     except requests.RequestException as e:
-        logging.error(f"Ooba API: Error making API request: {str(e)}", exc_info=True)
+        logging.error(
+            "Ooba API: API request failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Ooba API: Error making API request: {str(e)}"
     except Exception as e:
-        logging.error(f"Ooba API: Unexpected error: {str(e)}", exc_info=True)
+        logging.error(
+            "Ooba API: Unexpected failure; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Ooba API: Unexpected error occurred: {str(e)}"
 
 
@@ -832,15 +854,15 @@ def summarize_with_tabbyapi(
         if temp is None:
             temp = 0.7
 
-        logging.debug(
-            f"TabbyAPI: Using API Key: {tabby_api_key[:5]}...{tabby_api_key[-5:] if tabby_api_key else 'None'}"
-        )
+        if tabby_api_key is None:
+            raise TypeError("'NoneType' object is not subscriptable")
+        logging.debug("TabbyAPI: Credential configured")
 
         # Process input data
         logging.debug("TabbyAPI: Using provided data for summarization")
         data = input_data
 
-        logging.debug(f"TabbyAPI: Loaded data: {data}")
+        logging.debug("TabbyAPI: Input received")
         logging.debug(f"TabbyAPI: Type of data: {type(data)}")
 
         if isinstance(data, dict) and "summary" in data:
@@ -932,17 +954,27 @@ def summarize_with_tabbyapi(
                                         yield content
                             except json.JSONDecodeError as e:
                                 logging.error(
-                                    f"TabbyAPI: Failed to parse JSON streamed data: {str(e)}"
+                                    "TabbyAPI: Failed to parse streamed JSON; "
+                                    "exception_type=%s; line_length=%s",
+                                    safe_metadata_token(type(e).__name__),
+                                    len(data_line),
                                 )
                         else:
                             logging.debug(
-                                f"TabbyAPI: Received non-data line: {decoded_line}"
+                                "TabbyAPI: Ignored non-data stream line; line_length=%s",
+                                len(decoded_line),
                             )
             except requests.exceptions.RequestException as e:
-                logging.error(f"Error summarizing with TabbyAPI: {e}")
+                logging.error(
+                    "TabbyAPI: Streaming request failed; exception_type=%s",
+                    safe_metadata_token(type(e).__name__),
+                )
                 yield f"Error summarizing with TabbyAPI: {str(e)}"
             except Exception as e:
-                logging.error(f"Unexpected error in summarize_with_tabbyapi: {e}")
+                logging.error(
+                    "TabbyAPI: Streaming failed; exception_type=%s",
+                    safe_metadata_token(type(e).__name__),
+                )
                 yield f"Unexpected error in summarization process: {str(e)}"
         else:
             try:
@@ -991,7 +1023,10 @@ def summarize_with_tabbyapi(
                     )
 
             except requests.exceptions.RequestException as e:
-                logging.error(f"Error summarizing with TabbyAPI: {e}")
+                logging.error(
+                    "TabbyAPI: Request failed; exception_type=%s",
+                    safe_metadata_token(type(e).__name__),
+                )
                 return f"Error summarizing with TabbyAPI: {str(e)}"
             except json.JSONDecodeError:
                 logging.error("TabbyAPI: Received an invalid JSON response")
@@ -999,11 +1034,17 @@ def summarize_with_tabbyapi(
                     "TabbyAPI: Error: Received an invalid JSON response from TabbyAPI."
                 )
             except Exception as e:
-                logging.error(f"Unexpected error in summarize_with_tabbyapi: {e}")
+                logging.error(
+                    "TabbyAPI: Summarization failed; exception_type=%s",
+                    safe_metadata_token(type(e).__name__),
+                )
                 return f"TabbyAPI: Unexpected error in summarization process: {str(e)}"
 
     except Exception as e:
-        logging.error(f"TabbyAPI: Unexpected error in summarize_with_tabbyapi: {e}")
+        logging.error(
+            "TabbyAPI: Unexpected failure; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         if streaming:
             yield f"TabbyAPI: Unexpected error in summarization process: {str(e)}"
         else:

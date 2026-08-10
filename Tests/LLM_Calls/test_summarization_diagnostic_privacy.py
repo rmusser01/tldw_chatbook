@@ -6,6 +6,7 @@ import ast
 import copy
 import hashlib
 import importlib
+import inspect
 import json
 import logging as stdlib_logging
 import sys
@@ -119,6 +120,9 @@ class _FakeResponse:
     def iter_lines(self) -> Iterator[bytes]:
         yield from self._lines
 
+    def raise_for_status(self) -> None:
+        return None
+
 
 class _FakeSession:
     def __init__(self, response: _FakeResponse) -> None:
@@ -152,6 +156,42 @@ def _local_settings(*, llama_endpoint: str = "http://llama.invalid") -> dict[str
     }
 
 
+def _local_adapter_settings(
+    *, oobabooga_endpoint: str = "http://oobabooga.invalid/v1/chat/completions"
+) -> dict[str, Any]:
+    return {
+        "ooba_api": {
+            "api_key": "fixed-oobabooga-key",
+            "api_ip": oobabooga_endpoint,
+            "temperature": 0.7,
+            "api_retries": 0,
+            "api_retry_delay": 0,
+        },
+        "api_keys": {"tabby": "fixed-tabby-key"},
+        "local_api_ip": {"tabby": "http://tabby.invalid/v1/chat/completions"},
+        "models": {"tabby": "fixed-tabby-model"},
+        "tabby_api": {"api_retries": 0, "api_retry_delay": 0},
+    }
+
+
+def _install_signature_bound_session_post(
+    monkeypatch: pytest.MonkeyPatch,
+    result: _FakeResponse | BaseException,
+) -> list[tuple[tuple[object, ...], dict[str, object]]]:
+    real_post = local_summarization.requests.Session.post
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def fake_post(session: object, *args: object, **kwargs: object) -> _FakeResponse:
+        inspect.signature(real_post).bind(session, *args, **kwargs)
+        calls.append((args, kwargs))
+        if isinstance(result, BaseException):
+            raise result
+        return result
+
+    monkeypatch.setattr(local_summarization.requests.Session, "post", fake_post)
+    return calls
+
+
 def _consume_generator(generator: Iterator[str]) -> tuple[list[str], object]:
     chunks: list[str] = []
     while True:
@@ -167,6 +207,17 @@ LOCAL_CREDENTIAL_CANARY = "K3YQZ"
 LOCAL_PATH_CANARY = "http://LOCAL_PATH_CANARY_3796.invalid"
 LOCAL_RESPONSE_CANARY = "LOCAL_RESPONSE_CANARY_3796"
 LOCAL_EXCEPTION_CANARY = "LOCAL_EXCEPTION_CANARY_3796"
+OOBABOOGA_PROMPT_CANARY = "OOBABOOGA_PROMPT_CANARY_3796"
+OOBABOOGA_CREDENTIAL_CANARY = "O0BAZ"
+OOBABOOGA_ENDPOINT_CANARY = (
+    "http://OOBABOOGA_ENDPOINT_CANARY_3796.invalid/v1/chat/completions"
+)
+OOBABOOGA_RESPONSE_CANARY = "OOBABOOGA_RESPONSE_CANARY_3796"
+OOBABOOGA_EXCEPTION_CANARY = "OOBABOOGA_EXCEPTION_CANARY_3796"
+TABBY_INPUT_CANARY = "TABBY_INPUT_CANARY_3796"
+TABBY_CREDENTIAL_CANARY = "T4BBY"
+TABBY_STREAM_CANARY = "TABBY_STREAM_CANARY_3796"
+TABBY_EXCEPTION_CANARY = "TABBY_EXCEPTION_CANARY_3796"
 
 
 def _invoke_local_input(monkeypatch: pytest.MonkeyPatch) -> object:
@@ -1694,6 +1745,19 @@ def test_no_pending_local_core_sites() -> None:
     )
 
 
+def test_no_pending_local_adapters_sites() -> None:
+    pending = [
+        site
+        for site in _ledger_sites()
+        if site["group"] == "local_adapters" and site["outcome"] == "pending"
+    ]
+
+    assert not pending, (
+        f"local_adapters has {len(pending)} pending private diagnostics: "
+        f"{[site['site_id'] for site in pending]}"
+    )
+
+
 @pytest.mark.parametrize(
     "case",
     RUNTIME_SENTINEL_CASES,
@@ -1852,4 +1916,217 @@ def test_local_core_kobold_stream_fully_consumed_without_private_diagnostics(
     assert (
         "Kobold: Failed to decode streamed JSON; exception_type=JSONDecodeError"
         in captured.text
+    )
+
+
+def test_oobabooga_success_contract_hides_prompt_credential_endpoint_and_response(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    response = _FakeResponse(
+        json_data={
+            "choices": [{"message": {"content": f"  {OOBABOOGA_RESPONSE_CANARY}  "}}]
+        }
+    )
+    monkeypatch.setattr(
+        local_summarization,
+        "load_settings",
+        lambda: _local_adapter_settings(oobabooga_endpoint=OOBABOOGA_ENDPOINT_CANARY),
+    )
+    calls = _install_signature_bound_session_post(monkeypatch, response)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = local_summarization.summarize_with_oobabooga(
+            "fixed input",
+            OOBABOOGA_CREDENTIAL_CANARY,
+            OOBABOOGA_PROMPT_CANARY,
+            system_message="fixed system message",
+        )
+
+    assert result == OOBABOOGA_RESPONSE_CANARY
+    assert len(calls) == 1
+    args, kwargs = calls[0]
+    assert args == (OOBABOOGA_ENDPOINT_CANARY,)
+    assert kwargs["headers"] == {
+        "accept": "application/json",
+        "content-type": "application/json",
+        "Authorization": f"Bearer {OOBABOOGA_CREDENTIAL_CANARY}",
+    }
+    assert kwargs["json"]["messages"][1]["content"].endswith(OOBABOOGA_PROMPT_CANARY)
+    assert OOBABOOGA_PROMPT_CANARY not in captured.text
+    assert OOBABOOGA_CREDENTIAL_CANARY not in captured.text
+    assert OOBABOOGA_ENDPOINT_CANARY not in captured.text
+    assert OOBABOOGA_RESPONSE_CANARY not in captured.text
+    assert "Oobabooga: Credential configured" in captured.text
+    assert "Oobabooga: API endpoint configured" in captured.text
+    assert "Oobabooga: Prompt prepared; character_count=" in captured.text
+    assert "Ooba API: Summarization successful" in captured.text
+
+
+def test_oobabooga_error_response_contract_hides_response_body(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    response = _FakeResponse(status_code=503, text=OOBABOOGA_RESPONSE_CANARY)
+    monkeypatch.setattr(local_summarization, "load_settings", _local_adapter_settings)
+    _install_signature_bound_session_post(monkeypatch, response)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = local_summarization.summarize_with_oobabooga(
+            "fixed input",
+            "fixed-oobabooga-key",
+            "fixed prompt",
+            api_url="http://fixed-oobabooga.invalid/v1/chat/completions",
+        )
+
+    assert result == "Ooba API: Failed to process summary. Status code: 503"
+    assert OOBABOOGA_RESPONSE_CANARY not in captured.text
+    assert "Ooba API: Error response received; status_code=503" in captured.text
+
+
+def test_oobabooga_request_exception_contract_hides_message_and_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr(local_summarization, "load_settings", _local_adapter_settings)
+    _install_signature_bound_session_post(
+        monkeypatch,
+        local_summarization.requests.RequestException(OOBABOOGA_EXCEPTION_CANARY),
+    )
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = local_summarization.summarize_with_oobabooga(
+            "fixed input",
+            "fixed-oobabooga-key",
+            "fixed prompt",
+            api_url="http://fixed-oobabooga.invalid/v1/chat/completions",
+        )
+
+    assert result == (
+        "Ooba API: Error making API request: " + OOBABOOGA_EXCEPTION_CANARY
+    )
+    assert OOBABOOGA_EXCEPTION_CANARY not in captured.text
+    assert (
+        "Ooba API: API request failed; exception_type=RequestException" in captured.text
+    )
+    assert all(record.exc_info is None for record in caplog.records)
+
+
+def test_oobabooga_malformed_stream_contract_fully_consumes_and_hides_line(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    private_line = f'data: {{"content":"{OOBABOOGA_RESPONSE_CANARY}"'.encode()
+    response = _FakeResponse(lines=(private_line, b"data: [DONE]"))
+    monkeypatch.setattr(local_summarization, "load_settings", _local_adapter_settings)
+    calls = _install_signature_bound_session_post(monkeypatch, response)
+
+    generator = local_summarization.summarize_with_oobabooga(
+        "fixed input",
+        "fixed-oobabooga-key",
+        "fixed prompt",
+        api_url="http://fixed-oobabooga.invalid/v1/chat/completions",
+        streaming=True,
+    )
+    assert len(calls) == 1
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = _consume_generator(generator)
+
+    assert result == ([], None)
+    assert OOBABOOGA_RESPONSE_CANARY not in captured.text
+    assert "Oobabooga: Failed to decode streamed JSON; exception_type=" in (
+        captured.text
+    )
+    assert f"line_length={len(private_line) - len(b'data: ')}" in captured.text
+
+
+def test_tabby_malformed_stream_contract_hides_input_credential_and_lines(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    malformed_line = f'data: {{"content":"{TABBY_STREAM_CANARY}"'.encode()
+    non_data_line = f"event: {TABBY_STREAM_CANARY}".encode()
+    response = _FakeResponse(lines=(malformed_line, non_data_line, b"data: [DONE]"))
+    monkeypatch.setattr(local_summarization, "load_settings", _local_adapter_settings)
+    calls = _install_signature_bound_session_post(monkeypatch, response)
+
+    generator = local_summarization.summarize_with_tabbyapi(
+        TABBY_INPUT_CANARY,
+        "fixed prompt",
+        api_key=TABBY_CREDENTIAL_CANARY,
+        streaming=True,
+    )
+    assert calls == []
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = _consume_generator(generator)
+
+    assert result == ([], None)
+    assert len(calls) == 1
+    assert TABBY_INPUT_CANARY not in captured.text
+    assert TABBY_CREDENTIAL_CANARY not in captured.text
+    assert TABBY_STREAM_CANARY not in captured.text
+    assert "TabbyAPI: Credential configured" in captured.text
+    assert "TabbyAPI: Input received" in captured.text
+    assert "TabbyAPI: Failed to parse streamed JSON; exception_type=" in (captured.text)
+    assert "TabbyAPI: Ignored non-data stream line; line_length=" in captured.text
+
+
+def test_tabby_request_exception_contract_hides_message(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr(local_summarization, "load_settings", _local_adapter_settings)
+    _install_signature_bound_session_post(
+        monkeypatch,
+        local_summarization.requests.RequestException(TABBY_EXCEPTION_CANARY),
+    )
+
+    generator = local_summarization.summarize_with_tabbyapi(
+        "fixed input",
+        "fixed prompt",
+        api_key="fixed-tabby-key",
+        streaming=True,
+    )
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = _consume_generator(generator)
+
+    assert result == (
+        [f"Error summarizing with TabbyAPI: {TABBY_EXCEPTION_CANARY}"],
+        None,
+    )
+    assert TABBY_EXCEPTION_CANARY not in captured.text
+    assert (
+        "TabbyAPI: Streaming request failed; exception_type=RequestException"
+        in captured.text
+    )
+
+
+def test_tabby_missing_credential_error_contract_is_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _local_adapter_settings()
+    settings["api_keys"]["tabby"] = None
+    monkeypatch.setattr(local_summarization, "load_settings", lambda: settings)
+
+    def transport_must_not_run() -> object:
+        raise AssertionError("transport invoked before missing-key failure")
+
+    monkeypatch.setattr(
+        local_summarization.requests,
+        "Session",
+        transport_must_not_run,
+    )
+
+    generator = local_summarization.summarize_with_tabbyapi(
+        "fixed input",
+        "fixed prompt",
+    )
+    result = _consume_generator(generator)
+
+    assert result == (
+        [],
+        "TabbyAPI: Unexpected error in summarization process: "
+        "'NoneType' object is not subscriptable",
     )
