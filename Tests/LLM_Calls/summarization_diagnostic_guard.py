@@ -501,9 +501,12 @@ def _process_alias_statements(
             method_parent = _merge_alias_states(definition_state, *later_states)
         else:
             method_parent = function_parent
+        class_body_initial = (
+            definition_state if function_parent is None else function_parent
+        )
         _process_alias_statements(
             class_node.body,
-            definition_state,
+            class_body_initial,
             snapshots,
             function_parent=method_parent,
         )

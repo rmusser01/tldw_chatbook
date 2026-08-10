@@ -748,6 +748,52 @@ class C:
     assert calls[0].captures_exception is False
 
 
+def test_guard_nested_class_body_uses_module_bound_logger_not_outer_attribute() -> None:
+    source = """
+from logging import getLogger
+from loguru import logger
+
+audit = logger.bind(secret=module_private).opt(exception=module_exc)
+
+class Outer:
+    audit = getLogger(__name__)
+
+    class Inner:
+        audit.error(private_value)
+"""
+
+    call = _single_call(source)
+
+    assert call.qualname == "Outer.Inner"
+    assert call.expressions == (
+        "private_value",
+        "secret=module_private",
+        "exception=module_exc",
+    )
+    assert call.captures_exception is True
+
+
+def test_guard_nested_class_body_ignores_outer_bound_logger_attribute() -> None:
+    source = """
+from logging import getLogger
+from loguru import logger
+
+audit = getLogger(__name__)
+
+class Outer:
+    audit = logger.bind(secret=outer_private).opt(exception=outer_exc)
+
+    class Inner:
+        audit.error(private_value)
+"""
+
+    call = _single_call(source)
+
+    assert call.qualname == "Outer.Inner"
+    assert call.expressions == ("private_value",)
+    assert call.captures_exception is False
+
+
 def test_guard_finds_bind_and_opt_derived_logger_aliases() -> None:
     source = """
 from loguru import logger
