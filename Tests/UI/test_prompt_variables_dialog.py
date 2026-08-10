@@ -9,6 +9,7 @@ import pytest
 from rich.cells import cell_len
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
+from textual.widget import Widget
 from textual.widgets import Button, Checkbox, Input, Static
 
 import tldw_chatbook
@@ -100,7 +101,7 @@ def _input_for(dialog: PromptVariablesDialog, name: str) -> Input:
     )
 
 
-def _painted_region_text(widget: Static) -> str:
+def _painted_region_text(widget: Widget) -> str:
     lines = [
         "".join(segment.text for segment in strip)
         for strip in widget.screen._compositor.render_strips()
@@ -110,6 +111,44 @@ def _painted_region_text(widget: Static) -> str:
         lines[y][region.x : region.right].strip()
         for y in range(region.y, region.bottom)
     ).strip()
+
+
+def _painted_relative_luminance(color) -> float:
+    triplet = color.get_truecolor()
+
+    def channel(value: int) -> float:
+        srgb = value / 255
+        return srgb / 12.92 if srgb <= 0.04045 else ((srgb + 0.055) / 1.055) ** 2.4
+
+    return (
+        0.2126 * channel(triplet.red)
+        + 0.7152 * channel(triplet.green)
+        + 0.0722 * channel(triplet.blue)
+    )
+
+
+def _painted_contrast(first, second) -> float:
+    lighter, darker = sorted(
+        (_painted_relative_luminance(first), _painted_relative_luminance(second)),
+        reverse=True,
+    )
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def _painted_style_of_text(app: App, region, needle: str):
+    strips = list(app.screen._compositor.render_strips())
+    for y in range(region.y, region.bottom):
+        segments = list(strips[y]._segments)
+        row_text = "".join(segment.text for segment in segments)
+        index = row_text.find(needle)
+        if index == -1:
+            continue
+        x = 0
+        for segment in segments:
+            if x + len(segment.text) > index:
+                return segment.style
+            x += len(segment.text)
+    return None
 
 
 def test_request_is_frozen_validated_and_repr_safe() -> None:
@@ -416,6 +455,52 @@ async def test_use_original_returns_selected_source_without_interpolation() -> N
 
 
 @pytest.mark.asyncio
+async def test_use_original_with_system_selected_returns_both_exact_sources() -> None:
+    system_source = "System {customer} {{literal}}"
+    user_source = "User {customer} {{literal}}"
+    request = _request(system_text=system_source, user_text=user_source)
+    app = DialogHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        app.show(request)
+        await pilot.pause()
+        await pilot.click(f"#{SYSTEM_CHECKBOX_ID}")
+        await pilot.pause()
+        _input_for(app.screen, "customer").value = "INTERPOLATED"
+
+        await pilot.click(f"#{ORIGINAL_BUTTON_ID}")
+        await pilot.pause()
+
+    result = app.results[0]
+    assert isinstance(result, PromptVariableApplication)
+    assert result.system_text == system_source
+    assert result.user_text == user_source
+    assert result.apply_system is True
+    assert result.apply_user is True
+    assert result.system_fingerprint == request.system_fingerprint
+    assert "INTERPOLATED" not in (result.system_text, result.user_text)
+
+
+@pytest.mark.asyncio
+async def test_disabled_application_actions_paint_at_three_to_one_contrast() -> None:
+    app = BundledDialogHarness()
+    async with app.run_test(size=(64, 24)) as pilot:
+        app.show(_request(system_text="System {customer}", user_text=None))
+        await pilot.pause()
+
+        for button_id, label in (
+            (ORIGINAL_BUTTON_ID, "Use original placeholders"),
+            (APPLY_BUTTON_ID, "Apply"),
+        ):
+            button = app.screen.query_one(f"#{button_id}", Button)
+            assert button.disabled is True
+            style = _painted_style_of_text(app, button.region, label)
+            assert style is not None
+            assert style.color is not None and style.bgcolor is not None
+            ratio = _painted_contrast(style.color, style.bgcolor)
+            assert ratio >= 3.0, f"{button_id} paints at only {ratio:.2f}:1"
+
+
+@pytest.mark.asyncio
 async def test_markup_looking_value_remains_literal_when_applied() -> None:
     app = DialogHarness()
     async with app.run_test(size=(120, 40)) as pilot:
@@ -515,14 +600,22 @@ async def test_real_bundle_keeps_one_scroll_owner_and_fixed_actions_reachable(
         assert "Cancel" in normalized_paint
         assert "Apply" in normalized_paint
         state = dialog.query_one(f"#{SYSTEM_STATE_ID}", Static)
+        checkbox = dialog.query_one(f"#{SYSTEM_CHECKBOX_ID}", Checkbox)
+        off_control = _painted_region_text(checkbox)
+        assert off_control
+        assert "…" not in off_control
         assert str(state.renderable) == "Off"
         assert _painted_region_text(state) == "Off"
 
         await pilot.click(f"#{SYSTEM_CHECKBOX_ID}")
         await pilot.pause()
         state = dialog.query_one(f"#{SYSTEM_STATE_ID}", Static)
+        on_control = _painted_region_text(checkbox)
+        assert on_control
+        assert "…" not in on_control
         assert str(state.renderable) == "On"
         assert _painted_region_text(state) == "On"
+        assert (off_control, "Off") != (on_control, "On")
         assert dialog.query_one(f"#{ORIGINAL_BUTTON_ID}", Button).disabled is False
 
         scroll.scroll_to(y=scroll.max_scroll_y, animate=False)

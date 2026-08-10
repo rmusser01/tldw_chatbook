@@ -648,8 +648,10 @@ PromptVariablesDialog {
     max-width: 5;
     height: 3;
     min-height: 3;
+    padding: 0;
     background: $ds-surface-panel;
     color: $ds-text-primary;
+    text-overflow: clip;
 }
 
 #prompt-variables-system-state {
@@ -760,9 +762,10 @@ PromptVariablesDialog {
 }
 
 #prompt-variables-actions Button:disabled {
+    opacity: 100%;
+    text-opacity: 100%;
     background: $surface-darken-1;
-    color: $ds-text-primary;
-    text-opacity: 70%;
+    color: $text-muted;
 }
 
 /* TASK-870: "View full log" read-only run-log viewer, sized/laid out the
