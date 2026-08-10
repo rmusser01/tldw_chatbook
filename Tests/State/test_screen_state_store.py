@@ -7,6 +7,7 @@ import logging
 
 import pytest
 
+import tldw_chatbook.UI.Navigation.screen_state_store as screen_state_store
 from tldw_chatbook.UI.Navigation.screen_state_store import (
     ConsolePromptTargetProjection,
     RuntimeIdentity,
@@ -47,6 +48,21 @@ def test_console_prompt_target_projection_is_minimal_frozen_and_safe() -> None:
         assert not hasattr(projection, forbidden)
     with pytest.raises(FrozenInstanceError):
         projection.target_session_id = "session-2"  # type: ignore[misc]
+
+
+def test_console_target_has_no_parallel_backing_store() -> None:
+    store = ScreenStateStore()
+
+    assert tuple(
+        item.name for item in fields(screen_state_store._SnapshotEnvelope)
+    ) == (
+        "canonical_route",
+        "snapshot",
+        "runtime_identity",
+        "console_prompt_target",
+    )
+    assert not hasattr(screen_state_store, "_ConsolePromptTargetEnvelope")
+    assert not hasattr(store, "_console_prompt_targets")
 
 
 @pytest.mark.parametrize(

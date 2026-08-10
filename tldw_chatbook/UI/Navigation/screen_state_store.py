@@ -77,13 +77,7 @@ class _SnapshotEnvelope:
     canonical_route: str
     snapshot: dict[str, Any]
     runtime_identity: RuntimeIdentity
-
-
-@dataclass(slots=True)
-class _ConsolePromptTargetEnvelope:
-    canonical_route: str
-    projection: ConsolePromptTargetProjection
-    runtime_identity: RuntimeIdentity
+    console_prompt_target: ConsolePromptTargetProjection | None = None
 
 
 class ScreenStateStore:
@@ -92,7 +86,6 @@ class ScreenStateStore:
     def __init__(self) -> None:
         self._owner_thread_id = threading.get_ident()
         self._entries: dict[str, _SnapshotEnvelope] = {}
-        self._console_prompt_targets: dict[str, _ConsolePromptTargetEnvelope] = {}
 
     def save(
         self,
@@ -112,7 +105,6 @@ class ScreenStateStore:
             snapshot=detached_snapshot,
             runtime_identity=runtime_identity,
         )
-        self._console_prompt_targets.pop(canonical_route, None)
 
     def restore(
         self,
@@ -129,15 +121,7 @@ class ScreenStateStore:
             canonical_route=canonical_route,
             runtime_identity=runtime_identity,
         ):
-            self._discard_route(canonical_route)
-            return None
-        target = self._console_prompt_targets.get(canonical_route)
-        if target is not None and not self._target_compatible(
-            target,
-            canonical_route=canonical_route,
-            runtime_identity=runtime_identity,
-        ):
-            self._discard_route(canonical_route)
+            self._entries.pop(canonical_route, None)
             return None
         return dict(envelope.snapshot)
 
@@ -172,15 +156,11 @@ class ScreenStateStore:
             canonical_route=canonical_route,
             runtime_identity=runtime_identity,
         ):
-            self._discard_route(canonical_route)
+            self._entries.pop(canonical_route, None)
             raise ValueError(
                 "Console prompt target requires a compatible screen snapshot"
             )
-        self._console_prompt_targets[canonical_route] = _ConsolePromptTargetEnvelope(
-            canonical_route=canonical_route,
-            projection=self._copy_projection(projection),
-            runtime_identity=runtime_identity,
-        )
+        snapshot.console_prompt_target = self._copy_projection(projection)
 
     def restore_console_prompt_target(
         self,
@@ -199,31 +179,24 @@ class ScreenStateStore:
         self._assert_owner_thread()
         canonical_route = self._canonical_key(route)
         self._require_runtime_identity(runtime_identity)
-        envelope = self._console_prompt_targets.get(canonical_route)
-        if envelope is None:
-            return None
-        if not self._target_compatible(
+        envelope = self._entries.get(canonical_route)
+        if not self._compatible(
             envelope,
             canonical_route=canonical_route,
             runtime_identity=runtime_identity,
         ):
-            self._discard_route(canonical_route)
+            self._entries.pop(canonical_route, None)
             return None
-        snapshot = self._entries.get(canonical_route)
-        if not self._compatible(
-            snapshot,
-            canonical_route=canonical_route,
-            runtime_identity=runtime_identity,
-        ):
-            self._discard_route(canonical_route)
+        projection = envelope.console_prompt_target
+        if projection is None:
             return None
-        return self._copy_projection(envelope.projection)
+        return self._copy_projection(projection)
 
     def discard(self, route: str) -> None:
         """Forget one canonical route, if present."""
         self._assert_owner_thread()
         canonical_route = self._canonical_key(route)
-        self._discard_route(canonical_route)
+        self._entries.pop(canonical_route, None)
 
     def has_snapshots(self, runtime_identity: RuntimeIdentity) -> bool:
         """Return whether any compatible snapshot remains."""
@@ -236,20 +209,8 @@ class ScreenStateStore:
                 canonical_route=canonical_route,
                 runtime_identity=runtime_identity,
             ):
-                self._discard_route(canonical_route)
-                continue
-            target = self._console_prompt_targets.get(canonical_route)
-            if target is not None and not self._target_compatible(
-                target,
-                canonical_route=canonical_route,
-                runtime_identity=runtime_identity,
-            ):
-                self._discard_route(canonical_route)
+                self._entries.pop(canonical_route, None)
         return bool(self._entries)
-
-    def _discard_route(self, canonical_route: str) -> None:
-        self._entries.pop(canonical_route, None)
-        self._console_prompt_targets.pop(canonical_route, None)
 
     def _assert_owner_thread(self) -> None:
         if threading.get_ident() != self._owner_thread_id:
@@ -282,21 +243,13 @@ class ScreenStateStore:
             and isinstance(envelope.snapshot, dict)
             and isinstance(envelope.runtime_identity, RuntimeIdentity)
             and envelope.runtime_identity == runtime_identity
-        )
-
-    @staticmethod
-    def _target_compatible(
-        envelope: object,
-        *,
-        canonical_route: str,
-        runtime_identity: RuntimeIdentity,
-    ) -> bool:
-        return (
-            isinstance(envelope, _ConsolePromptTargetEnvelope)
-            and envelope.canonical_route == canonical_route
-            and isinstance(envelope.projection, ConsolePromptTargetProjection)
-            and isinstance(envelope.runtime_identity, RuntimeIdentity)
-            and envelope.runtime_identity == runtime_identity
+            and (
+                envelope.console_prompt_target is None
+                or isinstance(
+                    envelope.console_prompt_target,
+                    ConsolePromptTargetProjection,
+                )
+            )
         )
 
     @staticmethod
