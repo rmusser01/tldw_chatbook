@@ -545,3 +545,8 @@ so the wording says which one is refusing. Missing local extras stop
 being presented as blockers during a server-targeted import: the ⚠ block
 and its "Copy install command" button are replaced by one quiet note
 saying the gap affects imports on this machine only.*
+
+*Verified against dev @ 642567627 — 2026-08-10 (task-4023 AC#1, RC-07:
+while its gate is closed the submit button reads "○ Export bundle (.zip)"
+— the Library's non-colour disabled marker — and renders at 7.25:1
+(measured live; it was 1.44:1), with its F-018 reason tooltip unchanged).*

@@ -79,10 +79,12 @@ from ...Library.library_export_state import (
     LibraryExportFormState,
     build_library_export_form_state,
     default_export_name,
-    export_button_tooltip,
     format_last_export_line,
     next_media_quality,
     normalize_export_destination,
+)
+from ...Widgets.Library.library_export_canvas import (
+    apply_library_export_submit_gate,
 )
 from ...Library.ingest_analysis import resolve_ingest_analysis_provider
 from ...Library.ingest_capabilities import get_capabilities, list_type_groups
@@ -252,6 +254,7 @@ from ...Library.library_shell_state import (
     LibraryShellInput,
     LibraryShellState,
     build_library_shell_state,
+    library_disabled_action_label,
 )
 from ...Local_Ingestion.parakeet_v2_artifact import (
     run_parakeet_v2_preflight,
@@ -1136,6 +1139,31 @@ def _move_library_list_row_focus(focused: Widget | None, key: str) -> bool:
 # argument has no such attribute-lookup step, so a fake missing
 # `query_one`/`app`/etc. correctly falls through to the `except` below and
 # reaches the already-stubbed `screen.refresh(...)` fallback instead.
+def _patch_library_disabled_marker_label(button: Button) -> None:
+    """Rebuild a marker-carrying action label after ``disabled`` flipped.
+
+    task-4023 AC#1 (RC-07): the non-colour "○" disabled marker is part of
+    the Button's label, so every in-place patcher that flips ``disabled``
+    must rebuild the label too (the recompose-discipline rule). The base
+    label is stashed on the button at compose time
+    (``_library_disabled_marker_base``) because rendered labels are not a
+    safe source to reconstruct from (the PR #665 escape lesson) and the
+    notes canvas spells its compact label differently. A missing stash
+    (unexpected widget shape) is a silent no-op -- the label simply keeps
+    its compose-time marker state until the next canvas sync.
+
+    Args:
+        button: The action Button whose ``disabled`` was just updated.
+
+    Returns:
+        None.
+    """
+    base = getattr(button, "_library_disabled_marker_base", None)
+    if base is None:
+        return
+    button.label = library_disabled_action_label(base, button.disabled)
+
+
 def _apply_library_row_toggle(
     screen: "LibraryScreen", kind: str, button: Button, row_id: str
 ) -> None:
@@ -1195,6 +1223,12 @@ def _apply_library_row_toggle(
             if export_button.disabled
             else LIBRARY_EXPORT_SELECTED_TOOLTIP
         )
+        # task-4023 AC#1 (RC-07): the "○" disabled marker lives in the
+        # label, so it must flip here alongside `disabled` (recompose
+        # discipline). Rebuilt from the base label the canvas stashed at
+        # compose time -- notes spells the compact label differently, so
+        # the patcher must not hard-code it.
+        _patch_library_disabled_marker_label(export_button)
         # task-2853: Media is the only canvas with a "Delete selected" bulk
         # action today (conversations/notes are out of this task's scope) --
         # flip it in place too, same reason/action tooltip pair as export.
@@ -1212,6 +1246,7 @@ def _apply_library_row_toggle(
                 if delete_button.disabled
                 else LIBRARY_DELETE_SELECTED_TOOLTIP
             )
+            _patch_library_disabled_marker_label(delete_button)
     except Exception:
         logger.debug(
             f"Library {kind} row toggle in-place update failed; falling back "
@@ -1302,6 +1337,25 @@ def _canonical_shortcut_key(key: str) -> str:
     """
     lowered = key.strip().casefold()
     return "esc" if lowered == "escape" else lowered
+
+
+#: task-4023 AC#4 (RC-10): human names for the F1 panel's surface-qualified
+#: title, keyed by rail-row id. Surface identity only -- the shortcut SET
+#: still comes solely from ``_library_footer_shortcuts_for_current_state``.
+_LIBRARY_HELP_SURFACE_LABELS: dict[str, str] = {
+    LIBRARY_ROW_BROWSE_MEDIA: "Media",
+    LIBRARY_ROW_BROWSE_CONVERSATIONS: "Conversations",
+    LIBRARY_ROW_BROWSE_NOTES: "Notes",
+    LIBRARY_ROW_BROWSE_PROMPTS: "Prompts",
+    LIBRARY_ROW_BROWSE_SKILLS: "Skills",
+    LIBRARY_ROW_BROWSE_COLLECTIONS: "Collections",
+    LIBRARY_ROW_BROWSE_SEARCH: "Search / RAG",
+    LIBRARY_ROW_INGEST_MEDIA: "Import",
+    LIBRARY_ROW_INGEST_EXPORT: "Export",
+    LIBRARY_ROW_CREATE_NOTE: "New note",
+    LIBRARY_ROW_CREATE_PROMPT: "New prompt",
+    LIBRARY_ROW_CREATE_SKILL: "New skill",
+}
 
 
 class _ParakeetV2NoPendingReportError(RuntimeError):
@@ -1412,11 +1466,18 @@ class LibraryScreen(BaseAppScreen):
     #: too.
     #: F-012: `/` (focus the rail search box) works on every canvas, so it
     #: closes both sets.
+    #: task-4023 AC#4 (RC-10): F6 closes the set. Search/RAG was the ONLY
+    #: per-mode Library set without it, so F1 (fed by this same tuple)
+    #: omitted the key even though the footer's global cluster advertised
+    #: "F6 panes" on that surface. The footer merge is unharmed: a
+    #: context-covered reserved key renders verbatim in the screen entry
+    #: and drops from the global cluster (the task-2860 rule).
     LIBRARY_SHORTCUTS = (
         ("u", "use Library context in Console"),
         ("enter", "select evidence"),
         ("o", "open evidence"),
         ("/", "focus search"),
+        ("F6", "next pane"),
     )
 
     #: task-2237 (R2): the landing state advertises its full keyboard
@@ -7895,20 +7956,91 @@ class LibraryScreen(BaseAppScreen):
                 f"Media {counts.get('media', 0)} · "
                 f"Conversations {counts.get('conversations', 0)}"
             )
-        db_sizes = getattr(self.app_instance, "db_sizes_status", None)
-        if isinstance(db_sizes, dict) and db_sizes:
-            prompts_size = _unbreakable_size_text(str(db_sizes.get("prompts", "?")))
-            chachanotes_size = _unbreakable_size_text(
-                str(db_sizes.get("chachanotes", "?"))
-            )
-            media_size = _unbreakable_size_text(str(db_sizes.get("media", "?")))
-            sizes_line = (
-                f"Prompts {prompts_size} · "
-                f"Chats/Notes {chachanotes_size} · "
-                f"Media {media_size}"
-            )
+        sizes_line = self._library_db_sizes_line()
+        if sizes_line is not None:
             return (runtime_value, counts_or_error, sizes_line)
         return (runtime_value, counts_or_error)
+
+    def _library_db_sizes_line(self) -> str | None:
+        """Format the Details DB-sizes value from the app-level cache.
+
+        Single source for the sizes line's format, shared by the rail's
+        compose path (via ``_library_details_lines``) and the
+        Details-open refresh patcher
+        (``_refresh_library_details_db_sizes``) -- the recompose-
+        discipline rule: the in-place updater owns the same conditional
+        the compose branch owns.
+
+        Returns:
+            The formatted line, or ``None`` while the DBStatusManager has
+            never cached a reading (F-014: never an "N/A" triplet).
+        """
+        db_sizes = getattr(self.app_instance, "db_sizes_status", None)
+        if not isinstance(db_sizes, dict) or not db_sizes:
+            return None
+        prompts_size = _unbreakable_size_text(str(db_sizes.get("prompts", "?")))
+        chachanotes_size = _unbreakable_size_text(
+            str(db_sizes.get("chachanotes", "?"))
+        )
+        media_size = _unbreakable_size_text(str(db_sizes.get("media", "?")))
+        return (
+            f"Prompts {prompts_size} · "
+            f"Chats/Notes {chachanotes_size} · "
+            f"Media {media_size}"
+        )
+
+    async def _refresh_library_details_db_sizes(self) -> None:
+        """Recompute the DB sizes and patch the Details line in place.
+
+        task-4023 AC#3 (RC-09): the Details disclosure's sizes line
+        rendered once from the app-level cache and was never refreshed --
+        live, it kept reporting ``Prompts 180.0KB`` while disk (incl.
+        sidecars) held 4.8MB, even after closing and reopening Details.
+        The refresh runs at the point of consumption (opening the
+        disclosure), not on a polling loop: three stat() triples through
+        ``DBStatusManager.update_db_sizes`` (WAL-inclusive, task-2859),
+        then a targeted update of ``#library-details-db-sizes``. When the
+        cache was empty at compose time the line was never mounted, so
+        the patcher mounts it after ``#library-details-body`` -- the same
+        conditional the compose branch owns (``LibraryRail.compose``).
+        """
+        manager = getattr(self.app_instance, "db_status_manager", None)
+        update = getattr(manager, "update_db_sizes", None)
+        if callable(update):
+            try:
+                await update()
+            except Exception:
+                logger.debug(
+                    "Details-open DB size recompute failed; the disclosure "
+                    "keeps its cached reading.",
+                    exc_info=True,
+                )
+        sizes_line = self._library_db_sizes_line()
+        if sizes_line is None:
+            return
+        rendered = library_dim_label_text("DB sizes", sizes_line)
+        existing = list(self.query("#library-details-db-sizes"))
+        if existing:
+            existing[0].update(rendered)
+            return
+        anchors = list(self.query("#library-details-body"))
+        if not anchors:
+            return
+        try:
+            await anchors[0].parent.mount(
+                Static(
+                    rendered,
+                    id="library-details-db-sizes",
+                    classes="library-details-row",
+                ),
+                after=anchors[0],
+            )
+        except Exception:
+            logger.debug(
+                "Mounting the freshly computed DB-sizes line failed; the "
+                "next rail recompose renders it from the updated cache.",
+                exc_info=True,
+            )
 
     def _build_library_conversations_state(self):
         """Build the conversations canvas display state from local records."""
@@ -8803,9 +8935,10 @@ class LibraryScreen(BaseAppScreen):
             # toolbar's export/delete buttons -- otherwise the compose-
             # time tooltip goes stale the moment counts land and this
             # patcher is the only thing that updates `disabled` here.
+            # task-4023 AC#1: the shared gate helper also rebuilds the
+            # "○"-marker label alongside `disabled` (recompose discipline).
             submit_button = self.query_one("#library-export-submit", Button)
-            submit_button.disabled = not state.export_enabled
-            submit_button.tooltip = export_button_tooltip(state)
+            apply_library_export_submit_gate(submit_button, state)
         except (NoMatches, QueryError):
             pass
 
@@ -9459,8 +9592,9 @@ class LibraryScreen(BaseAppScreen):
             last_export_widget.update(state.last_export_line)
             last_export_widget.display = bool(state.last_export_line)
             submit_button = self.query_one("#library-export-submit", Button)
-            submit_button.disabled = not state.export_enabled
-            submit_button.tooltip = export_button_tooltip(state)
+            # task-4023 AC#1: disabled + "○"-marker label + F-018 tooltip
+            # through the one shared gate helper (recompose discipline).
+            apply_library_export_submit_gate(submit_button, state)
             self.query_one("#library-export-cancel", Button).display = bool(
                 state.running
             )
@@ -11334,6 +11468,18 @@ class LibraryScreen(BaseAppScreen):
             return
         body.display = open_state
         header.sync_open(open_state)
+        if section_id == "details" and open_state:
+            # task-4023 AC#3 (RC-09): opening the disclosure is the
+            # sensible refresh trigger for its DB-sizes reading -- the
+            # display toggle above never recomposes the rail, so without
+            # this the line keeps whatever the cache held at the last
+            # full recompose (measured live: 180.0KB shown against 4.8MB
+            # on disk, unchanged across close/reopen).
+            self.run_worker(
+                self._refresh_library_details_db_sizes(),
+                exclusive=True,
+                group="library_details_db_sizes",
+            )
 
     @work(thread=True)
     def _save_library_rail_preferences(self, serialized: dict[str, bool]) -> None:
@@ -14226,20 +14372,53 @@ class LibraryScreen(BaseAppScreen):
         # comparison kept both and F1 listed the exit twice in Ingest
         # ("esc: back to hub" + "escape: Back to Library hub" -- live,
         # 2026-08-08). Case is folded for the same reason ("F6" vs "f6").
+        # (task-4023 AC#4 / RC-10) The seen-set also GROWS as extras
+        # accumulate: two simultaneously active same-key BINDINGS extras
+        # (eight "escape" entries share one key on this screen) previously
+        # had no intra-set dedupe, so a surface whose footer set lacks
+        # "esc" could still list Escape twice with two labels. Keeping the
+        # FIRST active entry matches how Textual resolves same-key
+        # bindings -- declaration order, first passing gate wins -- so the
+        # panel names the action the key would actually run.
         seen_keys = {
             _canonical_shortcut_key(key) for key, _description in footer_shortcuts
         }
-        binding_extras = tuple(
-            pair
-            for pair in self._active_library_binding_shortcuts()
-            if _canonical_shortcut_key(pair[0]) not in seen_keys
-        )
+        binding_extras: list[tuple[str, str]] = []
+        for pair in self._active_library_binding_shortcuts():
+            canonical = _canonical_shortcut_key(pair[0])
+            if canonical in seen_keys:
+                continue
+            seen_keys.add(canonical)
+            binding_extras.append(pair)
+        # (task-4023 AC#4 / RC-10) Name the surface the panel describes --
+        # "Collections' panel says nothing about Collections". The label
+        # comes from the selected rail row (surface identity), not from a
+        # second copy of the shortcut-set decision tree; the SET itself
+        # still has exactly one source (the footer seam above).
+        surface_label = self._library_help_surface_label()
         state = WorkbenchHelpState(
             route_id="library",
-            title="Library Shortcuts",
-            shortcuts=footer_shortcuts + binding_extras,
+            title=(
+                f"Library Shortcuts — {surface_label}"
+                if surface_label
+                else "Library Shortcuts"
+            ),
+            shortcuts=footer_shortcuts + tuple(binding_extras),
         )
         self.app.push_screen(WorkbenchHelpPanel(state))
+
+    def _library_help_surface_label(self) -> str:
+        """Return the current surface's human name for the F1 panel title.
+
+        Derived from the selected rail row -- surface identity, not a fork
+        of the shortcut-set decision tree. An unmapped row id (e.g. the
+        Study staging rows) returns "" and the panel keeps its generic
+        title rather than inventing a name.
+        """
+        row_id = getattr(self, "_library_selected_row_id", "")
+        if not row_id:
+            return "Landing"
+        return _LIBRARY_HELP_SURFACE_LABELS.get(row_id, "")
 
     def _active_library_binding_shortcuts(self) -> tuple[tuple[str, str], ...]:
         """Filter ``BINDINGS`` through ``check_action`` for the F1 panel.
@@ -22735,6 +22914,13 @@ class LibraryScreen(BaseAppScreen):
             if buttons:
                 buttons[0].disabled = not action.enabled
                 buttons[0].tooltip = action.tooltip
+                # task-4023 AC#1 (RC-07): the "○" disabled marker lives in
+                # the label, so this targeted patcher rebuilds it whenever
+                # it flips `disabled` (recompose discipline; mirrors
+                # `LibraryCollectionsPanel._compose_collection_form`).
+                buttons[0].label = library_disabled_action_label(
+                    action.label, not action.enabled
+                )
 
         await self._sync_collections_form_guidance_widget(panel_state.create_action)
 

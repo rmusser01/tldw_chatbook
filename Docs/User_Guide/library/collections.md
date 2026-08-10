@@ -112,8 +112,10 @@ keys live in the [guide index](../index.md).
 - **Names are capped at 120 characters** ("Collection names must be 120
   characters or fewer."); descriptions are capped at 500. Duplicate names
   are refused ("A Collection with this name already exists.").
-- **A greyed-out button explains itself** — hover it and the tooltip gives
-  the exact requirement that is not yet met.
+- **A greyed-out button explains itself** — it reads with a leading **○**
+  (the Library's disabled marker, so the state never depends on colour
+  alone), and hovering it gives the exact requirement that is not yet met
+  in its tooltip.
 - **Sync is display-only.** Every sync label describes a read-only check;
   no state on this panel ever queues a server write.
 - If the Collections storage layer fails to load, actions report
@@ -125,3 +127,7 @@ keys live in the [guide index](../index.md).
 status line replaces the spec/roadmap block, sync-safety/internal detail
 moved behind a collapsed-by-default Details disclosure, empty-state
 message deduplicated, three enable-Create sentences collapsed into one)*
+*Verified against dev @ 642567627 — 2026-08-10 (task-4023 AC#1, RC-07:
+the three form buttons measured 2.30:1 while disabled — legible now
+(5.91:1 measured live via ANSI decode), with the "○" disabled marker;
+typing a valid name flips Create back in place without the marker).*

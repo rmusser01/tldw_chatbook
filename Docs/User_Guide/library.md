@@ -139,7 +139,9 @@ the **Database** link) returns to the notes list — see
 ### Details
 
 Collapsed by default; click anywhere on the **Details** header — the label
-text or the **▾**/**▸** chip — to open it.
+text or the **▾**/**▸** chip — to open it. Opening it recomputes the
+"DB sizes" line from disk (sidecars included), so the numbers you see are
+current as of that open, not a reading cached at some earlier repaint.
 
 | Group | Contents |
 |---|---|
@@ -339,3 +341,14 @@ cancels an armed Media bulk-delete confirmation instead of moving focus to
 the rail with it still showing, matching the media viewer's own confirm;
 a partial bulk-delete failure now focuses the first still-checked row
 instead of leaving nothing focused).*
+*Verified against dev @ 642567627 — 2026-08-10 (task-4023 AC#1–#4,
+re-critique RC-07/09/10, live-verified with ANSI contrast measurement:
+disabled Library action buttons now render at or above the 3:1 legibility
+floor (they measured 1.39:1–2.30:1 before) and carry a leading "○" marker
+plus a reason tooltip, so colour is never the sole disabled cue; the
+Details disclosure's DB sizes recompute on open (a grown 12.3MB prompts
+DB previously kept reporting its old size across close/reopen); F1's
+panel is titled for the surface it describes ("Library Shortcuts —
+Media"), lists each key exactly once, includes "F6 next pane" on
+Search/RAG (whose footer now spells it verbatim), and a second F1 closes
+the panel.)*

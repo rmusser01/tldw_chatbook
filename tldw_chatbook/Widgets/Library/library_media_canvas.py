@@ -15,6 +15,8 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_DELETE_SELECTED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_TOOLTIP,
+    LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP,
+    library_disabled_action_label,
 )
 from tldw_chatbook.Widgets.Library.library_rail import _visible_row_title
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
@@ -82,17 +84,24 @@ class LibraryMediaCanvas(RecomposeCaptureGuard, Vertical):
         )
         export_btn.display = not select_mode
         yield export_btn
-        select_btn = Button(
-            "Done" if select_mode else "Select",
-            id="library-media-select-toggle",
-            classes="library-canvas-action",
-            compact=True,
-        )
         # Disable only when there's nothing to select AND we're not already in
         # select mode -- in select mode the button is "Done" and must always be
         # pressable so the user can exit even if the rows dropped to zero
         # (e.g. a background snapshot refresh emptied the list).
-        select_btn.disabled = rendered_count == 0 and not select_mode
+        select_disabled = rendered_count == 0 and not select_mode
+        select_btn = Button(
+            # task-4023 AC#1 (RC-07): disabled carries the non-colour "○"
+            # marker; the F-018 reason tooltip below says why.
+            library_disabled_action_label(
+                "Done" if select_mode else "Select", select_disabled
+            ),
+            id="library-media-select-toggle",
+            classes="library-canvas-action",
+            compact=True,
+        )
+        select_btn.disabled = select_disabled
+        if select_disabled:
+            select_btn.tooltip = LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP
         yield select_btn
         confirming_bulk_delete = getattr(self.canvas, "confirming_bulk_delete", False)
         if select_mode:
@@ -169,13 +178,25 @@ class LibraryMediaCanvas(RecomposeCaptureGuard, Vertical):
                         classes="library-canvas-action",
                         compact=True,
                     )
+                    export_disabled = self.canvas.selected_count == 0
                     export_selected = Button(
-                        "Export selected",
+                        # task-4023 AC#1 (RC-07): "○" disabled marker --
+                        # these are the very buttons the user entered
+                        # Select mode looking for, previously colour-only
+                        # at a measured 1.39:1. The base label is stashed
+                        # so `_apply_library_row_toggle`'s in-place patch
+                        # can rebuild it when the selection count crosses 0.
+                        library_disabled_action_label(
+                            "Export selected", export_disabled
+                        ),
                         id="library-media-export-selected",
                         classes="library-canvas-action",
                         compact=True,
                     )
-                    export_selected.disabled = self.canvas.selected_count == 0
+                    export_selected._library_disabled_marker_base = (
+                        "Export selected"
+                    )
+                    export_selected.disabled = export_disabled
                     # F-018: a disabled action says why.
                     export_selected.tooltip = (
                         LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP
@@ -188,13 +209,19 @@ class LibraryMediaCanvas(RecomposeCaptureGuard, Vertical):
                     # library-media-action-danger idiom the single-item
                     # viewer's own Delete uses) so it is never adjacent to
                     # Export selected.
+                    delete_disabled = self.canvas.selected_count == 0
                     delete_selected = Button(
-                        "Delete selected",
+                        library_disabled_action_label(
+                            "Delete selected", delete_disabled
+                        ),
                         id="library-media-delete-selected",
                         classes="library-canvas-action library-media-action-danger",
                         compact=True,
                     )
-                    delete_selected.disabled = self.canvas.selected_count == 0
+                    delete_selected._library_disabled_marker_base = (
+                        "Delete selected"
+                    )
+                    delete_selected.disabled = delete_disabled
                     delete_selected.tooltip = (
                         LIBRARY_DELETE_SELECTED_DISABLED_TOOLTIP
                         if delete_selected.disabled

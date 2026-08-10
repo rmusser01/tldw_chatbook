@@ -74,7 +74,17 @@ class WorkbenchHelpPanel(ModalScreen[None]):
     footer structure).
     """
 
-    BINDINGS = [Binding("escape", "dismiss", "Close", show=False)]
+    BINDINGS = [
+        Binding("escape", "dismiss", "Close", show=False),
+        # task-4023 AC#4 (RC-10): F1 toggles the help CLOSED. With the
+        # panel on top, the app-level F1 delegate finds no
+        # ``action_show_workbench_help`` on this screen, so a second F1
+        # previously changed nothing and the panel sat open. A screen
+        # binding resolves before the app binding, so this wins while the
+        # panel is up -- making F1 a true open/close toggle on every
+        # screen that pushes this shared panel.
+        Binding("f1", "dismiss", "Close", show=False),
+    ]
 
     # KEEP IN SYNC with the live bundle source
     # css/components/_workbench.tcss (the "task-1232 round 1" block): this

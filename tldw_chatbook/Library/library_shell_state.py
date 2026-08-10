@@ -64,6 +64,35 @@ LIBRARY_EXPORT_SELECTED_TOOLTIP = "Export the selected items."
 LIBRARY_DELETE_SELECTED_DISABLED_TOOLTIP = "Select one or more items to delete them."
 LIBRARY_DELETE_SELECTED_TOOLTIP = "Move the selected items to trash."
 
+# task-4023 AC#1 (RC-07): disabled state finally joins the product's
+# non-colour vocabulary. Every disabled Library action label carries a
+# leading "○" -- the existing ✓/○ pair's neutral glyph (ingest option
+# toggles, sync status, RAG scope chips), extended rather than a new
+# invention -- so the state survives monochrome rendering, colour-blind
+# users, and low-contrast themes. The colour half of the fix (the 3:1
+# Legible Disabled floor) is app-tier CSS in css/components/
+# _agentic_terminal.tcss; this marker is the structural half.
+LIBRARY_DISABLED_ACTION_MARKER = "○"
+
+# F-018 reason for the list canvases' Select toggle while the rendered
+# list is empty -- previously the only disabled Library action with no
+# reason anywhere at the control ("click does nothing, says nothing",
+# re-critique RC-07).
+LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP = "Nothing here to select yet."
+
+
+def library_disabled_action_label(label: str, disabled: bool) -> str:
+    """Prefix ``label`` with the non-colour disabled marker when disabled.
+
+    Args:
+        label: The action's plain enabled label.
+        disabled: Whether the control renders disabled.
+
+    Returns:
+        ``"○ <label>"`` while disabled, ``label`` unchanged otherwise.
+    """
+    return f"{LIBRARY_DISABLED_ACTION_MARKER} {label}" if disabled else label
+
 
 @dataclass(frozen=True)
 class LibraryRailRow:

@@ -1,0 +1,499 @@
+"""task-4023 AC#1-#4 (re-critique 2026-08-09 RC-07/RC-09/RC-10).
+
+RC-07: the Library's disabled controls were colour-only and below every
+contrast floor (measured live at HEAD: select-mode bulk buttons 1.39:1,
+empty-list Select 1.45:1, Export submit 1.44:1, Collections' three form
+buttons 2.30:1). These tests pin the NON-COLOUR half of the fix -- the
+``○`` disabled marker (extending the product's existing ``✓/○``
+vocabulary) and the F-018 reason tooltips; the contrast floor itself is
+app-tier CSS, proven by live ANSI measurement (see task-4023's notes) and
+pinned here only at the source level.
+
+RC-09: the Details disclosure's DB-sizes line rendered once from the
+app-level cache and was never refreshed -- live, the disclosure kept
+reporting ``Prompts 180.0KB`` while disk (incl. sidecars) held 4.8MB,
+even after closing and reopening Details. Opening Details now recomputes
+the sizes and patches the line in place.
+
+RC-10: F1's remaining gaps at HEAD -- the Search/RAG set omitted F6
+though the footer's global cluster advertises it; a second F1 left the
+help panel open (the app-level F1 delegate finds no handler on the panel
+itself); repeated same-key binding extras had no intra-set dedupe; and
+the panel never named the surface it was describing.
+"""
+
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+from textual.app import App
+from textual.widgets import Button, Static
+
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_DISABLED_ACTION_MARKER,
+    LIBRARY_ROW_BROWSE_COLLECTIONS,
+    LIBRARY_ROW_BROWSE_SEARCH,
+    LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP,
+    library_disabled_action_label,
+)
+from tldw_chatbook.Library.library_media_state import LibraryMediaCanvasState
+from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.Widgets.Library.library_media_canvas import LibraryMediaCanvas
+from tldw_chatbook.Widgets.Library.library_export_canvas import LibraryExportCanvas
+from tldw_chatbook.Widgets.Library.library_collections_panel import (
+    LibraryCollectionsPanel,
+)
+from tldw_chatbook.Library.library_collections_state import (
+    LibraryCollectionActionState,
+    LibraryCollectionsPanelState,
+)
+from tldw_chatbook.Library.library_export_scope import ExportScope
+from tldw_chatbook.Library.library_export_state import (
+    LibraryExportFormState,
+    build_library_export_form_state,
+)
+
+_CSS_DIR = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
+
+
+# ---------------------------------------------------------------------------
+# AC#1 (RC-07): non-colour disabled marker + reason at the control.
+# ---------------------------------------------------------------------------
+
+
+def test_disabled_action_label_helper_prefixes_marker_only_when_disabled():
+    assert library_disabled_action_label("Export selected", True) == (
+        f"{LIBRARY_DISABLED_ACTION_MARKER} Export selected"
+    )
+    assert library_disabled_action_label("Export selected", False) == (
+        "Export selected"
+    )
+
+
+def _select_mode_zero_selected_state() -> LibraryMediaCanvasState:
+    return LibraryMediaCanvasState(
+        rows=(),
+        type_options=("All",),
+        active_type="All",
+        status_copy="",
+        empty_copy="No media in your Library yet.",
+        selected_id="",
+        preview_lines=(),
+        count=0,
+        select_mode=False,
+        selected_count=0,
+    )
+
+
+class _EmptyMediaCanvasApp(App):
+    def compose(self):
+        yield LibraryMediaCanvas(
+            canvas=_select_mode_zero_selected_state(), id="library-media-canvas"
+        )
+
+
+@pytest.mark.asyncio
+async def test_media_select_toggle_empty_list_carries_marker_and_reason():
+    """RC-07: the empty-list Select toggle measured 1.45:1 with no marker
+    and no reason -- 'click does nothing, says nothing'. Disabled now
+    carries the ``○`` marker in its label and an F-018 reason tooltip."""
+    app = _EmptyMediaCanvasApp()
+    async with app.run_test() as pilot:
+        toggle = pilot.app.query_one("#library-media-select-toggle", Button)
+        assert toggle.disabled is True
+        assert str(toggle.label) == f"{LIBRARY_DISABLED_ACTION_MARKER} Select"
+        assert str(toggle.tooltip) == LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP
+
+
+def _select_mode_state(selected_count: int) -> LibraryMediaCanvasState:
+    from tldw_chatbook.Library.library_media_state import LibraryMediaRow
+
+    rows = tuple(
+        LibraryMediaRow(
+            media_id=f"m{i}",
+            title=f"Item {i}",
+            media_type="document",
+            secondary="document · 1m",
+            selected=False,
+            checked=i < selected_count,
+        )
+        for i in range(2)
+    )
+    return LibraryMediaCanvasState(
+        rows=rows,
+        type_options=("All",),
+        active_type="All",
+        status_copy="",
+        empty_copy="",
+        selected_id="",
+        preview_lines=(),
+        count=2,
+        select_mode=True,
+        selected_count=selected_count,
+    )
+
+
+class _SelectModeApp(App):
+    def __init__(self, selected_count: int):
+        super().__init__()
+        self._selected_count = selected_count
+
+    def compose(self):
+        yield LibraryMediaCanvas(
+            canvas=_select_mode_state(self._selected_count),
+            id="library-media-canvas",
+        )
+
+
+@pytest.mark.asyncio
+async def test_select_mode_bulk_buttons_carry_marker_at_zero_selection():
+    """RC-07's headline: 'the very buttons the user entered Select mode
+    looking for' were colour-only. At 0 selected both bulk actions carry
+    the marker; with a selection neither does."""
+    async with _SelectModeApp(0).run_test() as pilot:
+        export_btn = pilot.app.query_one("#library-media-export-selected", Button)
+        delete_btn = pilot.app.query_one("#library-media-delete-selected", Button)
+        assert export_btn.disabled and delete_btn.disabled
+        assert str(export_btn.label).startswith(f"{LIBRARY_DISABLED_ACTION_MARKER} ")
+        assert str(delete_btn.label).startswith(f"{LIBRARY_DISABLED_ACTION_MARKER} ")
+
+    async with _SelectModeApp(1).run_test() as pilot:
+        export_btn = pilot.app.query_one("#library-media-export-selected", Button)
+        delete_btn = pilot.app.query_one("#library-media-delete-selected", Button)
+        assert not export_btn.disabled and not delete_btn.disabled
+        assert not str(export_btn.label).startswith(LIBRARY_DISABLED_ACTION_MARKER)
+        assert not str(delete_btn.label).startswith(LIBRARY_DISABLED_ACTION_MARKER)
+
+
+class _ExportCanvasApp(App):
+    def __init__(self, state: LibraryExportFormState):
+        super().__init__()
+        self._state = state
+
+    def compose(self):
+        yield LibraryExportCanvas(self._state, id="library-export-canvas")
+
+
+def _export_state(*, destination: str) -> LibraryExportFormState:
+    return build_library_export_form_state(
+        scope=ExportScope(kind="notes"),
+        counts={"media": 0, "conversations": 0, "notes": 3},
+        name="Library export",
+        description="",
+        media_quality="original",
+        destination=destination,
+    )
+
+
+@pytest.mark.asyncio
+async def test_export_submit_disabled_carries_marker_and_keeps_reason():
+    state = _export_state(destination="")  # no destination -> gate closed
+    assert state.export_enabled is False
+    async with _ExportCanvasApp(state).run_test() as pilot:
+        submit = pilot.app.query_one("#library-export-submit", Button)
+        assert submit.disabled is True
+        assert str(submit.label).startswith(f"{LIBRARY_DISABLED_ACTION_MARKER} ")
+        assert str(submit.tooltip)  # F-018 reason survives
+
+    enabled_state = _export_state(destination="/tmp/out.zip")
+    assert enabled_state.export_enabled is True
+    async with _ExportCanvasApp(enabled_state).run_test() as pilot:
+        submit = pilot.app.query_one("#library-export-submit", Button)
+        assert submit.disabled is False
+        assert not str(submit.label).startswith(LIBRARY_DISABLED_ACTION_MARKER)
+
+
+def _collections_state(*, create_enabled: bool) -> LibraryCollectionsPanelState:
+    def action(widget_id: str, label: str, enabled: bool, reason: str):
+        return LibraryCollectionActionState(
+            widget_id=widget_id,
+            label=label,
+            enabled=enabled,
+            disabled_reason="" if enabled else reason,
+        )
+
+    return LibraryCollectionsPanelState(
+        status="empty",
+        collections=(),
+        selected_collection_id=None,
+        selected_collection=None,
+        empty_copy="No stored collection items are available locally yet.",
+        create_action=action(
+            "library-create-collection",
+            "Create Collection",
+            create_enabled,
+            "Enter a Collection name.",
+        ),
+        rename_action=action(
+            "library-rename-collection",
+            "Rename Collection",
+            False,
+            "Select a Collection before renaming it.",
+        ),
+        delete_action=action(
+            "library-delete-collection",
+            "Delete Collection",
+            False,
+            "Select a Collection before deleting it.",
+        ),
+    )
+
+
+class _CollectionsPanelApp(App):
+    def __init__(self, state: LibraryCollectionsPanelState):
+        super().__init__()
+        self._state = state
+
+    def compose(self):
+        yield LibraryCollectionsPanel(self._state, id="library-collections-panel")
+
+
+@pytest.mark.asyncio
+async def test_collections_disabled_actions_carry_marker_enabled_do_not():
+    """RC-07: Collections' three form buttons measured 2.30:1 disabled with
+    colour as the only state carrier."""
+    async with _CollectionsPanelApp(_collections_state(create_enabled=False)).run_test() as pilot:
+        for widget_id in (
+            "library-create-collection",
+            "library-rename-collection",
+            "library-delete-collection",
+        ):
+            button = pilot.app.query_one(f"#{widget_id}", Button)
+            assert button.disabled is True
+            assert str(button.label).startswith(
+                f"{LIBRARY_DISABLED_ACTION_MARKER} "
+            ), widget_id
+            assert str(button.tooltip), widget_id  # reason at the control
+
+    async with _CollectionsPanelApp(_collections_state(create_enabled=True)).run_test() as pilot:
+        create = pilot.app.query_one("#library-create-collection", Button)
+        assert create.disabled is False
+        assert not str(create.label).startswith(LIBRARY_DISABLED_ACTION_MARKER)
+
+
+def test_library_disabled_contrast_rules_live_in_source_and_bundle():
+    """The 3:1 floor itself is proven by live ANSI measurement (task-4023
+    notes); this pins that the Legible Disabled escape rules exist at the
+    app tier (the only tier that outranks both ``Button:disabled`` layers,
+    per DESIGN.md's TASK-1801 section) in the SOURCE tcss and the built
+    bundle, and that the export-submit rule no longer states its label in
+    ``$ds-text-disabled`` (the alpha-blend token that measured 1.44:1)."""
+    source = (_CSS_DIR / "components" / "_agentic_terminal.tcss").read_text(
+        encoding="utf-8"
+    )
+    bundle = (_CSS_DIR.parent / "css" / "tldw_cli_modular.tcss").read_text(
+        encoding="utf-8"
+    )
+    for haystack in (source, bundle):
+        assert "Button.library-canvas-action:disabled" in haystack
+        assert "Button.library-source-action:disabled" in haystack
+    # The export-submit disabled rule must not re-introduce the compound
+    # alpha token; it states a colour that clears 3:1 on its own surface.
+    for haystack in (source, bundle):
+        start = haystack.index("#library-export-submit:disabled")
+        block = haystack[start : haystack.index("}", start)]
+        assert "$ds-text-disabled" not in block
+
+
+# ---------------------------------------------------------------------------
+# AC#3 (RC-09): Details DB sizes refresh on disclosure open.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_details_open_recomputes_db_sizes_and_patches_line():
+    """RC-09 observed effect: the disclosure kept showing the compose-time
+    sizes even after close/reopen while disk had grown. Opening Details
+    must recompute through the app's DBStatusManager and patch the mounted
+    line in place."""
+    from Tests.UI.test_library_shell import (
+        LIBRARY_TEST_SIZE,
+        LibraryHarness,
+        _seed_conversations,
+        _two_conversations,
+        _wait_for_library_shell,
+    )
+    from Tests.UI.app_factory import _build_test_app
+
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    app.db_sizes_status = {
+        "prompts": "148.0KB",
+        "chachanotes": "1.0MB",
+        "media": "476.0KB",
+    }
+
+    class _StubManager:
+        def __init__(self, target):
+            self.target = target
+            self.calls = 0
+
+        async def update_db_sizes(self):
+            self.calls += 1
+            self.target.db_sizes_status = {
+                "prompts": "180.0KB",
+                "chachanotes": "1.1MB",
+                "media": "508.0KB",
+            }
+
+    app.db_status_manager = _StubManager(app)
+
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = host.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+
+        # Ensure a deterministic starting point: details closed.
+        screen._set_library_rail_section("details", False)
+        await pilot.pause()
+
+        screen._set_library_rail_section("details", True)
+        for _ in range(300):
+            widgets = list(screen.query("#library-details-db-sizes"))
+            if widgets and "180.0KB" in str(widgets[0].render()):
+                break
+            await pilot.pause(0.01)
+        else:
+            raise AssertionError(
+                "Opening Details did not refresh the DB-sizes line "
+                f"(manager calls={app.db_status_manager.calls})."
+            )
+        assert app.db_status_manager.calls >= 1
+        rendered = str(screen.query_one("#library-details-db-sizes", Static).render())
+        assert "180.0KB" in rendered and "508.0KB" in rendered
+
+
+@pytest.mark.asyncio
+async def test_details_open_mounts_db_sizes_line_when_compose_had_none():
+    """Recompose discipline: the compose branch renders the sizes line only
+    when the cache exists -- the in-place updater must own the same
+    conditional and MOUNT the line when the first reading lands on open."""
+    from Tests.UI.test_library_shell import (
+        LIBRARY_TEST_SIZE,
+        LibraryHarness,
+        _seed_conversations,
+        _two_conversations,
+        _wait_for_library_shell,
+    )
+    from Tests.UI.app_factory import _build_test_app
+
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    if hasattr(app, "db_sizes_status"):
+        delattr(app, "db_sizes_status")
+
+    class _StubManager:
+        def __init__(self, target):
+            self.target = target
+
+        async def update_db_sizes(self):
+            self.target.db_sizes_status = {
+                "prompts": "10.0KB",
+                "chachanotes": "20.0KB",
+                "media": "30.0KB",
+            }
+
+    app.db_status_manager = _StubManager(app)
+
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = host.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        screen._set_library_rail_section("details", False)
+        await pilot.pause()
+        assert not list(screen.query("#library-details-db-sizes"))
+
+        screen._set_library_rail_section("details", True)
+        for _ in range(300):
+            widgets = list(screen.query("#library-details-db-sizes"))
+            if widgets and "10.0KB" in str(widgets[0].render()):
+                break
+            await pilot.pause(0.01)
+        else:
+            raise AssertionError(
+                "Opening Details with an empty cache did not mount the "
+                "freshly computed DB-sizes line."
+            )
+
+
+# ---------------------------------------------------------------------------
+# AC#4 (RC-10): F1 -- F6 on Search/RAG, one entry per key, surface label.
+# ---------------------------------------------------------------------------
+
+
+def test_search_rag_shortcuts_include_f6_like_every_sibling_set():
+    """RC-10: Search/RAG's footer globals advertise 'F6 panes' but F1 (fed
+    by LIBRARY_SHORTCUTS, which has no F6 entry) never listed the key --
+    the only Library per-mode set without it."""
+    assert ("F6", "next pane") in LibraryScreen.LIBRARY_SHORTCUTS
+
+
+def _f1_fake(footer_shortcuts, binding_extras, row_id=""):
+    from types import MethodType
+
+    pushed = []
+    fake = SimpleNamespace(
+        _library_footer_shortcuts_for_current_state=lambda: footer_shortcuts,
+        _active_library_binding_shortcuts=lambda: binding_extras,
+        _library_selected_row_id=row_id,
+        app=SimpleNamespace(push_screen=pushed.append),
+    )
+    # The real surface-label method (the mapping under test), bound to the
+    # fake -- the types.MethodType idiom the multiselect fakes use.
+    fake._library_help_surface_label = MethodType(
+        LibraryScreen._library_help_surface_label, fake
+    )
+    fake._pushed = pushed
+    return fake
+
+
+def test_f1_lists_each_key_once_even_across_repeated_binding_extras():
+    """(RC-10) The task-3312 dedupe only guarded footer-vs-extras
+    collisions; two simultaneously active BINDINGS extras sharing a key
+    still rendered twice. The first active entry wins -- the same order
+    Textual resolves same-key bindings in."""
+    fake = _f1_fake(
+        footer_shortcuts=(("/", "focus search"),),
+        binding_extras=(
+            ("escape", "Back"),
+            ("escape", "Focus rail"),
+            ("ctrl+s", "Save note"),
+        ),
+    )
+    LibraryScreen.action_show_workbench_help(fake)
+    (panel,) = fake._pushed
+    keys = [key for key, _label in panel.state.shortcuts]
+    assert keys.count("escape") == 1
+    labels = dict(panel.state.shortcuts)
+    assert labels["escape"] == "Back"
+
+
+def test_f1_title_names_the_current_surface():
+    """(RC-10) 'Collections' panel said nothing about Collections -- the
+    panel now names the surface it describes."""
+    fake = _f1_fake(
+        footer_shortcuts=(("/", "focus search"), ("F6", "next pane")),
+        binding_extras=(),
+        row_id=LIBRARY_ROW_BROWSE_COLLECTIONS,
+    )
+    LibraryScreen.action_show_workbench_help(fake)
+    (panel,) = fake._pushed
+    assert panel.state.title == "Library Shortcuts — Collections"
+
+    fake = _f1_fake(
+        footer_shortcuts=LibraryScreen.LIBRARY_SHORTCUTS,
+        binding_extras=(),
+        row_id=LIBRARY_ROW_BROWSE_SEARCH,
+    )
+    LibraryScreen.action_show_workbench_help(fake)
+    (panel,) = fake._pushed
+    assert panel.state.title == "Library Shortcuts — Search / RAG"
+
+    fake = _f1_fake(
+        footer_shortcuts=LibraryScreen.LIBRARY_LANDING_SHORTCUTS,
+        binding_extras=(),
+        row_id="",
+    )
+    LibraryScreen.action_show_workbench_help(fake)
+    (panel,) = fake._pushed
+    assert panel.state.title == "Library Shortcuts — Landing"

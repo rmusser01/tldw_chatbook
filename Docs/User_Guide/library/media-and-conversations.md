@@ -54,6 +54,14 @@ above): "‹ Back to list", the title, metadata lines, then the "Content",
   select mode clears the selection, and leaving with items still checked
   shows a quiet "Selection discarded (N items)" notice so exiting is never a
   silent no-op.
+- **Disabled actions announce themselves.** While nothing is checked,
+  "Export selected"/"Delete selected" read **"○ Export selected"** /
+  **"○ Delete selected"** — the leading **○** is the Library's disabled
+  marker (the same ✓/○ pair the ingest toggles use), so the state never
+  depends on colour alone — and their tooltips say what to do ("Select one
+  or more items…"). The same goes for **"○ Select"** when the list is
+  empty ("Nothing here to select yet."). Checking the first row flips the
+  labels back in place.
 - **"Export…"** (hidden while selecting) exports the whole current scope —
   for Media that means the current type filter — and **"Export selected"**
   exports just the checked rows. Both open the same "Export bundle (.zip)"
@@ -283,3 +291,7 @@ trashed match now restores on re-import instead of silently refusing;
 copy both now say what actually happens instead of promising a Trash view;
 "Delete selected" leaves a "✓ deleted · N items" receipt with Undo/Dismiss
 at the point of action).*
+*Verified against dev @ 642567627 — 2026-08-10 (task-4023 AC#1, RC-07:
+the select-mode bulk buttons and the empty-list Select toggle described
+above rendered at 1.39:1/1.45:1 — legible now (7.25:1 measured live via
+ANSI decode), with the "○" disabled marker and reason tooltips added).*

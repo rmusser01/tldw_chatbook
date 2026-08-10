@@ -20,6 +20,8 @@ from tldw_chatbook.Library.library_notes_state import (
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_TOOLTIP,
+    LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP,
+    library_disabled_action_label,
 )
 from tldw_chatbook.Library.library_notes_sync_state import (
     LibraryNotesSyncState,
@@ -234,13 +236,20 @@ class LibraryNotesCanvas(Vertical):
                     classes="library-canvas-action",
                     compact=True,
                 )
+                export_base = "Export" if self.compact else "Export selected"
+                export_disabled = list_state.selected_count == 0
                 export_selected = Button(
-                    "Export" if self.compact else "Export selected",
+                    # task-4023 AC#1 (RC-07): "○" disabled marker; base
+                    # label stashed for `_apply_library_row_toggle`'s
+                    # in-place patch (compact and full spellings differ,
+                    # so the patcher must not hard-code either).
+                    library_disabled_action_label(export_base, export_disabled),
                     id="library-notes-export-selected",
                     classes="library-canvas-action",
                     compact=True,
                 )
-                export_selected.disabled = list_state.selected_count == 0
+                export_selected._library_disabled_marker_base = export_base
+                export_selected.disabled = export_disabled
                 # F-018: a disabled action says why.
                 export_selected.tooltip = (
                     LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP
@@ -260,26 +269,43 @@ class LibraryNotesCanvas(Vertical):
             browse_actions.styles.height = "auto"
             browse_actions.display = not list_state.sort_choices_visible
             with browse_actions:
+                # task-4023 AC#1 (RC-07): every disabled toolbar action
+                # carries the non-colour "○" marker plus an F-018 reason.
+                running = list_state.operation_running
+                running_tooltip = "Wait for the running notes operation to finish."
                 yield Button(
-                    "New",
+                    library_disabled_action_label("New", running),
                     id="library-notes-new",
                     classes="library-canvas-action",
                     compact=True,
-                    disabled=list_state.operation_running,
+                    disabled=running,
+                    tooltip=running_tooltip if running else None,
                 )
+                sort_base = f"Sort: {_SORT_LABELS.get(self.sort_mode, 'Newest')}"
                 yield Button(
-                    f"Sort: {_SORT_LABELS.get(self.sort_mode, 'Newest')}",
+                    library_disabled_action_label(sort_base, running),
                     id="library-notes-sort",
                     classes="library-canvas-action",
                     compact=True,
-                    disabled=list_state.operation_running,
+                    disabled=running,
+                    tooltip=running_tooltip if running else None,
                 )
+                select_disabled = rendered_count == 0 or running
                 yield Button(
-                    "Select",
+                    library_disabled_action_label("Select", select_disabled),
                     id="library-notes-select-toggle",
                     classes="library-canvas-action",
                     compact=True,
-                    disabled=rendered_count == 0 or list_state.operation_running,
+                    disabled=select_disabled,
+                    tooltip=(
+                        (
+                            running_tooltip
+                            if running
+                            else LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP
+                        )
+                        if select_disabled
+                        else None
+                    ),
                 )
             if list_state.sort_choices_visible:
                 sort_choices = Horizontal(

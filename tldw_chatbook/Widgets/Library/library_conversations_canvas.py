@@ -12,6 +12,8 @@ from textual.widgets import Button, Input, Static
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_TOOLTIP,
+    LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP,
+    library_disabled_action_label,
 )
 from tldw_chatbook.Library.library_conversations_state import (
     LibraryConversationsCanvasState,
@@ -79,16 +81,23 @@ class LibraryConversationsCanvas(RecomposeCaptureGuard, Vertical):
         )
         export_btn.display = not select_mode
         yield export_btn
+        # Disable only when nothing to select AND not already in select mode --
+        # in select mode "Done" must stay pressable so the user can always exit,
+        # even if the rows dropped to zero (e.g. a background snapshot refresh).
+        select_disabled = rendered_count == 0 and not select_mode
         select_btn = Button(
-            "Done" if select_mode else "Select",
+            # task-4023 AC#1 (RC-07): disabled carries the non-colour "○"
+            # marker; the F-018 reason tooltip below says why.
+            library_disabled_action_label(
+                "Done" if select_mode else "Select", select_disabled
+            ),
             id="library-conversations-select-toggle",
             classes="library-canvas-action",
             compact=True,
         )
-        # Disable only when nothing to select AND not already in select mode --
-        # in select mode "Done" must stay pressable so the user can always exit,
-        # even if the rows dropped to zero (e.g. a background snapshot refresh).
-        select_btn.disabled = rendered_count == 0 and not select_mode
+        select_btn.disabled = select_disabled
+        if select_disabled:
+            select_btn.tooltip = LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP
         yield select_btn
         if select_mode:
             action_row = Horizontal(classes="ds-toolbar")
@@ -119,13 +128,20 @@ class LibraryConversationsCanvas(RecomposeCaptureGuard, Vertical):
                     classes="library-canvas-action",
                     compact=True,
                 )
+                export_disabled = self.canvas.selected_count == 0
                 export_selected = Button(
-                    "Export selected",
+                    # task-4023 AC#1 (RC-07): "○" disabled marker; base
+                    # label stashed for `_apply_library_row_toggle`'s
+                    # in-place patch.
+                    library_disabled_action_label(
+                        "Export selected", export_disabled
+                    ),
                     id="library-conversations-export-selected",
                     classes="library-canvas-action",
                     compact=True,
                 )
-                export_selected.disabled = self.canvas.selected_count == 0
+                export_selected._library_disabled_marker_base = "Export selected"
+                export_selected.disabled = export_disabled
                 # F-018: a disabled action says why.
                 export_selected.tooltip = (
                     LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP

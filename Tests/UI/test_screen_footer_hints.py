@@ -131,11 +131,15 @@ async def test_production_routes_own_and_preserve_contextual_footer_hints():
                 # string so a future edit can't silently drop a key.
                 # F-012: `/ focus search` closes the set -- it works on every
                 # canvas, including this one.
+                # task-4023 AC#4 (RC-10): the set now covers F6 itself, so
+                # the screen entry renders "F6 next pane" verbatim and the
+                # global cluster drops its generic "F6 panes" copy (the
+                # task-2860 merge rule, same as the landing assertion above).
                 assert screen_footer.shortcut_text == (
                     "u use Library context in Console | "
                     "enter select evidence | o open evidence | "
-                    "/ focus search | "
-                    f"{AppFooterStatus.GLOBAL_HINTS}"
+                    "/ focus search | F6 next pane | "
+                    "F1 help · Ctrl+P palette · Ctrl+Q quit"
                 )
 
                 footer_before = screen_footer
@@ -156,8 +160,8 @@ async def test_production_routes_own_and_preserve_contextual_footer_hints():
                 assert footer_after.shortcut_text == (
                     "u use Library context in Console | "
                     "enter select evidence | o open evidence | "
-                    "/ focus search | "
-                    f"{AppFooterStatus.GLOBAL_HINTS}"
+                    "/ focus search | F6 next pane | "
+                    "F1 help · Ctrl+P palette · Ctrl+Q quit"
                 )
 
                 await app.handle_screen_navigation(NavigateToScreen("settings"))
@@ -185,11 +189,16 @@ def test_library_shortcuts_advertise_the_evidence_card_keys():
 
     F-012: `/ focus search` closes the set (it works on every canvas), and
     the landing/other-canvas set is pinned alongside it."""
+    # task-4023 AC#4 (RC-10): F6 closes the set -- Search/RAG was the ONLY
+    # per-mode Library set without it, so F1 (fed by this same tuple, the
+    # task-2858 single-source rule) never listed the key even though the
+    # footer's global hint cluster advertised "F6 panes" on that surface.
     assert LibraryScreen.LIBRARY_SHORTCUTS == (
         ("u", "use Library context in Console"),
         ("enter", "select evidence"),
         ("o", "open evidence"),
         ("/", "focus search"),
+        ("F6", "next pane"),
     )
     # task-2237 (R2): the landing set advertises the full keyboard story --
     # the hub next-action accelerators and the pane-cycle key, not just `/`.
