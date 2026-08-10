@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 from loguru import logger
@@ -973,6 +974,44 @@ async def test_controller_decision_diagnostic_reports_counts_and_provenance_only
     diagnostic_text = repr(record)
     assert "question-0" not in diagnostic_text
     assert "answer-0" not in diagnostic_text
+
+
+def test_context_repository_init_failure_is_observable_without_error_content(
+    monkeypatch,
+) -> None:
+    error_canary = "PRIVATE-REPOSITORY-ERROR-CANARY"
+
+    class BrokenRepository:
+        def __init__(self, _db) -> None:
+            raise RuntimeError(error_canary)
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.console_chat_controller.ConsoleContextRepository",
+        BrokenRepository,
+    )
+    records = []
+    sink_id = logger.add(
+        lambda message: records.append(message.record), level="WARNING"
+    )
+    try:
+        controller = ConsoleChatController(
+            store=SimpleNamespace(persistence=SimpleNamespace(db=object())),
+            provider_gateway=SimpleNamespace(),
+        )
+    finally:
+        logger.remove(sink_id)
+
+    assert controller._context_repository is None
+    record = next(
+        item
+        for item in records
+        if item["message"] == "console_context_repository_init_failed"
+    )
+    assert record["extra"] == {
+        "error_type": "RuntimeError",
+        "persistence_db_present": True,
+    }
+    assert error_canary not in repr(record)
 
 
 @pytest.mark.asyncio

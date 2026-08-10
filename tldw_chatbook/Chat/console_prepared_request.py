@@ -37,7 +37,19 @@ LimitSource = Literal["detected", "provider_input_cap", "user_override", "unknow
 
 
 def freeze_json(value: Any) -> Any:
-    """Return a recursively immutable JSON-safe copy."""
+    """Return a recursively immutable JSON-safe copy.
+
+    Args:
+        value: JSON-compatible scalar, mapping, list, or tuple to freeze.
+
+    Returns:
+        Scalars unchanged, mappings as read-only mapping proxies, and sequences
+        as tuples containing recursively frozen values.
+
+    Raises:
+        TypeError: If a mapping key is not a string or a value is not JSON-safe.
+        ValueError: If a numeric value is not finite.
+    """
 
     if isinstance(value, Mapping):
         if any(not isinstance(key, str) for key in value):

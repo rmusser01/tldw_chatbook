@@ -278,6 +278,32 @@ def test_unknown_and_user_overridden_limits_are_honestly_labeled() -> None:
     )
 
 
+def test_unknown_capacity_does_not_invent_a_provider_safe_fallback() -> None:
+    semantic = build_console_request(
+        [
+            {"role": "user", "content": "older question " * 100},
+            {"role": "assistant", "content": "older answer " * 100},
+            {"role": "user", "content": "current request"},
+        ]
+    )
+
+    prepared = prepare_provider_request(
+        semantic,
+        wire_style="distinct_roles",
+        model="unknown",
+        capacity=resolve_request_capacity(context_window_tokens=None),
+        count_fn=_word_count,
+    )
+
+    # ADR-052 deliberately keeps unknown capacity unverified. Guessing a
+    # fallback here could still overflow a smaller provider window while
+    # falsely presenting the request as bounded; provider error handling is
+    # the final boundary until capability data or a user bound is supplied.
+    assert prepared.capacity.effective_input_ceiling_tokens is None
+    assert prepared.dropped_units == 0
+    assert prepared.safety_label == "limit unknown; provider safety unverified"
+
+
 def test_multimodal_and_tool_schema_material_is_in_exact_accounting() -> None:
     plain = build_console_request([{"role": "user", "content": "describe"}])
     rich = build_console_request(

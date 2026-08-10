@@ -32,6 +32,10 @@ TERMINAL_AUXILIARY_ATTEMPT_STATUSES = frozenset(
     }
 )
 
+DEFAULT_ACTIVE_MEMORY_PAGE_SIZE = 100
+DEFAULT_AUXILIARY_ATTEMPT_PAGE_SIZE = 50
+MAX_REPOSITORY_PAGE_SIZE = 500
+
 
 @dataclass(frozen=True)
 class ContextPolicyReadResult:
@@ -177,20 +181,17 @@ class ConsoleContextRepository:
             return ContextPolicyReadResult(
                 ConsoleContextPolicyOverrides(), error="invalid_conversation_id"
             )
-        row = (
-            self.db.get_connection()
-            .execute(
+        with self.db.transaction() as cursor:
+            row = cursor.execute(
                 """
             SELECT budget_mode, custom_budget_tokens, compaction_mode,
                    trigger_ratio, target_ratio, summary_max_tokens,
                    failure_behavior, carry_forward_mode, policy_revision
               FROM console_conversation_context_policy
              WHERE conversation_id = ?
-            """,
+                """,
                 (conversation_id,),
-            )
-            .fetchone()
-        )
+            ).fetchone()
         if row is None:
             return ContextPolicyReadResult(ConsoleContextPolicyOverrides())
         mapping = {key: row[key] for key in row.keys() if key != "policy_revision"}
@@ -314,24 +315,39 @@ class ConsoleContextRepository:
         return True
 
     def list_active_memories(
-        self, conversation_id: str
+        self,
+        conversation_id: str,
+        *,
+        limit: int = DEFAULT_ACTIVE_MEMORY_PAGE_SIZE,
+        offset: int = 0,
     ) -> tuple[ConsoleMemoryRecord, ...]:
-        """Return newest-first generated memory candidates for revalidation."""
+        """Return a bounded newest-first page of memory candidates.
+
+        Args:
+            conversation_id: Durable conversation whose generated memories are read.
+            limit: Maximum number of rows returned, from 1 through 500.
+            offset: Zero-based row offset for deterministic pagination.
+
+        Returns:
+            Decoded generated-memory records; corrupt derived rows are omitted.
+
+        Raises:
+            ValueError: If an identifier or pagination value is invalid.
+        """
         _validate_bounded_text("conversation_id", conversation_id, 200)
-        rows = (
-            self.db.get_connection()
-            .execute(
+        _validate_page(limit=limit, offset=offset)
+        with self.db.transaction() as cursor:
+            rows = cursor.execute(
                 """
             SELECT *
               FROM console_conversation_memories
              WHERE conversation_id = ? AND active = 1
                    AND source_kind = 'generated'
              ORDER BY created_at DESC, rowid DESC
+             LIMIT ? OFFSET ?
             """,
-                (conversation_id,),
-            )
-            .fetchall()
-        )
+                (conversation_id, limit, offset),
+            ).fetchall()
         records: list[ConsoleMemoryRecord] = []
         for row in rows:
             try:
@@ -469,30 +485,39 @@ class ConsoleContextRepository:
         return result.rowcount == 1
 
     def get_auxiliary_attempt(self, operation_id: str) -> Mapping[str, Any] | None:
-        row = (
-            self.db.get_connection()
-            .execute(
+        _validate_bounded_text("operation_id", operation_id, 200)
+        with self.db.transaction() as cursor:
+            row = cursor.execute(
                 "SELECT * FROM console_auxiliary_attempts WHERE operation_id = ?",
                 (operation_id,),
-            )
-            .fetchone()
-        )
+            ).fetchone()
         return dict(row) if row is not None else None
 
     def list_auxiliary_attempts(
         self,
         conversation_id: str,
         *,
-        limit: int = 50,
+        limit: int = DEFAULT_AUXILIARY_ATTEMPT_PAGE_SIZE,
+        offset: int = 0,
     ) -> tuple[Mapping[str, Any], ...]:
-        """Return newest content-free auxiliary accounting rows for diagnostics."""
+        """Return a bounded page of content-free auxiliary accounting rows.
+
+        Args:
+            conversation_id: Durable conversation whose attempts are read.
+            limit: Maximum number of rows returned, from 1 through 500.
+            offset: Zero-based row offset for deterministic pagination.
+
+        Returns:
+            Newest-first content-free attempt mappings.
+
+        Raises:
+            ValueError: If an identifier or pagination value is invalid.
+        """
 
         _validate_bounded_text("conversation_id", conversation_id, 200)
-        if type(limit) is not int or not 1 <= limit <= 500:
-            raise ValueError("limit must be an integer between 1 and 500")
-        rows = (
-            self.db.get_connection()
-            .execute(
+        _validate_page(limit=limit, offset=offset)
+        with self.db.transaction() as cursor:
+            rows = cursor.execute(
                 """
                 SELECT operation_id, conversation_id, purpose, provider, model,
                        requested_output_cap, estimated_input_tokens, status,
@@ -501,13 +526,20 @@ class ConsoleContextRepository:
                   FROM console_auxiliary_attempts
                  WHERE conversation_id = ?
                  ORDER BY started_at DESC, operation_id DESC
-                 LIMIT ?
+                 LIMIT ? OFFSET ?
                 """,
-                (conversation_id, limit),
-            )
-            .fetchall()
-        )
+                (conversation_id, limit, offset),
+            ).fetchall()
         return tuple(dict(row) for row in rows)
+
+
+def _validate_page(*, limit: int, offset: int) -> None:
+    if type(limit) is not int or not 1 <= limit <= MAX_REPOSITORY_PAGE_SIZE:
+        raise ValueError(
+            f"limit must be an integer between 1 and {MAX_REPOSITORY_PAGE_SIZE}"
+        )
+    if type(offset) is not int or offset < 0:
+        raise ValueError("offset must be a non-negative integer")
 
 
 def _positive_revision(value: object) -> int | None:

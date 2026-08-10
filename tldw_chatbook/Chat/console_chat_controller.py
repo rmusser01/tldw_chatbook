@@ -1136,8 +1136,12 @@ class ConsoleChatController:
         if self._context_repository is None and persistence_db is not None:
             try:
                 self._context_repository = ConsoleContextRepository(persistence_db)
-            except Exception:
+            except Exception as exc:
                 self._context_repository = None
+                logger.bind(
+                    error_type=type(exc).__name__,
+                    persistence_db_present=True,
+                ).warning("console_context_repository_init_failed")
         self._compaction_service = (
             ConsoleCompactionService(self._context_repository, provider_gateway)
             if self._context_repository is not None

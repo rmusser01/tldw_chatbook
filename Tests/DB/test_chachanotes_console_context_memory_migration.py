@@ -270,6 +270,21 @@ def test_generated_memory_repository_preserves_branch_provenance(tmp_path) -> No
         expected_memory_revision=1,
     )
     repository.insert_memory(replace(record, memory_id="memory-3"))
+    first_page = repository.list_active_memories(conversation_id, limit=2)
+    second_page = repository.list_active_memories(
+        conversation_id,
+        limit=2,
+        offset=2,
+    )
+    assert [item.memory_id for item in first_page] == [
+        "memory-3",
+        "memory-guarded",
+    ]
+    assert [item.memory_id for item in second_page] == ["memory-2"]
+    with pytest.raises(ValueError, match="limit"):
+        repository.list_active_memories(conversation_id, limit=0)
+    with pytest.raises(ValueError, match="offset"):
+        repository.list_active_memories(conversation_id, offset=-1)
     assert (
         repository.deactivate_all_memories(
             conversation_id,
@@ -365,6 +380,9 @@ def test_auxiliary_attempt_ledger_accepts_usage_but_no_content_fields(
     assert listed[0]["purpose"] == "conversation_compaction"
     assert "summary_text" not in listed[0]
     assert "content" not in listed[0]
+    assert repository.list_auxiliary_attempts(conversation_id, offset=1) == ()
+    with pytest.raises(ValueError, match="offset"):
+        repository.list_auxiliary_attempts(conversation_id, offset=-1)
     assert not repository.finish_auxiliary_attempt(
         "op-1",
         status=AuxiliaryAttemptStatus.FAILED,

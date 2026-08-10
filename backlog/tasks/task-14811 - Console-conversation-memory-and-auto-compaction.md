@@ -4,7 +4,7 @@ title: Console conversation memory and auto-compaction
 status: Done
 created_date: 2026-08-10 18:15
 priority: high
-updated_date: 2026-08-10 22:55
+updated_date: 2026-08-10 23:41
 ---
 
 ## Description
@@ -42,6 +42,7 @@ Reason: The feature introduces durable per-conversation policy and summary prove
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Delivered the ADR-052 conversation-memory architecture through six completed slices: durable per-conversation policy and schema-v33 persistence; exact provider-prepared request accounting and safety windowing; bounded branch-safe compaction with local prefix-valid memory and a content-free auxiliary ledger; current-conversation Console controls; canonical Settings defaults, model-capacity repair, and Internal Prompts routing; and race/privacy/accounting hardening with isolated real-provider verification. The Console now distinguishes conversation budget from response tokens, supports Ask/Automatic/Off plus reset/review/manual compaction, preserves transcripts and whole tool units, fails visibly when limits are unknown or mandatory overhead is non-compactable, and discards stale asynchronous summaries across branch/model/policy/session changes. Final evidence: all child tasks are Done; the final relevant matrix passed 319 tests across policy, persistence, provider preparation, lifecycle/races, privacy logging, mounted UI, and narrow geometry; targeted Ruff and py_compile passed; whole-diff whitespace checking passed; isolated OpenAI gpt-4o verification exercised every policy/failure case, stored usage/pricing provenance without a transcript summary row, left the real config unchanged, and removed its scratch profile. ADR: backlog/decisions/052-console-conversation-memory-and-compaction-policy.md. Design and delivery plan are in Docs/superpowers/specs and Docs/superpowers/plans. The live-verification credential-probe/isolation incident is documented in backlog/docs/lessons-testing-evidence.md.
+PR #1478 review follow-up completed in TASK-14811.5: transaction-wrapped repository reads, bounded pagination, API documentation, and content-free degraded-mode diagnostics were added; the ADR-052 unknown-capacity contract was retained and regression-tested rather than replaced with a guessed provider limit.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
