@@ -73,11 +73,11 @@
 
 ## Task 5: Harden the Pending Handoff Store
 
-- [ ] Update `Tests/State/test_pending_handoff_store.py` red tests: bare strings rejected; typed application copied/detached; latest wins; one-shot claim; `ready`/`expired` claim status; release retry only while valid; expiry at boundary; wrong type; safe repr; no value leakage.
-- [ ] Extend `pending_handoff_store.py` to validate/copy `PromptVariableApplication`, inject/use monotonic time, and surface claim-time expiry without weakening owner-thread or revision settlement rules.
-- [ ] An expired claim remains consumer-visible for one bounded warning, acknowledges once, and can never be released back to pending. Preserve newer revisions when an older ready in-flight claim is released.
-- [ ] Update `app.py::stage_console_prompt_insert` signature/docstring to accept the typed request and navigate only after successful staging.
-- [ ] Update application-ownership and retirement tests that currently stage bare strings.
+- [x] Update `Tests/State/test_pending_handoff_store.py` red tests: bare strings rejected; typed application copied/detached; latest wins; one-shot claim; `ready`/`expired` claim status; release retry only while valid; expiry at boundary; wrong type; safe repr; no value leakage.
+- [x] Extend `pending_handoff_store.py` to validate/copy `PromptVariableApplication`, inject/use monotonic time, and surface claim-time expiry without weakening owner-thread or revision settlement rules.
+- [x] An expired claim remains consumer-visible for one bounded warning, acknowledges once, and can never be released back to pending. Preserve newer revisions when an older ready in-flight claim is released.
+- [x] Update `app.py::stage_console_prompt_insert` signature/docstring to accept the typed request and navigate only after successful staging.
+- [x] Update application-ownership and retirement tests that currently stage bare strings.
 
 ## Task 6: Integrate Exact Slash and Picker Replacement
 
