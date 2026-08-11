@@ -57,11 +57,35 @@ Routes the per-keystroke `ConsoleComposerBar.DraftChanged` sync through the same
 | per keystroke | before | after |
 |---|---|---|
 | Workbench `Static.update` | 12 | 0 |
+| `CommandStrip._sync_button` | 7 | 0 |
 | `sort_children` | 2 | 0 |
 | screen `_nodes._updates` bumps | 2 | 0 |
 | `_build_console_provider_selection` | 7 | 1 |
 | `_provider_readiness_app_config` | 63 | 13 (12 memo hits) |
 | handler wall cost | 6.405 ms | 3.170-3.375 ms |
+
+### Attribution of that wall-clock win -- corrected after review
+
+The 6.405 -> ~3.2 ms is **almost entirely the derivation memo (change 5), not the
+gate**. Review reproduced the timings and measured the decomposition: reverting the
+gate + widget early-outs + sort skip while leaving the memo in place still measures
+~3.37 ms -- statistically indistinguishable from HEAD. So ~95% of the measured
+milliseconds are change 5.
+
+That is not evidence the gate is worthless -- it is a limit of the probe. The probe
+times one synchronous handler call. What changes 1-4 remove is `Static.update` /
+`sort_children` / `refresh(layout=True)` calls whose real cost is paid **later**, in
+Textual's render and layout pipeline, plus the screen-wide `query_one` LRU eviction
+that makes the *next* keystroke's screen-rooted lookups full DOM walks. None of that
+lands inside the timed call, so the probe cannot price it and does not claim to. The
+honest split:
+
+- **change 5 (memo)** -> the measured ~3.2 ms of handler CPU (the cProfile hot path
+  was `build_console_settings_readiness` -> `resolve_console_provider_identity` ->
+  ~1.0M `provider_config_key` calls per 60 invocations).
+- **changes 1-4 (gate, widget early-outs, sort skip)** -> the render/layout and
+  DOM-version churn: the 12 -> 0 / 7 -> 0 / 2 -> 0 / 2 -> 0 counter rows above, which
+  are counted directly and are the real deliverable, unpriced in ms by this probe.
 
 ## Trade-offs
 
@@ -78,4 +102,27 @@ Routes the per-keystroke `ConsoleComposerBar.DraftChanged` sync through the same
 ## Tests
 
 `test_console_composer_draft_changed.py` (the slash-popup / guidance / readiness pin suite) 23 passed before AND after, untouched. New: 9 + 11. Wider: 444 Console composer/flow, 323 workbench consumers, 140 Console+workbench, 505 destination shells -- green apart from two failures that reproduce unchanged on dev c0c4753f8 (`test_console_registers_footer_workbench_shortcuts`, stale footer copy from `14cc326e4`; `test_destination_action_buttons_explain_their_outcome[mcp|tools_settings]`, tooltip-less `#mcp-tools-workspace-save` from `8b4b7de8e`).
+
+### Known flake, recorded not omitted
+
+`Tests/UI/test_console_control_bar_coalescing.py::test_requested_sync_still_executes`
+flaked once in a batch run at HEAD ("three coalesced requests produced 4 runs
+(expected exactly 1)" -- its spy counts `_sync_console_control_bar` runs and picks up
+extra settling syncs under load). It passes in isolation and on repeat. Measured
+head-to-head afterwards, 10 whole-file runs each: **2/10 at HEAD, 3/10 with the two
+source files reverted to base c0c4753f8** -- so the flake is pre-existing on dev, and
+this diff adds no new `_sync_console_control_bar` call site. Worth its own
+deflaking task; not a gate on this one.
+
+### Lint
+
+`ruff check`: clean on all four changed/added files. `ruff format --check`: **not**
+clean on `chat_screen.py` and `Tests/UI/test_workbench_widgets.py`. Every deviation is
+pre-existing -- the `ruff format --diff` bodies for both files are byte-identical to
+the same files at base c0c4753f8 (10 hunks in `chat_screen.py`, 1 in
+`test_workbench_widgets.py`, line numbers merely shifted by this diff's insertions).
+Nothing this diff added is unformatted, and the pre-existing hunks were deliberately
+left alone rather than reformatted into an unrelated churn diff. The two files this
+diff is mostly responsible for -- `workbench_widgets.py` and the new
+`test_console_draft_sync_equality_gate.py` -- are format-clean.
 <!-- SECTION:NOTES:END -->
