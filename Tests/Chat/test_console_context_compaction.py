@@ -282,6 +282,21 @@ def test_compactable_units_are_post_boundary_and_exclude_active_request() -> Non
     ]
 
 
+def test_compactable_units_ignore_character_greeting_before_first_user_turn() -> None:
+    messages = (
+        _message("greeting", "assistant", "Welcome, traveller."),
+        _message("u1", "user", "one"),
+        _message("a1", "assistant", "two"),
+        _message("u2", "user", "active"),
+    )
+
+    units = compactable_units_after(messages)
+
+    assert [[row.message_id for row in unit.messages] for unit in units] == [
+        ["u1", "a1"]
+    ]
+
+
 @pytest.mark.parametrize(
     ("mode", "tokens", "units", "budget", "expected"),
     [
