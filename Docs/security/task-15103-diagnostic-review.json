@@ -2613,10 +2613,130 @@
         }
       ],
       "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "Failed to load the Library media trash page.",
+      "id": "TASK-15103-G098",
+      "owner_path": "tldw_chatbook/UI/Screens/library_screen.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "LibraryScreen._load_library_media_trash",
+          "semantic_digest": "34cd9b0d96db0c6fc7e178baedc7317f3b070b35dfae5fc93259133ee58bdb6f"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "566b4f0ea5db6b6fd6c6c9658b1633e134e53227"
+      },
+      "rationale": "The current warning captures the exception and therefore risks persisting exception details and a traceback. The proposed warning preserves the fixed operational event and severity without capture or dynamic data.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "LibraryScreen._load_library_media_trash",
+          "semantic_digest": "ffd4f17313d7d5136ad7bab0ddc263ce9e6937ca12eac165beff87d7e024a90c"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "Failed to restore a Library media item from the Trash view (error_type={}).",
+      "id": "TASK-15103-G099",
+      "owner_path": "tldw_chatbook/UI/Screens/library_screen.py",
+      "permitted_fields": [
+        {
+          "expression": "type(exc).__name__",
+          "provenance": "The exception class name is ADR-029 metadata and excludes the exception message and traceback."
+        }
+      ],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "LibraryScreen._restore_library_media_from_trash",
+          "semantic_digest": "913dadbfd14faebd51365ff7744d807aadaeb69c9d9642a5db98e4568e202278"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "566b4f0ea5db6b6fd6c6c9658b1633e134e53227"
+      },
+      "rationale": "The warning preserves a fixed failure event and only the exception class name, which is bounded code metadata; it excludes the private media identifier, exception message, and traceback capture.",
+      "removed": [],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "Dropped a MouseDown that hit Textual's text-selection begin path while its target widget was mid-recompose (detached parent). The click was not delivered; the app stays alive (task-14903).",
+      "id": "TASK-15103-G100",
+      "owner_path": "tldw_chatbook/Utils/text_selection_crash_guard.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "TextSelectionCrashGuard.on_event",
+          "semantic_digest": "6863c266001bc190bc2cd7f6c7543cdc5292fc1acf2aa5dc114d0c56340ca2a7"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "27779ef37108fef4f4c1bfecba22df6a2e5389bc"
+      },
+      "rationale": "The current warning renders an unbounded widget representation and mouse coordinates. The proposed warning preserves the dropped-click state, root cause, and severity without private widget data or interaction coordinates.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "TextSelectionCrashGuard.on_event",
+          "semantic_digest": "93f3c0e181496d6244dbb00966c3bd0b215220986e004659d267663f74aa3314"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "Failed to delete a Library media item.",
+      "id": "TASK-15103-G101",
+      "owner_path": "tldw_chatbook/UI/Screens/library_screen.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "LibraryScreen._delete_library_media_item",
+          "semantic_digest": "7b33cbe3e0c782f02c373e765f2f7c03d80461bd187c3c5f79eccd99cd905539"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "dac12386739e2cdf8ed95a8e8e2a3dc441e4b264"
+      },
+      "rationale": "The complete-history reconstruction proves this control-flow rewrite as a semantic transition in the canonical extractor. Both historical atoms expose the private media identifier and capture exception details; the proposed fixed warning preserves the failure state and severity without either value.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "LibraryScreen._delete_library_media_item",
+          "semantic_digest": "31cf54fd57802837478ff9e0d4313beea49fae311802a3c2b7bf732060e00c3b"
+        },
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "LibraryScreen._delete_library_media_item",
+          "semantic_digest": "d0532e06a89bd278ea5abda55fecb54009614b9bb633b91e2cf9273d21f55e4a"
+        }
+      ],
+      "severity": "warning"
     }
   ],
   "incident": {
-    "planning_base": "85863257dd7a30b16451f8f32e0c7142dd1d5273",
+    "planning_base": "82b595049d97836482c118cfeb4d31df537a86a1",
     "recorded_base": "6d72f15f8332b6469a5d644d409b80914634a8dd"
   },
   "owners": [
@@ -2728,8 +2848,8 @@
     {
       "path": "tldw_chatbook/UI/Screens/library_screen.py",
       "starting": {
-        "call_count": 84,
-        "diagnostic_digest": "c14a8222d35aec3a6e34"
+        "call_count": 86,
+        "diagnostic_digest": "ae0fac2e87bf1a6ee81c"
       }
     },
     {
@@ -2744,6 +2864,13 @@
       "starting": {
         "call_count": 31,
         "diagnostic_digest": "62ea61e3ba363d516a6e"
+      }
+    },
+    {
+      "path": "tldw_chatbook/Utils/text_selection_crash_guard.py",
+      "starting": {
+        "call_count": 1,
+        "diagnostic_digest": "f90a373ef5fcc81a8c1c"
       }
     }
   ],

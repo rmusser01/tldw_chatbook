@@ -492,7 +492,7 @@ def test_inventory_counts_chained_logger_diagnostic_calls() -> None:
 
 TASK_15103_REVIEW_PATH = REPO_ROOT / "Docs/security/task-15103-diagnostic-review.json"
 TASK_15103_RECORDED_BASE = "6d72f15f8332b6469a5d644d409b80914634a8dd"
-TASK_15103_PLANNING_BASE = "85863257dd7a30b16451f8f32e0c7142dd1d5273"
+TASK_15103_PLANNING_BASE = "82b595049d97836482c118cfeb4d31df537a86a1"
 TASK_15103_OWNER_STARTING = {
     "tldw_chatbook/Agents/agent_service.py": (9, "578de6bb91649fc9fc87"),
     "tldw_chatbook/Chat/console_agent_bridge.py": (
@@ -540,13 +540,17 @@ TASK_15103_OWNER_STARTING = {
         "eef7b929c039940e51f5",
     ),
     "tldw_chatbook/UI/Screens/library_screen.py": (
-        84,
-        "c14a8222d35aec3a6e34",
+        86,
+        "ae0fac2e87bf1a6ee81c",
     ),
     "tldw_chatbook/app.py": (305, "dec5c30c1ad1b1b1c8fc"),
     "tldw_chatbook/UI/Screens/settings_screen.py": (
         31,
         "62ea61e3ba363d516a6e",
+    ),
+    "tldw_chatbook/Utils/text_selection_crash_guard.py": (
+        1,
+        "f90a373ef5fcc81a8c1c",
     ),
 }
 _TASK_15103_DISPOSITIONS = {
@@ -555,8 +559,8 @@ _TASK_15103_DISPOSITIONS = {
     "justified-deletion",
 }
 TASK_15103_EXPECTED_DISPOSITION_COUNTS = {
-    "reviewed-safe": 45,
-    "metadata-repair": 40,
+    "reviewed-safe": 46,
+    "metadata-repair": 43,
     "justified-deletion": 12,
 }
 TASK_15103_EXPECTED_ATOM_MULTIPLICITY = {
@@ -575,9 +579,10 @@ TASK_15103_EXPECTED_ATOM_MULTIPLICITY = {
     "tldw_chatbook/RAG_Search/simplified/search_service.py": (1, 1),
     "tldw_chatbook/UI/Console_Modules/session.py": (1, 1),
     "tldw_chatbook/UI/Screens/chat_screen.py": (0, 0),
-    "tldw_chatbook/UI/Screens/library_screen.py": (2, 2),
+    "tldw_chatbook/UI/Screens/library_screen.py": (5, 5),
     "tldw_chatbook/app.py": (12, 9),
     "tldw_chatbook/UI/Screens/settings_screen.py": (0, 1),
+    "tldw_chatbook/Utils/text_selection_crash_guard.py": (1, 1),
 }
 _TASK_15103_SEVERITIES = {
     "critical",
@@ -713,7 +718,7 @@ def _task_15103_validate_checkpoint_evidence(value: Any, *, location: str) -> No
             location=f"{location}.owners[{index}].evidence",
         )
     assert set(checkpoint_paths) == set(TASK_15103_OWNER_STARTING), (
-        f"{location}.owners must contain the exact 18-owner path set"
+        f"{location}.owners must contain the exact 19-owner path set"
     )
     assert len(checkpoint_paths) == len(set(checkpoint_paths)), (
         f"{location}.owners contains duplicate paths"
@@ -772,7 +777,7 @@ def _task_15103_validate_review_ledger(ledger: Any) -> None:
                 location=f"owners[{index}].reviewed_final",
             )
     assert set(owner_paths) == set(TASK_15103_OWNER_STARTING), (
-        "owners must contain the exact 18-owner path set"
+        "owners must contain the exact 19-owner path set"
     )
     assert len(owner_paths) == len(set(owner_paths)), "owners contains duplicate paths"
 
@@ -805,7 +810,7 @@ def _task_15103_validate_review_ledger(ledger: Any) -> None:
         ), f"{location}.id must be a stable TASK-15103-GNNN identifier"
         group_ids.append(group_id)
         assert group_record["owner_path"] in TASK_15103_OWNER_STARTING, (
-            f"{location}.owner_path is outside the approved 18-owner set"
+            f"{location}.owner_path is outside the approved 19-owner set"
         )
         _task_15103_validate_provenance(
             group_record["provenance"], location=f"{location}.provenance"
@@ -1573,7 +1578,7 @@ def _task_15103_validate_canonical_reconciliation(ledger: Any) -> None:
         if stored_rows.get(path) != current_rows.get(path)
     }
     assert changed_paths == set(TASK_15103_OWNER_STARTING), (
-        "canonical inventory delta must contain the exact 18-owner path set"
+        "canonical inventory delta must contain the exact 19-owner path set"
     )
     history = _task_15103_complete_history(planning_base)
 
@@ -1749,7 +1754,7 @@ def test_task_15103_review_ledger_canonical_planned_schema_and_arithmetic(
         group["disposition"] for group in ledger["change_groups"]
     )
     assert disposition_counts == TASK_15103_EXPECTED_DISPOSITION_COUNTS
-    assert len(ledger["change_groups"]) == 97
+    assert len(ledger["change_groups"]) == 101
     atom_multiplicity: defaultdict[str, Counter[str]] = defaultdict(Counter)
     for group in ledger["change_groups"]:
         owner_path = group["owner_path"]
@@ -1765,8 +1770,8 @@ def test_task_15103_review_ledger_canonical_planned_schema_and_arithmetic(
         for path in TASK_15103_OWNER_STARTING
     }
     assert reconciled == TASK_15103_EXPECTED_ATOM_MULTIPLICITY
-    assert sum(pair[0] for pair in reconciled.values()) == 72
-    assert sum(pair[1] for pair in reconciled.values()) == 87
+    assert sum(pair[0] for pair in reconciled.values()) == 76
+    assert sum(pair[1] for pair in reconciled.values()) == 91
 
 
 def test_task_15103_review_ledger_canonical_provenance_revisions_exist() -> None:
@@ -1904,7 +1909,7 @@ def test_task_15103_review_ledger_requires_exact_owner_path_set(
     if extra_path:
         ledger["owners"].append(
             {
-                "path": "tldw_chatbook/nineteenth_owner.py",
+                "path": "tldw_chatbook/twentieth_owner.py",
                 "starting": {
                     "call_count": 1,
                     "diagnostic_digest": "a" * 20,
@@ -1914,7 +1919,7 @@ def test_task_15103_review_ledger_requires_exact_owner_path_set(
     else:
         ledger["owners"].pop()
 
-    with pytest.raises(AssertionError, match="exact 18-owner path set"):
+    with pytest.raises(AssertionError, match="exact 19-owner path set"):
         _task_15103_validate_review_ledger(ledger)
 
 
@@ -2133,7 +2138,7 @@ def test_task_15103_review_ledger_rejects_omitted_transient_history_atom() -> No
     replacement["id"] = "TASK-15103-G062"
     replacement["removed"] = [second_removed]
     ledger["change_groups"].append(replacement)
-    assert len(ledger["change_groups"]) == 97
+    assert len(ledger["change_groups"]) == 101
     assert Counter(group["disposition"] for group in ledger["change_groups"]) == (
         TASK_15103_EXPECTED_DISPOSITION_COUNTS
     )
