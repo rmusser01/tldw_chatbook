@@ -412,6 +412,12 @@ class TTSGenerationProfile:
             and type(self.reference) is not TTSCloneReferenceSummary
         ):
             raise ProfileValidationError("reference_invalid")
+        if (
+            self.reference is not None
+            and self.reference.recipe_requirement is not None
+            and self.reference.recipe_requirement.model_id != model_id
+        ):
+            raise ProfileValidationError("reference_invalid")
         object.__setattr__(self, "profile_id", profile_id)
         object.__setattr__(self, "display_name", display_name)
         object.__setattr__(self, "normalized_name", expected_normalized_name)

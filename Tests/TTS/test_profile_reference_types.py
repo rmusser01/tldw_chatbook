@@ -11,6 +11,7 @@ from uuid import UUID
 import pytest
 
 from tldw_chatbook.TTS.profile_errors import ProfileValidationError
+from tldw_chatbook.TTS.profile_types import TTSGenerationProfile
 from tldw_chatbook.TTS.profile_reference_types import (
     MAX_REFERENCE_CANONICAL_BYTES,
     MAX_REFERENCE_COUNT,
@@ -21,6 +22,7 @@ from tldw_chatbook.TTS.profile_reference_types import (
     MAX_REFERENCE_TOTAL_BYTES,
     CanonicalTTSCloneReference,
     TTSCloneReference,
+    TTSCloneRecipeRequirement,
     TTSCloneReferenceSummary,
     validate_reference_text,
 )
@@ -44,6 +46,16 @@ def _summary(**overrides: object) -> TTSCloneReferenceSummary:
     }
     values.update(overrides)
     return TTSCloneReferenceSummary(**values)  # type: ignore[arg-type]
+
+
+def _requirement(**overrides: object) -> TTSCloneRecipeRequirement:
+    values: dict[str, object] = {
+        "recipe_id": "audio-cpp-0.5.1.supertonic.supertonic_3_orig",
+        "recipe_revision": 1,
+        "model_id": "supertonic-3",
+    }
+    values.update(overrides)
+    return TTSCloneRecipeRequirement(**values)  # type: ignore[arg-type]
 
 
 def _canonical(**overrides: object) -> CanonicalTTSCloneReference:
@@ -77,6 +89,116 @@ def test_reference_summary_is_immutable_and_pickle_safe() -> None:
     assert pickle.loads(pickle.dumps(summary)) == summary
     with pytest.raises(FrozenInstanceError):
         summary.channels = 2  # type: ignore[misc]
+
+
+def test_recipe_requirement_is_immutable_pickle_safe_and_permanently_redacted() -> None:
+    requirement = _requirement()
+
+    assert pickle.loads(pickle.dumps(requirement)) == requirement
+    assert repr(requirement) == "TTSCloneRecipeRequirement(<private>)"
+    assert requirement.recipe_id not in repr(requirement)
+    assert requirement.model_id not in repr(requirement)
+    with pytest.raises(FrozenInstanceError):
+        requirement.recipe_revision = 2  # type: ignore[misc]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("recipe_id", ""),
+        ("recipe_id", ".invalid"),
+        ("recipe_id", "UPPER"),
+        ("recipe_id", "recipe/id"),
+        ("recipe_id", "a" * 129),
+        ("recipe_revision", True),
+        ("recipe_revision", 0),
+        ("recipe_revision", 2_147_483_648),
+        ("model_id", ""),
+        ("model_id", "x" * 257),
+        ("model_id", "model\ncontrol"),
+    ],
+)
+def test_recipe_requirement_rejects_noncanonical_values(
+    field: str, value: object
+) -> None:
+    with pytest.raises(ProfileValidationError):
+        _requirement(**{field: value})
+
+
+def test_reference_provenance_is_absent_or_exactly_shared() -> None:
+    requirement = _requirement()
+    summary = _summary(recipe_requirement=requirement)
+    reference = TTSCloneReference(
+        summary=summary,
+        recipe_requirement=requirement,
+        reference_text="The exact private transcript.",
+        sha256=DIGEST,
+        wav_bytes=CANONICAL_WAV,
+    )
+
+    assert _summary().recipe_requirement is None
+    assert summary.recipe_requirement == requirement
+    assert reference.recipe_requirement == requirement
+
+
+@pytest.mark.parametrize(
+    ("summary_recipe_revision", "reference_recipe_revision"),
+    [
+        (1, None),
+        (None, 1),
+        (1, 2),
+    ],
+)
+def test_reference_rejects_half_present_or_mismatched_provenance(
+    summary_recipe_revision: int | None,
+    reference_recipe_revision: int | None,
+) -> None:
+    summary_requirement = (
+        None
+        if summary_recipe_revision is None
+        else _requirement(recipe_revision=summary_recipe_revision)
+    )
+    reference_requirement = (
+        None
+        if reference_recipe_revision is None
+        else _requirement(recipe_revision=reference_recipe_revision)
+    )
+    with pytest.raises(
+        ProfileValidationError,
+        match=r"^TTS profile validation failed: reference_invalid$",
+    ):
+        TTSCloneReference(
+            summary=_summary(recipe_requirement=summary_requirement),
+            recipe_requirement=reference_requirement,
+            reference_text="The exact private transcript.",
+            sha256=DIGEST,
+            wav_bytes=CANONICAL_WAV,
+        )
+
+
+def test_profile_rejects_reference_requirement_for_another_model() -> None:
+    now = NOW
+    summary = _summary(recipe_requirement=_requirement(model_id="different-model"))
+
+    with pytest.raises(
+        ProfileValidationError,
+        match=r"^TTS profile validation failed: reference_invalid$",
+    ):
+        TTSGenerationProfile(
+            profile_id=UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+            display_name="Clone profile",
+            normalized_name="clone profile",
+            provider_id="audio_cpp",
+            model_id="supertonic-3",
+            voice_id=None,
+            response_format="wav",
+            speed=1.0,
+            options={},
+            revision=1,
+            created_at=now,
+            updated_at=now,
+            reference=summary,
+        )
 
 
 @pytest.mark.parametrize(

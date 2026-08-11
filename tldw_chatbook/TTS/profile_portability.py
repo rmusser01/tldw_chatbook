@@ -16,13 +16,14 @@ from tldw_chatbook.TTS.profile_types import (
 )
 
 PORTABLE_PROFILE_SCHEMA_VERSION = 1
+PORTABLE_PROFILE_REFERENCE_OMITTED_SCHEMA_VERSION = 2
 CHARACTER_CARD_TTS_EXTENSION_KEY = "tldw_chatbook/tts_generation_profile"
 # The cap covers the whole envelope. Portable audio.cpp drafts require empty
 # options, and their other validated text fields keep the largest valid UTF-8
 # envelope below 3 KiB; the remaining budget rejects hostile future payloads.
 _MAX_ATTACHMENT_BYTES = 16 * 1024
 _MAX_CONTAINER_LEVELS = 4
-_WIRE_FIELDS = frozenset(
+_WIRE_V1_FIELDS = frozenset(
     {
         "schema_version",
         "profile_id",
@@ -35,6 +36,7 @@ _WIRE_FIELDS = frozenset(
         "options",
     }
 )
+_WIRE_V2_FIELDS = _WIRE_V1_FIELDS | frozenset({"reference"})
 
 
 class PortableProfileDecodeStatus(StrEnum):
@@ -42,12 +44,14 @@ class PortableProfileDecodeStatus(StrEnum):
 
     VALID = "valid"
     SKIPPED = "skipped"
+    REFERENCE_OMITTED = "reference_omitted"
     INVALID = "invalid"
 
 
 PortableProfileWarningCode = Literal[
     "unsupported_version",
     "unsupported_provider",
+    "reference_omitted",
     "invalid_attachment",
 ]
 
@@ -77,14 +81,19 @@ class PortableProfileDecodeResult:
     warning_code: PortableProfileWarningCode | None
 
 
-def portable_profile_payload(profile: PortableTTSProfile) -> dict[str, Any]:
-    """Return the exact version-one sanitized payload for a profile.
+def portable_profile_payload(
+    profile: PortableTTSProfile,
+    *,
+    reference_present: bool = False,
+) -> dict[str, Any]:
+    """Return the exact sanitized payload for a profile.
 
     Args:
         profile: Validated local provider selection to make portable.
 
     Returns:
-        The strict version-one wire payload containing only portable fields.
+        The strict version-one payload for a reference-free profile, or the
+        exact version-two omission marker when a private reference is present.
 
     Raises:
         ProfileValidationError: If ``profile`` is not a portable profile
@@ -93,10 +102,16 @@ def portable_profile_payload(profile: PortableTTSProfile) -> dict[str, Any]:
 
     if type(profile) is not PortableTTSProfile:
         raise ProfileValidationError("profiles")
+    if type(reference_present) is not bool:
+        raise ProfileValidationError("reference_invalid")
     draft = profile.draft
     options = json.loads(canonical_json_options(draft.options))
-    return {
-        "schema_version": PORTABLE_PROFILE_SCHEMA_VERSION,
+    payload: dict[str, Any] = {
+        "schema_version": (
+            PORTABLE_PROFILE_REFERENCE_OMITTED_SCHEMA_VERSION
+            if reference_present
+            else PORTABLE_PROFILE_SCHEMA_VERSION
+        ),
         "profile_id": str(profile.profile_id),
         "name": draft.display_name,
         "provider_id": draft.provider_id,
@@ -106,16 +121,23 @@ def portable_profile_payload(profile: PortableTTSProfile) -> dict[str, Any]:
         "speed": draft.speed,
         "options": options,
     }
+    if reference_present:
+        payload["reference"] = {"status": "omitted"}
+    return payload
 
 
-def portable_profile_json(profile: PortableTTSProfile) -> str:
+def portable_profile_json(
+    profile: PortableTTSProfile,
+    *,
+    reference_present: bool = False,
+) -> str:
     """Return deterministic standalone JSON for a sanitized profile.
 
     Args:
         profile: Validated local provider selection to serialize.
 
     Returns:
-        Pretty-printed version-one JSON containing only portable fields.
+        Pretty-printed exact sanitized JSON containing only portable fields.
 
     Raises:
         ProfileValidationError: If ``profile`` is not a portable profile
@@ -123,7 +145,7 @@ def portable_profile_json(profile: PortableTTSProfile) -> str:
     """
 
     return json.dumps(
-        portable_profile_payload(profile),
+        portable_profile_payload(profile, reference_present=reference_present),
         indent=2,
         ensure_ascii=False,
         allow_nan=False,
@@ -146,6 +168,44 @@ def _skip_result(
         profile=None,
         warning_code=warning_code,
     )
+
+
+def _reference_omitted_result() -> PortableProfileDecodeResult:
+    return PortableProfileDecodeResult(
+        status=PortableProfileDecodeStatus.REFERENCE_OMITTED,
+        profile=None,
+        warning_code="reference_omitted",
+    )
+
+
+def _decode_selection(
+    payload: dict[str, object],
+    *,
+    skip_unsupported_provider: bool,
+) -> PortableTTSProfile | PortableProfileDecodeResult:
+    profile_id_value = payload["profile_id"]
+    if type(profile_id_value) is not str:
+        raise ValueError
+    profile_id = UUID(profile_id_value)
+    try:
+        draft = TTSProfileDraft(
+            display_name=payload["name"],
+            provider_id=payload["provider_id"],
+            model_id=payload["model_id"],
+            voice_id=payload["voice_id"],
+            response_format=payload["response_format"],
+            speed=payload["speed"],
+            options=payload["options"],
+        )
+    except ProfileValidationError as error:
+        if skip_unsupported_provider and error.code == "provider_id":
+            return _skip_result("unsupported_provider")
+        raise
+    if draft.provider_id not in PROFILE_PROVIDER_IDS:
+        if skip_unsupported_provider:
+            return _skip_result("unsupported_provider")
+        raise ValueError
+    return PortableTTSProfile(profile_id=profile_id, draft=draft)
 
 
 def _validate_json_shape(value: object, level: int, active: set[int]) -> None:
@@ -206,35 +266,32 @@ def decode_portable_profile(payload: object) -> PortableProfileDecodeResult:
         schema_version = payload.get("schema_version")
         if type(schema_version) is not int:
             raise ValueError
-        if schema_version != PORTABLE_PROFILE_SCHEMA_VERSION:
+        if schema_version not in (
+            PORTABLE_PROFILE_SCHEMA_VERSION,
+            PORTABLE_PROFILE_REFERENCE_OMITTED_SCHEMA_VERSION,
+        ):
             return _skip_result("unsupported_version")
-        if frozenset(payload) != _WIRE_FIELDS:
-            raise ValueError
-
-        profile_id_value = payload["profile_id"]
-        if type(profile_id_value) is not str:
-            raise ValueError
-        profile_id = UUID(profile_id_value)
-        try:
-            draft = TTSProfileDraft(
-                display_name=payload["name"],
-                provider_id=payload["provider_id"],
-                model_id=payload["model_id"],
-                voice_id=payload["voice_id"],
-                response_format=payload["response_format"],
-                speed=payload["speed"],
-                options=payload["options"],
+        if schema_version == PORTABLE_PROFILE_SCHEMA_VERSION:
+            if frozenset(payload) != _WIRE_V1_FIELDS:
+                raise ValueError
+            selection = _decode_selection(
+                payload,
+                skip_unsupported_provider=True,
             )
-        except ProfileValidationError as e:
-            if e.code == "provider_id":
-                return _skip_result("unsupported_provider")
-            raise
-        if draft.provider_id not in PROFILE_PROVIDER_IDS:
-            return _skip_result("unsupported_provider")
-        return PortableProfileDecodeResult(
-            status=PortableProfileDecodeStatus.VALID,
-            profile=PortableTTSProfile(profile_id=profile_id, draft=draft),
-            warning_code=None,
-        )
+            if type(selection) is PortableProfileDecodeResult:
+                return selection
+            return PortableProfileDecodeResult(
+                status=PortableProfileDecodeStatus.VALID,
+                profile=selection,
+                warning_code=None,
+            )
+        if frozenset(payload) != _WIRE_V2_FIELDS:
+            raise ValueError
+        if payload["reference"] != {"status": "omitted"}:
+            raise ValueError
+        selection = _decode_selection(payload, skip_unsupported_provider=False)
+        if type(selection) is PortableProfileDecodeResult:
+            raise ValueError
+        return _reference_omitted_result()
     except Exception:
         return _invalid_result()

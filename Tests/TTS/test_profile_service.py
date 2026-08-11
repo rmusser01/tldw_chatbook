@@ -15,6 +15,7 @@ from uuid import UUID
 
 import pytest
 
+import tldw_chatbook.TTS.profile_service as profile_service
 from tldw_chatbook.TTS.adapter_types import (
     ProviderHealth,
     TTSConfigurationRevisionError,
@@ -49,6 +50,7 @@ from tldw_chatbook.TTS.profile_service import (
 from tldw_chatbook.TTS.profile_reference_types import (
     CanonicalTTSCloneReference,
     TTSCloneReference,
+    TTSCloneRecipeRequirement,
     TTSCloneReferenceSummary,
 )
 from tldw_chatbook.TTS.profile_types import (
@@ -126,6 +128,63 @@ def _reference() -> TTSCloneReference:
         sha256=hashlib.sha256(wav_bytes).hexdigest(),
         wav_bytes=wav_bytes,
     )
+
+
+def test_reference_canonicalizers_reconstruct_exact_recipe_provenance() -> None:
+    requirement = TTSCloneRecipeRequirement(
+        recipe_id="audio-cpp-0.5.1.supertonic.supertonic_3_orig",
+        recipe_revision=1,
+        model_id="model-a",
+    )
+    wav_bytes = b"canonical-private-reference"
+    summary = TTSCloneReferenceSummary(
+        reference_id=UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+        byte_length=len(wav_bytes),
+        duration_ms=250,
+        sample_rate_hz=24_000,
+        channels=1,
+        sample_encoding="pcm_s16le",
+        created_at=_CREATED_AT,
+        updated_at=_CREATED_AT,
+        recipe_requirement=requirement,
+    )
+    reference = TTSCloneReference(
+        summary=summary,
+        recipe_requirement=requirement,
+        reference_text="Private transcript",
+        sha256=hashlib.sha256(wav_bytes).hexdigest(),
+        wav_bytes=wav_bytes,
+    )
+
+    canonical_summary = profile_service._canonicalize_exact_reference_summary(summary)
+    assert canonical_summary == summary
+    assert canonical_summary.recipe_requirement is not requirement
+    assert profile_service._canonicalize_exact_reference(reference) == reference
+    assert _profile(model_id="model-a", reference=summary).reference == summary
+    with pytest.raises(ProfileValidationError, match=r"reference_invalid"):
+        _profile(model_id="model-b", reference=summary)
+
+
+def test_reference_canonicalizer_rejects_forged_recipe_provenance() -> None:
+    summary = TTSCloneReferenceSummary(
+        reference_id=UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+        byte_length=1,
+        duration_ms=1,
+        sample_rate_hz=24_000,
+        channels=1,
+        sample_encoding="pcm_s16le",
+        created_at=_CREATED_AT,
+        updated_at=_CREATED_AT,
+    )
+    forged = object.__new__(TTSCloneReferenceSummary)
+    for summary_field in fields(TTSCloneReferenceSummary):
+        object.__setattr__(
+            forged, summary_field.name, getattr(summary, summary_field.name)
+        )
+    object.__setattr__(forged, "recipe_requirement", object())
+
+    with pytest.raises(ProfileValidationError, match=r"reference_invalid"):
+        profile_service._canonicalize_exact_reference_summary(forged)
 
 
 def _portable_profile(
@@ -455,9 +514,15 @@ def _artifact(
 ) -> STTSGeneratedAudio:
     return STTSGeneratedAudio(
         path=Path("/private/secret/result.wav"),
-        provider_id=("audio_cpp" if clone_evidence is not None else "legacy-response-provider"),
-        model_id=("selected-model" if clone_evidence is not None else "mutable-response-model"),
-        voice_id=("selected-voice" if clone_evidence is not None else "mutable-response-voice"),
+        provider_id=(
+            "audio_cpp" if clone_evidence is not None else "legacy-response-provider"
+        ),
+        model_id=(
+            "selected-model" if clone_evidence is not None else "mutable-response-model"
+        ),
+        voice_id=(
+            "selected-voice" if clone_evidence is not None else "mutable-response-voice"
+        ),
         source_text="private submitted text",
         operation_id="operation",
         audio_format=("wav" if clone_evidence is not None else "mp3"),
@@ -2017,7 +2082,9 @@ async def test_create_from_artifact_uses_only_immutable_requested_selection() ->
 
 
 @pytest.mark.asyncio
-async def test_create_clone_from_artifact_uses_exact_success_evidence_atomically() -> None:
+async def test_create_clone_from_artifact_uses_exact_success_evidence_atomically() -> (
+    None
+):
     service, repository, tts_service = _service()
     selection = _selection()
     evidence = _clone_evidence()
@@ -2049,7 +2116,9 @@ async def test_create_clone_from_artifact_uses_exact_success_evidence_atomically
 
 
 @pytest.mark.asyncio
-async def test_create_clone_from_artifact_rejects_missing_or_mismatched_evidence() -> None:
+async def test_create_clone_from_artifact_rejects_missing_or_mismatched_evidence() -> (
+    None
+):
     service, repository, tts_service = _service()
     selection = _selection()
 

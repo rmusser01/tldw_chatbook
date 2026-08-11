@@ -32,6 +32,7 @@ from tldw_chatbook.TTS.profile_errors import (
 from tldw_chatbook.TTS.profile_reference_types import (
     CanonicalTTSCloneReference,
     TTSCloneReference,
+    TTSCloneRecipeRequirement,
     TTSCloneReferenceSummary,
 )
 from tldw_chatbook.TTS.profile_types import (
@@ -70,6 +71,9 @@ _TTS_PROFILE_DRAFT_TYPE: type[TTSProfileDraft] = TTSProfileDraft
 _TTS_CLONE_REFERENCE_TYPE: type[TTSCloneReference] = TTSCloneReference
 _TTS_CLONE_REFERENCE_SUMMARY_TYPE: type[TTSCloneReferenceSummary] = (
     TTSCloneReferenceSummary
+)
+_TTS_CLONE_RECIPE_REQUIREMENT_TYPE: type[TTSCloneRecipeRequirement] = (
+    TTSCloneRecipeRequirement
 )
 _PORTABLE_TTS_PROFILE_TYPE: type[PortableTTSProfile] = PortableTTSProfile
 _TTS_NATIVE_CAPABILITY_SNAPSHOT_TYPE: type[TTSNativeCapabilitySnapshot] = (
@@ -421,6 +425,29 @@ def _canonicalize_exact_profile_id(value: object) -> UUID:
     return canonical
 
 
+def _canonicalize_exact_recipe_requirement(
+    value: object,
+) -> TTSCloneRecipeRequirement | None:
+    """Return a fresh exact clone recipe requirement or legacy absence."""
+
+    if value is None:
+        return None
+    if type(value) is not _TTS_CLONE_RECIPE_REQUIREMENT_TYPE:
+        raise ProfileValidationError("reference_invalid")
+    requirement = cast(TTSCloneRecipeRequirement, value)
+    try:
+        canonical = TTSCloneRecipeRequirement(
+            recipe_id=requirement.recipe_id,
+            recipe_revision=requirement.recipe_revision,
+            model_id=requirement.model_id,
+        )
+    except Exception:
+        raise ProfileValidationError("reference_invalid") from None
+    if canonical != requirement:
+        raise ProfileValidationError("reference_invalid")
+    return canonical
+
+
 def _canonicalize_exact_reference_summary(
     value: object,
 ) -> TTSCloneReferenceSummary:
@@ -439,6 +466,9 @@ def _canonicalize_exact_reference_summary(
             sample_encoding=summary.sample_encoding,
             created_at=summary.created_at,
             updated_at=summary.updated_at,
+            recipe_requirement=_canonicalize_exact_recipe_requirement(
+                summary.recipe_requirement
+            ),
         )
     except Exception:
         raise ProfileValidationError("reference_invalid") from None
@@ -459,6 +489,7 @@ def _canonicalize_exact_reference(value: object) -> TTSCloneReference:
             reference_text=reference.reference_text,
             sha256=reference.sha256,
             wav_bytes=reference.wav_bytes,
+            recipe_requirement=reference.recipe_requirement,
         )
     except Exception:
         raise ProfileValidationError("reference_invalid") from None
@@ -2439,7 +2470,9 @@ class TTSProfileService:
             repository_generation=(
                 loaded.repository_generation if profile.reference is not None else None
             ),
-            profile_revision=(profile.revision if profile.reference is not None else None),
+            profile_revision=(
+                profile.revision if profile.reference is not None else None
+            ),
         )
 
     @staticmethod

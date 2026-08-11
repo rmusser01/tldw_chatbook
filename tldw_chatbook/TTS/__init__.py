@@ -49,6 +49,7 @@ from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
 from tldw_chatbook.TTS.profile_reference_types import (
     CanonicalTTSCloneReference,
     TTSCloneReference,
+    TTSCloneRecipeRequirement,
     TTSCloneReferenceSummary,
 )
 from tldw_chatbook.TTS.profile_service import (
@@ -132,6 +133,7 @@ __all__ = [
     "TTSConfigMutation",
     "TTSGenerationProfile",
     "TTSCloneReference",
+    "TTSCloneRecipeRequirement",
     "TTSCloneReferenceSummary",
     "TTSModelInfo",
     "TTSNativeCapabilitySnapshot",
