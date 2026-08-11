@@ -16698,6 +16698,7 @@ class ChatScreen(BaseAppScreen):
 
     _H3_FAILURE_GUIDANCE_COPY = frozenset(
         {
+            "ComfyUI image edits require one valid in-memory PNG, JPEG, or WebP image.",
             "The source image could not be uploaded. Please try again.",
             "The image-edit operation did not complete. Please try again.",
             "The edited image could not be saved locally. The source remains staged.",
@@ -16725,62 +16726,20 @@ class ChatScreen(BaseAppScreen):
         return attachment_id, data, mime_type
 
     @staticmethod
-    def _h3_reference_from_snapshot(
-        snapshot: tuple[str, bytes, str], cfg: Any
-    ):
-        """Decode and validate one immutable source snapshot off the UI loop."""
+    def _h3_reference_from_snapshot(snapshot: tuple[str, bytes, str]):
+        """Read source header metadata without duplicating canonical policy."""
         from io import BytesIO
 
         from PIL import Image as PILImage
 
         from ...Image_Generation.capabilities import ResolvedReferenceImage
-        from ...Image_Generation.config import (
-            DEFAULT_MAX_HEIGHT,
-            DEFAULT_MAX_PIXELS,
-            DEFAULT_MAX_WIDTH,
-        )
-        from ...Image_Generation.request_validation import (
-            REFERENCE_IMAGE_ALLOWED_MIMES,
-            REFERENCE_IMAGE_SUPPORTED_MODES,
-        )
 
         attachment_id, data, mime_type = snapshot
-        if mime_type not in REFERENCE_IMAGE_ALLOWED_MIMES:
-            raise ValueError("source_mime")
-        max_width = getattr(cfg, "max_width", DEFAULT_MAX_WIDTH)
-        max_height = getattr(cfg, "max_height", DEFAULT_MAX_HEIGHT)
-        max_pixels = getattr(cfg, "max_pixels", DEFAULT_MAX_PIXELS)
-        if type(max_width) is not int or max_width <= 0:
-            max_width = DEFAULT_MAX_WIDTH
-        if type(max_height) is not int or max_height <= 0:
-            max_height = DEFAULT_MAX_HEIGHT
-        if type(max_pixels) is not int or max_pixels <= 0:
-            max_pixels = DEFAULT_MAX_PIXELS
         try:
             with PILImage.open(BytesIO(data)) as image:
-                expected_mime = {
-                    "JPEG": "image/jpeg",
-                    "PNG": "image/png",
-                    "WEBP": "image/webp",
-                }.get(str(image.format or "").upper())
                 width, height = image.size
-                if expected_mime != mime_type:
-                    raise ValueError("source_signature")
-                if image.mode not in REFERENCE_IMAGE_SUPPORTED_MODES:
-                    raise ValueError("source_mode")
-                if (
-                    width <= 0
-                    or height <= 0
-                    or width > max_width
-                    or height > max_height
-                    or width * height > max_pixels
-                ):
-                    raise ValueError("source_dimensions")
-                image.load()
         except Exception as exc:
-            if isinstance(exc, ValueError) and str(exc).startswith("source_"):
-                raise
-            raise ValueError("source_decode") from exc
+            raise ValueError("source_header") from exc
         return ResolvedReferenceImage(
             file_id=attachment_id,
             filename=None,
@@ -17206,17 +17165,6 @@ class ChatScreen(BaseAppScreen):
                 session_id=session.id,
             )
             return
-        try:
-            reference = await asyncio.to_thread(
-                self._h3_reference_from_snapshot, snapshot, cfg
-            )
-        except (TypeError, ValueError):
-            await self._append_native_console_system_message(
-                "ComfyUI image edits require one valid in-memory PNG, JPEG, or WebP image.",
-                session_id=session.id,
-            )
-            return
-
         composer = self._console_composer_or_none()
         captured_draft = (
             composer.draft_text()
@@ -17229,9 +17177,11 @@ class ChatScreen(BaseAppScreen):
         build_request = partial(image_worker.build_request, sampler=sampler)
 
         async def _owned(generation: str) -> None:
-            try:
-                batch = await asyncio.to_thread(
-                    run_generation_batch,
+            def _prepare_and_run():
+                reference = self._h3_reference_from_snapshot(snapshot)
+                if cancel_event.is_set():
+                    raise ImageGenerationCancelled()
+                return run_generation_batch(
                     backend="comfyui",
                     prompt=instruction,
                     negative_prompt=None,
@@ -17246,7 +17196,22 @@ class ChatScreen(BaseAppScreen):
                     cancel_event=cancel_event,
                     build=build_request,
                 )
+
+            try:
+                batch = await asyncio.to_thread(_prepare_and_run)
             except ImageGenerationCancelled:
+                return
+            except (TypeError, ValueError) as exc:
+                await self._append_h3_image_edit_error(
+                    session_id=session.id,
+                    generation=generation,
+                    phase="source_validation",
+                    error_type=type(exc).__name__,
+                    copy=(
+                        "ComfyUI image edits require one valid in-memory PNG, "
+                        "JPEG, or WebP image."
+                    ),
+                )
                 return
             except ComfyUIImageEditError as exc:
                 await self._append_h3_image_edit_error(

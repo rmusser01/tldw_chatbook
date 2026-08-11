@@ -424,7 +424,7 @@ async def test_h3_refusals_happen_before_generic_preparation_or_generation(
 
 
 @pytest.mark.asyncio
-async def test_h3_source_decode_runs_off_loop_while_message_pump_remains_responsive(
+async def test_h3_source_header_read_runs_off_loop_while_pump_remains_responsive(
     monkeypatch,
 ):
     store = ConsoleChatStore()
@@ -437,17 +437,19 @@ async def test_h3_source_decode_runs_off_loop_while_message_pump_remains_respons
         "list_image_models_for_catalog",
         lambda: [{"name": "comfyui", "is_configured": True}],
     )
-    decode_started = threading.Event()
-    release_decode = threading.Event()
-    original_decode = screen._h3_reference_from_snapshot
+    header_started = threading.Event()
+    release_header = threading.Event()
+    original_header_read = screen._h3_reference_from_snapshot
 
-    def _barrier_decode(snapshot, cfg):
-        decode_started.set()
+    def _barrier_header_read(snapshot):
+        header_started.set()
         assert threading.current_thread() is not threading.main_thread()
-        assert release_decode.wait(2)
-        return original_decode(snapshot, cfg)
+        assert release_header.wait(2)
+        return original_header_read(snapshot)
 
-    monkeypatch.setattr(screen, "_h3_reference_from_snapshot", _barrier_decode)
+    monkeypatch.setattr(
+        screen, "_h3_reference_from_snapshot", _barrier_header_read
+    )
     monkeypatch.setattr(
         chat_screen_module,
         "run_generation_batch",
@@ -461,11 +463,11 @@ async def test_h3_source_decode_runs_off_loop_while_message_pump_remains_respons
             )
         )
     )
-    assert await asyncio.to_thread(decode_started.wait, 2)
+    assert await asyncio.to_thread(header_started.wait, 2)
     responsive = asyncio.Event()
     asyncio.get_running_loop().call_soon(responsive.set)
     await asyncio.wait_for(responsive.wait(), timeout=0.2)
-    release_decode.set()
+    release_header.set()
     await command
     operation = screen.app_instance.console_image_edit_operations.active(session.id)
     assert operation is not None
@@ -515,6 +517,150 @@ async def test_h3_oversize_source_is_rejected_before_decode_or_dispatch(monkeypa
         "ComfyUI image edits require one valid in-memory PNG, JPEG, or WebP image."
     ]
     assert screen.app_instance.console_image_edit_operations.active(session.id) is None
+
+
+@pytest.mark.asyncio
+async def test_h3_canonical_validation_performs_the_only_full_source_decode(
+    monkeypatch,
+):
+    from tldw_chatbook.Image_Generation.request_validation import (
+        validate_image_generation_request,
+    )
+    from PIL.PngImagePlugin import PngImageFile
+
+    store = ConsoleChatStore()
+    screen, _composer = _screen_with_h3_store(store)
+    session = store.ensure_session(settings=ConsoleSessionSettings(provider="openai"))
+    store.add_pending_attachment(session.id, _pending())
+    config = _cfg(max_width=1024, max_height=1024, max_pixels=1024 * 1024)
+    monkeypatch.setattr(chat_screen_module, "get_image_generation_config", lambda: config)
+    monkeypatch.setattr(
+        chat_screen_module,
+        "list_image_models_for_catalog",
+        lambda: [{"name": "comfyui", "is_configured": True}],
+    )
+    real_load = PngImageFile.load
+    load_calls = 0
+
+    def _count_load(image, *args, **kwargs):
+        nonlocal load_calls
+        load_calls += 1
+        return real_load(image, *args, **kwargs)
+
+    monkeypatch.setattr(PngImageFile, "load", _count_load)
+    canonical_calls = 0
+
+    def _canonical_batch(**kwargs):
+        nonlocal canonical_calls
+        canonical_calls += 1
+        issues = validate_image_generation_request(
+            {
+                "backend": kwargs["backend"],
+                "prompt": kwargs["prompt"],
+                "width": kwargs["width"],
+                "height": kwargs["height"],
+                "steps": kwargs["steps"],
+                "cfg_scale": kwargs["cfg_scale"],
+                "reference_image": kwargs["reference_image"],
+            },
+            config=config,
+        )
+        assert issues == []
+        return BatchResult(successes=[], errors=["canonical-only"])
+
+    monkeypatch.setattr(chat_screen_module, "run_generation_batch", _canonical_batch)
+    await screen._console_command_generate_image(
+        CommandParse(kind="command", name="generate-image", args=":comfyui change it")
+    )
+    operation = screen.app_instance.console_image_edit_operations.active(session.id)
+    assert operation is not None
+    await operation.task
+
+    assert canonical_calls == 1
+    assert load_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_h3_warning_band_is_rejected_by_canonical_ceiling_before_full_decode(
+    monkeypatch,
+):
+    import math
+
+    from tldw_chatbook.Image_Generation import request_validation
+
+    store = ConsoleChatStore()
+    screen, _composer = _screen_with_h3_store(store)
+    session = store.ensure_session(settings=ConsoleSessionSettings(provider="openai"))
+    store.add_pending_attachment(session.id, _pending())
+    side = math.isqrt(
+        request_validation._PILLOW_DECOMPRESSION_WARNING_MAX_PIXELS
+    ) + 1
+    config = _cfg(
+        max_width=side + 1,
+        max_height=side + 1,
+        max_pixels=(side + 1) * (side + 1),
+    )
+    monkeypatch.setattr(chat_screen_module, "get_image_generation_config", lambda: config)
+    monkeypatch.setattr(
+        chat_screen_module,
+        "list_image_models_for_catalog",
+        lambda: [{"name": "comfyui", "is_configured": True}],
+    )
+    open_calls = 0
+    load_calls = 0
+
+    class _WarningBandImage:
+        format = "PNG"
+        mode = "RGB"
+        size = (side, side)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def load(self):
+            nonlocal load_calls
+            load_calls += 1
+            raise AssertionError("warning-band image was fully decoded")
+
+    def _open_warning_band(*_args, **_kwargs):
+        nonlocal open_calls
+        open_calls += 1
+        return _WarningBandImage()
+
+    monkeypatch.setattr(PILImage, "open", _open_warning_band)
+    canonical_issues = []
+
+    def _canonical_batch(**kwargs):
+        canonical_issues.extend(
+            request_validation.validate_image_generation_request(
+                {
+                    "backend": kwargs["backend"],
+                    "prompt": kwargs["prompt"],
+                    "width": kwargs["width"],
+                    "height": kwargs["height"],
+                    "steps": kwargs["steps"],
+                    "cfg_scale": kwargs["cfg_scale"],
+                    "reference_image": kwargs["reference_image"],
+                },
+                config=config,
+            )
+        )
+        return BatchResult(successes=[], errors=["canonical-refusal"])
+
+    monkeypatch.setattr(chat_screen_module, "run_generation_batch", _canonical_batch)
+    await screen._console_command_generate_image(
+        CommandParse(kind="command", name="generate-image", args=":comfyui change it")
+    )
+    operation = screen.app_instance.console_image_edit_operations.active(session.id)
+    assert operation is not None
+    await operation.task
+
+    assert open_calls == 2
+    assert load_calls == 0
+    assert any("safe decode limits" in issue.message for issue in canonical_issues)
 
 
 @pytest.mark.asyncio

@@ -436,14 +436,46 @@ async def test_h3_start_immediately_paints_enabled_stop_on_live_screen(
     host = ConsoleHarness(app)
     started = threading.Event()
     release = threading.Event()
+    batch_calls = 0
 
-    def _blocked_batch(**kwargs):
+    from PIL.PngImagePlugin import PngImageFile
+
+    from tldw_chatbook.Image_Generation.request_validation import (
+        validate_image_generation_request,
+    )
+
+    real_load = PngImageFile.load
+
+    def _blocked_canonical_load(image, *args, **kwargs):
         started.set()
-        assert kwargs["cancel_event"].wait(2)
-        release.set()
-        raise ImageGenerationCancelled()
+        assert release.wait(2)
+        return real_load(image, *args, **kwargs)
 
-    monkeypatch.setattr(chat_screen_module, "run_generation_batch", _blocked_batch)
+    monkeypatch.setattr(PngImageFile, "load", _blocked_canonical_load)
+
+    def _canonical_then_dispatch(**kwargs):
+        nonlocal batch_calls
+        issues = validate_image_generation_request(
+            {
+                "backend": kwargs["backend"],
+                "prompt": kwargs["prompt"],
+                "width": kwargs["width"],
+                "height": kwargs["height"],
+                "steps": kwargs["steps"],
+                "cfg_scale": kwargs["cfg_scale"],
+                "reference_image": kwargs["reference_image"],
+            },
+            config=_h3_config(),
+        )
+        assert issues == []
+        if kwargs["cancel_event"].is_set():
+            raise ImageGenerationCancelled()
+        batch_calls += 1
+        raise AssertionError("cancelled canonical decode reached dispatch")
+
+    monkeypatch.setattr(
+        chat_screen_module, "run_generation_batch", _canonical_then_dispatch
+    )
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
@@ -475,17 +507,20 @@ async def test_h3_start_immediately_paints_enabled_stop_on_live_screen(
         send.post_message(Button.Pressed(send))
         await asyncio.wait_for(pilot.pause(), timeout=0.5)
         assert await asyncio.to_thread(started.wait, 2)
-        operation = app.console_image_edit_operations.active(session.id)
-        assert operation is not None
-        stop = console.query_one("#console-stop-generation", Button)
-        assert stop.styles.display != "none"
-        assert not stop.disabled
-        await asyncio.wait_for(
-            pilot.click("#console-stop-generation"), timeout=0.5
-        )
-        assert await asyncio.to_thread(release.wait, 2)
-        assert operation.cancel_event.is_set()
+        try:
+            operation = app.console_image_edit_operations.active(session.id)
+            assert operation is not None
+            stop = console.query_one("#console-stop-generation", Button)
+            assert stop.styles.display != "none"
+            assert not stop.disabled
+            await asyncio.wait_for(
+                pilot.click("#console-stop-generation"), timeout=0.5
+            )
+            assert operation.cancel_event.is_set()
+        finally:
+            release.set()
         await operation.task
+        assert batch_calls == 0
 
 
 @pytest.mark.asyncio
