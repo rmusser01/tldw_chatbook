@@ -368,17 +368,19 @@ class LibraryFileNotesWorkspace(Vertical):
         max-height: 1;
     }
 
-    /* LIB-19: placement sentence relating Files mode to Database/Sync --
-       same muted one-line treatment as #library-notes-database-purpose
+    /* LIB-19 / TASK-14880: placement sentence relating Files mode to
+       Database/Sync. Keep the muted treatment used by
+       #library-notes-database-purpose
        and #library-notes-sync-purpose (library_notes_canvas.py /
-       css/components/_agentic_terminal.tcss). */
+       css/components/_agentic_terminal.tcss), but allow the concise copy
+       one additional row at compact widths rather than clipping it. */
     #file-notes-purpose {
         width: 100%;
-        height: 1;
+        height: auto;
         min-height: 1;
-        max-height: 1;
+        max-height: 2;
         color: $text-muted;
-        text-wrap: nowrap;
+        text-wrap: wrap;
         overflow: hidden hidden;
     }
 
@@ -574,6 +576,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self._service: FileNotesService | None = None
         self._runtime_warning = ""
         self._root_status_detail = "Choose a notes folder."
+        self._root_status_summary = "Choose a notes folder."
 
         self._poll_interval = max(0.02, poll_interval)
         self._autosave_delay = max(0.01, autosave_delay)
@@ -772,8 +775,7 @@ class LibraryFileNotesWorkspace(Vertical):
         # sub-canvas are three folder-notes concepts never related to each
         # other anywhere in the UI -- one placement sentence per surface.
         yield Static(
-            "Files mode edits a folder directly — unlike Sync, which "
-            "mirrors a folder into the Library.",
+            "Files edits this folder directly. Sync mirrors files into Library.",
             id="file-notes-purpose",
             markup=False,
         )
@@ -1304,8 +1306,9 @@ class LibraryFileNotesWorkspace(Vertical):
         )
         if self._root is None:
             self._root_status_detail = "Choose a notes folder."
+            self._root_status_summary = self._root_status_detail
             status.tooltip = None
-            status.update(self._root_status_detail)
+            status.update(self._root_status_summary)
             status.set_class(True, "-empty-root")
             body.display = False
             details.display = False
@@ -1323,8 +1326,13 @@ class LibraryFileNotesWorkspace(Vertical):
         if self._runtime_warning:
             detail = f"{detail} · {self._runtime_warning}"
         self._root_status_detail = detail
+        folder_name = self._root.name or self._root.anchor or str(self._root)
+        display_state = "Warning" if self._runtime_warning else state
+        self._root_status_summary = (
+            f"{display_state} · Local folder: {folder_name}"
+        )
         status.tooltip = Text(detail)
-        status.update(detail)
+        status.update(self._root_status_summary)
         body.display = True
         details.display = True
         choose.label = "Change…"
@@ -1333,7 +1341,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self.call_after_refresh(self._fit_root_status)
 
     def _fit_root_status(self) -> None:
-        """Keep the linked-root summary to one row and retain exact detail."""
+        """Fit the friendly root summary while retaining exact detail."""
         if not self._active or not self.is_mounted or not self.children:
             return
         try:
@@ -1342,7 +1350,7 @@ class LibraryFileNotesWorkspace(Vertical):
             return
         width = status.content_region.width
         if width > 0:
-            status.update(_middle_elide_cells(self._root_status_detail, width))
+            status.update(_middle_elide_cells(self._root_status_summary, width))
 
     def _apply_responsive_layout(self, width: int) -> None:
         if not self._active or not self.is_mounted:
