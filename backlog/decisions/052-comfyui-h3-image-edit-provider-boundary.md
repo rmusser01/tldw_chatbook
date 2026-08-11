@@ -44,8 +44,9 @@ or video-specific behavior.
    Successfully saving the normalized base URL establishes user intent to trust
    that exact host for self-built endpoints; Video Generation settings are never
    read and response data cannot extend trust.
-4. `worker.run_generation()` remains the single validation choke point, including
-   a backward-compatible capability that marks the reference image as required.
+4. `worker.run_generation()` remains the single validation choke point. The
+   existing reference-image capability grows a backward-compatible `required`
+   flag: current reference providers stay optional, while ComfyUI requires one.
 5. Successful output uses the existing image attachment and variant-metadata path.
    No Video Generation adapter, store, or metadata is involved.
 6. Local graph and remote object-schema/model validation complete before source
@@ -82,6 +83,10 @@ or video-specific behavior.
   effective-parameter mapping, and the request contract grows by one optional
   `threading.Event` cancellation seam. Existing adapters keep their current
   behavior when both are absent.
+- Staged attachment identity is an in-memory UUID used by an exact-consume store
+  operation; it is not persisted as generation provenance.
+- H3 prompt preparation resolves the backend before generic style/context logic,
+  and success-versus-cancellation is linearized before a shielded durable append.
 - Source images and edited outputs may persist on the configured ComfyUI server;
   operator cleanup policy governs them.
 - Settings changes reset the Image Generation registry only after successful

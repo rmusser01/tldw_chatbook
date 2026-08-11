@@ -238,6 +238,14 @@ would change the user's instruction or introduce unsupported controls. An empty
 instruction is also rejected rather than falling back to conversation-context
 prompt synthesis.
 
+Backend resolution occurs immediately after parsing and config resolution, before
+generic `prepare_generation_request()` runs. For `backend == "comfyui"`, a pure
+H3-specific preparation branch validates the raw instruction, style absence,
+attachment count/type, and one-result rule without calling style composition,
+conversation-context synthesis, or an LLM. All other backends retain the existing
+generic preparation path unchanged. This ordering prevents a request that H3 will
+refuse from causing prompt-transformation or LLM network activity first.
+
 | Invocation/input | Result |
 | --- | --- |
 | `:comfyui <instruction>` with one staged image | Accepted; one raw instruction and one PNG |
@@ -258,6 +266,12 @@ The adapter supports:
 - sampler; and
 - PNG output.
 
+Programmatic request values are authoritative when supplied. For the Console,
+optional `[image_generation.comfyui]` defaults provide seed, steps, and sampler;
+blank defaults leave those values `None`, which tells the adapter to retain and
+validate the corresponding packaged graph literal. No command grammar for these
+advanced controls is added in this task.
+
 The graph preserves the source dimensions. Explicit width or height overrides are
 rejected. Negative prompt, CFG, model override, alternate output format, and every
 other nonempty unsupported request value are rejected before source upload or queue
@@ -277,8 +291,11 @@ Before egress it verifies:
 - positive dimensions and configured width, height, and pixel-count limits; and
 - the backend's `requires_reference_image` capability.
 
-`requires_reference_image` is added backward-compatibly to the capability contract
-and enforced by `worker.run_generation()` so non-Console callers cannot bypass it.
+`ReferenceImageCapability` gains `required: bool = False`. The existing optional
+reference providers remain `supported=True, required=False`; ComfyUI resolves to
+`supported=True, required=True`. `worker.run_generation()` enforces the required
+case after backend resolution and before adapter construction or egress, so
+non-Console callers cannot bypass it.
 
 ### 6.4 Success, failure, and Regenerate
 
@@ -303,18 +320,31 @@ seed, steps, sampler, effective source/output dimensions, format, and validated 
 MIME. It records no source path, source filename, upload name, ComfyUI descriptor,
 history payload, or server response body.
 
-Only after durable persistence succeeds may the composer remove the exact staged
-attachment that initiated the edit. Removal is gated by an opaque runtime
-attachment ID and operation generation, never a persisted filename or hash. If the
-attachment was replaced while work ran, the replacement remains staged.
+`PendingAttachment` gains a non-persisted `attachment_id` generated with a random
+UUID at construction. Existing construction paths receive a default automatically.
+The ID is used only for in-memory ownership checks; it is never placed in message
+metadata, logs, reports, or user copy.
+
+`ConsoleChatStore.consume_pending_attachment(session_id, attachment_id) -> bool`
+atomically removes only the currently staged item with that ID and returns whether
+it did so. It never clears the list or removes a different attachment. Only after
+durable persistence succeeds may the Console call this method for the initiating
+attachment and operation generation. If the source was replaced or additional
+items were staged while work ran, every nonmatching attachment remains staged.
+
+The durable generation-message append is the local commit point. A `False` consume
+result is an expected identity-mismatch no-op. An unexpected consume exception is
+logged through the sanitized cleanup phase, but it does not roll back, reoffer, or
+misreport the already committed edited image; the still-staged source remains under
+the user's control.
 
 Validation, transport, generation, output, or persistence failure leaves the
 source staged for retry.
 
 Regenerate recognizes the durable `operation="edit"` metadata and refuses before
-network activity, telling the user to stage the original source again. The app does
-not retain a hidden source copy and never substitutes the previous edited output as
-the source.
+capacity/in-flight checks or network activity, telling the user to stage the
+original source again. The app does not retain a hidden source copy and never
+substitutes the previous edited output as the source.
 
 ## 7. Independent Configuration and Registry Lifecycle
 
@@ -326,7 +356,16 @@ The settings include:
 - base URL, defaulting to `http://127.0.0.1:8188`;
 - request/connect timeout;
 - history poll interval; and
-- total generation deadline.
+- total generation deadline;
+- optional default seed (`None` means use the packaged graph value, `-1` means
+  resolve a fresh seed once);
+- optional default steps (`None` means use the packaged graph value); and
+- optional default sampler (`None`/blank means use the packaged graph value).
+
+Cleared fields are omitted from persisted TOML and display “Use packaged workflow”
+rather than importing/loading the graph into Settings. Supplied defaults pass
+through the same request and `/object_info` validation as programmatic values; they
+are never silently clamped or replaced.
 
 There is no custom workflow path or model selector in this task. Userinfo, query,
 and fragment components are forbidden in the base URL.
@@ -346,10 +385,12 @@ the source image and instruction are transmitted to the configured ComfyUI serve
 and that ComfyUI retains inputs and saved outputs according to operator policy.
 
 After a successful settings write, Image Generation clears its config cache and
-adapter registry. Classification and dispatch resolve the same cached adapter
-instance. Existing in-flight requests retain their adapter snapshot; subsequent
-requests use the refreshed configuration. Failed settings writes do not reset
-runtime state.
+adapter registry. The Console classifies this fixed edit capability from the
+resolved backend ID; it does not instantiate a second adapter for classification.
+`worker.run_generation()` resolves configuration, validates the request, obtains
+the cached adapter, and invokes it within one blocking call. Existing in-flight
+calls retain their adapter snapshot; subsequent calls use the refreshed registry.
+Failed settings writes do not reset runtime state.
 
 ## 8. Preparation and Remote Preflight
 
@@ -386,7 +427,10 @@ The adapter uses the configured origin for the full exchange:
    subfolder without traversal.
 9. Fetch through same-origin `/view` using descriptor fields as query data, never
    as an arbitrary URL.
-10. Stream the response with both declared-length and actual-byte bounds.
+10. Stream the response with both declared-length and actual-byte bounds. The
+    effective cap is no greater than the existing Image Generation
+    `inline_max_bytes` attachment-storage limit, so an adapter cannot return an
+    image that the required persistence boundary is guaranteed to reject.
 11. Require normalized `image/png`, PNG signature, successful decode, and the
     expected preserved dimensions.
 
@@ -403,6 +447,14 @@ unmount set it. The adapter checks it before every network phase and waits betwe
 history polls with `cancel_event.wait(interval)` so cancellation is responsive
 without a second polling mechanism.
 
+The Console owns a per-session H3 image-edit cancellation registry parallel to the
+existing video-generation registry. While an H3 edit is active, the existing
+composer Stop affordance is active and sets that session's event. Screen unmount
+sets every owned event, marks the operation generation terminal for UI purposes,
+and drains the corresponding operation tasks without allowing stale screen updates.
+Removing an event from the registry occurs in `finally` after the operation task
+settles, so Stop cannot target a later operation accidentally.
+
 Before prompt submission, an observed cancellation ends the operation without a
 queue deletion. After a prompt ID exists, an observed cancellation or monotonic
 deadline expiry must attempt exactly one prompt-scoped `POST /queue` with
@@ -412,13 +464,22 @@ mask the original cancellation/timeout. The adapter never calls ComfyUI's global
 interrupt endpoint because the server may be shared.
 
 A running prompt can finish server-side after local cancellation or timeout. This
-is an accepted and documented server-retention consequence. The Console shields
-only validated-result attachment/metadata persistence once adapter success has
-been accepted; it does not shield remote polling or later UI synchronization.
-Cancellation before adapter success produces no local result. Once a successful
-result crosses the local durable-persistence boundary, cancellation cannot erase
-the committed attachment or metadata. Subsequent UI synchronization remains
-cancellable and runs only for the originating live screen/operation generation.
+is an accepted and documented server-retention consequence.
+
+Cancellation-versus-success has one explicit linearization rule. Immediately after
+validating the downloaded output, the adapter performs its final event check. If
+the event is already set, cancellation wins and no local result is returned. If the
+event is clear, success wins; a later cancellation cannot discard that result.
+
+The Console wraps the blocking worker call and, for a success-wins result, the
+durable attachment/metadata append in one owned async operation task. The caller
+awaits that task through `asyncio.shield`. If the caller is cancelled, it sets the
+same event, continues to await the real operation task to settlement, and then
+re-raises cancellation. Thus a success that won the final event check is persisted
+exactly once before cancellation escapes, while a cancellation that won produces
+no local card. Attachment consumption follows the durable append inside the same
+success path. Later UI synchronization is outside the shield, remains cancellable,
+and runs only for the originating live screen/operation generation.
 
 ## 10. Retention and Privacy
 
@@ -457,6 +518,14 @@ Every phase maps to sanitized actionable user guidance. Server status codes may 
 recorded when useful; server bodies are never recorded. Persistence failure retains
 the staged source and does not append a partial generation card.
 
+The H3 path does not reuse the generic Console catch block that logs `exc!r` and
+shows `str(exc)`. Adapter and operation failures are normalized to a typed
+phase-coded error before crossing into Console. H3 logging records only
+`component=image_edit`, a stable phase, and `error_type`; user copy uses a fixed
+phase-specific message. Persistence and attachment-consumption exceptions receive
+the same treatment, so local database/filesystem details cannot bypass adapter
+sanitization.
+
 ## 12. Verification Strategy
 
 Only tests related to touched files are authorized. The implementation plan must
@@ -469,8 +538,10 @@ Focused coverage includes:
 
 1. **Asset topology and provenance** — exact node/class/link inventory, 154/166
    absent, 165 sole output, neutral filler, prohibited source material absent.
-2. **Distribution** — wheel and sdist contain exactly the sanitized image workflow;
-   a fresh wheel install loads it through the confined adapter resource loader.
+2. **Distribution** — the `Image_Generation` workflow resource directory inside
+   wheel and sdist contains exactly the sanitized H3 image workflow; unrelated
+   packaged Video Generation workflows are outside this assertion. A fresh wheel
+   install loads the image workflow through the confined adapter resource loader.
 3. **Validation** — reference required, exactly-one staging, MIME/signature/decode
    and pixel limits, one batch, preserved dimensions, PNG-only, supported controls
    applied, unsupported controls rejected before egress.
@@ -481,11 +552,14 @@ Focused coverage includes:
    descriptors, pending previews, terminal failures, monotonic timeout,
    prompt-specific pending cancellation, bounded streaming, PNG validation, and
    exact node-165 selection.
-6. **Config/registry/Settings** — independent settings, precedence, successful-save
-   reset, same-instance classification/dispatch, and no video dependency.
-7. **Console/persistence** — staging rules, no style mutation, explicit-batch
-   refusal, failure retention, one durable attachment/metadata result,
-   identity-gated consumption, cancellation/unmount races, and Regenerate refusal.
+6. **Config/registry/Settings** — independent settings and optional control
+   defaults, precedence, successful-save reset, one worker-owned adapter snapshot,
+   and no video dependency.
+7. **Console/persistence** — backend-before-prompt preparation, no LLM/style work
+   for refused H3 input, staging rules, one-count enforcement, failure retention,
+   one durable attachment/metadata result, UUID-gated exact consumption, real Stop
+   and unmount cancellation wiring, success/cancel linearization, commit-wins
+   cleanup containment, and Regenerate refusal.
 8. **Privacy** — sentinel prompt/path/filename/descriptor/server-body values are
    absent from all captured logs, user copy, tracked fixtures, and reports.
 
