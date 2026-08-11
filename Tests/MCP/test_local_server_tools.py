@@ -27,6 +27,7 @@ from tldw_chatbook.MCP.server import TldwMCPServer, _describe_local_tools
 
 
 BUILTIN_TOOL_NAMES = [descriptor["name"] for descriptor in _describe_local_tools()]
+TASK_TOOL_NAMES = {"todo_create", "todo_update", "todo_get", "todo_list"}
 
 
 def _context():
@@ -158,12 +159,13 @@ def test_resolve_state_reads_store_fresh_per_call(workspace, store):
     assert not r.ok and r.error == EXTERNAL_NO_CALLBACK_REFUSAL
 
 
-def test_todo_write_absent_from_catalog(workspace, store):
-    # No todo_store is handed in (Console-session-scoped state), so the
-    # todo_write spec must not be registered at all.
+def test_session_task_tools_absent_from_external_catalog(workspace, store):
+    # No Console SessionTodoStore is handed in, so neither the replacement
+    # task tools nor the retired todo_write tool can be registered.
     provider = build_server_local_provider(workspace, store)
-    names = [e.name for e in provider.list_catalog()]
+    names = {e.name for e in provider.list_catalog()}
     assert "todo_write" not in names
+    assert TASK_TOOL_NAMES.isdisjoint(names)
     assert "fs_read" in names
 
 
@@ -213,10 +215,11 @@ def test_kill_switch_handler_returns_tool_result(workspace, store):
     assert result == ToolResult(ok=False, error=LOCAL_KILL_SWITCH_REFUSAL)
 
 
-def test_todo_write_absent_from_registrations(workspace, store):
+def test_session_task_tools_absent_from_external_registrations(workspace, store):
     provider = build_server_local_provider(workspace, store)
     regs = _registrations(provider)
     assert "todo_write" not in regs
+    assert TASK_TOOL_NAMES.isdisjoint(regs)
     # The rest of the default catalog IS present.
     assert "fs_read" in regs
     assert "git_status" in regs
@@ -262,6 +265,7 @@ async def test_flag_on_registers_local_tool_names(monkeypatch, tmp_path):
     assert "git_status" in names
     assert "web_fetch" in names
     assert "todo_write" not in names
+    assert TASK_TOOL_NAMES.isdisjoint(names)
 
 
 @pytest.mark.asyncio

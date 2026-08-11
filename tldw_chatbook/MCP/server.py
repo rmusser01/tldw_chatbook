@@ -28,8 +28,9 @@ permission store under `local:__local__`) or by editing
 `<user_data_dir>/mcp_permissions.json` directly. `mutates`-tagged tools
 (writes, edits, patches) are therefore effectively denied to external clients
 by default. The kill switch and `deny` states are honored identically to the
-Console path. `todo_write` is Console-session-scoped and intentionally not
-exposed.
+Console path. The standalone server supplies no Console `SessionTodoStore`, so
+`todo_create`, `todo_update`, `todo_get`, and `todo_list` are not registered;
+the retired `todo_write` tool is also absent.
 
 ## Exposed local Library tools (task-1337)
 

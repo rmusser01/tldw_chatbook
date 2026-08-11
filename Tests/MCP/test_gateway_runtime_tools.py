@@ -56,6 +56,7 @@ BUILTIN_TOOL_NAMES = [
     "get_conversation_history",
     "export_conversation",
 ]
+TASK_TOOL_NAMES = {"todo_create", "todo_update", "todo_get", "todo_list"}
 
 
 def _context() -> GatewayRequestContext:
@@ -701,6 +702,7 @@ async def test_real_provider_schemas_compile_for_every_public_profile(
     )
     assert "error" not in tools_response
     tools = tools_response["result"]["tools"]
+    published_names = {descriptor["name"] for descriptor in tools}
     assert len(tools) == len(BUILTIN_TOOL_NAMES) + len(expected_schemas)
     published_locals = {
         descriptor["name"]: descriptor["inputSchema"]
@@ -708,7 +710,8 @@ async def test_real_provider_schemas_compile_for_every_public_profile(
         if descriptor["name"] in expected_schemas
     }
     assert published_locals == expected_schemas
-    assert "todo_write" not in published_locals
+    assert "todo_write" not in published_names
+    assert TASK_TOOL_NAMES.isdisjoint(published_names)
 
 
 @pytest.mark.asyncio
