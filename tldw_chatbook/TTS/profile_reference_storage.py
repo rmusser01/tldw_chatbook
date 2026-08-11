@@ -1,4 +1,4 @@
-"""Metadata-only persistence projections for private clone references."""
+"""Metadata projections and bounded BLOB I/O for private clone references."""
 
 from __future__ import annotations
 
@@ -11,10 +11,14 @@ from tldw_chatbook.TTS.migrations.v2_to_v3 import (
     REFERENCE_TABLE,
 )
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
-from tldw_chatbook.TTS.profile_reference_types import TTSCloneReferenceSummary
+from tldw_chatbook.TTS.profile_reference_types import (
+    TTSCloneReference,
+    TTSCloneReferenceSummary,
+)
 from tldw_chatbook.TTS.profile_schema import decode_utc_datetime, decode_uuid
 
 RowLike: TypeAlias = sqlite3.Row | Mapping[str, object]
+REFERENCE_BLOB_CHUNK_BYTES = 256 * 1024
 
 REFERENCE_SUMMARY_ALIASES = (
     "reference_reference_id",
@@ -51,6 +55,55 @@ SELECT
     r.updated_at AS reference_updated_at
 FROM tts_generation_profiles AS p
 LEFT JOIN {REFERENCE_TABLE} AS r ON r.profile_id = p.profile_id
+"""
+
+ASSIGNED_PROFILE_WITH_REFERENCE_JOIN_SELECT = f"""
+SELECT
+    a.source AS assignment_source,
+    a.authority_id AS assignment_authority_id,
+    a.character_id AS assignment_character_id,
+    a.profile_id AS assignment_profile_id,
+    a.created_at AS assignment_created_at,
+    a.updated_at AS assignment_updated_at,
+    p.profile_id AS profile_profile_id,
+    p.display_name AS profile_display_name,
+    p.normalized_name AS profile_normalized_name,
+    p.provider_id AS profile_provider_id,
+    p.model_id AS profile_model_id,
+    p.voice_id AS profile_voice_id,
+    p.response_format AS profile_response_format,
+    p.speed AS profile_speed,
+    p.options_json AS profile_options_json,
+    p.revision AS profile_revision,
+    p.created_at AS profile_created_at,
+    p.updated_at AS profile_updated_at,
+    r.reference_id AS reference_reference_id,
+    r.byte_length AS reference_byte_length,
+    r.duration_ms AS reference_duration_ms,
+    r.sample_rate_hz AS reference_sample_rate_hz,
+    r.channels AS reference_channels,
+    r.sample_encoding AS reference_sample_encoding,
+    r.created_at AS reference_created_at,
+    r.updated_at AS reference_updated_at
+FROM character_tts_assignments AS a
+LEFT JOIN tts_generation_profiles AS p ON p.profile_id = a.profile_id
+LEFT JOIN {REFERENCE_TABLE} AS r ON r.profile_id = p.profile_id
+"""
+
+REFERENCE_PAYLOAD_SELECT = f"""
+SELECT
+    rowid AS reference_rowid,
+    reference_id AS reference_reference_id,
+    reference_text,
+    sha256,
+    byte_length AS reference_byte_length,
+    duration_ms AS reference_duration_ms,
+    sample_rate_hz AS reference_sample_rate_hz,
+    channels AS reference_channels,
+    sample_encoding AS reference_sample_encoding,
+    created_at AS reference_created_at,
+    updated_at AS reference_updated_at
+FROM {REFERENCE_TABLE}
 """
 
 
@@ -96,10 +149,124 @@ def decode_reference_summary(row: RowLike) -> TTSCloneReferenceSummary | None:
     return summary
 
 
+def decode_reference_payload(row: RowLike, wav_bytes: bytes) -> TTSCloneReference:
+    """Decode one exact reference after its BLOB has been streamed separately."""
+
+    try:
+        summary = decode_reference_summary(row)
+        reference_text = row["reference_text"]
+        digest = row["sha256"]
+        if (
+            summary is None
+            or type(reference_text) is not str
+            or type(digest) is not str
+        ):
+            raise ValueError
+        return TTSCloneReference(
+            summary=summary,
+            reference_text=reference_text,
+            sha256=digest,
+            wav_bytes=wav_bytes,
+        )
+    except Exception:
+        raise ProfileRepositoryError("reference_unavailable") from None
+
+
+def _finish_blob_operation(
+    body_error: BaseException | None,
+    close_error: BaseException | None,
+    *,
+    error_code: str,
+) -> None:
+    for error in (body_error, close_error):
+        if error is not None and not isinstance(error, Exception):
+            raise error
+    if body_error is not None or close_error is not None:
+        raise ProfileRepositoryError(error_code) from None
+
+
+def write_reference_blob(
+    connection: sqlite3.Connection,
+    rowid: int,
+    payload: bytes,
+) -> None:
+    """Write an allocated reference BLOB in bounded chunks and close it."""
+
+    blob: sqlite3.Blob | None = None
+    body_error: BaseException | None = None
+    close_error: BaseException | None = None
+    try:
+        blob = connection.blobopen(REFERENCE_TABLE, "wav_bytes", rowid)
+        if len(blob) != len(payload):
+            raise ValueError
+        for offset in range(0, len(payload), REFERENCE_BLOB_CHUNK_BYTES):
+            blob.write(payload[offset : offset + REFERENCE_BLOB_CHUNK_BYTES])
+        if blob.tell() != len(payload):
+            raise ValueError
+    except BaseException as error:
+        body_error = error
+    if blob is not None:
+        try:
+            blob.close()
+        except BaseException as error:
+            close_error = error
+    _finish_blob_operation(body_error, close_error, error_code="operation_failed")
+
+
+def read_reference_blob(
+    connection: sqlite3.Connection,
+    rowid: int,
+    byte_length: int,
+) -> bytes:
+    """Read one exact reference BLOB in bounded chunks and close it."""
+
+    blob: sqlite3.Blob | None = None
+    body_error: BaseException | None = None
+    close_error: BaseException | None = None
+    payload: bytes | None = None
+    try:
+        blob = connection.blobopen(
+            REFERENCE_TABLE,
+            "wav_bytes",
+            rowid,
+            readonly=True,
+        )
+        if len(blob) != byte_length:
+            raise ValueError
+        parts: list[bytes] = []
+        remaining = byte_length
+        while remaining:
+            chunk = blob.read(min(REFERENCE_BLOB_CHUNK_BYTES, remaining))
+            if type(chunk) is not bytes or not chunk:
+                raise ValueError
+            parts.append(chunk)
+            remaining -= len(chunk)
+        if blob.read(1) != b"":
+            raise ValueError
+        payload = b"".join(parts)
+    except BaseException as error:
+        body_error = error
+    if blob is not None:
+        try:
+            blob.close()
+        except BaseException as error:
+            close_error = error
+    _finish_blob_operation(body_error, close_error, error_code="reference_unavailable")
+    if payload is None:
+        raise ProfileRepositoryError("reference_unavailable")
+    return payload
+
+
 __all__ = [
     "PROFILE_WITH_REFERENCE_SELECT",
+    "ASSIGNED_PROFILE_WITH_REFERENCE_JOIN_SELECT",
+    "REFERENCE_BLOB_CHUNK_BYTES",
     "REFERENCE_ID_INDEX",
+    "REFERENCE_PAYLOAD_SELECT",
     "REFERENCE_SUMMARY_ALIASES",
     "REFERENCE_TABLE",
+    "decode_reference_payload",
     "decode_reference_summary",
+    "read_reference_blob",
+    "write_reference_blob",
 ]

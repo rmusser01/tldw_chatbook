@@ -56,6 +56,8 @@ _REPOSITORY_CODES = frozenset(
         "migration_failed",
         "missing",
         "operation_failed",
+        "reference_quota",
+        "reference_unavailable",
         "restore_failed",
         "restoring",
         "schema_corrupt",

@@ -12,7 +12,7 @@ import tempfile
 import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Generic, Literal, TypeVar, cast
@@ -28,8 +28,24 @@ from tldw_chatbook.DB.private_sqlite import (
 )
 import tldw_chatbook.TTS.profile_schema as _profile_schema
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+from tldw_chatbook.TTS.profile_reference_audio import validate_canonical_reference_wav
+from tldw_chatbook.TTS.profile_reference_storage import (
+    ASSIGNED_PROFILE_WITH_REFERENCE_JOIN_SELECT,
+    PROFILE_WITH_REFERENCE_SELECT,
+    REFERENCE_PAYLOAD_SELECT,
+    REFERENCE_TABLE,
+    decode_reference_payload,
+    decode_reference_summary,
+    read_reference_blob,
+    write_reference_blob,
+)
+from tldw_chatbook.TTS.profile_reference_types import (
+    MAX_REFERENCE_COUNT,
+    MAX_REFERENCE_TOTAL_BYTES,
+    CanonicalTTSCloneReference,
+    TTSCloneReference,
+)
 from tldw_chatbook.TTS.profile_schema import (
-    ASSIGNED_PROFILE_JOIN_SELECT,
     CURRENT_PROFILE_SCHEMA_VERSION,
     decode_assigned_snapshot,
     decode_assignment,
@@ -37,6 +53,7 @@ from tldw_chatbook.TTS.profile_schema import (
     decode_utc_datetime,
     encode_assignment,
     encode_profile,
+    encode_utc_datetime,
     encode_uuid,
     open_profile_store,
     peek_profile_store_schema_version,
@@ -67,6 +84,7 @@ from tldw_chatbook.Utils.path_validation import validate_path_simple
 _T = TypeVar("_T")
 _PATH_TYPE = type(Path())
 _CHARACTER_REF_TYPE = CharacterRef
+_CANONICAL_REFERENCE_TYPE = CanonicalTTSCloneReference
 _TTS_GENERATION_PROFILE_TYPE = TTSGenerationProfile
 _TTS_PROFILE_DRAFT_TYPE = TTSProfileDraft
 _MAX_SEARCH_CHARACTERS = 128
@@ -94,23 +112,10 @@ _TransactionOperation = Literal[
     "delete",
     "assignment_set",
     "assignment_remove",
+    "reference_set",
+    "reference_remove",
 ]
-_PROFILE_SELECT = """
-SELECT
-    profile_id,
-    display_name,
-    normalized_name,
-    provider_id,
-    model_id,
-    voice_id,
-    response_format,
-    speed,
-    options_json,
-    revision,
-    created_at,
-    updated_at
-FROM tts_generation_profiles
-"""
+_PROFILE_SELECT = PROFILE_WITH_REFERENCE_SELECT
 _ASSIGNMENT_SELECT = """
 SELECT
     source,
@@ -167,6 +172,27 @@ class _CandidateSnapshot:
 
 def _repository_error(code: str) -> ProfileRepositoryError:
     return ProfileRepositoryError(code)
+
+
+def _decode_profile_with_reference_row(row: sqlite3.Row) -> TTSGenerationProfile:
+    """Preserve the repository codec seam and add metadata-only reference state."""
+
+    return replace(decode_profile(row), reference=decode_reference_summary(row))
+
+
+def _decode_assigned_with_reference_row(
+    row: sqlite3.Row,
+) -> AssignedTTSProfileSnapshot:
+    """Preserve the joined codec seam and add metadata-only reference state."""
+
+    snapshot = decode_assigned_snapshot(row)
+    return replace(
+        snapshot,
+        profile=replace(
+            snapshot.profile,
+            reference=decode_reference_summary(row),
+        ),
+    )
 
 
 def _v2_migration_backup_path(active_path: Path) -> Path:
@@ -231,6 +257,7 @@ def _validate_optional_profile(
             revision=profile.revision,
             created_at=profile.created_at,
             updated_at=profile.updated_at,
+            reference=profile.reference,
         )
         if validated != profile:
             raise ValueError
@@ -282,6 +309,37 @@ def _validate_expected_generation(value: object) -> int:
     if type(value) is not int or value < 0:
         raise _repository_error("operation_failed")
     return cast(int, value)
+
+
+def _validate_canonical_reference(value: object) -> CanonicalTTSCloneReference:
+    """Return one exact copied canonical reference or reject the boundary."""
+
+    if type(value) is not _CANONICAL_REFERENCE_TYPE:
+        raise _repository_error("operation_failed")
+    reference = cast(CanonicalTTSCloneReference, value)
+    validation_error: BaseException | None = None
+    validated: CanonicalTTSCloneReference | None = None
+    try:
+        validated = CanonicalTTSCloneReference(
+            wav_bytes=reference.wav_bytes,
+            reference_text=reference.reference_text,
+            sha256=reference.sha256,
+            byte_length=reference.byte_length,
+            duration_ms=reference.duration_ms,
+            sample_rate_hz=reference.sample_rate_hz,
+            channels=reference.channels,
+            sample_encoding=reference.sample_encoding,
+        )
+        if validated != reference:
+            raise ValueError
+    except BaseException as error:
+        validation_error = error
+    if validation_error is not None:
+        if not isinstance(validation_error, Exception):
+            raise validation_error
+        raise _repository_error("operation_failed")
+    assert validated is not None
+    return validated
 
 
 def _validate_character_ref(value: object) -> CharacterRef:
@@ -1795,6 +1853,72 @@ class TTSProfileRepository:
             expected_generation=validated_generation,
         )
 
+    async def set_reference(
+        self,
+        profile_id: UUID,
+        canonical: CanonicalTTSCloneReference,
+        *,
+        expected_revision: int,
+        expected_generation: int,
+    ) -> ProfileStoreResult[TTSGenerationProfile]:
+        """Atomically attach or replace one profile-owned clone reference."""
+
+        validated_profile_id = _validate_exact_profile_id(profile_id)
+        validated_reference = _validate_canonical_reference(canonical)
+        validated_revision = _validate_expected_revision(expected_revision)
+        validated_generation = _validate_expected_generation(expected_generation)
+        return await self._submit_operation(
+            lambda connection: self._worker_set_reference(
+                connection,
+                validated_profile_id,
+                validated_reference,
+                validated_revision,
+            ),
+            expected_generation=validated_generation,
+        )
+
+    async def remove_reference(
+        self,
+        profile_id: UUID,
+        *,
+        expected_revision: int,
+        expected_generation: int,
+    ) -> ProfileStoreResult[TTSGenerationProfile]:
+        """Atomically remove one profile-owned clone reference."""
+
+        validated_profile_id = _validate_exact_profile_id(profile_id)
+        validated_revision = _validate_expected_revision(expected_revision)
+        validated_generation = _validate_expected_generation(expected_generation)
+        return await self._submit_operation(
+            lambda connection: self._worker_remove_reference(
+                connection,
+                validated_profile_id,
+                validated_revision,
+            ),
+            expected_generation=validated_generation,
+        )
+
+    async def get_reference(
+        self,
+        profile_id: UUID,
+        *,
+        expected_revision: int,
+        expected_generation: int,
+    ) -> ProfileStoreResult[TTSCloneReference]:
+        """Stream and fully revalidate one exact stored clone reference."""
+
+        validated_profile_id = _validate_exact_profile_id(profile_id)
+        validated_revision = _validate_expected_revision(expected_revision)
+        validated_generation = _validate_expected_generation(expected_generation)
+        return await self._submit_operation(
+            lambda connection: self._worker_get_reference(
+                connection,
+                validated_profile_id,
+                validated_revision,
+            ),
+            expected_generation=validated_generation,
+        )
+
     async def assignment_count(
         self,
         profile_id: UUID,
@@ -3052,12 +3176,12 @@ class TTSProfileRepository:
         profile_id: UUID,
     ) -> TTSGenerationProfile:
         row = connection.execute(
-            f"{_PROFILE_SELECT} WHERE profile_id = ?",
+            f"{_PROFILE_SELECT} WHERE p.profile_id = ?",
             (encode_uuid(profile_id),),
         ).fetchone()
         if row is None:
             raise _repository_error("missing")
-        return decode_profile(row)
+        return _decode_profile_with_reference_row(row)
 
     def _worker_get_profile_collisions(
         self,
@@ -3067,21 +3191,23 @@ class TTSProfileRepository:
     ) -> TTSProfileCollisionSnapshot:
         def read_collisions() -> TTSProfileCollisionSnapshot:
             profile_id_row = connection.execute(
-                f"{_PROFILE_SELECT} WHERE profile_id = ?",
+                f"{_PROFILE_SELECT} WHERE p.profile_id = ?",
                 (encode_uuid(profile_id),),
             ).fetchone()
             normalized_name_row = connection.execute(
-                f"{_PROFILE_SELECT} WHERE normalized_name = ?",
+                f"{_PROFILE_SELECT} WHERE p.normalized_name = ?",
                 (normalized_name,),
             ).fetchone()
             return TTSProfileCollisionSnapshot(
                 profile_id_match=(
-                    None if profile_id_row is None else decode_profile(profile_id_row)
+                    None
+                    if profile_id_row is None
+                    else _decode_profile_with_reference_row(profile_id_row)
                 ),
                 normalized_name_match=(
                     None
                     if normalized_name_row is None
-                    else decode_profile(normalized_name_row)
+                    else _decode_profile_with_reference_row(normalized_name_row)
                 ),
             )
 
@@ -3104,11 +3230,11 @@ class TTSProfileRepository:
                 where_clause = ""
                 filter_parameters: tuple[object, ...] = ()
             else:
-                where_clause = " WHERE normalized_name LIKE ? ESCAPE '!'"
+                where_clause = " WHERE p.normalized_name LIKE ? ESCAPE '!'"
                 filter_parameters = (f"%{_escape_like_literal(normalized_search)}%",)
 
             count_row = connection.execute(
-                f"SELECT COUNT(*) FROM tts_generation_profiles{where_clause}",
+                f"SELECT COUNT(*) FROM tts_generation_profiles AS p{where_clause}",
                 filter_parameters,
             ).fetchone()
             if (
@@ -3122,12 +3248,12 @@ class TTSProfileRepository:
             rows = connection.execute(
                 (
                     f"{_PROFILE_SELECT}{where_clause} "
-                    "ORDER BY normalized_name ASC, profile_id ASC "
+                    "ORDER BY p.normalized_name ASC, p.profile_id ASC "
                     "LIMIT ? OFFSET ?"
                 ),
                 (*filter_parameters, limit, offset),
             ).fetchall()
-            profiles = tuple(decode_profile(row) for row in rows)
+            profiles = tuple(_decode_profile_with_reference_row(row) for row in rows)
             return TTSProfilePage(profiles=profiles, total=total)
 
         return self._worker_transaction(
@@ -3166,6 +3292,7 @@ class TTSProfileRepository:
                 revision=stored.revision + 1,
                 created_at=stored.created_at,
                 updated_at=self._clock(),
+                reference=stored.reference,
             )
             parameters = encode_profile(updated)
             parameters["expected_revision"] = expected_revision
@@ -3237,6 +3364,258 @@ class TTSProfileRepository:
             operation_kind="delete",
             immediate=True,
             integrity_evidence=evidence,
+        )
+
+    def _worker_bump_reference_revision(
+        self,
+        connection: sqlite3.Connection,
+        profile_id: UUID,
+        expected_revision: int,
+        timestamp: datetime,
+    ) -> TTSGenerationProfile:
+        cursor = connection.execute(
+            """
+            UPDATE tts_generation_profiles
+            SET revision = revision + 1, updated_at = ?
+            WHERE profile_id = ? AND revision = ?
+            """,
+            (
+                encode_utc_datetime(timestamp),
+                encode_uuid(profile_id),
+                expected_revision,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise _repository_error("conflict")
+        profile = self._worker_get_profile(connection, profile_id)
+        if profile.revision != expected_revision + 1:
+            raise _repository_error("corrupt_data")
+        return profile
+
+    def _worker_set_reference(
+        self,
+        connection: sqlite3.Connection,
+        profile_id: UUID,
+        canonical: CanonicalTTSCloneReference,
+        expected_revision: int,
+    ) -> TTSGenerationProfile:
+        def set_exact() -> TTSGenerationProfile:
+            profile = self._worker_get_profile(connection, profile_id)
+            if profile.revision != expected_revision:
+                raise _repository_error("conflict")
+            encoded_profile_id = encode_uuid(profile_id)
+            existing_row = connection.execute(
+                f"SELECT byte_length FROM {REFERENCE_TABLE} WHERE profile_id = ?",
+                (encoded_profile_id,),
+            ).fetchone()
+            existing_bytes = 0
+            if existing_row is not None:
+                if (
+                    len(existing_row) != 1
+                    or type(existing_row[0]) is not int
+                    or existing_row[0] <= 0
+                ):
+                    raise _repository_error("corrupt_data")
+                existing_bytes = cast(int, existing_row[0])
+            quota_row = connection.execute(
+                f"SELECT COUNT(*), COALESCE(SUM(byte_length), 0) FROM {REFERENCE_TABLE}"
+            ).fetchone()
+            if (
+                quota_row is None
+                or len(quota_row) != 2
+                or type(quota_row[0]) is not int
+                or type(quota_row[1]) is not int
+                or quota_row[0] < 0
+                or quota_row[1] < 0
+            ):
+                raise _repository_error("corrupt_data")
+            prospective_count = cast(int, quota_row[0]) + (
+                0 if existing_row is not None else 1
+            )
+            prospective_bytes = (
+                cast(int, quota_row[1]) - existing_bytes + canonical.byte_length
+            )
+            if (
+                prospective_count > MAX_REFERENCE_COUNT
+                or prospective_bytes > MAX_REFERENCE_TOTAL_BYTES
+            ):
+                raise _repository_error("reference_quota")
+
+            reference_id = self._worker_new_uuid()
+            timestamp = self._clock()
+            cursor = connection.execute(
+                f"""
+                INSERT INTO {REFERENCE_TABLE} (
+                    profile_id,
+                    reference_id,
+                    wav_bytes,
+                    reference_text,
+                    sha256,
+                    byte_length,
+                    duration_ms,
+                    sample_rate_hz,
+                    channels,
+                    sample_encoding,
+                    created_at,
+                    updated_at
+                ) VALUES (?, ?, zeroblob(?), ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(profile_id) DO UPDATE SET
+                    reference_id = excluded.reference_id,
+                    wav_bytes = excluded.wav_bytes,
+                    reference_text = excluded.reference_text,
+                    sha256 = excluded.sha256,
+                    byte_length = excluded.byte_length,
+                    duration_ms = excluded.duration_ms,
+                    sample_rate_hz = excluded.sample_rate_hz,
+                    channels = excluded.channels,
+                    sample_encoding = excluded.sample_encoding,
+                    created_at = excluded.created_at,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    encoded_profile_id,
+                    encode_uuid(reference_id),
+                    canonical.byte_length,
+                    canonical.reference_text,
+                    canonical.sha256,
+                    canonical.byte_length,
+                    canonical.duration_ms,
+                    canonical.sample_rate_hz,
+                    canonical.channels,
+                    canonical.sample_encoding,
+                    encode_utc_datetime(timestamp),
+                    encode_utc_datetime(timestamp),
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise _repository_error("operation_failed")
+            rowid_row = connection.execute(
+                f"SELECT rowid FROM {REFERENCE_TABLE} WHERE profile_id = ?",
+                (encoded_profile_id,),
+            ).fetchone()
+            if (
+                rowid_row is None
+                or len(rowid_row) != 1
+                or type(rowid_row[0]) is not int
+                or rowid_row[0] <= 0
+            ):
+                raise _repository_error("corrupt_data")
+            write_reference_blob(
+                connection, cast(int, rowid_row[0]), canonical.wav_bytes
+            )
+            updated = self._worker_bump_reference_revision(
+                connection,
+                profile_id,
+                expected_revision,
+                timestamp,
+            )
+            if (
+                updated.reference is None
+                or updated.reference.reference_id != reference_id
+                or updated.reference.byte_length != canonical.byte_length
+            ):
+                raise _repository_error("corrupt_data")
+            return updated
+
+        return self._worker_transaction(
+            connection,
+            set_exact,
+            operation_kind="reference_set",
+            immediate=True,
+        )
+
+    def _worker_remove_reference(
+        self,
+        connection: sqlite3.Connection,
+        profile_id: UUID,
+        expected_revision: int,
+    ) -> TTSGenerationProfile:
+        def remove_exact() -> TTSGenerationProfile:
+            profile = self._worker_get_profile(connection, profile_id)
+            if profile.revision != expected_revision:
+                raise _repository_error("conflict")
+            cursor = connection.execute(
+                f"DELETE FROM {REFERENCE_TABLE} WHERE profile_id = ?",
+                (encode_uuid(profile_id),),
+            )
+            if cursor.rowcount == 0:
+                raise _repository_error("missing")
+            if cursor.rowcount != 1:
+                raise _repository_error("corrupt_data")
+            updated = self._worker_bump_reference_revision(
+                connection,
+                profile_id,
+                expected_revision,
+                self._clock(),
+            )
+            if updated.reference is not None:
+                raise _repository_error("corrupt_data")
+            return updated
+
+        return self._worker_transaction(
+            connection,
+            remove_exact,
+            operation_kind="reference_remove",
+            immediate=True,
+        )
+
+    def _worker_get_reference(
+        self,
+        connection: sqlite3.Connection,
+        profile_id: UUID,
+        expected_revision: int,
+    ) -> TTSCloneReference:
+        def read_exact() -> TTSCloneReference:
+            profile = self._worker_get_profile(connection, profile_id)
+            if profile.revision != expected_revision:
+                raise _repository_error("conflict")
+            if profile.reference is None:
+                raise _repository_error("missing")
+            row = connection.execute(
+                f"{REFERENCE_PAYLOAD_SELECT} WHERE profile_id = ?",
+                (encode_uuid(profile_id),),
+            ).fetchone()
+            if row is None:
+                raise _repository_error("reference_unavailable")
+            rowid = row["reference_rowid"]
+            byte_length = row["reference_byte_length"]
+            if (
+                type(rowid) is not int
+                or rowid <= 0
+                or type(byte_length) is not int
+                or byte_length != profile.reference.byte_length
+            ):
+                raise _repository_error("reference_unavailable")
+            payload = read_reference_blob(connection, rowid, byte_length)
+            reference = decode_reference_payload(row, payload)
+            validation_error: BaseException | None = None
+            metadata = None
+            try:
+                metadata = validate_canonical_reference_wav(payload)
+            except BaseException as error:
+                validation_error = error
+            if validation_error is not None and not isinstance(
+                validation_error, Exception
+            ):
+                raise validation_error
+            if (
+                validation_error is not None
+                or metadata is None
+                or reference.summary != profile.reference
+                or metadata.byte_length != reference.summary.byte_length
+                or metadata.duration_ms != reference.summary.duration_ms
+                or metadata.sample_rate_hz != reference.summary.sample_rate_hz
+                or metadata.channels != reference.summary.channels
+                or metadata.sample_encoding != reference.summary.sample_encoding
+            ):
+                raise _repository_error("reference_unavailable")
+            return reference
+
+        return self._worker_transaction(
+            connection,
+            read_exact,
+            operation_kind="read",
+            immediate=False,
         )
 
     def _worker_assignment_count(
@@ -3453,7 +3832,7 @@ class TTSProfileRepository:
     ) -> AssignedTTSProfileSnapshot | None:
         row = connection.execute(
             (
-                f"{ASSIGNED_PROFILE_JOIN_SELECT} "
+                f"{ASSIGNED_PROFILE_WITH_REFERENCE_JOIN_SELECT} "
                 "WHERE a.source = ? "
                 "AND a.authority_id = ? "
                 "AND a.character_id = ?"
@@ -3466,7 +3845,7 @@ class TTSProfileRepository:
         ).fetchone()
         if row is None:
             return None
-        snapshot = decode_assigned_snapshot(row)
+        snapshot = _decode_assigned_with_reference_row(row)
         if snapshot.assignment.character_ref != character_ref:
             raise _repository_error("corrupt_data")
         return snapshot
