@@ -40,6 +40,21 @@ provider on the next Console agent run. This separates discoverability from
 authorization: users can see and select the tools by default without granting
 silent filesystem access, writes, or network egress.
 
+**Addendum (TASK-1354 closeout, 2026-08-10): web-tool egress remains
+public-only.** `web_search` and `web_fetch` are ordinary `local:<name>` tools,
+not privileged built-ins. Fresh and missing permission state therefore remains
+`ask` for both tools; catalog availability never implies network authorization.
+`web_fetch` accepts only HTTP(S) targets whose complete DNS answer is public,
+and it repeats that check for every redirect hop. Private, loopback,
+link-local, reserved, multicast, unspecified, cloud-metadata, and unresolvable
+targets fail before transport. There is no per-domain approval bypass in the
+local-tool contract. This intentionally supersedes TASK-1354's earlier draft
+proposal for a default-Allow search tool and configurable localhost/LAN
+fetching. Optional external exposure is governed separately by ADR-053:
+`[mcp] expose_local_tools` must be enabled, and an external client cannot
+satisfy an `ask` verdict, so it fails closed until the operator records a
+persistent tool-level Allow through the Console.
+
 **Addendum (PR-T3 review, Fix Round H, 2026-08-06):** a fourth pinned
 constant, `LOCAL_GATE_ERROR_REFUSAL`, distinguishes a permission-resolver
 CRASH from a genuine configured deny. `_verdict_for()`'s `resolve_state`
@@ -121,6 +136,7 @@ root confinement with hidden components explicitly allowed under it.
 ## Links
 
 - [TASK-2819](../tasks/task-2819%20-%20Local-agent-tools-phase-1-plumbing-fs_list-pilot.md)
+- [TASK-1354](../tasks/task-1354%20-%20Complete-web_search-and-web_fetch-Console-and-MCP-exposure.md)
 - [Design specification](../../Docs/superpowers/specs/2026-08-04-local-agent-tools-design.md)
 - [Implementation plan](../../Docs/superpowers/plans/2026-08-04-local-agent-tools-phase1.md)
 - [ADR-030: Direct Local Library Tool Boundary for Console and MCP](030-local-library-agent-tool-boundary.md)

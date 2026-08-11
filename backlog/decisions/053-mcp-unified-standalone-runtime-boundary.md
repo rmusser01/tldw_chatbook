@@ -3,7 +3,7 @@
 Status: Accepted
 Date: 2026-08-09
 Amended: 2026-08-10 (post-rebase inventory reconciliation with TASK-4000)
-Related Task: [TASK-2512 - Migrate MCP server from FastMCP to tldw_server's mcp-unified package](../tasks/task-2512%20-%20Migrate-MCP-server-from-FastMCP-to-tldw_servers-mcp-unified-package.md)
+Related Tasks: [TASK-2512 - Migrate MCP server from FastMCP to tldw_server's mcp-unified package](../tasks/task-2512%20-%20Migrate-MCP-server-from-FastMCP-to-tldw_servers-mcp-unified-package.md); [TASK-1354 - Complete web_search and web_fetch Console and MCP exposure](../tasks/task-1354%20-%20Complete-web_search-and-web_fetch-Console-and-MCP-exposure.md)
 Supersedes: N/A
 
 ## Decision
@@ -181,6 +181,7 @@ repository's architecture rules.
 ## Links
 
 - [TASK-2512](../tasks/task-2512%20-%20Migrate-MCP-server-from-FastMCP-to-tldw_servers-mcp-unified-package.md)
+- [TASK-1354](../tasks/task-1354%20-%20Complete-web_search-and-web_fetch-Console-and-MCP-exposure.md)
 - [Migration specification](../../Docs/superpowers/specs/2026-08-09-mcp-unified-standalone-server-migration-design.md)
 - [ADR-030: Direct Local Library Tool Boundary](030-local-library-agent-tool-boundary.md)
 - [ADR-032: Local Agent Tool Permission Boundary](032-local-agent-tool-permission-boundary.md)

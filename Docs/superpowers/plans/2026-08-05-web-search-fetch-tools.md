@@ -2,6 +2,17 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Status: superseded — do not execute.** This plan targets a FastMCP-era
+> builtin architecture that was replaced before implementation by the
+> LocalToolProvider phase plan. The shipped work is governed by ADR-032,
+> ADR-053, `Docs/superpowers/plans/2026-08-05-local-agent-tools-phase3a.md`,
+> `Docs/superpowers/plans/2026-08-05-local-agent-tools-phase4.md`, and the
+> current TASK-1354 implementation plan. In particular, do not add the
+> proposed `Tools/web_tools.py`, `Utils/egress_guard.py`, seeded default-Allow
+> search state, domain-scoped approval tuples, configurable private-network
+> access, or FastMCP registrations. This file remains only as historical
+> evidence of the abandoned approach.
+
 **Goal:** Give the model Claude-Code-style web access from the Console agent runtime and the FastMCP server: `web_search` (title/url/snippet) and `web_fetch` (URL → clean text), registered once as MCP-hub builtin tools.
 
 **Architecture:** One implementation in `Tools/web_tools.py`, registered as builtin hub tools (manifest in `MCP/server.py` + handlers/schemas in `MCP/local_runtime_delegate.py` + schema plumbing through the inventory/catalog), surfaced in the Console via `MCPToolProvider` with inherited On/Off/Ask permissions (search=allow, fetch=ask, domain-scoped session approvals). `web_fetch` is lightweight-first (httpx + trafilatura) behind a new egress guard, with one Playwright escalation. Spec: `Docs/superpowers/specs/2026-08-05-web-search-fetch-tools-design.md`.
@@ -1873,7 +1884,7 @@ git commit -m "test(mcp): web tools end-to-end schema exposure (task-1354)"
 **Files:**
 - Create: `Tests/Tools/test_web_tools_live.py`
 - Modify: `AGENTS.md` ("Adding Features → New Tool" bullet)
-- Modify: `backlog/tasks/task-1354 - Add-web_search-web_fetch-tools-for-Console-and-MCP-hub-native.md` (Implementation Notes via `backlog task edit`)
+- Modify: `backlog/tasks/task-1354 - Complete-web_search-and-web_fetch-Console-and-MCP-exposure.md` (Implementation Notes via `backlog task edit`)
 
 - [ ] **Step 1: Live tests (marked optional — skipped in CI without network)**
 
@@ -1971,7 +1982,7 @@ backlog task edit 1354 -s Done
 - [ ] **Step 5: Final commit**
 
 ```bash
-git add Tests/Tools/test_web_tools_live.py AGENTS.md "backlog/tasks/task-1354 - Add-web_search-web_fetch-tools-for-Console-and-MCP-hub-native.md"
+git add Tests/Tools/test_web_tools_live.py AGENTS.md "backlog/tasks/task-1354 - Complete-web_search-and-web_fetch-Console-and-MCP-exposure.md"
 git commit -m "feat(web-tools): live tests, AGENTS.md tool guidance, task-1354 closeout"
 ```
 
