@@ -1025,6 +1025,6 @@ git commit -m "docs(mcp): close mcp-unified migration"
   checks**. Repository-full/CI are waived, not green: the earlier full run
   reached about 83% and stopped at the shared Library navigation test hang.
   Exact branch and clean-dev 300-second timeouts isolated the stale test stub;
-  TASK-14913 changed it to the typed permitted `NoteFlushOutcome` and made the
+  TASK-15104 changed it to the typed permitted `NoteFlushOutcome` and made the
   exact node and adjacent transition group pass. No later repository-full or
   CI result is represented as successful.
