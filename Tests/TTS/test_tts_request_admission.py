@@ -1205,7 +1205,7 @@ async def test_transient_clone_uses_existing_typed_materialization_lifetime(
     )
     response: TTSAudioResponse | None = None
     try:
-        response, selection = await service.synthesize_effective(
+        response, selection, evidence = await service.synthesize_effective_with_evidence(
             text="Transient clone.",
             studio_draft=draft,
             studio_preferences=saved,
@@ -1213,6 +1213,15 @@ async def test_transient_clone_uses_existing_typed_materialization_lifetime(
         )
 
         assert selection.provider_id == "audio_cpp"
+        assert evidence is not None
+        assert repr(evidence) == "TTSCloneGenerationEvidence(<private>)"
+        assert evidence.canonical_reference == clone_audition.canonical_reference
+        assert evidence.model_id == "clone-model"
+        assert evidence.recipe_id == "pocket_tts"
+        assert evidence.recipe_revision == 1
+        assert evidence.provider_configuration_revision == 1
+        assert evidence.applied_provider_generation == 0
+        assert evidence.process_generation == 7
         assert len(adapter.clone_requests) == 1
         materialization = adapter.clone_requests[0].materialization
         assert materialization.reference_text == "Private reference transcript"

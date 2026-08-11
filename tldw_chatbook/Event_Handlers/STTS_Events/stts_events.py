@@ -32,6 +32,7 @@ from tldw_chatbook.TTS import (
     TTSRequestedSelectionSnapshot,
     get_tts_service,
 )
+from tldw_chatbook.TTS.audio_cpp_contract import validate_pcm16_wav
 from tldw_chatbook.TTS.adapter_types import (
     ProgressSink,
     TTSOperationError,
@@ -982,6 +983,7 @@ class STTSEventHandler:
 
         response = None
         effective = None
+        clone_evidence = None
         primary_error: BaseException | None = None
         profile_reference_resolver = None
         if snapshot.profile_preview is not None:
@@ -1005,7 +1007,12 @@ class STTSEventHandler:
 
             profile_reference_resolver = resolve_profile_reference
         try:
-            response, effective = await self._stts_service.synthesize_effective(
+            synthesize_with_evidence = getattr(
+                self._stts_service,
+                "synthesize_effective_with_evidence",
+                None,
+            )
+            synthesis_kwargs = dict(
                 text=snapshot.text,
                 studio_draft=snapshot.studio_draft,
                 studio_preferences=snapshot.studio_preferences,
@@ -1014,6 +1021,14 @@ class STTSEventHandler:
                 profile_reference_resolver=profile_reference_resolver,
                 progress_sink=progress_sink,
             )
+            if callable(synthesize_with_evidence):
+                response, effective, clone_evidence = await synthesize_with_evidence(
+                    **synthesis_kwargs
+                )
+            else:
+                response, effective = await self._stts_service.synthesize_effective(
+                    **synthesis_kwargs
+                )
             chunks = [chunk async for chunk in response.byte_stream]
         except BaseException as error:
             primary_error = error
@@ -1032,9 +1047,12 @@ class STTSEventHandler:
 
         assert response is not None
         assert effective is not None
+        complete_audio = b"".join(chunks)
+        if clone_evidence is not None:
+            validate_pcm16_wav(complete_audio)
         path = Path(
             create_secure_temp_file(
-                b"".join(chunks),
+                complete_audio,
                 suffix=f".{response.audio_format.removeprefix('.')}",
                 prefix="stts_playground_",
             )
@@ -1062,6 +1080,7 @@ class STTSEventHandler:
                 metadata=response.metadata,
                 requested_selection=requested_selection,
                 profile_save_block_code=profile_save_block_code,
+                clone_evidence=clone_evidence,
             )
         except BaseException:
             if secure_delete_file(path) or not path.exists():

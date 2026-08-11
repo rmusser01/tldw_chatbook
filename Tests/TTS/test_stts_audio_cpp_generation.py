@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import stat
+import struct
 from collections.abc import AsyncIterator, Mapping
 from hashlib import sha256
 from pathlib import Path
@@ -35,8 +36,10 @@ from tldw_chatbook.TTS import (
     CanonicalTTSCloneReference,
 )
 from tldw_chatbook.TTS.adapter_types import (
+    TTSCloneGenerationEvidence,
     TTSProviderReconfiguringError,
     TTSRegistryClosedError,
+    _TTS_CLONE_GENERATION_EVIDENCE_TOKEN,
 )
 from tldw_chatbook.TTS.effective_settings import (
     TTSSelectionOverrides,
@@ -211,6 +214,7 @@ class _StudioService:
         # `TTSEffectiveSelection` always carries this axis; a fake that omits
         # it invents a shape the real system never produces.
         effective_provider_options: Mapping[str, Any] | None = None,
+        clone_evidence: TTSCloneGenerationEvidence | None = None,
     ) -> None:
         self.response = response
         self.calls: list[dict[str, object]] = []
@@ -223,6 +227,7 @@ class _StudioService:
         self._effective_provider_options = (
             {} if effective_provider_options is None else effective_provider_options
         )
+        self._clone_evidence = clone_evidence
 
     async def synthesize_effective(self, **kwargs: object) -> tuple[object, object]:
         self.calls.append(kwargs)
@@ -237,6 +242,13 @@ class _StudioService:
                 provider_configuration=self._effective_configuration_revision
             ),
         )
+
+    async def synthesize_effective_with_evidence(
+        self,
+        **kwargs: object,
+    ) -> tuple[object, object, TTSCloneGenerationEvidence | None]:
+        response, effective = await self.synthesize_effective(**kwargs)
+        return response, effective, self._clone_evidence
 
 
 class _DeliveryPlayground:
@@ -964,22 +976,50 @@ async def test_studio_profile_preview_forwards_only_identity_and_private_resolve
 
 @pytest.mark.asyncio
 async def test_studio_clone_audition_forwards_exact_canonical_snapshot() -> None:
-    response = _Response(_CountingStream((b"RIFF", b"audio")))
-    service = _StudioService(response, effective_model_id="clone-model")
+    frames = 32
+    sample_rate = 16_000
+    pcm = struct.pack("<h", 4) * frames
+    fmt = struct.pack("<HHIIHH", 1, 1, sample_rate, sample_rate * 2, 2, 16)
+    body = (
+        b"WAVE"
+        + b"fmt "
+        + struct.pack("<I", len(fmt))
+        + fmt
+        + b"data"
+        + struct.pack("<I", len(pcm))
+        + pcm
+    )
+    wav = b"RIFF" + struct.pack("<I", len(body)) + body
+    canonical = CanonicalTTSCloneReference(
+        wav_bytes=wav,
+        reference_text="Private transcript",
+        sha256=sha256(wav).hexdigest(),
+        byte_length=len(wav),
+        duration_ms=2,
+        sample_rate_hz=sample_rate,
+        channels=1,
+        sample_encoding="pcm_s16le",
+    )
+    evidence = TTSCloneGenerationEvidence(
+        _TTS_CLONE_GENERATION_EVIDENCE_TOKEN,
+        canonical_reference=canonical,
+        model_id="clone-model",
+        recipe_id="pocket_tts",
+        recipe_revision=1,
+        provider_configuration_revision=9,
+        applied_provider_generation=2,
+        process_generation=7,
+    )
+    response = _Response(_CountingStream((wav,)))
+    service = _StudioService(
+        response,
+        effective_model_id="clone-model",
+        clone_evidence=evidence,
+    )
     handler = _handler(service)
-    wav = b"RIFF\x24\x00\x00\x00WAVEfmt private-reference"
     clone = STTSPlaygroundCloneSnapshot(
         draft_revision=6,
-        canonical_reference=CanonicalTTSCloneReference(
-            wav_bytes=wav,
-            reference_text="Private transcript",
-            sha256=sha256(wav).hexdigest(),
-            byte_length=len(wav),
-            duration_ms=500,
-            sample_rate_hz=24_000,
-            channels=1,
-            sample_encoding="pcm_s16le",
-        ),
+        canonical_reference=canonical,
     )
     preferences = StudioTTSPreferencesSnapshot(revision=3)
     snapshot = STTSPlaygroundRequest(
@@ -1011,6 +1051,8 @@ async def test_studio_clone_audition_forwards_exact_canonical_snapshot() -> None
         assert service.calls[0]["clone_audition"] is clone
         assert "profile_reference_resolver" in service.calls[0]
         assert service.calls[0]["profile_reference_resolver"] is None
+        assert artifact.clone_evidence is evidence
+        assert "Private transcript" not in repr(artifact)
     finally:
         artifact.path.unlink(missing_ok=True)
 

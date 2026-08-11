@@ -10,6 +10,7 @@ from typing import Any, Final, Literal, TypeAlias
 from uuid import UUID
 
 from tldw_chatbook.TTS.effective_settings import TTSStudioDraftSelection
+from tldw_chatbook.TTS.adapter_types import TTSCloneGenerationEvidence
 from tldw_chatbook.TTS.profile_types import (
     AUDIO_CPP_PROFILE_SPEED,
     PROFILE_PROVIDER_FORMATS,
@@ -253,6 +254,10 @@ class STTSGeneratedAudio:
     content_type: str
     metadata: Mapping[str, AudioMetadataValue] = field(default_factory=dict)
     requested_selection: TTSRequestedSelectionSnapshot | None = None
+    clone_evidence: TTSCloneGenerationEvidence | None = field(
+        default=None,
+        repr=False,
+    )
     #: Why provenance was refused, when the reason is actionable to explain.
     #:
     #: `None` covers both "provenance attached" and "dropped for a reason the
@@ -283,6 +288,10 @@ class STTSGeneratedAudio:
             raise TypeError(
                 "requested_selection must be a requested selection snapshot"
             )
+        if self.clone_evidence is not None and (
+            type(self.clone_evidence) is not TTSCloneGenerationEvidence
+        ):
+            raise TypeError("clone_evidence must be exact clone generation evidence")
         if self.profile_save_block_code is not None:
             if self.profile_save_block_code not in PROFILE_SAVE_BLOCK_CODES:
                 raise ValueError("profile_save_block_code is not a known code")

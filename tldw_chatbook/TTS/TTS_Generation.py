@@ -41,6 +41,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSNativeCapabilityObservation,
     TTSNativeCapabilitySnapshot,
     TTSNativeCloneAdapter,
+    TTSCloneGenerationEvidence,
     TTSOperationError,
     TTSProgress,
     TTSProviderCatalog,
@@ -50,6 +51,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSStructuredVoiceAdapter,
     TTSVoiceDiscoveryResult,
     _new_admitted_audio_cpp_clone_request,
+    _new_tts_clone_generation_evidence,
 )
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
@@ -84,6 +86,10 @@ from tldw_chatbook.TTS.profile_reference_materialization import (
     TTSCloneReferenceMaterialization,
     TTSCloneReferenceMaterializer,
 )
+from tldw_chatbook.TTS.profile_reference_types import (
+    CanonicalTTSCloneReference,
+    TTSCloneReference,
+)
 from tldw_chatbook.TTS.request_admission import (
     TTSRequestAdmissionCoordinator,
     TTSProfileReferenceResolver,
@@ -98,6 +104,37 @@ _TTS_SETTINGS_FOREGROUND_TIMEOUT_SECONDS = 2.0
 _NATIVE_CAPABILITY_TIMEOUT_SECONDS = 10.0
 _NATIVE_CAPABILITY_VOICE_CONCURRENCY = 4
 _NATIVE_CAPABILITY_MAX_MODEL_ROWS = 50
+
+
+def _canonical_clone_reference(
+    reference: CanonicalTTSCloneReference | TTSCloneReference,
+) -> CanonicalTTSCloneReference:
+    """Detach one admitted reference into exact canonical evidence."""
+
+    if type(reference) is CanonicalTTSCloneReference:
+        return CanonicalTTSCloneReference(
+            wav_bytes=reference.wav_bytes,
+            reference_text=reference.reference_text,
+            sha256=reference.sha256,
+            byte_length=reference.byte_length,
+            duration_ms=reference.duration_ms,
+            sample_rate_hz=reference.sample_rate_hz,
+            channels=reference.channels,
+            sample_encoding=reference.sample_encoding,
+        )
+    if type(reference) is TTSCloneReference:
+        summary = reference.summary
+        return CanonicalTTSCloneReference(
+            wav_bytes=reference.wav_bytes,
+            reference_text=reference.reference_text,
+            sha256=reference.sha256,
+            byte_length=summary.byte_length,
+            duration_ms=summary.duration_ms,
+            sample_rate_hz=summary.sample_rate_hz,
+            channels=summary.channels,
+            sample_encoding=summary.sample_encoding,
+        )
+    raise TypeError("Clone reference authority is invalid")
 
 
 def _native_capability_deadline() -> float:
@@ -439,6 +476,14 @@ class _AdmittedTTSOperation:
         progress_sink: ProgressSink | None = None,
     ) -> TTSAudioResponse:
         """Execute the admitted request exactly once."""
+        response, _evidence = await self.synthesize_with_evidence(progress_sink)
+        return response
+
+    async def synthesize_with_evidence(
+        self,
+        progress_sink: ProgressSink | None = None,
+    ) -> tuple[TTSAudioResponse, TTSCloneGenerationEvidence | None]:
+        """Execute once and retain exact clone-success evidence internally."""
         if self._used:
             raise RuntimeError("The admitted TTS operation has already been used")
         self._claimed = True
@@ -458,6 +503,7 @@ class _AdmittedTTSOperation:
         generation_changed = False
         materialization: TTSCloneReferenceMaterialization | None = None
         capability: AudioCppCloneCapabilityAdmission | None = None
+        clone_evidence: TTSCloneGenerationEvidence | None = None
         try:
             with _adapter_admission_scope(
                 lease.adapter,
@@ -517,6 +563,20 @@ class _AdmittedTTSOperation:
                         admitted_request,
                         safe_sink,
                     )
+                    try:
+                        clone_evidence = _new_tts_clone_generation_evidence(
+                            capability=capability,
+                            canonical_reference=_canonical_clone_reference(
+                                self._clone_execution.reference
+                            ),
+                            provider_configuration_revision=(
+                                lease.configuration_revision
+                            ),
+                            applied_provider_generation=lease.applied_generation,
+                        )
+                    except BaseException as error:
+                        await _cleanup_preserving_primary(response.aclose, error)
+                        raise
                     response.add_cleanup(materialization.aclose)
                     materialization = None
                     capability = None
@@ -589,7 +649,7 @@ class _AdmittedTTSOperation:
             for cleanup_task in cleanup_tasks:
                 cleanup_task.add_done_callback(self._observe_cleanup)
             raise closed_error
-        return managed_response
+        return managed_response, clone_evidence
 
     async def close(self) -> None:
         """Release an admitted operation that has not started execution."""
@@ -1723,6 +1783,39 @@ class TTSService:
         """Resolve owner-scoped settings and synthesize one admitted request."""
 
         return await self._request_admission.synthesize_effective(
+            text=text,
+            explicit=explicit,
+            character_profile=character_profile,
+            default_profile=default_profile,
+            studio_draft=studio_draft,
+            studio_preferences=studio_preferences,
+            clone_audition=clone_audition,
+            profile_preview=profile_preview,
+            profile_reference_resolver=profile_reference_resolver,
+            progress_sink=progress_sink,
+        )
+
+    async def synthesize_effective_with_evidence(
+        self,
+        *,
+        text: str,
+        explicit: TTSSelectionOverrides | None = None,
+        character_profile: TTSCharacterProfileSelection | None = None,
+        default_profile: TTSDefaultProfileSelection | None = None,
+        studio_draft: TTSStudioDraftSelection | None = None,
+        studio_preferences: StudioTTSPreferencesSnapshot | None = None,
+        clone_audition: STTSPlaygroundCloneSnapshot | None = None,
+        profile_preview: STTSPlaygroundProfilePreview | None = None,
+        profile_reference_resolver: TTSProfileReferenceResolver | None = None,
+        progress_sink: ProgressSink | None = None,
+    ) -> tuple[
+        TTSAudioResponse,
+        TTSEffectiveSelectionSnapshot,
+        TTSCloneGenerationEvidence | None,
+    ]:
+        """Synthesize and retain exact clone-success evidence for STTS."""
+
+        return await self._request_admission.synthesize_effective_with_evidence(
             text=text,
             explicit=explicit,
             character_profile=character_profile,

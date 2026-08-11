@@ -12,6 +12,7 @@ from uuid import UUID
 from tldw_chatbook.TTS._async_lifecycle import join_retained_task
 from tldw_chatbook.TTS.adapter_types import (
     ProgressSink,
+    TTSCloneGenerationEvidence,
     TTSAudioResponse,
     TTSConfigurationRevisionError,
     TTSNativeCapabilitySnapshot,
@@ -238,7 +239,41 @@ class TTSRequestAdmissionCoordinator:
         profile_reference_resolver: TTSProfileReferenceResolver | None = None,
         progress_sink: ProgressSink | None = None,
     ) -> tuple[TTSAudioResponse, TTSEffectiveSelectionSnapshot]:
-        """Resolve one owner-coherent snapshot, admit it, and synthesize."""
+        """Resolve and synthesize while preserving the established public API."""
+
+        response, selection, _evidence = await self.synthesize_effective_with_evidence(
+            text=text,
+            explicit=explicit,
+            character_profile=character_profile,
+            default_profile=default_profile,
+            studio_draft=studio_draft,
+            studio_preferences=studio_preferences,
+            clone_audition=clone_audition,
+            profile_preview=profile_preview,
+            profile_reference_resolver=profile_reference_resolver,
+            progress_sink=progress_sink,
+        )
+        return response, selection
+
+    async def synthesize_effective_with_evidence(
+        self,
+        *,
+        text: str,
+        explicit: TTSSelectionOverrides | None = None,
+        character_profile: TTSCharacterProfileSelection | None = None,
+        default_profile: TTSDefaultProfileSelection | None = None,
+        studio_draft: TTSStudioDraftSelection | None = None,
+        studio_preferences: StudioTTSPreferencesSnapshot | None = None,
+        clone_audition: STTSPlaygroundCloneSnapshot | None = None,
+        profile_preview: STTSPlaygroundProfilePreview | None = None,
+        profile_reference_resolver: TTSProfileReferenceResolver | None = None,
+        progress_sink: ProgressSink | None = None,
+    ) -> tuple[
+        TTSAudioResponse,
+        TTSEffectiveSelectionSnapshot,
+        TTSCloneGenerationEvidence | None,
+    ]:
+        """Resolve, admit, and retain exact clone-success evidence internally."""
 
         if explicit is not None and type(explicit) is not TTSSelectionOverrides:
             raise TypeError("Explicit TTS selection is invalid")
@@ -494,8 +529,8 @@ class TTSRequestAdmissionCoordinator:
             raise
 
         assert operation is not None
-        response = await operation.synthesize(progress_sink)
-        return response, selection
+        response, evidence = await operation.synthesize_with_evidence(progress_sink)
+        return response, selection, evidence
 
     @staticmethod
     async def _resolve_profile_preview_reference(

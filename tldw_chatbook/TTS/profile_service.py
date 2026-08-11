@@ -17,6 +17,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSNativeCapabilitySnapshot,
     TTSProviderCatalog,
     TTSVoiceDiscoveryResult,
+    TTSCloneGenerationEvidence,
 )
 from tldw_chatbook.TTS.playground_types import (
     STTSGeneratedAudio,
@@ -29,6 +30,7 @@ from tldw_chatbook.TTS.profile_errors import (
     ProfileValidationError,
 )
 from tldw_chatbook.TTS.profile_reference_types import (
+    CanonicalTTSCloneReference,
     TTSCloneReference,
     TTSCloneReferenceSummary,
 )
@@ -122,6 +124,15 @@ class _ProfileRepositoryProtocol(Protocol):
         profile_id: UUID | None = None,
         *,
         expected_generation: int | None = None,
+    ) -> ProfileStoreResult[TTSGenerationProfile]: ...
+
+    async def create_profile_with_reference(
+        self,
+        draft: TTSProfileDraft,
+        profile_id: UUID,
+        canonical: CanonicalTTSCloneReference,
+        *,
+        expected_generation: int,
     ) -> ProfileStoreResult[TTSGenerationProfile]: ...
 
     async def update_profile(
@@ -1771,6 +1782,106 @@ class TTSProfileService:
             repository_generation=repository_generation,
             profile=profile,
         )
+
+    async def create_clone_from_artifact(
+        self,
+        display_name: str,
+        artifact: STTSGeneratedAudio,
+    ) -> LoadedTTSProfile:
+        """Atomically persist one exact successful clone artifact.
+
+        Args:
+            display_name: User-selected name for the new profile.
+            artifact: Exact retained STTS result carrying clone evidence.
+
+        Returns:
+            The committed revision-2 profile and repository generation.
+
+        Raises:
+            ProfileServiceError: If the artifact or collaborator result is
+                ineligible, incoherent, or unsafe.
+            ProfileRepositoryError: If persistence or freshness fails.
+            ProfileValidationError: If the selected profile values are invalid.
+        """
+
+        if (
+            type(artifact) is not STTSGeneratedAudio
+            or type(artifact.requested_selection) is not TTSRequestedSelectionSnapshot
+            or type(artifact.clone_evidence) is not TTSCloneGenerationEvidence
+        ):
+            raise ProfileServiceError("artifact_ineligible")
+        selection = artifact.requested_selection
+        evidence = artifact.clone_evidence
+        assert selection is not None
+        assert evidence is not None
+        if (
+            artifact.provider_id != "audio_cpp"
+            or artifact.model_id != selection.model_id
+            or artifact.voice_id != selection.voice_id
+            or artifact.audio_format.removeprefix(".") != selection.response_format
+            or selection.provider_id != "audio_cpp"
+            or evidence.model_id != selection.model_id
+            or evidence.provider_configuration_revision
+            != selection.configuration_revision
+            or not _selection_is_profile_safe(
+                selection.provider_id,
+                selection.response_format,
+                selection.speed,
+                selection.options,
+            )
+        ):
+            raise ProfileServiceError("artifact_ineligible")
+        draft = TTSProfileDraft(
+            display_name=display_name,
+            provider_id=selection.provider_id,
+            model_id=selection.model_id,
+            voice_id=selection.voice_id,
+            response_format=selection.response_format,
+            speed=selection.speed,
+            options=selection.options,
+        )
+        await self._require_configuration_revision(
+            selection.provider_id,
+            evidence.provider_configuration_revision,
+        )
+        repository_generation = self._current_repository_generation()
+        profile_id = self._next_portable_uuid(set())
+
+        failed = False
+        result = None
+        try:
+            result = await self._repository.create_profile_with_reference(
+                draft,
+                profile_id,
+                evidence.canonical_reference,
+                expected_generation=repository_generation,
+            )
+        except (ProfileRepositoryError, ProfileValidationError):
+            raise
+        except Exception:  # noqa: BLE001 - hide unexpected repository detail
+            failed = True
+        if failed or result is None:
+            raise ProfileServiceError("operation_failed")
+        value = self._require_admitted_store_result(result, repository_generation)
+        profile = self._require_profile_mutation_result(
+            value,
+            draft,
+            expected_revision=2,
+            required_profile_id=profile_id,
+        )
+        reference = profile.reference
+        canonical = evidence.canonical_reference
+        if (
+            reference is None
+            or reference.byte_length != canonical.byte_length
+            or reference.duration_ms != canonical.duration_ms
+            or reference.sample_rate_hz != canonical.sample_rate_hz
+            or reference.channels != canonical.channels
+            or reference.sample_encoding != canonical.sample_encoding
+        ):
+            raise ProfileServiceError("operation_failed")
+        self._require_repository_generation(repository_generation)
+        return LoadedTTSProfile(repository_generation, profile)
 
     async def update_profile(
         self,
