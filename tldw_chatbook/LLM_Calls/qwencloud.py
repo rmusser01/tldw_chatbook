@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 from collections.abc import Mapping
 from collections.abc import Sequence
 from copy import deepcopy
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from urllib.parse import urlsplit
 
 from tldw_chatbook.Chat.Chat_Deps import ChatBadRequestError, ChatConfigurationError
@@ -30,6 +31,72 @@ def _configuration_error(message: str) -> ChatConfigurationError:
 
 def _bad_request(message: str) -> ChatBadRequestError:
     return ChatBadRequestError(provider="qwencloud", message=message)
+
+
+def _validate_optional_number(name: str, value: Any) -> None:
+    if value is None:
+        return
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise _bad_request(f"QwenCloud {name} must be numeric.")
+    if isinstance(value, float) and not math.isfinite(value):
+        raise _bad_request(f"QwenCloud {name} must be finite.")
+
+
+def _validate_optional_integer(name: str, value: Any) -> None:
+    if value is not None and (not isinstance(value, int) or isinstance(value, bool)):
+        raise _bad_request(f"QwenCloud {name} must be an integer.")
+
+
+def _normalize_stop(stop: Any) -> str | list[str] | None:
+    if stop is None or isinstance(stop, str):
+        return stop
+    if not isinstance(stop, Sequence) or isinstance(stop, (str, bytes)):
+        raise _bad_request("QwenCloud stop must be a string or sequence of strings.")
+    if any(not isinstance(item, str) for item in stop):
+        raise _bad_request("QwenCloud stop sequences must contain only strings.")
+    return list(stop)
+
+
+def _validate_scalar_parameters(
+    *,
+    model: Any,
+    streaming: Any,
+    temp: Any,
+    topp: Any,
+    topk: Any,
+    max_tokens: Any,
+    seed: Any,
+    presence_penalty: Any,
+    stop: Any,
+    n: Any,
+    logprobs: Any,
+    top_logprobs: Any,
+    reasoning_effort: Any,
+) -> str | list[str] | None:
+    if not isinstance(model, str) or not model.strip():
+        raise _bad_request("QwenCloud model must be a non-empty string.")
+    if not isinstance(streaming, bool):
+        raise _bad_request("QwenCloud streaming must be a boolean.")
+    if logprobs is not None and not isinstance(logprobs, bool):
+        raise _bad_request("QwenCloud logprobs must be a boolean.")
+    if reasoning_effort is not None and not isinstance(reasoning_effort, str):
+        raise _bad_request("QwenCloud reasoning effort must be a string.")
+
+    for name, value in (
+        ("temperature", temp),
+        ("top_p", topp),
+        ("presence penalty", presence_penalty),
+    ):
+        _validate_optional_number(name, value)
+    for name, value in (
+        ("top_k", topk),
+        ("max tokens", max_tokens),
+        ("seed", seed),
+        ("n", n),
+        ("top_logprobs", top_logprobs),
+    ):
+        _validate_optional_integer(name, value)
+    return _normalize_stop(stop)
 
 
 def _reject_non_finite_json_constant(value: str) -> None:
@@ -69,7 +136,7 @@ def normalize_qwencloud_api_mode(
         raise _configuration_error(
             "QwenCloud API mode must be 'responses' or 'chat_completions'."
         )
-    return normalized  # type: ignore[return-value]
+    return cast(QwenCloudAPIMode, normalized)
 
 
 def normalize_qwencloud_base_url(api_base_url: str | None) -> str:
@@ -446,6 +513,8 @@ def _translate_function_tools(
     for tool in tools:
         if not isinstance(tool, Mapping) or tool.get("type") != "function":
             raise _bad_request("QwenCloud supports only existing function tools.")
+        if set(tool) != {"type", "function"}:
+            raise _bad_request("QwenCloud function tool fields are unsupported.")
         function = tool.get("function")
         if not isinstance(function, Mapping):
             raise _bad_request("QwenCloud function tool definition is malformed.")
@@ -472,9 +541,8 @@ def _translate_function_tools(
                 "QwenCloud function parameters must be an object schema."
             )
 
-        copied_tool = deepcopy(dict(tool))
         copied_function = deepcopy(dict(function))
-        chat_tools.append(copied_tool)
+        chat_tools.append({"type": "function", "function": copied_function})
         responses_tools.append({"type": "function", **copied_function})
     return chat_tools, responses_tools
 
@@ -530,6 +598,21 @@ def build_qwencloud_payload(
     Raises:
         ChatBadRequestError: If request history or parameters are unsupported.
     """
+    normalized_stop = _validate_scalar_parameters(
+        model=model,
+        streaming=streaming,
+        temp=temp,
+        topp=topp,
+        topk=topk,
+        max_tokens=max_tokens,
+        seed=seed,
+        presence_penalty=presence_penalty,
+        stop=stop,
+        n=n,
+        logprobs=logprobs,
+        top_logprobs=top_logprobs,
+        reasoning_effort=reasoning_effort,
+    )
     if tool_choice is not None and tool_choice not in ("auto", "none"):
         raise _bad_request("Unsupported QwenCloud function tool choice.")
     chat_tools, responses_tools = _translate_function_tools(tools)
@@ -558,8 +641,8 @@ def build_qwencloud_payload(
         for key, value in optional_values:
             if value is not None:
                 chat_payload[key] = value
-        if stop is not None:
-            chat_payload["stop"] = deepcopy(stop)
+        if normalized_stop is not None:
+            chat_payload["stop"] = normalized_stop
         if response_format is not None:
             if not isinstance(response_format, Mapping):
                 raise _bad_request("QwenCloud response format must be an object.")

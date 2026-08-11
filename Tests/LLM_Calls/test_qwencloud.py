@@ -429,6 +429,58 @@ def test_chat_payload_has_exact_allowlist_and_thinking_invariant() -> None:
             )
 
 
+@pytest.mark.parametrize(
+    "api_mode",
+    ("responses", "chat_completions"),
+    ids=("responses", "chat-completions"),
+)
+@pytest.mark.parametrize(
+    ("field", "invalid_value"),
+    (
+        pytest.param("model", "", id="model-empty"),
+        pytest.param("model", "   ", id="model-blank"),
+        pytest.param("model", 7, id="model-non-string"),
+        pytest.param("streaming", "no", id="streaming-non-bool"),
+        pytest.param("temp", "hot", id="temperature-non-numeric"),
+        pytest.param("temp", True, id="temperature-bool"),
+        pytest.param("temp", float("nan"), id="temperature-nan"),
+        pytest.param("topp", float("inf"), id="top-p-infinity"),
+        pytest.param("topk", 1.5, id="top-k-non-int"),
+        pytest.param("max_tokens", False, id="max-tokens-bool"),
+        pytest.param("seed", "seven", id="seed-non-int"),
+        pytest.param("presence_penalty", "high", id="presence-penalty-non-numeric"),
+        pytest.param(
+            "presence_penalty",
+            float("-inf"),
+            id="presence-penalty-negative-infinity",
+        ),
+        pytest.param("stop", 7, id="stop-non-sequence"),
+        pytest.param("stop", ["END", 7], id="stop-non-string-member"),
+        pytest.param("n", True, id="n-bool"),
+        pytest.param("logprobs", "yes", id="logprobs-non-bool"),
+        pytest.param("top_logprobs", False, id="top-logprobs-bool"),
+        pytest.param("reasoning_effort", [], id="reasoning-effort-non-string"),
+    ),
+)
+def test_scalar_boundaries_reject_invalid_shapes_in_both_modes(
+    api_mode: str,
+    field: str,
+    invalid_value: object,
+) -> None:
+    kwargs: dict[str, object] = {
+        "api_mode": api_mode,
+        "model": "qwen3.8-max",
+        "system_message": None,
+        "messages_payload": [{"role": "user", "content": "Hello"}],
+        "streaming": False,
+    }
+    kwargs[field] = invalid_value
+
+    with pytest.raises(ChatBadRequestError) as exc_info:
+        build_qwencloud_payload(**kwargs)  # type: ignore[arg-type]
+    assert exc_info.value.provider == "qwencloud"
+
+
 def test_chat_stop_sequence_is_deep_copied() -> None:
     stop = ["END", "DONE"]
     payload = build_qwencloud_payload(
@@ -508,27 +560,62 @@ def test_function_tools_translate_by_mode() -> None:
                 assert payload["tool_choice"] == accepted_choice
 
 
-def test_invalid_or_builtin_tools_fail_before_network() -> None:
-    base = {
-        "model": "qwen3.8-max",
-        "system_message": None,
-        "messages_payload": [{"role": "user", "content": "Hello"}],
-        "streaming": False,
-    }
-    valid_function = {
-        "type": "function",
-        "function": {
-            "name": "lookup",
-            "description": "Look something up.",
-            "parameters": {"type": "object", "properties": {}},
-        },
-    }
-    rejected_tool_sets = (
+@pytest.mark.parametrize(
+    "api_mode",
+    ("responses", "chat_completions"),
+    ids=("responses", "chat-completions"),
+)
+def test_function_tools_reject_private_top_level_metadata_without_disclosure(
+    api_mode: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    canary = "SECRET-QWENCLOUD-TOOL-CANARY"
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "lookup",
+                "parameters": {"type": "object", "properties": {}},
+            },
+            "private_metadata": {"token": canary},
+        }
+    ]
+
+    with pytest.raises(ChatBadRequestError) as exc_info:
+        build_qwencloud_payload(
+            api_mode=api_mode,  # type: ignore[arg-type]
+            model="qwen3.8-max",
+            system_message=None,
+            messages_payload=[{"role": "user", "content": "Hello"}],
+            streaming=False,
+            tools=tools,
+        )
+    assert exc_info.value.provider == "qwencloud"
+    assert canary not in str(exc_info.value)
+    captured = capsys.readouterr()
+    assert canary not in captured.out
+    assert canary not in captured.err
+
+
+@pytest.mark.parametrize(
+    "api_mode",
+    ("responses", "chat_completions"),
+    ids=("responses", "chat-completions"),
+)
+@pytest.mark.parametrize(
+    "rejected_tools",
+    (
         [{"type": "web_search"}],
         [{"type": "function", "function": {"name": "", "parameters": {}}}],
         [{"type": "function", "function": {"name": "   ", "parameters": {}}}],
         [
-            valid_function,
+            {
+                "type": "function",
+                "function": {
+                    "name": "lookup",
+                    "parameters": {"type": "object"},
+                },
+            },
             {
                 "type": "function",
                 "function": {
@@ -562,25 +649,65 @@ def test_invalid_or_builtin_tools_fail_before_network() -> None:
                 },
             }
         ],
-    )
-    for mode in ("responses", "chat_completions"):
-        for rejected_tools in rejected_tool_sets:
-            with pytest.raises(ChatBadRequestError) as exc_info:
-                build_qwencloud_payload(
-                    api_mode=mode,
-                    **base,
-                    tools=rejected_tools,  # type: ignore[arg-type]
-                )
-            assert exc_info.value.provider == "qwencloud"
+    ),
+    ids=(
+        "builtin-web-search",
+        "empty-function-name",
+        "blank-function-name",
+        "duplicate-function-name",
+        "non-object-parameters",
+        "array-parameters-schema",
+        "nested-builtin-tool-type",
+    ),
+)
+def test_invalid_or_builtin_tools_fail_before_network(
+    api_mode: str,
+    rejected_tools: list[dict[str, object]],
+) -> None:
+    with pytest.raises(ChatBadRequestError) as exc_info:
+        build_qwencloud_payload(
+            api_mode=api_mode,  # type: ignore[arg-type]
+            model="qwen3.8-max",
+            system_message=None,
+            messages_payload=[{"role": "user", "content": "Hello"}],
+            streaming=False,
+            tools=rejected_tools,  # type: ignore[arg-type]
+        )
+    assert exc_info.value.provider == "qwencloud"
 
-        for rejected_choice in ("required", "lookup", {"type": "function"}):
-            with pytest.raises(ChatBadRequestError):
-                build_qwencloud_payload(
-                    api_mode=mode,
-                    **base,
-                    tools=[valid_function],
-                    tool_choice=rejected_choice,
-                )
+
+@pytest.mark.parametrize(
+    "api_mode",
+    ("responses", "chat_completions"),
+    ids=("responses", "chat-completions"),
+)
+@pytest.mark.parametrize(
+    "rejected_choice",
+    ("required", "lookup", {"type": "function"}),
+    ids=("required", "forced-name", "mapping-choice"),
+)
+def test_forced_function_tool_choices_fail_before_network(
+    api_mode: str,
+    rejected_choice: object,
+) -> None:
+    with pytest.raises(ChatBadRequestError):
+        build_qwencloud_payload(
+            api_mode=api_mode,  # type: ignore[arg-type]
+            model="qwen3.8-max",
+            system_message=None,
+            messages_payload=[{"role": "user", "content": "Hello"}],
+            streaming=False,
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "lookup",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                }
+            ],
+            tool_choice=rejected_choice,  # type: ignore[arg-type]
+        )
 
 
 @pytest.mark.parametrize(
