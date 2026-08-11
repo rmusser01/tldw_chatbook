@@ -31,6 +31,7 @@ from tldw_chatbook.Chat.console_context_policy import (
     ContextBudgetMode,
     ContextCarryForwardMode,
     ContextCompactionMode,
+    ContextCompactionRepresentation,
     ResolvedConsoleContextPolicy,
 )
 from tldw_chatbook.Chat.console_context_repository import (
@@ -949,6 +950,43 @@ async def test_unknown_model_uses_bounded_custom_budget_for_compaction() -> None
     assert result is None
     assert gateway.calls == 1
     assert any("_tldw_context_owner" in row for row in output)
+
+
+@pytest.mark.asyncio
+async def test_visual_policy_falls_back_to_text_for_text_only_model(
+    monkeypatch,
+) -> None:
+    from tldw_chatbook.Chat import console_chat_controller as controller_module
+
+    controller, _store, session, assistant, gateway, provider_messages = (
+        _controller_preflight_fixture(
+            ContextCompactionMode.AUTOMATIC,
+            overrides=ConsoleContextPolicyOverrides(
+                budget_mode=ContextBudgetMode.CUSTOM,
+                custom_budget_tokens=1_800,
+                compaction_mode=ContextCompactionMode.AUTOMATIC,
+                compaction_representation=(
+                    ContextCompactionRepresentation.VISUAL_TRANSCRIPT
+                ),
+                summary_max_tokens=100,
+            ),
+        )
+    )
+    monkeypatch.setattr(controller_module, "is_vision_capable", lambda *_args: False)
+
+    output, result = await controller._apply_conversation_memory_preflight(
+        session_id=session.id,
+        resolution=_resolution(),
+        provider_messages=provider_messages,
+        assistant_message_id=assistant.id,
+        agent_tools_enabled=False,
+    )
+
+    assert result is None
+    assert gateway.calls == 1
+    memory_rows = [row for row in output if "_tldw_context_owner" in row]
+    assert len(memory_rows) == 1
+    assert isinstance(memory_rows[0]["content"], str)
 
 
 @pytest.mark.asyncio

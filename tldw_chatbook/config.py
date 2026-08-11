@@ -2595,6 +2595,7 @@ local_tools_enabled = true      # standard web + workspace agent tools; every ca
 conversation_budget_mode = "automatic"  # automatic, custom
 # conversation_budget_tokens = 32000     # required only when mode = custom
 compaction_mode = "ask"                  # ask, automatic, off
+compaction_representation = "text_summary"  # text_summary, visual_transcript, hybrid
 compaction_trigger_ratio = 0.80
 compaction_target_ratio = 0.55
 compaction_summary_max_tokens = 1024

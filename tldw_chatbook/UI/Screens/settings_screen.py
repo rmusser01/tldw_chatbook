@@ -51,6 +51,7 @@ from ...Chat.console_context_policy import (
     ContextBudgetMode,
     ContextCarryForwardMode,
     ContextCompactionMode,
+    ContextCompactionRepresentation,
 )
 from ...Chat.console_roleplay_identity import (
     ChatDisplayNameError,
@@ -953,8 +954,12 @@ def _build_field_search_index() -> None:
                 ("settings-console-context-budget-tokens", "Conversation max tokens"),
                 ("settings-console-context-compaction-mode", "When limit nears"),
                 (
+                    "settings-console-context-compaction-representation",
+                    "Compaction representation",
+                ),
+                (
                     "settings-console-context-trigger-percent",
-                    "Summarize at percent",
+                    "Compact at percent",
                 ),
                 (
                     "settings-console-context-target-percent",
@@ -966,9 +971,12 @@ def _build_field_search_index() -> None:
                 ),
                 (
                     "settings-console-context-failure-behavior",
-                    "If summary fails",
+                    "If compaction fails",
                 ),
-                ("settings-console-context-carry-forward-mode", "Keep after summary"),
+                (
+                    "settings-console-context-carry-forward-mode",
+                    "Keep after compaction",
+                ),
             ),
             SettingsCategoryId.APPEARANCE: (
                 ("settings-appearance-theme", "Theme"),
@@ -10869,8 +10877,39 @@ class SettingsScreen(BaseAppScreen):
                     allow_blank=False,
                     compact=True,
                 )
+            with Horizontal(classes="settings-input-row settings-select-row"):
+                yield Static("Representation", classes="settings-input-label")
+                yield Select(
+                    [
+                        (
+                            "Text summary",
+                            ContextCompactionRepresentation.TEXT_SUMMARY.value,
+                        ),
+                        (
+                            "Visual transcript",
+                            ContextCompactionRepresentation.VISUAL_TRANSCRIPT.value,
+                        ),
+                        (
+                            "Hybrid",
+                            ContextCompactionRepresentation.HYBRID.value,
+                        ),
+                    ],
+                    value=str(
+                        self._console_behavior_value("compaction_representation")
+                    ),
+                    id="settings-console-context-compaction-representation",
+                    classes="settings-compact-select",
+                    allow_blank=False,
+                    compact=True,
+                )
+            yield Static(
+                "Visual and Hybrid apply only to vision-capable sessions; unsupported "
+                "models safely use Text summary without overwriting this default.",
+                id="settings-console-context-representation-help",
+                classes="settings-detail-row",
+            )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Summarize at (%)", classes="settings-input-label")
+                yield Static("Compact at (%)", classes="settings-input-label")
                 yield Input(
                     value=format_ratio_percent(
                         self._console_behavior_value("compaction_trigger_ratio")
@@ -10900,8 +10939,13 @@ class SettingsScreen(BaseAppScreen):
                     placeholder="1024 tokens",
                     restrict=r"^[0-9]*$",
                 )
+            yield Static(
+                "Summary response max applies only to Text summary and Hybrid.",
+                id="settings-console-context-summary-max-help",
+                classes="settings-detail-row",
+            )
             with Horizontal(classes="settings-input-row settings-select-row"):
-                yield Static("If summary fails", classes="settings-input-label")
+                yield Static("If compaction fails", classes="settings-input-label")
                 yield Select(
                     [
                         ("Stop and ask", CompactionFailureBehavior.STOP_AND_ASK.value),
@@ -10919,7 +10963,7 @@ class SettingsScreen(BaseAppScreen):
                     compact=True,
                 )
             with Horizontal(classes="settings-input-row settings-select-row"):
-                yield Static("Keep after summary", classes="settings-input-label")
+                yield Static("Keep after compaction", classes="settings-input-label")
                 yield Select(
                     [
                         (
@@ -10945,9 +10989,11 @@ class SettingsScreen(BaseAppScreen):
                 tooltip="Open the existing Internal Prompts editor filtered to the Console summary prompt.",
             )
             yield Static(
-                "Compaction makes one extra model call and stores generated memory with "
-                "provenance; original transcript messages remain stored. Off disables "
-                "optional compaction only—mandatory provider safety trimming still applies.",
+                "Text summary and Hybrid make one extra model call and store generated "
+                "memory with provenance. Visual pages are rendered on-device for one "
+                "request and never persisted. Original transcript messages remain stored. "
+                "Off disables optional compaction only—mandatory provider safety trimming "
+                "still applies.",
                 id="settings-console-context-safety-copy",
                 classes="settings-detail-row",
             )
@@ -15330,6 +15376,7 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Select.Changed, "#settings-console-context-budget-mode")
     @on(Select.Changed, "#settings-console-context-compaction-mode")
+    @on(Select.Changed, "#settings-console-context-compaction-representation")
     @on(Select.Changed, "#settings-console-context-failure-behavior")
     @on(Select.Changed, "#settings-console-context-carry-forward-mode")
     def handle_console_context_select_changed(self, event: Select.Changed) -> None:
@@ -15339,6 +15386,9 @@ class SettingsScreen(BaseAppScreen):
         key_by_id = {
             "settings-console-context-budget-mode": "conversation_budget_mode",
             "settings-console-context-compaction-mode": "compaction_mode",
+            "settings-console-context-compaction-representation": (
+                "compaction_representation"
+            ),
             "settings-console-context-failure-behavior": "compaction_failure_behavior",
             "settings-console-context-carry-forward-mode": "compaction_carry_forward_mode",
         }
@@ -18446,6 +18496,9 @@ class SettingsScreen(BaseAppScreen):
             context_selects = {
                 "#settings-console-context-budget-mode": "conversation_budget_mode",
                 "#settings-console-context-compaction-mode": "compaction_mode",
+                "#settings-console-context-compaction-representation": (
+                    "compaction_representation"
+                ),
                 "#settings-console-context-failure-behavior": (
                     "compaction_failure_behavior"
                 ),
