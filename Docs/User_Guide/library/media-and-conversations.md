@@ -82,9 +82,11 @@ that gets deleted.
 
 A successful delete leaves a receipt in the same spot — "✓ deleted · N
 items" with "Undo" and "Dismiss" — until you act on it or start another
-bulk delete. "Undo" restores every item the receipt names (or just the
-ones still outstanding, if a prior undo partially failed); "Dismiss" clears
-the receipt without restoring anything. There is no persistent Trash view
+delete. The viewer's single-item "Delete" leaves the same receipt
+("✓ deleted · 1 item") in the list it returns you to — single and bulk
+delete share one undo story. "Undo" restores every item the receipt names
+(or just the ones still outstanding, if a prior undo partially failed);
+"Dismiss" clears the receipt without restoring anything. There is no persistent Trash view
 to browse later — restoring an item you've dismissed, or deleted in an
 earlier session, means re-importing the same file from
 [Import & export](import-and-export.md): it now restores the item instead
@@ -141,7 +143,7 @@ of type 'pdf'."
 | "Use in Console" | Stages this item as context for your next Console message. |
 | "Read it later" ↔ "Remove from read-it-later" | Toggles the item on your read-it-later list. |
 | "Open in Library ▸ Media" | Returns to Library's own Media surface (the separate Media screen was retired). |
-| "Delete" | Two-step: shows "Delete this media? Re-import the same file later to bring it back — there's no Trash view to browse." with "Delete" / "Cancel". Confirming trashes the item, returns to the list, and drops the rail's "Media N" count by one immediately, the same as the list's own "Delete selected". Unlike the list's bulk delete, there's no in-place Undo here — the way back is re-importing the same file. |
+| "Delete" | Two-step: shows "Delete this media? You can undo right away — there's no Trash view to browse later." with "Delete" / "Cancel". Confirming trashes the item, returns to the list, and drops the rail's "Media N" count by one immediately, the same as the list's own "Delete selected". The list you land on shows the same receipt as a bulk delete — "✓ deleted · 1 item" with "Undo" / "Dismiss" — and "Undo" restores the item in place. |
 
 ### Conversations
 
@@ -303,3 +305,9 @@ terminals instead of the old 17-character cut; the viewer's metadata says
 "Type: markdown (stored as plaintext)" for items it renders as markdown;
 and Export… now remembers where you came from — Escape on the Export
 canvas returns to this canvas.)*
+*Verified against feat/library-queue-batch @ a899cbf6a — 2026-08-11
+(task-14901 / ADR-055: the viewer's single-item "Delete" now leaves the
+same "✓ deleted · 1 item" receipt with Undo/Dismiss as "Delete selected" —
+single delete is one-item bulk, sharing the bulk path's undo and its
+in-flight interlock — and its confirm copy promises the undo instead of
+pointing at re-import.)*

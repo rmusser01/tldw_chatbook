@@ -198,7 +198,7 @@ and selected retained row unchanged so you can correct the issue or retry.
 | Export… | Saves a representable Prompt or Recipe as a Markdown file ("Export Prompt as Markdown" dialog). Compatibility or legacy Recipes that would lose their type fail closed and require **Convert and save as a new Prompt** first. |
 | Copy Markdown | Copies the exact live Markdown working copy, including unsaved create, duplicate, conversion, and block edits: System/User text plus applicable structured Prompt/Recipe metadata. Success follows a clipboard write; unavailable or failed clipboard support shows a warning or error. Compatibility or legacy Recipes that would flatten to Prompt-looking Markdown require **Convert and save as a new Prompt** first. |
 | Duplicate prompt | Opens a new unsaved copy named "<name> (copy)" with all fields prefilled. Compatibility or legacy Recipes that cannot retain Recipe identity require **Convert and save as a new Prompt** first. |
-| Delete | Opens a confirmation before discarding the saved Prompt or Recipe; if the editor is dirty, it also warns that the unsaved working copy will be discarded |
+| Delete | Opens a confirmation before discarding the saved Prompt or Recipe; the copy states the deletion cannot be undone from Library, and if the editor is dirty it also warns that the unsaved working copy will be discarded |
 
 For a Prompt, **Use in Console** works differently from the notes and media
 actions: instead of staging a source for retrieval, it appends compiled User
@@ -283,3 +283,7 @@ prompt to the Library. See
 the real Textual compositor and focused automated suites on 2026-08-09.
 Verification is tied to branch history rather than a self-referential
 documentation SHA.*
+*Verified against feat/library-queue-batch @ a899cbf6a — 2026-08-11
+(task-14901 / ADR-055: the delete confirmation copy now states the
+deletion cannot be undone from Library, on every variant — clean, dirty,
+and multi-item.)*

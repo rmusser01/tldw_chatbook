@@ -147,6 +147,10 @@ class PromptDeleteConfirmationModal(ModalScreen[PromptDeleteDecision]):
         return f"Delete {self.request.items[0].artifact_type.title()}?"
 
     def _body_copy(self) -> str:
+        # task-14901 (ADR-055): a saved Prompt/Recipe is persisted user data
+        # with no recovery surface after deletion, so every variant states
+        # permanence -- the same "cannot be undone from Library" vocabulary
+        # the note delete confirm uses.
         if self._is_single:
             item = self.request.items[0]
             artifact_label = item.artifact_type.title()
@@ -154,10 +158,16 @@ class PromptDeleteConfirmationModal(ModalScreen[PromptDeleteDecision]):
             if self.request.dirty:
                 return (
                     f'The saved {artifact_label} "{display_name}" and this unsaved working copy '
-                    "will be discarded."
+                    "will be discarded. This cannot be undone from Library."
                 )
-            return f'The saved {artifact_label} "{display_name}" will be discarded.'
-        return f"This will discard {self._plural_count_copy()}."
+            return (
+                f'The saved {artifact_label} "{display_name}" will be discarded. '
+                "This cannot be undone from Library."
+            )
+        return (
+            f"This will discard {self._plural_count_copy()}. "
+            "This cannot be undone from Library."
+        )
 
     def _preview_copy(self) -> str:
         names = [

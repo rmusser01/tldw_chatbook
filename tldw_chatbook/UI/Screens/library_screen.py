@@ -2555,12 +2555,20 @@ class LibraryScreen(BaseAppScreen):
         # before the other can even schedule its worker, and the losing
         # press is a silent no-op rather than a second worker racing the
         # first over the same mutable state.
+        #
+        # task-14901 (ADR-055): the single-item viewer delete
+        # (``handle_library_media_delete_confirm`` /
+        # ``_delete_library_media_item``) is the THIRD mutator of that same
+        # shared state -- it is one-item bulk, so it claims this same flag
+        # and schedules into the same exclusive worker group rather than
+        # growing a flag of its own.
         self._library_media_bulk_delete_in_flight: bool = False
-        # task-4022 AC2: the ids from the most recently completed bulk
-        # delete, rendered as a "✓ deleted · N items" receipt (with
-        # Undo/Dismiss) until acted on or replaced by a newer bulk-delete
+        # task-4022 AC2: the ids from the most recently completed media
+        # delete (bulk OR, since task-14901, the single-item viewer
+        # delete), rendered as a "✓ deleted · N items" receipt (with
+        # Undo/Dismiss) until acted on or replaced by a newer delete
         # action. Empty tuple means no receipt to show. Cleared when a new
-        # bulk-delete confirmation is armed or select mode is freshly
+        # delete confirmation is armed or select mode is freshly
         # entered, set to the succeeded subset when a delete completes, and
         # narrowed to only the still-failed ids by a partial Undo.
         self._library_media_delete_receipt_ids: tuple[str, ...] = ()
@@ -22310,11 +22318,17 @@ class LibraryScreen(BaseAppScreen):
         affordance; the actual service call only happens once the confirm
         button (``#library-media-delete-confirm``) is pressed.
 
+        task-14901 (ADR-055): arming also supersedes any receipt still
+        showing from an earlier delete (bulk or single) -- mirroring
+        ``handle_library_media_delete_selected``'s arm-time clear, so a
+        completed receipt always reflects only what just happened.
+
         Args:
             event: Button press event emitted by the viewer's "Delete" action.
         """
         event.stop()
         self._library_media_confirming_delete = True
+        self._library_media_delete_receipt_ids = ()
         self.refresh(recompose=True)
 
     @on(Button.Pressed, "#library-media-delete-cancel")
@@ -22339,17 +22353,35 @@ class LibraryScreen(BaseAppScreen):
         ``handle_library_media_edit_save`` defers to
         ``_save_library_media_edit``.
 
+        task-14901 (ADR-055): guarded by the SAME
+        ``_library_media_bulk_delete_in_flight`` flag and scheduled into
+        the SAME exclusive worker ``group`` as the bulk delete/Undo pair --
+        this handler is the third mutator of the shared
+        ``_local_source_records["media"]`` / ``_local_source_counts
+        ["media"]`` / ``_library_media_delete_receipt_ids`` state, so it
+        joins the one interlock (PR-1473's one-flag rule) instead of
+        racing it. The flag is claimed BEFORE the worker is scheduled and
+        only after the empty-id early-out, so a no-op press can never
+        leave it stuck True.
+
         Args:
             event: Button press event emitted by the confirm affordance's
                 "Delete" action.
         """
         event.stop()
+        if self._library_media_bulk_delete_in_flight:
+            return
         media_id = self._selected_media_id
         if not media_id:
             self._library_media_confirming_delete = False
             self.refresh(recompose=True)
             return
-        self.run_worker(self._delete_library_media_item(media_id))
+        self._library_media_bulk_delete_in_flight = True
+        self.run_worker(
+            self._delete_library_media_item(media_id),
+            exclusive=True,
+            group="library_media_bulk_delete",
+        )
 
     async def _delete_library_media_item(self, media_id: str) -> None:
         """Trash the selected Library media item, then return to the list view.
@@ -22372,61 +22404,85 @@ class LibraryScreen(BaseAppScreen):
         though the exact same recompose repaints it correctly after a
         bulk one.
 
+        task-14901 (ADR-055): on success,
+        ``_library_media_delete_receipt_ids`` is set to the one deleted
+        id -- the list the viewer exits back to renders it as a
+        "✓ deleted · 1 item" receipt with the SAME Undo/Dismiss
+        affordances the bulk delete's receipt uses
+        (``handle_library_media_bulk_delete_undo`` /
+        ``_undo_library_media_bulk_delete``); single delete is one-item
+        bulk, not a second reversibility story. The shared
+        ``_library_media_bulk_delete_in_flight`` flag (claimed by the
+        confirm handler before this coroutine was scheduled) is cleared
+        in a ``finally``, mirroring ``_delete_library_media_selection``,
+        so a failure can never leave delete/Undo permanently blocked.
+
         Args:
             media_id: The Library media item id to delete.
         """
-        service = getattr(self.app_instance, "media_reading_scope_service", None)
-        delete_media_item = getattr(service, "delete_media_item", None)
-        deleted = False
-        if callable(delete_media_item):
-            try:
-                await self._run_library_service_call(
-                    delete_media_item,
-                    mode="local",
-                    media_id=media_id,
-                    isolate_in_worker=True,
-                )
-                deleted = True
-            except Exception:
-                logger.opt(exception=True).warning(
-                    f"Failed to delete Library media item {media_id!r}."
-                )
+        try:
+            service = getattr(
+                self.app_instance, "media_reading_scope_service", None
+            )
+            delete_media_item = getattr(service, "delete_media_item", None)
+            deleted = False
+            if callable(delete_media_item):
+                try:
+                    await self._run_library_service_call(
+                        delete_media_item,
+                        mode="local",
+                        media_id=media_id,
+                        isolate_in_worker=True,
+                    )
+                    deleted = True
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        f"Failed to delete Library media item {media_id!r}."
+                    )
+                    self._notify_library_media_delete_warning(
+                        "Could not delete this media item."
+                    )
+            else:
                 self._notify_library_media_delete_warning(
-                    "Could not delete this media item."
+                    "Media deletion is unavailable."
                 )
-        else:
-            self._notify_library_media_delete_warning("Media deletion is unavailable.")
 
-        self._library_media_confirming_delete = False
-        if deleted:
-            self._local_source_records["media"] = tuple(
-                record
-                for record in self._local_source_records.get("media", ())
-                if self._source_record_id(record) != media_id
-            )
-            self._local_source_counts["media"] = max(
-                0, self._local_source_counts.get("media", 0) - 1
-            )
-            self._library_media_view = "list"
-            self._library_media_detail = None
-            self._library_media_highlights = []
-            self._library_media_editing_analysis = False
-            self._library_media_content_query = ""
-            self._library_media_content_match_index = 0
-            self._library_media_content_mode = "raw"
-            self._selected_media_id = ""
-        if self.is_mounted:
-            self.refresh(recompose=True)
+            self._library_media_confirming_delete = False
             if deleted:
-                # task-2853 review round 2: this is exactly the "back to
-                # list from viewer" transition ``_exit_library_media_
-                # viewer`` established the entry-focus convention for
-                # (task-2856 AC1) -- it was simply missed when this method
-                # was written before that convention landed. Without it, a
-                # keyboard-only user who deletes the item they are viewing
-                # is left with nothing focused, the same gap the bulk
-                # delete's own completion tail fixes just above.
-                self._arm_library_list_entry_focus()
+                self._local_source_records["media"] = tuple(
+                    record
+                    for record in self._local_source_records.get("media", ())
+                    if self._source_record_id(record) != media_id
+                )
+                self._local_source_counts["media"] = max(
+                    0, self._local_source_counts.get("media", 0) - 1
+                )
+                # task-14901: the receipt for THIS action -- already
+                # cleared at arm-time (``handle_library_media_delete``),
+                # so it always reflects only what just happened.
+                self._library_media_delete_receipt_ids = (media_id,)
+                self._library_media_view = "list"
+                self._library_media_detail = None
+                self._library_media_highlights = []
+                self._library_media_editing_analysis = False
+                self._library_media_content_query = ""
+                self._library_media_content_match_index = 0
+                self._library_media_content_mode = "raw"
+                self._selected_media_id = ""
+            if self.is_mounted:
+                self.refresh(recompose=True)
+                if deleted:
+                    # task-2853 review round 2: this is exactly the "back to
+                    # list from viewer" transition ``_exit_library_media_
+                    # viewer`` established the entry-focus convention for
+                    # (task-2856 AC1) -- it was simply missed when this method
+                    # was written before that convention landed. Without it, a
+                    # keyboard-only user who deletes the item they are viewing
+                    # is left with nothing focused, the same gap the bulk
+                    # delete's own completion tail fixes just above.
+                    self._arm_library_list_entry_focus()
+        finally:
+            self._library_media_bulk_delete_in_flight = False
 
     def _notify_library_media_delete_warning(self, message: str) -> None:
         """Surface a quiet warning notice for a failed media-delete attempt.
@@ -23164,7 +23220,13 @@ class LibraryScreen(BaseAppScreen):
                     Button(
                         "Confirm delete",
                         id="library-confirm-delete-collection",
-                        tooltip="Delete the selected local Collection.",
+                        # task-14901 (ADR-055): keep in lockstep with the
+                        # compose-side copy in ``LibraryCollectionsPanel``.
+                        tooltip=(
+                            "Delete the selected local Collection. Its items "
+                            "stay in the Library; the deletion cannot be "
+                            "undone from Library."
+                        ),
                     )
                 )
 
