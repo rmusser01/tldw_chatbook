@@ -214,6 +214,50 @@ async def test_console_speak_autoplay_when_no_legacy_widget_claims_message(tmp_p
     assert audio_file.read_bytes() == complete_wav
 
 
+class _FakeConsoleScreen:
+    """Stand-in for the Console screen's speak-state surface (TASK-15422)."""
+
+    def __init__(self, speaking_message_id: str | None) -> None:
+        self._console_speaking_message_id = speaking_message_id
+        self.sync_calls = 0
+
+    async def _sync_native_console_chat_ui(self) -> None:
+        """Count resyncs so the test can assert the row was repainted.
+
+        Returns:
+            None.
+        """
+        self.sync_calls += 1
+
+
+@pytest.mark.asyncio
+async def test_error_completion_clears_console_speaking_marker() -> None:
+    """A failed generation must return the Console action row to 🔊.
+
+    The error branch reset legacy `ChatMessage` widgets only; the Console
+    transcript's action row renders from `_console_speaking_message_id`,
+    which nothing cleared on failure — so after an instant failure the row
+    kept "⏹ Stop speech" with no speech to stop (TASK-15422, observed live
+    during the TASK-15420 UAT).
+    """
+    speaking = _FakeConsoleScreen("console-msg-1")
+    other = _FakeConsoleScreen("console-msg-2")
+    fake_app = _FakeApp(widgets=())
+    fake_app.screen_stack = (other, speaking)
+    event = TTSCompleteEvent(
+        message_id="console-msg-1",
+        error="The selected TTS model is not available",
+    )
+
+    await TldwCli.handle_tts_complete_event(fake_app, event)
+
+    assert speaking._console_speaking_message_id is None
+    assert speaking.sync_calls == 1
+    # A screen speaking a DIFFERENT message keeps its own state untouched.
+    assert other._console_speaking_message_id == "console-msg-2"
+    assert other.sync_calls == 0
+
+
 @pytest.mark.asyncio
 async def test_console_speak_autoplay_skipped_when_legacy_widget_claims_message(
     tmp_path,
