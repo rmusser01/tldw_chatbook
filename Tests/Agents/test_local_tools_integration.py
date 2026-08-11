@@ -53,6 +53,18 @@ def fence(name, args):
     return f"```tool_call\n{json.dumps({'name': name, 'arguments': args})}\n```"
 
 
+def _catalog_result_id_names(result: str) -> list[tuple[str, str]]:
+    """Extract the catalog identity columns from a find_tools result."""
+    rows = []
+    for line in result.splitlines():
+        tool_id, separator, remainder = line.partition(" — ")
+        assert separator == " — "
+        name, separator, _description = remainder.partition(": ")
+        assert separator == ": "
+        rows.append((tool_id, name))
+    return rows
+
+
 class ScriptedChat:
     """Returns scripted replies; records every call's kwargs."""
 
@@ -617,6 +629,10 @@ def test_todo_create_mutates_session_store_after_approve_once(db, workspace):
         "load_tools",
         "todo_create",
     ]
+    assert _catalog_result_id_names(tool_results[0].result) == [
+        ("local:todo_create", "todo_create")
+    ]
+    assert tool_results[1].result == "loaded: todo_create"
     assert tool_results[-1].result == json.dumps(
         created, ensure_ascii=False, allow_nan=False, separators=(",", ":")
     )
@@ -714,6 +730,11 @@ def test_find_load_path_todo_get_reads_created_task_without_mutation_floor(
     )
     tool_results = [s for s in outcome.steps if s.kind == "tool_result"]
     assert [s.tool_name for s in tool_results] == called
+    assert _catalog_result_id_names(tool_results[0].result) == [
+        ("local:todo_create", "todo_create"),
+        ("local:todo_get", "todo_get"),
+    ]
+    assert tool_results[1].result == "loaded: todo_create, todo_get"
     assert tool_results[-2].result == compact_created
     assert tool_results[-1].result == compact_created
     assert todo_store.get("1") == created
