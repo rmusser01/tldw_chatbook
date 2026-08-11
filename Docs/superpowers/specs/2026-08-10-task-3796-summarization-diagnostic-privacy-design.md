@@ -10,7 +10,7 @@
 
 ## Outcome
 
-The two summarization modules retain useful operational diagnostics without submitting private summarization values to either logging implementation they use. The repair covers every one of the 199 verified direct-private diagnostic sites and prevents equivalent new sites from entering either module unnoticed.
+The two summarization modules retain useful operational diagnostics without submitting private summarization values to either logging implementation they use. The repair covers every one of the 200 verified direct-private diagnostic sites and prevents equivalent new sites from entering either module unnoticed.
 
 The summarization functions keep their existing inputs, outputs, streaming behavior, retry behavior, exception handling, and user-visible error strings. This is a diagnostic-data repair, not a provider or application-state refactor.
 
@@ -19,9 +19,9 @@ The summarization functions keep their existing inputs, outputs, streaming behav
 TASK-2118's final review replaced an identifier-filtered candidate list with a complete review of all 523 logger calls in:
 
 - `tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py` — 242 calls, including 100 direct-private diagnostics;
-- `tldw_chatbook/LLM_Calls/Summarization_General_Lib.py` — 281 calls, including 99 direct-private diagnostics.
+- `tldw_chatbook/LLM_Calls/Summarization_General_Lib.py` — 281 calls, including 100 direct-private diagnostics.
 
-The 199 sites comprise:
+The 200 sites comprise:
 
 | Category | Local | General | Total |
 | --- | ---: | ---: | ---: |
@@ -29,9 +29,13 @@ The 199 sites comprise:
 | Prompt content | 8 | 9 | 17 |
 | Credential fragments | 8 | 13 | 21 |
 | Private endpoint or path values | 6 | 5 | 11 |
-| Response or generated-output content | 29 | 42 | 71 |
+| Response or generated-output content | 29 | 43 | 72 |
 | Exception messages or error detail | 36 | 22 | 58 |
-| **Total** | **100** | **99** | **199** |
+| **Total** | **100** | **100** | **200** |
+
+### Final-review audit correction
+
+The approved pre-implementation audit originally recorded `199 private + 324 reviewed-safe`. Independent final review found that stable site `general-2efc909241862caf` renders the provider-controlled Cohere stream event type and had been incorrectly frozen as status metadata. Under this design's approved misclassification procedure, the authoritative starting population is corrected to `200 private + 323 reviewed-safe = 523`: General is `100/181`, `general_mid` is 24, and response/output content is 72 overall. Historical batch results that quote `199/324` describe the ledger before this correction and remain evidence of why a late review-fix tranche was required.
 
 The task's verified inventory is authoritative for the pre-implementation sites. Its line numbers are navigation aids. Stable identity is the module, qualified enclosing function, fixed diagnostic event/label, category, and an occurrence ordinal only when those fields would otherwise collide.
 
@@ -68,7 +72,7 @@ Apply direct, one-for-one call-site repairs. Each private argument is removed be
 
 This is deliberately not a new abstraction. The two modules already use different logging imports and numerous provider-specific control-flow shapes. A new wrapper would add a second diagnostic policy surface without eliminating the need to inspect and edit every leaking expression. Direct substitutions make the privacy property visible at the actual source and keep behavior reviewable.
 
-### Allowed metadata for the 199 repaired sites
+### Allowed metadata for the 200 repaired sites
 
 A replacement for an inventoried private diagnostic may contain only fields justified by the event:
 
@@ -82,7 +86,7 @@ A replacement for an inventoried private diagnostic may contain only fields just
 
 Prefer fixed labels and numeric/boolean fields. Do not add a dynamic provider/model/type token merely to preserve the shape of an old private log. If a replacement needs a dynamic string token, pass it through `safe_metadata_token()` before it reaches the logger; the helper's fixed `invalid` result is the only fallback. Raw `type(value).__name__`, model names, provider names, object class names, and arbitrary string values are not automatically trusted metadata for a replacement.
 
-The other 324 logger calls were already reviewed and excluded from the private-site inventory because their current values are fixed, type, length, status, count, provider/model, or other bounded operational metadata. This task does not mechanically rewrite those calls to the stricter replacement style. Instead, the exhaustive guard freezes each reviewed call's current normalized expression structure and rationale. That exact legacy-safe structure is not a general allowlist: a new call or any changed dynamic expression fails until it is reviewed against the strict schema above or assigned to a separately approved scope.
+The other 323 logger calls were reviewed and excluded from the private-site inventory because their current values are fixed, type, length, status, count, provider/model, or other bounded operational metadata. This task does not mechanically rewrite those calls to the stricter replacement style. Instead, the exhaustive guard freezes each reviewed call's current normalized expression structure and rationale. That exact legacy-safe structure is not a general allowlist: a new call or any changed dynamic expression fails until it is reviewed against the strict schema above or assigned to a separately approved scope.
 
 ### Forbidden values and operations
 
@@ -131,8 +135,8 @@ The permanent guard must enumerate every stdlib-logging and Loguru call in both 
 
 The guard records stable call identity as module, qualified enclosing function, fixed event label, privacy category/classification, and occurrence ordinal where required. It does not key expectations to line numbers. It reconciles two explicit classes:
 
-1. the 199 inventoried sites, each recorded as an approved strict-schema replacement or an intentional deletion; and
-2. the 324 previously reviewed-safe calls, each recorded with its exact normalized dynamic-expression structure and its existing safe classification.
+1. the 200 inventoried sites, each recorded as an approved strict-schema replacement or an intentional deletion; and
+2. the 323 reviewed-safe calls, each recorded with its exact normalized dynamic-expression structure and its existing safe classification.
 
 An unclassified call, a changed expression in the frozen reviewed-safe class, or a replacement outside the strict schema fails closed. The implementation does not change a previously reviewed-safe call merely to make its style uniform. If the fresh all-call review finds that one was misclassified, update the verified task inventory and obtain approval before expanding production scope. The starting population, the two classes, and the deleted-site ledger must reconcile arithmetically and by stable identity.
 
@@ -227,7 +231,7 @@ No other production module is in scope without first amending TASK-3796 acceptan
 
 ### Add a shared summarization logging wrapper
 
-Rejected. It would create another policy owner, require a broad mechanical rewrite, and still require reviewing all 199 leaking sites. The existing `safe_metadata_token()` is sufficient for the few dynamic identifiers that genuinely need to survive.
+Rejected. It would create another policy owner, require a broad mechanical rewrite, and still require reviewing all 200 leaking sites. The existing `safe_metadata_token()` is sufficient for the few dynamic identifiers that genuinely need to survive.
 
 ### Remove every diagnostic in the two modules
 
@@ -259,7 +263,7 @@ Rejected. TASK-2118 demonstrated that such a search missed private diagnostics w
 
 TASK-3796 may be marked Done only when:
 
-1. all 199 starting sites reconcile to an approved metadata-only replacement or an explicitly justified deletion;
+1. all 200 starting sites reconcile to an approved metadata-only replacement or an explicitly justified deletion;
 2. every category in both modules has non-vacuous direct-function sentinel coverage;
 3. the complete all-call guard reports no unclassified or private expression;
 4. mutation evidence proves each category/module boundary can fail;

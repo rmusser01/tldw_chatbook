@@ -1376,9 +1376,7 @@ def summarize_with_cohere(
                         if chunk:
                             yield chunk
                     else:
-                        logging.debug(
-                            f"Cohere: Unhandled streaming event type: {event.get('type')}"
-                        )
+                        logging.debug("Cohere: Unhandled streaming event")
 
             return stream_generator()
         else:

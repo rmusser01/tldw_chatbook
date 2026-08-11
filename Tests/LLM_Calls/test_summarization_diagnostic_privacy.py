@@ -32,7 +32,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 LEDGER_PATH = REPO_ROOT / "Tests/fixtures/summarization_diagnostic_review.json"
 INVENTORY_PATH = REPO_ROOT / "Docs/security/production-diagnostic-inventory.json"
 STARTING_PROJECTION_SHA256 = (
-    "a4c9ba5f999199f02fd1c6186d1d88120f6d5f696071127ee192dff2c3503047"
+    "85a5c6b74f0cd4eb15f8ca0f8abfa5e18ca7f26f749d97fc7b781090cabd7733"
 )
 MODULE_COUNTS = {
     "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py": 242,
@@ -44,12 +44,12 @@ PRIVATE_GROUP_COUNTS = {
     "local_vllm_ollama": 22,
     "local_custom": 31,
     "general_core": 36,
-    "general_mid": 23,
+    "general_mid": 24,
     "general_streaming": 20,
     "general_tail": 20,
 }
 PRIVATE_CATEGORY_COUNTS = {
-    "response/output content": 71,
+    "response/output content": 72,
     "exception/error detail": 58,
     "raw/processed/extracted input": 21,
     "credential fragment": 21,
@@ -66,7 +66,7 @@ PRIVATE_CATEGORY_COUNTS_BY_MODULE = {
         "private endpoint/path": 6,
     },
     "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py": {
-        "response/output content": 42,
+        "response/output content": 43,
         "exception/error detail": 22,
         "raw/processed/extracted input": 8,
         "credential fragment": 13,
@@ -358,6 +358,7 @@ COHERE_CREDENTIAL_CANARY = "C0H3R3_K3Y_3796"
 COHERE_PROMPT_CANARY = "COHERE_PROMPT_CANARY_3796"
 COHERE_RESPONSE_CANARY = "COHERE_RESPONSE_CANARY_3796"
 COHERE_STREAM_CANARY = "COHERE_STREAM_CANARY_3796"
+COHERE_EVENT_TYPE_CANARY = "COHERE_EVENT_TYPE_CANARY_3796"
 COHERE_EXCEPTION_CANARY = "COHERE_EXCEPTION_CANARY_3796"
 COHERE_PRIVATE_STREAMING_VALUE = "COHERE_PRIVATE_STREAMING_VALUE_3796"
 GROQ_CREDENTIAL_CANARY = "GR0Q_K3Y_3796"
@@ -2364,8 +2365,8 @@ def test_ledger_retains_all_523_starting_sites() -> None:
     assert len(sites) == 523
     assert len({site["site_id"] for site in sites}) == 523
     assert Counter(site["starting_classification"] for site in sites) == {
-        "private": 199,
-        "reviewed_safe": 324,
+        "private": 200,
+        "reviewed_safe": 323,
     }
     assert Counter(site["module"] for site in sites) == MODULE_COUNTS
     assert (
@@ -4660,6 +4661,50 @@ def test_cohere_stream_is_lazy_and_hides_rejected_lines(
     assert "Cohere Stream: Non-object event skipped" in captured.text
 
 
+def test_cohere_unknown_stream_event_hides_provider_controlled_type(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_mid_provider_settings(),
+    )
+    response = _FakeResponse(
+        lines=(
+            json.dumps({"type": COHERE_EVENT_TYPE_CANARY}).encode(),
+            json.dumps(
+                {
+                    "type": "content-delta",
+                    "delta": {"message": {"content": {"text": "fixed chunk"}}},
+                }
+            ).encode(),
+            b"data: [DONE]",
+        )
+    )
+    post_calls = _install_signature_bound_general_session_post(monkeypatch, response)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        stream = general_summarization.summarize_with_cohere(
+            "fixed-cohere-key",
+            "fixed input",
+            "fixed prompt",
+            streaming=True,
+        )
+        assert inspect.isgenerator(stream)
+        assert response.iter_lines_started is False
+        assert response.closed is False
+        chunks = list(stream)
+
+    assert chunks == ["fixed chunk"]
+    assert response.iter_lines_started is True
+    assert response.closed is True
+    assert len(post_calls) == 1
+    assert post_calls[0][1]["json"]["stream"] is True
+    assert post_calls[0][1]["stream"] is True
+    assert COHERE_EVENT_TYPE_CANARY not in captured.text
+    assert "Cohere: Unhandled streaming event" in captured.text
+
+
 @pytest.mark.parametrize("streaming", [False, True], ids=["nonstream", "stream"])
 def test_cohere_status_failure_hides_response_body_and_preserves_return(
     streaming: bool,
@@ -6200,11 +6245,11 @@ def test_general_tail_completes_general_module_private_inventory() -> None:
     assert len(general) == 281
     assert (
         sum(site["starting_classification"] == "reviewed_safe" for site in general)
-        == 182
+        == 181
     )
-    assert sum(site["outcome"] == "frozen" for site in general) == 182
+    assert sum(site["outcome"] == "frozen" for site in general) == 181
     assert not [site for site in general if site["outcome"] == "pending"]
-    assert sum(site["outcome"] in {"metadata", "deleted"} for site in general) == 99
+    assert sum(site["outcome"] in {"metadata", "deleted"} for site in general) == 100
 
 
 def test_general_tail_complete_ledger_reconciles_without_private_sites() -> None:
@@ -6212,10 +6257,10 @@ def test_general_tail_complete_ledger_reconciles_without_private_sites() -> None
 
     assert len(sites) == 523
     assert (
-        sum(site["starting_classification"] == "reviewed_safe" for site in sites) == 324
+        sum(site["starting_classification"] == "reviewed_safe" for site in sites) == 323
     )
-    assert sum(site["outcome"] == "frozen" for site in sites) == 324
-    assert sum(site["outcome"] in {"metadata", "deleted"} for site in sites) == 199
+    assert sum(site["outcome"] == "frozen" for site in sites) == 323
+    assert sum(site["outcome"] in {"metadata", "deleted"} for site in sites) == 200
     assert not [site for site in sites if site["outcome"] == "pending"]
 
     deleted_count = sum(site["outcome"] == "deleted" for site in sites)

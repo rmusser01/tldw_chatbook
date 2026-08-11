@@ -26,7 +26,7 @@ TASK-2118's final review found that its identifier-filtered candidate list had b
 
 ## Verified Diagnostic Inventory
 
-The stable owner is the module plus enclosing function plus diagnostic label/category; current line numbers are navigation aids only. The complete all-call audit reviewed 523 logger calls and classified 199 direct private diagnostics. Safe constant, type, length, status, count, and provider/model metadata calls are intentionally absent. Exception messages are included because ADR-029 permits exception type metadata but expressly excludes exception messages.
+The stable owner is the module plus enclosing function plus diagnostic label/category; current line numbers are navigation aids only. The complete all-call audit reviewed 523 logger calls and classified 200 direct private diagnostics. Safe constant, type, length, status, count, and provider/model metadata calls are intentionally absent. Exception messages are included because ADR-029 permits exception type metadata but expressly excludes exception messages.
 
 ### `Local_Summarization_Lib.py` — 100 sites
 
@@ -84,7 +84,7 @@ The stable owner is the module plus enclosing function plus diagnostic label/cat
 
 Category totals: 13 raw/processed/extracted input, 8 prompt content, 8 credential fragments, 6 private endpoint/path values, 29 response/output-content sites, and 36 exception/error-detail sites.
 
-### `Summarization_General_Lib.py` — 99 sites
+### `Summarization_General_Lib.py` — 100 sites
 
 | Enclosing function | Category | Diagnostic labels (current lines) |
 | --- | --- | --- |
@@ -115,7 +115,7 @@ Category totals: 13 raw/processed/extracted input, 8 prompt content, 8 credentia
 | `summarize_with_cohere` | credential fragment | `Using API Key` (1224) |
 | `summarize_with_cohere` | response/output content | `request failed ... response.text` (1312, 1431); `API Response Data` (1414) |
 | `summarize_with_cohere` | exception/error detail | `Error in processing` (1437) |
-| `summarize_with_cohere._stream_events` | response/output content | `Skipping non-JSON stream line` (1348); `Error decoding JSON from line` (1357); `Skipping non-object stream event` (1364) |
+| `summarize_with_cohere._stream_events` | response/output content | `Skipping non-JSON stream line` (1348); `Error decoding JSON from line` (1357); `Skipping non-object stream event` (1364); `Unhandled streaming event type` (1380) |
 | `summarize_with_groq` | raw/processed/extracted input | `Loaded data` (1477) |
 | `summarize_with_groq` | prompt content | `Prompt being sent` (1512) |
 | `summarize_with_groq` | credential fragment | `Using API Key` (1470) |
@@ -149,7 +149,17 @@ Category totals: 13 raw/processed/extracted input, 8 prompt content, 8 credentia
 | `summarize_chunk` | response/output content | `Streaming error` (2739); `Summarization ... failed` (2749) |
 | `summarize_chunk` | exception/error detail | `Error in summarize_chunk` (2760) |
 
-Category totals: 8 raw/processed/extracted input, 9 prompt content, 13 credential fragments, 5 private endpoint/path values, 42 response/output-content sites, and 22 exception/error-detail sites.
+Category totals: 8 raw/processed/extracted input, 9 prompt content, 13 credential fragments, 5 private endpoint/path values, 43 response/output-content sites, and 22 exception/error-detail sites.
+
+## Final Review Audit Correction (2026-08-10)
+
+The original implementation record classified 199 calls as private and 324 as reviewed-safe. Independent final review found that stable site `general-2efc909241862caf` in `summarize_with_cohere._stream_events` renders provider-controlled `event.get("type")`; it is response/output content, not bounded status metadata. The approved misclassification procedure therefore corrects the authoritative starting arithmetic to `200 private + 323 reviewed-safe = 523`, with General `100 private + 181 reviewed-safe`, `general_mid = 24`, and response/output content `72` overall. Earlier commits and verification transcripts that report `199/324` remain historical evidence of the audit state before this correction; they are not the final inventory.
+
+Final verification also reproduced an unrelated 15-owner persistent-diagnostic
+inventory drift on detached exact latest dev. That baseline incident has separate
+backlog ownership and is not accepted into TASK-3796's manifest. This task names
+the ownership generically because repository task hygiene prohibits a lower task
+from forward-referencing a later, higher-numbered task.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
@@ -170,8 +180,8 @@ Reason: ADR-029 already owns the metadata-only persistent-log boundary; this tas
 Detailed plan: [TASK-3796 implementation plan](../../Docs/superpowers/plans/2026-08-10-task-3796-summarization-diagnostic-privacy.md)
 
 1. Rebase onto current `origin/dev`, recheck in-flight ownership, and reproduce the focused behavioral, inventory, lint, and formatter baselines.
-2. Add a test-only stable-identity ledger covering all 523 starting calls: 199 private sites pending repair and 324 exact reviewed-safe calls.
+2. Add a test-only stable-identity ledger covering all 523 starting calls: 200 private sites pending repair and 323 exact reviewed-safe calls.
 3. Repair the 100 Local-module sites in four test-first provider batches, with direct-function canaries and per-batch reconciliation.
-4. Repair the 99 General-module sites in four test-first provider batches, with direct-function canaries and per-batch reconciliation.
+4. Repair the 100 General-module sites in four test-first provider batches, with direct-function canaries and per-batch reconciliation.
 5. Run independent category/module mutations, prove restoration, and reconcile the exhaustive all-call boundary.
 6. Regenerate only the two owned diagnostic-inventory entries, run touched-functionality verification, complete self-review, and close TASK-3796.
