@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Literal, TypeAlias, cast
 
 from tldw_chatbook.TTS.migrations.v2_to_v3 import (
@@ -11,7 +11,10 @@ from tldw_chatbook.TTS.migrations.v2_to_v3 import (
     REFERENCE_TABLE,
 )
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+from tldw_chatbook.TTS.profile_reference_audio import validate_canonical_reference_wav
 from tldw_chatbook.TTS.profile_reference_types import (
+    MAX_REFERENCE_COUNT,
+    MAX_REFERENCE_TOTAL_BYTES,
     TTSCloneReference,
     TTSCloneReferenceSummary,
 )
@@ -177,10 +180,15 @@ def _finish_blob_operation(
     close_error: BaseException | None,
     *,
     error_code: str,
+    database_error_code: str | None = None,
 ) -> None:
     for error in (body_error, close_error):
         if error is not None and not isinstance(error, Exception):
             raise error
+    if database_error_code is not None and any(
+        isinstance(error, sqlite3.DatabaseError) for error in (body_error, close_error)
+    ):
+        raise ProfileRepositoryError(database_error_code) from None
     if body_error is not None or close_error is not None:
         raise ProfileRepositoryError(error_code) from None
 
@@ -217,6 +225,8 @@ def read_reference_blob(
     connection: sqlite3.Connection,
     rowid: int,
     byte_length: int,
+    *,
+    progress_guard: Callable[[], None] | None = None,
 ) -> bytes:
     """Read one exact reference BLOB in bounded chunks and close it."""
 
@@ -225,6 +235,8 @@ def read_reference_blob(
     close_error: BaseException | None = None
     payload: bytes | None = None
     try:
+        if progress_guard is not None:
+            progress_guard()
         blob = connection.blobopen(
             REFERENCE_TABLE,
             "wav_bytes",
@@ -236,6 +248,8 @@ def read_reference_blob(
         parts: list[bytes] = []
         remaining = byte_length
         while remaining:
+            if progress_guard is not None:
+                progress_guard()
             chunk = blob.read(min(REFERENCE_BLOB_CHUNK_BYTES, remaining))
             if type(chunk) is not bytes or not chunk:
                 raise ValueError
@@ -243,6 +257,8 @@ def read_reference_blob(
             remaining -= len(chunk)
         if blob.read(1) != b"":
             raise ValueError
+        if progress_guard is not None:
+            progress_guard()
         payload = b"".join(parts)
     except BaseException as error:
         body_error = error
@@ -251,10 +267,84 @@ def read_reference_blob(
             blob.close()
         except BaseException as error:
             close_error = error
-    _finish_blob_operation(body_error, close_error, error_code="reference_unavailable")
+    _finish_blob_operation(
+        body_error,
+        close_error,
+        error_code="reference_unavailable",
+        database_error_code="schema_corrupt",
+    )
     if payload is None:
         raise ProfileRepositoryError("reference_unavailable")
     return payload
+
+
+def validate_reference_rows(
+    connection: sqlite3.Connection,
+    *,
+    check_deadline: Callable[[], None] | None = None,
+) -> None:
+    """Fully qualify every reference payload, metadata row, and total quota."""
+
+    body_error: BaseException | None = None
+    try:
+        if check_deadline is not None:
+            check_deadline()
+        quota = connection.execute(
+            f"SELECT COUNT(*), COALESCE(SUM(byte_length), 0) FROM {REFERENCE_TABLE}"
+        ).fetchone()
+        if (
+            quota is None
+            or len(quota) != 2
+            or type(quota[0]) is not int
+            or type(quota[1]) is not int
+            or not 0 <= quota[0] <= MAX_REFERENCE_COUNT
+            or not 0 <= quota[1] <= MAX_REFERENCE_TOTAL_BYTES
+        ):
+            raise ValueError
+        seen = 0
+        for row in connection.execute(
+            f"{REFERENCE_PAYLOAD_SELECT} ORDER BY profile_id"
+        ):
+            if check_deadline is not None:
+                check_deadline()
+            rowid = row["reference_rowid"]
+            byte_length = row["reference_byte_length"]
+            if (
+                type(rowid) is not int
+                or rowid <= 0
+                or type(byte_length) is not int
+                or byte_length <= 0
+            ):
+                raise ValueError
+            payload = read_reference_blob(
+                connection,
+                rowid,
+                byte_length,
+                progress_guard=check_deadline,
+            )
+            reference = decode_reference_payload(row, payload)
+            metadata = validate_canonical_reference_wav(payload)
+            if (
+                metadata.byte_length != reference.summary.byte_length
+                or metadata.duration_ms != reference.summary.duration_ms
+                or metadata.sample_rate_hz != reference.summary.sample_rate_hz
+                or metadata.channels != reference.summary.channels
+                or metadata.sample_encoding != reference.summary.sample_encoding
+            ):
+                raise ValueError
+            seen += 1
+        if seen != quota[0]:
+            raise ValueError
+        if check_deadline is not None:
+            check_deadline()
+    except BaseException as error:
+        body_error = error
+    if body_error is not None and not isinstance(body_error, Exception):
+        raise body_error
+    if isinstance(body_error, ProfileRepositoryError):
+        raise ProfileRepositoryError(body_error.code) from None
+    if body_error is not None:
+        raise ProfileRepositoryError("reference_unavailable") from None
 
 
 __all__ = [
@@ -268,5 +358,6 @@ __all__ = [
     "decode_reference_payload",
     "decode_reference_summary",
     "read_reference_blob",
+    "validate_reference_rows",
     "write_reference_blob",
 ]

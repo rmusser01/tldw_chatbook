@@ -459,6 +459,366 @@ async def test_later_parent_failure_rolls_back_completed_blob_write(
 
 
 @pytest.mark.asyncio
+async def test_backup_and_restore_round_trip_exact_reference_payload(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    backup = tmp_path / "profiles-backup.sqlite3"
+    canonical = _canonical(sample=7)
+    async with _opened_repository(path) as repository:
+        generation, revision = await _create(repository, PROFILE_A, "Narrator")
+        attached = await repository.set_reference(
+            PROFILE_A,
+            canonical,
+            expected_revision=revision,
+            expected_generation=generation,
+        )
+        await repository.backup_to(backup, timeout_seconds=2.0)
+        await repository.remove_reference(
+            PROFILE_A,
+            expected_revision=attached.value.revision,
+            expected_generation=generation,
+        )
+        restored = await repository.restore_from(backup, timeout_seconds=2.0)
+        profile = await repository.get_profile(PROFILE_A)
+        exact = await repository.get_reference(
+            PROFILE_A,
+            expected_revision=profile.value.revision,
+            expected_generation=restored.generation,
+        )
+
+        assert exact.value.wav_bytes == canonical.wav_bytes
+        assert exact.value.reference_text == canonical.reference_text
+        assert exact.value.sha256 == canonical.sha256
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("corruption_sql", "parameters", "ignore_checks"),
+    (
+        (
+            "UPDATE tts_profile_clone_references SET wav_bytes = zeroblob(byte_length)",
+            (),
+            False,
+        ),
+        (
+            "UPDATE tts_profile_clone_references SET sha256 = ?",
+            ("0" * 64,),
+            False,
+        ),
+        (
+            "UPDATE tts_profile_clone_references SET duration_ms = duration_ms + 1",
+            (),
+            False,
+        ),
+        (
+            "UPDATE tts_profile_clone_references SET reference_text = ''",
+            (),
+            True,
+        ),
+    ),
+)
+async def test_backup_rejects_corrupt_reference_without_publication(
+    tmp_path: Path,
+    corruption_sql: str,
+    parameters: tuple[object, ...],
+    ignore_checks: bool,
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    destination = tmp_path / "must-not-publish.sqlite3"
+    async with _opened_repository(path) as repository:
+        generation, revision = await _create(repository, PROFILE_A, "Narrator")
+        await repository.set_reference(
+            PROFILE_A,
+            _canonical(),
+            expected_revision=revision,
+            expected_generation=generation,
+        )
+        connection = sqlite3.connect(path)
+        try:
+            if ignore_checks:
+                connection.execute("PRAGMA ignore_check_constraints = ON")
+            connection.execute(corruption_sql, parameters)
+            connection.commit()
+        finally:
+            connection.close()
+        with pytest.raises(ProfileRepositoryError) as caught:
+            await repository.backup_to(destination, timeout_seconds=2.0)
+        _assert_error(caught.value, "backup_failed")
+    assert destination.exists() is False
+
+
+@pytest.mark.asyncio
+async def test_exact_damage_is_isolated_and_replacement_recovers_profile(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    async with _opened_repository(path) as repository:
+        generation, revision_a = await _create(repository, PROFILE_A, "A")
+        await _create(repository, PROFILE_B, "B")
+        attached = await repository.set_reference(
+            PROFILE_A,
+            _canonical(),
+            expected_revision=revision_a,
+            expected_generation=generation,
+        )
+
+    connection = sqlite3.connect(path)
+    try:
+        connection.execute(
+            "UPDATE tts_profile_clone_references SET duration_ms = duration_ms + 1"
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    async with _opened_repository(path) as repository:
+        generation = repository.generation
+        with pytest.raises(ProfileRepositoryError) as caught:
+            await repository.get_reference(
+                PROFILE_A,
+                expected_revision=attached.value.revision,
+                expected_generation=generation,
+            )
+        _assert_error(caught.value, "reference_unavailable")
+        assert PROFILE_A in repository._damaged_reference_profile_ids
+        assert repository.state.value == "open"
+        assert (await repository.get_profile(PROFILE_B)).value.display_name == "B"
+
+        repaired = await repository.set_reference(
+            PROFILE_A,
+            _canonical(sample=9),
+            expected_revision=attached.value.revision,
+            expected_generation=generation,
+        )
+        exact = await repository.get_reference(
+            PROFILE_A,
+            expected_revision=repaired.value.revision,
+            expected_generation=generation,
+        )
+        assert exact.value.reference_text == "Reference 9"
+        assert PROFILE_A not in repository._damaged_reference_profile_ids
+
+
+@pytest.mark.asyncio
+async def test_structural_reference_read_failure_makes_repository_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    repository = profile_repository.TTSProfileRepository(path, _clock=lambda: NOW)
+    await repository.open()
+    generation, revision = await _create(repository, PROFILE_A, "Narrator")
+    attached = await repository.set_reference(
+        PROFILE_A,
+        _canonical(),
+        expected_revision=revision,
+        expected_generation=generation,
+    )
+
+    def fail_structurally(*_args: object, **_kwargs: object) -> bytes:
+        raise sqlite3.DatabaseError("private structural detail")
+
+    monkeypatch.setattr(profile_repository, "read_reference_blob", fail_structurally)
+    try:
+        with pytest.raises(ProfileRepositoryError) as caught:
+            await repository.get_reference(
+                PROFILE_A,
+                expected_revision=attached.value.revision,
+                expected_generation=generation,
+            )
+        _assert_error(caught.value, "schema_corrupt")
+        assert repository.state.value == "unavailable"
+        assert PROFILE_A not in repository._damaged_reference_profile_ids
+    finally:
+        await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_close_clears_generation_local_damage_markers(tmp_path: Path) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    repository = profile_repository.TTSProfileRepository(path, _clock=lambda: NOW)
+    await repository.open()
+    generation, revision = await _create(repository, PROFILE_A, "Narrator")
+    attached = await repository.set_reference(
+        PROFILE_A,
+        _canonical(),
+        expected_revision=revision,
+        expected_generation=generation,
+    )
+    connection = sqlite3.connect(path)
+    try:
+        connection.execute(
+            "UPDATE tts_profile_clone_references SET sha256 = ?",
+            ("0" * 64,),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    with pytest.raises(ProfileRepositoryError):
+        await repository.get_reference(
+            PROFILE_A,
+            expected_revision=attached.value.revision,
+            expected_generation=generation,
+        )
+    assert PROFILE_A in repository._damaged_reference_profile_ids
+
+    await repository.close()
+
+    assert repository._damaged_reference_profile_ids == set()
+
+
+@pytest.mark.asyncio
+async def test_restore_rejects_corrupt_reference_and_preserves_live_store(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    candidate = tmp_path / "candidate.sqlite3"
+    async with _opened_repository(path) as repository:
+        generation, revision = await _create(repository, PROFILE_A, "Live")
+        await repository.set_reference(
+            PROFILE_A,
+            _canonical(),
+            expected_revision=revision,
+            expected_generation=generation,
+        )
+        await repository.backup_to(candidate)
+
+    connection = sqlite3.connect(candidate)
+    try:
+        connection.execute(
+            "UPDATE tts_profile_clone_references SET sha256 = ?",
+            ("0" * 64,),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    async with _opened_repository(path) as repository:
+        before = await repository.get_profile(PROFILE_A)
+        with pytest.raises(ProfileRepositoryError) as caught:
+            await repository.restore_from(candidate, timeout_seconds=2.0)
+        _assert_error(caught.value, "restore_failed")
+        after = await repository.get_profile(PROFILE_A)
+
+        assert after.value == before.value
+        assert repository.state.value == "open"
+
+
+@pytest.mark.asyncio
+async def test_restore_qualifies_stage_recovery_and_both_live_handles(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    candidate = tmp_path / "candidate.sqlite3"
+    qualification_calls = 0
+    real_validate = profile_repository.validate_reference_rows
+
+    def count_qualification(
+        connection: sqlite3.Connection,
+        *,
+        check_deadline: object = None,
+    ) -> None:
+        nonlocal qualification_calls
+        qualification_calls += 1
+        real_validate(connection, check_deadline=cast(Any, check_deadline))
+
+    async with _opened_repository(path) as repository:
+        generation, revision = await _create(repository, PROFILE_A, "Narrator")
+        await repository.set_reference(
+            PROFILE_A,
+            _canonical(),
+            expected_revision=revision,
+            expected_generation=generation,
+        )
+        await repository.backup_to(candidate)
+        qualification_calls = 0
+        monkeypatch.setattr(
+            profile_repository,
+            "validate_reference_rows",
+            count_qualification,
+        )
+
+        await repository.restore_from(candidate, timeout_seconds=2.0)
+
+    assert qualification_calls == 4
+
+
+@pytest.mark.asyncio
+async def test_backup_deadline_interrupts_reference_scan_without_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    destination = tmp_path / "must-not-publish.sqlite3"
+    now = 0.0
+    real_read = reference_storage.read_reference_blob
+
+    def expire_during_blob_scan(
+        connection: sqlite3.Connection,
+        rowid: int,
+        byte_length: int,
+        *,
+        progress_guard: object = None,
+    ) -> bytes:
+        nonlocal now
+        now = 2.0
+        return real_read(
+            connection,
+            rowid,
+            byte_length,
+            progress_guard=cast(Any, progress_guard),
+        )
+
+    monkeypatch.setattr(profile_repository, "_monotonic", lambda: now)
+    monkeypatch.setattr(
+        reference_storage,
+        "read_reference_blob",
+        expire_during_blob_scan,
+    )
+    async with _opened_repository(path) as repository:
+        generation, revision = await _create(repository, PROFILE_A, "Narrator")
+        await repository.set_reference(
+            PROFILE_A,
+            _canonical(),
+            expected_revision=revision,
+            expected_generation=generation,
+        )
+        with pytest.raises(ProfileRepositoryError) as caught:
+            await repository.backup_to(destination, timeout_seconds=1.0)
+        _assert_error(caught.value, "backup_failed")
+
+    assert destination.exists() is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "timeout",
+    (None, True, 0, -1, float("inf"), float("-inf"), float("nan"), "5"),
+)
+async def test_backup_rejects_invalid_timeout_before_file_mutation(
+    tmp_path: Path,
+    timeout: object,
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    destination = tmp_path / "must-not-publish.sqlite3"
+    async with _opened_repository(path) as repository:
+        before_generation = repository.generation
+        with pytest.raises(ProfileRepositoryError) as caught:
+            await repository.backup_to(
+                destination,
+                timeout_seconds=cast(Any, timeout),
+            )
+        _assert_error(caught.value, "backup_failed")
+        assert repository.generation == before_generation
+        assert repository.state.value == "open"
+
+    assert destination.exists() is False
+
+
+@pytest.mark.asyncio
 async def test_ordinary_reads_never_project_sensitive_reference_columns(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
