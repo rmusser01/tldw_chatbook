@@ -159,7 +159,7 @@ test_library_honesty_accessibility.py (vocabulary test),
 test_library_export_state.py (`next_media_quality` pins → option-set +
 state-flag pins), product-maturity mode-label pins. One gate16 failure
 (`test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional`)
-A/B'd at clean base 6b4b4ec5f: fails identically there — ambient, not this
+A/B'd at clean base 0662e09f5: fails identically there — ambient, not this
 change.
 
 **Live-verified** (isolated tmux, scratch config `sdd_lq6`, cleaned up, live

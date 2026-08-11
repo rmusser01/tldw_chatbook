@@ -65,10 +65,10 @@ class LibraryExportCanvas(VerticalScroll):
     ``VerticalScroll`` root (the L3a clipping lesson -- a plain ``Vertical``
     canvas clips content past the fold); every child is a stacked, full-
     width Button/Input/Static, mirroring ``LibraryIngestCanvas``. No
-    ``Select`` -- the media-quality control is a cycle button (label
-    ``"quality: {value} ⇄"``) like the media canvas's type filter,
-    since a plain ``Select`` widget did not render reliably in the
-    deployed TUI (see ``handle_library_media_type_filter_pressed``).
+    ``Select`` -- the media-quality control opens a one-row choice strip
+    (task-14902, ``library_choice_strip.py``) with ``✓`` on the active
+    option, like the media canvas's type filter, since a plain ``Select``
+    widget did not render reliably in the deployed TUI.
 
     Attributes:
         state: The canvas's full display state (built by

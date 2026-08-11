@@ -231,7 +231,7 @@ paragraph's prose already covered).*
 save note | esc back to notes" in the editor (with shorter labels at
 compact widths); locked states such as a running sync advertise no dead
 keys.)*
-*Verified against feat/library-queue-batch @ 6b4b4ec5f — 2026-08-11
+*Verified against feat/library-queue-batch @ 0662e09f5 — 2026-08-11
 (task-14902: the Sort chooser described above is this page's pre-existing
 pattern — it became the Library-wide one; the table copy above was
 re-verified against the live control (its label reads "Sort: Newest",

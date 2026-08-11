@@ -288,7 +288,7 @@ documentation SHA.*
 deletion cannot be undone from Library, on every variant — clean, dirty,
 and multi-item.)*
 
-*Verified against feat/library-queue-batch @ 6b4b4ec5f — 2026-08-11
+*Verified against feat/library-queue-batch @ 0662e09f5 — 2026-08-11
 (task-14902: the sort control converged on the Library chooser-strip
 pattern — press opens Newest / Name with ✓ on the active one, a pick
 requests that exact scope at page 1, Escape cancels; the collection

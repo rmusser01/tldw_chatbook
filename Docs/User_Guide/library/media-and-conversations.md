@@ -368,7 +368,7 @@ described in the layout tour — live at 170/121 cols, back to the stacked
 flow at 119/100, keyboard traversal, Select mode and the bulk toolbar
 checked in both layouts, "No preview in Select mode." placeholder wide
 only.)*
-*Verified against feat/library-queue-batch @ 6b4b4ec5f — 2026-08-11
+*Verified against feat/library-queue-batch @ 0662e09f5 — 2026-08-11
 (task-14902: the type filter converged on the Notes Sort chooser pattern —
 pressing "type: All" swaps the toolbar for a one-row strip of every type
 with ✓ on the active one; a pick applies directly (no more press-to-cycle),

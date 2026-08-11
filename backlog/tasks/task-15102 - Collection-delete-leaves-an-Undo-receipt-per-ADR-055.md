@@ -7,7 +7,7 @@ created_date: '2026-08-11 06:20'
 labels:
   - library
   - ux
-  - adr-054
+  - adr-055
 dependencies: []
 priority: low
 ---

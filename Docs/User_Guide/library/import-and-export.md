@@ -586,7 +586,7 @@ this selection can be sent to the server" for files that only this
 destination refuses. The refusal is enforced at the submit itself, not
 just on the button, so Enter in the path field cannot route around it.*
 
-*Verified against feat/library-queue-batch @ 6b4b4ec5f — 2026-08-11
+*Verified against feat/library-queue-batch @ 0662e09f5 — 2026-08-11
 (task-14902: the quality control converged on the Library chooser-strip
 pattern — pressing "quality: thumbnail" opens a one-row strip of all
 three values under the still-visible button with ✓ on the active one; a

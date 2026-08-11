@@ -508,7 +508,7 @@ run start and again when results land, so Run visibly does something even
 when the configuration region fills the fold; the rail search box and the
 canvas query box now mirror each other as you type — one query, two
 views of it; the mode button reads "mode: Search ⇄".)*
-*Verified against feat/library-queue-batch @ 6b4b4ec5f — 2026-08-11
+*Verified against feat/library-queue-batch @ 0662e09f5 — 2026-08-11
 (task-14902: the mode control stays a one-press toggle — a genuine
 two-state flip earns its single press — but its full option set moved
 onto the label: "mode: ✓ Search ⇄ RAG Answer", ✓ marking the active mode,
