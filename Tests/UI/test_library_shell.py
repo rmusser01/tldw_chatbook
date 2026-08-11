@@ -1864,7 +1864,7 @@ async def test_library_shell_search_mode_toggle_cycles_mode():
         await _wait_for_selector(screen, pilot, "#library-rag-mode-toggle")
 
         toggle = screen.query_one("#library-rag-mode-toggle", Button)
-        assert str(toggle.label) == "mode: Search ⇄"
+        assert str(toggle.label) == "mode: ✓ Search ⇄ RAG Answer"
         assert toggle.tooltip == (
             "Cycle Search/RAG mode. Next: RAG Answer — calls a paid provider."
         )
@@ -1873,7 +1873,7 @@ async def test_library_shell_search_mode_toggle_cycles_mode():
         screen.query_one("#library-rag-mode-toggle", Button).press()
         for _ in range(120):
             toggles = list(screen.query("#library-rag-mode-toggle"))
-            if toggles and str(toggles[0].label) == "mode: RAG Answer ⇄":
+            if toggles and str(toggles[0].label) == "mode: Search ⇄ ✓ RAG Answer":
                 break
             await pilot.pause(0.02)
         else:
@@ -1885,7 +1885,7 @@ async def test_library_shell_search_mode_toggle_cycles_mode():
         screen.query_one("#library-rag-mode-toggle", Button).press()
         for _ in range(120):
             toggles = list(screen.query("#library-rag-mode-toggle"))
-            if toggles and str(toggles[0].label) == "mode: Search ⇄":
+            if toggles and str(toggles[0].label) == "mode: ✓ Search ⇄ RAG Answer":
                 break
             await pilot.pause(0.02)
         else:
@@ -1950,7 +1950,7 @@ async def test_library_shell_search_rag_mode_keeps_run_enabled_without_runtime(
         screen.query_one("#library-rag-mode-toggle", Button).press()
         for _ in range(120):
             toggles = list(screen.query("#library-rag-mode-toggle"))
-            if toggles and str(toggles[0].label) == "mode: RAG Answer ⇄":
+            if toggles and str(toggles[0].label) == "mode: Search ⇄ ✓ RAG Answer":
                 break
             await pilot.pause(0.02)
         else:
@@ -1993,7 +1993,7 @@ async def test_library_shell_search_rag_mode_blocks_run_without_a_ready_provider
         screen.query_one("#library-rag-mode-toggle", Button).press()
         for _ in range(120):
             toggles = list(screen.query("#library-rag-mode-toggle"))
-            if toggles and str(toggles[0].label) == "mode: RAG Answer ⇄":
+            if toggles and str(toggles[0].label) == "mode: Search ⇄ ✓ RAG Answer":
                 break
             await pilot.pause(0.02)
         else:
@@ -2060,7 +2060,7 @@ async def test_library_shell_search_rag_mode_blocks_run_when_endpoint_named_but_
         screen.query_one("#library-rag-mode-toggle", Button).press()
         for _ in range(120):
             toggles = list(screen.query("#library-rag-mode-toggle"))
-            if toggles and str(toggles[0].label) == "mode: RAG Answer ⇄":
+            if toggles and str(toggles[0].label) == "mode: Search ⇄ ✓ RAG Answer":
                 break
             await pilot.pause(0.02)
         else:
@@ -3136,7 +3136,9 @@ async def test_library_shell_browse_media_renders_canvas_with_rows_and_preview()
         assert title == "Media (2)"
 
         filter_button = screen.query_one("#library-media-type-filter", Button)
-        assert str(filter_button.label) == "type: All ⇄"
+        # task-14902: a chooser-opener (press opens the direct-pick strip),
+        # so no press-advances "⇄" glyph.
+        assert str(filter_button.label) == "type: All"
 
         rows = list(screen.query(".library-media-row"))
         assert len(rows) == 2
@@ -3159,14 +3161,28 @@ async def test_library_shell_browse_media_renders_canvas_with_rows_and_preview()
         assert not screen.query("#library-media-open")
 
 
+async def _pick_media_type(screen, pilot, value: str) -> None:
+    """Open the type chooser strip and pick ``value`` directly (task-14902)."""
+    screen.query_one("#library-media-type-filter", Button).press()
+    await _wait_for_selector(screen, pilot, "#library-media-type-choices")
+    choice = next(
+        button
+        for button in screen.query(".library-media-type-choice")
+        if str(getattr(button, "choice_value", "")) == value
+    )
+    choice.press()
+    await pilot.pause()
+    await pilot.pause()
+
+
 @pytest.mark.asyncio
 async def test_library_shell_media_type_filter_narrows_list():
-    """Pressing the cycling filter button advances through type_options.
+    """Picking a type from the chooser strip narrows the list (task-14902:
+    the per-press cycle retired -- pressing the chooser opens a strip of
+    every ``type_options`` value and the pick applies exactly).
 
     The media fixture seeds two types ("audio", "video"), so
-    ``type_options`` resolves to ``("All", "audio", "video")``. One press
-    from the "All" default advances to "audio"; a second press advances to
-    "video"; a third press wraps back around to "All".
+    ``type_options`` resolves to ``("All", "audio", "video")``.
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
@@ -3179,15 +3195,10 @@ async def test_library_shell_media_type_filter_narrows_list():
         screen.query_one("#library-row-browse-media").press()
         await _wait_for_selector(screen, pilot, "#library-media-canvas")
 
-        filter_button = screen.query_one("#library-media-type-filter", Button)
-
-        filter_button.press()
-        await pilot.pause()
-        await pilot.pause()
-
+        await _pick_media_type(screen, pilot, "audio")
         assert screen._library_media_type_filter == "audio"
         filter_button = screen.query_one("#library-media-type-filter", Button)
-        assert str(filter_button.label) == "type: audio ⇄"
+        assert str(filter_button.label) == "type: audio"
         rows = list(screen.query(".library-media-row"))
         assert len(rows) == 1
         assert "Interview Recording" in str(rows[0].label)
@@ -3195,24 +3206,18 @@ async def test_library_shell_media_type_filter_narrows_list():
         status = str(screen.query_one("#library-media-status").renderable)
         assert "type: audio" in status
 
-        filter_button.press()
-        await pilot.pause()
-        await pilot.pause()
-
+        await _pick_media_type(screen, pilot, "video")
         assert screen._library_media_type_filter == "video"
         filter_button = screen.query_one("#library-media-type-filter", Button)
-        assert str(filter_button.label) == "type: video ⇄"
+        assert str(filter_button.label) == "type: video"
         rows = list(screen.query(".library-media-row"))
         assert len(rows) == 1
         assert "Product Demo Video" in str(rows[0].label)
 
-        filter_button.press()
-        await pilot.pause()
-        await pilot.pause()
-
+        await _pick_media_type(screen, pilot, "All")
         assert screen._library_media_type_filter == "All"
         filter_button = screen.query_one("#library-media-type-filter", Button)
-        assert str(filter_button.label) == "type: All ⇄"
+        assert str(filter_button.label) == "type: All"
         rows = list(screen.query(".library-media-row"))
         assert len(rows) == 2
 
@@ -16313,9 +16318,7 @@ async def test_library_shell_restored_media_type_filter_renders_on_first_paint()
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-media").press()
         await _wait_for_selector(screen, pilot, "#library-media-type-filter")
-        screen.query_one("#library-media-type-filter", Button).press()
-        await pilot.pause()
-        await pilot.pause()
+        await _pick_media_type(screen, pilot, "audio")
         active_type = screen._library_media_type_filter
         assert active_type != "All"
         state = screen.save_state()
@@ -16332,7 +16335,7 @@ async def test_library_shell_restored_media_type_filter_renders_on_first_paint()
 
         assert screen2._library_media_type_filter == active_type
         filter_button = screen2.query_one("#library-media-type-filter", Button)
-        assert str(filter_button.label) == f"type: {active_type} ⇄"
+        assert str(filter_button.label) == f"type: {active_type}"
         rows = list(screen2.query(".library-media-row"))
         assert len(rows) == 1
 
@@ -16631,11 +16634,9 @@ async def test_library_shell_media_export_action_carries_type_filter_into_scope(
         screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_MEDIA}").press()
         await _wait_for_selector(screen, pilot, "#library-media-type-filter")
 
-        # Cycle the type filter off "All" onto a concrete type before
-        # opening Export -- the scope must carry THIS filter, not the
-        # canvas's default.
-        screen.query_one("#library-media-type-filter").press()
-        await pilot.pause()
+        # Pick a concrete type off "All" before opening Export -- the
+        # scope must carry THIS filter, not the canvas's default.
+        await _pick_media_type(screen, pilot, "audio")
         active_type = screen._library_media_type_filter
         assert active_type != "All"
 

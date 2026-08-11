@@ -22,7 +22,7 @@ Press **Ctrl+3** to open Library, then click **Prompts** in the rail's
 
 - **Prompts list** — the default view: an exact "Prompts (N)" header, the
   "Filter prompts… (Enter)" field, a local collection selector, a toolbar
-  ("sort: Newest ▸" / "sort: Name ▸" and "Import…"), and one row per prompt
+  ("sort: Newest" / "sort: Name" and "Import…"), and one row per prompt
   showing its name, artifact/source/lane summary, and description and age when present.
   Lists longer than one 50-row page have **Previous** and **Next** controls
   plus an exact "Page … · showing … of …" line.
@@ -42,8 +42,8 @@ Press **Ctrl+3** to open Library, then click **Prompts** in the rail's
 | Control | What it does |
 |---|---|
 | Filter prompts… (Enter) | Filters local prompt names and descriptions after a short pause; **Enter** applies the pending text immediately without sending a second request |
-| collection: All prompts ▸ | Opens the local-only collection manager; choose **All prompts** or one collection |
-| sort: Newest ▸ / sort: Name ▸ | Click to toggle between most recently modified first and name A–Z; changing sort returns to page 1 |
+| collection: All prompts | Opens the local-only collection manager; choose **All prompts** or one collection |
+| sort: Newest / sort: Name | Press to open a one-row strip of Newest / Name (✓ on the active one) in place of the toolbar; pick one directly (changing sort returns to page 1), or press Escape to cancel |
 | Previous / Next | Requests the adjacent exact 50-row page without changing search, collection, or sort |
 | Import… | Opens the inline Import row (below) |
 | A prompt row | Opens that prompt in the editor |
@@ -198,7 +198,7 @@ and selected retained row unchanged so you can correct the issue or retry.
 | Export… | Saves a representable Prompt or Recipe as a Markdown file ("Export Prompt as Markdown" dialog). Compatibility or legacy Recipes that would lose their type fail closed and require **Convert and save as a new Prompt** first. |
 | Copy Markdown | Copies the exact live Markdown working copy, including unsaved create, duplicate, conversion, and block edits: System/User text plus applicable structured Prompt/Recipe metadata. Success follows a clipboard write; unavailable or failed clipboard support shows a warning or error. Compatibility or legacy Recipes that would flatten to Prompt-looking Markdown require **Convert and save as a new Prompt** first. |
 | Duplicate prompt | Opens a new unsaved copy named "<name> (copy)" with all fields prefilled. Compatibility or legacy Recipes that cannot retain Recipe identity require **Convert and save as a new Prompt** first. |
-| Delete | Opens a confirmation before discarding the saved Prompt or Recipe; if the editor is dirty, it also warns that the unsaved working copy will be discarded |
+| Delete | Opens a confirmation before discarding the saved Prompt or Recipe; the copy states the deletion cannot be undone from Library, and if the editor is dirty it also warns that the unsaved working copy will be discarded |
 
 For a Prompt, **Use in Console** works differently from the notes and media
 actions: instead of staging a source for retrieval, it appends compiled User
@@ -283,3 +283,14 @@ prompt to the Library. See
 the real Textual compositor and focused automated suites on 2026-08-09.
 Verification is tied to branch history rather than a self-referential
 documentation SHA.*
+*Verified against feat/library-queue-batch @ a899cbf6a — 2026-08-11
+(task-14901 / ADR-055: the delete confirmation copy now states the
+deletion cannot be undone from Library, on every variant — clean, dirty,
+and multi-item.)*
+
+*Verified against feat/library-queue-batch @ 0662e09f5 — 2026-08-11
+(task-14902: the sort control converged on the Library chooser-strip
+pattern — press opens Newest / Name with ✓ on the active one, a pick
+requests that exact scope at page 1, Escape cancels; the collection
+control's label dropped the cycle glyph — it opens the collection
+manager, a direct-pick surface, and never cycled.)*

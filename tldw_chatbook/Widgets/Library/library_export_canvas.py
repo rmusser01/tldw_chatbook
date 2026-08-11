@@ -19,9 +19,12 @@ from tldw_chatbook.Library.library_export_state import (
     media_quality_helper_copy,
 )
 from tldw_chatbook.Library.library_shell_state import (
-    library_cycle_label,
-    library_cycle_tooltip,
+    library_choice_label,
+    library_choice_tooltip,
     library_disabled_action_label,
+)
+from tldw_chatbook.Widgets.Library.library_choice_strip import (
+    compose_library_choice_strip,
 )
 
 
@@ -62,10 +65,10 @@ class LibraryExportCanvas(VerticalScroll):
     ``VerticalScroll`` root (the L3a clipping lesson -- a plain ``Vertical``
     canvas clips content past the fold); every child is a stacked, full-
     width Button/Input/Static, mirroring ``LibraryIngestCanvas``. No
-    ``Select`` -- the media-quality control is a cycle button (label
-    ``"quality: {value} ⇄"``) like the media canvas's type filter,
-    since a plain ``Select`` widget did not render reliably in the
-    deployed TUI (see ``handle_library_media_type_filter_pressed``).
+    ``Select`` -- the media-quality control opens a one-row choice strip
+    (task-14902, ``library_choice_strip.py``) with ``✓`` on the active
+    option, like the media canvas's type filter, since a plain ``Select``
+    widget did not render reliably in the deployed TUI.
 
     Attributes:
         state: The canvas's full display state (built by
@@ -121,14 +124,30 @@ class LibraryExportCanvas(VerticalScroll):
         )
         if state.show_media_fields:
             yield Button(
-                library_cycle_label("quality", state.media_quality),
+                # task-14902: a chooser-opener -- press opens the
+                # direct-pick strip below (the per-press cycle retired).
+                library_choice_label("quality", state.media_quality),
                 id="library-export-quality",
                 classes="library-canvas-action",
                 compact=True,
-                tooltip=library_cycle_tooltip(
+                tooltip=library_choice_tooltip(
                     "media quality", MEDIA_QUALITY_OPTIONS
                 ),
             )
+            if state.quality_choices_visible:
+                # Unlike the list canvases, the opener stays visible (the
+                # form has vertical room and the "quality:" label anchors
+                # what the strip's bare values mean) -- so a second press
+                # on the opener also closes the strip.
+                yield from compose_library_choice_strip(
+                    strip_id="library-export-quality-choices",
+                    choice_class="library-export-quality-choice",
+                    options=tuple(
+                        (f"library-export-quality-{value}", value, value)
+                        for value in MEDIA_QUALITY_OPTIONS
+                    ),
+                    active_value=state.media_quality,
+                )
             yield Static(
                 media_quality_helper_copy(state.media_quality),
                 id="library-export-quality-helper",

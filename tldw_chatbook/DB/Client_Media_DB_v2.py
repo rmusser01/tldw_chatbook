@@ -3523,6 +3523,28 @@ class MediaDatabase:
         ``persist_parsed_media`` -- passes ``restore_trashed=True``
         explicitly. ``overwrite`` still governs ordinary (non-trashed)
         matches exactly as before, independent of this flag.
+
+        task-4026: the same opt-in now also outranks ``overwrite``. The
+        full contract for a matched row:
+
+        - live match: ``overwrite`` governs, exactly as it always has
+          (``True`` = update in place, ``False`` = duplicate-skip or URL
+          canonicalization).
+        - trashed match, ``restore_trashed=False``: SKIPPED, whatever
+          ``overwrite`` says -- returns ``(None, None, <message naming
+          Trash and this flag>)`` and the row's trash state, content,
+          metadata, keywords and chunks are all left untouched. (The
+          pre-existing one-directional URL canonicalization edge --
+          auto-generated ``local://`` url -> real url on identical
+          content -- still applies, as it has since task-4022.)
+        - trashed match, ``restore_trashed=True``: restored and updated
+          (``overwrite`` is irrelevant; the restore itself forces the
+          update path).
+
+        Previously ``overwrite=True`` alone silently resurrected a
+        trashed match on content change, and mutated its title/keywords/
+        chunks in place (while still hidden) on identical content --
+        with no restore decision anywhere in the call chain.
         """
         media_id, media_uuid, message = self._add_media_with_keywords_impl(
             url=url,
@@ -3615,7 +3637,20 @@ class MediaDatabase:
         def _media_payload(
             uuid_: str, version_: int, *, chunk_status: str
         ) -> Dict[str, Any]:
-            """Return a dict suitable for INSERT/UPDATE parameters and for sync logging."""
+            """Return a dict suitable for INSERT/UPDATE parameters and for sync logging.
+
+            task-4026: the hardcoded ``is_trash: 0`` / ``trash_date: None``
+            / ``deleted: 0`` below are intentional and safe ONLY because of
+            how this payload is routed: it is used for Path B INSERTs (new
+            rows are born live) and for the Case A.1.b full UPDATE, which a
+            trashed row can reach solely via ``restoring_from_trash`` (an
+            explicit ``restore_trashed=True`` opt-in -- writing 0 there IS
+            the requested restore; on a live row it is a no-op). A trashed
+            match without that opt-in is skipped before any payload is
+            built -- ``overwrite=True`` alone must never resurrect, or even
+            touch, a trashed row. If you add a new consumer of this
+            payload, preserve that routing invariant.
+            """
             return {
                 "url": url,
                 "title": title,
@@ -3767,10 +3802,22 @@ class MediaDatabase:
                     # ``restore_trashed=True`` -- restoring is no longer
                     # unconditional for any trashed match, since that
                     # silently resurrected rows for callers that never
-                    # asked for it (I1). A caller that didn't opt in still
+                    # asked for it (I1). A caller that didn't opt in
                     # falls through to the duplicate-skip / canonicalize
-                    # path below, exactly as it did before task-4022.
-                    restoring_from_trash = bool(row["is_trash"]) and restore_trashed
+                    # path below.
+                    #
+                    # task-4026: that opt-in now also outranks
+                    # ``overwrite``. A trashed match with
+                    # ``restore_trashed=False`` takes the skip path below
+                    # EVEN WITH ``overwrite=True`` -- previously overwrite
+                    # alone routed it into Case A.1, where identical
+                    # content mutated title/keywords/chunks in place on a
+                    # still-hidden row and different content silently
+                    # RESURRECTED it (``_media_payload`` writes
+                    # ``is_trash=0``). Trashed rows are never mutated
+                    # without an explicit restore decision.
+                    row_is_trashed = bool(row["is_trash"])
+                    restoring_from_trash = row_is_trashed and restore_trashed
                     # task-4022 (review round 2 / I3): when restoring, only
                     # canonicalize ``url`` in the same one direction the
                     # pre-existing ``is_canonicalisation`` branch (Case A.2
@@ -3785,9 +3832,11 @@ class MediaDatabase:
                         and not url.startswith("local://")
                     )
 
-                    # Case A.1: Overwrite is requested, or the match is a
-                    # trashed row being restored.
-                    if overwrite or restoring_from_trash:
+                    # Case A.1: an explicit trash restore, or overwrite of
+                    # a LIVE row. A trashed match without
+                    # ``restore_trashed=True`` never enters this branch,
+                    # whatever ``overwrite`` says (task-4026).
+                    if restoring_from_trash or (overwrite and not row_is_trashed):
                         # Case A.1.a: Content is identical. Check if metadata needs updating.
                         if content_hash == existing_hash:
                             logging.info(
@@ -4096,9 +4145,16 @@ class MediaDatabase:
                             else f"Media '{title}' updated to new version.",
                         )
 
-                    # Case A.2: Overwrite is FALSE, and the match is not
-                    # trashed (a trashed match always takes the branch above
-                    # regardless of ``overwrite`` -- see ``restoring_from_trash``).
+                    # Case A.2: overwrite is FALSE on a live match, or the
+                    # match is trashed and the caller did not pass
+                    # ``restore_trashed=True`` (task-4026: overwrite alone
+                    # never reaches a trashed row). Pre-existing edge kept
+                    # as-is: one-directional URL canonicalization
+                    # (auto-generated ``local://`` -> real url, identical
+                    # content) may still fire for a trashed match, exactly
+                    # as it did for ``overwrite=False`` since task-4022 --
+                    # it improves the row's identity only and never touches
+                    # trash state or content.
                     else:
                         is_canonicalisation = (
                             existing_url.startswith("local://")
@@ -4173,6 +4229,19 @@ class MediaDatabase:
                             },
                         )
 
+                        if row_is_trashed:
+                            # task-4026: name the real reason and the real
+                            # remedy. The generic "Overwrite not enabled."
+                            # advice below would be a lie here -- passing
+                            # ``overwrite=True`` does NOT touch a trashed
+                            # row; only ``restore_trashed=True`` does.
+                            return (
+                                None,
+                                None,
+                                f"Media '{title}' matches an item in Trash and was "
+                                "not modified. Pass restore_trashed=True to restore "
+                                "and update it.",
+                            )
                         return (
                             None,
                             None,

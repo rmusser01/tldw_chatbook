@@ -374,6 +374,41 @@ def test_local_service_list_media_items_carries_last_modified_for_list_card_age(
     assert row.secondary.startswith("document · ")
 
 
+def test_local_service_list_media_trash_carries_trash_date_for_trashed_age(
+    memory_db_factory,
+):
+    """task-4025: the Library media Trash view shows "trashed <age>" per row.
+
+    ``list_media_trash`` already ORDERs BY ``trash_date`` but did not SELECT
+    it, so the Trash view would have had no timestamp to render. Pins the
+    seam extension end-to-end into the pure state builder the screen uses.
+    """
+    from tldw_chatbook.Library.library_media_state import (
+        build_library_media_trash_state,
+    )
+
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Trashed Doc",
+        content="Body text",
+        media_type="document",
+        keywords=[],
+    )
+    service = LocalMediaReadingService(db)
+    service.delete_media_item(media_id)
+
+    trash = service.list_media_trash(page=1, results_per_page=10)
+
+    item = next(entry for entry in trash["items"] if entry["id"] == media_id)
+    assert item["trash_date"]
+
+    state = build_library_media_trash_state(
+        trash["items"], total=trash["pagination"]["total_items"]
+    )
+    row = next(row for row in state.rows if row.media_id == str(media_id))
+    assert row.secondary.startswith("document · trashed ")
+
+
 def test_local_service_update_media_item_persists_library_edit_fields_without_version(
     memory_db_factory,
 ):
@@ -2610,6 +2645,56 @@ def test_reading_import_content_hash_match_does_not_resurrect_trashed_row(tmp_pa
     assert row["is_trash"] == 1, "content-hash match must not resurrect a trashed row"
     assert row["url"] == "https://example.com/a"
     # No second row was created for the mirror url either.
+    cursor = db.execute_query("SELECT COUNT(*) FROM Media")
+    assert cursor.fetchone()[0] == 1
+    db.close_connection()
+
+
+# ---------------------------------------------------------------------------
+# task-4026: ``save_reading_item`` is an explicit user action naming one
+# exact URL ("save this for me"), so re-saving something previously moved
+# to Trash is an explicit restore decision -- the ONE reading-service
+# caller that opts into ``restore_trashed=True`` (mirroring the Library
+# ingest writer, ``persist_parsed_media``). Without the opt-in the DB
+# layer now skips trashed matches even with ``overwrite=True`` (the
+# task-4026 contract), which would leave this action failing with
+# "did not produce a media record" and no remedy. Real file-backed
+# ``MediaDatabase`` per this programme's DB-layer testing requirement.
+# ---------------------------------------------------------------------------
+
+
+def test_save_reading_item_restores_trashed_match(tmp_path):
+    db_path = tmp_path / "save_reading_item.sqlite"
+    db = Database(db_path=str(db_path), client_id="save_reading_item_test")
+    service = LocalMediaReadingService(db)
+
+    url = "https://example.com/saved-then-trashed"
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Saved once",
+        media_type="article",
+        content="the first saved body",
+        keywords=["kept"],
+        url=url,
+    )
+    assert db.mark_as_trash(media_id) is True
+
+    # Content supplied -> no scraping. The user is explicitly re-saving
+    # the same URL with fresh content.
+    detail = service.save_reading_item(
+        url=url,
+        title="Saved again",
+        content="the freshly saved body",
+        status="saved",
+    )
+
+    assert int(detail["id"]) == media_id, (
+        "re-saving a trashed URL must restore the SAME row, not fail or fork"
+    )
+    row = db.get_media_by_id(media_id, include_trash=True)
+    assert row["is_trash"] == 0, "explicit re-save must restore the trashed row"
+    assert row["trash_date"] is None
+    assert row["content"] == "the freshly saved body"
+    assert detail.get("is_read_it_later") is True
     cursor = db.execute_query("SELECT COUNT(*) FROM Media")
     assert cursor.fetchone()[0] == 1
     db.close_connection()

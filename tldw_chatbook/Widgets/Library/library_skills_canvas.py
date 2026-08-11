@@ -36,9 +36,12 @@ from textual.css.query import NoMatches, QueryError
 from textual.widgets import Button, Input, Static, TextArea
 
 from tldw_chatbook.Library.library_shell_state import (
-    LIBRARY_CYCLE_MARKER,
-    library_cycle_label,
-    library_cycle_tooltip,
+    library_choice_label,
+    library_choice_tooltip,
+    library_toggle_label,
+)
+from tldw_chatbook.Widgets.Library.library_choice_strip import (
+    compose_library_choice_strip,
 )
 from tldw_chatbook.Library.library_skills_state import (
     SkillEditorState,
@@ -473,13 +476,16 @@ def skill_editor_warning_lines(
 def skill_user_invocable_label(value: bool) -> str:
     """Render the user-invocable toggle Button's label (task-418 copy).
 
+    task-14902: a kept one-press toggle -- the full yes/no option set is
+    on the label with the ``✓`` marker on the active value.
+
     Args:
         value: Whether a user can invoke the skill directly.
 
     Returns:
         The toggle Button's label text.
     """
-    return f"User can invoke: {'yes' if value else 'no'} {LIBRARY_CYCLE_MARKER}"
+    return library_toggle_label("User can invoke", ("yes", "no"), 0 if value else 1)
 
 
 def skill_disable_model_label(value: bool) -> str:
@@ -488,7 +494,8 @@ def skill_disable_model_label(value: bool) -> str:
     task-418: display polarity is inverted -- the stored field stays
     ``disable_model_invocation``, but the label answers the question the
     user actually has ("can the agent invoke this?") instead of the
-    double-negative "disable model invocation: no".
+    double-negative "disable model invocation: no". task-14902: a kept
+    one-press toggle with the full option set on the label.
 
     Args:
         value: The stored ``disable_model_invocation`` flag (``True`` means
@@ -497,7 +504,7 @@ def skill_disable_model_label(value: bool) -> str:
     Returns:
         The toggle Button's label text, phrased as "Agent can invoke".
     """
-    return f"Agent can invoke: {'no' if value else 'yes'} {LIBRARY_CYCLE_MARKER}"
+    return library_toggle_label("Agent can invoke", ("yes", "no"), 1 if value else 0)
 
 
 def skill_context_toggle_label(context: str) -> str:
@@ -512,8 +519,18 @@ def skill_context_toggle_label(context: str) -> str:
     Returns:
         The cycle Button's label text.
     """
-    hint = "this conversation" if context == "inline" else "sub-agent"
-    return f"Runs in: {context} ({hint}) {LIBRARY_CYCLE_MARKER}"
+    # task-14902: a kept one-press toggle -- both spec values on the label
+    # with the ✓ marker on the active one. The task-418 plain-language
+    # hint stays, but on the ACTIVE option only so the label survives
+    # 60-column compact widths.
+    hints = {"inline": "this conversation", "fork": "sub-agent"}
+    options = tuple(
+        f"{value} ({hints[value]})" if value == context else value
+        for value in ("inline", "fork")
+    )
+    return library_toggle_label(
+        "Runs in", options, 0 if context == "inline" else 1
+    )
 
 
 def next_skill_context(context: str) -> str:
@@ -633,11 +650,13 @@ class LibrarySkillsListCanvas(VerticalScroll):
         import_path: str = "",
         import_status: str = "",
         import_review_name: str = "",
+        sort_choices_visible: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.state = state
         self.sort_mode = sort_mode
+        self.sort_choices_visible = sort_choices_visible
         self.filter_value = filter_value
         self.mode = mode
         self.trust_posture = trust_posture
@@ -755,15 +774,18 @@ class LibrarySkillsListCanvas(VerticalScroll):
         # shape: every child is a fixed-width compact Button).
         toolbar = Horizontal(classes="ds-toolbar")
         toolbar.styles.height = "auto"
+        # task-14902: the sort choice strip replaces this toolbar row while
+        # open (the Notes Sort precedent).
+        toolbar.display = not self.sort_choices_visible
         with toolbar:
             yield Button(
-                library_cycle_label(
+                library_choice_label(
                     "sort", _SORT_LABELS.get(self.sort_mode, "Name")
                 ),
                 id="library-skills-sort",
                 classes="library-canvas-action",
                 compact=True,
-                tooltip=library_cycle_tooltip(
+                tooltip=library_choice_tooltip(
                     "the sort order", tuple(_SORT_LABELS.values())
                 ),
             )
@@ -772,6 +794,16 @@ class LibrarySkillsListCanvas(VerticalScroll):
                 id="library-skills-import",
                 classes="library-canvas-action",
                 compact=True,
+            )
+        if self.sort_choices_visible:
+            yield from compose_library_choice_strip(
+                strip_id="library-skills-sort-choices",
+                choice_class="library-skills-sort-choice",
+                options=tuple(
+                    (f"library-skills-sort-{mode}", mode, label)
+                    for mode, label in _SORT_LABELS.items()
+                ),
+                active_value=self.sort_mode,
             )
         if self.import_open:
             yield from self._compose_import_row()
@@ -993,27 +1025,33 @@ class LibrarySkillsListCanvas(VerticalScroll):
             placeholder="Allowed tools (comma-separated)",
             id="library-skill-allowed-tools",
         )
+        # task-14902: kept one-press toggles -- the labels now carry the
+        # full option set with the ✓ active marker, so the old
+        # option-enumerating tooltips (task-4023 AC#5's stopgap for a
+        # hidden option space) are redundant; the tooltips now say what a
+        # press does instead.
         yield Button(
             skill_user_invocable_label(editor_state.user_invocable),
             id="library-skill-user-invocable",
             classes="library-canvas-action",
             compact=True,
-            tooltip=library_cycle_tooltip("user invocation", ("yes", "no")),
+            tooltip="Press to switch user invocation.",
         )
         yield Button(
             skill_disable_model_label(editor_state.disable_model_invocation),
             id="library-skill-disable-model",
             classes="library-canvas-action",
             compact=True,
-            tooltip=library_cycle_tooltip("agent invocation", ("yes", "no")),
+            tooltip="Press to switch agent invocation.",
         )
         yield Button(
             skill_context_toggle_label(editor_state.context),
             id="library-skill-context",
             classes="library-canvas-action",
             compact=True,
-            tooltip=library_cycle_tooltip(
-                "the execution context", ("inline", "fork")
+            tooltip=(
+                "Press to switch the execution context: inline runs in "
+                "this conversation, fork runs in a sub-agent."
             ),
         )
         yield Static(

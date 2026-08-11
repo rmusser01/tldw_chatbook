@@ -624,10 +624,22 @@ def library_rag_query_status_children(state: LibraryRagPanelState) -> list[Widge
 
 
 def _mode_toggle_label(state: LibraryRagPanelState) -> str:
-    """Return the visible mode-cycle button label (AC#5: cycle glyph)."""
-    from ...Library.library_shell_state import library_cycle_label
+    """Return the visible mode-toggle button label.
 
-    return library_cycle_label("mode", state.query_state.mode_label)
+    task-14902: a KEPT one-press toggle (a genuine two-state mode flip
+    that resets retrieval state -- a choice strip would add a press to
+    the most common action for zero information). AC#1 is satisfied at
+    the label instead: both modes render with the ``✓`` marker on the
+    active one, so the full option space is on screen and one press IS a
+    direct pick of the only other mode.
+    """
+    from ...Library.library_shell_state import library_toggle_label
+
+    return library_toggle_label(
+        "mode",
+        ("Search", "RAG Answer"),
+        0 if state.query_state.mode == "search" else 1,
+    )
 
 
 def _other_mode_label(state: LibraryRagPanelState) -> str:

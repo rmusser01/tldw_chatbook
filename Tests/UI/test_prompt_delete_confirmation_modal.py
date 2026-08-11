@@ -121,6 +121,10 @@ async def test_single_prompt_copy_names_the_saved_prompt() -> None:
         assert "Release notes" in copy
         assert "saved Prompt" in copy
         assert "unsaved working copy" not in copy
+        # task-14901 (ADR-055): deleting a persisted artifact with no
+        # recovery surface must SAY so in the confirm copy -- same
+        # vocabulary as the note delete confirm's own copy.
+        assert "cannot be undone from Library" in copy
 
 
 @pytest.mark.asyncio
@@ -152,6 +156,9 @@ async def test_dirty_single_delete_warns_about_saved_artifact_and_unsaved_workin
         assert "saved Prompt" in copy
         assert "unsaved working copy" in copy
         assert "discarded" in copy
+        # task-14901 (ADR-055): the permanence sentence holds on the dirty
+        # variant too -- the saved artifact is still what's being destroyed.
+        assert "cannot be undone from Library" in copy
 
 
 @pytest.mark.asyncio
@@ -179,6 +186,9 @@ async def test_bulk_copy_counts_types_and_bounds_name_preview() -> None:
 
         assert "3 Prompts" in copy
         assert "2 Recipes" in copy
+        # task-14901 (ADR-055): bulk deletion of saved artifacts states
+        # permanence exactly like the single variant.
+        assert "cannot be undone from Library" in copy
         assert "One" in preview
         assert "Two" in preview
         assert "Three" in preview

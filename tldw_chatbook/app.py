@@ -276,6 +276,7 @@ from tldw_chatbook.Utils.Emoji_Handling import (
 from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
 from tldw_chatbook.Utils.db_status_manager import DBStatusManager
 from tldw_chatbook.Utils.persistent_diagnostics import persist_event
+from tldw_chatbook.Utils.text_selection_crash_guard import TextSelectionCrashGuard
 from tldw_chatbook.TTS import TTSProfileService
 from tldw_chatbook.TTS.adapter_bootstrap import build_default_tts_service
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
@@ -4526,7 +4527,13 @@ class LibraryIngestQueueMixin:
 
 # --- Main App ---
 class TldwCli(
-    LibraryIngestQueueMixin, App[None]
+    # TextSelectionCrashGuard sits before App so its on_event wrapper is the
+    # last line of defense against Textual 8.x's text-selection MouseDown
+    # crash on a mid-recompose widget (task-14903) -- see the mixin's module
+    # docstring for the signature it (and ONLY it) drops.
+    TextSelectionCrashGuard,
+    LibraryIngestQueueMixin,
+    App[None],
 ):  # Specify return type for run() if needed, None is common
     """A Textual app for interacting with LLMs."""
 

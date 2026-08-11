@@ -178,6 +178,9 @@ class LibraryExportFormState:
     empty_scope_line: str = ""
     overwrite_line: str = ""
     last_export_line: str = ""
+    # task-14902: True while the quality chooser's direct-pick strip
+    # renders below its (still-visible) opener button.
+    quality_choices_visible: bool = False
 
 
 def build_library_export_form_state(
@@ -193,6 +196,7 @@ def build_library_export_form_state(
     status_line: str = "",
     error_line: str = "",
     last_export_line: str = "",
+    quality_choices_visible: bool = False,
 ) -> LibraryExportFormState:
     """Build the export canvas's full display state.
 
@@ -253,6 +257,7 @@ def build_library_export_form_state(
         empty_scope_line=empty_scope_line,
         overwrite_line=overwrite_line,
         last_export_line=last_export_line,
+        quality_choices_visible=quality_choices_visible,
     )
 
 
@@ -332,31 +337,6 @@ def format_last_export_line(
     else:
         relative = f"{int(elapsed // _SECONDS_PER_DAY)}d ago"
     return f"Last export: {clean_path} · {relative}"
-
-
-def next_media_quality(current: str) -> str:
-    """Cycle the media-quality control to its next option, wrapping around.
-
-    Mirrors the media canvas's type-filter cycle button
-    (``handle_library_media_type_filter_pressed``) -- a plain ``Select``
-    widget did not render reliably in the deployed TUI (see that
-    handler's docstring), so every Library form control that picks among
-    a small fixed set of options uses this same cycle-button convention
-    instead, including this one.
-
-    Args:
-        current: The current quality value.
-
-    Returns:
-        The next value in ``MEDIA_QUALITY_OPTIONS``, wrapping to the first
-        after the last; ``MEDIA_QUALITY_OPTIONS[0]`` when ``current`` is
-        not a recognized option.
-    """
-    try:
-        index = MEDIA_QUALITY_OPTIONS.index(current)
-    except ValueError:
-        return MEDIA_QUALITY_OPTIONS[0]
-    return MEDIA_QUALITY_OPTIONS[(index + 1) % len(MEDIA_QUALITY_OPTIONS)]
 
 
 def normalize_export_destination(path: Path) -> Path:

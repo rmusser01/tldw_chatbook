@@ -624,12 +624,17 @@ async def test_compact_notes_editor_footer_context_actually_displays_at_60_cols(
 
 def test_cycle_controls_use_the_cycle_glyph_not_the_disclosure_glyph():
     """AC#5: '▸' meant three things (selected row, collapsed disclosure,
-    silent value-cycler). Cycle controls now carry their own '⇄' glyph via
-    one shared builder, and the option set is enumerated at the control."""
+    silent value-cycler). task-14902 evolved the vocabulary: chooser-openers
+    (press opens a direct-pick strip) are glyph-free ``name: value`` labels
+    via ``library_choice_label``; the surviving cyclers are genuine
+    two-option TOGGLES whose ``⇄`` sits between the fully-enumerated
+    options with the ``✓`` marker on the active one. Neither shape ever
+    uses '▸'."""
     from tldw_chatbook.Library.library_shell_state import (
         LIBRARY_CYCLE_MARKER,
-        library_cycle_label,
-        library_cycle_tooltip,
+        library_choice_label,
+        library_choice_tooltip,
+        library_toggle_label,
     )
     from tldw_chatbook.Widgets.Library.library_skills_canvas import (
         skill_context_toggle_label,
@@ -637,16 +642,22 @@ def test_cycle_controls_use_the_cycle_glyph_not_the_disclosure_glyph():
         skill_user_invocable_label,
     )
 
-    assert library_cycle_label("type", "All") == f"type: All {LIBRARY_CYCLE_MARKER}"
-    assert library_cycle_tooltip("media type", ("All", "video")) == (
-        "Cycles media type: All → video."
+    assert library_choice_label("type", "All") == "type: All"
+    assert library_choice_tooltip("media type", ("All", "video")) == (
+        "Press to pick media type: All · video."
+    )
+    assert library_toggle_label("mode", ("Search", "RAG Answer"), 0) == (
+        "mode: ✓ Search ⇄ RAG Answer"
     )
     for label in (
         skill_user_invocable_label(True),
         skill_disable_model_label(True),
         skill_context_toggle_label("inline"),
     ):
-        assert label.endswith(LIBRARY_CYCLE_MARKER), label
+        # Kept toggles: the glyph between the options, the full option
+        # set on the label, the active option ✓-marked.
+        assert LIBRARY_CYCLE_MARKER in label, label
+        assert "✓" in label, label
         assert "▸" not in label, label
 
 
