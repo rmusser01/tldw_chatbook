@@ -509,7 +509,7 @@ Call `extract_text_from_segments`, `extract_text_from_input`, `recursive_summari
 - [ ] **Step 2: Run RED**
 
 ```bash
-../../.venv/bin/python -B -m pytest -q Tests/LLM_Calls/test_summarization_diagnostic_privacy.py -k 'general_core or analyze or general_openai or anthropic' -vv
+../../.venv/bin/python -B -m pytest -q Tests/LLM_Calls/test_summarization_diagnostic_privacy.py -k 'general_core or analyze or general_openai or anthropic or (runtime_sentinel and general)' -vv
 ```
 
 Expected: category-specific canary failures and exactly 36 pending sites.
@@ -521,7 +521,7 @@ Apply the strict replacement patterns, update only the 36 ledger records, and pr
 - [ ] **Step 4: Run GREEN and format the changed files**
 
 ```bash
-../../.venv/bin/python -B -m pytest -q Tests/LLM_Calls/test_summarization_diagnostic_privacy.py -k 'general_core or analyze or general_openai or anthropic' -vv
+../../.venv/bin/python -B -m pytest -q Tests/LLM_Calls/test_summarization_diagnostic_privacy.py -k 'general_core or analyze or general_openai or anthropic or (runtime_sentinel and general)' -vv
 ../../.venv/bin/python -B -m pytest -q Tests/LLM_Calls/test_summarization_analyze.py
 ../../.venv/bin/python -m ruff format tldw_chatbook/LLM_Calls/Summarization_General_Lib.py Tests/LLM_Calls/test_summarization_diagnostic_privacy.py
 ```
