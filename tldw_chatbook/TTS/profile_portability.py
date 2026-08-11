@@ -5,12 +5,13 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Literal, TypedDict, cast
 from uuid import UUID
 
 from tldw_chatbook.TTS.profile_errors import ProfileValidationError
 from tldw_chatbook.TTS.profile_types import (
     PROFILE_PROVIDER_IDS,
+    JsonOptionsInput,
     TTSProfileDraft,
     canonical_json_options,
 )
@@ -37,6 +38,19 @@ _WIRE_V1_FIELDS = frozenset(
     }
 )
 _WIRE_V2_FIELDS = _WIRE_V1_FIELDS | frozenset({"reference"})
+
+
+class _WireSelection(TypedDict):
+    """Exact typed values extracted from an already bounded wire object."""
+
+    profile_id: str
+    name: str
+    provider_id: str
+    model_id: str
+    voice_id: str | None
+    response_format: str
+    speed: float
+    options: JsonOptionsInput
 
 
 class PortableProfileDecodeStatus(StrEnum):
@@ -178,27 +192,65 @@ def _reference_omitted_result() -> PortableProfileDecodeResult:
     )
 
 
+def _extract_wire_selection(payload: dict[str, object]) -> _WireSelection:
+    """Validate and type one exact wire selection without coercion."""
+
+    profile_id = payload["profile_id"]
+    name = payload["name"]
+    provider_id = payload["provider_id"]
+    model_id = payload["model_id"]
+    voice_id = payload["voice_id"]
+    response_format = payload["response_format"]
+    speed = payload["speed"]
+    options = payload["options"]
+    if (
+        type(profile_id) is not str
+        or type(name) is not str
+        or type(provider_id) is not str
+        or type(model_id) is not str
+        or (voice_id is not None and type(voice_id) is not str)
+        or type(response_format) is not str
+        or type(options) is not dict
+    ):
+        raise ValueError
+    if type(speed) is int:
+        normalized_speed = float(speed)
+    elif type(speed) is float:
+        normalized_speed = speed
+    else:
+        raise ValueError
+    _validate_json_shape(options, 1, set())
+    return {
+        "profile_id": profile_id,
+        "name": name,
+        "provider_id": provider_id,
+        "model_id": model_id,
+        "voice_id": voice_id,
+        "response_format": response_format,
+        "speed": normalized_speed,
+        "options": cast(JsonOptionsInput, options),
+    }
+
+
 def _decode_selection(
     payload: dict[str, object],
     *,
     skip_unsupported_provider: bool,
     require_canonical_profile_id: bool,
 ) -> PortableTTSProfile | PortableProfileDecodeResult:
-    profile_id_value = payload["profile_id"]
-    if type(profile_id_value) is not str:
-        raise ValueError
-    profile_id = UUID(profile_id_value)
-    if require_canonical_profile_id and str(profile_id) != profile_id_value:
+    selection = _extract_wire_selection(payload)
+    profile_id = UUID(selection["profile_id"])
+    if require_canonical_profile_id and str(profile_id) != selection["profile_id"]:
         raise ValueError
     try:
         draft = TTSProfileDraft(
-            display_name=payload["name"],
-            provider_id=payload["provider_id"],
-            model_id=payload["model_id"],
-            voice_id=payload["voice_id"],
-            response_format=payload["response_format"],
-            speed=payload["speed"],
-            options=payload["options"],
+            display_name=selection["name"],
+            provider_id=selection["provider_id"],
+            model_id=selection["model_id"],
+            voice_id=selection["voice_id"],
+            response_format=selection["response_format"],
+            speed=selection["speed"],
+            options=selection["options"],
         )
     except ProfileValidationError as error:
         if skip_unsupported_provider and error.code == "provider_id":
@@ -282,11 +334,11 @@ def decode_portable_profile(payload: object) -> PortableProfileDecodeResult:
                 skip_unsupported_provider=True,
                 require_canonical_profile_id=False,
             )
-            if type(selection) is PortableProfileDecodeResult:
+            if isinstance(selection, PortableProfileDecodeResult):
                 return selection
             return PortableProfileDecodeResult(
                 status=PortableProfileDecodeStatus.VALID,
-                profile=selection,
+                profile=cast(PortableTTSProfile, selection),
                 warning_code=None,
             )
         if frozenset(payload) != _WIRE_V2_FIELDS:
@@ -298,7 +350,7 @@ def decode_portable_profile(payload: object) -> PortableProfileDecodeResult:
             skip_unsupported_provider=False,
             require_canonical_profile_id=True,
         )
-        if type(selection) is PortableProfileDecodeResult:
+        if isinstance(selection, PortableProfileDecodeResult):
             raise ValueError
         return _reference_omitted_result()
     except Exception:
