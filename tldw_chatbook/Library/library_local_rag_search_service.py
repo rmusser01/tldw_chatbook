@@ -118,6 +118,18 @@ _SEMANTICALLY_COVERABLE_SOURCE_TYPES = frozenset(_SEMANTIC_SOURCE_TYPE_MAP.value
 # is why a prompts-only selection is the one case that still cannot use
 # hybrid.
 _FTS_SERVABLE_SOURCE_TYPES = frozenset({"media", "notes", "conversations"})
+# Library scope identifier -> the ENGINE's keyword-leg vocabulary
+# (`rag_service.SOURCE_TYPE_*`, singular). The Library speaks plurals
+# (`notes`, `conversations`); the engine's FTS sub-legs are selected -- and
+# its rows stamped -- with the singular ingestion spelling, and a plural
+# handed to `keyword_source_types` is simply dropped as unknown, which would
+# leave the keyword leg empty rather than scoped. Domain: exactly
+# `_FTS_SERVABLE_SOURCE_TYPES` (`prompts` has no engine-side seam at all).
+_ENGINE_KEYWORD_SOURCE_TYPES = {
+    "media": "media",
+    "notes": "note",
+    "conversations": "conversation",
+}
 
 
 def _validated_query(query: str) -> str:
@@ -686,6 +698,16 @@ class LibraryLocalRagSearchService:
         media-off + notes-on now runs hybrid instead of being diverted to
         semantic in exactly the case the FTS leg was extended for.
 
+        The selection is also pushed INTO the engine's keyword leg
+        (TASK-14751). Before that, the leg split one fixed `top_k` FTS budget
+        three ways regardless of what the user had selected, and the rows for
+        unselected types were then discarded by the post-filter below -- a
+        media-only search over an empty vector index showed roughly a third
+        of the media rows it should. Pushing the (translated, singular)
+        selection down spends the whole budget on types that survive; the
+        post-filter stays, because it also drops semantic-leg rows the
+        keyword selection has no say over.
+
         Zero-results honesty (spec Workstream A item 5): "Index empty" is a
         claim about the whole runtime, so it may only be made when the
         engine returned nothing at all. When the FTS leg DID return rows
@@ -705,11 +727,19 @@ class LibraryLocalRagSearchService:
             A mapping with `results`/`runtime_backend` (`rag-hybrid`) plus
             diagnostics, or the "Index empty" recovery outcome.
         """
+        # `_search_rag` has already established this is non-empty, so the
+        # keyword leg is never asked to serve nothing.
+        keyword_source_types = {
+            _ENGINE_KEYWORD_SOURCE_TYPES[source_type]
+            for source_type in source_types
+            if source_type in _ENGINE_KEYWORD_SOURCE_TYPES
+        }
         raw_results = await rag_service.search(
             query=query,
             top_k=top_k,
             search_type="hybrid",
             include_citations=bool(kwargs.get("include_citations", True)),
+            keyword_source_types=keyword_source_types,
         )
         rows = _filtered_semantic_rows(raw_results, source_types)
         if not raw_results and await self._semantic_index_is_empty(rag_service):

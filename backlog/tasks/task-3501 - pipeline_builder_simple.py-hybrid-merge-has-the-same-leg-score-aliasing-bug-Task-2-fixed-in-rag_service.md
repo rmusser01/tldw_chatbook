@@ -25,3 +25,7 @@ TASK-3170's Task 2 fixed a bug in RAG_Search/simplified/rag_service.py's hybrid 
 - [ ] #2 A regression test exercises the real hybrid merge and asserts the leg scores in hybrid_fusion metadata do not silently equal the post-fusion score
 - [ ] #3 No behavior change for non-hybrid search modes on the legacy pipeline path
 <!-- AC:END -->
+
+## Note (2026-08-10, TASK-4110)
+
+The shipped hybrid fusion default `rrf_k` is now **5** (measured for chatbook's ~20-row candidate window; `RAG_Search/simplified/config.py`'s `DEFAULT_HYBRID_RRF_K`). This merge follows it automatically: TASK-4110's Task 3 gave `fusion.resolve_rrf_k` an active-profile fallback, so `_rrf_merge_parallel_results`'s `resolve_rrf_k(merge_config.get("rrf_k"))` picks up the profile value whenever the step config names none. **Both live fusion paths therefore moved together**, even though the measurement was made only on the Library path (`RAGService._hybrid_search`). That coupling is deliberate — two live fusion call sites must not disagree on one measured number — and is pinned by `Tests/RAG/test_fusion.py::TestPipelineRrfMerge::test_merge_with_no_step_rrf_k_inherits_the_shipped_profile_default`. When this task lands, unify or consciously diverge the two paths rather than letting the coupling stay implicit.

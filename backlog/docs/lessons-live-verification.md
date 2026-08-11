@@ -627,3 +627,34 @@ normalization pass can write itself into unparseable TOML, with no visible
 failure and a silent fallback to the default profile, is a data-integrity and
 privacy-boundary risk for real users, not just scratch-profile verification —
 filed as task-13157.
+
+## Your own library may not contain the precondition the defect needs — check it before the live check counts (TASK-4110, 2026-08-10)
+
+**Incident.** TASK-4110's failure mode is structural: a keyword-only document
+cannot enter hybrid's fused top-k *when the vector leg returns k or more
+distinct documents*. The closing task's live check was to run a keyword-only
+query against a scratch profile holding a copy of the real Library DBs and
+vector index, per the usual recipe. One `sqlite3` count over the copied
+`chromadb/chroma.sqlite3` first, purely to pick a target, showed what the
+recipe would have hidden: **453 embeddings but only four distinct documents**
+(450 of them chunks of one media item). The vector leg on that library can
+never fill a top-5, so a keyword-only row was going to appear no matter what
+the fusion weighting was — the very sighting the task's own description warns
+is not evidence. The check would have rendered a green screenshot of the
+intended behaviour while proving nothing about the fix.
+
+**What to do.** Before running a live check, write down the *precondition* the
+defect requires and query the live environment for it — row counts, distinct
+ids, index population — rather than assuming a copy of real data is
+representative. Real personal data is usually *smaller and lumpier* than the
+test fixtures, so the shape a bug needs is often exactly what it lacks. If the
+precondition is absent, build it through the app's own paths (here: 60 real
+documentation files ingested via `index_entries`, the seam both production
+indexing routes converge on, giving a 64-document library) and say in the
+write-up that you did, and why. Then run **both arms in the same UI on the same
+data** — ship value, then the previous value, one constant apart. That pair is
+what turns "the row I hoped for appeared" into evidence: here the shipped value
+put the keyword-only document in the last visible slot and the reverted value
+put an ordinary vector row there, with the four rows above it byte-identical in
+both runs — which also proves the change did not disturb the ranking it was not
+supposed to touch.

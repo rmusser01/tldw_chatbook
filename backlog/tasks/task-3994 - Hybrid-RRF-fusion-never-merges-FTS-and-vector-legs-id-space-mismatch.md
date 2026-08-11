@@ -23,7 +23,7 @@ Found by the P1 eval harness (TASK-3894). RRF fusion matches on SearchResult.id 
 <!-- AC:BEGIN -->
 - [x] #1 RRF fusion normalizes ids to a common granularity before matching legs, so a document found by both the FTS leg and the vector leg produces one fused row reflecting both contributions.
 - [x] #2a MERGE HALF - MET. AMENDED IN PLAN TASK 6: as originally written, AC #2 bundled two claims under one checkbox, so a single tick could not tell the truth about both; it is split here into #2a and #2b so the board shows what actually landed. The first claim - hybrid results provably differ from pure semantic on the P1 corpus - is MET: 22 of 44 golden queries returned a different id-list immediately after the fix, was 0 of 44 (hybrid had been byte-identical to semantic).
-- [ ] #2b RESCUE HALF - NOT MET BY THIS FIX, delegated to TASK-4110. The second claim - the FTS leg surfacing a relevant document the vector leg ranks outside the top-k - is not delivered here, and Task 6 established why by building the missing evidence rather than assuming it. The corpus had no vector-blind document (semantic recall@10 was 1.000 everywhere), so one was authored: note-saltmarsh-hide / kw-plant-maintenance-record, now committed. Measured against it: plain returns it at rank 1, semantic does not return it at all (the fixture works), the engine's FTS leg returns it at rank 1 - and hybrid still does not return it, because fusion's alpha blend scores an FTS-only row at (1-alpha)/(rrf_k+1) = 0.00492 and the vector leg fills every slot above it. That is a SECOND defect, named in this task's own description but not addressed by the id-space fix, and it is filed with its before-number as TASK-4110. This box stays UNTICKED on purpose: TASK-4110 closes it, and the harness will show it as kw-plant-maintenance-record's hybrid cell going from miss to hit. Leaving it ticked would have let a bundled checkbox certify work no commit on this branch performed.
+- [x] #2b RESCUE HALF - CLOSED 2026-08-10 BY TASK-4110's MEASURED WEIGHTING (see the closure note at the end of this task's Implementation Notes for the numbers). Original text, unedited, follows. NOT MET BY THIS FIX, delegated to TASK-4110. The second claim - the FTS leg surfacing a relevant document the vector leg ranks outside the top-k - is not delivered here, and Task 6 established why by building the missing evidence rather than assuming it. The corpus had no vector-blind document (semantic recall@10 was 1.000 everywhere), so one was authored: note-saltmarsh-hide / kw-plant-maintenance-record, now committed. Measured against it: plain returns it at rank 1, semantic does not return it at all (the fixture works), the engine's FTS leg returns it at rank 1 - and hybrid still does not return it, because fusion's alpha blend scores an FTS-only row at (1-alpha)/(rrf_k+1) = 0.00492 and the vector leg fills every slot above it. That is a SECOND defect, named in this task's own description but not addressed by the id-space fix, and it is filed with its before-number as TASK-4110. This box stays UNTICKED on purpose: TASK-4110 closes it, and the harness will show it as kw-plant-maintenance-record's hybrid cell going from miss to hit. Leaving it ticked would have let a bundled checkbox certify work no commit on this branch performed.
 - [x] #3 The P1 eval harness baselines (Tests/RAG_Eval/baselines/hybrid.json) are re-stamped in the same PR as this fix, with the before and after numbers included in the PR description. (Completes in plan Task 6, same PR - deliberately not in this commit.)
 - [x] #4 A regression test pins that a document found by both legs receives a fused score reflecting both contributions, not only the vector one.
 <!-- AC:END -->
@@ -126,4 +126,33 @@ satisfied by the split being honest about scope - every criterion this branch's
 commits actually deliver is ticked, and the one they do not is visibly open
 against a filed task with a measured before-number - rather than by a box that
 certifies work no commit performed.
+
+**AC #2b CLOSED (2026-08-10, branch `fix/rag-fusion-weighting`, TASK-4110).**
+The criterion, quoted: *"the FTS leg surfacing a relevant document the vector
+leg ranks outside the top-k"*. It is now met, by a measured change to the
+fusion weighting rather than to any wiring:
+
+- **The fixture that was authored to falsify it now passes.**
+  `kw-plant-maintenance-record` -> `note-saltmarsh-hide` in the eval harness:
+  plain rank 1, semantic **absent** (still - pinned by
+  `test_the_vector_blind_fixture_is_still_vector_blind`, so the corpus can
+  still tell a rescue from ordinary vector coverage), engine FTS leg rank 1,
+  hybrid **rank 8** - and rescued `fts-only` (`fts_rank=1`,
+  `vector_rank=None`), i.e. by the blend, not by a merge with a vector twin
+  and not by widening the candidate pool.
+- **The structural claim, not just the one query.** The shipped `rrf_k = 5`
+  makes an FTS-only rank-1 row strictly outrank vector-only rows from
+  **rank 10** ((1-0.7)/(5+1) = 0.0500 > 0.7/(5+10) = 0.04667), which falls
+  inside the ~20-row window `_hybrid_search` actually fuses. At the old
+  `rrf_k = 60` the same boundary was vector rank ~83 - outside any window
+  fusion ever sees, which is exactly why this half could not be delivered by
+  the id-space fix.
+- **Harness numbers, re-stamped in the same PR:** hybrid keyword recall
+  0.938 -> 1.000, keyword NDCG 0.938 -> 0.957, overall recall 0.974 -> 1.000;
+  no gated cell fell, and `semantic`/`plain` moved +0.000 on all 40 of their
+  gated metrics.
+- **Seen in the product**, on a real 64-document library through the running
+  TUI: a document matched only by literal words took the last slot of a full
+  Hybrid Basic result list, banded `keyword match`; with the constant
+  reverted that slot held a vector row and the document was absent.
 <!-- SECTION:NOTES:END -->

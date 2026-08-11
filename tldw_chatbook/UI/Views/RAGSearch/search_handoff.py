@@ -213,8 +213,9 @@ def _library_rag_score(result: Any) -> float | None:
     occupy it (RAG-port P0/Task 6):
 
     * a `hybrid_fusion` row contributes its preserved VECTOR LEG, never the
-      fused RRF number -- which maxes out near 0.016 at the shipped
-      `rrf_k=60` and would read as a near-zero similarity;
+      fused RRF number -- a rank blend maxing out at `1/(rrf_k + 1)`
+      (~0.17 at the shipped `rrf_k=5`, ~0.016 at the previous 60), which
+      would read as a weak-to-near-zero similarity it never was;
     * an FTS-leg-only hybrid row and a reranked row contribute nothing --
       no similarity exists, and a reranker score that happens to land
       inside [0, 1] would otherwise pass the unit-interval check silently.
@@ -436,8 +437,8 @@ def build_library_rag_evidence_bundle(
             "citations": _library_rag_citation_labels(result),
             # (RAG-port P0/Task 6) What `score` below is -- and, when it is
             # absent, why. A consumer computing weakness/coverage copy over
-            # these references must filter on this: a fused 0.016 or a
-            # reranker logit is not a weak similarity.
+            # these references must filter on this: a fused RRF rank blend
+            # or a reranker logit is not a weak similarity.
             SCORE_KIND_METADATA_KEY: score_kind,
             "runtime_backend": runtime_backend,
             "source_authority": source_authority,

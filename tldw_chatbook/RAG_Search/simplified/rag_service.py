@@ -17,6 +17,7 @@ from typing import (
     Any,
     Collection,
     Dict,
+    FrozenSet,
     Hashable,
     List,
     Literal,
@@ -48,11 +49,12 @@ from tldw_chatbook.Metrics.metrics_logger import (
 from .embeddings_wrapper import EmbeddingsServiceWrapper
 from .vector_store import create_vector_store, SearchResult, SearchResultWithCitations
 from .citations import Citation, CitationType, merge_citations
-from .config import RAGConfig
+from .config import RAGConfig, DEFAULT_HYBRID_POOL_MULTIPLIER
 from .collection_fingerprint import fingerprinted_collection_name, collection_provenance
 from ..fusion import (
     reciprocal_rank_fusion,
     resolve_hybrid_alpha,
+    resolve_rrf_k,
     interleave_rankings,
     DEFAULT_RRF_K,
 )
@@ -120,6 +122,123 @@ DEFAULT_BATCH_SIZE = _rag_service_config.get(
 SOURCE_TYPE_MEDIA = "media"
 SOURCE_TYPE_NOTE = "note"
 SOURCE_TYPE_CONVERSATION = "conversation"
+
+# Every source type the keyword (FTS5) leg has a sub-leg for, and the two of
+# those that live in the ChaChaNotes database. A caller's
+# ``keyword_source_types`` selection is expressed in THIS vocabulary (the
+# engine's singular spelling), never in a UI's plural scope identifiers.
+KEYWORD_LEG_SOURCE_TYPES = frozenset(
+    {SOURCE_TYPE_MEDIA, SOURCE_TYPE_NOTE, SOURCE_TYPE_CONVERSATION}
+)
+CHACHA_KEYWORD_SOURCE_TYPES = frozenset({SOURCE_TYPE_NOTE, SOURCE_TYPE_CONVERSATION})
+
+
+def _resolve_keyword_source_types(
+    selection: Optional[Collection[str]],
+) -> FrozenSet[str]:
+    """Resolve a caller's keyword-leg source-type selection.
+
+    TASK-14751. TASK-3996 made the keyword leg three sub-legs sharing one
+    fixed ``top_k`` budget, round-robined rank-fairly. Callers that only
+    want some of those types (the Library post-filters the fused rows by the
+    user's selected scope) were spending up to two thirds of the budget on
+    rows they then discarded; a media-only hybrid search over an empty
+    vector index showed roughly a third of the media rows the pre-TASK-3996
+    leg returned. Naming the types up front lets the leg give its whole
+    budget to the sub-legs whose rows will actually survive.
+
+    Args:
+        selection: Source types in the engine's vocabulary, or ``None`` for
+            "every sub-leg" -- the behavior of every caller that predates
+            this parameter.
+
+    Returns:
+        The selected subset of ``KEYWORD_LEG_SOURCE_TYPES``. Unrecognized
+        values are dropped with one debug log rather than raising: a
+        selection is a retrieval hint, and failing open to fewer sub-legs
+        can never be worse than failing the search. An empty result means
+        "run no sub-legs" -- which is a real request, not a mistake, and is
+        why ``None`` and ``set()`` are deliberately different.
+    """
+    if selection is None:
+        return KEYWORD_LEG_SOURCE_TYPES
+    requested = frozenset(str(source_type) for source_type in selection)
+    unknown = requested - KEYWORD_LEG_SOURCE_TYPES
+    if unknown:
+        logger.debug(
+            "Ignoring unknown keyword-leg source type(s) {}; the leg serves {}",
+            sorted(unknown),
+            sorted(KEYWORD_LEG_SOURCE_TYPES),
+        )
+    return requested & KEYWORD_LEG_SOURCE_TYPES
+
+
+async def _no_keyword_rows() -> List[Any]:
+    """A skipped sub-leg's contribution: nothing, and no query to get it.
+
+    Used so ``_keyword_search`` can keep gathering a fixed pair of awaitables
+    while an unselected sub-leg never touches a database.
+    """
+    return []
+
+
+# Sanity ceiling for _resolve_hybrid_pool_multiplier (TASK-4110 review,
+# minor a). Fusion still narrows back to top_k regardless of how wide the
+# legs over-fetch, so a multiplier this large protects nothing further and
+# only multiplies retrieval cost -- an absurd config value (typo, a stray
+# extra zero) is capped rather than honored outright.
+MAX_HYBRID_POOL_MULTIPLIER = 100
+
+
+def _resolve_hybrid_pool_multiplier(value: Any) -> int:
+    """Resolve ``config.search.hybrid_pool_multiplier`` for ``_hybrid_search``.
+
+    Use-time validation, matching ``resolve_hybrid_alpha``/``resolve_rrf_k``'s
+    pattern: an invalid (non-numeric) config value falls back to
+    ``DEFAULT_HYBRID_POOL_MULTIPLIER`` -- this field's OWN default (2), not
+    the separate module-level ``SEARCH_RESULT_MULTIPLIER`` constant. The two
+    happened to both be 2 but are different knobs (``SEARCH_RESULT_
+    MULTIPLIER`` governs ``_semantic_search``'s own internal over-fetch on
+    every search path, untouched by this field); falling back to the wrong
+    one would silently hand a user's tuned ``search_result_multiplier`` back
+    out of an invalid ``hybrid_pool_multiplier`` (TASK-4110 review minor b --
+    see ``DEFAULT_HYBRID_POOL_MULTIPLIER``'s docstring in config.py for the
+    release-note disclosure). Any value below 1 is floored to 1 -- each
+    hybrid leg must fetch at least ``top_k`` candidates for fusion to have
+    anything to work with -- and any value above
+    ``MAX_HYBRID_POOL_MULTIPLIER`` is capped there. Never raises: a
+    misconfigured pipeline must not abort search at merge time.
+
+    Args:
+        value: Caller/config-supplied multiplier, if any.
+
+    Returns:
+        An int in ``[1, MAX_HYBRID_POOL_MULTIPLIER]``.
+    """
+    try:
+        multiplier = int(value)
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError: `int()` on an infinite float raises OverflowError
+        # rather than ValueError -- TOML accepts a literal `inf`/`-inf`, so
+        # `hybrid_pool_multiplier = inf` reaches here straight from a
+        # hand-edited config (Qodo PR-1487, same defect as
+        # ``fusion.resolve_rrf_k``). Must fall back like every other
+        # invalid value, not raise before either hybrid leg launches.
+        logger.warning(
+            f"Invalid hybrid_pool_multiplier {value!r}; falling back to "
+            f"{DEFAULT_HYBRID_POOL_MULTIPLIER}"
+        )
+        return DEFAULT_HYBRID_POOL_MULTIPLIER
+    if multiplier < 1:
+        logger.warning(f"hybrid_pool_multiplier {multiplier} < 1; flooring to 1")
+        return 1
+    if multiplier > MAX_HYBRID_POOL_MULTIPLIER:
+        logger.warning(
+            f"hybrid_pool_multiplier {multiplier} > {MAX_HYBRID_POOL_MULTIPLIER}; "
+            f"capping to {MAX_HYBRID_POOL_MULTIPLIER}"
+        )
+        return MAX_HYBRID_POOL_MULTIPLIER
+    return multiplier
 
 
 def _fusion_doc_key(result: Any) -> Hashable:
@@ -640,6 +759,7 @@ class RAGService:
         score_threshold: Optional[float] = None,
         *,
         metadata_allowlist: Optional[Mapping[str, Collection[str]]] = None,
+        keyword_source_types: Optional[Collection[str]] = None,
     ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
         """
         Search with optional citations.
@@ -660,17 +780,34 @@ class RAGService:
                 a non-empty allowlist with ``search_type="hybrid"`` or
                 ``search_type="keyword"`` raises ``ValueError`` rather than
                 silently ignoring the scoping request.
+            keyword_source_types: Source types the keyword (FTS5) leg should
+                budget for, in the engine's vocabulary
+                (``media``/``note``/``conversation``). ``None`` -- the
+                default, and every pre-TASK-14751 caller -- serves all three.
+                The mirror image of ``metadata_allowlist``: it scopes the
+                KEYWORD leg only, so passing it with
+                ``search_type="semantic"`` raises ``ValueError`` rather than
+                silently ignoring the scoping request. It is part of the
+                cache key, so two selections of the same query never share
+                an entry.
 
         Returns:
             List of search results (with or without citations)
 
         Raises:
             ValueError: If ``metadata_allowlist`` is provided with a
-                ``search_type`` other than ``"semantic"``.
+                ``search_type`` other than ``"semantic"``, or if
+                ``keyword_source_types`` is provided with
+                ``search_type="semantic"``.
         """
         if metadata_allowlist and search_type != "semantic":
             raise ValueError(
                 "metadata_allowlist is only supported for search_type='semantic'"
+            )
+        if keyword_source_types is not None and search_type == "semantic":
+            raise ValueError(
+                "keyword_source_types is not supported for search_type='semantic' "
+                "(the semantic leg has no keyword sub-legs to scope)"
             )
 
         # Use defaults from config if not specified
@@ -694,9 +831,37 @@ class RAGService:
         log_histogram("rag_search_query_length", len(query))
         self._search_type_counts[search_type] += 1
 
+        # The RESOLVED fusion parameters a HYBRID search will actually use,
+        # so the cache key below reflects them (TASK-4110 review, important
+        # 1). Without this, two hybrid searches identical except for
+        # `rrf_k` (or `hybrid_alpha`, or `hybrid_pool_multiplier`) shared
+        # one cache entry -- the SECOND request was silently served the
+        # FIRST's stale results forever, which would have made Task 4's
+        # per-k strategy sweep report every value as "no effect" on a
+        # single cached service. Resolved (not raw config) values, so two
+        # configs that happen to resolve to the same effective number
+        # correctly SHARE an entry rather than needlessly splitting one.
+        # `None` for semantic/keyword: those legs never depend on these
+        # three, so their cache key stays exactly as it was.
+        hybrid_fusion_key: Optional[Tuple[float, int, int]] = None
+        if search_type == "hybrid":
+            hybrid_fusion_key = (
+                resolve_hybrid_alpha(self.config.search.hybrid_alpha),
+                resolve_rrf_k(self.config.search.rrf_k),
+                _resolve_hybrid_pool_multiplier(
+                    self.config.search.hybrid_pool_multiplier
+                ),
+            )
+
         # Check cache first
         cached_result = await self.cache.get_async(
-            query, search_type, top_k, filter_metadata, metadata_allowlist
+            query,
+            search_type,
+            top_k,
+            filter_metadata,
+            metadata_allowlist,
+            keyword_source_types=keyword_source_types,
+            hybrid_fusion=hybrid_fusion_key,
         )
         if cached_result is not None:
             results, context = cached_result
@@ -725,11 +890,20 @@ class RAGService:
                 )
             elif search_type == "hybrid":
                 results = await self._hybrid_search(
-                    query, top_k, filter_metadata, include_citations, score_threshold
+                    query,
+                    top_k,
+                    filter_metadata,
+                    include_citations,
+                    score_threshold,
+                    keyword_source_types=keyword_source_types,
                 )
             elif search_type == "keyword":
                 results = await self._keyword_search(
-                    query, top_k, filter_metadata, include_citations
+                    query,
+                    top_k,
+                    filter_metadata,
+                    include_citations,
+                    keyword_source_types=keyword_source_types,
                 )
             else:
                 raise ValueError(f"Unknown search type: {search_type}")
@@ -780,6 +954,8 @@ class RAGService:
                 context,
                 filter_metadata,
                 metadata_allowlist,
+                keyword_source_types=keyword_source_types,
+                hybrid_fusion=hybrid_fusion_key,
             )
 
             return results
@@ -868,6 +1044,8 @@ class RAGService:
         top_k: int,
         filter_metadata: Optional[Dict[str, Any]] = None,
         include_citations: bool = True,
+        *,
+        keyword_source_types: Optional[Collection[str]] = None,
     ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
         """
         Perform keyword (FTS5) search across media, notes and conversations.
@@ -893,7 +1071,43 @@ class RAGService:
         robin by rank position) rather than concatenated: FTS5 scores from
         different tables are not comparable, and concatenation would let one
         well-stocked source consume every ``top_k`` slot.
+
+        TASK-14751 narrows *which* sub-legs run without touching that
+        merge. ``keyword_source_types`` names the types the caller will
+        actually keep (``None`` = all three, i.e. unchanged for every caller
+        that predates it); the unnamed sub-legs are never queried, so the
+        whole ``top_k`` budget goes to the ones that were asked for. A
+        single-type selection therefore gets that sub-leg's full natural
+        best-first order -- the pre-TASK-3996 behavior for media -- and a
+        multi-type selection keeps the round robin among exactly the types
+        selected.
+
+        Args:
+            query: Raw user query (escaped for FTS5 downstream).
+            top_k: Maximum rows the merged leg returns.
+            filter_metadata: Optional metadata equality filters.
+            include_citations: Whether to build citation-carrying rows.
+            keyword_source_types: Source types to serve, in the engine's
+                vocabulary (``media``/``note``/``conversation``). ``None``
+                serves all three; an empty collection serves none and
+                returns ``[]`` without a database lookup; unrecognized
+                values are dropped (see ``_resolve_keyword_source_types``).
+
+        Returns:
+            The merged leg, best first, capped at ``top_k``.
         """
+        selected = _resolve_keyword_source_types(keyword_source_types)
+        if not selected:
+            # An explicitly empty selection is "no keyword leg" -- an
+            # answer, not a failure. Hybrid degrades to its semantic leg
+            # through the same disclosed path an empty FTS result already
+            # takes.
+            logger.debug(
+                "Keyword search asked for no source types; returning no "
+                "results without a database lookup."
+            )
+            return []
+
         # TASK-3995: a query with no FTS5-searchable tokens (empty,
         # whitespace-only, or all punctuation) escapes to "" and can only
         # ever match nothing. Short-circuit before resolving any DB
@@ -905,13 +1119,22 @@ class RAGService:
             )
             return []
 
+        chacha_types = selected & CHACHA_KEYWORD_SOURCE_TYPES
         media_ranking, chacha_rankings = await asyncio.gather(
             self._media_keyword_subleg(
                 query, top_k, filter_metadata, include_citations
-            ),
+            )
+            if SOURCE_TYPE_MEDIA in selected
+            else _no_keyword_rows(),
             self._chacha_keyword_sublegs(
-                query, top_k, filter_metadata, include_citations
-            ),
+                query,
+                top_k,
+                filter_metadata,
+                include_citations,
+                source_types=chacha_types,
+            )
+            if chacha_types
+            else _no_keyword_rows(),
         )
 
         rankings = [
@@ -1061,6 +1284,8 @@ class RAGService:
         top_k: int,
         filter_metadata: Optional[Dict[str, Any]] = None,
         include_citations: bool = True,
+        *,
+        source_types: Optional[Collection[str]] = None,
     ) -> List[Union[List[SearchResult], List[SearchResultWithCitations]]]:
         """The notes and conversation sub-legs, over a read-only chacha DB.
 
@@ -1069,6 +1294,10 @@ class RAGService:
             top_k: Maximum rows each sub-leg contributes.
             filter_metadata: Optional metadata equality filters.
             include_citations: Whether to build citation-carrying rows.
+            source_types: Which of ``note``/``conversation`` to run
+                (TASK-14751). ``None`` runs both. An unselected sub-query is
+                never issued, and when neither is selected the database is
+                not even opened.
 
         Returns:
             One ranking per non-empty sub-leg (notes, then conversations),
@@ -1077,6 +1306,13 @@ class RAGService:
             rankings and one logged warning; it never raises and never
             affects the media sub-leg.
         """
+        selected = (
+            _resolve_keyword_source_types(source_types)
+            & CHACHA_KEYWORD_SOURCE_TYPES
+        )
+        if not selected:
+            return []
+
         # Nothing below may raise: `_hybrid_search` gathers this leg with the
         # semantic one without `return_exceptions`, so an escaping exception
         # would fail the whole search rather than degrade one sub-leg.
@@ -1092,6 +1328,7 @@ class RAGService:
                 db_path,
                 query,
                 top_k * SEARCH_RESULT_MULTIPLIER,  # Get extra for filtering
+                selected,
             )
 
             rankings: List[Any] = []
@@ -1233,14 +1470,21 @@ class RAGService:
         return conn
 
     def _chacha_fts_rows(
-        self, db_path: Path, query: str, limit: int
+        self,
+        db_path: Path,
+        query: str,
+        limit: int,
+        source_types: Optional[Collection[str]] = None,
     ) -> Dict[str, List[Dict[str, Any]]]:
-        """Run both ChaChaNotes FTS sub-queries on one read-only connection.
+        """Run the selected ChaChaNotes FTS sub-queries on one connection.
 
         Args:
             db_path: Validated path to the ChaChaNotes database.
             query: Raw user query.
             limit: Maximum rows per sub-query.
+            source_types: Which of ``note``/``conversation`` to query
+                (TASK-14751); ``None`` queries both. An unselected sub-query
+                is never issued and its key stays empty.
 
         Returns:
             ``{"note": [...], "conversation": [...]}`` -- an unopenable
@@ -1251,6 +1495,13 @@ class RAGService:
             SOURCE_TYPE_NOTE: [],
             SOURCE_TYPE_CONVERSATION: [],
         }
+
+        selected = (
+            _resolve_keyword_source_types(source_types)
+            & CHACHA_KEYWORD_SOURCE_TYPES
+        )
+        if not selected:
+            return rows
 
         escaped_query = self._escape_fts5_query(query)
         if not escaped_query:
@@ -1275,12 +1526,14 @@ class RAGService:
             return rows
 
         with closing(conn):
-            rows[SOURCE_TYPE_NOTE] = self._chacha_notes_fts(
-                conn, escaped_query, limit
-            )
-            rows[SOURCE_TYPE_CONVERSATION] = self._chacha_conversations_fts(
-                conn, escaped_query, limit
-            )
+            if SOURCE_TYPE_NOTE in selected:
+                rows[SOURCE_TYPE_NOTE] = self._chacha_notes_fts(
+                    conn, escaped_query, limit
+                )
+            if SOURCE_TYPE_CONVERSATION in selected:
+                rows[SOURCE_TYPE_CONVERSATION] = self._chacha_conversations_fts(
+                    conn, escaped_query, limit
+                )
         return rows
 
     @staticmethod
@@ -1455,26 +1708,50 @@ class RAGService:
         filter_metadata: Optional[Dict[str, Any]] = None,
         include_citations: bool = True,
         score_threshold: float = 0.0,
+        *,
+        keyword_source_types: Optional[Collection[str]] = None,
     ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
         """
         Perform hybrid search combining semantic (vector) and keyword (FTS5) legs.
 
         The legs run in parallel and are fused with Reciprocal Rank Fusion
-        (k=60) plus an alpha-weighted blend of the per-leg RRF scores,
-        matching the tldw_server reference design. Alpha comes from
-        ``config.search.hybrid_alpha`` (0 = FTS only, 1 = vector only).
-        Citations are combined when the same chunk appears in both legs.
+        (default k=5, measured for this window -- see
+        ``config.DEFAULT_HYBRID_RRF_K``; the server's 60 starves FTS-only
+        rows here) plus an alpha-weighted blend of the per-leg RRF
+        scores, matching the tldw_server reference design. Alpha comes from
+        ``config.search.hybrid_alpha`` (0 = FTS only, 1 = vector only) and k
+        from ``config.search.rrf_k``. Each leg over-fetches
+        ``top_k * config.search.hybrid_pool_multiplier`` candidates before
+        fusion narrows back down to ``top_k``. Citations are combined when
+        the same chunk appears in both legs.
+
+        ``keyword_source_types`` (TASK-14751) narrows the FTS leg to the
+        types the caller will keep, so its budget is not spent on rows a
+        downstream source-type filter would discard; ``None`` leaves the leg
+        exactly as it was. It does not scope the semantic leg -- that is
+        ``metadata_allowlist``'s job, and it is semantic-only.
         """
-        # Get results from both search types
+        # Get results from both search types. The pool multiplier widens
+        # ONLY these two leg fetches -- `_semantic_search`'s own internal
+        # over-fetch (its raw vector-store call) still uses the module
+        # SEARCH_RESULT_MULTIPLIER, on this path and on the direct
+        # semantic-search path alike.
+        pool_multiplier = _resolve_hybrid_pool_multiplier(
+            self.config.search.hybrid_pool_multiplier
+        )
         semantic_task = self._semantic_search(
             query,
-            top_k * SEARCH_RESULT_MULTIPLIER,
+            top_k * pool_multiplier,
             filter_metadata,
             include_citations,
             score_threshold,
         )
         keyword_task = self._keyword_search(
-            query, top_k * SEARCH_RESULT_MULTIPLIER, filter_metadata, include_citations
+            query,
+            top_k * pool_multiplier,
+            filter_metadata,
+            include_citations,
+            keyword_source_types=keyword_source_types,
         )
 
         # Run both searches in parallel
@@ -1487,6 +1764,7 @@ class RAGService:
             semantic_results=semantic_results,
             top_k=top_k,
             alpha=self.config.search.hybrid_alpha,
+            rrf_k=self.config.search.rrf_k,
             include_citations=include_citations,
         )
 
@@ -1496,6 +1774,7 @@ class RAGService:
         semantic_results: Union[List[SearchResult], List[SearchResultWithCitations]],
         top_k: int,
         alpha: float,
+        rrf_k: int = DEFAULT_RRF_K,
         include_citations: bool = True,
     ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
         """Fuse the FTS (keyword) and vector (semantic) legs via RRF + alpha.
@@ -1521,21 +1800,40 @@ class RAGService:
                 Validated via resolve_hybrid_alpha: out-of-range/invalid
                 config values fall back to the 0.7 default, matching the
                 pipeline path.
+            rrf_k: RRF constant. The live caller (`_hybrid_search`) passes
+                `config.search.rrf_k`, whose shipped default is 5
+                (`config.DEFAULT_HYBRID_RRF_K`, TASK-4110). Validated via
+                fusion.resolve_rrf_k, the same use-time pattern as `alpha`:
+                out-of-range/invalid config values fall back to that
+                shipped default (5) with a warning rather than distorting
+                or crashing the fusion math -- every fallback in the
+                app-config resolver is the shipped value. The SIGNATURE
+                default here stays DEFAULT_RRF_K (60, server parity) for
+                every caller that predates this parameter: a pure no-config
+                fallback, not the shipped default, and never reached by the
+                live caller.
             include_citations: Whether results carry citations to merge.
 
         Returns:
-            Fused results sorted by fused score descending.
+            Fused results sorted by fused score descending. The recorded
+            `metadata['hybrid_fusion']['rrf_k']` is always this resolved
+            value (never a literal) -- `local_citation_capture._reliable_rrf`
+            re-derives the fused score from it to certify the row as RRF, so
+            a metadata block that ever drifted from the value actually used
+            in the math would silently degrade every hybrid row to LEGACY.
         """
         # config.search.hybrid_alpha is not range-checked at load time
         # (RAGConfig.validate() has no callers); resolve here so this path
-        # gets the same fallback semantics as the pipeline merge.
+        # gets the same fallback semantics as the pipeline merge. Same for
+        # rrf_k via resolve_rrf_k.
         alpha = resolve_hybrid_alpha(alpha)
+        rrf_k = resolve_rrf_k(rrf_k)
         fused = reciprocal_rank_fusion(
             keyword_results,
             semantic_results,
             key=_fusion_doc_key,
             alpha=alpha,
-            rrf_k=DEFAULT_RRF_K,
+            rrf_k=rrf_k,
             max_results=top_k,
         )
 
@@ -1581,7 +1879,7 @@ class RAGService:
                     "fts_score": fts_score,
                     "vector_score": vector_score,
                     "alpha": alpha,
-                    "rrf_k": DEFAULT_RRF_K,
+                    "rrf_k": rrf_k,
                 },
             }
             results.append(result)

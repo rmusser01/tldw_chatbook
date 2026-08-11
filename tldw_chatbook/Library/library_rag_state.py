@@ -117,10 +117,12 @@ LIBRARY_RAG_MATCH_MODERATE_THRESHOLD = 0.2
 # SIMILARITY, and nothing else the retrieval stack produces lives on that
 # scale:
 #   * hybrid (RRF) fuses by RANK -- a fused score's theoretical maximum is
-#     `1/(rrf_k + 1)`, i.e. ~0.016 at the shipped `rrf_k = 60`, an order of
-#     magnitude below the 0.2 weak boundary. Banding it on the thresholds
-#     above rendered a wall of "match: weak (0.02)" on every hybrid search,
-#     including perfect matches.
+#     `1/(rrf_k + 1)`, i.e. ~0.17 at the shipped `rrf_k = 5` (TASK-4110) and
+#     ~0.016 at the previous `rrf_k = 60`. Below the 0.2 weak boundary
+#     either way, but the kind -- not the magnitude -- is what disqualifies
+#     it: a rank blend is not a similarity at any k. Banding it on the
+#     thresholds above rendered a wall of "match: weak (0.02)" on every
+#     hybrid search, including perfect matches.
 #   * reranker scores are unbounded (cross-encoder logits, 0-10 LLM
 #     scales); a value that happens to land inside [0, 1] is not a
 #     similarity either.
@@ -657,7 +659,8 @@ def library_rag_score_suffix(
     * `vector_similarity` (the default, and every pre-existing call site):
       band `score`, exactly as before.
     * `hybrid_fusion` with a `vector_score`: band the VECTOR LEG. The fused
-      RRF number is a rank blend maxing out near 0.016 and is never banded.
+      RRF number is a rank blend (maxing out at `1/(rrf_k + 1)`) and is
+      never banded, whatever k is configured.
       The label is unchanged -- "match: strong" means the same thing it
       always did, because it is computed from the same kind of number.
     * `hybrid_fusion` with no `vector_score` (an FTS-leg-only row): no
@@ -1612,8 +1615,8 @@ def library_rag_all_matches_weak(rows: Sequence[LibraryRagResultRow]) -> bool:
 
     are ignored entirely -- neither counted toward "all" nor treated as
     weak. A hybrid row IS counted, on its preserved vector leg: the fused
-    RRF number (~0.016) would otherwise make every hybrid result set read
-    as uniformly weak (RAG-port P0/Task 6).
+    RRF number (a rank blend maxing out at `1/(rrf_k + 1)`) would otherwise
+    make every hybrid result set read as uniformly weak (RAG-port P0/Task 6).
 
     True only when there is at least one such row and all of them fall
     below `LIBRARY_RAG_MATCH_MODERATE_THRESHOLD`; a result set with no

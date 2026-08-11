@@ -2177,3 +2177,68 @@ fails in 2.2s naming `AttributeError`, where before it hung.
    prompt editor's guarded exit now needs a running App) that had been invisible
    for days behind the hang, plus one load-sensitive flake. "That file is green"
    was never true; it was never finishing.
+
+---
+
+## A test double mirroring the BASE class is blind to the SUBCLASS the app actually runs (TASK-14751, 2026-08-10)
+
+**Incident.** TASK-14751 added a keyword-only `keyword_source_types` kwarg to
+`RAGService.search` and had the Library's hybrid arm pass it down. Fourteen new
+tests over real media + ChaChaNotes databases were green, the Library suites
+were green, 413 targeted tests were green. Then the informational gated run
+(`RAG_EVAL=1 pytest Tests/RAG_Eval/`) crashed three tests with
+`TypeError: EnhancedRAGServiceV2.search() got an unexpected keyword argument
+'keyword_source_types'`. `EnhancedRAGServiceV2` is the class the Library
+actually resolves at runtime, and it overrides `search()` with an explicit
+signature, so it does not inherit new base-class kwargs. Every double in the
+unit suites (`_ProfileRagService`, `FakeRagService`, the new spy) was written
+to mirror `RAGService.search` — the base — so nothing in ~2,500 unit tests
+could see it. The same class's docstring already warned about this for
+`metadata_allowlist`, and the warning was not enough to prevent the repeat.
+
+**The rule.** When you add a parameter to a method, `grep` for overrides of that
+method (`def <name>(` in the package) before you add the caller, and add at
+least one test that drives the class the PRODUCTION resolver returns, not the
+base class your doubles copy. A doubles-only suite pins the contract you wrote
+down, never the object graph that runs. Corollary: an "informational, expect
+no metric movement" gated run is not ceremony — this one earned its slot by
+being the only thing in the repo that built the real runtime class, and it
+caught the defect as a hard crash, not as a metric delta. (After the fix its
+deltas were +0.000 in all three modes exactly as predicted, which is why the
+crash, not the numbers, was the whole value of running it.)
+
+---
+
+## Retuning a numeric constant obliges you to grep its LITERAL VALUES, not just its symbol (TASK-4110, 2026-08-09/10)
+
+**Incident.** Shipping the RAG hybrid-fusion `rrf_k` default `60 -> 5` took
+three separate rounds to find every place the old value had leaked into prose,
+because each round only swept one surface:
+
+- **Task 5 round 3** grepped the SYMBOL (`rrf_k`, `DEFAULT_RRF_K`,
+  `resolve_rrf_k`) and found four docstrings/comments still asserting `k=60`
+  verbatim.
+- **Task 6** grepped a downstream literal VALUE, `0.016` — the fused-score
+  ceiling (`1/(60+1)`) that `k=60` produces arithmetically — and found a fifth
+  location, a module docstring that named no `rrf_k`-family symbol at all,
+  only the number the old constant happened to produce.
+- The **final whole-branch review** found the seventh and eighth — two
+  docstrings (`Event_Handlers/Chat_Events/chat_rag_events.py`,
+  `RAG_Search/pipeline_builder_simple.py`) whose precedence-chain prose read
+  "... -> active profile -> 60" — that neither earlier grep could have caught,
+  because a bare literal `60` sitting inside an English arrow chain matches
+  neither a symbol grep nor a `0.016`-shaped value grep.
+
+Eight stale locations, three different grep strategies, three review rounds,
+on a value everyone involved already knew had been retuned.
+
+**What to do.** When a numeric constant is retuned, a symbol-only grep is not
+a complete sweep. Enumerate every SHAPE the old value can still appear in and
+grep each one separately: the symbol itself; any literal downstream
+arithmetic consequence the docs may quote (a derived ratio, a ceiling, a
+percentage — here, `0.016`); and the bare literal in comparison/precedence
+prose ("-> 60", "an order of magnitude below X", "defaults to 60"). A
+docstring can assert a stale number while never naming the constant that used
+to produce it — that is exactly what lets it survive a symbol-only grep, and
+exactly why an inline-literal arrow chain needs a human reading the prose, not
+a tool, to catch on the first pass.

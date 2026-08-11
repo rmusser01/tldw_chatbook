@@ -213,6 +213,7 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
         user_id: Optional[str] = None,
         *,
         metadata_allowlist: Optional[Mapping[str, Collection[str]]] = None,
+        keyword_source_types: Optional[Collection[str]] = None,
     ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
         """
         Enhanced search with optional reranking and experiment tracking.
@@ -232,6 +233,16 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
                 one actually instantiated at runtime, so it must accept and
                 forward this kwarg itself rather than relying on it merely
                 being present on the base class.
+            keyword_source_types: Keyword-leg source-type selection,
+                forwarded to ``RAGService.search`` (TASK-14751). Same
+                runtime-override caveat as ``metadata_allowlist``, and it
+                bit for real: the P1 eval harness -- which drives the
+                Library service against THIS class -- crashed with a
+                ``TypeError`` the moment the Library started pushing the
+                selection down, while every unit test stayed green because
+                their doubles mirror ``RAGService.search``, not this
+                override. Any new base-class search kwarg has to be added
+                here too.
 
         Returns:
             Search results, optionally reranked
@@ -268,6 +279,7 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
             include_citations=include_citations,
             score_threshold=score_threshold,
             metadata_allowlist=metadata_allowlist,
+            keyword_source_types=keyword_source_types,
         )
 
         # Apply reranking if enabled. Reranking must NEVER fail a search:

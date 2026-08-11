@@ -179,9 +179,18 @@ Search Mode: [Dropdown]
 hybrid_alpha = 0.7
 ```
 
-Hybrid results are fused with Reciprocal Rank Fusion (k=60) per leg, then
-blended: `final = (1 - alpha) * fts_rrf + alpha * vector_rrf`, matching the
+Hybrid results are fused with Reciprocal Rank Fusion per leg, then blended:
+`final = (1 - alpha) * fts_rrf + alpha * vector_rrf`, matching the
 tldw_server reference design.
+
+The RRF constant `k` lives on the active RAG profile (`search.rrf_k`; it has
+no `[rag.retriever]` TOML key of its own) and defaults to **5**, not the
+server's 60 (TASK-4110). The server calibrates `k` for candidate pools of
+thousands; chatbook fuses only `top_k * hybrid_pool_multiplier` (~20) rows
+per leg, and over that window `k = 60` flattens the RRF curve enough that a
+document only the keyword leg found could never enter the fused top-k. `k =
+5` was chosen by measurement over the eval corpus — see
+`RAG_Search/simplified/config.py`'s `DEFAULT_HYBRID_RRF_K`.
 
 ### Document Indexing
 

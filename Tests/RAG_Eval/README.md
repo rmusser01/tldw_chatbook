@@ -124,13 +124,14 @@ in the second case do you re-stamp, and when you do:
    that does not match the code it was measured against is worse than an
    absent one, because it looks authoritative.
 
-**This happened for real, once: the fusion cluster (TASK-3995 / 3994 /
-3996 + a corpus addition), re-stamped in one commit.** The first baselines
-encoded a defect — hybrid search was byte-identical to semantic search on
-this corpus (44/44 identical id-lists), because the two legs fused on
-mismatched id spaces. The progression, each step measured by a gated run
-against the *then-current* committed baselines, with only the last step
-re-stamped:
+**This happened for real, twice: the fusion cluster (TASK-3995 / 3994 /
+3996 + a corpus addition), re-stamped in one commit, and then the
+weighting arc (TASK-14751 + TASK-4110), re-stamped in one commit.** The
+first baselines encoded a defect — hybrid search was byte-identical to
+semantic search on this corpus (44/44 identical id-lists), because the two
+legs fused on mismatched id spaces. The progression, each step measured by
+a gated run against the *then-current* committed baselines, with only the
+two marked steps re-stamped:
 
 | step | hybrid overall P / F1 | hybrid keyword P / R | note |
 |---|---|---|---|
@@ -139,14 +140,40 @@ re-stamped:
 | + TASK-3994 (fuse on document identity) | 0.105 / 0.190 | 0.113 / 1.000 | 22/44 queries now differ from semantic; real merged rows appear |
 | + TASK-3996 (notes/conversations sub-legs) | 0.105 / 0.190 | 0.113 / 1.000 | +0.000 again: every query whose FTS leg fires already had its target at vector rank 1 |
 | + vector-blind fixture (**stamped**) | 0.103 / 0.185 | 0.106 / 0.938 | corpus 48→49 docs, golden 44→45; the new query is the first one hybrid *cannot* answer |
+| + TASK-14751 (source-type pushdown) | 0.103 / 0.185 | 0.106 / 0.938 | +0.000 on all 60 gated metrics, **expected by construction**: the harness always selects all three keyword-indexed sources, so pushing that selection into the FTS leg cannot change what the leg searches here. The fix shows in product behaviour (a Notes-only search stops searching media), not in these numbers. |
+| + TASK-4110 (`rrf_k` 60 → 5, **stamped**) | 0.105 / 0.190 | 0.113 / 1.000 | the keyword leg's unique find finally survives fusion: `kw-plant-maintenance-record` goes miss → **hit at rank 8, FTS-only**. Every moved cell is a rise; `semantic` and `plain` are +0.000 on all 40 of their gated metrics, which is the check that the change touched hybrid fusion and nothing else. |
 
-Two things in that table are worth more than the numbers. First, **two of
-the three fixes moved nothing**, and that is a finding rather than a
+Three things in that table are worth more than the numbers. First, **three
+of the five fixes moved nothing**, and that is a finding rather than a
 disappointment: it says this corpus could not tell coverage from noise,
 because semantic recall@10 was 1.000 everywhere and the FTS leg's finds
 were always documents the vector leg had already ranked first. Second, the
-last row moved the numbers **down**, because the corpus finally contains a
-document the vector leg misses — and hybrid misses it too (TASK-4110).
+vector-blind-fixture row moved the numbers **down**, because the corpus
+finally contained a document the vector leg misses — and hybrid missed it
+too, which is what made TASK-4110 measurable at all. Third, the last row is
+the only one where a *weighting* change (not a wiring change) moved a
+number, and it moved exactly one query: keyword recall 0.938 → 1.000 is
+15/16 → 16/16.
+
+**The rescue query is now at its ceiling too.** With
+`kw-plant-maintenance-record` answered, every scored query in this corpus
+is a hit in hybrid mode (overall recall 1.000). A future fusion retune
+therefore has *nothing left to improve* here and can only be measured for
+regression — the same trap documented for `vocabulary_mismatch` above. If
+another weighting change needs evidence that it *adds* something, it needs
+a **new** vector-blind fixture authored the way the existing one was (see
+the "VECTOR-BLIND KEYWORD TARGET" sections in both fixture files); do not
+read this corpus going quiet as "fusion is finished".
+
+**The bound on "nothing regressed".** It is a 49-document corpus in which
+every scored query except one was already answered at rank 1, so there was
+very little left to damage; and this harness measures at `k = 10`, while
+the Library Search/RAG surface defaults to `LIBRARY_RAG_DEFAULT_TOP_K = 5`
+(half the fused candidate window, since `_hybrid_search` fetches
+`top_k * hybrid_pool_multiplier` per leg). A hybrid number here is a
+statement about this corpus at k=10, not a promise about a large library at
+k=5. TASK-4110's live check answered the k=5 half separately, against a
+real 64-document library through the running TUI.
 
 Two mechanical effects behind the precision drops, so nobody re-derives
 them later:
@@ -240,7 +267,11 @@ Every golden query carries one of four categories:
   was). **These negative-probe numbers are report-only and never gate the
   run** — a junk-similarity regression on a negative query does not fail
   the harness, it is visible in `metadata.report_only.negatives` for a
-  human to read.
+  human to read. One trap when reading them across a re-stamp: hybrid's
+  `top_score` is a *fused RRF* number whose whole scale is `1/(rrf_k+1)`,
+  so TASK-4110's k change moved it 0.0115 → 0.1167 without any retrieval
+  getting more confident. `max_top_vector_score` stayed at 0.2387 across
+  that same re-stamp, and it is the one to read for confidence.
 
 ## Reading the summary table
 
@@ -331,24 +362,27 @@ for that path.
 ## Known, deliberately-recorded defects
 
 The first real harness run surfaced four real defects in the Library/RAG
-retrieval seams — not harness bugs. Three are now fixed (the fusion
-cluster, re-stamped in one commit — see the progression table above);
-closing them surfaced a fifth. Read the task descriptions for exact
-mechanisms and source locations before attempting anything here:
+retrieval seams — not harness bugs. Closing three of them (the fusion
+cluster, re-stamped in one commit — see the progression table above)
+surfaced a fifth, TASK-4110, which is now fixed and re-stamped too. Read
+the task descriptions for exact mechanisms and source locations before
+attempting anything here:
 
 - **TASK-3995 — FIXED.** The engine's keyword leg wrapped every query in
   FTS5 phrase quotes, so multi-token queries required a contiguous token
   run. It now quotes each token individually and joins them with FTS5's
   implicit AND, which keeps the injection safety that made whole-query
   quoting attractive while dropping the phrase semantics.
-- **TASK-3994 — FIXED (one AC open).** Fusion matched the two legs on
+- **TASK-3994 — FIXED.** Fusion matched the two legs on
   `SearchResult.id` across mismatched id spaces (`media_15` vs
   `media_15_chunk_0`), so a document found by both legs could never fuse.
   It now matches on `(source_type, source_id)` document identity, and a
   merged row displays the vector leg's matched chunk. Hybrid is no longer
   byte-identical to semantic (22/44 golden queries differed immediately
-  after the fix). The task's second AC — hybrid *rescuing* a document the
-  vector leg misses — is **not** met, see TASK-4110.
+  after the fix). Its second AC — hybrid *rescuing* a document the vector
+  leg misses — was split out and closed later, by TASK-4110's weighting
+  change; `kw-plant-maintenance-record`'s hybrid cell going miss → hit is
+  what closed it.
 - **TASK-3996 — FIXED.** The keyword leg only joined `Media`/`media_fts`.
   It is now three read-only sub-legs (media, notes, conversations) merged
   by rank-position interleaving, so notes and conversations are reachable
@@ -359,33 +393,45 @@ mechanisms and source locations before attempting anything here:
   AND-joins every query term group, so one term with no match anywhere in
   the corpus zeroes the whole query's result set. An
   investigation/product-judgment task, not a defect with an obvious fix.
-- **TASK-4110 — open, found by this harness closing the cluster.** An
-  FTS-only row still cannot enter hybrid's fused top-k. The fused score is
-  `(1-alpha)/(rrf_k+fts_rank) + alpha/(rrf_k+vector_rank)`; with the
-  shipped defaults (alpha 0.7, rrf_k 60) a keyword rank-1 row scores
-  0.00492 and loses to every vector row better than rank ~82, while the
-  vector leg is only ever asked for `2k` results. So whenever the vector
-  leg returns k or more **distinct documents**, a document only the
-  keyword leg found is structurally unreachable. Distinct *documents*, not
-  rows, is the load-bearing word: fusion dedups by document identity, so a
-  vector leg returning `2k` chunk rows that collapse to fewer than k
-  documents leaves room, which is why keyword-only rows still appear when
-  the vector index is thin or unrelated to the selected sources.
-  `kw-plant-maintenance-record` is the before-number for the case that
-  matters: plain rank 1, semantic absent, engine FTS leg rank 1, hybrid
-  absent.
+- **TASK-4110 — FIXED, found by this harness closing the cluster.** An
+  FTS-only row could not enter hybrid's fused top-k. The fused score is
+  `(1-alpha)/(rrf_k+fts_rank) + alpha/(rrf_k+vector_rank)`; at the old
+  defaults (alpha 0.7, rrf_k 60) a keyword rank-1 row scored 0.00492 and
+  lost to every vector row better than rank ~82, while the vector leg is
+  only ever asked for `top_k * hybrid_pool_multiplier` (~2k) results. So
+  whenever the vector leg returned k or more **distinct documents**, a
+  document only the keyword leg found was structurally unreachable.
+  Distinct *documents*, not rows, is the load-bearing word: fusion dedups
+  by document identity, so a vector leg returning `2k` chunk rows that
+  collapse to fewer than k documents leaves room — which is why
+  keyword-only rows appeared anyway when the vector index was thin, and why
+  such a sighting is **not** evidence the starvation is absent. The fix was
+  a measured retune of one constant, `rrf_k` 60 → **5**
+  (`RAG_Search/simplified/config.py`'s `DEFAULT_HYBRID_RRF_K`), chosen from
+  a six-strategy sweep (`test_fusion_sweep.py`, still runnable) rather than
+  asserted: at k=5 an FTS-only rank-1 row strictly outranks vector-only
+  rows from rank 10, which is inside the ~20-row window fusion actually
+  sees. `kw-plant-maintenance-record` is the before/after: plain rank 1,
+  semantic absent, engine FTS leg rank 1, hybrid **absent → rank 8**.
+  Alpha (0.7) and the pool multiplier (2) were measured alongside and
+  deliberately left alone.
 
 Do not "fix" any of these by editing the harness or the fixtures — the
 harness's job is to keep measuring the real seam accurately; the numbers it
 reports for hybrid mode *are* today's truth about that seam.
 
-**Two fusion paths, two identity rules.** The engine's `_fuse_hybrid_results`
-now keys on `(source_type, source_id)`, while `pipeline_builder`'s parallel
-hybrid path keys on `(source, id)` — the same `reciprocal_rank_fusion`
-helper, two different notions of "the same document". Only the engine path
-is measured here. Reconciling them is TASK-3501; until then, a hybrid number
-from this harness describes the engine path and does not transfer to the
-pipeline path.
+**Two fusion paths, one k, two identity rules.** The engine's
+`_fuse_hybrid_results` keys on `(source_type, source_id)`, while
+`pipeline_builder`'s parallel hybrid path keys on `(source, id)` — the same
+`reciprocal_rank_fusion` helper, two different notions of "the same
+document". They no longer disagree about the *weighting*: both resolve k
+through `fusion.resolve_rrf_k`, which falls back to the active profile, so
+TASK-4110's measured `rrf_k = 5` moved both live paths together even though
+only the engine path was measured (deliberate, and pinned by
+`Tests/RAG/test_fusion.py::TestPipelineRrfMerge`). The identity rules still
+differ, and only the engine path is measured here: reconciling them is
+TASK-3501, and until then a hybrid *quality* number from this harness
+describes the engine path and does not transfer to the pipeline path.
 
 ## Adding a fixture document or golden query
 

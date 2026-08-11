@@ -238,19 +238,22 @@ Each hit is one block:
   fit:
 
   - Hybrid profiles (Hybrid Basic / Hybrid Full) blend the keyword and
-    vector rankings into a fused score that maxes out near 0.016 — far
+    vector rankings into a fused score that maxes out near 0.17 — still far
     below the weak boundary. Those rows are banded on the vector leg's own
     similarity, so a strong hybrid hit reads `| match: strong`, exactly as
     the same hit would in a semantic profile.
   - A hybrid row that only the keyword leg found has no similarity at all
-    and reads `| keyword match`. In practice you see these when the vector
-    leg comes back short or empty — for instance when the selected sources
-    have nothing in the vector index yet. When the vector leg fills the
-    result list, its rows currently crowd keyword-only rows out of a hybrid
-    result even if the keyword leg matched a document the vector leg never
-    returned; that limitation is tracked as TASK-4110. A document both legs
-    found is unaffected: it fuses into one row and is ranked on the
-    strength of both.
+    and reads `| keyword match`. You see these in two situations. The
+    obvious one: the vector leg came back short or empty — for instance the
+    selected sources have nothing in the vector index yet. The one that
+    matters more: **a document the keyword leg matched exactly and the
+    vector leg never returned can now take a slot in a full result list**,
+    which is the point of running a hybrid profile at all. It normally
+    lands at the bottom of the list, below the rows the vector leg ranked,
+    so a hybrid result reads as "the semantically closest documents, plus
+    anything that matched your words literally". A document both legs found
+    is unaffected: it fuses into one row and is ranked on the strength of
+    both.
   - A reranked row reads `| reranked`: reranker scores are on the
     reranking model's own scale, not a 0-1 similarity, so the band is
     withheld rather than guessed.
@@ -473,4 +476,26 @@ matched nothing at all before the per-token FTS quoting fix, and neither
 source type was reachable by the engine's keyword leg before it grew its
 notes and conversations sub-legs. The vector index on that profile holds
 media chunks only, which is why the keyword-only rows survived to be shown
-— see the TASK-4110 note under [Evidence rows](#evidence-rows).*
+— at the time, a full vector leg would still have crowded them out.*
+
+*Verified against 0e7b3b564 — 2026-08-10 (TASK-4110 fusion-weighting live
+check): the keyword-only rescue described under
+[Evidence rows](#evidence-rows), seen in the real UI. Scratch profile
+holding a copy of the real Library DBs and vector index, **plus 60 real
+documentation files ingested through the app's own indexing path** — the
+untouched library had four indexed documents, too few for the vector leg to
+fill a result list, and a keyword-only row appearing in that situation
+proves nothing. On the resulting 64-document library, default Hybrid Basic
+profile, Library Search/RAG at its default top-5: the query "drafted
+expert" (two words that occur literally in `Docs/User_Guide/settings.md`
+and in no other document, and that vector retrieval never returns) placed
+that page at position **5, banded `keyword match`**, with positions 1-4
+holding the same four `match: moderate` vector rows as before. Re-running
+the identical query on the identical library with the fusion constant
+reverted to its previous value put an ordinary vector row
+(`Docs/User_Guide/index.md | match: moderate`) in that slot and the
+settings page nowhere in the list. Ordinary semantic queries were unharmed:
+"how do I import a PDF into the library" ranked
+`library/import-and-export.md` first, and "change the color theme and
+appearance" returned a byte-identical list under both constants — the
+weighting change moves the bottom of the list, not the ranking above it.*

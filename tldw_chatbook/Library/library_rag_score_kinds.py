@@ -5,10 +5,13 @@ a raw number, and the band is a claim about COSINE SIMILARITY. Nothing else
 the retrieval stack produces lives on that scale:
 
 * hybrid retrieval fuses by RANK (RRF). A fused score's theoretical maximum
-  is ``1 / (rrf_k + 1)`` -- about 0.016 at the shipped ``rrf_k = 60``, an
-  order of magnitude below the 0.2 weak boundary. Banding it on similarity
-  thresholds rendered a wall of "match: weak (0.02)" on every hybrid
-  search, perfect matches included (RAG-port P0/Task 6).
+  is ``1 / (rrf_k + 1)`` -- about 0.17 at the shipped ``rrf_k = 5``
+  (TASK-4110), and it was ~0.016 at the previous ``rrf_k = 60``. Either way
+  it is below the 0.2 weak boundary, though no longer by an order of
+  magnitude: the number is not a similarity at any k, which is why the kind
+  and not the magnitude decides. Banding it on similarity thresholds
+  rendered a wall of "match: weak (0.02)" on every hybrid search, perfect
+  matches included (RAG-port P0/Task 6).
 * reranker scores are unbounded (cross-encoder logits, 0-10 LLM scales); a
   value that happens to land inside [0, 1] is not a similarity either.
 
