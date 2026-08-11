@@ -298,6 +298,46 @@ Structural tests do not close those host gates. The available macOS smoke can
 land first, but TASK-598 remains In Progress until the focused evidence passes
 on the other wheel-supported targets.
 
+### Automated platform evidence
+
+The four remaining native gates run through one manually dispatched GitHub
+Actions workflow on Linux x86_64, Linux aarch64, Windows x86_64, and macOS
+x86_64. It does not run on ordinary pushes, pull requests, or the nightly
+suite: each lane downloads roughly 1.35 GB of pinned model and VAD data, and
+the evidence is needed only when the implementation or supported runtime
+changes.
+
+Each lane uses Python 3.12 and the documented Parakeet ONNX CPU extra, then
+runs one bounded, platform-neutral evidence probe. Before importing application
+code, the probe creates an isolated HOME, XDG config/data root, config file,
+managed artifact store, and user-owned external directory. It obtains the
+pinned v2 INT8 root, v3 INT8 root, and Silero VAD through the production
+artifact acquisition boundary, materializes both roots as regular external
+files, and removes the temporary managed Parakeet roots so each runtime closure
+is exactly one external root plus managed VAD.
+
+The probe must prove all of the following on every lane:
+
+- exact descriptor verification succeeds for both external roots;
+- optional managed copy and deletion leave both external roots unchanged;
+- the app-owned source service, coordinator, executor, and ONNX runtime perform
+  real v2 INT8 and v3 INT8 CPU inference without a provider download during
+  transcription;
+- provenance has a null artifact root and the exact managed VAD dependency;
+- external model and VAD hashes and mtimes remain unchanged during inference;
+- no managed Parakeet readiness, active selector, or root remains afterward;
+- shutdown completes within the same bounded run.
+
+The probe writes one path-private JSON result containing the tested commit SHA,
+workflow run and attempt identifiers, platform, architecture, package/runtime
+versions, CPU provider, timings, descriptor and dependency identities,
+invariant results, and bounded failure classification. The workflow uploads
+that JSON for each lane. It never records a local path, credential, username,
+or temporary-directory name. A lane passes only when both native inference
+smokes succeed and its JSON validates. Existing descriptor tests retain the
+F32 and external-data coverage; structural tests do not replace either native
+INT8 inference smoke.
+
 Only affected focused tests, scoped lint, formatting checks for changed files,
 and `git diff --check` run locally. The unrelated full suite is not part of this
 task's local gate.
