@@ -2067,11 +2067,15 @@ handler traceback, including the live `websockets.asyncio.server.ServerConnectio
 local. pytest-xdist then failed while serializing the report with an execnet
 `DumpError`, hiding the ordinary timeout behind an internal runner error on both
 macOS and Ubuntu. The same signature reproduced on the latest `dev` baseline.
+The first regression opened its own client connection and repeated the failure
+when its test frame was serialized, so the durable regression had to exercise
+the content-only exception copy without creating any transport objects.
 
 **What to do.** When an async test helper captures an exception across a task,
 thread, process, or worker boundary, do not retain its traceback-bearing object.
 Store a content-only diagnostic exception (type name plus message), and test that
-its traceback is absent before re-raise. Keep positive wire waits long enough for
-full-suite scheduling contention while leaving negative "nothing arrived" grace
-windows deliberately short. Verify the helper with the same xdist distribution
-flags used by CI; an isolated serial pass does not exercise report transport.
+its traceback is absent without putting a transport in the regression's own frame.
+Keep positive wire waits long enough for full-suite scheduling contention while
+leaving negative "nothing arrived" grace windows deliberately short. Verify the
+helper with the same xdist distribution flags used by CI; an isolated serial pass
+does not exercise report transport.

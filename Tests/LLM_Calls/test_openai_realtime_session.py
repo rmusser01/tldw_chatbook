@@ -44,6 +44,11 @@ _WIRE_STEP_TIMEOUT_SECONDS = 30
 _SCRIPT_COMPLETION_TIMEOUT_SECONDS = 30
 
 
+def _transport_safe_error(exc: Exception) -> AssertionError:
+    """Copy exception diagnostics without retaining traceback locals."""
+    return AssertionError(f"{type(exc).__name__}: {exc}")
+
+
 # ---------------------------------------------------------------------------
 # Scripted fake server
 # ---------------------------------------------------------------------------
@@ -120,7 +125,7 @@ class ScriptedServer:
             # ``ServerConnection`` local. pytest-xdist cannot serialize that
             # object when this suite runs in parallel, so preserve only the
             # diagnostic type and message in a transport-safe exception.
-            self.error = AssertionError(f"{type(exc).__name__}: {exc}")
+            self.error = _transport_safe_error(exc)
         finally:
             self._done.set()
 
@@ -289,21 +294,16 @@ async def _connect_and_handshake(
 # ---------------------------------------------------------------------------
 
 
-async def test_scripted_server_captures_transport_safe_errors(fake_server):
-    start, _track = fake_server
-    url, scripted = await start([("expect", lambda _event: False)])
+def test_transport_safe_error_discards_original_traceback():
+    try:
+        raise TimeoutError("wire receive exceeded its allowance")
+    except TimeoutError as exc:
+        assert exc.__traceback__ is not None
+        safe_error = _transport_safe_error(exc)
 
-    async with websockets.connect(url) as client:
-        await client.send(json.dumps({"type": "unexpected"}))
-        await asyncio.wait_for(
-            scripted._done.wait(), timeout=_SCRIPT_COMPLETION_TIMEOUT_SECONDS
-        )
-
-    assert type(scripted.error) is AssertionError
-    assert scripted.error.__traceback__ is None
-    assert "scripted predicate rejected event" in str(scripted.error)
-    with pytest.raises(AssertionError, match="scripted predicate rejected event"):
-        await scripted.wait_done()
+    assert type(safe_error) is AssertionError
+    assert safe_error.__traceback__ is None
+    assert str(safe_error) == "TimeoutError: wire receive exceeded its allowance"
 
 
 async def test_connect_sends_session_update_and_fires_ready(fake_server):
