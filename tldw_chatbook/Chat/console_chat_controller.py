@@ -16,7 +16,15 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Protocol
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Awaitable,
+    Callable,
+    Literal,
+    Protocol,
+    TypedDict,
+)
 from uuid import uuid4
 
 from loguru import logger
@@ -149,6 +157,10 @@ from tldw_chatbook.Agents.builtin_tool_gate import (
 from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall, MCPToolProvider
 from tldw_chatbook.Agents.run_context import current_run_id
+from tldw_chatbook.Agents.session_todo_store import (
+    SessionTodoStore,
+    TodoChangeCallback,
+)
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
 from tldw_chatbook.config import coerce_bool_setting, get_cli_setting
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
@@ -177,6 +189,13 @@ if TYPE_CHECKING:
     from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
     from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+
+
+class _TodoWiring(TypedDict, total=False):
+    """Typed optional task kwargs for ``LocalToolProvider`` composition."""
+
+    todo_store: SessionTodoStore
+    on_todo_change: TodoChangeCallback
 
 
 #: task-1337 (plan Task 8): raw built-in tool names the Console-composed
@@ -4072,7 +4091,7 @@ class ConsoleChatController:
         )
         return provider, build_local_review_hook(provider, bound_request_approvals)
 
-    def _todo_wiring(self, session_id: str | None) -> dict[str, object]:
+    def _todo_wiring(self, session_id: str | None) -> _TodoWiring:
         """The todo_store/on_todo_change kwargs for ``_compose_local_provider``.
 
         Empty dict (no todo capability) when there is no session context,

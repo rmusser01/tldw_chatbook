@@ -965,15 +965,32 @@ def test_console_task_state_missing_legacy_key_starts_empty_without_warning():
 
 
 def test_console_task_state_malformed_key_starts_empty_with_fixed_warning():
-    """Corrupt task state fails soft without reflecting payload material."""
+    """Corrupt state emits one structured, payload-free Loguru warning."""
     from loguru import logger as loguru_logger
 
     controller = ConsoleSessionController.__new__(ConsoleSessionController)
     payload = controller._console_session_to_state(ConsoleChatSession())
-    payload["todo_state"] = {"sentinel": "private-task-payload"}
-    warnings: list[str] = []
+    private_values = (
+        "private-task-payload",
+        "/Users/private/workspace/tasks.json",
+        "private-api-key",
+    )
+    payload["todo_state"] = {
+        "sentinel": private_values[0],
+        "private_path": private_values[1],
+        "api_key": private_values[2],
+    }
+    records: list[dict[str, object]] = []
+    formatted: list[str] = []
+
+    def capture(message) -> None:
+        records.append(message.record)
+        formatted.append(str(message))
+
     sink_id = loguru_logger.add(
-        lambda message: warnings.append(message.record["message"]), level="WARNING"
+        capture,
+        level="WARNING",
+        format="{name}:{function}:{message}",
     )
     try:
         restored = controller._console_session_from_state(payload)
@@ -982,8 +999,20 @@ def test_console_task_state_malformed_key_starts_empty_with_fixed_warning():
 
     assert restored.todo_store.list_after(None) == []
     assert restored.todo_store.create(content="First")["id"] == "1"
-    assert warnings == ["Console task state invalid; starting empty."]
-    assert "private-task-payload" not in "".join(warnings)
+    assert len(records) == 1
+    record = records[0]
+    assert record["message"] == "Console task state invalid; starting empty."
+    assert record["exception"] is None
+    assert record["extra"] == {"module": "ChatScreen"}
+    assert record["name"] == "tldw_chatbook.UI.Console_Modules.session"
+    assert record["module"] == "session"
+    assert record["function"] == "_console_session_from_state"
+    assert formatted == [
+        "tldw_chatbook.UI.Console_Modules.session:_console_session_from_state:"
+        "Console task state invalid; starting empty.\n"
+    ]
+    for private_value in private_values:
+        assert private_value not in formatted[0]
 
 
 @pytest.mark.parametrize(

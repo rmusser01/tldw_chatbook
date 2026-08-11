@@ -486,7 +486,7 @@ def test_compose_local_provider_without_session_registers_no_todo_spec(
 def test_compose_local_provider_wires_the_sessions_exact_todo_store(
     monkeypatch, tmp_path
 ):
-    """The provider and transcript callback share the session's exact store."""
+    """An inactive target, not the active session, owns provider task state."""
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 
     monkeypatch.setattr(
@@ -497,7 +497,9 @@ def test_compose_local_provider_wires_the_sessions_exact_todo_store(
     service = _FakeService(state=ALLOW)
     controller = _bare_controller(SimpleNamespace(unified_mcp_service=service))
     controller.store = ConsoleChatStore()
-    session = controller.store.create_session(workspace_id="ws")
+    target = controller.store.create_session(title="Target", workspace_id="ws")
+    active = controller.store.create_session(title="Active", workspace_id="ws")
+    assert controller.store.active_session_id == active.id
     markers = []
     controller._agent_bridge = SimpleNamespace(
         append_todo_marker=lambda session_id, todos: markers.append(
@@ -505,13 +507,14 @@ def test_compose_local_provider_wires_the_sessions_exact_todo_store(
         )
     )
 
-    local_provider, _hook = controller._compose_local_provider(session_id=session.id)
+    local_provider, _hook = controller._compose_local_provider(session_id=target.id)
 
     created = local_provider.invoke("local:todo_create", {"content": "Ship it"})
 
     assert created.ok
-    assert session.todo_store.get("1")["content"] == "Ship it"
-    assert markers == [(session.id, session.todo_store.list_after(None))]
+    assert target.todo_store.get("1")["content"] == "Ship it"
+    assert active.todo_store.list_after(None) == []
+    assert markers == [(target.id, target.todo_store.list_after(None))]
 
 
 def test_compose_local_provider_unknown_session_registers_no_todo_spec(

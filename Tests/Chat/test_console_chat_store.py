@@ -740,8 +740,25 @@ def test_durable_resume_starts_with_a_fresh_empty_todo_store():
     persistence = FakePersistence()
     store = ConsoleChatStore(persistence=persistence)
     live = store.ensure_session(title="Chat with tasks")
-    live.todo_store.create(content="Keep only in process memory")
+    live.todo_store.create(content="private-task-record-one")
+    live.todo_store.create(content="private-task-record-deleted")
+    live.todo_store.create(content="private-task-record-three")
+    live.todo_store.update(task_id="2", expected_version=1, status="deleted")
+    assert live.todo_store.export_snapshot()["next_id"] == 4
+
     conversation_id = store.persist_session_if_needed(live.id)
+
+    durable_kwargs = persistence.created_conversations[0]
+    assert persistence.last_create_kwargs == durable_kwargs
+    durable_projection = repr(durable_kwargs)
+    for forbidden in (
+        "todo_state",
+        "next_id",
+        "private-task-record-one",
+        "private-task-record-deleted",
+        "private-task-record-three",
+    ):
+        assert forbidden not in durable_projection
 
     restored = store.restore_persisted_session(
         title=live.title,
