@@ -106,7 +106,7 @@ This formats every task-owned edit without either blessing or hiding the pre-exi
 - Read: the task, approved design, ADR-029, testing/backlog lessons, two production modules, and focused tests
 - No tracked edits
 
-- [ ] **Step 1: Confirm the worktree is clean and the task has no competing implementation**
+- [x] **Step 1: Confirm the worktree is clean and the task has no competing implementation**
 
 Run:
 
@@ -118,7 +118,7 @@ git for-each-ref --format='%(refname:short)' refs/remotes/ | rg -i '3796'
 
 Expected: clean worktree; no unrelated open PR or remote branch claiming TASK-3796. Stop and reconcile if ownership changed.
 
-- [ ] **Step 2: Fetch and rebase onto the latest `origin/dev`**
+- [x] **Step 2: Fetch and rebase onto the latest `origin/dev`**
 
 Run:
 
@@ -131,7 +131,7 @@ git rev-list --left-right --count origin/dev...HEAD
 
 Expected: conflict-free rebase, ancestor exit 0, and `0 <ahead>`.
 
-- [ ] **Step 3: Recheck the approved source boundary after the rebase**
+- [x] **Step 3: Recheck the approved source boundary after the rebase**
 
 Run:
 
@@ -141,7 +141,7 @@ git diff --stat 59cf35d6e..origin/dev -- tldw_chatbook/LLM_Calls/Local_Summariza
 
 Expected: either no scoped upstream change, or a fully reviewed delta reconciled into the task/spec before continuing. Never carry old inventory counts across an upstream logger change or verified misclassification without a fresh all-call review.
 
-- [ ] **Step 4: Run only the focused behavioral baseline**
+- [x] **Step 4: Run only the focused behavioral baseline**
 
 Run:
 
@@ -151,7 +151,7 @@ Run:
 
 Expected at the approved base: `37 passed`.
 
-- [ ] **Step 5: Run the cross-cutting inventory and static baselines**
+- [x] **Step 5: Run the cross-cutting inventory and static baselines**
 
 Run:
 
@@ -173,7 +173,7 @@ Expected at the approved base: inventory `14 passed`, lint green, Local formatte
 - Create: `Tests/fixtures/summarization_diagnostic_review.json`
 - Create: `Tests/LLM_Calls/test_summarization_diagnostic_privacy.py`
 
-- [ ] **Step 1: Write synthetic failing tests for stable identity and failure modes**
+- [x] **Step 1: Write synthetic failing tests for stable identity and failure modes**
 
 Import the not-yet-created helper inside a small loader that converts `ModuleNotFoundError` into an intentional assertion failure; do not use a top-level import that aborts collection:
 
@@ -202,7 +202,7 @@ def test_guard_rejects_exception_and_traceback_capture() -> None: ...
 
 The synthetic source must include stdlib logging, Loguru, `logger.opt(...)`, a nested generator, duplicate labels requiring an occurrence ordinal, bare-name first messages, `%` interpolation, `.format()`, string concatenation, and `exc_info=True`/`logger.exception` mutants. For each dynamic-message mutant, first prove its exact `message_shape`/expressions are recorded, then classify it as `metadata` and prove the strict validator rejects it.
 
-- [ ] **Step 2: Run the new guard tests and verify RED**
+- [x] **Step 2: Run the new guard tests and verify RED**
 
 Run:
 
@@ -212,7 +212,7 @@ Run:
 
 Expected: collected tests fail with the exact assertion `summarization diagnostic guard is not implemented`. A collection error, syntax error, or unrelated failure does not count as RED.
 
-- [ ] **Step 3: Implement the minimal test-only extractor**
+- [x] **Step 3: Implement the minimal test-only extractor**
 
 Reuse `scripts.check_persistent_diagnostic_inventory._logger_symbols`, `_is_diagnostic_call`, and `_scope_names`; do not add a second production scanner. The helper's core record is:
 
@@ -235,7 +235,7 @@ class DiagnosticCall:
 
 `event` is the constant literal projection of the first argument; formatted values are excluded from the label. `message_shape` is the canonical `ast.dump(first_argument, include_attributes=False)` for every call, including constants, f-strings, bare names, `%`, `.format()`, and concatenation. `expressions` includes every dynamic subtree in the first argument plus positional arguments after the message, keyword fields, and bound fields. Ignore line numbers when comparing identity. A `metadata` outcome requires a constant string first argument; legacy dynamic first arguments may exist only as exact frozen or pending shapes.
 
-- [ ] **Step 4: Create and hand-review the starting ledger**
+- [x] **Step 4: Create and hand-review the starting ledger**
 
 Emit the extractor snapshot to stdout, then add the reviewed JSON with `apply_patch`. Do not let a generator silently classify entries. Each entry retains an immutable starting record and a separately updated current outcome:
 
@@ -278,7 +278,7 @@ General: 281 = 100 starting-private + 181 reviewed-safe
 Overall: 523 = 200 starting-private + 323 reviewed-safe
 ```
 
-- [ ] **Step 5: Add the real-source reconciliation test**
+- [x] **Step 5: Add the real-source reconciliation test**
 
 ```python
 def test_ledger_retains_all_523_starting_sites() -> None:
@@ -297,7 +297,7 @@ def test_ledger_current_state_matches_sources() -> None:
 
 Compute `STARTING_PROJECTION_SHA256` once from canonical JSON containing only site ID, module, qualname, group, starting classification/category, and the complete `starting` record; hard-code that digest in the test module. Outcome/current/navigation edits do not participate. The matcher compares each non-deleted `current` record to source and each deleted outcome to explicit absence. It must fail on additions, undeclared deletions, label/method/message-shape changes, expression changes, duplicate loss, unclassified calls, dynamic first arguments in a `metadata` record, or exception capture in a `frozen`/`metadata` record. A known-private `pending` record may temporarily match its inventoried starting traceback shape; it cannot survive a batch completion gate or the final zero-pending gate. The immutable projection digest preserves starting evidence after current source changes.
 
-- [ ] **Step 6: Run the guard foundation GREEN**
+- [x] **Step 6: Run the guard foundation GREEN**
 
 Run:
 
@@ -310,7 +310,7 @@ Run:
 
 Expected: all selected tests pass with exact `523/200/323` reconciliation.
 
-- [ ] **Step 7: Commit the test-only foundation**
+- [x] **Step 7: Commit the test-only foundation**
 
 ```bash
 git add Tests/LLM_Calls/summarization_diagnostic_guard.py Tests/LLM_Calls/test_summarization_diagnostic_privacy.py Tests/fixtures/summarization_diagnostic_review.json
@@ -326,7 +326,7 @@ git commit -m "test(security): inventory summarization diagnostic privacy"
 - Modify: `Tests/LLM_Calls/test_summarization_diagnostic_privacy.py`
 - Modify: `Tests/fixtures/summarization_diagnostic_review.json`
 
-- [ ] **Step 1: Add the failing 24-site batch gate and direct-function sentinels**
+- [x] **Step 1: Add the failing 24-site batch gate and direct-function sentinels**
 
 Add `test_no_pending_local_core_sites`, plus direct tests for `summarize_with_local_llm` success, malformed streamed JSON, and exception paths. Use canaries for input, response line, and exception message; fully consume the returned stream. Assert the pre-change return/yield/error contract separately from captured logging.
 
@@ -347,7 +347,7 @@ def test_runtime_sentinel_hides_private_value(case, monkeypatch, caplog) -> None
 
 Final IDs are exactly `local-input`, `local-prompt`, `local-credential`, `local-path`, `local-response`, `local-exception`, and the corresponding six `general-*` IDs. Extra provider/stream tests use separate descriptive names.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```bash
 ../../.venv/bin/python -B -m pytest -q Tests/LLM_Calls/test_summarization_diagnostic_privacy.py -k 'local_core or local_llm or runtime_sentinel' -vv
@@ -355,13 +355,13 @@ Final IDs are exactly `local-input`, `local-prompt`, `local-credential`, `local-
 
 Expected: failures expose the owned canaries and report exactly 24 pending entries.
 
-- [ ] **Step 3: Apply the 24 direct repairs**
+- [x] **Step 3: Apply the 24 direct repairs**
 
 Repair `summarize_with_local_llm`, `summarize_with_llama`, and `summarize_with_kobold`. Delete redundant input/body previews when an adjacent type/status event survives; replace prompt, credential, endpoint, response, and exception details with the approved fixed/count/status/token shapes. Remove traceback capture.
 
 Update only `outcome` to `metadata` or `deleted` and update `current` with final event/exact allowed fields or `null` plus a deletion reason. Do not modify `starting` or any `reviewed_safe` entry.
 
-- [ ] **Step 4: Run GREEN and static checks**
+- [x] **Step 4: Run GREEN and static checks**
 
 ```bash
 ../../.venv/bin/python -B -m pytest -q Tests/LLM_Calls/test_summarization_diagnostic_privacy.py -k 'local_core or local_llm or runtime_sentinel' -vv
@@ -372,7 +372,7 @@ Update only `outcome` to `metadata` or `deleted` and update `current` with final
 
 Expected: selected tests and static checks pass.
 
-- [ ] **Step 5: Commit the batch**
+- [x] **Step 5: Commit the batch**
 
 ```bash
 git add tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py Tests/LLM_Calls/test_summarization_diagnostic_privacy.py Tests/fixtures/summarization_diagnostic_review.json
@@ -388,11 +388,11 @@ git commit -m "fix(security): redact local summarizer core diagnostics"
 - Modify: `Tests/LLM_Calls/test_summarization_diagnostic_privacy.py`
 - Modify: `Tests/fixtures/summarization_diagnostic_review.json`
 
-- [ ] **Step 1: Add `test_no_pending_local_adapters_sites` and real-function canaries**
+- [x] **Step 1: Add `test_no_pending_local_adapters_sites` and real-function canaries**
 
 Drive `summarize_with_oobabooga` through a signature-bound fake `requests.Session.post` result. Cover prompt, credential, endpoint, response, and exception canaries. Add a Tabby malformed-stream case and consume the generator.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```bash
 ../../.venv/bin/python -B -m pytest -q Tests/LLM_Calls/test_summarization_diagnostic_privacy.py -k 'local_adapters or oobabooga or tabby' -vv
@@ -400,11 +400,11 @@ Drive `summarize_with_oobabooga` through a signature-bound fake `requests.Sessio
 
 Expected: owned canaries appear and the batch reports 23 pending entries.
 
-- [ ] **Step 3: Repair exactly the Oobabooga/Tabby entries and ledger records**
+- [x] **Step 3: Repair exactly the Oobabooga/Tabby entries and ledger records**
 
 Use fixed credential/endpoint events, response status/length where available, line length for stream parse failures, and bounded exception class. Preserve all returned strings and retry/stream behavior.
 
-- [ ] **Step 4: Run GREEN, format/lint, and commit**
+- [x] **Step 4: Run GREEN, format/lint, and commit**
 
 ```bash
 ../../.venv/bin/python -B -m pytest -q Tests/LLM_Calls/test_summarization_diagnostic_privacy.py -k 'local_adapters or oobabooga or tabby' -vv
@@ -424,11 +424,11 @@ git commit -m "fix(security): redact local adapter diagnostics"
 - Modify: `Tests/LLM_Calls/test_summarization_diagnostic_privacy.py`
 - Modify: `Tests/fixtures/summarization_diagnostic_review.json`
 
-- [ ] **Step 1: Add `test_no_pending_local_vllm_ollama_sites` and failing function tests**
+- [x] **Step 1: Add `test_no_pending_local_vllm_ollama_sites` and failing function tests**
 
 Use real `summarize_with_vllm`/`summarize_with_ollama` calls with signature-bound transport/config seams. Cover raw/processed/extracted input, prompt, credential, response, streamed-line, and exception-message canaries; assert the same summary/error/yield sequence.
 
-- [ ] **Step 2: Run RED, repair exactly 22 sites, and update the ledger**
+- [x] **Step 2: Run RED, repair exactly 22 sites, and update the ledger**
 
 ```bash
 ../../.venv/bin/python -B -m pytest -q Tests/LLM_Calls/test_summarization_diagnostic_privacy.py -k 'local_vllm_ollama or vllm or ollama' -vv
@@ -436,7 +436,7 @@ Use real `summarize_with_vllm`/`summarize_with_ollama` calls with signature-boun
 
 Expected before repair: owned canary failures plus 22 pending entries. Replace previews with counts/fixed events, responses with status/length, and errors with bounded class tokens; do not change provider logic.
 
-- [ ] **Step 3: Run GREEN and commit**
+- [x] **Step 3: Run GREEN and commit**
 
 ```bash
 ../../.venv/bin/python -B -m pytest -q Tests/LLM_Calls/test_summarization_diagnostic_privacy.py -k 'local_vllm_ollama or vllm or ollama' -vv
@@ -456,11 +456,11 @@ git commit -m "fix(security): redact vllm and ollama diagnostics"
 - Modify: `Tests/LLM_Calls/test_summarization_diagnostic_privacy.py`
 - Modify: `Tests/fixtures/summarization_diagnostic_review.json`
 
-- [ ] **Step 1: Add `test_no_pending_local_custom_sites` and complete the Local six-category matrix**
+- [x] **Step 1: Add `test_no_pending_local_custom_sites` and complete the Local six-category matrix**
 
 Directly exercise both custom OpenAI functions in success, non-success, raised-exception, and malformed-stream modes. Capture both logging systems; use distinct input, prompt, credential, endpoint, response, and exception canaries. Consume generators. Exercise `save_summary_to_file` with a private path canary while asserting the file-write contract.
 
-- [ ] **Step 2: Run RED, repair 31 entries, and run GREEN**
+- [x] **Step 2: Run RED, repair 31 entries, and run GREEN**
 
 ```bash
 ../../.venv/bin/python -B -m pytest -q Tests/LLM_Calls/test_summarization_diagnostic_privacy.py -k 'local_custom or custom_openai or save_summary' -vv
@@ -468,7 +468,7 @@ Directly exercise both custom OpenAI functions in success, non-success, raised-e
 
 Expected RED: all category canaries prove their prior exposure and the group reports 31 pending sites. Apply direct fixed/count/status/token replacements or justified deletions, update only those ledger entries, then rerun the same command to green.
 
-- [ ] **Step 3: Add and pass the Local-module completion gate**
+- [x] **Step 3: Add and pass the Local-module completion gate**
 
 ```python
 def test_local_module_has_no_pending_private_sites() -> None:
@@ -481,7 +481,7 @@ def test_local_module_has_no_pending_private_sites() -> None:
     assert sum(item.outcome in {"metadata", "deleted"} for item in local) == 100
 ```
 
-- [ ] **Step 4: Run all Local privacy tests and commit**
+- [x] **Step 4: Run all Local privacy tests and commit**
 
 ```bash
 ../../.venv/bin/python -B -m pytest -q Tests/LLM_Calls/test_summarization_diagnostic_privacy.py -k 'no_pending_local or local_custom or (runtime_sentinel and local) or local_llm or local_core or oobabooga or tabby or vllm or ollama or local_save_summary' -vv
@@ -502,11 +502,11 @@ git commit -m "fix(security): finish local summarizer diagnostic privacy"
 - Modify: `Tests/LLM_Calls/test_summarization_diagnostic_privacy.py`
 - Modify: `Tests/fixtures/summarization_diagnostic_review.json`
 
-- [ ] **Step 1: Add `test_no_pending_general_core_sites` and the General six-category matrix**
+- [x] **Step 1: Add `test_no_pending_general_core_sites` and the General six-category matrix**
 
 Call `extract_text_from_segments`, `extract_text_from_input`, `recursive_summarize_chunks`, `analyze`, `summarize_with_openai`, and `summarize_with_anthropic` directly. Use signature-bound transport/file/config seams only. Cover every category with distinct canaries, including the nested `analyze.consume_generator` and provider streaming generators, and assert unchanged return/error/yield contracts.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```bash
 ../../.venv/bin/python -B -m pytest -q Tests/LLM_Calls/test_summarization_diagnostic_privacy.py -k 'general_core or analyze or general_openai or anthropic or (runtime_sentinel and general)' -vv
@@ -514,11 +514,11 @@ Call `extract_text_from_segments`, `extract_text_from_input`, `recursive_summari
 
 Expected: category-specific canary failures and exactly 36 pending sites.
 
-- [ ] **Step 3: Repair the 36 owned calls without touching `_dispatch_to_api` line 311**
+- [x] **Step 3: Repair the 36 owned calls without touching `_dispatch_to_api` line 311**
 
 Apply the strict replacement patterns, update only the 36 ledger records, and preserve all in-band error strings. The pre-existing formatter delta at `_CHAT_DISPATCH_NAME_ALIASES` is outside the owned changed ranges.
 
-- [ ] **Step 4: Run GREEN and format the changed files**
+- [x] **Step 4: Run GREEN and format the changed files**
 
 ```bash
 ../../.venv/bin/python -B -m pytest -q Tests/LLM_Calls/test_summarization_diagnostic_privacy.py -k 'general_core or analyze or general_openai or anthropic or (runtime_sentinel and general)' -vv
@@ -536,7 +536,7 @@ Restore the one baseline statement with `apply_patch` as specified by the Genera
 
 Expected: tests/lint/test formatting green; full-file General format remains baseline-red only at unchanged line 311 with output identical to Task 1.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add tldw_chatbook/LLM_Calls/Summarization_General_Lib.py Tests/LLM_Calls/test_summarization_diagnostic_privacy.py Tests/fixtures/summarization_diagnostic_review.json
@@ -552,17 +552,17 @@ git commit -m "fix(security): redact general summarizer core diagnostics"
 - Modify: `Tests/LLM_Calls/test_summarization_diagnostic_privacy.py`
 - Modify: `Tests/fixtures/summarization_diagnostic_review.json`
 
-- [ ] **Step 1: Add `test_no_pending_general_mid_sites` and provider stream/error sentinels**
+- [x] **Step 1: Add `test_no_pending_general_mid_sites` and provider stream/error sentinels**
 
 Directly invoke Cohere, Groq, and OpenRouter functions with signature-bound transports. Fully consume streams and assert response-line/body and exception canaries are absent without changing results.
 
-- [ ] **Step 2: Run RED, repair exactly 23 sites, and update the ledger**
+- [x] **Step 2: Run RED, repair exactly 23 sites, and update the ledger**
 
 ```bash
 ../../.venv/bin/python -B -m pytest -q Tests/LLM_Calls/test_summarization_diagnostic_privacy.py -k 'general_mid or cohere or groq or openrouter' -vv
 ```
 
-- [ ] **Step 3: Run GREEN plus existing Cohere tests and commit**
+- [x] **Step 3: Run GREEN plus existing Cohere tests and commit**
 
 ```bash
 ../../.venv/bin/python -B -m pytest -q Tests/LLM_Calls/test_summarization_diagnostic_privacy.py -k 'general_mid or cohere or groq or openrouter' -vv
@@ -594,11 +594,11 @@ git commit -m "fix(security): redact general provider diagnostics"
 - Modify: `Tests/LLM_Calls/test_summarization_diagnostic_privacy.py`
 - Modify: `Tests/fixtures/summarization_diagnostic_review.json`
 
-- [ ] **Step 1: Add `test_no_pending_general_streaming_sites` and malformed-stream sentinels**
+- [x] **Step 1: Add `test_no_pending_general_streaming_sites` and malformed-stream sentinels**
 
 Cover each provider's response/body and exception paths; consume HuggingFace, DeepSeek, and Mistral streams so decode/key-error diagnostics actually execute.
 
-- [ ] **Step 2: Run RED, repair 20 sites, then run GREEN**
+- [x] **Step 2: Run RED, repair 20 sites, then run GREEN**
 
 ```bash
 ../../.venv/bin/python -B -m pytest -q Tests/LLM_Calls/test_summarization_diagnostic_privacy.py -k 'general_streaming or huggingface or deepseek or mistral' -vv
@@ -606,7 +606,7 @@ Cover each provider's response/body and exception paths; consume HuggingFace, De
 
 Expected RED before repair: owned canaries plus 20 pending entries. After direct replacements/deletions and ledger updates, the same command passes.
 
-- [ ] **Step 3: Format, lint, and commit**
+- [x] **Step 3: Format, lint, and commit**
 
 ```bash
 ../../.venv/bin/python -m ruff format tldw_chatbook/LLM_Calls/Summarization_General_Lib.py Tests/LLM_Calls/test_summarization_diagnostic_privacy.py
@@ -636,17 +636,17 @@ git commit -m "fix(security): redact streaming provider diagnostics"
 - Modify: `Tests/LLM_Calls/test_summarization_diagnostic_privacy.py`
 - Modify: `Tests/fixtures/summarization_diagnostic_review.json`
 
-- [ ] **Step 1: Add `test_no_pending_general_tail_sites` and direct Google/mock/chunk tests**
+- [x] **Step 1: Add `test_no_pending_general_tail_sites` and direct Google/mock/chunk tests**
 
 Cover Google's input, prompt, credential, response/stream, and exception paths plus mock/chunk output/error diagnostics. Assert all public result strings/yields remain unchanged.
 
-- [ ] **Step 2: Run RED, repair 20 entries, and run GREEN**
+- [x] **Step 2: Run RED, repair 20 entries, and run GREEN**
 
 ```bash
 ../../.venv/bin/python -B -m pytest -q Tests/LLM_Calls/test_summarization_diagnostic_privacy.py -k 'general_tail or google or mock_llm or summarize_chunk' -vv
 ```
 
-- [ ] **Step 3: Add the General and whole-ledger completion gates**
+- [x] **Step 3: Add the General and whole-ledger completion gates**
 
 ```python
 def test_general_module_has_no_pending_private_sites() -> None:
@@ -670,7 +670,7 @@ def test_complete_ledger_reconciles_without_private_sites() -> None:
 
 For deleted records, `assert_ledger_matches_source` reconciles the retained starting identity against an explicit absence; current source-call count is `523 - deleted_count`.
 
-- [ ] **Step 4: Run all new tests, format, and commit**
+- [x] **Step 4: Run all new tests, format, and commit**
 
 ```bash
 ../../.venv/bin/python -B -m pytest -q Tests/LLM_Calls/test_summarization_diagnostic_privacy.py -vv
@@ -700,7 +700,7 @@ git commit -m "fix(security): finish general summarizer diagnostic privacy"
 - Temporarily modify and restore the two production modules with `apply_patch`
 - Modify: TASK-3796 implementation notes only after all evidence is complete
 
-- [ ] **Step 1: Record clean restoration hashes**
+- [x] **Step 1: Record clean restoration hashes**
 
 ```bash
 git hash-object tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py
@@ -710,7 +710,7 @@ git status --short
 
 Expected: clean status; record both hashes.
 
-- [ ] **Step 2: Collect and record the exact 12 owning node IDs**
+- [x] **Step 2: Collect and record the exact 12 owning node IDs**
 
 Run:
 
@@ -737,7 +737,7 @@ Tests/LLM_Calls/test_summarization_diagnostic_privacy.py::test_runtime_sentinel_
 
 Record this collection output before mutation. Each following mutation command names one exact node from this list; never use a broad `-k` selector as mutation evidence.
 
-- [ ] **Step 3: Run 12 independent runtime mutations**
+- [x] **Step 3: Run 12 independent runtime mutations**
 
 For each module/category pair (Local and General × input, prompt, credential, endpoint/path, response/output, exception/error detail):
 
@@ -749,11 +749,11 @@ For each module/category pair (Local and General × input, prompt, credential, e
 
 Do not combine mutations. For exception mutations, separately confirm traceback-capture mutants fail the structural guard.
 
-- [ ] **Step 4: Mutate the stable guard itself**
+- [x] **Step 4: Mutate the stable guard itself**
 
 Temporarily add an unclassified logger call, change one frozen reviewed-safe expression, and enable one `exc_info=True`/Loguru exception capture. Each must fail its intended guard assertion. Restore between runs.
 
-- [ ] **Step 5: Prove exact restoration and final reconciliation**
+- [x] **Step 5: Prove exact restoration and final reconciliation**
 
 ```bash
 git hash-object tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py
@@ -773,7 +773,7 @@ Expected: hashes match Step 1, clean status, all new tests green, 323 frozen rev
 - Modify: `Docs/security/production-diagnostic-inventory.json`
 - Modify: `Tests/LLM_Calls/test_summarization_diagnostic_privacy.py`
 
-- [ ] **Step 1: Run the inventory checker and verify the expected RED boundary**
+- [x] **Step 1: Run the inventory checker and verify the expected RED boundary**
 
 ```bash
 ../../.venv/bin/python -B scripts/check_persistent_diagnostic_inventory.py
@@ -781,11 +781,11 @@ Expected: hashes match Step 1, clean status, all new tests green, 323 frozen rev
 
 Expected: mismatch limited to Local and General summarization owner count/digest entries. Any other delta must be compared with the identical command at exact `origin/dev`; do not bless it.
 
-- [ ] **Step 2: Add a permanent two-owner manifest-boundary assertion**
+- [x] **Step 2: Add a permanent two-owner manifest-boundary assertion**
 
 Store the current-dev non-owned inventory fingerprint and the two owners' unchanged path/owner/reason fields in the review fixture. Assert that only their diagnostic count/digest may differ and that sink topology is identical.
 
-- [ ] **Step 3: Regenerate through the canonical checker and inspect the exact diff**
+- [x] **Step 3: Regenerate through the canonical checker and inspect the exact diff**
 
 ```bash
 ../../.venv/bin/python -B scripts/check_persistent_diagnostic_inventory.py --write
@@ -794,7 +794,7 @@ git diff -- Docs/security/production-diagnostic-inventory.json
 
 Expected: exactly two owner entries change; call-count deltas equal the ledger's explicit deletion totals, reasons/owners are unchanged, and no sink topology or unrelated entry changes.
 
-- [ ] **Step 4: Run inventory/guard GREEN and commit separately**
+- [x] **Step 4: Run inventory/guard GREEN and commit separately**
 
 ```bash
 ../../.venv/bin/python -B -m pytest -q Tests/Architecture/test_persistent_diagnostic_inventory.py Tests/LLM_Calls/test_summarization_diagnostic_privacy.py
@@ -816,11 +816,11 @@ Tasks 2–12 were executed against the then-approved `199 private / 324 reviewed
 - Modify: this plan
 - Modify lesson docs only if a new incident—not an already documented rule—was discovered
 
-- [ ] **Step 1: Rebase onto the latest `origin/dev` and re-audit logger drift**
+- [x] **Step 1: Rebase onto the latest `origin/dev` and re-audit logger drift**
 
 Repeat Task 1 Steps 1–3. Rerun the 523-call reconciliation against the new base. If upstream changed either module, reconcile every changed logger call before continuing.
 
-- [ ] **Step 2: Run the complete touched-functionality test set**
+- [x] **Step 2: Run the complete touched-functionality test set**
 
 ```bash
 ../../.venv/bin/python -B -m pytest -q Tests/LLM_Calls/test_summarization_diagnostic_privacy.py Tests/LLM_Calls/test_summarization_analyze.py Tests/Chat/test_cohere_summarize_v2.py Tests/Internal_Prompts/test_summarization_migration.py Tests/Internal_Prompts/test_summarization_prompt_parity.py Tests/Architecture/test_persistent_diagnostic_inventory.py
@@ -845,7 +845,7 @@ separate backlog ownership and must not be written into TASK-3796's manifest. An
 different failed node, owner set, diff fingerprint, or sink topology is a real
 failure. Do not run repository-wide pytest.
 
-- [ ] **Step 3: Run final static and formatting gates**
+- [x] **Step 3: Run final static and formatting gates**
 
 ```bash
 ../../.venv/bin/python -m ruff check tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py tldw_chatbook/LLM_Calls/Summarization_General_Lib.py Tests/LLM_Calls/summarization_diagnostic_guard.py Tests/LLM_Calls/test_summarization_diagnostic_privacy.py
@@ -869,7 +869,7 @@ git diff --check
 
 Reconfirm the full-file diff is exactly that one unchanged baseline hunk and record the comparison; every other line has just passed the formatter.
 
-- [ ] **Step 4: Perform whole-branch scope and privacy self-review**
+- [x] **Step 4: Perform whole-branch scope and privacy self-review**
 
 Inspect:
 
@@ -883,11 +883,11 @@ git status --short --branch
 
 Review every production hunk for eager formatting, private response/path/key/exception values, traceback flags, accidental control-flow changes, and unrelated reviewed-safe rewrites.
 
-- [ ] **Step 5: Request an independent code review**
+- [x] **Step 5: Request an independent code review**
 
 Use `@superpowers:requesting-code-review` with the exact `origin/dev...HEAD` range, approved spec/plan, inventory arithmetic, mutation evidence, focused test results, and known General formatter baseline. Fix and re-review every verified Critical/Important issue before closeout.
 
-- [ ] **Step 6: Close the task only after every gate is green**
+- [x] **Step 6: Close the task only after every gate meets its approved expectation**
 
 Use the Backlog CLI to set Done and add concise implementation notes, then use `apply_patch` to preserve the detailed notes and check all four acceptance criteria. Notes must record:
 
@@ -902,7 +902,7 @@ Use the Backlog CLI to set Done and add concise implementation notes, then use `
 
 Set the design status to `implemented and verified` and check every completed plan step.
 
-- [ ] **Step 7: Commit exact closeout files and verify clean state**
+- [x] **Step 7: Commit exact closeout files and verify clean state**
 
 ```bash
 git add "backlog/tasks/task-3796 - Remove-private-summarization-values-from-diagnostics.md" Docs/superpowers/specs/2026-08-10-task-3796-summarization-diagnostic-privacy-design.md Docs/superpowers/plans/2026-08-10-task-3796-summarization-diagnostic-privacy.md

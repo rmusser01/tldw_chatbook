@@ -1,11 +1,11 @@
 ---
 id: TASK-3796
 title: Remove private summarization values from diagnostics
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-09 14:49'
-updated_date: '2026-08-10 19:38'
+updated_date: '2026-08-11 05:21'
 labels:
   - llm-calls
   - observability
@@ -163,14 +163,15 @@ from forward-referencing a later, higher-numbered task.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every verified raw/processed/extracted input, prompt, response/output, credential-fragment, private endpoint/path, and exception/error-detail diagnostic in the inventory emits metadata only
-- [ ] #2 Sentinel tests capture representative real paths for every inventory category in both modules and prove distinctive private strings never reach diagnostics
-- [ ] #3 A fresh all-call sweep of both summarization modules finds no equivalent direct private diagnostic outside an explicit metadata-only helper
-- [ ] #4 The production diagnostic inventory is reconciled without changing unrelated owners, reasons, counts, or sink topology
+- [x] #1 Every verified raw/processed/extracted input, prompt, response/output, credential-fragment, private endpoint/path, and exception/error-detail diagnostic in the inventory emits metadata only
+- [x] #2 Sentinel tests capture representative real paths for every inventory category in both modules and prove distinctive private strings never reach diagnostics
+- [x] #3 A fresh all-call sweep of both summarization modules finds no equivalent direct private diagnostic outside an explicit metadata-only helper
+- [x] #4 The production diagnostic inventory is reconciled without changing unrelated owners, reasons, counts, or sink topology
 <!-- AC:END -->
 
 ## Implementation Plan
 
+<!-- SECTION:PLAN:BEGIN -->
 ADR required: no
 
 ADR path: `backlog/decisions/029-local-private-data-boundary.md`
@@ -185,3 +186,57 @@ Detailed plan: [TASK-3796 implementation plan](../../Docs/superpowers/plans/2026
 4. Repair the 100 General-module sites in four test-first provider batches, with direct-function canaries and per-batch reconciliation.
 5. Run independent category/module mutations, prove restoration, and reconcile the exhaustive all-call boundary.
 6. Regenerate only the two owned diagnostic-inventory entries, run touched-functionality verification, complete self-review, and close TASK-3796.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+- Reconciled all 523 starting calls: `200 private + 323 reviewed-safe` across
+  Local `242 = 100 private + 142 safe` and General
+  `281 = 100 private + 181 safe`. Final outcomes are `177 metadata + 23
+  deleted + 323 frozen`; 500 calls remain in source and no site is pending or
+  unclassified.
+- The private category matrix is Local/General/total: input `13/8/21`, prompt
+  `8/9/17`, credential `8/13/21`, endpoint/path `6/5/11`, response/output
+  `29/43/72`, and exception/error detail `36/22/58`. The eight implementation
+  batches reconcile as Local `24/23/22/31` and General `36/24/20/20`.
+- Final review corrected Cohere site `general-2efc909241862caf` from the
+  historical `199 private / 324 safe` audit to `200/323`: the real, fully
+  consumed `summarize_with_cohere()` unknown-event sentinel proved that
+  provider-controlled `event.get("type")` reached diagnostics. The corrected
+  immutable starting-projection SHA-256 is
+  `85a5c6b74f0cd4eb15f8ca0f8abfa5e18ca7f26f749d97fc7b781090cabd7733`.
+- Direct real-function sentinels cover every category in both modules. Twelve
+  independent runtime privacy mutations, two traceback-capture mutations, and
+  three stable-guard mutations (unclassified call, changed frozen expression,
+  and exception capture) each failed their owning assertion before inverse
+  restoration. Final production blob hashes were restored exactly to Local
+  `c4599dd418734ff991d0df71ed1d3b329feec9bd` and General
+  `c8c03fb4a45a8271195adbe5d9480ca068699668`.
+- Only diagnostic arguments changed. Provider selection, request payloads and
+  transport calls, response handling, retry/error paths, return strings,
+  streaming laziness/chunks, and response-close behavior remain under direct
+  tests and unchanged contracts.
+- The governed manifest changes only Local `242 -> 229` (digest
+  `1ccaf200dcf244f3effc`) and General `281 -> 271` (digest
+  `5e988a1c16e064c39fcb`), plus the derived TASK-492 total `1,167 -> 1,144`.
+  Owners, reasons, unrelated checked entries, and six-file sink topology are
+  unchanged. Exact latest dev independently carries an unrelated 17-owner
+  baseline drift (`44` additions / `30` deletions; Git-patch SHA-256
+  `24d71574ec8e8ab57384059d469685dd851ba5aee7795d8841b6ca081fce58eb`),
+  which remains unblessed with separate To Do ownership. This lower-numbered
+  task intentionally omits the later task ID under the repository's
+  no-forward-reference rule.
+- Fresh focused evidence: the privacy file passed `255` tests; the complete
+  touched-functionality command passed `305` tests with only the approved
+  current-dev baseline failure
+  `test_production_diagnostic_inventory_and_sink_topology_are_unchanged`.
+  Detached exact base `39298db48f173976a8563ad1a95415f8cf506c24` passed the
+  other 13 architecture tests and failed that same sole node. Ruff lint,
+  Local/helper/test formatting, Python compilation, and diff checks passed;
+  General's full-file format check retained only the known line-317 alias hunk.
+- ADR decision: no new ADR. ADR-029 already governs the metadata-only
+  persistent-log boundary. The approved baseline-red deviation and the new
+  provenance/projection incidents are documented in
+  `backlog/docs/lessons-testing-evidence.md`.
+<!-- SECTION:NOTES:END -->
