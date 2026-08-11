@@ -93,10 +93,32 @@ conversation, owned by the controller (impure layer), surviving turns:
 4. **Steering never cancels.** Injected instructions append messages; they
    never restart a run (cancellation-based supersede is unsound around
    durable writes — item-status lesson).
-5. **No auto-wake.** Completion events queue and deliver on the supervisor's
-   next turn + a UI chip. An unprompted supervisor model turn is a new
-   autonomy surface (spend with no user present, races with Console supersede)
-   — cut from this program; config-gated follow-up if ever missed.
+5. **Auto-wake on completion** (CORRECTED 2026-08-11 — this invariant
+   previously said the opposite). A finished child wakes its supervisor so it
+   can act on the result, rather than waiting for the user to return to that
+   conversation and send another message.
+
+   The original "no auto-wake" ruling rested on a false premise: that a
+   supervisor turn firing with "no user present" is a problem because the user
+   is watching one conversation. **This application is built around
+   concurrent activity** — multiple conversations, workspaces, watchlists,
+   schedules — and hopping between them. A child completing in a conversation
+   the user is not currently looking at is the NORMAL case, not the edge case,
+   and it is exactly the case delegation exists to serve. Deferring its result
+   until the user happens to return makes background work pointless.
+
+   This follows Claude Code's own model: a background subagent outlives the
+   turn that spawned it and its completion re-invokes the parent, delivered as
+   an injected notification rather than as user input.
+
+   Two constraints the original ruling was right about, kept:
+   - A completion notification must be unambiguously marked as **not user
+     input**, and must never be treated as approval or consent for anything.
+   - Spend is still bounded — by the containment set in §5, not by requiring a
+     human keystroke.
+
+   Consequence for the UI: completion must reach the user across
+   conversations, not only inside the one that spawned the child.
 
 ## 4. Agent definitions (Phase 1)
 
@@ -223,11 +245,18 @@ concurrency model.
 
 1. End-of-turn no longer waits; children may outlive the turn. Nothing new
    persists (runs already in DB; reconcile already handles process death).
-2. Completion events queue → Console notification chip → delivered as context
-   on the supervisor's **next** turn (short notice; the model fetches full
-   results via `wait_agents`, which returns immediately for finished
-   children — results also live in the run row's `result` column, so they
-   survive restart).
+2. Completion **wakes the supervisor** (corrected 2026-08-11; see §3
+   invariant 5). A finished child injects a completion notice and re-invokes
+   its supervisor so it can act — it does not sit in a queue waiting for the
+   user to send another message in that conversation. The model fetches full
+   results via `wait_agents`, which returns immediately for finished children;
+   results also live in the run row's `result` column, so they survive
+   restart. A Console chip surfaces the same event to the user, reachable
+   from any conversation.
+
+   The injected notice must be unambiguously marked **not user input** and
+   must never be read as approval or consent — the one thing the original
+   no-auto-wake ruling was right to worry about.
 3. `send_to_agent(id, message)` + user steering from the panel (§6).
 4. **Wiring-lifetime audit — the hard part of 3a.** A live child holds the
    prior turn's object graph: the approval-routing callable (bound "for THIS
@@ -375,8 +404,14 @@ now fights the target, and nothing long-term sneaks into this program's ACs.
   refresh individually (`recompose=False`); the panel never rebuilds per step
   (task-3010 lesson).
 - **Notifications:** completion bumps the badge + low-key chip; no modal, no
-  focus steal. Per-conversation scope; a cross-conversation completion
-  indicator is a filed follow-up, not built.
+  focus steal. **Cross-conversation by requirement, not as a follow-up**
+  (corrected 2026-08-11 alongside §3 invariant 5): the user hops between
+  conversations, workspaces, watchlists and schedules, so a child finishing
+  in a conversation that is not on screen is the normal case. A completion
+  the user can only discover by returning to the right conversation is a
+  completion they will miss. The indicator must be reachable from wherever
+  they are; the fleet panel's own rows stay scoped to the conversation they
+  belong to.
 - **Cost:** per-child token spend rolls into the existing Console cost
   ticker, attributed per agent in expanded rows; fleet aggregate visible on
   the summary line's expansion.
@@ -435,7 +470,7 @@ verification per `backlog/docs/lessons-live-verification.md`.
 | **2b — Panel v1** | Section component + Agents section (summary/rows/drill-in read-only), coalescer, cost rollup |
 | **3a — Cross-turn runtime** | End-of-turn no longer waits, supersede boundary change, mailboxes + `send_to_agent`, finished-agent continuation (`resumed_from_run_id`), completion delivery next turn |
 | **3b — Steering UI** | Steering input, mailbox "queued" state, notification chip, Stop-semantics change + "Cancel all agents" |
-| **4 — Polish** | Starter library (plain CRUD: researcher, critic, ingest-runner), per-definition `max_wall_seconds`, config knobs, docs pass, file follow-ups (inspector sections, cross-conversation indicator) |
+| **4 — Polish** | Starter library (plain CRUD: researcher, critic, ingest-runner), per-definition `max_wall_seconds`, config knobs, docs pass, file follow-ups (inspector sections) |
 
 Backlog: one parent task + one per PR, IDs assigned against origin/dev with
 headroom (collision lesson). UI-changing PRs update the matching
