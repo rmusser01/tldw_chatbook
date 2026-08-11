@@ -78,6 +78,15 @@ $ds-chat-user-accent-dark: #8bd5ff;
 $ds-chat-user-accent-light: #004d6d;
 $ds-chat-assistant-accent-dark: #ffc473;
 $ds-chat-assistant-accent-light: #704000;
+/* Inline roleplay semantics inside assistant / character Markdown. These are
+   separate from the speaker accent so dialogue, action, and emphasis remain
+   distinguishable without changing the transcript's structural grammar. */
+$ds-chat-rp-speech-dark: #8bd5ff;
+$ds-chat-rp-speech-light: #004d6d;
+$ds-chat-rp-action-dark: #d7b2ff;
+$ds-chat-rp-action-light: #5e3578;
+$ds-chat-rp-strong-dark: #fff0a6;
+$ds-chat-rp-strong-light: #665000;
 $ds-destination-header-height: 1;
 $ds-destination-compact-strip-height: 1;
 $ds-home-dashboard-grid-height: 18;

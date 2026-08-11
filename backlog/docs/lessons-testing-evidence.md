@@ -2721,3 +2721,20 @@ the mounted test the app's real shape (`app.app_config = load_settings()`, exact
 `app.py` does) rather than teaching the product to fall back. And any test whose subject is
 "X still works when Y fails" should assert **that Y was actually attempted** — here,
 `exploding_search.await_count == 1` — or it cannot tell "handled" from "never happened".
+
+## Textual component CSS must be proven on the concrete widget class (TASK-1990.1, 2026-08-11)
+
+**Incident.** TASK-1990.1 extended Textual's Markdown block classes through a
+Python mixin and declared the new inline component names on that mixin. Pure
+parser tests passed because the expected component spans were present, and the
+TCSS bundle compiled, but a real compositor test painted narration, speech,
+action, and emphasis identically. Textual's class construction had populated
+the concrete block's internal component registry before the ordinary mixin
+attribute could affect it; type-oriented TCSS also needed a stable class hook
+because the rendered blocks were concrete subclasses.
+
+**What to do.** When adding Textual component styles through subclasses, declare
+`COMPONENT_CLASSES` on every concrete widget class and give the widget a stable
+CSS class selector. Then verify both `get_component_rich_style()` and final
+compositor segments. Span-level or stylesheet-compilation tests alone do not
+prove that Textual registered or painted a component.
