@@ -100,9 +100,28 @@ def test_three_mode_eval_run_over_the_real_fixtures(tmp_path, capsys):
         assert len(mode_report.queries) == len(golden), (
             f"{mode}: ran {len(mode_report.queries)} of {len(golden)} queries"
         )
-        assert mode_report.runtime_backends == (EXPECTED_BACKEND[mode],), (
-            f"{mode}: expected every query to route to "
-            f"{EXPECTED_BACKEND[mode]!r}, got {mode_report.runtime_backends} — "
+        # Judged over the UNSCOPED queries only. A scoped query's route is
+        # not the mode's to decide today: a scope diverts the hybrid profile
+        # to the semantic path (the engine's allowlist pushdown is
+        # semantic-only), so once scoped fixtures exist hybrid's recorded
+        # backends legitimately include "rag-semantic" — by design, not by a
+        # failed config flip. `test_harness_scoped.py` pins that divert and is
+        # the test that must change when scope-aware hybrid lands; this one is
+        # about the per-mode flip, and asking it about scoped queries would
+        # send a reader debugging config plumbing that is fine.
+        unscoped_backends = tuple(
+            sorted(
+                {
+                    outcome.runtime_backend
+                    for outcome in mode_report.queries
+                    if outcome.category != SCOPED_CATEGORY
+                    and outcome.runtime_backend
+                }
+            )
+        )
+        assert unscoped_backends == (EXPECTED_BACKEND[mode],), (
+            f"{mode}: expected every unscoped query to route to "
+            f"{EXPECTED_BACKEND[mode]!r}, got {unscoped_backends} — "
             "the per-mode config flip did not take effect (or a stale cached "
             "result was reused across modes)"
         )

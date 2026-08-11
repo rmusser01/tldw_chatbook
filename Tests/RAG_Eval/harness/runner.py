@@ -74,7 +74,9 @@ __all__ = [
     "NegativeProbe",
     "QueryOutcome",
     "SOURCE_TYPES",
+    "UNAVERAGED_CATEGORIES",
     "build_query_scope",
+    "count_scored",
     "run_eval",
 ]
 
@@ -93,6 +95,15 @@ SOURCE_TYPES: tuple[str, ...] = ("media", "notes", "conversations")
 #: Metric keys `evaluate_retrieval_batch` returns (short names — see the
 #: port note in `RAG_Search/eval/metrics.py`).
 _METRIC_KEYS: tuple[str, ...] = ("precision", "recall", "mrr", "ndcg", "f1")
+
+#: Categories measured, but never folded into the cross-mode overall row:
+#: negatives (no relevant document, so no meaningful precision/recall) and
+#: scoped (routing makes the modes incomparable — see the module docstring).
+#: One definition, because every "how many queries did that average cover"
+#: count in this package must be the same count: `count_scored` below, the
+#: `averaged` set in `_build_mode_report`, and the fusion sweep's own header
+#: all read this.
+UNAVERAGED_CATEGORIES: tuple[str, ...] = (NEGATIVE_CATEGORY, SCOPED_CATEGORY)
 
 
 @dataclass(frozen=True, slots=True)
@@ -301,7 +312,7 @@ def run_eval(
     # fixture/runtime mismatch, and discovering it three modes deep would
     # waste the whole pass. The same object is reused across modes, which is
     # also what makes the cross-mode comparison of a scoped query honest.
-    scoped_queries = tuple(
+    queries_with_scope = tuple(
         (query, build_query_scope(runtime.slug_to_source, query)) for query in golden
     )
 
@@ -313,7 +324,7 @@ def run_eval(
             search_config.default_search_mode = mode
             outcomes = tuple(
                 _run_query(seam, runtime, query, k, scope, lookup, query_scope)
-                for query, query_scope in scoped_queries
+                for query, query_scope in queries_with_scope
             )
             mode_reports[mode] = _build_mode_report(mode, k, outcomes)
     finally:
@@ -330,9 +341,29 @@ def run_eval(
         modes=mode_reports,
         source_types=scope,
         num_queries=len(golden),
-        num_scored=len(golden) - negatives - scoped,
+        num_scored=count_scored(golden),
         num_negative=negatives,
         num_scoped=scoped,
+    )
+
+
+def count_scored(golden: Sequence[GoldenQuery]) -> int:
+    """How many of ``golden`` the overall row actually averages.
+
+    The one definition of that count. A report header that says "38 scored"
+    while the row beneath it averaged 32 is not a rounding difference — it is
+    a claim about coverage, and the two numbers drifting apart is exactly the
+    "plausible numbers that mean something else" failure this harness exists
+    to prevent. Every caller that labels an averaged number reads it here.
+
+    Args:
+        golden: The queries a run covers.
+
+    Returns:
+        The count excluding every `UNAVERAGED_CATEGORIES` member.
+    """
+    return sum(
+        1 for query in golden if query.category not in UNAVERAGED_CATEGORIES
     )
 
 
@@ -578,7 +609,11 @@ def _build_mode_report(
     # semantic path, so those two columns hold one measurement, and averaging
     # it in would move a cross-mode number for a routing reason. Same
     # mechanism as the negative exclusion above, one category further out.
-    averaged = [outcome for outcome in scored if outcome.category != SCOPED_CATEGORY]
+    averaged = [
+        outcome
+        for outcome in scored
+        if outcome.category not in UNAVERAGED_CATEGORIES
+    ]
     overall = _metrics_for(averaged, k)
     per_category: dict[str, dict[str, float]] = {}
     for category in sorted({outcome.category for outcome in scored}):

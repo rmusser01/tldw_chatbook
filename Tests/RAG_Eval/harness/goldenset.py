@@ -393,6 +393,12 @@ def _check_scope_slugs(
                 f"vocabulary (scopeable: {', '.join(SCOPEABLE_SOURCE_TYPES)})"
             )
 
+    # If a future fixture class wants a scoped query with NO in-scope answer
+    # (a scoped negative — "does scope suppress the out-of-scope match"), it
+    # needs its own category or an explicit flag, NOT a relaxation of this
+    # rule: relaxing it would also stop catching the ordinary case this rule
+    # exists for, where the target was simply left out of the scope by
+    # mistake, and the two are indistinguishable from the fixture alone.
     outside = [
         slug for slug in query.relevant_slugs if slug not in set(query.scope_slugs)
     ]

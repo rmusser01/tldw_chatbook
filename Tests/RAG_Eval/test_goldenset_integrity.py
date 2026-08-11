@@ -294,14 +294,26 @@ def test_golden_set_category_quotas(golden):
 
 
 def test_the_scoped_category_is_declared_but_not_yet_required(golden):
-    """The handoff, pinned: schema now, fixtures later (P2ab Task 3).
+    """A SENTINEL for the pre-fixture state: schema now, fixtures later.
 
     Task 2 ships the scope schema and the runner machinery against a corpus
-    that is byte-identical to P1's. If this ever fails because scoped queries
-    now exist, the follow-up is to ADD `scoped` to `REQUIRED_CATEGORIES` (and
-    a quota above), not to delete this test: an authored-then-silently-lost
-    scoped set is exactly the "cell vanishes from the report" defect the
-    presence rule exists for.
+    that is byte-identical to P1's, so `scoped` is declared but exempt from
+    the presence rule — otherwise the always-on gate would fail for a
+    category nobody has authored yet.
+
+    This test's job ends when the scoped fixtures land. At that point
+    REPLACE it — it is not meant to survive, and it cannot: it asserts the
+    exemption it exists to flag. The replacement is two edits, both required,
+    because the exemption is what the presence rule stops covering:
+
+      1. add `scoped` to `REQUIRED_CATEGORIES` in `harness/goldenset.py`, so
+         an authored-then-silently-lost scoped set fails the validator like
+         every other category;
+      2. add its quota to `test_golden_set_category_quotas` above
+         (`counts["scoped"] >= 6`, the spec's floor).
+
+    Doing only (1) leaves the class unquotaed; doing only (2) leaves it
+    deletable without a failure. Delete this test in the same commit.
     """
     assert SCOPED_CATEGORY in CATEGORIES
     assert SCOPED_CATEGORY not in REQUIRED_CATEGORIES
