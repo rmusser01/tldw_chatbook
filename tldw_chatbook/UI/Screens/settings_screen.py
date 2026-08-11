@@ -209,7 +209,7 @@ from ...Video_Generation.config import (
 )
 from ...Image_Generation.config import (
     get_image_generation_config,
-    reset_image_generation_config_cache,
+    reset_image_generation_runtime,
 )
 from .settings_appearance_defaults import (
     SettingsAppearanceDefaults,
@@ -4249,7 +4249,7 @@ class SettingsScreen(BaseAppScreen):
             if keys:
                 ok = adapter.delete_values(section, keys) and ok
         if ok:
-            reset_image_generation_config_cache()
+            reset_image_generation_runtime()
         self.app.call_from_thread(self._apply_image_gen_save_result, ok, warnings)
 
     async def _apply_image_gen_save_result(
@@ -13162,6 +13162,13 @@ class SettingsScreen(BaseAppScreen):
         elif category is SettingsCategoryId.IMAGE_GENERATION:
             yield Static(
                 "Image Gen", classes="destination-section settings-column-title"
+            )
+            yield Static(
+                "ComfyUI sends the source image and instruction to the configured "
+                "server. ComfyUI retains inputs and saved outputs according to the "
+                "server operator's policy.",
+                id="settings-imagegen-comfyui-disclosure",
+                classes="settings-imagegen-hint",
             )
             image_gen_overlay = self._image_gen_overlay_values()
             self._queue_image_gen_select_suppression(image_gen_overlay)

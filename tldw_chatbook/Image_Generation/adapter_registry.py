@@ -24,6 +24,7 @@ class ImageAdapterRegistry:
         "modelstudio": "tldw_chatbook.Image_Generation.adapters.modelstudio_image_adapter.ModelStudioImageAdapter",
         "gemini": "tldw_chatbook.Image_Generation.adapters.gemini_image_adapter.GeminiImageAdapter",
         "fal": "tldw_chatbook.Image_Generation.adapters.fal_image_adapter.FalImageAdapter",
+        "comfyui": "tldw_chatbook.Image_Generation.adapters.comfyui_image_adapter.ComfyUIImageAdapter",
     }
 
     def __init__(self, config_override: dict[str, Any] | None = None) -> None:

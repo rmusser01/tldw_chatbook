@@ -913,3 +913,117 @@ def test_probe_sd_cpp_empty_form_values(tmp_path):
     gap first (matches the spec's check order)."""
     result = probe_backend("stable_diffusion_cpp", {}, None)
     assert result == ImageGenProbeResult(ok=False, badge="Binary missing or not executable")
+
+
+# --- TASK-3402: curated ComfyUI image settings ----------------------------
+
+
+def test_comfyui_schema_is_curated_without_workflow_or_model_selector():
+    assert BACKEND_LABELS["comfyui"] == "ComfyUI (H3 image edit)"
+    keys = [spec.toml_key for spec in FIELD_SCHEMA["comfyui"]]
+    assert keys == [
+        "base_url",
+        "request_timeout_seconds",
+        "connect_timeout_seconds",
+        "poll_interval_seconds",
+        "total_deadline_seconds",
+        "default_seed",
+        "default_steps",
+        "default_sampler",
+    ]
+    assert "workflow" not in " ".join(keys)
+    assert "model" not in " ".join(keys)
+
+
+def test_comfyui_optional_defaults_delete_when_cleared_and_use_packaged_placeholder(
+    monkeypatch,
+):
+    cfg = _fake_cfg(monkeypatch, section={})
+    draft = _draft(
+        backend_fields={
+            "comfyui": {
+                "default_seed": "",
+                "default_steps": "   ",
+                "default_sampler": "",
+            }
+        }
+    )
+
+    sections, deletions = diff_to_sections(
+        draft,
+        raw_config={
+            "image_generation": {
+                "comfyui": {
+                    "default_seed": 12,
+                    "default_steps": 30,
+                    "default_sampler": "euler",
+                }
+            }
+        },
+    )
+
+    assert sections == {}
+    assert deletions == {
+        "image_generation.comfyui": [
+            "default_sampler",
+            "default_seed",
+            "default_steps",
+        ]
+    }
+    assert effective_placeholder(cfg, "comfyui", "default_seed") == (
+        "Use packaged workflow"
+    )
+    assert effective_placeholder(cfg, "comfyui", "default_steps") == (
+        "Use packaged workflow"
+    )
+    assert effective_placeholder(cfg, "comfyui", "default_sampler") == (
+        "Use packaged workflow"
+    )
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "ftp://example.invalid:8188",
+        "http://user@example.invalid:8188",
+        "http://example.invalid:8188/?query=1",
+        "http://example.invalid:8188/#fragment",
+        "http://example.invalid:not-a-port",
+    ],
+)
+def test_comfyui_draft_rejects_non_origin_base_url(base_url):
+    errors, _warnings = validate_draft(
+        _draft(
+            enabled_backends=["comfyui"],
+            backend_fields={"comfyui": {"base_url": base_url}},
+        )
+    )
+
+    assert any("valid http(s) origin" in error for error in errors)
+
+
+def test_comfyui_private_origin_is_explicitly_saveable():
+    errors, _warnings = validate_draft(
+        _draft(
+            enabled_backends=["comfyui"],
+            backend_fields={
+                "comfyui": {"base_url": "http://192.168.50.20:8188"}
+            },
+        )
+    )
+
+    assert errors == []
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf"])
+def test_comfyui_draft_rejects_non_finite_timeout_values(value):
+    errors, _warnings = validate_draft(
+        _draft(
+            enabled_backends=["comfyui"],
+            backend_fields={
+                "comfyui": {"request_timeout_seconds": value}
+            },
+        )
+    )
+
+    assert any("Request timeout" in error for error in errors)

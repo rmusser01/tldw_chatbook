@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlsplit
 
 import keyring
 from loguru import logger
@@ -66,6 +68,11 @@ DEFAULT_FAL_IMAGE_TIMEOUT_SECONDS = 120
 DEFAULT_GEMINI_IMAGE_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 DEFAULT_GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image"
 DEFAULT_GEMINI_IMAGE_TIMEOUT_SECONDS = 120
+DEFAULT_COMFYUI_IMAGE_BASE_URL = "http://127.0.0.1:8188"
+DEFAULT_COMFYUI_IMAGE_REQUEST_TIMEOUT_SECONDS = 30.0
+DEFAULT_COMFYUI_IMAGE_CONNECT_TIMEOUT_SECONDS = 5.0
+DEFAULT_COMFYUI_IMAGE_POLL_INTERVAL_SECONDS = 1.0
+DEFAULT_COMFYUI_IMAGE_TOTAL_DEADLINE_SECONDS = 1800.0
 
 # Secret fields: backend -> (flat_field_name, [env vars in precedence
 # order], keyring_backend_id, nested [image_generation.<backend>] TOML
@@ -136,6 +143,14 @@ _NON_SECRET = {
     ("gemini", "base_url"):           "gemini_image_base_url",
     ("gemini", "default_model"):      "gemini_image_default_model",
     ("gemini", "timeout_seconds"):    "gemini_image_timeout_seconds",
+    ("comfyui", "base_url"):                "comfyui_image_base_url",
+    ("comfyui", "request_timeout_seconds"): "comfyui_image_request_timeout_seconds",
+    ("comfyui", "connect_timeout_seconds"): "comfyui_image_connect_timeout_seconds",
+    ("comfyui", "poll_interval_seconds"):    "comfyui_image_poll_interval_seconds",
+    ("comfyui", "total_deadline_seconds"):   "comfyui_image_total_deadline_seconds",
+    ("comfyui", "default_seed"):             "comfyui_image_default_seed",
+    ("comfyui", "default_steps"):            "comfyui_image_default_steps",
+    ("comfyui", "default_sampler"):          "comfyui_image_default_sampler",
 }
 _GLOBAL_KEYS = [
     "default_backend", "enabled_backends", "max_width", "max_height",
@@ -331,6 +346,14 @@ class ImageGenerationConfig:
     gemini_image_api_key: str | None
     gemini_image_default_model: str | None
     gemini_image_timeout_seconds: int
+    comfyui_image_base_url: str
+    comfyui_image_request_timeout_seconds: float
+    comfyui_image_connect_timeout_seconds: float
+    comfyui_image_poll_interval_seconds: float
+    comfyui_image_total_deadline_seconds: float
+    comfyui_image_default_seed: int | None
+    comfyui_image_default_steps: int | None
+    comfyui_image_default_sampler: str | None
     reference_image_supported_models: dict[str, list[str]] = field(default_factory=dict)
     # backend id -> "env:<VAR>" | "config" | "keyring" | "missing" (task-1,
     # Settings ▸ Image Gen plan). Purely additive/read-only metadata about
@@ -354,6 +377,82 @@ def _coerce_float(value: Any, default: float) -> float:
         return float(str(value).strip())
     except (TypeError, ValueError):
         return default
+
+
+def _coerce_positive_float(value: Any, default: float) -> float:
+    """Return a finite positive float, otherwise the documented default."""
+    parsed = _coerce_float(value, default)
+    return parsed if math.isfinite(parsed) and parsed > 0 else default
+
+
+def _optional_int(
+    section: dict[str, Any], key: str, *, minimum: int
+) -> int | None:
+    """Parse an optional integer without silently replacing invalid values."""
+    raw = section.get(key)
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return None
+    if isinstance(raw, bool):
+        raise ValueError(f"[image_generation.comfyui] {key} must be an integer")
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"[image_generation.comfyui] {key} must be an integer"
+        ) from None
+    if value < minimum:
+        raise ValueError(
+            f"[image_generation.comfyui] {key} must be at least {minimum}"
+        )
+    return value
+
+
+def _optional_string(section: dict[str, Any], key: str) -> str | None:
+    """Parse an optional string while rejecting structured TOML values."""
+    raw = section.get(key)
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        raise ValueError(f"[image_generation.comfyui] {key} must be a string")
+    value = raw.strip()
+    return value or None
+
+
+def normalize_comfyui_image_origin(value: Any) -> str:
+    """Return one normalized HTTP(S) origin for the image ComfyUI server.
+
+    Userinfo, paths, queries, fragments, malformed ports, and parser-ambiguous
+    whitespace/backslashes are refused because later adapter endpoints must stay
+    on exactly this scheme/host/port boundary.
+    """
+    raw = str(value or "").strip()
+    if not raw or any(character.isspace() for character in raw) or "\\" in raw:
+        raise ValueError("ComfyUI image base URL must be a valid http(s) origin")
+    try:
+        parsed = urlsplit(raw)
+        port = parsed.port
+    except ValueError:
+        raise ValueError(
+            "ComfyUI image base URL must be a valid http(s) origin"
+        ) from None
+    scheme = parsed.scheme.lower()
+    hostname = parsed.hostname
+    if (
+        scheme not in {"http", "https"}
+        or not hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in {"", "/"}
+        or parsed.netloc.endswith(":")
+    ):
+        raise ValueError("ComfyUI image base URL must be a valid http(s) origin")
+    normalized_host = hostname.lower()
+    if ":" in normalized_host:
+        normalized_host = f"[{normalized_host}]"
+    normalized_port = f":{port}" if port is not None else ""
+    return f"{scheme}://{normalized_host}{normalized_port}"
 
 
 def _coerce_bool(value: Any, default: bool) -> bool:
@@ -585,6 +684,35 @@ def get_image_generation_config(*, reload: bool = False) -> ImageGenerationConfi
             section.get("gemini_image_timeout_seconds"),
             DEFAULT_GEMINI_IMAGE_TIMEOUT_SECONDS,
         ),
+        comfyui_image_base_url=normalize_comfyui_image_origin(
+            _get_config_value(section, "comfyui_image_base_url")
+            or DEFAULT_COMFYUI_IMAGE_BASE_URL
+        ),
+        comfyui_image_request_timeout_seconds=_coerce_positive_float(
+            section.get("comfyui_image_request_timeout_seconds"),
+            DEFAULT_COMFYUI_IMAGE_REQUEST_TIMEOUT_SECONDS,
+        ),
+        comfyui_image_connect_timeout_seconds=_coerce_positive_float(
+            section.get("comfyui_image_connect_timeout_seconds"),
+            DEFAULT_COMFYUI_IMAGE_CONNECT_TIMEOUT_SECONDS,
+        ),
+        comfyui_image_poll_interval_seconds=_coerce_positive_float(
+            section.get("comfyui_image_poll_interval_seconds"),
+            DEFAULT_COMFYUI_IMAGE_POLL_INTERVAL_SECONDS,
+        ),
+        comfyui_image_total_deadline_seconds=_coerce_positive_float(
+            section.get("comfyui_image_total_deadline_seconds"),
+            DEFAULT_COMFYUI_IMAGE_TOTAL_DEADLINE_SECONDS,
+        ),
+        comfyui_image_default_seed=_optional_int(
+            section, "comfyui_image_default_seed", minimum=-1
+        ),
+        comfyui_image_default_steps=_optional_int(
+            section, "comfyui_image_default_steps", minimum=1
+        ),
+        comfyui_image_default_sampler=_optional_string(
+            section, "comfyui_image_default_sampler"
+        ),
         reference_image_supported_models=_parse_mapping_of_lists(section.get("reference_image_supported_models")),
         key_sources=key_sources,
         default_batch=default_batch,
@@ -601,3 +729,11 @@ def get_image_generation_config(*, reload: bool = False) -> ImageGenerationConfi
 def reset_image_generation_config_cache() -> None:
     global _config_cache
     _config_cache = None
+
+
+def reset_image_generation_runtime() -> None:
+    """Clear the config cache, then the lazily imported adapter registry."""
+    reset_image_generation_config_cache()
+    from tldw_chatbook.Image_Generation.adapter_registry import reset_registry
+
+    reset_registry()

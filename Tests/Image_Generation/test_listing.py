@@ -84,3 +84,64 @@ def test_is_gemini_configured_false_when_key_missing(monkeypatch):
     monkeypatch.setattr(c, "_read_image_generation_toml", lambda: {}, raising=False)
     cfg = c.get_image_generation_config(reload=True)
     assert L._is_gemini_configured(cfg, True) is False
+
+
+def test_comfyui_listing_is_local_only_and_requires_enabled_valid_resource(
+    monkeypatch,
+):
+    import httpx
+
+    from tldw_chatbook.Image_Generation import config as c, listing as L
+
+    monkeypatch.setattr(
+        c,
+        "_read_image_generation_toml",
+        lambda: {
+            "enabled_backends": ["comfyui"],
+            "comfyui": {"base_url": "http://127.0.0.1:8188"},
+        },
+    )
+    monkeypatch.setattr(
+        L, "_comfyui_workflow_resource_available", lambda: True, raising=False
+    )
+    monkeypatch.setattr(
+        httpx,
+        "Client",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("catalog listing must not construct a network client")
+        ),
+    )
+
+    entries = {entry["name"]: entry for entry in L.list_image_models_for_catalog()}
+
+    assert entries["comfyui"]["is_configured"] is True
+
+
+def test_comfyui_listing_reports_unconfigured_without_packaged_resource(monkeypatch):
+    from tldw_chatbook.Image_Generation import config as c, listing as L
+
+    monkeypatch.setattr(
+        c,
+        "_read_image_generation_toml",
+        lambda: {
+            "enabled_backends": ["comfyui"],
+            "comfyui": {"base_url": "http://127.0.0.1:8188"},
+        },
+    )
+    monkeypatch.setattr(
+        L, "_comfyui_workflow_resource_available", lambda: False, raising=False
+    )
+
+    entries = {entry["name"]: entry for entry in L.list_image_models_for_catalog()}
+
+    assert entries["comfyui"]["is_configured"] is False
+
+
+def test_comfyui_listing_excludes_disabled_backend(monkeypatch):
+    from tldw_chatbook.Image_Generation import config as c, listing as L
+
+    monkeypatch.setattr(c, "_read_image_generation_toml", lambda: {})
+
+    assert "comfyui" not in {
+        entry["name"] for entry in L.list_image_models_for_catalog()
+    }

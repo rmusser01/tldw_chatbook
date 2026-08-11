@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +13,10 @@ from tldw_chatbook.Image_Generation.capabilities import (
     resolve_backend_reference_image_capability,
 )
 from tldw_chatbook.Image_Generation.adapter_registry import get_registry
-from tldw_chatbook.Image_Generation.config import get_image_generation_config
+from tldw_chatbook.Image_Generation.config import (
+    get_image_generation_config,
+    normalize_comfyui_image_origin,
+)
 
 _IMAGE_LISTING_NONCRITICAL_EXCEPTIONS = (
     AttributeError,
@@ -100,6 +104,28 @@ def _is_gemini_configured(cfg, enabled: bool) -> bool:
     return bool(api_key)
 
 
+def _comfyui_workflow_resource_available() -> bool:
+    """Check the one packaged workflow locally, without importing an adapter."""
+    try:
+        resource = files("tldw_chatbook.Image_Generation").joinpath(
+            "workflows", "minimax_h3_image_edit.json"
+        )
+        return resource.is_file()
+    except (AttributeError, ModuleNotFoundError, OSError, TypeError, ValueError):
+        return False
+
+
+def _is_comfyui_configured(cfg, enabled: bool) -> bool:
+    """Return local configurability; never probe the configured server."""
+    if not enabled or not _comfyui_workflow_resource_available():
+        return False
+    try:
+        normalize_comfyui_image_origin(cfg.comfyui_image_base_url)
+    except (AttributeError, TypeError, ValueError):
+        return False
+    return True
+
+
 def _resolve_supported_formats(name: str) -> list[str] | None:
     registry = get_registry()
     try:
@@ -174,6 +200,12 @@ def list_image_models_for_catalog() -> list[dict[str, Any]]:
         if name == "gemini":
             try:
                 is_configured = _is_gemini_configured(cfg, enabled)
+            except _IMAGE_LISTING_NONCRITICAL_EXCEPTIONS as exc:
+                logger.debug("Image backend config check failed for {}: {}", name, exc)
+                is_configured = False
+        if name == "comfyui":
+            try:
+                is_configured = _is_comfyui_configured(cfg, enabled)
             except _IMAGE_LISTING_NONCRITICAL_EXCEPTIONS as exc:
                 logger.debug("Image backend config check failed for {}: {}", name, exc)
                 is_configured = False

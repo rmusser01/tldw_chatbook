@@ -3346,6 +3346,21 @@ timeout_seconds = 120
 allowed_extra_params = []
 # swarm_token: secret, resolved via env/keyring precedence, not stored plaintext here
 
+# ComfyUI H3 image editing is explicit opt-in: add "comfyui" to
+# enabled_backends above after reviewing this server boundary. Saving a base_url
+# in F9 Settings consents to sending the source image and instruction to that
+# exact origin. ComfyUI retains uploaded inputs and saved outputs according to
+# the server operator's policy.
+# [image_generation.comfyui]
+# base_url = "http://127.0.0.1:8188"
+# request_timeout_seconds = 30
+# connect_timeout_seconds = 5
+# poll_interval_seconds = 1
+# total_deadline_seconds = 1800
+# default_seed = -1                # omit to use packaged workflow
+# default_steps = 28               # omit to use packaged workflow
+# default_sampler = "euler"        # omit to use packaged workflow
+
 [image_generation.openrouter]
 base_url = "https://openrouter.ai/api/v1"
 default_model = "google/gemini-2.5-flash-image"  # task-620: "openai/gpt-image-1" was retired upstream and 404s

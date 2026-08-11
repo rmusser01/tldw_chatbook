@@ -180,7 +180,7 @@ def test_key_sources_missing(monkeypatch):
     assert cfg.key_sources["openrouter"] == "missing"
     assert set(cfg.key_sources) == {
         "stable_diffusion_cpp", "swarmui", "openrouter", "novita", "together", "modelstudio",
-        "fal", "gemini",
+        "fal", "gemini", "comfyui",
     }
 
 
@@ -459,3 +459,136 @@ def test_gemini_key_sources_keyring(monkeypatch):
     cfg = _load_config_with_section(monkeypatch, {}, keyring={"gemini": "kr-gemini-secret"})
     assert cfg.key_sources["gemini"] == "keyring"
     assert cfg.gemini_image_api_key == "kr-gemini-secret"
+
+
+# --- TASK-3402: independent ComfyUI image configuration -------------------
+
+
+def test_comfyui_image_defaults_are_loopback_optional_and_not_enabled(monkeypatch):
+    cfg = _load_config_with_section(monkeypatch, {})
+
+    assert cfg.comfyui_image_base_url == "http://127.0.0.1:8188"
+    assert cfg.comfyui_image_request_timeout_seconds > 0
+    assert cfg.comfyui_image_connect_timeout_seconds > 0
+    assert cfg.comfyui_image_poll_interval_seconds > 0
+    assert cfg.comfyui_image_total_deadline_seconds > 0
+    assert cfg.comfyui_image_default_seed is None
+    assert cfg.comfyui_image_default_steps is None
+    assert cfg.comfyui_image_default_sampler is None
+    assert "comfyui" not in cfg.enabled_backends
+    assert cfg.default_backend != "comfyui"
+
+
+def test_comfyui_image_section_normalizes_origin_and_optional_controls(monkeypatch):
+    cfg = _load_config_with_section(
+        monkeypatch,
+        {
+            "enabled_backends": ["comfyui"],
+            "comfyui": {
+                "base_url": "HTTPS://Example.COM:8443/",
+                "request_timeout_seconds": "12.5",
+                "connect_timeout_seconds": "3",
+                "poll_interval_seconds": "0.25",
+                "total_deadline_seconds": "900",
+                "default_seed": "-1",
+                "default_steps": "28",
+                "default_sampler": "  euler_ancestral  ",
+            },
+        },
+    )
+
+    assert cfg.comfyui_image_base_url == "https://example.com:8443"
+    assert cfg.comfyui_image_request_timeout_seconds == 12.5
+    assert cfg.comfyui_image_connect_timeout_seconds == 3.0
+    assert cfg.comfyui_image_poll_interval_seconds == 0.25
+    assert cfg.comfyui_image_total_deadline_seconds == 900.0
+    assert cfg.comfyui_image_default_seed == -1
+    assert cfg.comfyui_image_default_steps == 28
+    assert cfg.comfyui_image_default_sampler == "euler_ancestral"
+
+
+def test_comfyui_blank_optional_controls_remain_none(monkeypatch):
+    cfg = _load_config_with_section(
+        monkeypatch,
+        {
+            "comfyui": {
+                "default_seed": "",
+                "default_steps": "   ",
+                "default_sampler": "",
+            }
+        },
+    )
+
+    assert cfg.comfyui_image_default_seed is None
+    assert cfg.comfyui_image_default_steps is None
+    assert cfg.comfyui_image_default_sampler is None
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "ftp://example.invalid:8188",
+        "http://user:pass@example.invalid:8188",
+        "http://example.invalid:8188/?probe=1",
+        "http://example.invalid:8188/#fragment",
+        "http://example.invalid:not-a-port",
+        "http://example.invalid:8188/api",
+    ],
+)
+def test_comfyui_image_origin_rejects_non_origin_urls(monkeypatch, base_url):
+    with pytest.raises(ValueError, match="ComfyUI image base URL"):
+        _load_config_with_section(monkeypatch, {"comfyui": {"base_url": base_url}})
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("default_seed", "not-an-int"),
+        ("default_seed", -2),
+        ("default_steps", "not-an-int"),
+        ("default_steps", 0),
+        ("default_sampler", ["not", "a", "string"]),
+    ],
+)
+def test_comfyui_invalid_optional_controls_are_rejected(monkeypatch, key, value):
+    with pytest.raises(ValueError, match=key):
+        _load_config_with_section(monkeypatch, {"comfyui": {key: value}})
+
+
+def test_image_comfyui_never_reads_video_comfyui_values(monkeypatch):
+    from tldw_chatbook.Image_Generation import config as c
+    import tldw_chatbook.config as app_config
+
+    monkeypatch.setattr(
+        app_config,
+        "load_settings",
+        lambda: {
+            "video_generation": {
+                "comfyui": {
+                    "base_url": "http://video-only.invalid:9999",
+                    "timeout_seconds": 999,
+                }
+            }
+        },
+    )
+    cfg = c.get_image_generation_config(reload=True)
+
+    assert cfg.comfyui_image_base_url == c.DEFAULT_COMFYUI_IMAGE_BASE_URL
+    assert cfg.comfyui_image_total_deadline_seconds == (
+        c.DEFAULT_COMFYUI_IMAGE_TOTAL_DEADLINE_SECONDS
+    )
+
+
+def test_runtime_reset_clears_config_before_registry(monkeypatch):
+    from tldw_chatbook.Image_Generation import adapter_registry as registry
+    from tldw_chatbook.Image_Generation import config as c
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        c, "reset_image_generation_config_cache", lambda: calls.append("config")
+    )
+    monkeypatch.setattr(registry, "reset_registry", lambda: calls.append("registry"))
+
+    c.reset_image_generation_runtime()
+
+    assert calls == ["config", "registry"]

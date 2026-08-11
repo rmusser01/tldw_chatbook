@@ -1430,3 +1430,162 @@ enabled_backends = ["openrouter"]
         assert screen._image_gen_raw_section_cache != sentinel, (
             "re-entering the category must invalidate the cache"
         )
+
+
+# ---------------------------------------------------------------------------
+# TASK-3402: ComfyUI H3 image settings and runtime refresh.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_comfyui_panel_fields_disclosure_and_narrow_geometry(scratch_config):
+    scratch_config("")
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(90, 24)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_image_gen(pilot)
+        await pilot.pause()
+        panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+
+        assert "ComfyUI (H3 image edit)" in _visible_text(screen)
+        for toml_key in (
+            "base_url",
+            "request_timeout_seconds",
+            "connect_timeout_seconds",
+            "poll_interval_seconds",
+            "total_deadline_seconds",
+            "default_seed",
+            "default_steps",
+            "default_sampler",
+        ):
+            panel.query_one(f"#settings-imagegen-field-comfyui-{toml_key}", Input)
+        assert not list(panel.query("#settings-imagegen-field-comfyui-workflow"))
+        assert not list(panel.query("#settings-imagegen-field-comfyui-model"))
+
+        disclosure = screen.query_one("#settings-imagegen-comfyui-disclosure", Static)
+        disclosure_text = str(disclosure.renderable)
+        assert "source image and instruction" in disclosure_text
+        assert "retains inputs and saved outputs" in disclosure_text
+        assert disclosure.display and disclosure.region.height > 0
+        assert disclosure.region.y < 24
+
+        title = screen.query_one(".settings-column-title", Static)
+        for widget in (title, disclosure):
+            assert widget.region.x >= 0
+            assert widget.region.x + widget.region.width <= 90
+            assert widget.region.y >= 0
+            assert widget.region.y + widget.region.height <= 24
+
+
+@pytest.mark.asyncio
+async def test_comfyui_optional_fields_render_packaged_placeholder_and_clear_on_save(
+    scratch_config, tmp_path
+):
+    scratch_config(
+        """
+[image_generation]
+default_backend = "comfyui"
+enabled_backends = ["comfyui"]
+
+[image_generation.comfyui]
+default_seed = 4
+default_steps = 30
+default_sampler = "euler"
+"""
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_image_gen(pilot)
+        panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+        for key in ("default_seed", "default_steps", "default_sampler"):
+            field = panel.query_one(
+                f"#settings-imagegen-field-comfyui-{key}", Input
+            )
+            field.value = ""
+        await pilot.pause()
+
+        await pilot.click("#settings-imagegen-save")
+        await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
+
+        panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+        for key in ("default_seed", "default_steps", "default_sampler"):
+            field = panel.query_one(
+                f"#settings-imagegen-field-comfyui-{key}", Input
+            )
+            assert field.value == ""
+            assert field.placeholder == "Use packaged workflow"
+
+    with open(tmp_path / "config.toml", "rb") as stream:
+        saved = tomllib.load(stream)
+    comfyui = saved["image_generation"].get("comfyui", {})
+    assert "default_seed" not in comfyui
+    assert "default_steps" not in comfyui
+    assert "default_sampler" not in comfyui
+
+
+@pytest.mark.asyncio
+async def test_failed_image_gen_persistence_does_not_reset_runtime(
+    scratch_config, monkeypatch
+):
+    scratch_config("")
+    resets: list[None] = []
+    monkeypatch.setattr(
+        settings_screen_module,
+        "reset_image_generation_runtime",
+        lambda: resets.append(None),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        settings_screen_module.SettingsConfigAdapter,
+        "save_sections",
+        lambda self, sections: False,
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_image_gen(pilot)
+        field = screen.query_one(
+            "#settings-imagegen-field-comfyui-base_url", Input
+        )
+        field.value = "http://127.0.0.1:8288"
+        await pilot.pause()
+        await pilot.click("#settings-imagegen-save")
+        await _wait_for_settings_text(screen, pilot, "Failed to save Image Gen defaults.")
+
+    assert resets == []
+
+
+@pytest.mark.asyncio
+async def test_successful_image_gen_persistence_resets_runtime_exactly_once(
+    scratch_config, monkeypatch
+):
+    scratch_config("")
+    resets: list[None] = []
+    monkeypatch.setattr(
+        settings_screen_module,
+        "reset_image_generation_runtime",
+        lambda: resets.append(None),
+        raising=False,
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_image_gen(pilot)
+        field = screen.query_one(
+            "#settings-imagegen-field-comfyui-base_url", Input
+        )
+        field.value = "http://127.0.0.1:8288"
+        await pilot.pause()
+        await pilot.click("#settings-imagegen-save")
+        await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
+
+    assert resets == [None]
