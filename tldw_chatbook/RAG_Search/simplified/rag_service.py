@@ -1081,9 +1081,10 @@ class RAGService:
                 is scope-aware at each database.
             keyword_source_types: Source types the keyword (FTS5) leg should
                 budget for, in the engine's vocabulary
-                (``media``/``note``/``conversation``). ``None`` -- the
-                default, and every pre-TASK-14751 caller -- serves all three.
-                The mirror image of ``metadata_allowlist``: it scopes the
+                (``media``/``note``/``conversation``/``prompt``). ``None``
+                -- the default, and every pre-TASK-14751 caller -- serves
+                all four. The mirror image of ``metadata_allowlist``: it
+                scopes the
                 KEYWORD leg only, so passing it with
                 ``search_type="semantic"`` raises ``ValueError`` rather than
                 silently ignoring the scoping request. It is part of the
@@ -1463,7 +1464,7 @@ class RAGService:
 
         TASK-14751 narrows *which* sub-legs run without touching that
         merge. ``keyword_source_types`` names the types the caller will
-        actually keep (``None`` = all three, i.e. unchanged for every caller
+        actually keep (``None`` = all four, i.e. unchanged for every caller
         that predates it); the unnamed sub-legs are never queried, so the
         whole ``top_k`` budget goes to the ones that were asked for. A
         single-type selection therefore gets that sub-leg's full natural

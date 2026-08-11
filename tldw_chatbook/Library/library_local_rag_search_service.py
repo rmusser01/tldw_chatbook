@@ -912,8 +912,11 @@ def _resolve_profile_search_mode(rag_service: Any) -> str:
 
     "plain" deliberately routes to the four-seam scope-aware keyword path,
     NOT the engine's keyword leg (spec: plain-profile routing) -- the
-    four-seam path is scope-aware and covers prompts, neither of which the
-    engine's leg does even now that it spans media, notes and conversations.
+    engine's ``search_type="keyword"`` still refuses a
+    ``metadata_allowlist`` (it has no semantic leg to scope), so a scoped
+    plain search needs the four-seam path regardless of which source types
+    the engine's leg now spans; the four-seam path remains the product
+    surface for plain mode.
     Unknown values -- and any runtime without a profile config at all, which
     includes every pre-profile test fake -- fall back to "semantic", the
     behavior this path had before profiles were honored.

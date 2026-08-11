@@ -427,8 +427,10 @@ indexes — if RAG Answer mode reports an empty index, go there to backfill.
 
 ## Quirks & troubleshooting
 
-- **"top 5" is fixed here.** The tunable top-k in Settings ▸ RAG does not
-  change this canvas. "Per source" only appears in Search mode — RAG
+- **The evidence window follows your active profile.** "Evidence · top N
+  per source" reads the active RAG profile's **Default results** setting
+  (Settings ▸ RAG), clamped at 50 — it falls back to a fixed top 5 only
+  when no profile resolves. "Per source" only appears in Search mode — RAG
   Answer mode runs one merged query across sources (semantic, keyword, or
   hybrid depending on the active profile — see [Retrieval mode follows
   your RAG profile](#retrieval-mode-follows-your-rag-profile)), not one
