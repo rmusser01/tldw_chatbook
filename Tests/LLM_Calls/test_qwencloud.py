@@ -43,12 +43,14 @@ class _TransportResponse:
         text: str = "",
         headers: dict[str, str] | None = None,
         chunks: list[bytes] | None = None,
+        close_error: Exception | None = None,
     ) -> None:
         self._payload = payload
         self.status_code = status_code
         self.text = text
         self.headers = headers or {}
         self.chunks = chunks or []
+        self.close_error = close_error
         self.closed = False
         self.close_calls = 0
 
@@ -62,6 +64,8 @@ class _TransportResponse:
     def close(self) -> None:
         self.close_calls += 1
         self.closed = True
+        if self.close_error is not None:
+            raise self.close_error
 
     def iter_content(self, chunk_size: int) -> Iterator[bytes]:
         assert chunk_size > 0
@@ -74,12 +78,15 @@ class _RecordingSession:
         response: _TransportResponse,
         *,
         error: requests.exceptions.RequestException | None = None,
+        close_error: Exception | None = None,
     ) -> None:
         self.response = response
         self.error = error
+        self.close_error = close_error
         self.mounts: list[tuple[str, object]] = []
         self.posts: list[dict[str, Any]] = []
         self.closed = False
+        self.close_calls = 0
 
     def __enter__(self) -> _RecordingSession:
         return self
@@ -97,7 +104,10 @@ class _RecordingSession:
         return self.response
 
     def close(self) -> None:
+        self.close_calls += 1
         self.closed = True
+        if self.close_error is not None:
+            raise self.close_error
 
 
 _SCRIPTED_SUCCESS_BODY = (
@@ -1894,14 +1904,85 @@ def test_nonstream_transport_uses_exact_mode_url_headers_and_timeout(
     assert response.closed is True
 
 
+@pytest.mark.parametrize("path", ("success", "provider-error"))
+def test_nonstream_cleanup_failures_never_mask_result_or_provider_error(
+    monkeypatch: pytest.MonkeyPatch,
+    path: str,
+) -> None:
+    payload = (
+        {
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "ok"},
+                    "finish_reason": "stop",
+                }
+            ]
+        }
+        if path == "success"
+        else {"choices": []}
+    )
+    response = _TransportResponse(
+        payload,
+        close_error=RuntimeError("RAW-RESPONSE-CLOSE-CANARY"),
+    )
+    session = _RecordingSession(
+        response,
+        close_error=RuntimeError("RAW-SESSION-CLOSE-CANARY"),
+    )
+    monkeypatch.setattr(qwencloud, "requests", SimpleNamespace(Session=lambda: session))
+    monkeypatch.setattr(
+        qwencloud,
+        "get_runtime_config_snapshot",
+        lambda: SimpleNamespace(
+            values={
+                "api_settings": {
+                    "qwencloud": {"timeout": 3, "retries": 0, "retry_delay": 0}
+                }
+            }
+        ),
+    )
+
+    with _captured_qwencloud_logs() as logs:
+        if path == "success":
+            result = chat_with_qwencloud(
+                input_data=[{"role": "user", "content": "hello"}],
+                model="qwen3.8-max",
+                api_key="key",
+                streaming=False,
+                api_base_url="https://qwen.example/v1",
+                api_mode="chat_completions",
+            )
+            assert result["choices"][0]["message"]["content"] == "ok"
+            disclosure = "".join(logs)
+        else:
+            with pytest.raises(ChatProviderError) as exc_info:
+                chat_with_qwencloud(
+                    input_data=[{"role": "user", "content": "hello"}],
+                    model="qwen3.8-max",
+                    api_key="key",
+                    streaming=False,
+                    api_base_url="https://qwen.example/v1",
+                    api_mode="chat_completions",
+                )
+            assert exc_info.value.provider == "qwencloud"
+            assert exc_info.value.__cause__ is None
+            assert exc_info.value.__context__ is None
+            disclosure = str(exc_info.value) + "".join(logs)
+
+    assert "RAW-RESPONSE-CLOSE-CANARY" not in disclosure
+    assert "RAW-SESSION-CLOSE-CANARY" not in disclosure
+    assert response.close_calls == 1
+    assert session.close_calls == 1
+
+
 def test_streaming_transport_transfers_response_and_session_ownership(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     response = _TransportResponse(
         {},
         chunks=[
-            b'data: {"choices":[{"delta":{"content":"owned"},'
-            b'"finish_reason":null}]}\n\n',
+            b'data: {"choices":[{"index":0,"delta":{"content":"owned"},'
+            b'"finish_reason":"stop"}]}\n\n',
             b"data: [DONE]\n\n",
         ],
     )

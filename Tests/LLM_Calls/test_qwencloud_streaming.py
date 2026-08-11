@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import inspect
 import json
 from types import SimpleNamespace
 from typing import Any
@@ -13,6 +14,7 @@ from loguru import logger
 
 from tldw_chatbook.Chat.Chat_Deps import ChatProviderError
 import tldw_chatbook.LLM_Calls.qwencloud as qwencloud
+import tldw_chatbook.LLM_Calls.qwencloud_streaming as qwencloud_streaming
 from tldw_chatbook.LLM_Calls.qwencloud_streaming import (
     QwenCloudStream,
     QwenResponsesStreamTranslator,
@@ -64,6 +66,12 @@ class _FailingByteStreamResponse(_ByteStreamResponse):
         raise self.error
 
 
+class _CloseFailingByteStreamResponse(_ByteStreamResponse):
+    def close(self) -> None:
+        self.close_calls += 1
+        raise RuntimeError("RAW-RESPONSE-CLOSE-CANARY")
+
+
 class _ByteStreamSession:
     def __init__(self, responses: list[_ByteStreamResponse]) -> None:
         self.responses = responses
@@ -80,6 +88,12 @@ class _ByteStreamSession:
 
     def close(self) -> None:
         self.close_calls += 1
+
+
+class _CloseFailingByteStreamSession(_ByteStreamSession):
+    def close(self) -> None:
+        self.close_calls += 1
+        raise RuntimeError("RAW-SESSION-CLOSE-CANARY")
 
 
 def _message_item(
@@ -319,6 +333,85 @@ def _terminal(
     }
 
 
+def _chat_wire(events: list[dict[str, Any]], *, done: bool = True) -> list[bytes]:
+    wire = b"".join(
+        b"data: " + json.dumps(event, separators=(",", ":")).encode() + b"\n\n"
+        for event in events
+    )
+    if done:
+        wire += b"data: [DONE]\n\n"
+    return [wire]
+
+
+def _chat_stream(
+    events: list[dict[str, Any]], *, done: bool = True
+) -> tuple[QwenCloudStream, _ByteStreamResponse, _ByteStreamSession]:
+    response = _ByteStreamResponse(_chat_wire(events, done=done))
+    session = _ByteStreamSession([response])
+    stream = QwenCloudStream(
+        response=response,  # type: ignore[arg-type]
+        session=session,  # type: ignore[arg-type]
+        api_mode="chat_completions",
+    )
+    return stream, response, session
+
+
+def _chat_tool_start() -> dict[str, Any]:
+    return {
+        "id": "chatcmpl_metadata",
+        "choices": [
+            {
+                "index": 0,
+                "delta": {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "call_metadata",
+                            "type": "function",
+                            "function": {"name": "lookup", "arguments": ""},
+                        }
+                    ],
+                },
+                "finish_reason": None,
+            }
+        ],
+    }
+
+
+def _chat_tool_terminal() -> dict[str, Any]:
+    return {
+        "id": "chatcmpl_metadata",
+        "choices": [
+            {
+                "index": 0,
+                "delta": {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "function": {"arguments": '{"safe":true}'},
+                        }
+                    ]
+                },
+                "finish_reason": "tool_calls",
+            }
+        ],
+    }
+
+
+def _chat_text_terminal(*, reason: str = "stop") -> dict[str, Any]:
+    return {
+        "id": "chatcmpl_metadata",
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"content": "safe"},
+                "finish_reason": reason,
+            }
+        ],
+    }
+
+
 def test_sse_records_survive_adversarial_byte_boundaries() -> None:
     wire = (
         b'data: {"type":"response.output_text.delta","delta":"caf\xc3\xa9"}\r\n'
@@ -361,6 +454,68 @@ def test_sse_comments_and_multiline_data_frame_without_decoding() -> None:
         '{"type":"response.output_text.delta",\n"delta":"safe"}',
         "[DONE]",
     ]
+
+
+@pytest.mark.parametrize("cap", ("events", "line", "record"))
+def test_stream_caps_provider_controlled_event_and_record_sizes(
+    monkeypatch: pytest.MonkeyPatch,
+    cap: str,
+) -> None:
+    events = [
+        {
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"role": "assistant"},
+                    "finish_reason": None,
+                }
+            ]
+        },
+        _chat_text_terminal(),
+    ]
+    if cap == "events":
+        monkeypatch.setattr(qwencloud_streaming, "_MAX_STREAM_EVENTS", 1, raising=False)
+    elif cap == "line":
+        monkeypatch.setattr(
+            qwencloud_streaming, "_MAX_SSE_LINE_CHARS", 32, raising=False
+        )
+    else:
+        monkeypatch.setattr(
+            qwencloud_streaming, "_MAX_SSE_RECORD_CHARS", 32, raising=False
+        )
+    stream, response, session = _chat_stream(events)
+
+    with pytest.raises(ChatProviderError) as exc_info:
+        list(stream)
+
+    assert exc_info.value.provider == "qwencloud"
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
+    assert response.close_calls == 1
+    assert session.close_calls == 1
+
+
+def test_sse_accepts_long_valid_record_below_private_caps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(qwencloud_streaming, "_MAX_SSE_LINE_CHARS", 2048, raising=False)
+    monkeypatch.setattr(
+        qwencloud_streaming, "_MAX_SSE_RECORD_CHARS", 2048, raising=False
+    )
+    terminal = _chat_text_terminal()
+    terminal["choices"][0]["delta"]["content"] = "x" * 512
+    stream, response, session = _chat_stream([terminal])
+
+    assert list(stream) == [terminal]
+    assert response.close_calls == 1
+    assert session.close_calls == 1
+
+
+def test_sse_line_accumulation_is_structurally_linear() -> None:
+    source = inspect.getsource(qwencloud_streaming._iter_utf8_lines)
+
+    assert "buffered +=" not in source
+    assert "segments" in source
 
 
 def test_responses_text_delta_done_recovery_is_exactly_once() -> None:
@@ -450,6 +605,96 @@ def test_responses_sequence_duplicate_conflict_and_decrease() -> None:
         QwenResponsesStreamTranslator().feed({"type": "response.created"})
 
 
+def test_responses_sequence_state_is_compact_and_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(qwencloud_streaming, "_MAX_TRACKED_SEQUENCES", 2, raising=False)
+    translator = QwenResponsesStreamTranslator()
+    created = {
+        "type": "response.created",
+        "sequence_number": 0,
+        "response": {
+            "id": "resp_compact_RAW-SEQUENCE-CANARY",
+            "status": "in_progress",
+            "output": [],
+        },
+    }
+    translator.feed(created)
+    stored = translator._seen_sequences[0]  # noqa: SLF001
+    assert isinstance(stored, bytes)
+    assert len(stored) <= 64
+    assert "RAW-SEQUENCE-CANARY" not in repr(stored)
+    translator.feed(
+        {
+            "type": "response.in_progress",
+            "sequence_number": 1,
+            "response": {"id": "resp_compact", "status": "in_progress"},
+        }
+    )
+
+    with pytest.raises(ChatProviderError) as exc_info:
+        translator.feed(
+            {
+                "type": "response.in_progress",
+                "sequence_number": 2,
+                "response": {"id": "resp_compact", "status": "in_progress"},
+            }
+        )
+
+    assert exc_info.value.provider == "qwencloud"
+    assert "RAW-SEQUENCE-CANARY" not in str(exc_info.value)
+
+
+@pytest.mark.parametrize("kind", ("text", "arguments"))
+def test_responses_accumulated_output_cap_is_typed_and_redacted(
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+) -> None:
+    monkeypatch.setattr(qwencloud_streaming, "_MAX_OUTPUT_CHARS", 5, raising=False)
+    translator = QwenResponsesStreamTranslator()
+    if kind == "text":
+        translator.feed(_message_added(0, 0, "msg_cap"))
+        translator.feed(_content_added(1, 0, "msg_cap"))
+        translator.feed(_text_delta(2, 0, "msg_cap", "abc"))
+        crossing = _text_delta(3, 0, "msg_cap", "RAW")
+    else:
+        translator.feed(_function_added(0, 0, "fc_cap", "call_cap", "lookup"))
+        translator.feed(_arguments_delta(1, 0, "fc_cap", "abc"))
+        crossing = _arguments_delta(2, 0, "fc_cap", "RAW")
+
+    with pytest.raises(ChatProviderError) as exc_info:
+        translator.feed(crossing)
+
+    assert exc_info.value.provider == "qwencloud"
+    assert "RAW" not in str(exc_info.value)
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
+
+
+def test_responses_text_and_argument_fragments_use_linear_lists_then_release() -> None:
+    translator = QwenResponsesStreamTranslator()
+    translator.feed(_message_added(0, 0, "msg_fragments"))
+    translator.feed(_content_added(1, 0, "msg_fragments"))
+    translator.feed(_text_delta(2, 0, "msg_fragments", "ab"))
+    translator.feed(_text_delta(3, 0, "msg_fragments", "cd"))
+    text_state = translator._text_parts[(0, 0)]  # noqa: SLF001
+    assert text_state.fragments == ["ab", "cd"]
+    assert not hasattr(text_state, "emitted_text")
+    translator.feed(_text_done(4, 0, "msg_fragments", "abcd"))
+    assert text_state.fragments == []
+    assert text_state.final_text == "abcd"
+
+    translator.feed(_function_added(5, 1, "fc_fragments", "call_fragments", "lookup"))
+    translator.feed(_arguments_delta(6, 1, "fc_fragments", '{"a":'))
+    translator.feed(_arguments_delta(7, 1, "fc_fragments", "1}"))
+    call_state = translator._function_calls[1]  # noqa: SLF001
+    assert call_state.argument_fragments == ['{"a":', "1}"]
+    assert not hasattr(call_state, "emitted_arguments")
+    translator.feed(_arguments_done(8, 1, "fc_fragments", '{"a":1}'))
+    assert call_state.argument_fragments == []
+    assert call_state.final_arguments == '{"a":1}'
+
+
 def test_responses_terminal_replay_is_strict_and_finish_safe() -> None:
     translator = QwenResponsesStreamTranslator()
     translator.feed(_message_added(0, 0, "msg_replay"))
@@ -463,6 +708,12 @@ def test_responses_terminal_replay_is_strict_and_finish_safe() -> None:
 
     assert translator.feed(completed)[-1]["choices"][0]["finish_reason"] == "stop"
     assert translator.feed(deepcopy(completed)) == ()
+    reordered = {
+        "response": deepcopy(completed["response"]),
+        "sequence_number": completed["sequence_number"],
+        "type": completed["type"],
+    }
+    assert translator.feed(reordered) == ()
     assert translator.finish() == ()
 
     with pytest.raises(ChatProviderError, match="object"):
@@ -649,6 +900,80 @@ def test_responses_function_call_fragments_recover_without_duplication() -> None
         }
     ]
     assert translator.finish() == ()
+
+
+def test_responses_function_indexes_preserve_terminal_output_order() -> None:
+    translator = QwenResponsesStreamTranslator()
+    chunks: list[dict[str, Any]] = []
+    chunks.extend(
+        translator.feed(_function_added(0, 1, "fc_one", "call_one", "second"))
+    )
+    chunks.extend(
+        translator.feed(_function_added(1, 0, "fc_zero", "call_zero", "first"))
+    )
+    chunks.extend(
+        translator.feed(
+            _terminal(
+                2,
+                [
+                    _function_item("fc_zero", "call_zero", "first", '{"n":0}'),
+                    _function_item("fc_one", "call_one", "second", '{"n":1}'),
+                ],
+            )
+        )
+    )
+
+    identities = {
+        tool_call["index"]: tool_call["id"]
+        for chunk in chunks
+        for tool_call in chunk["choices"][0]["delta"].get("tool_calls", [])
+        if "id" in tool_call
+    }
+    assert identities == {1: "call_one", 0: "call_zero"}
+    assert [identities[index] for index in sorted(identities)] == [
+        "call_zero",
+        "call_one",
+    ]
+
+
+def test_responses_stable_function_indexes_survive_interleaved_output_types() -> None:
+    translator = QwenResponsesStreamTranslator()
+    chunks: list[dict[str, Any]] = []
+    chunks.extend(
+        translator.feed(_function_added(0, 3, "fc_three", "call_three", "third"))
+    )
+    chunks.extend(translator.feed(_message_added(1, 0, "msg_zero")))
+    chunks.extend(translator.feed(_content_added(2, 0, "msg_zero")))
+    chunks.extend(translator.feed(_text_delta(3, 0, "msg_zero", "safe")))
+    chunks.extend(translator.feed(_reasoning_added(4, 1, "reasoning_one")))
+    chunks.extend(
+        translator.feed(_function_added(5, 2, "fc_two", "call_two", "second"))
+    )
+    chunks.extend(
+        translator.feed(
+            _terminal(
+                6,
+                [
+                    _message_item("msg_zero", "safe"),
+                    _reasoning_item("reasoning_one", status="completed"),
+                    _function_item("fc_two", "call_two", "second", '{"n":2}'),
+                    _function_item("fc_three", "call_three", "third", '{"n":3}'),
+                ],
+            )
+        )
+    )
+
+    identities = {
+        tool_call["index"]: tool_call["id"]
+        for chunk in chunks
+        for tool_call in chunk["choices"][0]["delta"].get("tool_calls", [])
+        if "id" in tool_call
+    }
+    assert identities == {3: "call_three", 2: "call_two"}
+    assert [identities[index] for index in sorted(identities)] == [
+        "call_two",
+        "call_three",
+    ]
 
 
 def test_responses_partial_or_mismatched_call_never_surfaces() -> None:
@@ -930,6 +1255,311 @@ def test_responses_reasoning_status_is_validated_without_surface() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "case",
+    (
+        "choice-index-bool",
+        "choice-index-float",
+        "choice-index-negative",
+        "tool-index-bool",
+        "tool-index-float",
+        "tool-index-negative",
+        "id-number",
+        "id-blank",
+        "type-other",
+        "type-mapping",
+        "function-nonmapping",
+        "name-number",
+        "name-blank",
+        "arguments-number",
+        "content-number",
+        "role-number",
+    ),
+)
+def test_chat_stream_rejects_malformed_choice_and_tool_metadata(case: str) -> None:
+    start = _chat_tool_start()
+    choice = start["choices"][0]
+    tool = choice["delta"]["tool_calls"][0]
+    if case == "choice-index-bool":
+        choice["index"] = False
+    elif case == "choice-index-float":
+        choice["index"] = 0.0
+    elif case == "choice-index-negative":
+        choice["index"] = -1
+    elif case == "tool-index-bool":
+        tool["index"] = False
+    elif case == "tool-index-float":
+        tool["index"] = 0.0
+    elif case == "tool-index-negative":
+        tool["index"] = -1
+    elif case == "id-number":
+        tool["id"] = 7
+    elif case == "id-blank":
+        tool["id"] = "   "
+    elif case == "type-other":
+        tool["type"] = "builtin"
+    elif case == "type-mapping":
+        tool["type"] = {"RAW-METADATA-CANARY": True}
+    elif case == "function-nonmapping":
+        tool["function"] = "RAW-METADATA-CANARY"
+    elif case == "name-number":
+        tool["function"]["name"] = 7
+    elif case == "name-blank":
+        tool["function"]["name"] = "   "
+    elif case == "arguments-number":
+        tool["function"]["arguments"] = 7
+    elif case == "content-number":
+        choice["delta"]["content"] = 7
+    else:
+        choice["delta"]["role"] = 7
+    stream, response, session = _chat_stream([start, _chat_tool_terminal()])
+
+    with pytest.raises(ChatProviderError) as exc_info:
+        list(stream)
+
+    assert exc_info.value.provider == "qwencloud"
+    assert "RAW-METADATA-CANARY" not in str(exc_info.value)
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
+    assert response.close_calls == 1
+    assert session.close_calls == 1
+
+
+@pytest.mark.parametrize("case", ("conflicting-id", "conflicting-name", "duplicate-id"))
+def test_chat_stream_rejects_conflicting_or_duplicate_tool_identity(case: str) -> None:
+    start = _chat_tool_start()
+    later = _chat_tool_terminal()
+    later_tool = later["choices"][0]["delta"]["tool_calls"][0]
+    if case == "conflicting-id":
+        later_tool["id"] = "call_conflict"
+    elif case == "conflicting-name":
+        later_tool["function"]["name"] = "other_tool"
+    else:
+        duplicate = deepcopy(start["choices"][0]["delta"]["tool_calls"][0])
+        duplicate["index"] = 1
+        start["choices"][0]["delta"]["tool_calls"].append(duplicate)
+        later["choices"][0]["delta"]["tool_calls"].append(
+            {"index": 1, "function": {"arguments": "{}"}}
+        )
+    stream, response, session = _chat_stream([start, later])
+
+    with pytest.raises(ChatProviderError) as exc_info:
+        list(stream)
+
+    assert exc_info.value.provider == "qwencloud"
+    assert response.close_calls == 1
+    assert session.close_calls == 1
+
+
+@pytest.mark.parametrize(
+    "case",
+    (
+        "arbitrary-reason",
+        "blank-reason",
+        "missing-reason",
+        "stop-with-tools",
+        "length-with-tools",
+        "tool-calls-without-tools",
+    ),
+)
+def test_chat_stream_terminal_reason_matches_tool_fragment_state(case: str) -> None:
+    if case in {"stop-with-tools", "length-with-tools"}:
+        terminal = _chat_tool_terminal()
+        terminal["choices"][0]["finish_reason"] = case.removesuffix("-with-tools")
+        events = [_chat_tool_start(), terminal]
+    else:
+        terminal = _chat_text_terminal(
+            reason={
+                "arbitrary-reason": "content_filter",
+                "blank-reason": "   ",
+                "missing-reason": "stop",
+                "tool-calls-without-tools": "tool_calls",
+            }[case]
+        )
+        if case == "missing-reason":
+            del terminal["choices"][0]["finish_reason"]
+        events = [terminal]
+    stream, response, session = _chat_stream(events)
+
+    with pytest.raises(ChatProviderError) as exc_info:
+        list(stream)
+
+    assert exc_info.value.provider == "qwencloud"
+    assert response.close_calls == 1
+    assert session.close_calls == 1
+
+
+@pytest.mark.parametrize(
+    "case",
+    (
+        "done-before-terminal",
+        "eof-before-terminal",
+        "usage-before-terminal",
+        "chunk-after-terminal",
+        "one-of-two-choices-unterminated",
+    ),
+)
+def test_chat_stream_requires_ordered_complete_terminal_lifecycle(case: str) -> None:
+    done = case != "eof-before-terminal"
+    if case in {"done-before-terminal", "eof-before-terminal"}:
+        events = [
+            {
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"content": "partial"},
+                        "finish_reason": None,
+                    }
+                ]
+            }
+        ]
+    elif case == "usage-before-terminal":
+        events = [
+            {"choices": [], "usage": {"total_tokens": 1}},
+            _chat_text_terminal(),
+        ]
+    elif case == "chunk-after-terminal":
+        events = [
+            _chat_text_terminal(),
+            {
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"content": "late"},
+                        "finish_reason": None,
+                    }
+                ]
+            },
+        ]
+    else:
+        events = [
+            {
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"content": "done"},
+                        "finish_reason": "stop",
+                    },
+                    {
+                        "index": 1,
+                        "delta": {"content": "partial"},
+                        "finish_reason": None,
+                    },
+                ]
+            }
+        ]
+    stream, response, session = _chat_stream(events, done=done)
+
+    with pytest.raises(ChatProviderError) as exc_info:
+        list(stream)
+
+    assert exc_info.value.provider == "qwencloud"
+    assert response.close_calls == 1
+    assert session.close_calls == 1
+
+
+def test_chat_stream_preserves_multiple_valid_choices_role_tools_and_usage() -> None:
+    events = [
+        {
+            "id": "chatcmpl_multi",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"role": "assistant"},
+                    "finish_reason": None,
+                },
+                {
+                    "index": 1,
+                    "delta": {
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "index": 2,
+                                "id": "call_multi",
+                                "type": "function",
+                                "function": {"name": "lookup", "arguments": "{"},
+                            }
+                        ],
+                    },
+                    "finish_reason": None,
+                },
+            ],
+        },
+        {
+            "id": "chatcmpl_multi",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"content": "safe"},
+                    "finish_reason": "stop",
+                },
+                {
+                    "index": 1,
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 2,
+                                "function": {"arguments": "}"},
+                            }
+                        ]
+                    },
+                    "finish_reason": "tool_calls",
+                },
+            ],
+        },
+        {
+            "id": "chatcmpl_multi",
+            "choices": [],
+            "usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5},
+        },
+    ]
+    stream, response, session = _chat_stream(events)
+
+    assert list(stream) == events
+    assert response.close_calls == 1
+    assert session.close_calls == 1
+
+
+def test_chat_stream_drops_unvalidated_private_extras_without_coercion() -> None:
+    event = _chat_tool_start()
+    event["id"] = "chatcmpl_safe"
+    event["private"] = "RAW-PRIVATE-CANARY"
+    choice = event["choices"][0]
+    choice["private"] = "RAW-PRIVATE-CANARY"
+    choice["delta"]["private"] = "RAW-PRIVATE-CANARY"
+    tool = choice["delta"]["tool_calls"][0]
+    tool["private"] = "RAW-PRIVATE-CANARY"
+    tool["function"]["private"] = "RAW-PRIVATE-CANARY"
+    terminal = _chat_tool_terminal()
+    stream, response, session = _chat_stream([event, terminal])
+
+    emitted = list(stream)
+
+    assert emitted[0] == {
+        "id": "chatcmpl_safe",
+        "choices": [
+            {
+                "index": 0,
+                "delta": {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "call_metadata",
+                            "type": "function",
+                            "function": {"name": "lookup", "arguments": ""},
+                        }
+                    ],
+                },
+                "finish_reason": None,
+            }
+        ],
+    }
+    assert "RAW-PRIVATE-CANARY" not in repr(emitted)
+    assert response.close_calls == 1
+    assert session.close_calls == 1
+
+
 def test_chat_stream_preserves_openai_deltas_and_usage() -> None:
     events = [
         {
@@ -1010,10 +1640,17 @@ def test_stream_retries_only_before_first_consumed_byte(
 ) -> None:
     retryable = _ByteStreamResponse([], status_code=503)
     malformed_after_body = _ByteStreamResponse(
-        [b'data: {"choices":[{"delta":{"content":"private"}}]}\n\n', b"data: {"]
+        [
+            b'data: {"choices":[{"index":0,"delta":{"content":"private"},'
+            b'"finish_reason":null}]}\n\n',
+            b"data: {",
+        ]
     )
     replay_canary = _ByteStreamResponse(
-        [b'data: {"choices":[{"delta":{"content":"replayed"}}]}\n\n']
+        [
+            b'data: {"choices":[{"index":0,"delta":{"content":"replayed"},'
+            b'"finish_reason":"stop"}]}\n\n'
+        ]
     )
     session = _ByteStreamSession([retryable, malformed_after_body, replay_canary])
     monkeypatch.setattr(
@@ -1074,7 +1711,12 @@ def test_stream_body_read_failures_are_typed_closed_and_never_retried(
 ) -> None:
     canary = "RAW-STREAM-READ-CANARY"
     chunks = (
-        [b'data: {"choices":[{"delta":{"content":"safe"}}]}\n\n'] if after_event else []
+        [
+            b'data: {"choices":[{"index":0,"delta":{"content":"safe"},'
+            b'"finish_reason":null}]}\n\n'
+        ]
+        if after_event
+        else []
     )
     response = _FailingByteStreamResponse(chunks, error=error_type(canary))
     session = _ByteStreamSession([response])
@@ -1143,6 +1785,43 @@ def test_stream_close_is_idempotent_and_closes_response_and_session() -> None:
         next(stream)
 
 
+@pytest.mark.parametrize("path", ("primary-error", "normal", "explicit"))
+def test_stream_cleanup_failures_never_mask_primary_or_normal_result(path: str) -> None:
+    terminal = _chat_text_terminal()
+    chunks = (
+        [b"data: {not-json}\n\n"] if path == "primary-error" else _chat_wire([terminal])
+    )
+    response = _CloseFailingByteStreamResponse(chunks)
+    session = _CloseFailingByteStreamSession([response])
+    stream = QwenCloudStream(
+        response=response,  # type: ignore[arg-type]
+        session=session,  # type: ignore[arg-type]
+        api_mode="chat_completions",
+    )
+    records: list[str] = []
+    sink_id = logger.add(lambda message: records.append(str(message)), level="DEBUG")
+    try:
+        if path == "primary-error":
+            with pytest.raises(ChatProviderError) as exc_info:
+                list(stream)
+            assert exc_info.value.provider == "qwencloud"
+            assert exc_info.value.__cause__ is None
+            assert exc_info.value.__context__ is None
+            disclosure = str(exc_info.value) + "".join(records)
+            assert "RAW-RESPONSE-CLOSE-CANARY" not in disclosure
+            assert "RAW-SESSION-CLOSE-CANARY" not in disclosure
+        elif path == "normal":
+            assert list(stream) == [terminal]
+        else:
+            assert stream.close() is None
+            assert stream.close() is None
+    finally:
+        logger.remove(sink_id)
+
+    assert response.close_calls == 1
+    assert session.close_calls == 1
+
+
 @pytest.mark.parametrize(
     "chunks",
     (
@@ -1181,3 +1860,96 @@ def test_stream_malformed_json_and_error_event_are_typed_closed_and_not_retried(
     assert response.iter_content_calls == 1
     assert response.close_calls == 1
     assert session.close_calls == 1
+
+
+@pytest.mark.parametrize("case", ("raw-recursion", "depth-cap", "node-cap"))
+def test_stream_deep_json_is_typed_redacted_and_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    case: str,
+) -> None:
+    canary = "RAW-DEEP-JSON-CANARY"
+    if case == "raw-recursion":
+        nested = "[" * 1200 + json.dumps(canary) + "]" * 1200
+        raw = (
+            '{"choices":[{"index":0,"delta":{"content":"safe"},'
+            '"finish_reason":"stop"}],"private":' + nested + "}"
+        )
+        response = _ByteStreamResponse(
+            [b"data: " + raw.encode("utf-8") + b"\n\ndata: [DONE]\n\n"]
+        )
+        session = _ByteStreamSession([response])
+        stream = QwenCloudStream(
+            response=response,  # type: ignore[arg-type]
+            session=session,  # type: ignore[arg-type]
+            api_mode="chat_completions",
+        )
+    else:
+        terminal = _chat_text_terminal()
+        if case == "depth-cap":
+            monkeypatch.setattr(
+                qwencloud_streaming, "_MAX_JSON_DEPTH", 4, raising=False
+            )
+            terminal["private"] = {"a": {"b": {"c": canary}}}
+        else:
+            monkeypatch.setattr(
+                qwencloud_streaming, "_MAX_JSON_NODES", 8, raising=False
+            )
+            terminal["private"] = [canary] * 20
+        stream, response, session = _chat_stream([terminal])
+
+    with pytest.raises(ChatProviderError) as exc_info:
+        list(stream)
+
+    assert exc_info.value.provider == "qwencloud"
+    assert canary not in str(exc_info.value)
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
+    assert response.close_calls == 1
+    assert session.close_calls == 1
+
+
+def test_responses_deep_direct_event_is_typed_and_redacted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(qwencloud_streaming, "_MAX_JSON_DEPTH", 4, raising=False)
+    event = {
+        "type": "response.created",
+        "sequence_number": 0,
+        "response": {
+            "id": "resp_deep",
+            "status": "in_progress",
+            "private": {"a": {"b": {"RAW-DEEP-EVENT-CANARY": True}}},
+        },
+    }
+
+    with pytest.raises(ChatProviderError) as exc_info:
+        QwenResponsesStreamTranslator().feed(event)
+
+    assert exc_info.value.provider == "qwencloud"
+    assert "RAW-DEEP-EVENT-CANARY" not in str(exc_info.value)
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
+
+
+@pytest.mark.parametrize("case", ("depth-cap", "raw-recursion"))
+def test_responses_deep_function_arguments_are_typed_and_redacted(
+    monkeypatch: pytest.MonkeyPatch,
+    case: str,
+) -> None:
+    if case == "depth-cap":
+        monkeypatch.setattr(qwencloud_streaming, "_MAX_JSON_DEPTH", 4, raising=False)
+        arguments = '{"a":{"b":{"c":{"RAW-DEEP-ARGS-CANARY":true}}}}'
+    else:
+        arguments = (
+            '{"value":' + "[" * 1200 + '"RAW-DEEP-ARGS-CANARY"' + "]" * 1200 + "}"
+        )
+    translator = QwenResponsesStreamTranslator()
+    translator.feed(_function_added(0, 0, "fc_deep", "call_deep", "lookup"))
+
+    with pytest.raises(ChatProviderError) as exc_info:
+        translator.feed(_arguments_done(1, 0, "fc_deep", arguments))
+
+    assert exc_info.value.provider == "qwencloud"
+    assert "RAW-DEEP-ARGS-CANARY" not in str(exc_info.value)
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None

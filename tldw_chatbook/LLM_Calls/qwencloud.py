@@ -69,6 +69,14 @@ def _provider_error(message: str, *, status_code: int = 502) -> ChatProviderErro
     )
 
 
+def _best_effort_close(resource: Any) -> None:
+    """Attempt one close without allowing cleanup failures to mask results."""
+    try:
+        resource.close()
+    except Exception:
+        pass
+
+
 def _retry_configuration(
     provider_settings: Mapping[str, Any],
 ) -> tuple[int, float]:
@@ -1326,7 +1334,7 @@ def chat_with_qwencloud(
                 raise _provider_error("QwenCloud returned malformed JSON.") from None
             finally:
                 if response is not None:
-                    response.close()
+                    _best_effort_close(response)
 
             if retry_sleep is None:
                 raise _provider_error("QwenCloud retry state was incomplete.")
@@ -1334,6 +1342,6 @@ def chat_with_qwencloud(
                 time.sleep(retry_sleep)
     finally:
         if not stream_owns_session:
-            session.close()
+            _best_effort_close(session)
 
     raise _provider_error("QwenCloud request attempts were exhausted.")
