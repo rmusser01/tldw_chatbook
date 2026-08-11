@@ -1196,6 +1196,58 @@ def test_stale_conflict_precedes_version_exhaustion_at_max() -> None:
     assert callbacks == []
 
 
+def test_missing_task_precedes_version_exhaustion_at_max() -> None:
+    maximum = todo_store_module.MAX_TODO_NUMBER
+    callbacks: list[list[dict[str, object]]] = []
+    store = SessionTodoStore()
+    before = store.export_snapshot()
+
+    with pytest.raises(TodoStoreError, match="^task not found$"):
+        store.update(
+            task_id=str(maximum),
+            expected_version=maximum,
+            content="Valid mutation for a missing bounded ID",
+            on_change=callbacks.append,
+        )
+
+    assert store.export_snapshot() == before
+    assert callbacks == []
+
+
+def test_version_exhaustion_precedes_in_progress_invariant() -> None:
+    maximum = todo_store_module.MAX_TODO_NUMBER
+    payload = {
+        "next_id": 3,
+        "tasks": [
+            {
+                "id": "1",
+                "version": 1,
+                "content": "Already active",
+                "status": "in_progress",
+            },
+            {
+                "id": "2",
+                "version": maximum,
+                "content": "At version ceiling",
+                "status": "pending",
+            },
+        ],
+    }
+    callbacks: list[list[dict[str, object]]] = []
+    store = SessionTodoStore.from_snapshot(payload)
+
+    with pytest.raises(TodoStoreError, match="^task version exhausted$"):
+        store.update(
+            task_id="2",
+            expected_version=maximum,
+            status="in_progress",
+            on_change=callbacks.append,
+        )
+
+    assert store.export_snapshot() == payload
+    assert callbacks == []
+
+
 @pytest.mark.parametrize(
     ("task_id", "expected_version"),
     [
