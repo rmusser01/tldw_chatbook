@@ -771,15 +771,25 @@ class ConsoleProviderGateway:
 
         The client bound to the caller's current running loop (if any) is
         closed directly -- safe, since we are already running on that loop.
-        Every other cached per-loop client -- e.g. one built earlier by the
-        app's long-lived loop, still alive while a shorter-lived per-turn
-        loop is the one calling ``aclose()`` -- is closed best-effort via
-        ``_schedule_stale_client_close`` on its own loop; this never awaits,
-        and never closes, a client bound to a loop it is not currently
-        running on.
+        Every other cached per-loop client whose loop is IDLE -- e.g. one
+        built earlier by the app's long-lived loop, still alive while a
+        shorter-lived per-turn loop is the one calling ``aclose()`` -- is
+        closed best-effort via ``_schedule_stale_client_close`` on its own
+        loop; this never awaits, and never closes, a client bound to a loop
+        it is not currently running on.
+
+        PR3a-1 Task 6b (audit F5): a cached loop that is still RUNNING is
+        skipped and its entry RETAINED. Such a loop is somebody's live
+        transport -- since PR3a-1 Task 1, typically a fleet child's
+        ``_ModelCallLifeline``, which outlives the turn that spawned it --
+        and scheduling ``client.aclose()`` onto it closes the connection
+        pool that child is actively issuing requests through. Each is
+        closed by its own owner's teardown instead; see the inline comment
+        at the sweep for the full argument.
 
         Returns:
-            ``None``. Injected HTTP clients are left open for their owner.
+            ``None``. Injected HTTP clients are left open for their owner,
+            and so are clients belonging to loops still running.
         """
         if not self._owns_http_client:
             return
@@ -807,12 +817,41 @@ class ConsoleProviderGateway:
                     # re-treated as "unclaimed" by this branch.
                     current_client = self.http_client
                     self._client_ever_claimed = True
-            others = [
-                (other_loop, other_client)
-                for other_loop, other_client in self._loop_clients.items()
-                if other_client is not current_client
-            ]
+            others: list[
+                tuple[asyncio.AbstractEventLoop, httpx.AsyncClient]
+            ] = []
+            still_live: list[
+                tuple[asyncio.AbstractEventLoop, httpx.AsyncClient]
+            ] = []
+            for other_loop, other_client in self._loop_clients.items():
+                if other_client is current_client:
+                    continue
+                # PR3a-1 Task 6b (audit F5): a RUNNING loop is somebody's
+                # live transport, not a leftover. `_prune_closed_loops`
+                # above already dropped the finished per-turn loops, and
+                # the remaining ones that are still spinning `run_forever`
+                # are fleet children's `_ModelCallLifeline`s -- which now
+                # outlive the turn that spawned them (PR3a-1 Task 1), so
+                # scheduling `client.aclose()` onto such a loop closes the
+                # pool a child is actively issuing requests through.
+                # Reproduced by execution in `Tests/Chat/test_console_
+                # provider_gateway.py::test_aclose_does_not_close_a_still_
+                # running_childs_client`.
+                if other_loop.is_running():
+                    still_live.append((other_loop, other_client))
+                    continue
+                others.append((other_loop, other_client))
             self._loop_clients.clear()
+            # Retained, not merely spared: the child's next
+            # `_active_http_client()` must find the SAME pool rather than
+            # build a fresh one per call for the rest of its life.
+            # Each is closed by its own owner's teardown -- a
+            # `_ModelCallLifeline` closes its loop when the child ends, at
+            # which point `_prune_closed_loops` drops the entry and the
+            # client's own finalizer releases the sockets (the same
+            # reasoning that method's docstring already relies on).
+            for live_loop, live_client in still_live:
+                self._loop_clients[live_loop] = live_client
             self._client_loop = None
 
         for other_loop, other_client in others:

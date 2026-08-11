@@ -2117,15 +2117,68 @@ class ConsoleChatController:
         the union of the two predicates those existing callers already
         use.
 
+        PR3a-1 Task 6b (audit F5, second half): a THIRD leg -- sessions
+        holding a surviving fleet child. Since PR3a-1 a sub-agent keeps
+        running after the turn that spawned it returns, and such a session
+        has no active stream task and no pending approval round, so the two
+        legs above both read it as idle. The confirm dialog therefore told
+        the user "0 runs will be killed" and `shutdown()` then killed one:
+        a dialog that lies to the user is worse than no dialog. Reproduced
+        by execution in `Tests/Chat/test_console_agent_bridge.py::test_busy_
+        fleet_session_count_sees_a_session_whose_only_work_is_a_survivor`.
+
         Returns:
-            The number of live sessions with in-flight work and/or an
-            outstanding approval-like round -- 0 when the fleet is idle.
+            The number of live sessions with in-flight work, an outstanding
+            approval-like round, and/or a still-running sub-agent -- 0 when
+            the fleet is idle.
         """
         live_ids = {session.id for session in self.store.sessions()}
         with self._approval_state_lock:
             pending_ids = set(self._pending_approvals)
         busy_ids = set(self._live_busy_session_ids())
-        return len(busy_ids | (pending_ids & live_ids))
+        return len(
+            busy_ids
+            | (pending_ids & live_ids)
+            | self._fleet_survivor_session_ids()
+        )
+
+    def _fleet_survivor_session_ids(self) -> set[str]:
+        """Live sessions with at least one still-running sub-agent.
+
+        Reads the agent bridge's own live coordinator view
+        (`fleet_snapshot`, per conversation) rather than any DB row: a
+        child's real status lives in `FleetCoordinator` while it runs, and
+        `agent_runs` only catches up when it ends. Terminal handles are
+        filtered out -- `fleet_snapshot` includes them while a run is in
+        flight, and a finished child is nothing teardown would kill.
+
+        Called only from `busy_fleet_session_count` (navigation confirm and
+        the teardown record), never on the rail's 0.2s tick. Degrades to an
+        empty set with no bridge, no `fleet_snapshot`, or a raising one:
+        under-counting is the pre-PR3a-1 behaviour, and this must never be
+        the thing that breaks a navigation.
+        """
+        from tldw_chatbook.Agents.agent_models import TERMINAL_RUN_STATUSES
+
+        bridge = self._agent_bridge
+        snapshot = getattr(bridge, "fleet_snapshot", None) if bridge else None
+        if snapshot is None:
+            return set()
+        busy: set[str] = set()
+        for session in self.store.sessions():
+            try:
+                handles = snapshot(self._agent_conversation_id(session.id))
+            except Exception:  # noqa: BLE001 -- never block a navigation
+                logger.opt(exception=True).debug(
+                    "fleet survivor count failed for a session; treated as idle"
+                )
+                continue
+            if any(
+                getattr(handle, "status", "") not in TERMINAL_RUN_STATUSES
+                for handle in handles or ()
+            ):
+                busy.add(session.id)
+        return busy
 
     @property
     def max_parallel_runs(self) -> int:

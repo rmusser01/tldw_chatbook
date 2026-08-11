@@ -5006,3 +5006,106 @@ def test_a_finished_childs_live_slot_does_not_follow_the_conversation_forever(
         bridge._live_primary_keys["conv-live-prune"]
         in bridge._live["conv-live-prune"]
     )
+
+
+# -- PR3a-1 Task 6b (audit F5, second half): the navigate confirm's count
+#
+# `busy_fleet_session_count()` is the number the user is shown before
+# "Leave" -- and the number the post-navigate toast reports as killed. It
+# was (session with an active stream task) UNION (session with a pending
+# approval round). A survivor is NEITHER, so the dialog said "0 runs will
+# be killed" and then killed one. A dialog that lies to the user is worse
+# than no dialog.
+
+
+def test_busy_fleet_session_count_sees_a_session_whose_only_work_is_a_survivor(
+    tmp_path,
+):
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+    gate = threading.Event()
+    gateway = _FleetTwoChildGateway(
+        parent_script=[
+            [_fence("spawn_subagent", {"task": "long job"})],
+            ["turn 1 final"],
+        ],
+        child_result=["child answer"],
+        gate=gate,
+        needed=1,
+    )
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=gateway
+    )
+    controller = ConsoleChatController(
+        store=store, provider_gateway=object(), agent_bridge=bridge
+    )
+    try:
+        outcome = _run(
+            bridge, store, session, assistant.id, conversation_id=session.id
+        )
+        assert outcome.status == "done"
+        assert gateway.entered_event.wait(5), "the child never started"
+
+        # Nothing else is busy: the turn is over, no approval is armed.
+        assert controller.in_flight_run_count() == 0
+        assert bridge.fleet_snapshot(session.id), "precondition: a live survivor"
+
+        assert controller.busy_fleet_session_count() == 1, (
+            "the confirm dialog would tell the user 0 runs will be killed, "
+            "and then kill one"
+        )
+    finally:
+        gate.set()
+    _join_fleet_threads()
+
+    # ... and it goes back to 0 once the survivor settles, so an idle
+    # Console still navigates away with no dialog at all.
+    assert controller.busy_fleet_session_count() == 0
+
+
+def test_busy_fleet_session_count_ignores_a_terminal_child():
+    """Only a STILL-RUNNING child counts.
+
+    `fleet_snapshot` includes terminal handles while a run is in flight
+    (`FleetCoordinator` never forgets one mid-turn), and a finished child
+    is nothing teardown would kill -- counting it would inflate the number
+    the confirm dialog shows in the opposite direction.
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+    class _FinishedFleetBridge:
+        def fleet_snapshot(self, conversation_id):
+            return [SimpleNamespace(status="done", handle_id="h1")]
+
+    store = ConsoleChatStore()
+    store.ensure_session()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=object(), agent_bridge=_FinishedFleetBridge()
+    )
+    assert controller.busy_fleet_session_count() == 0
+
+
+def test_busy_fleet_session_count_degrades_when_the_bridge_raises():
+    """Under-counting is the pre-PR3a-1 behaviour; a broken fleet read must
+    never be the thing that blocks a navigation."""
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+    class _RaisingFleetBridge:
+        def fleet_snapshot(self, conversation_id):
+            raise RuntimeError("boom")
+
+    store = ConsoleChatStore()
+    store.ensure_session()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=object(), agent_bridge=_RaisingFleetBridge()
+    )
+    assert controller.busy_fleet_session_count() == 0
