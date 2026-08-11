@@ -1120,7 +1120,15 @@ _BUDGET_USAGE_DETAILS_KEYS = (
     "output_tokens_details",
     "output_token_details",
 )
-_BUDGET_USAGE_DETAIL_COUNT_KEYS = ("cached_tokens", "reasoning_tokens")
+_BUDGET_USAGE_DETAIL_COUNT_KEYS = (
+    "cached_tokens",
+    "reasoning_tokens",
+    "audio_tokens",
+    "text_tokens",
+    "image_tokens",
+    "accepted_prediction_tokens",
+    "rejected_prediction_tokens",
+)
 
 
 def _has_strict_budget_usage_counts(payload: Mapping[str, Any]) -> bool:
@@ -1140,6 +1148,15 @@ def _has_strict_budget_usage_counts(payload: Mapping[str, Any]) -> bool:
                 value = details[count_key]
                 if type(value) is not int or value < 0:
                     return False
+        if "cached_tokens_details" in details:
+            cached_details = details["cached_tokens_details"]
+            if not isinstance(cached_details, Mapping):
+                return False
+            for count_key in _BUDGET_USAGE_DETAIL_COUNT_KEYS:
+                if count_key in cached_details:
+                    value = cached_details[count_key]
+                    if type(value) is not int or value < 0:
+                        return False
     return True
 
 

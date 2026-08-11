@@ -1257,6 +1257,55 @@ def test_openai_usage_handoff_preserves_chat_completion_cache_details():
             "cache_creation_input_tokens": 1.5,
             "output_tokens": 3,
         },
+        {
+            "input_tokens": 9,
+            "input_token_details": {"cached_tokens": 0, "audio_tokens": True},
+            "output_tokens": 3,
+            "total_tokens": 12,
+        },
+        {
+            "input_tokens": 9,
+            "input_token_details": {
+                "cached_tokens": 2,
+                "cached_tokens_details": [],
+            },
+            "output_tokens": 3,
+            "total_tokens": 12,
+        },
+        {
+            "input_tokens": 9,
+            "input_tokens_details": {"cached_tokens": 2},
+            "output_tokens": 3,
+            "output_tokens_details": {"accepted_prediction_tokens": "1"},
+            "total_tokens": 12,
+        },
+        {
+            "input_tokens": 9,
+            "input_token_details": {"text_tokens": 9.5},
+            "output_tokens": 3,
+            "total_tokens": 12,
+        },
+        {
+            "input_tokens": 9,
+            "output_tokens": 3,
+            "output_token_details": {"image_tokens": -1},
+            "total_tokens": 12,
+        },
+        {
+            "input_tokens": 9,
+            "input_token_details": {
+                "cached_tokens": 2,
+                "cached_tokens_details": {"audio_tokens": "1"},
+            },
+            "output_tokens": 3,
+            "total_tokens": 12,
+        },
+        {
+            "input_tokens": 9,
+            "output_tokens": 3,
+            "output_tokens_details": {"rejected_prediction_tokens": False},
+            "total_tokens": 12,
+        },
     ],
     ids=(
         "bool",
@@ -1268,6 +1317,13 @@ def test_openai_usage_handoff_preserves_chat_completion_cache_details():
         "nested-float",
         "malformed-details-shape",
         "anthropic-cache-fields",
+        "boolean-audio",
+        "malformed-cached-details-shape",
+        "numeric-string-accepted-prediction",
+        "fractional-singular-text",
+        "negative-singular-image",
+        "malformed-nested-cached-count",
+        "boolean-rejected-prediction",
     ),
 )
 def test_malformed_streamed_usage_uses_agent_estimator_instead_of_coercion(
@@ -1337,9 +1393,47 @@ def test_exact_zero_streamed_usage_counts_remain_authoritative(
 ):
     usage = {
         "input_tokens": 0,
-        "input_tokens_details": {"cached_tokens": 0},
+        "input_tokens_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0,
+            "text_tokens": 0,
+            "image_tokens": 0,
+            "cached_tokens_details": {
+                "audio_tokens": 0,
+                "text_tokens": 0,
+                "image_tokens": 0,
+                "vendor_metadata": "preserved",
+            },
+        },
+        "input_token_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0,
+            "text_tokens": 0,
+            "image_tokens": 0,
+            "cached_tokens_details": {
+                "audio_tokens": 0,
+                "text_tokens": 0,
+                "image_tokens": 0,
+            },
+        },
         "output_tokens": 3,
-        "output_tokens_details": {"reasoning_tokens": 0},
+        "output_tokens_details": {
+            "reasoning_tokens": 0,
+            "audio_tokens": 0,
+            "text_tokens": 0,
+            "image_tokens": 0,
+            "accepted_prediction_tokens": 0,
+            "rejected_prediction_tokens": 0,
+            "vendor_metadata": "preserved",
+        },
+        "output_token_details": {
+            "reasoning_tokens": 0,
+            "audio_tokens": 0,
+            "text_tokens": 0,
+            "image_tokens": 0,
+            "accepted_prediction_tokens": 0,
+            "rejected_prediction_tokens": 0,
+        },
         "total_tokens": 3,
     }
 
