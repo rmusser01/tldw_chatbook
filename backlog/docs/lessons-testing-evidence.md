@@ -2461,3 +2461,65 @@ retain. Validate derived totals from their primary rows before normalization. Th
 mutate an unknown field and mutate the derived value independently: both must make the
 boundary test red. Equality between two values produced by the same regeneration path
 does not independently validate either one.
+
+---
+## A test written in the same PR as the change it pins can be born red — and then that PR's own omission ships (TASK-14920, 2026-08-11)
+
+**Incident.** `7dbbc401b` (TASK-2154, FB-07) moved every Console "Save as..."
+confirmation from `severity="information"` to `severity="success"` — and shipped
+`test_console_save_as_savers_confirm_at_success_severity`, which asserts all four
+destinations do so. It missed the Chatbook destination. Nobody noticed for four days,
+because the test it shipped alongside called `console._save_console_message_as_media(...)`
+— a seam decomposition wave 3 (`391b7bf69`, merged ~9 hours earlier the same day) had
+already moved onto `ConsoleMessageController`. The test raised `AttributeError` on line
+one of its four calls and **never once ran green**; the same PR's
+`test_console_settings_save_fires_success_toast` was born red the same way against
+wave 2's `_ensure_active_console_session_settings`. Repointing them at their controllers
+made the first fail on exactly the assertion the PR had forgotten to satisfy — proving
+the never-green test had been masking a real, shipped defect the whole time.
+
+Verified with `git archive 7dbbc401b | tar -x` into a scratch tree: both tests fail at
+the very commit that introduced them.
+
+**What to do.** A test added in the same change as the behaviour it pins deserves the
+same "confirm it could have gone red" treatment as a guard: run it, read the pass count,
+and read WHICH assertion moved. And when a decomposition wave moves a seam, the delegator
+shim it leaves behind for the "direct-call convention" is only as good as its coverage —
+wave 3 kept `_save_console_message_as_note` and `_save_console_message_image` on
+`ChatScreen` and silently dropped the other three savers. `Tests/UI/test_console_moved_seam_guard.py`
+now checks that shape mechanically (AST + the live classes), because "the AttributeError
+is loud" is only true for tests that anything actually runs.
+
+---
+
+## Production's broad `except` turns a stale test double into an INVERTED contract (TASK-14920, 2026-08-11)
+
+**Incident.** `a6cc05d8b` ("seed dynamic character chat templates") moved the character
+handoff's greeting seam from `store.append_message(...)` to
+`store.seed_character_roleplay(...)`. Six tests across two suites
+(`test_console_native_chat_flow.py`, `test_personas_workbench.py`) drove that handoff
+through hand-rolled store doubles implementing only `create_session` and
+`append_message`. The handoff wraps its seed call in `except Exception: logger.warning(...)`,
+so the double's missing method surfaced as a swallowed `AttributeError` — not as an error.
+The tests did not blow up; they quietly started observing "no greeting was ever appended"
+and their assertions (`identity_at_append is None`, `store.messages == []`) began pinning
+the ABSENCE of the behaviour they were written to prove.
+
+That is worse than the familiar "a fake written to match your call site" trap two entries
+up: there the double agrees with a wrong assumption, here the double's *silence* is
+laundered by production's own error handling into a false negative that reads like data.
+
+**What to do.** When production calls a collaborator behind a broad `except`, a stub double
+for that collaborator cannot report drift. Subclass the real collaborator instead and
+override only what you need to observe:
+
+```python
+class _CharacterHandoffStore(ConsoleChatStore):      # real store, persistence=None
+    def append_message(self, session_id, *, role, content, persist=False, **kwargs):
+        self.identity_at_append = {...}              # observe
+        return super().append_message(...)           # production behaviour intact
+```
+
+The greeting text then comes from production's own template expansion, so the assertion
+`== ["Hello User, I am Elara."]` is a live end-to-end claim (mutation-checked: passing
+`global_default="Zed"` turns it red) instead of a re-implementation of the thing under test.
