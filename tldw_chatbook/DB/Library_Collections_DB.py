@@ -115,19 +115,47 @@ class LibraryCollectionsDB(BaseDB):
         ``BEGIN DEFERRED`` takes no lock until a statement needs one, so a
         block that only reads never acquires the write lock -- while still
         seeing one consistent snapshot across several SELECTs (a caller
-        pairing a COUNT with its page needs exactly that). The block is
-        always ended with ROLLBACK: nothing here may write, and rolling
-        back an unwritten transaction is free.
+        pairing a COUNT with its page needs exactly that). The block always
+        ends with ROLLBACK, so a write placed in here would be DISCARDED;
+        rather than lose it silently, the block raises when it sees one
+        (see Raises). Rolling back an unwritten transaction is free.
+
+        Nesting: this and ``transaction`` both issue an explicit BEGIN on
+        the ONE connection this thread holds, so nesting either inside the
+        other raises ``sqlite3.OperationalError: cannot start a transaction
+        within a transaction``. Pre-port each block had its own connection
+        and nesting silently "worked"; the outer block still rolls back
+        cleanly, because the failure propagates through its ``except``.
 
         Yields:
             The thread's held ``sqlite3.Connection`` in a read snapshot.
+
+        Raises:
+            RuntimeError: If the block modified any row. The transaction is
+                rolled back first, so the write is undone either way -- the
+                error exists so the misuse cannot pass unnoticed.
         """
         conn = self._held_connection()
+        # total_changes counts rows inserted/updated/deleted on this
+        # connection since it was opened, so a difference across the block
+        # means a write happened inside a snapshot that is about to be
+        # thrown away. It cannot see a DML statement that matched zero rows
+        # (nothing to lose in that case) or bare DDL, so this is a guard
+        # against silent DATA LOSS, not a general read-only enforcement.
+        changes_before = conn.total_changes
         conn.execute("BEGIN DEFERRED")
         try:
             yield conn
-        finally:
+        except Exception:
             conn.rollback()
+            raise
+        wrote = conn.total_changes != changes_before
+        conn.rollback()
+        if wrote:
+            raise RuntimeError(
+                "read_transaction() is read-only: a write inside it is "
+                "always rolled back. Use transaction() for writes."
+            )
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
@@ -138,6 +166,14 @@ class LibraryCollectionsDB(BaseDB):
         transaction that read before writing could fail to upgrade; taking
         the lock immediately removes that class of failure. Pure readers
         must use ``read_transaction`` (or ``connection``) instead.
+
+        Nesting: this and ``read_transaction`` both issue an explicit BEGIN
+        on the ONE connection this thread holds, so nesting either inside
+        the other raises ``sqlite3.OperationalError: cannot start a
+        transaction within a transaction``. Pre-port each block had its own
+        connection and nesting silently "worked"; the outer block still
+        rolls back cleanly, because the failure propagates through its
+        ``except``.
 
         Raises:
             Exception: Re-raised after rolling back, on any error inside
@@ -198,7 +234,8 @@ class LibraryCollectionsDB(BaseDB):
                 );
                 """
             )
-            conn.commit()
+            # No commit: executescript self-commits, and the held connection
+            # is in autocommit mode, so there is no transaction to end.
 
     def get_schema_version(self) -> int:
         """Return the initialized schema version."""

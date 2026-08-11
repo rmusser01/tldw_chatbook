@@ -318,6 +318,77 @@ class TestPureReadsDoNotTakeWriteTransactions:
         assert begins.count("COMMIT") == 1, begins
         db.close()
 
+    def test_a_write_inside_read_transaction_raises_and_persists_nothing(
+        self, tmp_path
+    ):
+        """Silent data loss must be impossible.
+
+        ``read_transaction`` always ends in ROLLBACK, so a write placed
+        inside it is discarded. Discarding it QUIETLY is the dangerous
+        part -- the caller would see a successful-looking block and no row.
+        """
+        db, service = self._service(tmp_path)
+        before = {record.name for record in service.list_collections()}
+
+        with pytest.raises(RuntimeError, match="read_transaction"):
+            with db.read_transaction() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO library_collections (
+                        collection_id, name, description, created_at, updated_at
+                    )
+                    VALUES ('ghost', 'ghost', '', '2026-01-01', '2026-01-01')
+                    """
+                )
+
+        assert {record.name for record in service.list_collections()} == before
+        assert db._held_connection().in_transaction is False
+        # The connection is still usable: the guard rolled back before it raised.
+        service.create_collection("after-the-guard")
+        assert "after-the-guard" in {
+            record.name for record in service.list_collections()
+        }
+        db.close()
+
+    def test_read_transaction_still_allows_a_zero_row_statement_block(self, tmp_path):
+        """The guard keys on rows changed, so a pure read never trips it."""
+        db, service = self._service(tmp_path)
+        with db.read_transaction() as conn:
+            conn.execute("SELECT COUNT(*) FROM library_collections").fetchone()
+            conn.execute("SELECT COUNT(*) FROM library_collection_items").fetchone()
+        assert service.list_collections()
+        db.close()
+
+    def test_nesting_a_transaction_raises_and_the_outer_block_rolls_back(
+        self, tmp_path
+    ):
+        """One connection per thread means one transaction at a time.
+
+        Pre-port each block opened its own connection, so nesting silently
+        "worked". It now raises -- and the outer block must still roll back
+        cleanly rather than strand an open transaction on the held
+        connection.
+        """
+        db, service = self._service(tmp_path)
+        before = {record.name for record in service.list_collections()}
+
+        with pytest.raises(sqlite3.OperationalError, match="within a transaction"):
+            with db.transaction() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO library_collections (
+                        collection_id, name, description, created_at, updated_at
+                    )
+                    VALUES ('outer', 'outer', '', '2026-01-01', '2026-01-01')
+                    """
+                )
+                with db.transaction():
+                    pass
+
+        assert db._held_connection().in_transaction is False
+        assert {record.name for record in service.list_collections()} == before
+        db.close()
+
     def test_a_failed_write_rolls_back_and_leaves_no_open_transaction(self, tmp_path):
         from tldw_chatbook.Library.library_collections_service import (
             DuplicateLibraryCollectionItem,

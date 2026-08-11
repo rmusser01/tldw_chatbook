@@ -66,6 +66,7 @@ explicit skip, not a gap.
 from __future__ import annotations
 
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Callable
 
@@ -401,3 +402,61 @@ def test_memory_backed_db_tolerates_pragma_application(tmp_path, factory):
         assert journal_mode == "memory", f"expected memory, got {journal_mode!r}"
     finally:
         cleanup()
+
+
+#: Held-connection DBs (task-15466): a worker thread gets its OWN connection,
+#: so the pairing has to be re-applied there too. The factories above all run
+#: on the constructing thread, which cannot distinguish "applied once at
+#: construction" from "applied per new connection" -- and `synchronous` is
+#: per-connection, so only the second is correct.
+_HELD_CONNECTION_DBS: list[tuple[str, Callable]] = [
+    ("library_collections", lambda path: LibraryCollectionsDB(path / "collections.db")),
+    ("rag_indexing", lambda path: RAGIndexingDB(path / "rag_indexing.db")),
+    ("client_notifications", lambda path: ClientNotificationsDB(path / "notify.db")),
+    ("workspace", lambda path: WorkspaceDB(path / "workspace.db")),
+    ("agent_runs", lambda path: AgentRunsDB(path / "agent_runs.db")),
+]
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [case[1] for case in _HELD_CONNECTION_DBS],
+    ids=[case[0] for case in _HELD_CONNECTION_DBS],
+)
+def test_worker_thread_connection_also_pairs_wal_and_synchronous_normal(
+    tmp_path, factory
+):
+    """AC#1 on the connection a WORKER thread actually gets.
+
+    These DBs hold one connection per thread, and every one of them is
+    reached from ``asyncio.to_thread`` pools. ``synchronous`` is a
+    per-connection setting (``journal_mode=WAL`` persists in the file, but
+    NORMAL does not), so a port that applied the pairing only to the first
+    connection would leave every worker thread silently back on
+    ``synchronous=FULL`` -- fsyncing on each commit -- while the
+    construction-thread assertions above stayed green.
+    """
+    db = factory(tmp_path)
+    observed: dict[str, tuple[str, int]] = {}
+    errors: list[Exception] = []
+
+    def worker() -> None:
+        try:
+            observed["pragmas"] = _pragmas(db._held_connection())
+        except Exception as exc:  # noqa: BLE001 - reported below
+            errors.append(exc)
+        finally:
+            db.close()  # closes THIS thread's connection
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    thread.join()
+
+    assert errors == []
+    journal_mode, synchronous = observed["pragmas"]
+    assert journal_mode == "wal", f"expected WAL, got {journal_mode!r}"
+    assert synchronous == _SYNCHRONOUS_NORMAL, (
+        f"expected synchronous=NORMAL ({_SYNCHRONOUS_NORMAL}) on the worker "
+        f"thread's own connection, got {synchronous!r}"
+    )
+    db.close()

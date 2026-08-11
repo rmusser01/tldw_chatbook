@@ -152,6 +152,14 @@ class ClientNotificationsDB(BaseDB):
         together: in autocommit mode each bare statement would otherwise
         commit on its own.
 
+        Nesting: the explicit BEGIN runs on the ONE connection this thread
+        holds (or, for ``:memory:``, the single shared one), so nesting a
+        second ``transaction()`` inside one raises
+        ``sqlite3.OperationalError: cannot start a transaction within a
+        transaction``. Pre-port each block had its own connection and
+        nesting silently "worked"; the outer block still rolls back
+        cleanly, because the failure propagates through its ``except``.
+
         Raises:
             Exception: Re-raised after rolling back, on any error inside
                 the ``with`` block. On clean exit the transaction commits.
@@ -415,6 +423,12 @@ class ClientNotificationsDB(BaseDB):
         unknown = set(settings) - set(DEFAULT_NOTIFICATION_SETTINGS)
         if unknown:
             raise ValueError(f"Unknown notification settings: {sorted(unknown)}")
+        if not settings:
+            # `update_preferences` reaches here with nothing to write when
+            # its caller passed no changes. Returning early keeps a
+            # zero-statement BEGIN IMMEDIATE -- which would still take the
+            # write lock -- off a read-only path.
+            return self.get_settings()
         now = self._now_iso()
         # One upsert per setting: under autocommit they would commit
         # independently, so an explicit transaction keeps a multi-key

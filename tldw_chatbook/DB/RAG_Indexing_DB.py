@@ -143,6 +143,20 @@ class RAGIndexingDB:
         The liveness probe is a plain no-op statement; a connection another
         component closed (or that SQLite invalidated) is transparently
         replaced, mirroring `Workspace_DB._held_connection`.
+
+        ``:memory:`` asymmetry, deliberate: unlike ``ClientNotificationsDB``
+        -- whose in-memory branch keeps ONE shared connection because the
+        app really does fall back to an in-memory inbox -- this class stays
+        uniformly thread-local, matching the ``Workspace_DB`` template it
+        was ported from. The consequence is that with ``:memory:`` a SECOND
+        thread gets its own connection and therefore its own schema-less
+        database (an in-memory DB lives inside its connection, and
+        ``_initialize_schema`` only ran on the constructing thread's).
+        That is acceptable because production always constructs this DB
+        from ``get_rag_indexing_db_path()``; ``:memory:`` exists here only
+        for single-threaded tests. It is also not a regression -- before
+        this port EVERY call opened a fresh, empty in-memory database, so
+        no operation after construction could see the schema at all.
         """
         conn = getattr(self._thread_local, "conn", None)
         if conn is not None:
@@ -182,6 +196,13 @@ class RAGIndexingDB:
         Required for any block whose statements must land (or not land)
         together: in autocommit mode each bare statement would otherwise
         commit on its own.
+
+        Nesting: the explicit BEGIN runs on the ONE connection this thread
+        holds, so nesting a second ``transaction()`` inside one raises
+        ``sqlite3.OperationalError: cannot start a transaction within a
+        transaction``. Pre-port each block had its own connection and
+        nesting silently "worked"; the outer block still rolls back
+        cleanly, because the failure propagates through its ``except``.
 
         Raises:
             Exception: Re-raised after rolling back, on any error inside
