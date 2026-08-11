@@ -146,7 +146,7 @@ by reusing one writer across trees.
 
 `supersede_run_tree` (`:943-962`) flips `id = ? OR parent_run_id = ?` to `superseded` with **no liveness guard**. Today that is coherent because children cannot outlive the turn. After Task 2, the first user message sent while background children run would mark the live fleet superseded — the feature destroyed by an existing correctness mechanism.
 
-- [ ] **Step 1: Failing test** — superseding a primary run leaves its still-`running` children untouched, while terminal children are superseded as before.
+- [ ] **Step 1: Failing tests** — (a) superseding a primary run leaves its still-`running` children untouched, while terminal children are superseded as before; (b) **the lost-result half**: a live child superseded mid-flight must still persist its real terminal status and result when it finishes — assert the result is readable afterwards, not merely that the row is not `superseded`.
 - [ ] **Step 2: Implement** — narrow the UPDATE so a non-terminal child is skipped. Keep lineage intact (rows stay parented); this changes status semantics only.
 - [ ] **Step 3: Gate** `pytest Tests/DB/test_agent_runs_db.py Tests/Agents/ -q`. **Step 4: Commit.**
 
