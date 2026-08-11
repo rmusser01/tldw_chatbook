@@ -1460,6 +1460,7 @@ class TTSProfileRepository:
                     or rollback_state.st_ino != prior_state.st_ino
                 ):
                     raise _repository_error("migration_failed")
+                _fsync_directory(backup_path.parent)
             os.replace(temporary_path, backup_path)
             replaced = True
             _fsync_directory(backup_path.parent)
@@ -1467,9 +1468,10 @@ class TTSProfileRepository:
             if rollback_path is not None:
                 rollback_path.unlink()
                 rollback_path = None
+                _fsync_directory(backup_path.parent)
         except BaseException as error:
             body_error = error
-            if replaced:
+            if replaced and not published:
                 try:
                     if rollback_path is None:
                         _unlink_path_if_present(backup_path)
@@ -1510,6 +1512,7 @@ class TTSProfileRepository:
         if rollback_path is not None:
             try:
                 _unlink_path_if_present(rollback_path)
+                _fsync_directory(backup_path.parent)
             except BaseException as error:
                 cleanup_errors.append(error)
 

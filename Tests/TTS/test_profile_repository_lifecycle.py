@@ -540,6 +540,58 @@ async def test_v2_migration_directory_fsync_failure_restores_prior_backup(
 
 
 @pytest.mark.asyncio
+async def test_v2_migration_durably_orders_backup_rollback_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _repository_module()
+    database_path = tmp_path / "profiles.sqlite3"
+    _build_populated_v2_store_at(database_path)
+    backup_path = module._v2_migration_backup_path(database_path)
+    _test_online_backup(database_path, backup_path)
+    connection = sqlite3.connect(database_path)
+    connection.execute(
+        "UPDATE tts_generation_profiles SET display_name = 'Updated', normalized_name = 'updated'"
+    )
+    connection.commit()
+    connection.close()
+    events: list[str] = []
+    real_link = module.os.link
+    real_replace = module.os.replace
+    real_fsync_directory = module._fsync_directory
+    real_unlink = Path.unlink
+
+    def tracked_link(*args: object, **kwargs: object) -> None:
+        real_link(*args, **kwargs)
+        events.append("link")
+
+    def tracked_replace(source: object, destination: object) -> None:
+        real_replace(source, destination)
+        if Path(destination) == backup_path:
+            events.append("replace")
+
+    def tracked_fsync_directory(path: Path) -> None:
+        real_fsync_directory(path)
+        events.append("fsync")
+
+    def tracked_unlink(path: Path, *args: object, **kwargs: object) -> None:
+        real_unlink(path, *args, **kwargs)
+        if path.suffix == ".rollback" and "link" in events:
+            events.append("unlink")
+
+    monkeypatch.setattr(module.os, "link", tracked_link)
+    monkeypatch.setattr(module.os, "replace", tracked_replace)
+    monkeypatch.setattr(module, "_fsync_directory", tracked_fsync_directory)
+    monkeypatch.setattr(Path, "unlink", tracked_unlink)
+
+    repository = module.TTSProfileRepository(database_path)
+    await repository.open()
+    await repository.close()
+
+    assert events == ["link", "fsync", "replace", "fsync", "unlink", "fsync"]
+    assert _stored_profile_name(backup_path) == "Updated"
+
+
+@pytest.mark.asyncio
 async def test_v2_migration_backup_failure_preserves_source_and_prior_backup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
