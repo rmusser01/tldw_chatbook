@@ -10,6 +10,9 @@ from typing import Any, Optional, Callable
 from loguru import logger
 
 # Global flags for optional dependency availability
+# This is feature availability, not a credential.
+_TOKEN_CHUNKING_AVAILABILITY = {"token_chunking": False}  # nosec B105
+
 DEPENDENCIES_AVAILABLE = {
     "torch": False,
     "transformers": False,
@@ -24,7 +27,7 @@ DEPENDENCIES_AVAILABLE = {
     "chunker": False,
     "chinese_chunking": False,
     "japanese_chunking": False,
-    "token_chunking": False,
+    **_TOKEN_CHUNKING_AVAILABILITY,
     "cohere": False,
     # Audio/Video processing
     "audio_processing": False,

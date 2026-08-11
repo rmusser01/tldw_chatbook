@@ -507,6 +507,207 @@ async def test_eof_marks_reader_unavailable_but_close_still_cleans_live_child() 
     assert connection._cleanup_complete is True
 
 
+@pytest.mark.parametrize(
+    (
+        "failure_stage",
+        "expected_message",
+        "expected_waits",
+        "expected_kills",
+        "expected_returncode",
+    ),
+    [
+        pytest.param(
+            "stdin-close",
+            "Failed to close MCP subprocess stdin",
+            1,
+            0,
+            0,
+            id="stdin-close",
+        ),
+        pytest.param(
+            "stdin-wait",
+            "Failed to wait for MCP subprocess stdin closure",
+            1,
+            0,
+            0,
+            id="stdin-wait",
+        ),
+        pytest.param(
+            "terminate",
+            "Failed to terminate MCP subprocess cleanly",
+            1,
+            1,
+            -9,
+            id="terminate",
+        ),
+        pytest.param(
+            "initial-wait",
+            "Failed to wait for MCP subprocess termination",
+            2,
+            1,
+            -9,
+            id="initial-wait",
+        ),
+        pytest.param(
+            "final-reap",
+            "Failed to reap MCP subprocess after kill",
+            2,
+            1,
+            -9,
+            id="final-reap",
+        ),
+        pytest.param(
+            "kill",
+            "Failed to kill MCP subprocess cleanly",
+            1,
+            1,
+            None,
+            id="kill",
+        ),
+        pytest.param(
+            "done-task",
+            "MCP transport task failed before cleanup",
+            1,
+            0,
+            0,
+            id="done-task",
+        ),
+        pytest.param(
+            "active-task",
+            "MCP transport task failed during cleanup",
+            1,
+            0,
+            0,
+            id="active-task",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_connection_close_reports_failures_and_finishes_cleanup(
+    failure_stage: str,
+    expected_message: str,
+    expected_waits: int,
+    expected_kills: int,
+    expected_returncode: int | None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinel = "private-close-payload"
+    logged: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    class FailingStdin(_Stdin):
+        def close(self) -> None:
+            self.closed = True
+            if failure_stage == "stdin-close":
+                raise RuntimeError(sentinel)
+
+        async def wait_closed(self) -> None:
+            if failure_stage == "stdin-wait":
+                raise RuntimeError(sentinel)
+
+    class FailingProcess(_Process):
+        def __init__(self) -> None:
+            super().__init__()
+            self.stdin = FailingStdin()
+
+        def terminate(self) -> None:
+            self.terminate_calls += 1
+            if failure_stage == "terminate":
+                raise RuntimeError(sentinel)
+            if failure_stage not in {"initial-wait", "final-reap", "kill"}:
+                self.returncode = 0
+
+        def kill(self) -> None:
+            self.kill_calls += 1
+            if failure_stage == "kill":
+                raise RuntimeError(sentinel)
+            self.returncode = -9
+
+        async def wait(self) -> int:
+            self.wait_calls += 1
+            if failure_stage == "initial-wait" and self.wait_calls == 1:
+                raise RuntimeError(sentinel)
+            if failure_stage in {"final-reap", "kill"} and self.wait_calls == 1:
+                await asyncio.Future()
+            if failure_stage == "final-reap":
+                raise RuntimeError(sentinel)
+            return self.returncode or 0
+
+    process = FailingProcess()
+    connection = _bare_connection(process)
+    monkeypatch.setattr(client_module, "_TERMINATE_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(
+        client_module.logger,
+        "warning",
+        lambda *args, **kwargs: logged.append((args, kwargs)),
+    )
+
+    if failure_stage == "done-task":
+
+        async def fail_before_cleanup() -> None:
+            raise RuntimeError(sentinel)
+
+        connection._read_task = asyncio.create_task(fail_before_cleanup())
+        await asyncio.sleep(0)
+    elif failure_stage == "active-task":
+        started = asyncio.Event()
+
+        async def fail_during_cleanup() -> None:
+            started.set()
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                raise RuntimeError(sentinel) from None
+
+        connection._read_task = asyncio.create_task(fail_during_cleanup())
+        await asyncio.wait_for(started.wait(), timeout=1)
+
+    await asyncio.wait_for(connection.close(), timeout=1)
+
+    assert logged == [((expected_message,), {})]
+    assert sentinel not in repr(logged)
+    assert process.stdin.closed
+    assert process.terminate_calls == 1
+    assert process.wait_calls == expected_waits
+    assert process.kill_calls == expected_kills
+    assert process.returncode == expected_returncode
+    assert connection._cleanup_complete is True
+
+
+@pytest.mark.asyncio
+async def test_teardown_close_failure_is_reported_reaped_and_finalized(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinel = "private-session-close-payload"
+    logged: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    process = _Process()
+
+    class Session:
+        def __init__(self) -> None:
+            self.process = process
+
+        async def close(self) -> None:
+            raise RuntimeError(sentinel)
+
+    session = Session()
+    client = client_module.MCPClient(name="failing-close-client")
+    client.sessions["server"] = session  # type: ignore[assignment]
+    client.servers["server"] = {"command": "fake"}
+    monkeypatch.setattr(
+        client_module.logger,
+        "warning",
+        lambda *args, **kwargs: logged.append((args, kwargs)),
+    )
+
+    await asyncio.wait_for(client._bounded_teardown_connection("server"), timeout=1)
+
+    assert logged == [(("Failed to close MCP connection during teardown",), {})]
+    assert sentinel not in repr(logged)
+    assert process.returncode == 0
+    assert process.wait_calls == 1
+    assert client.sessions == {}
+    assert client.servers == {}
+
+
 @pytest.mark.asyncio
 async def test_catalog_uses_one_monotonic_deadline_and_remaining_timeout(
     monkeypatch: pytest.MonkeyPatch,

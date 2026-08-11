@@ -7,12 +7,13 @@ and use their tools, resources, and prompts within tldw_chatbook.
 
 from __future__ import annotations
 
+# subprocess supplies only PIPE constants; launches use an argument-vector API.
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 import json
 import math
 import re
-import subprocess
+import subprocess  # nosec B404
 from datetime import datetime
 from itertools import count
 from time import monotonic as _monotonic
@@ -555,43 +556,56 @@ class _StdioJSONRPCConnection:
                 try:
                     stdin.close()
                 except Exception:
-                    pass
+                    logger.warning("Failed to close MCP subprocess stdin")
                 wait_closed = getattr(stdin, "wait_closed", None)
                 if callable(wait_closed):
                     try:
                         await wait_closed()
                     except Exception:
-                        pass
+                        logger.warning(
+                            "Failed to wait for MCP subprocess stdin closure"
+                        )
 
             if self.process.returncode is None:
+                should_kill = False
                 try:
                     self.process.terminate()
                 except ProcessLookupError:
-                    pass
+                    logger.debug("MCP subprocess exited before termination cleanup")
                 except Exception:
-                    logger.opt(exception=True).debug(
-                        "Failed to terminate MCP subprocess cleanly"
-                    )
+                    logger.warning("Failed to terminate MCP subprocess cleanly")
+                    should_kill = True
 
-                try:
-                    await asyncio.wait_for(
-                        self.process.wait(), timeout=_TERMINATE_TIMEOUT_SECONDS
-                    )
-                except asyncio.TimeoutError:
+                if not should_kill:
+                    try:
+                        await asyncio.wait_for(
+                            self.process.wait(), timeout=_TERMINATE_TIMEOUT_SECONDS
+                        )
+                    except asyncio.TimeoutError:
+                        should_kill = True
+                    except Exception:
+                        logger.warning("Failed to wait for MCP subprocess termination")
+                        should_kill = True
+
+                if should_kill:
                     try:
                         self.process.kill()
                     except ProcessLookupError:
-                        pass
+                        logger.debug("MCP subprocess exited before kill cleanup")
                     except Exception:
-                        logger.opt(exception=True).debug(
-                            "Failed to kill MCP subprocess cleanly"
-                        )
-                    try:
-                        await self.process.wait()
-                    except Exception:
-                        pass
-                except Exception:
-                    pass
+                        logger.warning("Failed to kill MCP subprocess cleanly")
+                    else:
+                        try:
+                            await asyncio.wait_for(
+                                self.process.wait(),
+                                timeout=_TERMINATE_TIMEOUT_SECONDS,
+                            )
+                        except asyncio.TimeoutError:
+                            logger.warning(
+                                "Timed out reaping MCP subprocess after kill"
+                            )
+                        except Exception:
+                            logger.warning("Failed to reap MCP subprocess after kill")
 
             current_task = asyncio.current_task()
             for task in (self._read_task, self._stderr_task):
@@ -601,17 +615,17 @@ class _StdioJSONRPCConnection:
                     try:
                         await task
                     except asyncio.CancelledError:
-                        pass
+                        logger.debug("MCP transport task was already cancelled")
                     except Exception:
-                        pass
+                        logger.warning("MCP transport task failed before cleanup")
                     continue
                 task.cancel()
                 try:
                     await task
                 except asyncio.CancelledError:
-                    pass
+                    logger.debug("MCP transport task cancelled during cleanup")
                 except Exception:
-                    pass
+                    logger.warning("MCP transport task failed during cleanup")
 
             self._cleanup_complete = True
 
@@ -1205,7 +1219,7 @@ class MCPClient:
             except asyncio.CancelledError:
                 raise
             except Exception:
-                pass
+                logger.warning("Failed to close MCP connection during teardown")
 
     async def _force_stop_process(self, process: Any) -> None:
         stdin = getattr(process, "stdin", None)
