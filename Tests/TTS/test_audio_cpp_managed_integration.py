@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import copy
+import hashlib
 import json
+import logging
 import os
 import socket
 import struct
 from collections.abc import Awaitable, Callable, Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -19,6 +23,7 @@ from tldw_chatbook.TTS import audio_cpp_supervisor as supervisor_module
 from tldw_chatbook.TTS.adapter_registry import TTSAdapterRegistry
 from tldw_chatbook.TTS._async_lifecycle import current_shutdown_deadline
 from tldw_chatbook.TTS.adapter_types import (
+    _AdmittedAudioCppCloneRequest,
     TTSOperationError,
     TTSProviderCatalog,
     TTSProviderDescriptor,
@@ -50,6 +55,13 @@ from tldw_chatbook.TTS.effective_settings import (
     TTSSelectionOverrides,
 )
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+from tldw_chatbook.TTS.profile_reference_materialization import (
+    TTSCloneReferenceMaterializer,
+)
+from tldw_chatbook.TTS.profile_reference_types import (
+    TTSCloneReference,
+    TTSCloneReferenceSummary,
+)
 from tldw_chatbook.TTS.TTS_Generation import (
     AudioCppRuntimeObservation,
     TTSService,
@@ -138,6 +150,9 @@ def _no_model_handler(request: httpx.Request) -> httpx.Response:
 
 class _PreparationSupervisor:
     def __init__(self) -> None:
+        self._application_owner_token = (
+            supervisor_module._AUDIO_CPP_SUPERVISOR_OWNER_TOKEN
+        )
         self.state = "stopped"
         self.lifecycle_epoch = 0
         self.process_generation = 0
@@ -1313,6 +1328,393 @@ async def test_concurrent_guided_first_use_materializes_and_launches_once(
     assert process.wait_calls == 1
     assert runtime_root.exists()
     assert tuple(runtime_root.iterdir()) == ()
+
+
+def _clone_reference() -> TTSCloneReference:
+    wav_bytes = b"PRIVATE CLONE WAV"
+    now = datetime(2026, 8, 10, tzinfo=UTC)
+    return TTSCloneReference(
+        summary=TTSCloneReferenceSummary(
+            reference_id=UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+            byte_length=len(wav_bytes),
+            duration_ms=250,
+            sample_rate_hz=24_000,
+            channels=1,
+            sample_encoding="pcm_s16le",
+            created_at=now,
+            updated_at=now,
+        ),
+        reference_text="PRIVATE REFERENCE TRANSCRIPT",
+        sha256=hashlib.sha256(wav_bytes).hexdigest(),
+        wav_bytes=wav_bytes,
+    )
+
+
+@pytest.mark.asyncio
+async def test_clone_source_preflight_rejects_external_before_http() -> None:
+    requests: list[httpx.Request] = []
+
+    def forbidden(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        raise AssertionError("clone preflight must not contact External audio.cpp")
+
+    adapter = AudioCppAdapter(
+        AudioCppConfig(),
+        transport=httpx.MockTransport(forbidden),
+    )
+    try:
+        with pytest.raises(TTSOperationError) as caught:
+            adapter.preflight_clone_source()
+        assert caught.value.code == "configuration_invalid"
+        assert requests == []
+    finally:
+        await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_clone_source_preflight_rejects_user_json_before_launch_or_http(
+    tmp_path: Path,
+) -> None:
+    supervisor = _PreparationSupervisor()
+    adapter = AudioCppAdapter(
+        AudioCppConfig.from_mapping(
+            _managed_config(tmp_path, "clone-user-json", 19_411)
+        ),
+        transport=httpx.MockTransport(
+            lambda _request: (_ for _ in ()).throw(
+                AssertionError("clone preflight must not use HTTP")
+            )
+        ),
+        supervisor=supervisor,  # type: ignore[arg-type]
+    )
+    try:
+        with pytest.raises(TTSOperationError) as caught:
+            adapter.preflight_clone_source()
+        assert caught.value.code == "configuration_invalid"
+        assert supervisor.ensure_calls == 0
+        assert supervisor.launches == 0
+    finally:
+        await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_clone_source_preflight_requires_the_application_process_owner(
+    tmp_path: Path,
+) -> None:
+    settings = _guided_settings(
+        tmp_path,
+        filename="pocket-tts-english-q8_0.gguf",
+        package_variant="pocket_tts_english_q8_0",
+        public_model_id="clone-model",
+    )
+    supervisor = _PreparationSupervisor()
+    del supervisor._application_owner_token
+    adapter = AudioCppAdapter(
+        AudioCppConfig.from_mapping(settings.to_mapping()),
+        guided_settings=settings,
+        supervisor=supervisor,  # type: ignore[arg-type]
+    )
+    try:
+        with pytest.raises(TTSOperationError) as caught:
+            adapter.preflight_clone_source()
+        assert caught.value.code == "configuration_invalid"
+        assert supervisor.ensure_calls == 0
+        assert supervisor.launches == 0
+    finally:
+        await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_guided_clone_admission_sends_only_typed_live_reference_fields(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings = _guided_settings(
+        tmp_path,
+        filename="pocket-tts-english-bf16.gguf",
+        package_variant="pocket_tts_english_bf16",
+        public_model_id="clone-model",
+    )
+    supervisor = _PreparationSupervisor()
+    payloads: list[dict[str, str]] = []
+    caplog.set_level(logging.DEBUG, logger="httpcore.http11")
+
+    async def deterministic_materialize(current: AudioCppSettingsConfig):
+        return await materialize_audio_cpp_guided_launch(
+            current,
+            artifact_root=tmp_path / "guided-runtime",
+            port_selector=lambda: 54_332,
+            system="darwin",
+            architecture="arm64",
+        )
+
+    monkeypatch.setattr(
+        audio_cpp_adapter_module,
+        "materialize_audio_cpp_guided_launch",
+        deterministic_materialize,
+    )
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return _response(b'{"status":"ok","backend":"cpu","models":1}')
+        if request.url.path == "/v1/models":
+            return _response(
+                b'{"object":"list","data":[{"id":"clone-model",'
+                b'"object":"model","owned_by":"engine",'
+                b'"family":"pocket_tts","task":"tts","mode":"offline"}]}'
+            )
+        if request.url.path == "/v1/audio/speech":
+            logging.getLogger("httpcore.http11").debug(
+                "PRIVATE CLONE BODY %s",
+                request.content,
+            )
+            payloads.append(json.loads(request.content))
+            return _response(_wav(), headers={"content-type": "audio/wav"})
+        raise AssertionError(f"unexpected path: {request.url.path}")
+
+    adapter = AudioCppAdapter(
+        AudioCppConfig.from_mapping(settings.to_mapping()),
+        guided_settings=settings,
+        transport=httpx.MockTransport(respond),
+        supervisor=supervisor,  # type: ignore[arg-type]
+    )
+    materializer = TTSCloneReferenceMaterializer(tmp_path / "clone-runtime")
+    request = TTSRequest(
+        provider_id="audio_cpp",
+        model_id="clone-model",
+        text="speak as the character",
+        voice=None,
+        response_format="wav",
+    )
+    try:
+        adapter.preflight_clone_source()
+        assert supervisor.ensure_calls == 0
+        await adapter.ensure_ready()
+        with pytest.raises(TTSOperationError) as omitted:
+            await adapter.synthesize(request)
+        assert omitted.value.code == "request_invalid"
+        assert payloads == []
+        with pytest.raises(TTSOperationError) as conflicting:
+            adapter.admit_clone_capability(
+                TTSRequest(
+                    provider_id="audio_cpp",
+                    model_id="clone-model",
+                    text="invalid combined request",
+                    voice="native-voice",
+                    response_format="wav",
+                )
+            )
+        assert conflicting.value.code == "request_invalid"
+
+        forged_internal = object.__new__(_AdmittedAudioCppCloneRequest)
+        with pytest.raises(TTSOperationError) as forged_error:
+            await adapter.synthesize_clone(forged_internal)
+        assert forged_error.value.code == "request_invalid"
+        assert payloads == []
+
+        capability = adapter.admit_clone_capability(request)
+        with pytest.raises(AttributeError):
+            capability._model_id = "forged-model"
+        owner = await materializer.materialize(_clone_reference())
+        copied_capability = copy.copy(capability)
+        copied_admission = _AdmittedAudioCppCloneRequest(
+            request=request,
+            materialization=owner,
+            capability=copied_capability,
+            provider_revision=0,
+            applied_provider_generation=0,
+            recipe_id=copied_capability.recipe_id,
+            recipe_revision=copied_capability.recipe_revision,
+            process_generation=copied_capability.process_generation,
+        )
+        with pytest.raises(TTSOperationError) as copied:
+            await adapter.synthesize_clone(copied_admission)
+        assert copied.value.code == "request_invalid"
+
+        with pytest.raises(ValueError):
+            _AdmittedAudioCppCloneRequest(
+                request=request,
+                materialization=owner,
+                capability=capability,
+                provider_revision=0,
+                applied_provider_generation=0,
+                recipe_id="wrong-recipe",
+                recipe_revision=capability.recipe_revision,
+                process_generation=capability.process_generation,
+            )
+        with pytest.raises(ValueError):
+            _AdmittedAudioCppCloneRequest(
+                request=request,
+                materialization=Path("/private/forged-reference.wav"),  # type: ignore[arg-type]
+                capability=capability,
+                provider_revision=0,
+                applied_provider_generation=0,
+                recipe_id=capability.recipe_id,
+                recipe_revision=capability.recipe_revision,
+                process_generation=capability.process_generation,
+            )
+        copied_owner = copy.copy(owner)
+        copied_owner_admission = _AdmittedAudioCppCloneRequest(
+            request=request,
+            materialization=copied_owner,
+            capability=capability,
+            provider_revision=0,
+            applied_provider_generation=0,
+            recipe_id=capability.recipe_id,
+            recipe_revision=capability.recipe_revision,
+            process_generation=capability.process_generation,
+        )
+        with pytest.raises(TTSOperationError) as copied_owner_error:
+            await adapter.synthesize_clone(copied_owner_admission)
+        assert copied_owner_error.value.code == "request_invalid"
+        capability = adapter.admit_clone_capability(request)
+        admitted = _AdmittedAudioCppCloneRequest(
+            request=request,
+            materialization=owner,
+            capability=capability,
+            provider_revision=0,
+            applied_provider_generation=0,
+            recipe_id=capability.recipe_id,
+            recipe_revision=capability.recipe_revision,
+            process_generation=capability.process_generation,
+        )
+        with pytest.raises(TypeError):
+            copy.copy(admitted)
+        with pytest.raises(TTSOperationError) as public_forgery:
+            await adapter.synthesize(admitted)  # type: ignore[arg-type]
+        assert public_forgery.value.code == "request_invalid"
+        assert payloads == []
+
+        response = await adapter.synthesize_clone(admitted)
+        await response.aclose()
+        assert "voice_ref" not in response.metadata
+        assert "reference_text" not in response.metadata
+
+        assert payloads == [
+            {
+                "model": "clone-model",
+                "input": "speak as the character",
+                "response_format": "wav",
+                "voice_ref": str(owner.voice_ref),
+                "reference_text": "PRIVATE REFERENCE TRANSCRIPT",
+            }
+        ]
+        assert "PRIVATE" not in repr(admitted)
+        assert str(owner.voice_ref) not in repr(admitted)
+        assert "PRIVATE REFERENCE TRANSCRIPT" not in caplog.text
+        assert str(owner.voice_ref) not in caplog.text
+        with pytest.raises(TTSOperationError) as consumed:
+            await adapter.synthesize_clone(admitted)
+        assert consumed.value.code == "request_invalid"
+        assert len(payloads) == 1
+
+        closed_owner = await materializer.materialize(_clone_reference())
+        closed_capability = adapter.admit_clone_capability(request)
+        closed_admission = _AdmittedAudioCppCloneRequest(
+            request=request,
+            materialization=closed_owner,
+            capability=closed_capability,
+            provider_revision=0,
+            applied_provider_generation=0,
+            recipe_id=closed_capability.recipe_id,
+            recipe_revision=closed_capability.recipe_revision,
+            process_generation=closed_capability.process_generation,
+        )
+        await closed_owner.aclose()
+        with pytest.raises(TTSOperationError) as stale_owner:
+            await adapter.synthesize_clone(closed_admission)
+        assert stale_owner.value.code == "request_invalid"
+        assert len(payloads) == 1
+    finally:
+        await materializer.close()
+        await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_guided_clone_capability_is_process_generation_fenced(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _guided_settings(
+        tmp_path,
+        filename="pocket-tts-english-q8_0.gguf",
+        package_variant="pocket_tts_english_q8_0",
+        public_model_id="clone-model",
+    )
+
+    async def deterministic_materialize(current: AudioCppSettingsConfig):
+        return await materialize_audio_cpp_guided_launch(
+            current,
+            artifact_root=tmp_path / "guided-runtime",
+            port_selector=lambda: 54_333,
+            system="darwin",
+            architecture="arm64",
+        )
+
+    monkeypatch.setattr(
+        audio_cpp_adapter_module,
+        "materialize_audio_cpp_guided_launch",
+        deterministic_materialize,
+    )
+    speech_requests = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal speech_requests
+        if request.url.path == "/health":
+            return _response(b'{"status":"ok","backend":"cpu","models":1}')
+        if request.url.path == "/v1/models":
+            return _response(
+                b'{"object":"list","data":[{"id":"clone-model",'
+                b'"object":"model","owned_by":"engine",'
+                b'"family":"pocket_tts","task":"tts","mode":"offline"}]}'
+            )
+        if request.url.path == "/v1/audio/speech":
+            speech_requests += 1
+            return _response(_wav(), headers={"content-type": "audio/wav"})
+        raise AssertionError
+
+    supervisor = _PreparationSupervisor()
+    adapter = AudioCppAdapter(
+        AudioCppConfig.from_mapping(settings.to_mapping()),
+        guided_settings=settings,
+        transport=httpx.MockTransport(respond),
+        supervisor=supervisor,  # type: ignore[arg-type]
+    )
+    materializer = TTSCloneReferenceMaterializer(tmp_path / "clone-runtime")
+    request = TTSRequest(
+        provider_id="audio_cpp",
+        model_id="clone-model",
+        text="stale generation",
+        voice=None,
+        response_format="wav",
+    )
+    try:
+        await adapter.ensure_ready()
+        capability = adapter.admit_clone_capability(request)
+        owner = await materializer.materialize(_clone_reference())
+        admitted = _AdmittedAudioCppCloneRequest(
+            request=request,
+            materialization=owner,
+            capability=capability,
+            provider_revision=0,
+            applied_provider_generation=0,
+            recipe_id=capability.recipe_id,
+            recipe_revision=capability.recipe_revision,
+            process_generation=capability.process_generation,
+        )
+
+        async def replace_during_progress(_progress: object) -> None:
+            await supervisor.force_exit()
+
+        with pytest.raises(TTSOperationError) as stale:
+            await adapter.synthesize_clone(admitted, replace_during_progress)
+
+        assert stale.value.code == "connection_unavailable"
+        assert speech_requests == 0
+    finally:
+        await materializer.close()
+        await adapter.close()
 
 
 @pytest.mark.asyncio
@@ -2841,6 +3243,9 @@ async def test_real_child_uses_generated_multi_model_config_and_cleans_artifact(
         guided_settings=settings,
         supervisor=supervisor,
     )
+    clone_materializer = TTSCloneReferenceMaterializer(
+        tmp_path / "clone-materializations"
+    )
     artifact_directory: Path | None = None
 
     try:
@@ -2872,13 +3277,25 @@ async def test_real_child_uses_generated_multi_model_config_and_cleans_artifact(
         await response.aclose()
         first_process_generation = response.metadata["process_generation"]
 
-        second_response = await adapter.synthesize(
-            TTSRequest(
-                provider_id="audio_cpp",
-                model_id="clone-voice",
-                text="a second model in the same managed child",
-                voice=None,
-                response_format="wav",
+        second_request = TTSRequest(
+            provider_id="audio_cpp",
+            model_id="clone-voice",
+            text="a second model in the same managed child",
+            voice=None,
+            response_format="wav",
+        )
+        second_capability = adapter.admit_clone_capability(second_request)
+        second_owner = await clone_materializer.materialize(_clone_reference())
+        second_response = await adapter.synthesize_clone(
+            _AdmittedAudioCppCloneRequest(
+                request=second_request,
+                materialization=second_owner,
+                capability=second_capability,
+                provider_revision=0,
+                applied_provider_generation=0,
+                recipe_id=second_capability.recipe_id,
+                recipe_revision=second_capability.recipe_revision,
+                process_generation=second_capability.process_generation,
             )
         )
         second_audio = [chunk async for chunk in second_response.byte_stream]
@@ -2909,6 +3326,7 @@ async def test_real_child_uses_generated_multi_model_config_and_cleans_artifact(
         assert len(tuple(runtime_root.iterdir())) == 1
     finally:
         try:
+            await clone_materializer.close()
             await adapter.close()
         finally:
             await supervisor.close()

@@ -19,6 +19,7 @@ import httpx
 
 from tldw_chatbook.TTS._async_lifecycle import join_retained_task
 from tldw_chatbook.TTS.adapter_types import (
+    AudioCppCloneCapabilityAdmission,
     ProgressSink,
     ProviderHealth,
     TTSAudioResponse,
@@ -29,6 +30,8 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSProviderCatalog,
     TTSRequest,
     TTSVoiceDiscoveryResult,
+    _AdmittedAudioCppCloneRequest,
+    _new_audio_cpp_clone_capability,
 )
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.TTS.audio_cpp_guided_config import (
@@ -56,12 +59,20 @@ from tldw_chatbook.TTS.audio_cpp_managed_config import (
     AudioCppManagedLaunchConfig,
     validate_audio_cpp_managed_launch,
 )
+from tldw_chatbook.TTS.audio_cpp_recipes import (
+    AUDIO_CPP_RECIPE_REGISTRY,
+    AudioCppPackageRecipe,
+)
 from tldw_chatbook.TTS.audio_cpp_supervisor import (
+    _AUDIO_CPP_SUPERVISOR_OWNER_TOKEN,
     AudioCppGenerationHooks,
     AudioCppProcessAdmissionSnapshot,
     AudioCppReadyEndpoint,
     AudioCppSupervisor,
     AudioCppTTSCapability,
+)
+from tldw_chatbook.TTS.profile_reference_materialization import (
+    TTSCloneReferenceMaterialization,
 )
 
 _PROVIDER_ID = "audio_cpp"
@@ -385,6 +396,8 @@ class AudioCppAdapter:
         self._close_lock = asyncio.Lock()
         self._close_task: asyncio.Task[None] | None = None
         self._closed = False
+        self._clone_adapter_identity = object()
+        self._clone_capabilities: dict[object, AudioCppCloneCapabilityAdmission] = {}
         self._httpx_privacy_filter = _HttpxPrivacyFilter()
         self._http_log_suppression_users = 0
         self._http_log_client_closed = False
@@ -436,6 +449,69 @@ class AudioCppAdapter:
     async def ensure_ready(self) -> None:
         """Perform the first authoritative refresh and cache fresh readiness."""
         await self._refresh_catalog(force=False)
+
+    def preflight_clone_source(self) -> None:
+        """Reject non-Guided local-reference authority without side effects."""
+        if not self._clone_source_authorized():
+            raise self._operation_error(
+                _MANAGED_CONFIGURATION_INVALID,
+                uuid4().hex,
+            ) from None
+
+    def admit_clone_capability(
+        self,
+        request: TTSRequest,
+    ) -> AudioCppCloneCapabilityAdmission:
+        """Issue single-use authority for one ready Guided model generation."""
+        self.preflight_clone_source()
+        if type(request) is not TTSRequest or not self._valid_speech_request(request):
+            raise self._operation_error(_REQUEST_INVALID, uuid4().hex) from None
+        if not self._catalog_contains(self._catalog, request.model_id):
+            raise self._operation_error(_MODEL_INVALID, uuid4().hex) from None
+        readiness = self._readiness_failure()
+        if readiness is not None:
+            raise self._operation_error(readiness, uuid4().hex) from None
+        recipe = self._guided_recipe_for_model(request.model_id)
+        if recipe is None:
+            raise self._operation_error(
+                _MANAGED_CONFIGURATION_INVALID,
+                uuid4().hex,
+            ) from None
+        if (
+            "clone" not in recipe.capabilities
+            or not recipe.admits_voice_reference(
+                has_voice=request.voice is not None,
+                has_reference=True,
+            )
+        ):
+            raise self._operation_error(_REQUEST_INVALID, uuid4().hex) from None
+        process_generation = self._current_clone_process_generation()
+        if process_generation is None:
+            raise self._operation_error(_CONNECTION_UNAVAILABLE, uuid4().hex) from None
+        capability_token = object()
+        capability = _new_audio_cpp_clone_capability(
+            adapter_identity=self._clone_adapter_identity,
+            capability_token=capability_token,
+            model_id=request.model_id,
+            recipe_id=recipe.recipe_id,
+            recipe_revision=recipe.recipe_revision,
+            process_generation=process_generation,
+        )
+        self._clone_capabilities[capability_token] = capability
+        return capability
+
+    def release_clone_capability(
+        self,
+        capability: AudioCppCloneCapabilityAdmission,
+    ) -> None:
+        """Discard one exact unused capability without affecting other work."""
+        if (
+            type(capability) is AudioCppCloneCapabilityAdmission
+            and capability._adapter_identity is self._clone_adapter_identity
+            and self._clone_capabilities.get(capability._capability_token)
+            is capability
+        ):
+            self._clone_capabilities.pop(capability._capability_token, None)
 
     async def get_catalog(self, refresh: bool = False) -> TTSProviderCatalog:
         """Return the immutable catalog, optionally forcing one refresh."""
@@ -582,29 +658,79 @@ class AudioCppAdapter:
         progress_sink: ProgressSink | None = None,
     ) -> TTSAudioResponse:
         """Validate and perform one non-retried complete-WAV speech request."""
+        return await self._synthesize_request(
+            request,
+            progress_sink,
+            clone_request=None,
+        )
+
+    async def synthesize_clone(
+        self,
+        request: _AdmittedAudioCppCloneRequest,
+        progress_sink: ProgressSink | None = None,
+    ) -> TTSAudioResponse:
+        """Perform one exact internal Guided clone request."""
+        failure = self._clone_request_failure(request, consume=False)
+        if failure is not None:
+            if type(request) is _AdmittedAudioCppCloneRequest:
+                try:
+                    capability = request.capability
+                except Exception:
+                    capability = None
+                if type(capability) is AudioCppCloneCapabilityAdmission:
+                    self.release_clone_capability(capability)
+            raise self._operation_error(failure, uuid4().hex) from None
+        return await self._synthesize_request(
+            request.request,
+            progress_sink,
+            clone_request=request,
+        )
+
+    async def _synthesize_request(
+        self,
+        request: TTSRequest,
+        progress_sink: ProgressSink | None,
+        *,
+        clone_request: _AdmittedAudioCppCloneRequest | None,
+    ) -> TTSAudioResponse:
         operation_id = uuid4().hex
         failure: _OperationFailure | None = None
         outcome: _SpeechOutcome | None = None
         payload: dict[str, str] | None = None
         process_generation: int | None = None
 
-        if not self._valid_speech_request(request):
+        if type(request) is not TTSRequest or not self._valid_speech_request(request):
             failure = _REQUEST_INVALID
+        elif clone_request is not None:
+            failure = self._clone_request_failure(clone_request, consume=False)
+            if failure is None:
+                failure = self._readiness_failure()
         else:
             await self.ensure_ready()
             failure = self._readiness_failure()
+
+        if failure is None and clone_request is None and self._uses_guided_launch():
+            recipe = self._guided_recipe_for_model(request.model_id)
+            if recipe is not None and not recipe.admits_voice_reference(
+                has_voice=request.voice is not None,
+                has_reference=False,
+            ):
+                failure = _REQUEST_INVALID
 
         if failure is None and not self._catalog_contains(
             self._catalog,
             request.model_id,
         ):
-            await self._refresh_catalog(force=True)
-            failure = self._readiness_failure()
-            if failure is None and not self._catalog_contains(
-                self._catalog,
-                request.model_id,
-            ):
+            if clone_request is not None:
                 failure = _MODEL_INVALID
+            else:
+                await self._refresh_catalog(force=True)
+                failure = self._readiness_failure()
+                if failure is None and not self._catalog_contains(
+                    self._catalog,
+                    request.model_id,
+                ):
+                    failure = _MODEL_INVALID
 
         if failure is None:
             process_generation = self._managed_process_generation
@@ -615,14 +741,30 @@ class AudioCppAdapter:
             if self._closed:
                 failure = _CLOSED_UNAVAILABLE
             else:
-                payload = {
-                    "model": request.model_id,
-                    "input": request.text,
-                    "response_format": "wav",
-                }
-                if request.voice is not None:
-                    payload["voice"] = request.voice
+                if clone_request is not None:
+                    failure = self._clone_request_failure(
+                        clone_request,
+                        consume=True,
+                    )
+                if failure is not None:
+                    payload = None
+                else:
+                    payload = {
+                        "model": request.model_id,
+                        "input": request.text,
+                        "response_format": "wav",
+                    }
+                    if request.voice is not None:
+                        payload["voice"] = request.voice
+                    if clone_request is not None:
+                        payload["voice_ref"] = str(
+                            clone_request.materialization.voice_ref
+                        )
+                        payload["reference_text"] = (
+                            clone_request.materialization.reference_text
+                        )
 
+            if failure is None and payload is not None:
                 suppression_token = self._begin_http_log_suppression()
                 try:
                     try:
@@ -753,6 +895,124 @@ class AudioCppAdapter:
             )
         )
 
+    def _clone_source_authorized(self) -> bool:
+        return (
+            not self._closed
+            and self._config.mode == "managed"
+            and self._supervisor is not None
+            and getattr(self._supervisor, "_application_owner_token", None)
+            is _AUDIO_CPP_SUPERVISOR_OWNER_TOKEN
+            and self._uses_guided_launch()
+        )
+
+    def _guided_recipe_for_model(
+        self,
+        model_id: str,
+    ) -> AudioCppPackageRecipe | None:
+        settings = self._guided_settings
+        if settings is None:
+            return None
+        accepted = next(
+            (
+                package
+                for package in settings.guided_packages
+                if package.public_model_id == model_id
+            ),
+            None,
+        )
+        if accepted is None:
+            return None
+        try:
+            return AUDIO_CPP_RECIPE_REGISTRY.validate_accepted(accepted)
+        except (TypeError, ValueError):
+            return None
+
+    def _current_clone_process_generation(self) -> int | None:
+        supervisor = self._supervisor
+        bundle = self._managed_bundle
+        process_generation = self._managed_process_generation
+        if (
+            supervisor is None
+            or bundle is None
+            or process_generation is None
+            or bundle.process_generation != process_generation
+        ):
+            return None
+        try:
+            snapshot = supervisor.snapshot()
+        except Exception:
+            return None
+        if (
+            snapshot.state not in {"running", "draining"}
+            or snapshot.process_generation != process_generation
+        ):
+            return None
+        return process_generation
+
+    def _clone_request_failure(
+        self,
+        request: _AdmittedAudioCppCloneRequest,
+        *,
+        consume: bool,
+    ) -> _OperationFailure | None:
+        if type(request) is not _AdmittedAudioCppCloneRequest:
+            return _REQUEST_INVALID
+        try:
+            capability = request.capability
+            base_request = request.request
+            materialization = request.materialization
+            provider_revision = request.provider_revision
+            applied_generation = request.applied_provider_generation
+            recipe_id = request.recipe_id
+            recipe_revision = request.recipe_revision
+            process_generation = request.process_generation
+        except Exception:
+            return _REQUEST_INVALID
+        if (
+            type(base_request) is not TTSRequest
+            or not self._valid_speech_request(base_request)
+            or type(materialization) is not TTSCloneReferenceMaterialization
+            or type(provider_revision) is not int
+            or provider_revision < 0
+            or type(applied_generation) is not int
+            or applied_generation < 0
+            or type(capability) is not AudioCppCloneCapabilityAdmission
+            or capability._adapter_identity is not self._clone_adapter_identity
+            or base_request.model_id != capability.model_id
+            or recipe_id != capability.recipe_id
+            or recipe_revision != capability.recipe_revision
+            or process_generation != capability.process_generation
+            or not self._clone_source_authorized()
+        ):
+            return _REQUEST_INVALID
+        if self._current_clone_process_generation() != process_generation:
+            return _CONNECTION_UNAVAILABLE
+        try:
+            live_owner = materialization._is_live_owner()
+        except Exception:
+            live_owner = False
+        if (
+            self._clone_capabilities.get(capability._capability_token)
+            is not capability
+            or not live_owner
+        ):
+            return _REQUEST_INVALID
+        recipe = self._guided_recipe_for_model(base_request.model_id)
+        if (
+            recipe is None
+            or recipe.recipe_id != recipe_id
+            or recipe.recipe_revision != recipe_revision
+            or "clone" not in recipe.capabilities
+            or not recipe.admits_voice_reference(
+                has_voice=base_request.voice is not None,
+                has_reference=True,
+            )
+        ):
+            return _REQUEST_INVALID
+        if consume:
+            self._clone_capabilities.pop(capability._capability_token, None)
+        return None
+
     def _readiness_failure(self) -> _OperationFailure | None:
         health = self._catalog.health
         if self._closed or health.state == "closed":
@@ -880,6 +1140,7 @@ class AudioCppAdapter:
                 self._close_task = None
             if self._close_task is None:
                 self._closed = True
+                self._clone_capabilities.clear()
                 self._close_task = asyncio.create_task(self._complete_close())
             close_task = self._close_task
         await join_retained_task(close_task)
@@ -1296,6 +1557,7 @@ class AudioCppAdapter:
 
         self._managed_bundle = bundle
         self._managed_process_generation = process_generation
+        self._clone_capabilities.clear()
         self._managed_catalog_process_generation = None
         self._managed_catalog_observation_version = None
         self._managed_stop_complete = False
@@ -1322,6 +1584,7 @@ class AudioCppAdapter:
 
         def generation_invalidate() -> None:
             if self._managed_process_generation == process_generation:
+                self._clone_capabilities.clear()
                 self._managed_process_generation = None
                 self._managed_catalog_process_generation = None
                 self._managed_catalog_observation_version = None

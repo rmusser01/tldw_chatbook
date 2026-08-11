@@ -106,6 +106,9 @@ class TTSCloneReferenceMaterialization:
         """Remove the exact owned materialization, preserving substitutions."""
         await self._materializer._close_handle(self)
 
+    def _is_live_owner(self) -> bool:
+        return self._materializer.owns(self)
+
     def __repr__(self) -> str:
         return "TTSCloneReferenceMaterialization(<private>)"
 

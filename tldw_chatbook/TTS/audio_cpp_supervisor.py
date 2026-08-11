@@ -56,6 +56,7 @@ _ASSIGNMENT_SECRET_RE = re.compile(
 )
 _BEARER_SECRET_RE = re.compile(r"(?i)(\bbearer\s+)[^\s,;]+")
 _REDACTION = "<redacted>"
+_AUDIO_CPP_SUPERVISOR_OWNER_TOKEN = object()
 _ASYNCIO_SPAWN_LOG_SUPPRESSION_ACTIVE: ContextVar[bool] = ContextVar(
     "audio_cpp_asyncio_spawn_log_suppression_active",
     default=False,
@@ -510,6 +511,7 @@ class AudioCppSupervisor:
         monotonic: Callable[[], float] = time.monotonic,
         sleep: _Sleep = asyncio.sleep,
     ) -> None:
+        self._application_owner_token = _AUDIO_CPP_SUPERVISOR_OWNER_TOKEN
         credentials = collect_provider_credential_environment_names({})
         if provider_credential_names is not None:
             credentials = credentials.union(provider_credential_names)
