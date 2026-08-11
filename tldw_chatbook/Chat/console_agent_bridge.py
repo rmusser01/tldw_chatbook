@@ -735,12 +735,78 @@ class SubAgentSummary:
     Attributes:
         text: Rendered summary of the sub-agent's task (live) or its
             recorded ``task`` (historical, resume-derived).
-        status: The sub-agent run's status -- ``"running"`` while the
-            primary's step log has not yet recorded its outcome.
+        status: The sub-agent run's status. PR2b Task 2: on the FLEET
+            path (``[agents] max_live_subagents > 1``, the default) this
+            is rebuilt from ``FleetCoordinator``'s own live status on
+            every snapshot publish (see ``_subagent_summaries_from_fleet``)
+            and reaches a real terminal value (``"done"``/``"error"``/
+            ``"stuck"``/``"cancelled"``) as soon as the child does, DURING
+            the turn -- not the dataclass default forever. On the INLINE
+            path (``max_live_subagents <= 1``, no coordinator ever exists)
+            this stays the ``"running"`` default for the run's whole
+            duration, same as before this task -- unchanged, not (yet)
+            improved.
+        run_id: The sub-agent's own ``AgentRunsDB`` run id. Empty until
+            ``FleetCoordinator.attach_run`` has fired for this handle (or
+            always empty on the inline path, which has no coordinator).
+        handle_id: The ``FleetCoordinator`` handle id backing this row.
+            Empty on the inline path (no coordinator, no handle).
     """
 
     text: str
     status: str = "running"
+    run_id: str = ""
+    handle_id: str = ""
+
+
+def _subagent_summaries_from_fleet(
+    handles: list[FleetHandle], fallback: list[SubAgentSummary]
+) -> tuple[SubAgentSummary, ...]:
+    """Build one snapshot publish's ``subagents`` tuple (PR2b Task 2).
+
+    ``handles`` is ``AgentService.fleet_snapshot()``'s return -- PR2a's
+    ``FleetCoordinator`` is the live authority for a running child's real
+    status (spec Sec 3 invariant 3; the DB is authority only after the
+    fact). It is non-empty as soon as this run's first child is reserved,
+    and (unlike ``self._live``/historical caches) a handle is NEVER
+    dropped from it once reserved -- ``FleetCoordinator.snapshot()`` walks
+    ``self._handles.values()`` (insertion-ordered, terminal handles
+    included), only its private ``_live_ids`` liveness set shrinks on
+    ``finish``. So once non-empty for a run, it stays the source for the
+    rest of that run, and every child's real status/run_id/handle_id is
+    always current.
+
+    ``handles`` is ALWAYS ``[]`` in two cases this function cannot tell
+    apart by itself, both handled by falling back to ``fallback``:
+      - The inline path (``[agents] max_live_subagents <= 1``): no
+        coordinator ever exists for this run, so this is the ONLY source
+        of rows, for the run's entire duration.
+      - The brief instant on a fleet-ON run between a STEP_SPAWN step
+        firing (this bridge's ``on_step`` appends to ``fallback`` before
+        returning control) and ``fleet.reserve()`` actually registering
+        the handle a few lines later, in the very same synchronous call
+        (see ``agent_runtime.py``'s ``add(STEP_SPAWN, ...)`` then
+        ``deps.spawn(...)``) -- self-correcting on the very next publish,
+        which is always at most one step later (every tool call, spawn
+        included, gets its own STEP_TOOL_RESULT immediately after).
+
+    ``fallback`` is the STEP_SPAWN-derived list ``on_step`` has been
+    building all along: one ``SubAgentSummary(step.summary or "")`` per
+    spawn, status stuck at its dataclass default ``"running"`` (this
+    function does not, and cannot, improve on that for the inline path --
+    there is no coordinator to read a real status from).
+    """
+    if handles:
+        return tuple(
+            SubAgentSummary(
+                text=(f"[{h.agent}] {h.task}" if h.agent else h.task)[:200],
+                status=h.status,
+                run_id=h.run_id or "",
+                handle_id=h.handle_id,
+            )
+            for h in handles
+        )
+    return tuple(fallback)
 
 
 @dataclass(frozen=True)
@@ -2088,10 +2154,18 @@ class ConsoleAgentBridge:
         def on_step(step: AgentStep, agent_kind: str, run_id: str) -> None:
             # PR 2a (task-3): AgentService now attributes every step to its
             # run id so a fleet of concurrent children can be told apart.
-            # This bridge is still single-run-at-a-time -- `run_id` is
-            # accepted here but not yet used; PR 2b routes fleet rows by it
-            # (keying `live_steps`/`self._live` per run_id instead of per
-            # conversation_id).
+            # PR 2b Task 2: still accepted (the `LoopDeps.on_step`
+            # signature this closure must match always passes it) but
+            # still not used -- routing fleet rows turned out not to need
+            # it. `service.fleet_snapshot()` below (the `service` local
+            # this closure closes over, late-bound: `on_step` is only ever
+            # CALLED once `service = AgentService(...)` a little further
+            # down has already run) already returns every live child's
+            # real status/run_id/handle_id, correctly told apart by
+            # `FleetCoordinator` itself -- keying `live_steps`/`self._live`
+            # per run_id here too would be redundant bookkeeping for
+            # nothing this bridge (still single-primary-run-at-a-time)
+            # actually needs.
             live_steps.append(
                 AgentLiveStep(step.kind, self._summarize(step), agent_kind)
             )
@@ -2108,6 +2182,13 @@ class ConsoleAgentBridge:
                 tool_diff = _pair_step_diff(pending_diffs, step.tool_name)
             if agent_kind == AGENT_KIND_PRIMARY:
                 if step.kind == STEP_SPAWN:
+                    # PR2b Task 2: kept as the INLINE-path (fleet off)
+                    # fallback `_subagent_summaries_from_fleet` reads below
+                    # -- on a fleet-ON run this list is superseded by the
+                    # coordinator's own real per-child state as soon as
+                    # `service.fleet_snapshot()` is non-empty (see that
+                    # function's docstring), so entries appended here past
+                    # that point are dead weight, not wrong.
                     subagents.append(SubAgentSummary(step.summary or ""))
                 # format_agent_step_marker is the single source of truth for
                 # marker text -- shared with resume_marker_messages below --
@@ -2158,7 +2239,13 @@ class ConsoleAgentBridge:
                 status="running",
                 step=len(live_steps),
                 steps=tuple(live_steps[-5:]),
-                subagents=tuple(subagents),
+                # PR2b Task 2: rebuilt from the fleet's REAL live state on
+                # every publish, not appended once and left stuck at the
+                # "running" default -- see
+                # `_subagent_summaries_from_fleet`'s docstring.
+                subagents=_subagent_summaries_from_fleet(
+                    service.fleet_snapshot(), subagents
+                ),
             )
 
         # C1 (probe-verified security regression): thread the composed MCP
@@ -2423,7 +2510,22 @@ class ConsoleAgentBridge:
             status=outcome.status,
             step=len(live_steps),
             steps=tuple(live_steps[-5:]),
-            subagents=tuple(subagents),
+            # PR2b Task 2: `service` here -- NOT `self.fleet_snapshot(
+            # conversation_id)` -- deliberately: the `finally` block just
+            # above already ran `self._teardown_fleet_service`, which pops
+            # THIS run's own `self._fleet_services` entry (assuming no
+            # overlapping resend already overwrote it -- see that
+            # method's docstring), so a lookup by conversation_id here
+            # would see `[]` and wipe out every child's final status right
+            # when the run ends. The `service` local variable is
+            # unaffected by that pop -- by this point `_settle_fleet`
+            # (called from inside `run_turn`, before it returned above)
+            # has already joined/abandoned every fleet child, so every
+            # handle `service.fleet_snapshot()` returns here is already
+            # terminal.
+            subagents=_subagent_summaries_from_fleet(
+                service.fleet_snapshot(), subagents
+            ),
         )
         # The run just finished -- drop any stale historical cache entry so
         # a *later* resume (in a future process) always re-derives fresh

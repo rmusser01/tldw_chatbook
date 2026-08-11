@@ -3873,3 +3873,242 @@ def test_fleet_teardown_pop_is_identity_checked_not_blind(tmp_path):
     # And B's OWN (later) teardown still works normally.
     bridge._teardown_fleet_service("conv-resend", service_b)
     assert bridge.fleet_snapshot("conv-resend") == []
+
+
+# -- PR2b Task 2: real per-child status on the live `subagents` rows -----
+
+
+def test_live_snapshot_subagent_status_reaches_done_on_the_live_path(tmp_path):
+    """PR2b Task 2 headline fix: before this task, a live row's status was
+    the `SubAgentSummary` dataclass default ("running") FOREVER -- the
+    exact same object, appended once on STEP_SPAWN and never replaced --
+    even once the run (and its one child) had fully completed.
+    `live_snapshot` is the CURRENT process's in-memory path (it never
+    touches `AgentRunsDB`); only a restart's `historical_snapshot`
+    re-derivation ever saw the real status before. This proves the LIVE
+    path itself now agrees, with no restart needed.
+    """
+    scripts = [
+        [_fence("spawn_subagent", {"task": "compute 1+1"})],  # primary turn 1
+        ["2"],  # sub-agent turn
+        ["Done: ", "2."],  # primary final
+    ]
+    bridge, db, store, session, aid = _bridge(tmp_path, scripts)
+
+    outcome = _run(bridge, store, session, aid)
+
+    assert outcome.status == "done"
+    subagents = bridge.live_snapshot("conv-1").subagents
+    assert len(subagents) == 1, subagents
+    summary = subagents[0]
+    assert summary.status == "done"
+    assert summary.text == "compute 1+1"
+    assert summary.handle_id, "fleet path must carry the coordinator's own handle id"
+    assert summary.run_id, "attach_run must have populated the child's own run id"
+    # Cross-check against the DB's own record of the same run -- not just
+    # self-consistent with the coordinator's in-memory copy.
+    child_run = db.get_run(summary.run_id)
+    assert child_run is not None
+    assert child_run["status"] == "done"
+
+
+def test_live_snapshot_subagent_status_reaches_error_when_child_run_fails(tmp_path):
+    """PR2b Task 2: an errored child must show `status == "error"` on the
+    live path, not the permanently-stuck "running" the pre-task code
+    always showed regardless of how the child actually ended.
+    """
+
+    class _FleetChildRaisesGateway:
+        """Primary spawns one child whose OWN first turn raises --
+        deterministic way to drive a fleet child to a terminal "error"
+        without needing an error-producing tool call inside its script.
+        The primary's OWN turns are unaffected (`run_child`'s exception
+        handling is fully contained -- see `agent_service.py`), so this
+        also incidentally confirms one child's failure never drags down
+        the primary's own outcome.
+        """
+
+        def __init__(self, parent_script):
+            self._parent = list(parent_script)
+            self._lock = threading.Lock()
+
+        async def stream_chat(self, resolution, messages, tools=None, **kwargs):
+            system = str(messages[0].get("content", "")) if messages else ""
+            if system.startswith(SUBAGENT_PROMPT_PREFIX):
+                raise RuntimeError("child blew up")
+            with self._lock:
+                assert self._parent, "parent script exhausted"
+                chunks = self._parent.pop(0)
+            for chunk in chunks:
+                yield chunk
+
+    gateway = _FleetChildRaisesGateway(
+        parent_script=[
+            [_fence("spawn_subagent", {"task": "doomed task"})],
+            ["Done."],
+        ]
+    )
+    bridge, db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+
+    outcome = _run(bridge, store, session, aid)
+
+    assert outcome.status == "done"  # the PRIMARY still finishes fine
+    subagents = bridge.live_snapshot("conv-1").subagents
+    assert len(subagents) == 1, subagents
+    assert subagents[0].status == "error"
+    assert subagents[0].handle_id
+
+
+def test_live_snapshot_two_concurrent_subagents_get_distinct_run_ids_that_dont_cross(
+    tmp_path,
+):
+    """PR2b Task 2: the rail's `subagents` tuple, not just the raw
+    `fleet_snapshot` Task 1 exposed, must carry each concurrent child's
+    OWN distinct run_id/handle_id -- and the SAME id for the SAME task,
+    from the mid-run poll through to the run's own final publish. Before
+    this task every live row was one shared, ever-appended list of bare
+    `SubAgentSummary(text)` objects carrying no id at all, so two
+    concurrent children were indistinguishable by construction.
+
+    Reuses Task 1's `_FleetTwoChildGateway` gating helper (two children,
+    both gated on a shared `threading.Event` until released) -- see its
+    own docstring for why the gate is awaited via `run_in_executor`
+    rather than a bare synchronous `.wait()`.
+    """
+    gate = threading.Event()
+    gateway = _FleetTwoChildGateway(
+        parent_script=[
+            [_fence("spawn_subagent", {"task": "task A"})],  # primary turn 1
+            [_fence("spawn_subagent", {"task": "task B"})],  # primary turn 2
+            ["parent final"],  # primary turn 3
+        ],
+        child_result=["child answer"],
+        gate=gate,
+    )
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=gateway
+    )
+
+    result: dict = {}
+
+    def do_run():
+        result["outcome"] = _run(
+            bridge, store, session, assistant.id, conversation_id="conv-two-children"
+        )
+
+    runner = threading.Thread(target=do_run, name="test-two-children-run-ids")
+    runner.start()
+    try:
+        assert gateway.entered_event.wait(5), (
+            "both children never reached their gated turn -- run_reply "
+            "never got far enough to reserve two handles"
+        )
+        # `fleet_snapshot` (Task 1) reads `FleetCoordinator` LIVE, so it is
+        # never subject to the rail cache's own publish cadence. Each
+        # child's `run_id` is attached (`FleetCoordinator.attach_run`) on
+        # ITS OWN thread, strictly before that child's own gated turn is
+        # even reached -- so both are already populated by now. `handle_id`
+        # only needs `fleet.reserve()`, which is even earlier.
+        live_handles = bridge.fleet_snapshot("conv-two-children")
+        assert len(live_handles) == 2, live_handles
+        assert {h.status for h in live_handles} == {"running"}
+        by_task = {h.task: h for h in live_handles}
+        assert set(by_task) == {"task A", "task B"}
+        handle_ids = {h.handle_id for h in live_handles}
+        run_ids = {h.run_id for h in live_handles}
+        assert len(handle_ids) == 2 and all(handle_ids), (
+            "each child must carry its OWN distinct, non-empty handle_id"
+        )
+        assert len(run_ids) == 2 and all(run_ids), (
+            "each child must carry its OWN distinct, non-empty run_id -- "
+            "attach_run fires before the child's own gated turn, so both "
+            "should already be populated by the time the gate is reached"
+        )
+        # Pin the mapping so the release-and-recheck below can prove
+        # neither id crossed to the other child.
+        pre_release = {h.task: (h.handle_id, h.run_id) for h in live_handles}
+
+        # The rail-facing cache (`live_snapshot`, what
+        # `_subagent_summaries_from_fleet` actually publishes to) agrees
+        # on status/handle_id too: its last publish -- the second spawn's
+        # own STEP_TOOL_RESULT step -- already had both handles reserved.
+        # `run_id` is NOT asserted here on purpose: that publish happens
+        # strictly BEFORE either child's own thread reaches `attach_run`
+        # (there is no THIRD on_step call between the second spawn's
+        # tool-result step and the primary's own final turn in this
+        # script to refresh it), so it can still legitimately lag behind
+        # the coordinator's live state read above -- exactly the "at most
+        # one step behind, self-correcting" gap
+        # `_subagent_summaries_from_fleet`'s own docstring documents. The
+        # run's own FINAL publish below re-reads the coordinator fresh
+        # (see that publish site's own comment on why), so this is not a
+        # gap in the rail's terminal accuracy -- only in how quickly a
+        # mid-run poll picks up an id attached on a different thread AFTER
+        # the last step-triggered publish.
+        rail_subagents = bridge.live_snapshot("conv-two-children").subagents
+        assert len(rail_subagents) == 2, rail_subagents
+        assert {s.status for s in rail_subagents} == {"running"}
+        assert {s.handle_id for s in rail_subagents} == handle_ids
+    finally:
+        gate.set()
+    runner.join(10)
+    assert not runner.is_alive(), "run_reply never returned"
+
+    assert result["outcome"].status == "done"
+    assert result["outcome"].final_text == "parent final"
+    final_subagents = bridge.live_snapshot("conv-two-children").subagents
+    assert len(final_subagents) == 2, final_subagents
+    assert {s.status for s in final_subagents} == {"done"}
+    for summary in final_subagents:
+        assert (summary.handle_id, summary.run_id) == pre_release[summary.text], (
+            "a child's id must not change/cross between the mid-run poll "
+            "and the run's own final publish"
+        )
+
+
+def test_inline_fleet_off_spawn_still_produces_a_live_subagent_row(
+    tmp_path, monkeypatch
+):
+    """PR2b Task 2 explicit non-regression: `[agents] max_live_subagents
+    <= 1` turns the fleet off entirely (`AgentService._fleet` stays
+    `None` for the whole run), so `service.fleet_snapshot()` is `[]` for
+    the run's entire duration and `_subagent_summaries_from_fleet` falls
+    back to the STEP_SPAWN-derived list -- the only source of rows on
+    this path. A live row must still appear here; the inline child is
+    just not (yet) given a REAL terminal status the way the fleet path
+    now is (see `SubAgentSummary.status`'s own docstring) -- this pins
+    that as documented, unchanged behavior rather than an accident this
+    task silently regressed.
+    """
+    monkeypatch.setattr(
+        agent_service,
+        "_setting",
+        lambda key, default: (
+            1 if key == agent_service.MAX_LIVE_SUBAGENTS_KEY else default
+        ),
+    )
+    scripts = [
+        [_fence("spawn_subagent", {"task": "compute 1+1"})],  # primary turn 1
+        ["2"],  # sub-agent turn (inline, so strictly ordered)
+        ["Done: ", "2."],  # primary final
+    ]
+    bridge, _db, store, session, aid = _bridge(tmp_path, scripts)
+
+    outcome = _run(bridge, store, session, aid)
+
+    assert outcome.status == "done"
+    subagents = bridge.live_snapshot("conv-1").subagents
+    assert len(subagents) == 1, subagents
+    assert "compute 1+1" in subagents[0].text
+    # Unchanged from before this task: no coordinator exists on this
+    # path, so there is nowhere to read a real terminal status from.
+    assert subagents[0].status == "running"
+    assert subagents[0].run_id == ""
+    assert subagents[0].handle_id == ""
