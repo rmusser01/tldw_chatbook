@@ -82,6 +82,27 @@ class _SlowReapProcess(_Process):
         return self.returncode
 
 
+class _RetryAfterPermissionErrorProcess(_Process):
+    def __init__(self, sentinel: str) -> None:
+        super().__init__()
+        self.sentinel = sentinel
+
+    def terminate(self) -> None:
+        self.terminate_calls += 1
+
+    def kill(self) -> None:
+        self.kill_calls += 1
+        if self.kill_calls == 1:
+            raise PermissionError(self.sentinel)
+        self.returncode = -9
+
+    async def wait(self) -> int:
+        self.wait_calls += 1
+        if self.returncode is None:
+            await asyncio.Future()
+        return self.returncode
+
+
 def _bare_connection(
     process: object | None = None,
 ) -> client_module._StdioJSONRPCConnection:
@@ -190,6 +211,261 @@ async def test_initialize_rejects_unexpected_protocol_version_without_payload_le
 
     _assert_client_error(exc_info.value, "Unexpected MCP protocol version")
     assert "private-version" not in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_init_failure_retains_private_owner_until_retry_reaps_child(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = _RetryAfterPermissionErrorProcess("private-init-kill-payload")
+    created_session: object | None = None
+
+    class Session:
+        def __init__(self, created_process: object, *, client_name: str) -> None:
+            nonlocal created_session
+            assert created_process is process
+            assert client_name == "pending-init-client"
+            self.process = created_process
+            created_session = self
+
+        async def initialize(self) -> None:
+            raise RuntimeError("initialization rejected")
+
+        async def close(self) -> None:
+            await asyncio.Future()
+
+    async def spawn(*_args: Any, **_kwargs: Any) -> _Process:
+        return process
+
+    client = client_module.MCPClient(name="pending-init-client")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(client_module, "_StdioJSONRPCConnection", Session)
+    monkeypatch.setattr(client_module, "CLEANUP_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(client_module, "_TERMINATE_TIMEOUT_SECONDS", 0.01)
+
+    assert await client.connect_to_server("server", "python") is False
+    assert client.sessions == {}
+    assert client.servers == {}
+    pending = client._pending_connections["server"]
+    assert pending.process is process
+    assert pending.session is created_session
+    assert process.returncode is None
+
+    assert await client.disconnect_from_server("server") is True
+    assert process.returncode == -9
+    assert process.kill_calls == 2
+    assert client._pending_connections == {}
+    assert client.sessions == {}
+    assert client.servers == {}
+    await asyncio.sleep(0)
+    current = asyncio.current_task()
+    assert all(
+        task is current
+        or task.done()
+        or "_finish_connection_cleanup" not in task.get_coro().__qualname__
+        for task in asyncio.all_tasks()
+    )
+
+
+@pytest.mark.asyncio
+async def test_discovery_does_not_publish_half_initialized_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    discovery_started = asyncio.Event()
+    allow_discovery = asyncio.Event()
+    process = _Process()
+
+    class Session:
+        protocol_version = "2025-03-26"
+        server_info: dict[str, Any] = {}
+        server_capabilities: dict[str, Any] = {}
+
+        def __init__(self, created_process: object, *, client_name: str) -> None:
+            assert created_process is process
+            self.process = created_process
+
+        async def initialize(self) -> None:
+            return None
+
+        async def close(self) -> None:
+            process.terminate()
+            await process.wait()
+
+    async def spawn(*_args: Any, **_kwargs: Any) -> _Process:
+        return process
+
+    async def discover(_server_id: str) -> None:
+        discovery_started.set()
+        await allow_discovery.wait()
+
+    client = client_module.MCPClient(name="atomic-publication-client")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(client_module, "_StdioJSONRPCConnection", Session)
+    monkeypatch.setattr(client, "_discover_server_capabilities", discover)
+
+    connect = asyncio.create_task(client.connect_to_server("server", "python"))
+    await asyncio.wait_for(discovery_started.wait(), timeout=1)
+    try:
+        assert client.sessions == {}
+        assert client.servers == {}
+        assert client._pending_connections["server"].session is not None
+        allow_discovery.set()
+        assert await asyncio.wait_for(connect, timeout=1) is True
+        assert "server" in client.sessions
+        assert "server" in client.servers
+        assert client._pending_connections == {}
+    finally:
+        allow_discovery.set()
+        if not connect.done():
+            connect.cancel()
+            await asyncio.gather(connect, return_exceptions=True)
+        await client.disconnect_all()
+
+
+@pytest.mark.asyncio
+async def test_pending_cleanup_preserves_registry_replacement_identity() -> None:
+    close_started = asyncio.Event()
+    allow_close = asyncio.Event()
+    process = _Process()
+
+    class Session:
+        def __init__(self) -> None:
+            self.process = process
+
+        async def close(self) -> None:
+            close_started.set()
+            await allow_close.wait()
+            process.terminate()
+            await process.wait()
+
+    old_session = Session()
+    old_pending = SimpleNamespace(process=process, session=old_session)
+    replacement = SimpleNamespace(process=_Process(), session=None)
+    client = client_module.MCPClient(name="pending-replacement-client")
+    client._pending_connections["server"] = old_pending
+
+    cleanup = asyncio.create_task(client.disconnect_from_server("server"))
+    await asyncio.wait_for(close_started.wait(), timeout=1)
+    client._pending_connections["server"] = replacement
+    allow_close.set()
+
+    assert await asyncio.wait_for(cleanup, timeout=1) is True
+    assert process.returncode == 0
+    assert client._pending_connections == {"server": replacement}
+    assert client.sessions == {}
+    assert client.servers == {}
+
+
+@pytest.mark.asyncio
+async def test_spawn_only_pending_cleanup_does_not_touch_active_replacement() -> None:
+    old_process = _Process()
+    replacement_process = _Process()
+
+    class ReplacementSession:
+        def __init__(self) -> None:
+            self.process = replacement_process
+            self.close_calls = 0
+
+        async def close(self) -> None:
+            self.close_calls += 1
+            replacement_process.terminate()
+
+    old_pending = SimpleNamespace(process=old_process, session=None)
+    replacement = ReplacementSession()
+    replacement_record = {"command": "replacement"}
+    client = client_module.MCPClient(name="spawn-replacement-client")
+    client._pending_connections["server"] = old_pending
+    client.sessions["server"] = replacement  # type: ignore[assignment]
+    client.servers["server"] = replacement_record
+
+    await client._bounded_teardown_connection("server", pending=old_pending)
+
+    assert old_process.returncode == 0
+    assert replacement.close_calls == 0
+    assert replacement_process.returncode is None
+    assert client.sessions == {"server": replacement}
+    assert client.servers == {"server": replacement_record}
+    assert client._pending_connections == {}
+
+
+@pytest.mark.asyncio
+async def test_pending_collision_cleanup_failure_does_not_spawn_replacement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = _RetryAfterPermissionErrorProcess("private-collision-payload")
+
+    class Session:
+        def __init__(self) -> None:
+            self.process = process
+
+        async def close(self) -> None:
+            await asyncio.Future()
+
+    session = Session()
+    pending = SimpleNamespace(process=process, session=session)
+    client = client_module.MCPClient(name="pending-collision-client")
+    client._pending_connections["server"] = pending
+    monkeypatch.setattr(client_module, "CLEANUP_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(client_module, "_TERMINATE_TIMEOUT_SECONDS", 0.01)
+
+    async def unexpected_spawn(*_args: Any, **_kwargs: Any) -> _Process:
+        pytest.fail("replacement must not spawn while the prior child remains live")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", unexpected_spawn)
+
+    assert await client.connect_to_server("server", "python") is False
+    assert client._pending_connections == {"server": pending}
+    assert process.returncode is None
+    assert await client.disconnect_from_server("server") is True
+    assert process.returncode == -9
+    assert client._pending_connections == {}
+
+
+@pytest.mark.asyncio
+async def test_pending_transport_failure_reaps_without_publication(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = _Process()
+
+    class Session:
+        protocol_version = "2025-03-26"
+        server_info: dict[str, Any] = {}
+        server_capabilities: dict[str, Any] = {}
+
+        def __init__(self, created_process: object, *, client_name: str) -> None:
+            assert created_process is process
+            self.process = created_process
+            self._on_transport_failure: Callable[[], Any] | None = None
+
+        async def initialize(self) -> None:
+            assert self._on_transport_failure is not None
+            await self._on_transport_failure()
+            raise RuntimeError("transport failed")
+
+        async def close(self) -> None:
+            process.terminate()
+            await process.wait()
+
+    async def spawn(*_args: Any, **_kwargs: Any) -> _Process:
+        return process
+
+    client = client_module.MCPClient(name="pending-transport-client")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(client_module, "_StdioJSONRPCConnection", Session)
+
+    assert await client.connect_to_server("server", "python") is False
+    assert process.returncode == 0
+    assert client.sessions == {}
+    assert client.servers == {}
+    assert client._pending_connections == {}
+    await asyncio.sleep(0)
+    current = asyncio.current_task()
+    assert all(
+        task is current
+        or task.done()
+        or "cleanup_failed_transport" not in task.get_coro().__qualname__
+        for task in asyncio.all_tasks()
+    )
 
 
 @pytest.mark.parametrize("phase", ["initialize", "discovery"])
@@ -409,9 +685,7 @@ async def test_forced_cleanup_reports_failures_and_only_finalizes_reaped_registr
     )
 
     if expected_success:
-        await asyncio.wait_for(
-            client._bounded_teardown_connection("server"), timeout=1
-        )
+        await asyncio.wait_for(client._bounded_teardown_connection("server"), timeout=1)
     else:
         with pytest.raises(client_module.MCPClientError) as exc_info:
             await asyncio.wait_for(
@@ -1761,6 +2035,181 @@ async def test_disconnect_cancellation_keeps_recovery_state_until_forced_reap(
     assert client.sessions == {}
     assert client.servers == {}
     assert await client.disconnect_from_server("server") is False
+
+
+@pytest.mark.parametrize("owner_kind", ["active", "pending"])
+@pytest.mark.parametrize("cancel_kind", ["direct", "wait_for"])
+@pytest.mark.asyncio
+async def test_cleanup_failure_replays_cancellation_and_retains_retryable_owner(
+    owner_kind: str,
+    cancel_kind: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinel = f"private-{owner_kind}-{cancel_kind}-payload"
+    process = _RetryAfterPermissionErrorProcess(sentinel)
+    close_started = asyncio.Event()
+    logged: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    class Session:
+        def __init__(self) -> None:
+            self.process = process
+
+        async def close(self) -> None:
+            close_started.set()
+            await asyncio.Future()
+
+    session = Session()
+    client = client_module.MCPClient(name="cancel-precedence-client")
+    if owner_kind == "active":
+        client.sessions["server"] = session  # type: ignore[assignment]
+        client.servers["server"] = {"command": "fake"}
+    else:
+        client._pending_connections["server"] = SimpleNamespace(
+            process=process, session=session
+        )
+    monkeypatch.setattr(client_module, "CLEANUP_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(client_module, "_TERMINATE_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(
+        client_module.logger,
+        "warning",
+        lambda *args, **kwargs: logged.append((args, kwargs)),
+    )
+
+    task = asyncio.create_task(client.disconnect_from_server("server"))
+    await asyncio.wait_for(close_started.wait(), timeout=1)
+    if cancel_kind == "direct":
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    else:
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(task, timeout=0.001)
+
+    if owner_kind == "active":
+        assert client.sessions == {"server": session}
+        assert client.servers == {"server": {"command": "fake"}}
+        assert client._pending_connections == {}
+    else:
+        assert client.sessions == {}
+        assert client.servers == {}
+        assert client._pending_connections["server"].session is session
+    assert process.returncode is None
+    assert sentinel not in repr(logged)
+    assert any(
+        args == ("MCP connection cleanup incomplete after cancellation",)
+        for args, _kwargs in logged
+    )
+
+    assert await client.disconnect_from_server("server") is True
+    assert process.returncode == -9
+    assert process.kill_calls == 2
+    assert client.sessions == {}
+    assert client.servers == {}
+    assert client._pending_connections == {}
+
+
+@pytest.mark.asyncio
+async def test_connect_cancellation_retains_pending_owner_when_reap_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinel = "private-connect-cancel-payload"
+    process = _RetryAfterPermissionErrorProcess(sentinel)
+    initialize_started = asyncio.Event()
+    logged: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    class Session:
+        def __init__(self, created_process: object, *, client_name: str) -> None:
+            assert created_process is process
+            self.process = created_process
+
+        async def initialize(self) -> None:
+            initialize_started.set()
+            await asyncio.Future()
+
+        async def close(self) -> None:
+            await asyncio.Future()
+
+    async def spawn(*_args: Any, **_kwargs: Any) -> _Process:
+        return process
+
+    client = client_module.MCPClient(name="connect-cancel-owner-client")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(client_module, "_StdioJSONRPCConnection", Session)
+    monkeypatch.setattr(client_module, "CLEANUP_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(client_module, "_TERMINATE_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(
+        client_module.logger,
+        "warning",
+        lambda *args, **kwargs: logged.append((args, kwargs)),
+    )
+
+    connect = asyncio.create_task(client.connect_to_server("server", "python"))
+    await asyncio.wait_for(initialize_started.wait(), timeout=1)
+    connect.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await connect
+
+    assert client.sessions == {}
+    assert client.servers == {}
+    assert client._pending_connections["server"].session is not None
+    assert process.returncode is None
+    assert sentinel not in repr(logged)
+
+    assert await client.disconnect_from_server("server") is True
+    assert process.returncode == -9
+    assert client._pending_connections == {}
+
+
+@pytest.mark.asyncio
+async def test_disconnect_all_continues_after_cancelled_cleanup_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_started = asyncio.Event()
+    first_process = _RetryAfterPermissionErrorProcess("private-all-cancel-payload")
+    second_process = _Process()
+    close_calls: list[str] = []
+
+    class Session:
+        def __init__(self, server_id: str, process: _Process) -> None:
+            self.server_id = server_id
+            self.process = process
+
+        async def close(self) -> None:
+            close_calls.append(self.server_id)
+            if self.server_id == "first":
+                first_started.set()
+                await asyncio.Future()
+            self.process.terminate()
+            await self.process.wait()
+
+    first_session = Session("first", first_process)
+    second_session = Session("second", second_process)
+    client = client_module.MCPClient(name="disconnect-all-failed-cleanup-client")
+    client.sessions["first"] = first_session  # type: ignore[assignment]
+    client.servers["first"] = {"command": "fake"}
+    client._pending_connections["second"] = SimpleNamespace(
+        process=second_process, session=second_session
+    )
+    monkeypatch.setattr(client_module, "CLEANUP_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(client_module, "_TERMINATE_TIMEOUT_SECONDS", 0.01)
+
+    task = asyncio.create_task(client.disconnect_all())
+    await asyncio.wait_for(first_started.wait(), timeout=1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert close_calls == ["first", "second"]
+    assert client.sessions == {"first": first_session}
+    assert client.servers == {"first": {"command": "fake"}}
+    assert client._pending_connections == {}
+    assert first_process.returncode is None
+    assert second_process.returncode == 0
+
+    assert await client.disconnect_from_server("first") is True
+    assert first_process.returncode == -9
+    assert client.sessions == {}
+    assert client.servers == {}
 
 
 @pytest.mark.asyncio

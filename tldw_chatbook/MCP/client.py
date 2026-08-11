@@ -790,6 +790,15 @@ class _StdioJSONRPCConnection:
             future.set_exception(exc)
 
 
+class _PendingConnection:
+    """Private ownership of a spawned child until publication or reap."""
+
+    def __init__(self, process: Any) -> None:
+        self.process = process
+        self.session: Optional[_StdioJSONRPCConnection] = None
+        self.server: Dict[str, Any] = {}
+
+
 class MCPClient:
     """MCP Client for connecting to external MCP servers."""
 
@@ -798,6 +807,7 @@ class MCPClient:
         self.name = name
         self.sessions: Dict[str, _StdioJSONRPCConnection] = {}
         self.servers: Dict[str, Dict[str, Any]] = {}
+        self._pending_connections: Dict[str, _PendingConnection] = {}
 
         logger.info("MCP Client '{}' initialized", name)
 
@@ -819,10 +829,15 @@ class MCPClient:
         Returns:
             True if connection successful
         """
-        if server_id in self.sessions:
-            await self._bounded_teardown_connection(server_id)
+        if server_id in self.sessions or server_id in self._pending_connections:
+            try:
+                await self._bounded_teardown_connection(server_id)
+            except MCPClientError:
+                logger.warning("MCP connection cleanup incomplete before reconnect")
+                return False
 
         session = None
+        pending = None
         deadline = _monotonic() + CONNECT_TIMEOUT_SECONDS
         try:
             spawn_timeout = _remaining(deadline, "MCP connection deadline exceeded")
@@ -838,20 +853,28 @@ class MCPClient:
                 ),
                 timeout=spawn_timeout,
             )
+            pending = _PendingConnection(process)
+            self._pending_connections[server_id] = pending
 
             async def cleanup_failed_transport() -> None:
-                if session is not None and self.sessions.get(server_id) is session:
-                    await self._bounded_teardown_connection(server_id, session=session)
+                active_owner = (
+                    session is not None and self.sessions.get(server_id) is session
+                )
+                pending_owner = self._pending_connections.get(server_id) is pending
+                if active_owner or pending_owner:
+                    await self._bounded_teardown_connection(
+                        server_id, session=session, pending=pending
+                    )
 
             session = _StdioJSONRPCConnection(process, client_name=self.name)
+            pending.session = session
             session._on_transport_failure = cleanup_failed_transport
             initialize_timeout = _remaining(
                 deadline, "MCP connection deadline exceeded"
             )
             await asyncio.wait_for(session.initialize(), timeout=initialize_timeout)
 
-            self.sessions[server_id] = session
-            self.servers[server_id] = {
+            pending.server = {
                 "command": command,
                 "args": list(args or []),
                 "connected_at": datetime.now().isoformat(),
@@ -876,15 +899,32 @@ class MCPClient:
                 self._discover_server_capabilities(server_id),
                 timeout=discovery_timeout,
             )
+            if self._pending_connections.get(server_id) is not pending:
+                raise MCPClientError("MCP connection ownership changed")
+            self.sessions[server_id] = session
+            self.servers[server_id] = pending.server
+            self._pending_connections.pop(server_id, None)
 
             logger.info("Successfully connected to MCP server: {}", server_id)
             return True
 
         except asyncio.CancelledError:
-            await self._bounded_teardown_connection(server_id, session=session)
+            try:
+                await self._bounded_teardown_connection(
+                    server_id, session=session, pending=pending
+                )
+            except MCPClientError:
+                logger.warning("MCP connection cleanup incomplete after cancellation")
             raise
         except Exception as e:
-            await self._bounded_teardown_connection(server_id, session=session)
+            try:
+                await self._bounded_teardown_connection(
+                    server_id, session=session, pending=pending
+                )
+            except MCPClientError:
+                logger.warning(
+                    "MCP connection cleanup incomplete after connection failure"
+                )
             logger.error("Failed to connect to MCP server {}: {}", server_id, e)
             return False
 
@@ -898,7 +938,7 @@ class MCPClient:
             True if disconnection successful
         """
         try:
-            if server_id in self.sessions:
+            if server_id in self.sessions or server_id in self._pending_connections:
                 await self._bounded_teardown_connection(server_id)
                 logger.info("Disconnected from MCP server: {}", server_id)
                 return True
@@ -917,31 +957,33 @@ class MCPClient:
             server_id: Server identifier
         """
         session = self.sessions.get(server_id)
-        if not session:
+        server = self.servers.get(server_id)
+        if session is None:
+            pending = self._pending_connections.get(server_id)
+            if pending is not None:
+                session = pending.session
+                server = pending.server
+        if session is None or server is None:
             raise RuntimeError(f"Server session not found for {server_id}")
 
         tools_response = await session.list_tools()
-        self.servers[server_id]["tools"] = tools_response.tools
+        server["tools"] = tools_response.tools
 
         resources_response = await session.list_resources()
-        self.servers[server_id]["resources"] = resources_response.resources
+        server["resources"] = resources_response.resources
 
         prompts_response = await session.list_prompts()
-        self.servers[server_id]["prompts"] = prompts_response.prompts
+        server["prompts"] = prompts_response.prompts
 
         logger.info(
             "Discovered capabilities for {}: {} tools, {} resources, {} prompts",
             server_id,
-            len(self.servers[server_id]["tools"]),
-            len(self.servers[server_id]["resources"]),
-            len(self.servers[server_id]["prompts"]),
+            len(server["tools"]),
+            len(server["resources"]),
+            len(server["prompts"]),
         )
 
-        if not (
-            self.servers[server_id]["tools"]
-            or self.servers[server_id]["resources"]
-            or self.servers[server_id]["prompts"]
-        ):
+        if not (server["tools"] or server["resources"] or server["prompts"]):
             raise RuntimeError(
                 f"Server {server_id} returned no discoverable capabilities"
             )
@@ -1191,7 +1233,9 @@ class MCPClient:
 
     async def disconnect_all(self) -> None:
         """Disconnect from all servers."""
-        server_ids = list(self.sessions.keys())
+        server_ids = list(
+            dict.fromkeys((*self.sessions.keys(), *self._pending_connections.keys()))
+        )
         cancelled = False
         for server_id in server_ids:
             try:
@@ -1261,26 +1305,43 @@ class MCPClient:
     async def _finish_connection_cleanup(
         self,
         server_id: str,
-        active_session: Optional[_StdioJSONRPCConnection],
+        cleanup_session: Optional[_StdioJSONRPCConnection],
+        active_owner: Optional[_StdioJSONRPCConnection],
+        pending_owner: Optional[_PendingConnection],
     ) -> None:
-        cleanup = asyncio.create_task(
-            self._teardown_connection(server_id, session=active_session)
-        )
-        try:
-            await asyncio.wait_for(
-                asyncio.shield(cleanup), timeout=CLEANUP_TIMEOUT_SECONDS
+        if cleanup_session is not None:
+            cleanup = asyncio.create_task(
+                self._teardown_connection(server_id, session=cleanup_session)
             )
-        except asyncio.TimeoutError:
-            cleanup.cancel()
-            await asyncio.gather(cleanup, return_exceptions=True)
-        process = getattr(active_session, "process", None)
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(cleanup), timeout=CLEANUP_TIMEOUT_SECONDS
+                )
+            except asyncio.TimeoutError:
+                cleanup.cancel()
+                await asyncio.gather(cleanup, return_exceptions=True)
+        process = (
+            pending_owner.process
+            if pending_owner is not None
+            else getattr(cleanup_session, "process", None)
+        )
         if process is not None and getattr(process, "returncode", None) is None:
             if not await self._force_stop_process(process):
                 raise MCPClientError("MCP subprocess cleanup incomplete")
-        if self.sessions.get(server_id) is active_session:
+        if active_owner is not None and self.sessions.get(server_id) is active_owner:
             self.sessions.pop(server_id, None)
             self.servers.pop(server_id, None)
-        elif active_session is None and server_id not in self.sessions:
+        if (
+            pending_owner is not None
+            and self._pending_connections.get(server_id) is pending_owner
+        ):
+            self._pending_connections.pop(server_id, None)
+        if (
+            cleanup_session is None
+            and active_owner is None
+            and pending_owner is None
+            and server_id not in self.sessions
+        ):
             self.servers.pop(server_id, None)
 
     async def _bounded_teardown_connection(
@@ -1288,19 +1349,48 @@ class MCPClient:
         server_id: str,
         *,
         session: Optional[_StdioJSONRPCConnection] = None,
+        pending: Optional[_PendingConnection] = None,
     ) -> None:
-        active_session = (
-            session if session is not None else self.sessions.get(server_id)
+        registered_active = self.sessions.get(server_id)
+        registered_pending = self._pending_connections.get(server_id)
+        active_owner = (
+            registered_active
+            if (session is None and pending is None) or registered_active is session
+            else None
         )
+        pending_owner = pending
+        if pending_owner is None and active_owner is None:
+            if registered_pending is not None and (
+                session is None or registered_pending.session is session
+            ):
+                pending_owner = registered_pending
+        cleanup_session = session
+        if cleanup_session is None:
+            cleanup_session = active_owner
+        if cleanup_session is None and pending_owner is not None:
+            cleanup_session = pending_owner.session
         cleanup = asyncio.create_task(
-            self._finish_connection_cleanup(server_id, active_session)
+            self._finish_connection_cleanup(
+                server_id, cleanup_session, active_owner, pending_owner
+            )
         )
         cancelled = False
+        cleanup_failure: Optional[Exception] = None
         while not cleanup.done():
             try:
                 await asyncio.shield(cleanup)
             except asyncio.CancelledError:
                 cancelled = True
-        cleanup.result()
+            except Exception as exc:
+                cleanup_failure = exc
+        if cleanup_failure is None:
+            try:
+                cleanup.result()
+            except Exception as exc:
+                cleanup_failure = exc
         if cancelled:
+            if cleanup_failure is not None:
+                logger.warning("MCP connection cleanup incomplete after cancellation")
             raise asyncio.CancelledError
+        if cleanup_failure is not None:
+            raise cleanup_failure

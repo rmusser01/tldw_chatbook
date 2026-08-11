@@ -241,16 +241,17 @@ def test_documents_warn_about_external_local_data_and_cloud_egress(
     assert "cloud model" in normalized, path
 
 
-def test_design_distinguishes_payload_free_diagnostics_from_authorized_egress() -> (
-    None
-):
+def test_design_distinguishes_payload_free_diagnostics_from_authorized_egress() -> None:
     text = DESIGN_DOCUMENT.read_text(encoding="utf-8")
     normalized = " ".join(text.split())
-    assert re.search(
-        r"sensitive data (?:is|are) never exposed through MCP",
-        normalized,
-        re.IGNORECASE,
-    ) is None
+    assert (
+        re.search(
+            r"sensitive data (?:is|are) never exposed through MCP",
+            normalized,
+            re.IGNORECASE,
+        )
+        is None
+    )
     assert "Internal diagnostics and refusals are payload-free." in normalized
     assert "Authorized external MCP clients can read private Library data" in normalized
     assert "may send that data onward" in normalized
