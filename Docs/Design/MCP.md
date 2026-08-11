@@ -77,7 +77,10 @@ tldw_chatbook/MCP/
 ### Design Principles
 - **Modular Architecture**: Clear separation between server, tools, resources, and prompts
 - **Async-First**: All operations use async/await for optimal performance
-- **Security**: API keys and sensitive data are never exposed through MCP
+- **Security**: Internal diagnostics and refusals are payload-free. Authorized
+  external MCP clients can read private Library data through enabled tools,
+  resources, and prompts and may send that data onward, including to cloud
+  models. API keys remain internal.
 - **Extensibility**: Easy to add new tools, resources, or prompts
 - **Error Handling**: Comprehensive error handling with detailed logging
 
@@ -224,8 +227,6 @@ Create a new note.
 - **Parameters**:
   - `title`: Note title
   - `content`: Note content
-  - `tags`: Optional list of tags
-  - `template`: Optional template name
 - **Returns**: Note ID and creation details
 
 #### `list_characters`

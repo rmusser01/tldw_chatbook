@@ -315,13 +315,20 @@ async def test_connect_cancellation_forces_hung_cleanup_and_removes_state(
 
 
 @pytest.mark.parametrize(
-    ("failure_stage", "expected_message", "expected_wait_calls", "expected_kills"),
+    (
+        "failure_stage",
+        "expected_message",
+        "expected_wait_calls",
+        "expected_kills",
+        "expected_success",
+    ),
     [
         pytest.param(
             "stdin-close",
             "Failed to close MCP subprocess stdin during forced cleanup",
             1,
             0,
+            True,
             id="stdin-close",
         ),
         pytest.param(
@@ -329,6 +336,7 @@ async def test_connect_cancellation_forces_hung_cleanup_and_removes_state(
             "Failed to wait for MCP subprocess termination during forced cleanup",
             2,
             1,
+            True,
             id="initial-wait",
         ),
         pytest.param(
@@ -336,16 +344,18 @@ async def test_connect_cancellation_forces_hung_cleanup_and_removes_state(
             "Failed to reap MCP subprocess after forced cleanup",
             2,
             1,
+            False,
             id="final-reap",
         ),
     ],
 )
 @pytest.mark.asyncio
-async def test_forced_cleanup_reports_failures_and_finalizes_registry(
+async def test_forced_cleanup_reports_failures_and_only_finalizes_reaped_registry(
     failure_stage: str,
     expected_message: str,
     expected_wait_calls: int,
     expected_kills: int,
+    expected_success: bool,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     sentinel = "private-cleanup-payload"
@@ -398,7 +408,16 @@ async def test_forced_cleanup_reports_failures_and_finalizes_registry(
         lambda *args, **kwargs: logged.append((args, kwargs)),
     )
 
-    await asyncio.wait_for(client._bounded_teardown_connection("server"), timeout=1)
+    if expected_success:
+        await asyncio.wait_for(
+            client._bounded_teardown_connection("server"), timeout=1
+        )
+    else:
+        with pytest.raises(client_module.MCPClientError) as exc_info:
+            await asyncio.wait_for(
+                client._bounded_teardown_connection("server"), timeout=1
+            )
+        assert str(exc_info.value) == "MCP subprocess cleanup incomplete"
 
     assert logged == [((expected_message,), {})]
     assert sentinel not in repr(logged)
@@ -406,8 +425,172 @@ async def test_forced_cleanup_reports_failures_and_finalizes_registry(
     assert process.terminate_calls == 1
     assert process.wait_calls == expected_wait_calls
     assert process.kill_calls == expected_kills
-    assert client.sessions == {}
-    assert client.servers == {}
+    if expected_success:
+        assert client.sessions == {}
+        assert client.servers == {}
+    else:
+        assert client.sessions == {"server": session}
+        assert client.servers == {"server": {"command": "fake"}}
+
+
+@pytest.mark.asyncio
+async def test_disconnect_retains_live_real_child_after_kill_permission_error_and_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    child = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-c",
+        "import time; time.sleep(60)",
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    sentinel = "private-kill-permission-payload"
+
+    class Process:
+        def __init__(self) -> None:
+            self.stdin = child.stdin
+            self.kill_calls = 0
+
+        @property
+        def returncode(self) -> int | None:
+            return child.returncode
+
+        def terminate(self) -> None:
+            return None
+
+        def kill(self) -> None:
+            self.kill_calls += 1
+            if self.kill_calls == 1:
+                raise PermissionError(sentinel)
+            child.kill()
+
+        async def wait(self) -> int:
+            return await child.wait()
+
+    process = Process()
+
+    class Session:
+        def __init__(self) -> None:
+            self.process = process
+
+        async def close(self) -> None:
+            await asyncio.Future()
+
+    session = Session()
+    client = client_module.MCPClient(name="kill-permission-client")
+    server_record = {"command": sys.executable}
+    client.sessions["server"] = session  # type: ignore[assignment]
+    client.servers["server"] = server_record
+    logged: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    monkeypatch.setattr(client_module, "CLEANUP_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(client_module, "_TERMINATE_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(
+        client_module.logger,
+        "error",
+        lambda *args, **kwargs: logged.append((args, kwargs)),
+    )
+    try:
+        assert await client.disconnect_from_server("server") is False
+        assert child.returncode is None
+        assert client.sessions == {"server": session}
+        assert client.servers == {"server": server_record}
+        assert sentinel not in repr(logged)
+
+        assert await client.disconnect_from_server("server") is True
+        assert child.returncode is not None
+        assert process.kill_calls == 2
+        assert client.sessions == {}
+        assert client.servers == {}
+    finally:
+        if child.returncode is None:
+            child.kill()
+            await child.wait()
+
+
+@pytest.mark.asyncio
+async def test_failed_old_session_cleanup_preserves_registry_replacement_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    close_started = asyncio.Event()
+
+    class Process(_Process):
+        def terminate(self) -> None:
+            self.terminate_calls += 1
+
+        def kill(self) -> None:
+            self.kill_calls += 1
+            raise PermissionError("private-replacement-payload")
+
+        async def wait(self) -> int:
+            self.wait_calls += 1
+            await asyncio.Future()
+
+    process = Process()
+
+    class Session:
+        def __init__(self) -> None:
+            self.process = process
+
+        async def close(self) -> None:
+            close_started.set()
+            await asyncio.Future()
+
+    old_session = Session()
+    replacement = _bare_connection()
+    replacement_record = {"command": "replacement"}
+    client = client_module.MCPClient(name="replacement-identity-client")
+    client.sessions["server"] = old_session  # type: ignore[assignment]
+    client.servers["server"] = {"command": "old"}
+    monkeypatch.setattr(client_module, "CLEANUP_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(client_module, "_TERMINATE_TIMEOUT_SECONDS", 0.01)
+
+    cleanup = asyncio.create_task(client.disconnect_from_server("server"))
+    await asyncio.wait_for(close_started.wait(), timeout=1)
+    client.sessions["server"] = replacement
+    client.servers["server"] = replacement_record
+
+    assert await asyncio.wait_for(cleanup, timeout=1) is False
+    assert process.returncode is None
+    assert client.sessions == {"server": replacement}
+    assert client.servers == {"server": replacement_record}
+
+
+@pytest.mark.asyncio
+async def test_successful_old_session_cleanup_preserves_registry_replacement_identity() -> (
+    None
+):
+    close_started = asyncio.Event()
+    allow_close = asyncio.Event()
+    process = _Process()
+
+    class Session:
+        def __init__(self) -> None:
+            self.process = process
+
+        async def close(self) -> None:
+            close_started.set()
+            await allow_close.wait()
+            process.terminate()
+            await process.wait()
+
+    old_session = Session()
+    replacement = _bare_connection()
+    replacement_record = {"command": "replacement"}
+    client = client_module.MCPClient(name="replacement-success-client")
+    client.sessions["server"] = old_session  # type: ignore[assignment]
+    client.servers["server"] = {"command": "old"}
+
+    cleanup = asyncio.create_task(client.disconnect_from_server("server"))
+    await asyncio.wait_for(close_started.wait(), timeout=1)
+    client.sessions["server"] = replacement
+    client.servers["server"] = replacement_record
+    allow_close.set()
+
+    assert await asyncio.wait_for(cleanup, timeout=1) is True
+    assert process.returncode == 0
+    assert client.sessions == {"server": replacement}
+    assert client.servers == {"server": replacement_record}
 
 
 @pytest.mark.asyncio
@@ -1058,12 +1241,6 @@ async def test_catalog_rejects_item_10_001_instead_of_returning_partial_items() 
             "prompts",
             {"name": "prompt", "arguments": [{"name": "arg", "required": 1}]},
             id="prompt-required",
-        ),
-        pytest.param(
-            "list_prompts",
-            "prompts",
-            {"name": "x" * 4097, "arguments": []},
-            id="bounded-name",
         ),
     ],
 )
@@ -1776,13 +1953,62 @@ async def test_notification_log_is_fixed_and_payload_free(
 
 
 @pytest.mark.parametrize(
+    ("list_method", "item_key", "item", "expected_name"),
+    [
+        pytest.param(
+            "list_tools",
+            "tools",
+            {"name": "my tool", "inputSchema": {"type": "object"}},
+            "my tool",
+            id="tool-space",
+        ),
+        pytest.param(
+            "list_tools",
+            "tools",
+            {"name": "", "inputSchema": {"type": "object"}},
+            "",
+            id="tool-empty",
+        ),
+        pytest.param(
+            "list_prompts",
+            "prompts",
+            {"name": "my prompt", "arguments": []},
+            "my prompt",
+            id="prompt-space",
+        ),
+        pytest.param(
+            "list_prompts",
+            "prompts",
+            {"name": "x" * 129, "arguments": []},
+            "x" * 129,
+            id="prompt-unbounded-by-later-profile",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_legacy_catalog_accepts_official_string_name_domain(
+    list_method: str,
+    item_key: str,
+    item: dict[str, object],
+    expected_name: str,
+) -> None:
+    connection, _requests = _scripted_connection(
+        lambda _index, _method, _params: {item_key: [item]}
+    )
+
+    result = await getattr(connection, list_method)()
+
+    assert getattr(result, item_key)[0].name == expected_name
+
+
+@pytest.mark.parametrize(
     ("list_method", "item_key", "item"),
     [
         pytest.param(
             "list_tools",
             "tools",
-            {"name": "bad name", "inputSchema": {"type": "object"}},
-            id="tool-name-pattern",
+            {"name": 7, "inputSchema": {"type": "object"}},
+            id="tool-name-type",
         ),
         pytest.param(
             "list_tools",
@@ -1873,8 +2099,8 @@ async def test_notification_log_is_fixed_and_payload_free(
         pytest.param(
             "list_prompts",
             "prompts",
-            {"name": "bad name", "arguments": []},
-            id="prompt-name-pattern",
+            {"name": 7, "arguments": []},
+            id="prompt-name-type",
         ),
         pytest.param(
             "list_prompts",

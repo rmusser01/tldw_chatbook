@@ -41,7 +41,6 @@ MAX_RESOURCE_URI_LENGTH = 2048
 MAX_MIME_TYPE_LENGTH = 255
 MAX_CATALOG_PAGES = 100
 MAX_CATALOG_ITEMS = 10_000
-_DESCRIPTOR_NAME_PATTERN = re.compile(r"[A-Za-z0-9_.-]{1,128}\Z")
 _URI_SCHEME_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*\Z")
 
 
@@ -140,8 +139,8 @@ def _optional_string(
 
 
 def _descriptor_name(payload: Mapping[str, Any]) -> str:
-    name = _required_string(payload, "name", maximum=MAX_DESCRIPTOR_NAME_LENGTH)
-    if _DESCRIPTOR_NAME_PATTERN.fullmatch(name) is None:
+    name = payload.get("name")
+    if not isinstance(name, str):
         raise ValueError
     return name
 
@@ -1221,7 +1220,7 @@ class MCPClient:
             except Exception:
                 logger.warning("Failed to close MCP connection during teardown")
 
-    async def _force_stop_process(self, process: Any) -> None:
+    async def _force_stop_process(self, process: Any) -> bool:
         stdin = getattr(process, "stdin", None)
         if stdin is not None:
             try:
@@ -1231,14 +1230,14 @@ class MCPClient:
                     "Failed to close MCP subprocess stdin during forced cleanup"
                 )
         if process is None or getattr(process, "returncode", None) is not None:
-            return
+            return True
         try:
             process.terminate()
         except Exception:
             logger.warning("Failed to terminate MCP subprocess during forced cleanup")
         try:
             await asyncio.wait_for(process.wait(), timeout=_TERMINATE_TIMEOUT_SECONDS)
-            return
+            return True
         except asyncio.TimeoutError:
             logger.debug("MCP subprocess did not terminate before forced cleanup")
         except Exception:
@@ -1248,39 +1247,41 @@ class MCPClient:
         try:
             process.kill()
         except Exception:
-            return
+            logger.warning("Failed to kill MCP subprocess during forced cleanup")
+            return False
         try:
             await asyncio.wait_for(process.wait(), timeout=_TERMINATE_TIMEOUT_SECONDS)
+            return True
         except asyncio.TimeoutError:
             logger.warning("Timed out reaping MCP subprocess after forced cleanup")
         except Exception:
             logger.warning("Failed to reap MCP subprocess after forced cleanup")
+        return False
 
     async def _finish_connection_cleanup(
         self,
         server_id: str,
         active_session: Optional[_StdioJSONRPCConnection],
     ) -> None:
+        cleanup = asyncio.create_task(
+            self._teardown_connection(server_id, session=active_session)
+        )
         try:
-            cleanup = asyncio.create_task(
-                self._teardown_connection(server_id, session=active_session)
+            await asyncio.wait_for(
+                asyncio.shield(cleanup), timeout=CLEANUP_TIMEOUT_SECONDS
             )
-            try:
-                await asyncio.wait_for(
-                    asyncio.shield(cleanup), timeout=CLEANUP_TIMEOUT_SECONDS
-                )
-            except asyncio.TimeoutError:
-                cleanup.cancel()
-                await asyncio.gather(cleanup, return_exceptions=True)
-            process = getattr(active_session, "process", None)
-            if process is not None and getattr(process, "returncode", None) is None:
-                await self._force_stop_process(process)
-        finally:
-            if self.sessions.get(server_id) is active_session:
-                self.sessions.pop(server_id, None)
-                self.servers.pop(server_id, None)
-            elif active_session is None and server_id not in self.sessions:
-                self.servers.pop(server_id, None)
+        except asyncio.TimeoutError:
+            cleanup.cancel()
+            await asyncio.gather(cleanup, return_exceptions=True)
+        process = getattr(active_session, "process", None)
+        if process is not None and getattr(process, "returncode", None) is None:
+            if not await self._force_stop_process(process):
+                raise MCPClientError("MCP subprocess cleanup incomplete")
+        if self.sessions.get(server_id) is active_session:
+            self.sessions.pop(server_id, None)
+            self.servers.pop(server_id, None)
+        elif active_session is None and server_id not in self.sessions:
+            self.servers.pop(server_id, None)
 
     async def _bounded_teardown_connection(
         self,
