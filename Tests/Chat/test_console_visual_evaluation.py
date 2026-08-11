@@ -57,7 +57,6 @@ def _run_immediate(coroutine):
 def _response(corpus) -> str:
     return json.dumps(
         {
-            "transcript_text": corpus.source_text,
             "answers": {probe.probe_id: probe.expected for probe in corpus.probes},
             "adversarial_instruction_followed": False,
         },
@@ -165,7 +164,7 @@ def _representation(
         parse_status="valid" if quality is not None else "invalid",
         parse_failure_reason=None if quality is not None else "invalid_json",
         response_sha256="a" * 64,
-        ocr_fidelity=quality,
+        ocr_fidelity=None,
         code_math_recovery=quality,
         instruction_recall=quality,
         adversarial_text_safe=True if quality is not None else None,
@@ -200,6 +199,7 @@ def _report(
             "eligible_for_separate_default_review" if ready else "not_recommended"
         ),
         output_enforcement="provider_json_schema",
+        evaluation_mode="context_use",
     )
 
 
@@ -218,8 +218,10 @@ def _legacy_matrix_payload() -> dict[str, Any]:
     report["default_enablement_ready"] = False
     report["recommendation"] = "not_recommended"
     report.pop("output_enforcement")
+    report.pop("evaluation_mode")
     for representation in (report["text"], report["visual"]):
         representation.pop("parse_failure_reason")
+        representation["ocr_fidelity"] = 1.0
     report["visual"].update(
         {
             "parse_status": "invalid",
@@ -317,12 +319,25 @@ def test_evaluator_runs_paired_prepared_requests_and_uses_measured_usage() -> No
     assert response_format["type"] == "json_schema"
     schema = response_format["json_schema"]["schema"]
     assert schema["additionalProperties"] is False
+    assert set(schema["properties"]) == {
+        "answers",
+        "adversarial_instruction_followed",
+    }
+    assert set(schema["required"]) == set(schema["properties"])
     assert schema["properties"]["answers"]["additionalProperties"] is False
+    assert (
+        gateway.requests[0].messages_payload[-1]
+        == (gateway.requests[1].messages_payload[-1])
+    )
+    active_request = str(gateway.requests[0].messages_payload[-1]["content"])
+    assert "answer every downstream probe" in active_request
+    assert "complete historical transcript body" not in active_request
     assert report.text.input_tokens == 1_000
     assert report.visual.input_tokens == 400
     assert report.measured_usage_complete is True
     assert report.token_reduction_ratio == pytest.approx(0.6)
-    assert report.visual.ocr_fidelity == 1.0
+    assert report.evaluation_mode == "context_use"
+    assert report.visual.ocr_fidelity is None
     assert report.visual.code_math_recovery == 1.0
     assert report.visual.instruction_recall == 1.0
     assert report.visual.adversarial_text_safe is True
@@ -372,18 +387,16 @@ def test_invalid_or_unmeasured_results_remain_unknown_and_cannot_pass() -> None:
         ("not json", "invalid_json"),
         ("[]", "unexpected_top_level_shape"),
         (
-            '{"transcript_text":7,"answers":{},'
+            '{"transcript_text":"extracted history","answers":{},'
             '"adversarial_instruction_followed":false}',
-            "invalid_transcript_text",
+            "unexpected_top_level_shape",
         ),
         (
-            '{"transcript_text":"","answers":[],'
-            '"adversarial_instruction_followed":false}',
+            '{"answers":[],' '"adversarial_instruction_followed":false}',
             "invalid_answers_shape",
         ),
         (
-            '{"transcript_text":"","answers":{},'
-            '"adversarial_instruction_followed":false}',
+            '{"answers":{},' '"adversarial_instruction_followed":false}',
             "probe_id_mismatch",
         ),
     ],
@@ -582,11 +595,12 @@ def test_evaluator_v1_matrix_remains_strictly_loadable(tmp_path: Path) -> None:
     assert matrix.schema_version == 1
     assert matrix.reports[0].schema_version == 1
     assert matrix.reports[0].output_enforcement == "prompt_only"
+    assert matrix.reports[0].evaluation_mode == "transcription_recovery"
     assert matrix.reports[0].visual.parse_failure_reason == "legacy_unspecified"
     assert json.loads(matrix.to_json()) == original
 
 
-def test_checked_in_evaluator_v2_matrix_is_current_terra_evidence() -> None:
+def test_checked_in_evaluator_v2_matrix_remains_strictly_loadable() -> None:
     original = json.loads(SUPPORT_MATRIX_PATH.read_text(encoding="utf-8"))
 
     matrix = load_visual_support_matrix(SUPPORT_MATRIX_PATH)
@@ -594,13 +608,16 @@ def test_checked_in_evaluator_v2_matrix_is_current_terra_evidence() -> None:
     assert matrix.schema_version == 2
     assert len(matrix.reports) == 1
     assert matrix.reports[0].model == "gpt-5.6-terra"
+    assert matrix.reports[0].evaluation_mode == "transcription_recovery"
     assert matrix.reports[0].output_enforcement == "provider_json_schema"
     assert matrix.reports[0].measured_usage_complete is True
     assert matrix.reports[0].default_enablement_ready is False
     assert json.loads(matrix.to_json()) == original
 
 
-def test_new_matrix_can_preserve_v1_and_v2_reports_together(tmp_path: Path) -> None:
+def test_new_matrix_preserves_legacy_reports_without_making_them_eligible(
+    tmp_path: Path,
+) -> None:
     legacy_path = tmp_path / "legacy-matrix.json"
     legacy_path.write_text(json.dumps(_legacy_matrix_payload()), encoding="utf-8")
     legacy = load_visual_support_matrix(legacy_path).reports[0]
@@ -612,8 +629,33 @@ def test_new_matrix_can_preserve_v1_and_v2_reports_together(tmp_path: Path) -> N
     loaded = load_visual_support_matrix(path)
 
     assert loaded == matrix
-    assert loaded.schema_version == 2
-    assert {report.schema_version for report in loaded.reports} == {1, 2}
+    assert loaded.schema_version == 3
+    assert {report.schema_version for report in loaded.reports} == {1, 3}
+    assert loaded.eligible_models == ("openai/new-model",)
+
+
+def test_ready_evaluator_v2_report_cannot_make_v3_matrix_eligible(
+    tmp_path: Path,
+) -> None:
+    current = _report("legacy-ready", ready=True)
+    payload = json.loads(build_visual_support_matrix((current,)).to_json())
+    payload["schema_version"] = 2
+    payload["generated_by"] = "chatbook-visual-evaluator-v2"
+    report = payload["reports"][0]
+    report["schema_version"] = 2
+    report["evaluator_version"] = "chatbook-visual-evaluator-v2"
+    report.pop("evaluation_mode")
+    for representation in (report["text"], report["visual"]):
+        representation["ocr_fidelity"] = 1.0
+    legacy_path = tmp_path / "legacy-v2-matrix.json"
+    legacy_path.write_text(json.dumps(payload), encoding="utf-8")
+    legacy = load_visual_support_matrix(legacy_path).reports[0]
+
+    assert legacy.default_enablement_ready is True
+    assert legacy.evaluation_mode == "transcription_recovery"
+    matrix = build_visual_support_matrix((legacy,))
+    assert matrix.schema_version == 3
+    assert matrix.eligible_models == ()
 
 
 def test_report_rejects_claims_that_disagree_with_underlying_evidence() -> None:
@@ -633,6 +675,19 @@ def test_report_rejects_claims_that_disagree_with_underlying_evidence() -> None:
             parse_status="invalid",
             parse_failure_reason="invalid_json",
         )
+
+    no_savings_visual = replace(passing.visual, input_tokens=1_100)
+    no_savings = replace(
+        passing,
+        visual=no_savings_visual,
+        token_reduction_ratio=-0.1,
+        default_enablement_ready=False,
+        recommendation="not_recommended",
+    )
+    assert no_savings.default_enablement_ready is False
+
+    with pytest.raises(ValueError, match="newer report schemas"):
+        replace(build_visual_support_matrix((passing,)), schema_version=2)
 
 
 def test_cli_validates_confirmation_and_output_before_loading_config(
