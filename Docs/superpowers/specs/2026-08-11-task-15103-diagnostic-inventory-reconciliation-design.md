@@ -191,7 +191,8 @@ is green. The resulting manifest may change only:
 
 - the 17 reviewed owner entries, including additions or removals already
   identified by the incident;
-- the derived TASK-492 and TASK-494 totals; and
+- the independently derived owner-file, TASK-492, and TASK-494 totals,
+  including the known 485-to-487 owner-file transition; and
 - no persistent-sink entry or topology field.
 
 The candidate is compared against both the original branch base and the final
@@ -212,6 +213,12 @@ Mutation tests must make this boundary red for an unknown top-level field, a
 forged derived summary, an eighteenth owner, an owner/reason classification
 change on one of the 17 paths, and a persistent-sink change. Each mutant is
 restored before the next, and byte hashes plus clean status prove restoration.
+Except for the mutant that deliberately forges a summary, each mutated document
+must first recompute its owner-file, TASK-492, TASK-494, and sink-file totals so
+it is internally consistent. Every mutant must then fail the assertion that
+owns its intended invariant—with a specific unknown-field, unreviewed-owner,
+classification, or topology failure—not a stale-summary check or another
+incidental assertion.
 
 Immediately before the final rebase, record the complete diagnostic-call
 multiset for every one of the 17 owners, not only its inventory entry. After
