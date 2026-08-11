@@ -135,6 +135,14 @@ TextArea:focus {
     color: $ds-text-primary;
 }
 
+/* TASK-14879: File Notes fields already use the stable border treatment
+ * above. Remove the global perimeter outline so it cannot repaint the first
+ * or last editor/search cells over meaningful content. */
+LibraryFileNotesWorkspace Input:focus,
+LibraryFileNotesWorkspace TextArea:focus {
+    outline: none;
+}
+
 /* TASK-2300. `Select:focus` used to be in the rule above, and it is the one
  * member of that list that does not draw its own border.
  *

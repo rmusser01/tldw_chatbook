@@ -85,6 +85,9 @@ NATIVE_CHOICE_HOVER_MARKERS = (
 # test_file_picker_list_highlight_uses_high_contrast_override_contract below.
 NATIVE_CHOICE_HIGH_CONTRAST_OVERRIDES = (
     "#file-list-pane .option-list--option-highlighted",
+    # TASK-14879: File Notes removes its perimeter outline, so the focused
+    # Tree cursor intentionally carries the stronger workbench focus cue.
+    "LibraryFileNotesWorkspace Tree:focus > .tree--cursor",
     # TASK-368: the discovered-model checkbox CHECKED glyph is a sanctioned
     # high-contrast override (scoped by id) so selected reads distinctly from the
     # empty unchecked box — the shared $surface/$text contract erases that.
@@ -1504,6 +1507,15 @@ def test_bundled_native_choice_and_tree_states_match_source_contracts():
         assert_native_row_hover_state_contract(css_block(text, selector))
 
     assert_all_native_choice_selectors_follow_contracts(text)
+
+
+def test_file_notes_tree_cursor_uses_readable_high_contrast_focus_contract():
+    selector = "LibraryFileNotesWorkspace Tree:focus > .tree--cursor"
+    for text in (
+        LISTS.read_text(encoding="utf-8"),
+        BUNDLE.read_text(encoding="utf-8"),
+    ):
+        assert_readable_selected_state_contract(css_block(text, selector))
 
 
 def test_file_picker_list_highlight_uses_high_contrast_override_contract():

@@ -477,6 +477,10 @@ class LibraryFileNotesWorkspace(Vertical):
         min-height: 1;
     }
 
+    .file-notes-toolbar.-empty-actions {
+        display: none;
+    }
+
     .file-notes-toolbar Button,
     #file-notes-back,
     #file-notes-session-changes {
@@ -610,6 +614,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self._navigator_mode: Literal["files", "search", "git"] = "files"
         self._navigator_mode_before_git: Literal["files", "search"] = "files"
         self._editor_action_layout_sync_scheduled = False
+        self._editor_action_focus_target: str | None = None
         self._git_observed_changes: tuple[SequencedSessionChange, ...] | None = None
         self._git_refresh_timer: Timer | None = None
         self._git_refresh_after_mutation = False
@@ -833,13 +838,19 @@ class LibraryFileNotesWorkspace(Vertical):
                     value=self._selected_deleted_path or self._current_path,
                 )
                 yield self._editor_widget
-                with Horizontal(classes="file-notes-toolbar"):
+                with Horizontal(
+                    id="file-notes-file-actions",
+                    classes="file-notes-toolbar",
+                ):
                     yield Button("New", id="file-notes-new", compact=True)
                     yield Button("Move", id="file-notes-move", compact=True)
                     yield Button("Delete", id="file-notes-delete", compact=True)
                     yield Button("Restore", id="file-notes-restore", compact=True)
                     yield Button("Protect", id="file-notes-protect", compact=True)
-                with Horizontal(classes="file-notes-toolbar"):
+                with Horizontal(
+                    id="file-notes-maintenance-actions",
+                    classes="file-notes-toolbar",
+                ):
                     yield Button("Reload", id="file-notes-reload", compact=True)
                     yield Button(
                         "Save Copy",
@@ -1392,9 +1403,11 @@ class LibraryFileNotesWorkspace(Vertical):
         delete = self.query_one("#file-notes-delete", Button)
         delete.label = "Confirm delete" if confirmed else "Delete"
         delete.set_class(confirmed, "-confirm-delete")
+        delete.refresh(layout=True)
         toolbar = delete.parent
         if toolbar is not None:
             toolbar.set_class(confirmed, "-confirm-delete")
+            toolbar.refresh(layout=True)
         self._schedule_editor_action_layout()
 
     def _sync_editor_action_layout(self) -> None:
@@ -3354,6 +3367,23 @@ class LibraryFileNotesWorkspace(Vertical):
             binding is not None
             and self._session_owner.mutation_active(binding)
         )
+        focused = self.app.focused
+        if (
+            (transitioning or mutation_active)
+            and isinstance(focused, Button)
+            and focused.id
+            in {
+                "file-notes-new",
+                "file-notes-move",
+                "file-notes-delete",
+                "file-notes-restore",
+                "file-notes-protect",
+                "file-notes-reload",
+                "file-notes-save-copy",
+                "file-notes-refresh",
+            }
+        ):
+            self._editor_action_focus_target = focused.id
         structurally_available = not transitioning and not mutation_active
         has_service = self._service is not None and structurally_available
         has_document = self._opened is not None and not transitioning
@@ -3365,7 +3395,9 @@ class LibraryFileNotesWorkspace(Vertical):
             ).disabled = not (
                 has_document and structurally_available
             )
-        self.query_one("#file-notes-protect", Button).disabled = not has_document
+        self.query_one("#file-notes-protect", Button).disabled = not (
+            has_document and structurally_available
+        )
         self.query_one("#file-notes-save-copy", Button).disabled = (
             not has_document
             or not structurally_available
@@ -3375,13 +3407,33 @@ class LibraryFileNotesWorkspace(Vertical):
             not has_service or not has_deleted or not structurally_available
         )
         self.query_one("#file-notes-refresh", Button).disabled = (
-            self._service is None or transitioning
+            self._service is None or not structurally_available
         )
         protect = self.query_one("#file-notes-protect", Button)
-        protect.label = (
+        protect_label = (
             "Unprotect"
             if self._opened is not None and self._opened.protected
             else "Protect"
+        )
+        if str(protect.label) != protect_label:
+            protect.label = protect_label
+            protect.refresh(layout=True)
+            if protect.parent is not None:
+                protect.parent.refresh(layout=True)
+        self._sync_editor_action_visibility()
+        busy_reason = ""
+        if transitioning:
+            busy_reason = (
+                "File operation in progress; editor actions are temporarily "
+                "unavailable."
+            )
+        elif mutation_active:
+            busy_reason = (
+                "Session Git mutation in progress; editor actions are temporarily "
+                "unavailable."
+            )
+        self.query_one("#file-notes-action-status", Static).update(
+            busy_reason or self._action_detail
         )
         self._schedule_editor_action_layout()
         self.query_one("#file-notes-search", Input).disabled = transitioning
@@ -3396,6 +3448,52 @@ class LibraryFileNotesWorkspace(Vertical):
         )
         self._sync_editor_read_only()
         self._git_panel_widget.set_mutating(mutation_active)
+
+    def _sync_editor_action_visibility(self) -> None:
+        """Disclose only editor actions relevant to the retained state."""
+        has_service = self._service is not None
+        has_document = self._opened is not None
+        has_deleted = has_service and bool(self._selected_deleted_path)
+        visibility = {
+            "file-notes-new": has_service,
+            "file-notes-move": has_document,
+            "file-notes-delete": has_document,
+            "file-notes-restore": has_deleted,
+            "file-notes-protect": has_document,
+            "file-notes-reload": has_document,
+            "file-notes-save-copy": (
+                has_document
+                and self._save_state in {"dirty", "conflict", "error"}
+            ),
+            "file-notes-refresh": has_service,
+        }
+        focused = self.app.focused
+        for action_id, displayed in visibility.items():
+            button = self.query_one(f"#{action_id}", Button)
+            if button is focused and not displayed:
+                self._editor_action_focus_target = action_id
+            button.display = displayed
+
+        for toolbar in self.query(".file-notes-toolbar"):
+            toolbar.set_class(
+                not any(button.display for button in toolbar.query(Button)),
+                "-empty-actions",
+            )
+
+        if self._editor_action_focus_target is not None:
+            for selector in dict.fromkeys(
+                (
+                    f"#{self._editor_action_focus_target}",
+                    "#file-notes-restore",
+                    "#file-notes-new",
+                    "#file-notes-refresh",
+                )
+            ):
+                candidate = self.query_one(selector, Button)
+                if candidate.display and not candidate.disabled:
+                    candidate.focus()
+                    self._editor_action_focus_target = None
+                    break
 
     @contextmanager
     def _hold_path_transition(
@@ -3619,8 +3717,8 @@ class LibraryFileNotesWorkspace(Vertical):
         """Select one persistent tombstone for the Restore action."""
         if not self._active or relative_path not in self._deleted_paths:
             return False
-        self._clear_open_document()
         self._selected_deleted_path = relative_path
+        self._clear_open_document(keep_restore_path=True)
         self.query_one("#file-notes-path", Input).value = relative_path
         self.query_one("#file-notes-breadcrumb", Static).update(
             f"Recently deleted: {relative_path}"
@@ -5350,8 +5448,8 @@ class LibraryFileNotesWorkspace(Vertical):
                 self._operation_error("Delete", result)
                 return
             deleted_path = opened.relative_path
-            self._clear_open_document()
             self._selected_deleted_path = deleted_path
+            self._clear_open_document(keep_restore_path=True)
             self.query_one("#file-notes-path", Input).value = deleted_path
             self.query_one("#file-notes-breadcrumb", Static).update(
                 f"Recently deleted: {deleted_path}"

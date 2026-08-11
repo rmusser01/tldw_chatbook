@@ -117,6 +117,19 @@ Tree:focus > .tree--cursor {
     text-style: bold underline;
 }
 
+/* TASK-14879: File Notes Trees render entries on their perimeter cells, so
+ * the app-wide outline obscures the first/last visible rows. The focused
+ * cursor supplies the content-safe workbench cue instead. */
+LibraryFileNotesWorkspace Tree:focus {
+    outline: none;
+}
+
+LibraryFileNotesWorkspace Tree:focus > .tree--cursor {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
 /* TASK-368: the discovered-model SelectionList checkbox glyph (▐X▌) must clearly
    distinguish selected from unselected. The shared native-choice contract above
    paints the toggle classes the same ($surface/$text), erasing the
