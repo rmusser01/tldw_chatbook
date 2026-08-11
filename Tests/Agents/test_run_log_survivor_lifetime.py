@@ -442,3 +442,68 @@ def test_a_survivors_row_is_running_while_it_logs(db, log_root):
     finally:
         release.set()
     _join(survivor_threads)
+
+
+def test_a_child_scheduled_after_the_next_turn_begins_files_its_own_tree(
+    db, log_root
+):
+    """The race the spawn-time capture closes, made deterministic.
+
+    Capturing the writer at `_run_one`'s ENTRY is not enough on its own:
+    `spawn` returns the moment the thread is started, and nothing
+    guarantees that thread runs a single line before `run_turn` returns and
+    the NEXT turn replaces `self.run_log_writer`. Here the child's
+    `_run_one` is held until turn 2 is already in flight -- so a fix that
+    resolved the writer on the CHILD's thread would file turn 1's child
+    into turn 2's tree, exactly as the original bug did. The writer is
+    instead captured on the parent's thread at spawn and passed down.
+    """
+    scheduled = threading.Event()
+    finished = threading.Event()
+
+    def turn_two_parent():
+        # Turn 2's writer is already bound by the time a provider call
+        # happens, so releasing the child here puts its whole run inside
+        # the window where `self.run_log_writer` is the WRONG writer.
+        scheduled.set()
+        if not finished.wait(_JOIN_TIMEOUT):
+            raise AssertionError("the late child never finished")
+        return "turn two answer"
+
+    service, _chat, _coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "slow task"}),
+            "turn one answer",
+            turn_two_parent,
+        ],
+        {"slow task": [SURVIVOR_MARKER]},
+    )
+    real_run_one = service._run_one
+
+    def late_run_one(**kwargs):
+        if kwargs.get("agent_kind") == "subagent":
+            if not scheduled.wait(_JOIN_TIMEOUT):
+                raise AssertionError("turn 2 never started")
+        try:
+            return real_run_one(**kwargs)
+        finally:
+            if kwargs.get("agent_kind") == "subagent":
+                finished.set()
+
+    service._run_one = late_run_one
+
+    turn_one_id, outcome_one = _turn(service)
+    assert outcome_one.status == RUN_DONE
+    survivor_threads = list(service._fleet_threads.values())
+    turn_two_id, outcome_two = _turn(service)
+    assert outcome_two.status == RUN_DONE
+    _join(survivor_threads)
+
+    child_id = _child_run_id(db)
+    assert [r.run_id for r in _records_of(turn_two_id)] == [turn_two_id]
+    assert any(
+        SURVIVOR_MARKER in r.content
+        for r in _records_of(turn_one_id)
+        if r.run_id == child_id
+    )
