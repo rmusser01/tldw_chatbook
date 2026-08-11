@@ -155,7 +155,7 @@ Category totals: 8 raw/processed/extracted input, 9 prompt content, 13 credentia
 
 The original implementation record classified 199 calls as private and 324 as reviewed-safe. Independent final review found that stable site `general-2efc909241862caf` in `summarize_with_cohere._stream_events` renders provider-controlled `event.get("type")`; it is response/output content, not bounded status metadata. The approved misclassification procedure therefore corrects the authoritative starting arithmetic to `200 private + 323 reviewed-safe = 523`, with General `100 private + 181 reviewed-safe`, `general_mid = 24`, and response/output content `72` overall. Earlier commits and verification transcripts that report `199/324` remain historical evidence of the audit state before this correction; they are not the final inventory.
 
-Final verification also reproduced an unrelated 15-owner persistent-diagnostic
+Final verification also reproduced an unrelated 17-owner persistent-diagnostic
 inventory drift on detached exact latest dev. That baseline incident has separate
 backlog ownership and is not accepted into TASK-3796's manifest. This task names
 the ownership generically because repository task hygiene prohibits a lower task
