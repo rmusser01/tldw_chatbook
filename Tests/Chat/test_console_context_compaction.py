@@ -906,6 +906,7 @@ def _controller_preflight_fixture(
 
 @pytest.mark.asyncio
 async def test_unknown_model_automatic_budget_does_not_block_unverified_send() -> None:
+    """Allow an unverified send when an unknown model has no proven overflow."""
     controller, _store, session, assistant, gateway, provider_messages = (
         _controller_preflight_fixture(
             ContextCompactionMode.ASK,
@@ -929,6 +930,7 @@ async def test_unknown_model_automatic_budget_does_not_block_unverified_send() -
 
 @pytest.mark.asyncio
 async def test_unknown_model_uses_bounded_custom_budget_for_compaction() -> None:
+    """Use the user's bounded budget to compact even when capacity is unknown."""
     controller, _store, session, assistant, gateway, provider_messages = (
         _controller_preflight_fixture(
             ContextCompactionMode.AUTOMATIC,
@@ -953,6 +955,7 @@ async def test_unknown_model_uses_bounded_custom_budget_for_compaction() -> None
 async def test_bounded_budget_without_older_units_does_not_block_fitting_send() -> (
     None
 ):
+    """Allow a fitting bounded send when no older unit remains to compact."""
     controller, _store, session, assistant, gateway, provider_messages = (
         _controller_preflight_fixture(
             ContextCompactionMode.AUTOMATIC,
@@ -987,6 +990,7 @@ async def test_bounded_budget_without_older_units_does_not_block_fitting_send() 
 
 @pytest.mark.asyncio
 async def test_known_overflow_still_blocks_when_compaction_is_unavailable() -> None:
+    """Block a proven overflow that cannot be resolved by compacting older turns."""
     controller, _store, session, assistant, gateway, provider_messages = (
         _controller_preflight_fixture(
             ContextCompactionMode.AUTOMATIC,
