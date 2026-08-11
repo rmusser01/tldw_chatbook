@@ -4,7 +4,7 @@
 
 **Goal:** Replace the racy full-list `todo_write` tool with stable-ID create/update/get/list operations that remain correct across concurrent parent and fleet-child calls and ordinary in-process Console navigation.
 
-**Architecture:** Add one stdlib-only `SessionTodoStore` that owns task records, ID allocation, compare-and-swap mutation, navigation snapshots, and the two-lock callback-ordering protocol. `LocalToolProvider` remains the permission/schema/JSON boundary and closes four tool handlers over that store; `ConsoleChatSession` owns one store, the controller injects it into each reconstructed provider, and the existing bridge renders defensive snapshots without persisting them durably.
+**Architecture:** Add one stdlib-only `SessionTodoStore` that owns task records, ID allocation, compare-and-swap mutation, navigation snapshots, and the two-lock callback-ordering protocol. `LocalToolProvider` remains the permission/canonical-schema/JSON boundary and closes four tool handlers over that store. Google and Cohere native adapters project fresh provider-compatible disclosure copies without mutating the strict canonical schemas; exact raw handlers remain final enforcement. `ConsoleChatSession` owns one store, the controller injects it into each reconstructed provider, and the existing bridge renders defensive snapshots without persisting them durably. Provider/native Task 4 and Console-composition Task 5 are one merge/deploy unit.
 
 **Tech Stack:** Python 3.11, standard-library `threading`/`json`/`dataclasses`, existing `LocalToolProvider` and `ToolResult` seams, Textual screen-state projection, pytest, Loguru only at existing application boundaries.
 
@@ -16,7 +16,7 @@
 
 **ADR path:** `backlog/decisions/032-local-agent-tool-permission-boundary.md`
 
-**Reason:** ADR-032 owns the local-tool permission and provider boundary; amend it with the stable-ID task API, CAS, and session-state ownership instead of creating a competing ADR.
+**Reason:** ADR-032 owns the local-tool permission and provider boundary; amend it with the stable-ID task API, CAS, and session-state ownership instead of creating a competing ADR. Native schema projection repairs compatibility inside the existing Google/Cohere provider adapters and does not require another ADR.
 
 ---
 
@@ -26,6 +26,8 @@
 - **Create:** `Tests/Agents/test_session_todo_store.py` — focused store behavior, mutation, snapshot, deterministic concurrency, callback/deadlock, and mutation-kill tests.
 - **Modify:** `tldw_chatbook/Agents/local_tool_provider.py` — replace conditional `todo_write` registration with four schemas/handlers, strict raw-argument validation, and compact byte-aware JSON pages.
 - **Modify:** `Tests/Agents/test_local_tool_provider.py` — exact catalog/schema/tags, raw argument rejection, JSON result shapes, pagination, privacy, and absence without a store.
+- **Modify:** `tldw_chatbook/LLM_Calls/LLM_API_Calls.py` — project strict canonical schemas into Google `parametersJsonSchema` and Cohere's supported disclosure subset without aliasing or mutation.
+- **Modify:** `Tests/Chat/test_google_native_tools.py`, `Tests/Chat/test_cohere_native_tools.py` — exact offline native payloads, unsupported-keyword stripping/lowering, and canonical-schema non-mutation proofs.
 - **Modify:** `tldw_chatbook/Chat/console_chat_store.py` — replace the mutable `todos` list with one `SessionTodoStore` per `ConsoleChatSession`.
 - **Modify:** `tldw_chatbook/Chat/console_chat_controller.py` — inject the session store and defensive transcript callback into each local provider.
 - **Modify:** `Tests/Chat/test_console_local_review_hook.py` — prove composition uses the session's exact store and emits markers only for successful mutations.
@@ -34,7 +36,7 @@
 - **Modify:** `Tests/UI/test_console_resume_active_path.py` — navigation round trip, legacy missing state, malformed state, and deleted-ID high-water coverage.
 - **Modify:** `tldw_chatbook/Chat/console_agent_bridge.py` — update marker prose and sanitize terminal control characters at display time only.
 - **Modify:** `Tests/Chat/test_console_agent_bridge.py` — marker rendering/control-character regression coverage.
-- **Modify:** `Tests/Agents/test_local_tools_integration.py` — real find/load/permission flow for the replacement tools.
+- **Modify:** `Tests/Agents/test_local_tools_integration.py` — migrate the stale minimal todo find/load workflow during Task 4, then add expanded permission/discovery evidence in Task 7.
 - **Modify:** `Tests/Agents/test_fleet_runtime.py` — real shared-provider parent/fleet concurrent-create path.
 - **Modify:** `Tests/MCP/test_control_plane_permissions.py` — prove an obsolete `todo_write` grant does not authorize any replacement tool and pin create/update mutation floors versus get/list reads.
 - **Modify:** `tldw_chatbook/MCP/local_server_tools.py`, `tldw_chatbook/MCP/server.py`, `tldw_chatbook/UI/MCP_Modules/mcp_workbench.py` — update current prose to say all four task tools are absent without a Console session store.
@@ -430,11 +432,15 @@ git add tldw_chatbook/Agents/session_todo_store.py \
 git commit -m "fix(todo): serialize versioned task mutations"
 ```
 
-## Task 4: Replace `todo_write` with four strict provider tools
+## Task 4: Replace `todo_write` and project strict schemas to native providers
 
 **Files:**
 - Modify: `tldw_chatbook/Agents/local_tool_provider.py`
 - Modify: `Tests/Agents/test_local_tool_provider.py`
+- Modify: `tldw_chatbook/LLM_Calls/LLM_API_Calls.py`
+- Modify: `Tests/Chat/test_google_native_tools.py`
+- Modify: `Tests/Chat/test_cohere_native_tools.py`
+- Modify: `Tests/Agents/test_local_tools_integration.py`
 
 - [ ] **Step 1: Replace old tests with failing catalog/schema tests**
 
@@ -457,13 +463,16 @@ def test_task_tools_are_conditional_and_todo_write_is_removed(tmp_path):
     assert with_store.hub_tool_for("todo_list").tags == ()
 ```
 
-Pin exact schema required fields, enums, nullable activeForm, bounds, and
-`additionalProperties: false` for all four tools. The `id` and `cursor` string
-schemas must accept exactly canonical decimal values in
+Pin the full strict canonical JSON Schema: exact required fields, enums,
+nullable update `activeForm`, string/numeric bounds, delete-only conditional,
+and `additionalProperties: false` for all four tools. The `id` and `cursor`
+string schemas must accept exactly canonical decimal values in
 `1..MAX_TODO_NUMBER`—including an exact upper-bound pattern, not merely a
 16-character limit—and `expected_version` must declare integer
 `minimum: 1`/`maximum: MAX_TODO_NUMBER`. Schema tests accept the exact boundary
-and reject one-over before handler invocation.
+and reject one-over before handler invocation. These `ToolSchema` objects are
+the authoritative local/MCP/UI contract; native projections must not replace,
+weaken, alias, or mutate them.
 
 - [ ] **Step 2: Write table-driven raw-boundary RED tests**
 
@@ -478,18 +487,63 @@ every failure returns a fixed bounded `ToolResult` with no state or callback.
 
 Add a provider-level callback-failure test: inject a callback that raises a credential/path-shaped sentinel, invoke `todo_create`, and assert `ToolResult.ok is True`, the compact JSON result is the committed record, the store contains it, and the one fixed diagnostic contains none of the sentinel fragments. This proves the store's containment remains true at the public provider boundary.
 
-- [ ] **Step 3: Run RED**
+- [ ] **Step 3: Write native-projection and stale-integration RED tests**
+
+In `Tests/Chat/test_google_native_tools.py`, pass a canonical task schema that
+contains the strict range, pattern, `additionalProperties`, nullable, and
+delete-conditional keywords through the real request converter. Assert the
+exact `FunctionDeclaration` contains `parametersJsonSchema` equal to the full
+canonical schema and has no `parameters` field.
+
+In `Tests/Chat/test_cohere_native_tools.py`, pass the same canonical fixture
+through the real Cohere v2 converter. Assert the exact recursively projected
+copy preserves object/property names, types, descriptions, `required`, `enum`,
+supported `anyOf`, and `additionalProperties`; lowers a nullable union to the
+supported Cohere nullable shape; and contains no `allOf`, `oneOf`, `not`,
+numeric `minimum`/`maximum` variants, string `minLength`/`maxLength`, `pattern`,
+anchor, or lookahead constraint.
+For both converters, retain a deep copy of the canonical input, assert it is
+unchanged after conversion, assert projected nested dictionaries do not alias
+it, mutate the captured projection, and assert the canonical input remains
+unchanged.
+
+Invoke the exact provider handler with a value that the lowered Cohere
+disclosure cannot express—such as an over-bound `expected_version` or
+noncanonical ID—and assert the fixed corrective failure with no state change or
+callback. The transport projection is never treated as final validation.
+
+Migrate the minimal stale todo workflow in
+`Tests/Agents/test_local_tools_integration.py` from
+`find_tools("todo") -> load_tools("local:todo_write") -> todo_write` to
+`find_tools("todo") -> load_tools("local:todo_create") -> todo_create` over an
+injected `SessionTodoStore`. Assert the compact JSON created record, committed
+store state, and one `risk_floored=True` mutation approval. Expanded read-only,
+parent/fleet, and permission migration coverage remains in Task 7.
+
+All native projection tests inspect mocked request payloads. They require no
+live Google or Cohere network call.
+
+- [ ] **Step 4: Run provider, native-projection, and integration RED**
 
 Run:
 
 ```bash
 ../../.venv/bin/python -m pytest Tests/Agents/test_local_tool_provider.py \
   -k "todo or task_tools" -q
+../../.venv/bin/python -m pytest \
+  Tests/Chat/test_google_native_tools.py \
+  Tests/Chat/test_cohere_native_tools.py -q
+../../.venv/bin/python -m pytest \
+  Tests/Agents/test_local_tools_integration.py \
+  -k "todo" -q
 ```
 
-Expected: failures because the old `todo_write` catalog and handlers still exist.
+Expected: failures because the old `todo_write` catalog/handler/integration
+expectation remains, the Google payload uses the incompatible `parameters`
+field, and the Cohere payload retains keywords outside its documented
+strict-tools subset.
 
-- [ ] **Step 4: Implement strict handler projection and four schemas**
+- [ ] **Step 5: Implement strict handlers and four canonical schemas**
 
 Change constructor/default-spec types from `list | None` to `SessionTodoStore | None`. Keep raw mapping validation in this module:
 
@@ -524,7 +578,29 @@ def _todo_json(payload: object) -> str:
 
 No task response may pass through `_fit_result` in an oversized form; the handler must construct a complete valid response first.
 
-- [ ] **Step 5: Implement byte-aware `todo_list` pages**
+- [ ] **Step 6: Implement non-mutating native schema projections**
+
+In `_google_tools_payload`, deep-copy the canonical `function.parameters` into
+the converted declaration's `parametersJsonSchema` field and omit
+`parameters`. Google declares those two fields mutually exclusive; do not
+translate the full schema into the narrower OpenAPI subset.
+
+In `_cohere_tools_payload`, recursively construct a fresh disclosure copy
+bounded to Cohere's strict-tools keyword subset. Preserve object/property names,
+types, descriptions, `required`, `enum`, supported `anyOf`, and
+`additionalProperties`; lower the canonical nullable union to Cohere's
+supported nullable shape. At every depth omit `allOf`, `oneOf`, `not`, numeric
+`minimum`/`maximum` variants, string `minLength`/`maxLength`, and all `pattern`
+regex constraints, including anchors and lookaheads. Keep Cohere's
+OpenAI-like outer `function.parameters` envelope.
+
+Neither converter may modify or retain mutable nested aliases into the
+canonical tool schema. Do not weaken the canonical `ToolSchema` to fit either
+transport. A call that satisfies a lowered Cohere disclosure but violates a
+canonical bound, pattern, or conditional reaches the exact raw handler and
+returns its bounded corrective validation error.
+
+- [ ] **Step 7: Implement byte-aware `todo_list` pages**
 
 Build candidate pages in creation order and append a task only if the complete
 `{tasks, next_cursor}` candidate stays within `_MAX_RESULT_BYTES`. Use the
@@ -533,7 +609,7 @@ bounded canonical cursor as an exclusive numeric lower bound even if
 deleted/unissued/future; a never-issued/future cursor is valid only through
 `MAX_TODO_NUMBER`.
 
-- [ ] **Step 6: Add maximum ASCII/multibyte pagination tests**
+- [ ] **Step 8: Add maximum ASCII/multibyte pagination tests**
 
 Fill 50 records with 500-character content and activeForm, then traverse every page for ASCII and `é`/multibyte content. For each response:
 
@@ -549,20 +625,41 @@ boundary ID/version/tombstone/list responses and parse each with `json.loads`;
 assert every result is complete valid JSON, every public task number is in
 `1..MAX_TODO_NUMBER`, and every UTF-8 result remains within the 32-KiB cap.
 
-- [ ] **Step 7: Verify provider tests and mutations**
+- [ ] **Step 9: Verify provider, native, and migrated integration tests**
 
-Run all provider tests. Mutation-check removal of `additionalProperties`, bool
-rejection, the schema/raw `MAX_TODO_NUMBER` checks, very-long lexical rejection,
-complete-response byte measurement, and `ensure_ascii=False`; each
-corresponding test must fail, then restore.
+Run:
 
-- [ ] **Step 8: Commit the provider migration**
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/Agents/test_local_tool_provider.py \
+  Tests/Chat/test_google_native_tools.py \
+  Tests/Chat/test_cohere_native_tools.py \
+  Tests/Agents/test_local_tools_integration.py -q
+```
+
+No live provider credential or network call is required. Mutation-check
+removal of canonical `additionalProperties`, bool rejection, schema/raw
+`MAX_TODO_NUMBER` checks, very-long lexical rejection, complete-response byte
+measurement, and `ensure_ascii=False`. Also make Google emit `parameters`, let
+one unsupported Cohere composition/range/regex keyword survive, skip nullable
+lowering, and alias/mutate one canonical nested schema; each corresponding test
+must fail, then restore.
+
+- [ ] **Step 10: Commit the provider/native migration checkpoint**
 
 ```bash
 git add tldw_chatbook/Agents/local_tool_provider.py \
-  Tests/Agents/test_local_tool_provider.py
+  Tests/Agents/test_local_tool_provider.py \
+  tldw_chatbook/LLM_Calls/LLM_API_Calls.py \
+  Tests/Chat/test_google_native_tools.py \
+  Tests/Chat/test_cohere_native_tools.py \
+  Tests/Agents/test_local_tools_integration.py
 git commit -m "feat(todo): expose stable task operations"
 ```
+
+This intermediate commit is a review checkpoint only. Do not merge, release,
+or deploy it without Task 5: the current Console still supplies the legacy
+mutable list. Do not add a temporary `todo_write` or list compatibility shim.
 
 ## Task 5: Wire the store into Console sessions and navigation
 
@@ -573,6 +670,10 @@ git commit -m "feat(todo): expose stable task operations"
 - Modify: `Tests/Chat/test_console_local_review_hook.py`
 - Modify: `Tests/Chat/test_console_chat_store.py`
 - Modify: `Tests/UI/test_console_resume_active_path.py`
+
+**Atomic merge gate:** Task 4 and Task 5 are one deploy/merge unit. Task 5 must
+remove the legacy list seam and pass the combined reachable suites below before
+the two commits receive combined review.
 
 - [ ] **Step 1: Write controller wiring RED tests**
 
@@ -608,7 +709,10 @@ from tldw_chatbook.Agents.session_todo_store import SessionTodoStore
 todo_store: SessionTodoStore = field(default_factory=SessionTodoStore)
 ```
 
-Remove `todos`. This store is still omitted from durable Chat persistence; it appears only in the in-process screen projection below.
+Remove `todos` and pass only `SessionTodoStore` at the provider seam. Do not add
+a temporary list adapter or restore `todo_write`. This store is still omitted
+from durable Chat persistence; it appears only in the in-process screen
+projection below.
 
 - [ ] **Step 5: Update controller composition**
 
@@ -633,12 +737,16 @@ Serialize `"todo_state": session.todo_store.export_snapshot()`. On restore:
 
 Pass the resulting store in `session_kwargs` before constructing `ConsoleChatSession`.
 
-- [ ] **Step 7: Verify navigation and composition**
+- [ ] **Step 7: Verify the combined reachable provider/integration/Console unit**
 
 Run:
 
 ```bash
 ../../.venv/bin/python -m pytest \
+  Tests/Agents/test_local_tool_provider.py \
+  Tests/Agents/test_local_tools_integration.py \
+  Tests/Chat/test_google_native_tools.py \
+  Tests/Chat/test_cohere_native_tools.py \
   Tests/Chat/test_console_local_review_hook.py \
   Tests/Chat/test_console_chat_store.py \
   Tests/UI/test_console_resume_active_path.py -q
@@ -657,6 +765,10 @@ git add tldw_chatbook/Chat/console_chat_store.py \
   Tests/UI/test_console_resume_active_path.py
 git commit -m "feat(todo): retain task state across console navigation"
 ```
+
+Only the completed Task 4 + Task 5 commit range is eligible for merge, release,
+or deployment. Review the combined range after the Step 7 suites pass; the Task
+4 checkpoint alone is intentionally non-deployable.
 
 ## Task 6: Harden transcript rendering
 
@@ -699,13 +811,20 @@ git commit -m "fix(todo): sanitize transcript task markers"
 - Modify: `Tests/Agents/test_fleet_runtime.py`
 - Modify: `Tests/MCP/test_control_plane_permissions.py`
 
-- [ ] **Step 1: Migrate the find/load permission integration test**
+- [ ] **Step 1: Expand the migrated find/load integration coverage**
 
-Script `find_tools("todo") -> load_tools("local:todo_create") -> todo_create`. Assert compact JSON result, task present in the injected store, and exactly one approval with `risk_floored=True`. Add a read-only `todo_get` or `todo_list` call proving its empty tags do not acquire the mutation floor.
+Task 4 already migrates the minimal stale workflow to
+`find_tools("todo") -> load_tools("local:todo_create") -> todo_create`. Build on
+that replacement path with a read-only `todo_get` or `todo_list` call proving
+its empty tags do not acquire the mutation floor, while the created compact
+JSON result and injected-store state remain reachable through the real service.
 
-- [ ] **Step 2: Run the integration test RED then GREEN**
+- [ ] **Step 2: Run the migrated and expanded integration nodes**
 
-Run the exact migrated nodes before changing their harness; capture RED from the missing new tool. Update `make_service(..., todo_store=SessionTodoStore())`, allowed tools, expected call order, and result parsing. Re-run to GREEN.
+Run the Task 4 migrated node plus the new read-only node. The harness already
+uses `make_service(..., todo_store=SessionTodoStore())` and replacement-tool
+allowed names from the atomic Task 4 migration; do not reintroduce the legacy
+list or `todo_write` expectation.
 
 - [ ] **Step 3: Add a real fleet shared-provider concurrency test**
 
@@ -808,6 +927,8 @@ git commit -m "docs(todo): retire todo_write runtime contract"
   Tests/Agents/test_local_tool_provider.py \
   Tests/Agents/test_local_tools_integration.py \
   Tests/Agents/test_fleet_runtime.py \
+  Tests/Chat/test_google_native_tools.py \
+  Tests/Chat/test_cohere_native_tools.py \
   Tests/Chat/test_console_local_review_hook.py \
   Tests/Chat/test_console_chat_store.py \
   Tests/Chat/test_console_agent_bridge.py \
@@ -857,6 +978,7 @@ Then run:
 ../../.venv/bin/python -m ruff check \
   tldw_chatbook/Agents/session_todo_store.py \
   tldw_chatbook/Agents/local_tool_provider.py \
+  tldw_chatbook/LLM_Calls/LLM_API_Calls.py \
   tldw_chatbook/Chat/console_chat_store.py \
   tldw_chatbook/Chat/console_chat_controller.py \
   tldw_chatbook/Chat/console_agent_bridge.py \
@@ -865,6 +987,8 @@ Then run:
   Tests/Agents/test_local_tool_provider.py \
   Tests/Agents/test_local_tools_integration.py \
   Tests/Agents/test_fleet_runtime.py \
+  Tests/Chat/test_google_native_tools.py \
+  Tests/Chat/test_cohere_native_tools.py \
   Tests/Chat/test_console_local_review_hook.py \
   Tests/Chat/test_console_chat_store.py \
   Tests/Chat/test_console_agent_bridge.py \
@@ -876,6 +1000,7 @@ Then run:
 ../../.venv/bin/python -m ruff format --check \
   tldw_chatbook/Agents/session_todo_store.py \
   tldw_chatbook/Agents/local_tool_provider.py \
+  tldw_chatbook/LLM_Calls/LLM_API_Calls.py \
   tldw_chatbook/Chat/console_chat_store.py \
   tldw_chatbook/Chat/console_chat_controller.py \
   tldw_chatbook/Chat/console_agent_bridge.py \
@@ -884,6 +1009,8 @@ Then run:
   Tests/Agents/test_local_tool_provider.py \
   Tests/Agents/test_local_tools_integration.py \
   Tests/Agents/test_fleet_runtime.py \
+  Tests/Chat/test_google_native_tools.py \
+  Tests/Chat/test_cohere_native_tools.py \
   Tests/Chat/test_console_local_review_hook.py \
   Tests/Chat/test_console_chat_store.py \
   Tests/Chat/test_console_agent_bridge.py \
@@ -895,6 +1022,7 @@ Then run:
 ../../.venv/bin/python -m mypy \
   tldw_chatbook/Agents/session_todo_store.py \
   tldw_chatbook/Agents/local_tool_provider.py \
+  tldw_chatbook/LLM_Calls/LLM_API_Calls.py \
   tldw_chatbook/Chat/console_chat_store.py \
   tldw_chatbook/Chat/console_chat_controller.py \
   tldw_chatbook/Chat/console_agent_bridge.py \
@@ -902,12 +1030,14 @@ Then run:
 ../../.venv/bin/python -m bandit -q \
   tldw_chatbook/Agents/session_todo_store.py \
   tldw_chatbook/Agents/local_tool_provider.py \
+  tldw_chatbook/LLM_Calls/LLM_API_Calls.py \
   tldw_chatbook/Chat/console_chat_store.py \
   tldw_chatbook/Chat/console_chat_controller.py \
   tldw_chatbook/Chat/console_agent_bridge.py \
   tldw_chatbook/UI/Console_Modules/session.py
 ../../.venv/bin/python -m compileall -q \
-  tldw_chatbook/Agents tldw_chatbook/Chat tldw_chatbook/UI/Console_Modules
+  tldw_chatbook/Agents tldw_chatbook/LLM_Calls tldw_chatbook/Chat \
+  tldw_chatbook/UI/Console_Modules
 git diff --check origin/dev...HEAD
 git diff --check
 ```
@@ -916,7 +1046,12 @@ If implementation changes any additional Python file discovered by the stale-con
 
 - [ ] **Step 4: Perform file-by-file self-review and final mutation pass**
 
-Review against every design §9 bullet. Re-run the required mutation kills: mutation lock, state lock, CAS comparison, defensive copy, one-in-progress guard, pagination byte counting, screen-state high-water projection, terminal control sanitization, and shared fleet store. Restore after every probe, then rerun the affected focused tests.
+Review against every design §9 bullet. Re-run the required mutation kills:
+mutation lock, state lock, CAS comparison, defensive copy, one-in-progress
+guard, pagination byte counting, Google `parametersJsonSchema`, Cohere
+unsupported-keyword stripping/nullable lowering, canonical-schema non-mutation,
+screen-state high-water projection, terminal control sanitization, and shared
+fleet store. Restore after every probe, then rerun the affected focused tests.
 
 - [ ] **Step 5: Request independent code review**
 

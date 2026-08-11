@@ -35,6 +35,8 @@ Primary references:
 - Remove `local:todo_write` from the Console-local catalog.
 - Add `local:todo_create`, `local:todo_update`, `local:todo_get`, and
   `local:todo_list` when a session task store is supplied.
+- Preserve their full strict canonical schemas while projecting non-mutating
+  Google/Cohere native disclosures compatible with each transport.
 - Give each task a stable session-local ID and positive integer version within
   the portable JSON exact-integer domain `1..2**53-1`.
 - Make create, update, delete, get, and list operations thread-safe.
@@ -150,9 +152,40 @@ task response. Validation failures continue to become bounded failed
 Handlers validate the raw argument mapping rather than relying on JSON Schema,
 because `LocalToolProvider.invoke` passes raw arguments directly to handlers.
 Every tool rejects unknown properties. This makes direct Python invocation and
-schema-mediated model invocation obey the same contract. Provider schemas and
-raw validators both enforce the `MAX_TODO_NUMBER` ceiling for IDs, versions,
-and cursors.
+canonical schema-mediated local/MCP/UI validation obey the same contract.
+Canonical schemas and raw validators both enforce the `MAX_TODO_NUMBER`
+ceiling for IDs, versions, and cursors. A native provider may receive a
+capability-compatible disclosure projection, but raw exact handler validation
+remains the final enforcement boundary and returns a bounded corrective error
+when a model sends a call outside the lowered disclosure.
+
+### Canonical schema and native transport projection
+
+Each local `ToolSchema` remains the authoritative full strict JSON Schema. The
+four task schemas retain `additionalProperties: false`, `maxLength` and
+`maximum` ceilings, bounded canonical-ID `pattern` constraints, nullable update
+semantics, and the delete-only conditional. Local catalog hashing, MCP/UI
+validation, and direct schema consumers use that canonical object unchanged.
+
+Native transports project a fresh disclosure copy without aliasing or mutating
+the canonical schema:
+
+- Google Gemini `FunctionDeclaration` has mutually exclusive `parameters`
+  (its OpenAPI Schema subset) and `parametersJsonSchema` (full JSON Schema).
+  The Google converter sends the complete canonical schema under
+  `parametersJsonSchema` and omits `parameters` for converted local tools.
+- Cohere v2 accepts JSON Schema but strict tools support only a subset. The
+  Cohere converter recursively builds a new copy bounded to supported keywords:
+  preserve object/property names, types, descriptions, `required`, `enum`,
+  supported `anyOf`, and `additionalProperties`; lower a nullable union to the
+  supported Cohere nullable shape; and omit unsupported `allOf`, `oneOf`,
+  `not`, numeric `minimum`/`maximum` variants, string `minLength`/`maxLength`,
+  and `pattern` regex constraints including anchors and lookaheads.
+
+The Cohere projection is disclosure, not authorization or validation. It must
+not weaken the canonical definition, definition hash, local validation, or raw
+handler checks. Both converters are deterministic pure projections of their
+input tool list and require no live provider request.
 
 ### `todo_create`
 
@@ -335,6 +368,17 @@ The Console's exact catalog grows by three entries relative to the old single
 tool. Discovery and exact-inventory tests must be updated; no direct-disclosure
 threshold is changed.
 
+### Atomic rollout boundary
+
+The provider/native-adapter work and Console session/composition work are one
+deploy/merge unit. The intermediate provider commit must not be merged,
+released, or deployed alone because the current Console still passes the
+legacy mutable list into `LocalToolProvider`. The following Console change must
+remove that list seam, inject `SessionTodoStore`, and run the reachable
+provider, native-projection, integration, and Console suites before combined
+review. No temporary `todo_write` or list-to-store compatibility shim is
+permitted.
+
 ## 7. UI behavior
 
 The transcript marker continues to show task content and status in creation
@@ -370,6 +414,16 @@ Tests must be RED before production changes and must cover:
 
 - exact removal of `todo_write` and registration/schema projection of all four
   replacement tools;
+- unchanged full canonical task schemas, including strict extra-property,
+  bound/pattern, nullable-update, and delete-only constraints;
+- exact Google native payloads using `parametersJsonSchema` and omitting
+  `parameters`, plus proof that conversion does not alias or mutate the
+  canonical schema;
+- exact Cohere supported-subset payloads preserving allowed disclosure fields,
+  lowering nullable unions, and omitting unsupported composition, range,
+  length, and regex keywords, plus canonical non-alias/mutation proof;
+- raw handler corrective errors for calls that pass a lowered Cohere disclosure
+  but violate the canonical contract;
 - create/get/list/update/delete happy paths and bounds;
 - defensive-copy behavior and creation ordering;
 - permission tags and absence when no session store exists;
@@ -410,6 +464,12 @@ Tests must be RED before production changes and must cover:
 - the real parent/fleet shared-provider path; and
 - existing Console transcript rendering and local-tool integration flows.
 
+Native projection verification uses exact payload unit tests only; no live
+Google or Cohere network call is required. Mutation checks must make Google use
+`parameters`, let an unsupported Cohere keyword survive, or alias/mutate a
+canonical schema and demonstrate that the corresponding focused test turns
+red.
+
 Mutation checks must remove or weaken the mutation-serialization lock, state
 lock, version comparison, defensive copy, and one-`in_progress` guard
 independently and demonstrate that the corresponding focused test turns red.
@@ -425,4 +485,7 @@ semantics, so ADR coverage is required. Existing ADR-032 already owns the
 local-tool provider boundary and todo permission model; an addendum there is
 clearer than creating a competing decision record. The addendum must land
 before production implementation. The implementation must also amend the
-existing local-agent-tools design to supersede its `todo_write` contract.
+existing local-agent-tools design to supersede its `todo_write` contract. The
+Google/Cohere native-schema projection is a compatibility repair inside the
+existing provider adapters, not a new architectural boundary, so it does not
+require another ADR.
