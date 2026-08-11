@@ -2429,3 +2429,36 @@ def test_console_and_library_share_one_profile_depth_seam(monkeypatch) -> None:
         chat_screen_module.CONSOLE_LIBRARY_RAG_FALLBACK_TOP_K
         == LIBRARY_RAG_FALLBACK_TOP_K
     )
+
+
+def test_clamp_divergence_is_pinned_as_a_pair(monkeypatch) -> None:
+    """The window clamps a >50 profile; the Console seam deliberately does NOT.
+
+    Task-8 review, minor 1: the clamp was only half-pinned. The window arm
+    (profile 100 -> 50) had a test, but nothing exercised the UNCAPPED
+    direction, so silently capping the SHARED seam -- `min(value,
+    LIBRARY_RAG_TOP_K_MAX)` inside `library_rag_profile_top_k` -- left 199
+    tests green while erasing a divergence that had been declared
+    deliberate. A declared difference that no test can tell from its own
+    removal is not a decision, it is a comment.
+
+    Both arms live in ONE test on purpose: they are a pair, and the whole
+    claim is that the same profile reads differently on the two surfaces.
+    `LIBRARY_RAG_TOP_K_MAX` is this window's bound (the evidence list's own
+    limit); the Console chip's request has no such list and honors whatever
+    depth the user configured, up to Settings' own 100 ceiling.
+    """
+    from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+
+    _patch_profile_depth(monkeypatch, 100)
+
+    # Uncapped arm: the shared seam and its Console delegation report the
+    # profile's real depth.
+    assert library_rag_profile_top_k() == 100
+    assert chat_screen_module._console_library_rag_profile_top_k() == 100
+
+    # Capped arm: the Library window's own display state trims to its bound.
+    window = LibraryRagQueryState.from_values(
+        query="summarize the policy", provider_name="openai"
+    )
+    assert window.top_k == LIBRARY_RAG_TOP_K_MAX == 50
