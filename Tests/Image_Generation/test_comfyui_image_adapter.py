@@ -786,6 +786,80 @@ def test_object_info_ignores_optional_hidden_and_unselected_dynamic_inputs() -> 
     adapter_module._validate_object_info(prepared, schema)
 
 
+def _add_future_dynamic_input(
+    schema: dict[str, Any],
+    *,
+    group: str = "optional",
+) -> None:
+    schema["BasicScheduler"]["input"].setdefault(group, {})["future_mode"] = [
+        "COMFY_DYNAMICCOMBO_V3",
+        {
+            "options": [
+                {
+                    "key": "simple",
+                    "inputs": {"required": {}},
+                },
+                {
+                    "key": "advanced",
+                    "inputs": {
+                        "required": {
+                            "amount": ["INT", {"min": 1, "max": 10}],
+                        },
+                        "optional": {
+                            "label": ["STRING"],
+                        },
+                    },
+                },
+            ]
+        },
+    ]
+
+
+def test_object_info_ignores_absent_optional_dynamic_selector() -> None:
+    prepared = adapter_module._prepare_workflow(_request(), config=_config())
+    schema = _object_info(prepared.graph)
+    _add_future_dynamic_input(schema)
+
+    adapter_module._validate_object_info(prepared, schema)
+
+
+def test_object_info_present_optional_dynamic_requires_selected_branch_fields() -> None:
+    prepared = adapter_module._prepare_workflow(_request(), config=_config())
+    schema = _object_info(prepared.graph)
+    _add_future_dynamic_input(schema)
+    prepared.graph["126"]["inputs"]["future_mode"] = "advanced"
+
+    with pytest.raises(ComfyUIImageEditError) as exc:
+        adapter_module._validate_object_info(prepared, schema)
+
+    _assert_phase(exc, "remote_schema_preflight")
+
+
+def test_object_info_accepts_complete_present_optional_dynamic_branch() -> None:
+    prepared = adapter_module._prepare_workflow(_request(), config=_config())
+    schema = _object_info(prepared.graph)
+    _add_future_dynamic_input(schema)
+    prepared.graph["126"]["inputs"].update(
+        {
+            "future_mode": "advanced",
+            "future_mode.amount": 3,
+        }
+    )
+
+    adapter_module._validate_object_info(prepared, schema)
+
+
+def test_object_info_still_rejects_absent_required_dynamic_selector() -> None:
+    prepared = adapter_module._prepare_workflow(_request(), config=_config())
+    schema = _object_info(prepared.graph)
+    _add_future_dynamic_input(schema, group="required")
+
+    with pytest.raises(ComfyUIImageEditError) as exc:
+        adapter_module._validate_object_info(prepared, schema)
+
+    _assert_phase(exc, "remote_schema_preflight")
+
+
 @pytest.mark.parametrize(
     "damage",
     [

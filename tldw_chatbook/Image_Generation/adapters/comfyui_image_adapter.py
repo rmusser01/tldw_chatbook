@@ -817,6 +817,8 @@ def _expanded_schema_inputs(
             and input_schema
             and input_schema[0] == "COMFY_DYNAMICCOMBO_V3"
         ):
+            if input_name not in node_inputs:
+                continue
             selected = node_inputs.get(input_name)
             nested, nested_required = _selected_dynamic_inputs(input_schema, selected)
             for nested_name, nested_schema in nested.items():
