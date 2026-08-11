@@ -3,6 +3,7 @@
 # Note ingestion event handlers and related functions
 #
 # Imports
+import asyncio
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional, List, Any, Dict
@@ -341,7 +342,21 @@ async def handle_ingest_notes_import_now_button_pressed(
 
     user_id = app.notes_user_id
 
-    async def import_worker_notes():
+    def import_worker_notes():
+        """Per-file/per-note import loop.
+
+        TASK-15468: plain ``def`` (not ``async def``) on purpose -- this body
+        is entirely synchronous (sync file parse, sync
+        ``notes_service.add_note`` DB transaction, sync template JSON I/O)
+        and contains no ``await``. It used to be declared ``async def`` and
+        called with a bare ``await`` from
+        ``_run_note_import_worker_and_dispatch``, which -- with no internal
+        await points -- ran the *entire* O(files x notes) loop inline, in one
+        shot, on the caller's coroutine (the main event loop), blocking all
+        UI input for the duration of a large import (see
+        Docs/Design/2026-08-11-input-latency-audit.md). It is now dispatched
+        via ``asyncio.to_thread`` instead, which needs a plain sync callable.
+        """
         results = []
 
         if import_as_templates:
@@ -635,12 +650,21 @@ async def handle_ingest_notes_import_now_button_pressed(
         # "file_operations" group this worker runs in) ever invoked them,
         # so the post-import status-area summary, the chat-notes sidebar
         # refresh, and (now) the Library notes-canvas refresh never actually
-        # fired. Since this worker is a plain coroutine (no `thread=True`),
-        # it runs on the main event loop, so calling these UI-touching
-        # callbacks directly here -- rather than relying on that dead
-        # dispatch path -- is safe.
+        # fired. Calling these UI-touching callbacks directly here -- rather
+        # than relying on that dead dispatch path -- is safe because
+        # `await asyncio.to_thread(...)` below always resumes this coroutine
+        # back on the *same* event-loop thread it started on once the worker
+        # thread finishes (TASK-15468), so by the time execution reaches
+        # this point we are back on the main/UI thread regardless of where
+        # `import_worker_notes` itself ran.
+        #
+        # TASK-15468: `import_worker_notes` moved off the event loop via
+        # `asyncio.to_thread` -- see its docstring. This is the only line
+        # that changed to fix the import-freezes-the-app symptom; everything
+        # else in this function (ordering, exception handling, callback
+        # dispatch) is unchanged from before.
         try:
-            results = await import_worker_notes()
+            results = await asyncio.to_thread(import_worker_notes)
         except Exception as e:
             on_import_failure_notes(e)
             raise
