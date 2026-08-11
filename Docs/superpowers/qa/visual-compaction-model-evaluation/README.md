@@ -36,6 +36,30 @@ The `--max-output-tokens` option is only the maximum length of each evaluator
 response. It is not the conversation context limit and does not control when
 Console compaction occurs.
 
+## Renderer profiles and local geometry evidence
+
+The shipped Console path remains pinned to `production_1024`, the byte-compatible
+1024x1024 v1 renderer. Evaluator runs may explicitly select
+`native_512_candidate`, which renders the same fixed 512x512 logical canvas
+without the v1 renderer's mechanical 2x nearest-neighbour enlargement. The
+candidate is evaluation-only: selecting it for a benchmark does not change the
+Console default or production compaction path.
+
+`build_visual_renderer_geometry_evidence()` renders both closed profiles against
+the same corpus and returns only renderer identities, dimensions, page hashes,
+prefix digest, and raw 32x32 patch counts. For the current pages, the production
+profile has 1,024 raw patches per page and the native candidate has 256. These are
+geometry facts, not measured provider tokens: the local evidence always records
+`provider_token_savings_measured = false` and no token-reduction ratio.
+
+This candidate follows the current
+[OpenAI image-input accounting guidance](https://developers.openai.com/api/docs/guides/images-vision):
+GPT-5.6 treats omitted/auto detail like original detail and meters original image
+dimensions in 32x32 patches. The same guidance warns that small text can reduce
+vision quality, so no production switch or recommendation is allowed until a
+separately authorized two-request evaluator-v3 run passes every ADR-056 gate.
+TASK-15505 performs no provider calls.
+
 ## Run one model evaluation
 
 The command makes exactly two requests to the explicitly selected model: one
@@ -60,6 +84,7 @@ New-Item -ItemType Directory -Path (Split-Path $env:TLDW_CONFIG_PATH) | Out-Null
 .venv\Scripts\python.exe scripts\evaluate_visual_compaction.py `
   --provider openai `
   --model gpt-5.6-terra `
+  --renderer-profile production_1024 `
   --confirm-billable
 ```
 
@@ -72,6 +97,9 @@ normal data profile even when the evaluator itself does not open a database.
 New provider/model reports are appended to an existing matrix. Use `--replace`
 only when intentionally rerunning and replacing that same provider/model entry;
 the duplicate check happens before either billable request.
+Use `--renderer-profile native_512_candidate` only for an explicitly reviewed
+candidate run. It still makes exactly two billable requests and requires the same
+confirmation and isolation steps.
 
 ## Interpretation
 

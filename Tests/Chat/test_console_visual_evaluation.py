@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import subprocess
@@ -12,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from scripts.evaluate_visual_compaction import validate_live_request
+from scripts.evaluate_visual_compaction import build_parser, validate_live_request
 from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderGateway,
     ConsoleProviderResolution,
@@ -23,6 +24,7 @@ from tldw_chatbook.Chat.console_visual_evaluation import (
     EVALUATOR_VERSION,
     VisualModelEvaluationReport,
     VisualRepresentationEvaluation,
+    build_visual_renderer_geometry_evidence,
     build_visual_support_matrix,
     evaluate_visual_compaction_model,
     load_visual_evaluation_corpus,
@@ -80,6 +82,29 @@ def _has_image(request) -> bool:
         ):
             return True
     return False
+
+
+def _image_dimensions(request) -> list[tuple[int, int]]:
+    dimensions: list[tuple[int, int]] = []
+    for message in request.messages_payload:
+        content = message.get("content")
+        if not isinstance(content, tuple):
+            continue
+        for part in content:
+            if not hasattr(part, "get") or part.get("type") != "image_url":
+                continue
+            image_url = part.get("image_url")
+            assert hasattr(image_url, "get")
+            encoded = image_url.get("url").split(",", 1)[1]
+            png = base64.b64decode(encoded, validate=True)
+            assert png[:8] == b"\x89PNG\r\n\x1a\n"
+            dimensions.append(
+                (
+                    int.from_bytes(png[16:20], "big"),
+                    int.from_bytes(png[20:24], "big"),
+                )
+            )
+    return dimensions
 
 
 class _ImmediateGateway:
@@ -260,6 +285,84 @@ def test_versioned_corpus_is_deterministic_and_covers_risk_categories() -> None:
     assert "checksum" in first.source_text
     assert "\\u6771\\u4eac" in first.source_text
     assert "OVERRIDE_ACCEPTED_7Q9" not in repr(first)
+
+
+def test_renderer_geometry_evidence_is_content_free_and_does_not_claim_savings() -> (
+    None
+):
+    corpus = load_visual_evaluation_corpus(CORPUS_PATH)
+
+    first = build_visual_renderer_geometry_evidence(corpus)
+    second = build_visual_renderer_geometry_evidence(corpus)
+
+    assert first == second
+    assert [item.profile_id for item in first] == [
+        "production_1024",
+        "native_512_candidate",
+    ]
+    production, native = first
+    assert (production.width, production.height) == (1024, 1024)
+    assert (native.width, native.height) == (512, 512)
+    assert production.page_count == native.page_count
+    assert production.summarized_prefix_digest == native.summarized_prefix_digest
+    assert production.raw_32px_patches_per_page == 1024
+    assert native.raw_32px_patches_per_page == 256
+    assert native.raw_32px_patches_total * 4 == production.raw_32px_patches_total
+    for report in first:
+        assert report.provider_token_savings_measured is False
+        assert report.provider_token_reduction_ratio is None
+        persisted = report.to_json()
+        assert corpus.source_text not in persisted
+        assert "OVERRIDE_ACCEPTED_7Q9" not in persisted
+    with pytest.raises(ValueError, match="cannot claim measured"):
+        replace(native, provider_token_savings_measured=True)
+
+
+def test_evaluator_can_select_native_candidate_without_changing_default() -> None:
+    corpus = load_visual_evaluation_corpus(CORPUS_PATH)
+    default_gateway = _ImmediateGateway(corpus)
+    native_gateway = _ImmediateGateway(corpus)
+
+    default_report = _run_immediate(
+        evaluate_visual_compaction_model(
+            gateway=default_gateway,
+            resolution=_resolution(),
+            corpus=corpus,
+            evaluated_at_utc="2026-08-11T00:00:00+00:00",
+            vision_available=True,
+            max_images=10,
+        )
+    )
+    native_report = _run_immediate(
+        evaluate_visual_compaction_model(
+            gateway=native_gateway,
+            resolution=_resolution(),
+            corpus=corpus,
+            evaluated_at_utc="2026-08-11T00:00:00+00:00",
+            vision_available=True,
+            max_images=10,
+            renderer_profile_id="native_512_candidate",
+        )
+    )
+
+    assert "visual-transcript-v1" in default_report.renderer_version
+    assert "v2-native-512" in native_report.renderer_version
+    assert default_report.page_count == native_report.page_count
+    assert len(default_gateway.requests) == len(native_gateway.requests) == 2
+    assert set(_image_dimensions(default_gateway.requests[1])) == {(1024, 1024)}
+    assert set(_image_dimensions(native_gateway.requests[1])) == {(512, 512)}
+    with pytest.raises(ValueError, match="Unsupported visual renderer profile"):
+        _run_immediate(
+            evaluate_visual_compaction_model(
+                gateway=_ImmediateGateway(corpus),
+                resolution=_resolution(),
+                corpus=corpus,
+                evaluated_at_utc="2026-08-11T00:00:00+00:00",
+                vision_available=True,
+                max_images=10,
+                renderer_profile_id="custom",
+            )
+        )
 
 
 @pytest.mark.parametrize(
@@ -602,6 +705,7 @@ def test_evaluator_v1_matrix_remains_strictly_loadable(tmp_path: Path) -> None:
 
 def test_checked_in_evaluator_v3_matrix_is_current_terra_context_evidence() -> None:
     original = json.loads(SUPPORT_MATRIX_PATH.read_text(encoding="utf-8"))
+    corpus = load_visual_evaluation_corpus(CORPUS_PATH)
 
     matrix = load_visual_support_matrix(SUPPORT_MATRIX_PATH)
 
@@ -617,6 +721,9 @@ def test_checked_in_evaluator_v3_matrix_is_current_terra_context_evidence() -> N
     assert "ocr_fidelity" not in original["reports"][0]["visual"]
     assert matrix.reports[0].default_enablement_ready is False
     assert matrix.eligible_models == ()
+    production_geometry = build_visual_renderer_geometry_evidence(corpus)[0]
+    assert production_geometry.renderer_version == matrix.reports[0].renderer_version
+    assert production_geometry.page_hashes == matrix.reports[0].page_hashes
     assert json.loads(matrix.to_json()) == original
 
 
@@ -728,6 +835,25 @@ def test_cli_validates_confirmation_and_output_before_loading_config(
     args.model = "gpt-5.6-terra"
     args.replace = True
     assert validate_live_request(args) == args.output.resolve()
+
+
+def test_cli_exposes_only_closed_renderer_profiles() -> None:
+    parser = build_parser()
+
+    default = parser.parse_args(["--provider", "openai", "--model", "gpt-5.6-terra"])
+    native = parser.parse_args(
+        [
+            "--provider",
+            "openai",
+            "--model",
+            "gpt-5.6-terra",
+            "--renderer-profile",
+            "native_512_candidate",
+        ]
+    )
+
+    assert default.renderer_profile == "production_1024"
+    assert native.renderer_profile == "native_512_candidate"
 
 
 @pytest.mark.parametrize(

@@ -20,11 +20,15 @@ from tldw_chatbook.Chat.console_visual_benchmark import (
     run_visual_compaction_benchmark,
 )
 from tldw_chatbook.Chat.console_visual_transcript import (
+    NATIVE_512_EVALUATION_PROFILE,
     PAGE_HEIGHT,
     PAGE_WIDTH,
+    PRODUCTION_RENDERER_PROFILE,
+    VisualTranscriptRendererProfile,
     count_semantic_images,
     plan_visual_compaction,
     render_visual_transcript,
+    resolve_evaluation_renderer_profile,
     resolve_effective_compaction_representation,
     visual_transcript_source_text,
 )
@@ -74,6 +78,55 @@ def test_renderer_is_deterministic_ordered_and_provenanced() -> None:
             (_unit(3, body="line\n" * 100),),
             summarized_prefix_digest="abc123",
             max_pages=1,
+        )
+
+
+def test_native_evaluation_profile_removes_upscale_without_changing_content() -> None:
+    units = (_unit(1, body="line\n" * 70), _unit(2))
+
+    production = render_visual_transcript(
+        units,
+        summarized_prefix_digest="abc123",
+        renderer_profile=PRODUCTION_RENDERER_PROFILE,
+    )
+    native_first = render_visual_transcript(
+        units,
+        summarized_prefix_digest="abc123",
+        renderer_profile=NATIVE_512_EVALUATION_PROFILE,
+    )
+    native_second = render_visual_transcript(
+        units,
+        summarized_prefix_digest="abc123",
+        renderer_profile=NATIVE_512_EVALUATION_PROFILE,
+    )
+
+    assert production.page_count == native_first.page_count
+    assert production.source_unit_ids == native_first.source_unit_ids
+    assert all(page.width == 1024 and page.height == 1024 for page in production.pages)
+    assert all(page.width == 512 and page.height == 512 for page in native_first.pages)
+    assert native_first.renderer_version != production.renderer_version
+    assert [page.png_bytes for page in native_first.pages] == [
+        page.png_bytes for page in native_second.pages
+    ]
+    assert [page.source_message_ids for page in production.pages] == [
+        page.source_message_ids for page in native_first.pages
+    ]
+
+
+def test_evaluation_renderer_profiles_are_closed_and_uniform_integer_scales() -> None:
+    assert (
+        resolve_evaluation_renderer_profile("native_512_candidate")
+        is NATIVE_512_EVALUATION_PROFILE
+    )
+    with pytest.raises(ValueError, match="Unsupported visual renderer profile"):
+        resolve_evaluation_renderer_profile("custom")
+    with pytest.raises(ValueError, match="uniform integer scale"):
+        VisualTranscriptRendererProfile(
+            profile_id="invalid",
+            renderer_version="invalid-v1",
+            page_width=768,
+            page_height=512,
+            evaluation_only=True,
         )
 
 

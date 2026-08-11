@@ -1,8 +1,9 @@
 """Deterministic, request-scoped visual transcript rendering.
 
 The renderer has no filesystem, network, locale, theme, or wall-clock inputs.
-Pillow's bundled default bitmap font is rasterized on a fixed logical canvas
-and nearest-neighbour scaled to the fixed provider image size.
+Pillow's bundled default bitmap font is rasterized on a fixed logical canvas.
+Closed versioned profiles either preserve that native canvas or uniformly
+nearest-neighbour scale it to a fixed provider image size.
 """
 
 from __future__ import annotations
@@ -27,9 +28,6 @@ from tldw_chatbook.Chat.console_prepared_request import (
 )
 
 
-RENDERER_VERSION = f"chatbook-visual-transcript-v1-pillow-{PILLOW_VERSION}"
-PAGE_WIDTH = 1024
-PAGE_HEIGHT = 1024
 LOGICAL_WIDTH = 512
 LOGICAL_HEIGHT = 512
 MARGIN_X = 8
@@ -41,6 +39,69 @@ FOOTER_LINES = 2
 LINES_PER_PAGE = (
     (LOGICAL_HEIGHT - (2 * MARGIN_Y)) // LINE_HEIGHT - HEADER_LINES - FOOTER_LINES
 )
+
+PRODUCTION_RENDERER_PROFILE_ID = "production_1024"
+NATIVE_512_EVALUATION_PROFILE_ID = "native_512_candidate"
+
+
+@dataclass(frozen=True, slots=True)
+class VisualTranscriptRendererProfile:
+    """Immutable geometry and identity for one deterministic renderer."""
+
+    profile_id: str
+    renderer_version: str
+    page_width: int
+    page_height: int
+    evaluation_only: bool
+
+    def __post_init__(self) -> None:
+        if not all(
+            isinstance(value, str) and value.strip()
+            for value in (self.profile_id, self.renderer_version)
+        ):
+            raise ValueError("Visual renderer profile identities are required.")
+        for name in ("page_width", "page_height"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ValueError(f"{name} must be a positive integer.")
+        if (
+            self.page_width % LOGICAL_WIDTH != 0
+            or self.page_height % LOGICAL_HEIGHT != 0
+            or self.page_width // LOGICAL_WIDTH != self.page_height // LOGICAL_HEIGHT
+        ):
+            raise ValueError(
+                "Visual renderer output must be a uniform integer scale of the "
+                "fixed logical canvas."
+            )
+        if not isinstance(self.evaluation_only, bool):
+            raise TypeError("evaluation_only must be a boolean.")
+
+
+PRODUCTION_RENDERER_PROFILE = VisualTranscriptRendererProfile(
+    profile_id=PRODUCTION_RENDERER_PROFILE_ID,
+    renderer_version=f"chatbook-visual-transcript-v1-pillow-{PILLOW_VERSION}",
+    page_width=1024,
+    page_height=1024,
+    evaluation_only=False,
+)
+NATIVE_512_EVALUATION_PROFILE = VisualTranscriptRendererProfile(
+    profile_id=NATIVE_512_EVALUATION_PROFILE_ID,
+    renderer_version=(
+        f"chatbook-visual-transcript-v2-native-512-pillow-{PILLOW_VERSION}"
+    ),
+    page_width=512,
+    page_height=512,
+    evaluation_only=True,
+)
+EVALUATION_RENDERER_PROFILES = (
+    PRODUCTION_RENDERER_PROFILE,
+    NATIVE_512_EVALUATION_PROFILE,
+)
+
+# Backward-compatible production aliases. Their values and rendered bytes remain v1.
+RENDERER_VERSION = PRODUCTION_RENDERER_PROFILE.renderer_version
+PAGE_WIDTH = PRODUCTION_RENDERER_PROFILE.page_width
+PAGE_HEIGHT = PRODUCTION_RENDERER_PROFILE.page_height
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +153,7 @@ def render_visual_transcript(
     *,
     summarized_prefix_digest: str,
     max_pages: int | None = None,
+    renderer_profile: VisualTranscriptRendererProfile = PRODUCTION_RENDERER_PROFILE,
 ) -> VisualTranscriptArtifact:
     """Render ordered durable units into byte-stable PNG pages."""
 
@@ -102,6 +164,8 @@ def render_visual_transcript(
         raise ValueError("summarized_prefix_digest is required.")
     if max_pages is not None and max_pages <= 0:
         raise ValueError("max_pages must be positive when supplied.")
+    if not isinstance(renderer_profile, VisualTranscriptRendererProfile):
+        raise TypeError("renderer_profile must be a VisualTranscriptRendererProfile.")
 
     body = _transcript_lines(units)
     chunks = [
@@ -112,11 +176,17 @@ def render_visual_transcript(
     if max_pages is not None and page_count > max_pages:
         raise ValueError("Visual transcript exceeds the available image-page limit.")
     pages = tuple(
-        _render_page(lines, index=index + 1, count=page_count, prefix_digest=digest)
+        _render_page(
+            lines,
+            index=index + 1,
+            count=page_count,
+            prefix_digest=digest,
+            renderer_profile=renderer_profile,
+        )
         for index, lines in enumerate(chunks)
     )
     return VisualTranscriptArtifact(
-        renderer_version=RENDERER_VERSION,
+        renderer_version=renderer_profile.renderer_version,
         summarized_prefix_digest=digest,
         source_unit_ids=tuple(unit.boundary_message_id for unit in units),
         pages=pages,
@@ -241,6 +311,18 @@ def resolve_effective_compaction_representation(
     return requested, None
 
 
+def resolve_evaluation_renderer_profile(
+    profile_id: str,
+) -> VisualTranscriptRendererProfile:
+    """Resolve a closed evaluator profile ID without admitting custom geometry."""
+
+    normalized = str(profile_id).strip()
+    for profile in EVALUATION_RENDERER_PROFILES:
+        if profile.profile_id == normalized:
+            return profile
+    raise ValueError(f"Unsupported visual renderer profile: {normalized or '<empty>'}.")
+
+
 def _transcript_lines(
     units: Sequence[DurableConversationUnit],
 ) -> list[_RenderedLine]:
@@ -312,6 +394,7 @@ def _render_page(
     index: int,
     count: int,
     prefix_digest: str,
+    renderer_profile: VisualTranscriptRendererProfile,
 ) -> VisualTranscriptPage:
     image = Image.new("1", (LOGICAL_WIDTH, LOGICAL_HEIGHT), color=1)
     draw = ImageDraw.Draw(image)
@@ -331,7 +414,7 @@ def _render_page(
     footer_y = LOGICAL_HEIGHT - MARGIN_Y - (FOOTER_LINES * LINE_HEIGHT)
     draw.text(
         (MARGIN_X, footer_y),
-        f"{RENDERER_VERSION} page {index}/{count}",
+        f"{renderer_profile.renderer_version} page {index}/{count}",
         fill=0,
         font=font,
     )
@@ -341,9 +424,17 @@ def _render_page(
         fill=0,
         font=font,
     )
-    scaled = image.resize((PAGE_WIDTH, PAGE_HEIGHT), resample=Image.Resampling.NEAREST)
+    rendered = image
+    if (renderer_profile.page_width, renderer_profile.page_height) != (
+        LOGICAL_WIDTH,
+        LOGICAL_HEIGHT,
+    ):
+        rendered = image.resize(
+            (renderer_profile.page_width, renderer_profile.page_height),
+            resample=Image.Resampling.NEAREST,
+        )
     output = BytesIO()
-    scaled.save(output, format="PNG", optimize=False, compress_level=9)
+    rendered.save(output, format="PNG", optimize=False, compress_level=9)
     png = output.getvalue()
     source_ids = tuple(
         dict.fromkeys(
@@ -355,8 +446,8 @@ def _render_page(
     return VisualTranscriptPage(
         index=index,
         count=count,
-        width=PAGE_WIDTH,
-        height=PAGE_HEIGHT,
+        width=renderer_profile.page_width,
+        height=renderer_profile.page_height,
         png_sha256=sha256(png).hexdigest(),
         source_message_ids=source_ids,
         png_bytes=png,
@@ -364,17 +455,24 @@ def _render_page(
 
 
 __all__ = [
+    "EVALUATION_RENDERER_PROFILES",
     "LINES_PER_PAGE",
+    "NATIVE_512_EVALUATION_PROFILE",
+    "NATIVE_512_EVALUATION_PROFILE_ID",
     "PAGE_HEIGHT",
     "PAGE_WIDTH",
+    "PRODUCTION_RENDERER_PROFILE",
+    "PRODUCTION_RENDERER_PROFILE_ID",
     "RENDERER_VERSION",
     "VisualTranscriptArtifact",
     "VisualTranscriptPage",
+    "VisualTranscriptRendererProfile",
     "VisualCompactionPlan",
     "VisualCompactionPlanResult",
     "count_semantic_images",
     "plan_visual_compaction",
     "render_visual_transcript",
+    "resolve_evaluation_renderer_profile",
     "resolve_effective_compaction_representation",
     "visual_transcript_source_text",
 ]
