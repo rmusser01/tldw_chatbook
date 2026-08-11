@@ -344,26 +344,48 @@ def _read_bounded_json(
     cancel_event: Any = None,
     deadline: float | None = None,
     phase: ComfyUIImageEditPhase = "remote_schema_preflight",
+    capture_prompt_id_on_control: bool = False,
 ) -> Any:
     """Bound declared and streamed JSON bytes before parsing."""
-    _check_stream_control(cancel_event, deadline, phase)
+    collected = bytearray()
+
+    def check_control() -> dict[str, Any] | None:
+        try:
+            _check_stream_control(cancel_event, deadline, phase)
+        except (ImageGenerationCancelled, _DeadlineExpired):
+            if capture_prompt_id_on_control:
+                payload = _complete_prompt_payload(collected)
+                if payload is not None:
+                    return payload
+            raise
+        return None
+
+    recovered = check_control()
+    if recovered is not None:
+        return recovered
     declared = _declared_length(response)
     if declared is not None and declared > COMFYUI_MAX_JSON_BYTES:
         raise ValueError("JSON response exceeds limit")
-    collected = bytearray()
     chunks = iter(response.iter_bytes())
     while True:
-        _check_stream_control(cancel_event, deadline, phase)
+        recovered = check_control()
+        if recovered is not None:
+            return recovered
         try:
             chunk = next(chunks)
         except StopIteration:
-            _check_stream_control(cancel_event, deadline, phase)
+            recovered = check_control()
+            if recovered is not None:
+                return recovered
             break
-        _check_stream_control(cancel_event, deadline, phase)
+        if not capture_prompt_id_on_control:
+            _check_stream_control(cancel_event, deadline, phase)
         collected.extend(chunk)
         if len(collected) > COMFYUI_MAX_JSON_BYTES:
             raise ValueError("JSON response exceeds limit")
-        _check_stream_control(cancel_event, deadline, phase)
+        recovered = check_control()
+        if recovered is not None:
+            return recovered
     if not collected and allow_empty:
         return {}
     if not collected:
@@ -372,6 +394,19 @@ def _read_bounded_json(
         return json.loads(bytes(collected))
     except (UnicodeError, json.JSONDecodeError, TypeError):
         raise ValueError("invalid JSON response") from None
+
+
+def _complete_prompt_payload(body: bytearray) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(bytes(body))
+    except (UnicodeError, json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    prompt_id = payload.get("prompt_id")
+    if not isinstance(prompt_id, str) or not _SAFE_PROMPT_ID.fullmatch(prompt_id):
+        return None
+    return payload
 
 
 def _schema_inputs(class_schema: dict[str, Any]) -> dict[str, Any]:
@@ -729,7 +764,7 @@ class ComfyUIImageAdapter:
         *,
         deadline: float,
     ) -> str:
-        payload = self._request_json(
+        response = self._send(
             self._endpoint("/prompt"),
             method="POST",
             deadline=deadline,
@@ -737,6 +772,16 @@ class ComfyUIImageAdapter:
             cancel_event=request.cancel_event,
             json_body={"prompt": graph},
         )
+        try:
+            payload = _read_bounded_json(
+                response,
+                cancel_event=request.cancel_event,
+                deadline=deadline,
+                phase="prompt_submission",
+                capture_prompt_id_on_control=True,
+            )
+        finally:
+            response.close()
         prompt_id = payload.get("prompt_id") if isinstance(payload, dict) else None
         if not isinstance(prompt_id, str) or not _SAFE_PROMPT_ID.fullmatch(prompt_id):
             raise ValueError("invalid prompt id")
@@ -918,6 +963,8 @@ class ComfyUIImageAdapter:
             prompt_id = self._submit_prompt(
                 prepared.graph, request, deadline=deadline
             )
+            self._check_cancelled(request.cancel_event)
+            self._remaining(deadline, phase)
 
             phase = "history_polling"
             descriptor = self._poll_history(prompt_id, request, deadline=deadline)

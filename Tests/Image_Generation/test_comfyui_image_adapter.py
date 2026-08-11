@@ -981,7 +981,7 @@ def test_cancel_before_prompt_id_never_deletes_queue() -> None:
     [
         ("/object_info", "/upload/image", 0),
         ("/upload/image", "/prompt", 0),
-        ("/prompt", "/history/opaque-prompt-id", 0),
+        ("/prompt", "/history/opaque-prompt-id", 1),
         ("/history/opaque-prompt-id", "/view", 1),
     ],
 )
@@ -995,6 +995,13 @@ def test_cancellation_is_checked_before_each_following_network_phase(
 
     def cancel_between_phases(request: httpx.Request) -> httpx.Response:
         response = script(request)
+        if request.url.path == "/prompt" and cancel_after == "/prompt":
+            body = response.content
+            response.close()
+            return httpx.Response(
+                200,
+                stream=ControlledChunkStream([body], lambda _index: event.set()),
+            )
         if request.url.path == cancel_after:
             event.set()
         return response
@@ -1004,6 +1011,100 @@ def test_cancellation_is_checked_before_each_following_network_phase(
 
     assert not any(path == forbidden_next for _, path in script.calls)
     assert script.calls.count(("POST", "/queue")) == queue_deletes
+
+
+def test_prompt_full_id_chunk_cancellation_captures_id_and_deletes_once() -> None:
+    event = threading.Event()
+    base = SuccessfulScript()
+    yielded: list[int] = []
+
+    def cancel(index: int) -> None:
+        yielded.append(index)
+        if index == 0:
+            event.set()
+
+    def script(request: httpx.Request) -> httpx.Response:
+        response = base(request)
+        if request.url.path != "/prompt":
+            return response
+        body = response.content
+        response.close()
+        return httpx.Response(
+            200,
+            stream=ControlledChunkStream([body, b"forbidden-extra"], cancel),
+        )
+
+    with pytest.raises(ImageGenerationCancelled):
+        _make_adapter(script).generate(_request(cancel_event=event))
+
+    assert base.calls.count(("POST", "/queue")) == 1
+    assert not any(path == "/history/opaque-prompt-id" for _, path in base.calls)
+    assert yielded == [0]
+
+
+def test_prompt_full_id_chunk_deadline_captures_id_and_deletes_once(monkeypatch) -> None:
+    clock = AdvancingClock()
+    monkeypatch.setattr(adapter_module.time, "monotonic", clock.monotonic)
+    base = SuccessfulScript()
+    yielded: list[int] = []
+
+    def cross_deadline(index: int) -> None:
+        yielded.append(index)
+        if index == 0:
+            clock.value = 1.1
+
+    def script(request: httpx.Request) -> httpx.Response:
+        response = base(request)
+        if request.url.path != "/prompt":
+            return response
+        body = response.content
+        response.close()
+        return httpx.Response(
+            200,
+            stream=ControlledChunkStream([body, b"forbidden-extra"], cross_deadline),
+        )
+
+    with pytest.raises(ComfyUIImageEditError) as exc:
+        _make_adapter(
+            script,
+            config=_config(comfyui_image_total_deadline_seconds=1.0),
+        ).generate(_request())
+
+    _assert_phase(exc, "prompt_submission")
+    assert base.calls.count(("POST", "/queue")) == 1
+    assert not any(path == "/history/opaque-prompt-id" for _, path in base.calls)
+    assert yielded == [0]
+
+
+def test_prompt_partial_id_chunk_cancellation_has_no_id_and_no_delete() -> None:
+    event = threading.Event()
+    base = SuccessfulScript()
+    yielded: list[int] = []
+
+    def cancel(index: int) -> None:
+        yielded.append(index)
+        if index == 0:
+            event.set()
+
+    def script(request: httpx.Request) -> httpx.Response:
+        response = base(request)
+        if request.url.path != "/prompt":
+            return response
+        response.close()
+        return httpx.Response(
+            200,
+            stream=ControlledChunkStream(
+                [b'{"prompt_id":"partial', b'-opaque-prompt-id"}'],
+                cancel,
+            ),
+        )
+
+    with pytest.raises(ImageGenerationCancelled):
+        _make_adapter(script).generate(_request(cancel_event=event))
+
+    assert base.calls.count(("POST", "/queue")) == 0
+    assert not any(path == "/history/opaque-prompt-id" for _, path in base.calls)
+    assert yielded == [0]
 
 
 def test_poll_wait_uses_event_and_cancellation_deletes_exact_prompt_once() -> None:
