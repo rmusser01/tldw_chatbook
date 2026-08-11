@@ -280,9 +280,22 @@ def _candidate_matches_accepted(
     return len(matches) == 1
 
 
-async def _revalidate_packages(
+async def revalidate_audio_cpp_guided_packages(
     accepted_packages: tuple[AudioCppAcceptedPackage, ...],
 ) -> tuple[AudioCppPackageRecipe, ...]:
+    """Recheck accepted package identities without launching audio.cpp.
+
+    Args:
+        accepted_packages: Immutable package snapshots accepted in Settings.
+
+    Returns:
+        The exact reviewed recipes for the still-current package identities.
+
+    Raises:
+        AudioCppGuidedLaunchError: If a recipe or local package no longer
+            matches its accepted snapshot.
+    """
+
     recipes: list[AudioCppPackageRecipe] = []
     for accepted in accepted_packages:
         invalid_recipe = False
@@ -362,6 +375,44 @@ def _select_backend(
         )
     )
     return next((candidate for candidate in order if candidate in eligible), None)
+
+
+def select_audio_cpp_guided_backend(
+    preference: AudioCppBackendPreference,
+    recipes: tuple[AudioCppPackageRecipe, ...],
+    *,
+    system: str | None = None,
+    architecture: str | None = None,
+) -> AudioCppBackendPreference | None:
+    """Resolve one evidenced backend for the exact recipes and host.
+
+    This pure selection seam is shared by passive Settings validation and
+    deliberate launch so Save cannot promise a tuple that launch will reject.
+
+    Args:
+        preference: User-selected backend preference.
+        recipes: Exact reviewed package recipes that must share one backend.
+        system: Optional normalized host-system override for deterministic tests.
+        architecture: Optional host-architecture override for deterministic tests.
+
+    Returns:
+        The selected evidenced backend, or ``None`` when the tuple is not
+        supported on the host.
+    """
+
+    host_system = (platform.system() if system is None else system).casefold()
+    if host_system not in {"darwin", "linux"}:
+        return None
+    host_architecture = _normalize_architecture(
+        platform.machine() if architecture is None else architecture,
+        system=host_system,
+    )
+    return _select_backend(
+        preference,
+        recipes,
+        system=host_system,
+        architecture=host_architecture,
+    )
 
 
 def _default_port_selector() -> int:
@@ -626,20 +677,16 @@ async def materialize_audio_cpp_guided_launch(
     binary = await asyncio.to_thread(_validate_binary, settings.guided_binary_path)
     if binary is None:
         raise AudioCppGuidedLaunchError("binary_invalid") from None
-    recipes = await _revalidate_packages(settings.guided_packages)
+    recipes = await revalidate_audio_cpp_guided_packages(settings.guided_packages)
 
     host_system = (platform.system() if system is None else system).casefold()
-    host_architecture = _normalize_architecture(
-        platform.machine() if architecture is None else architecture,
-        system=host_system,
-    )
     if os.name != "posix" or host_system not in {"darwin", "linux"}:
         raise AudioCppGuidedLaunchError("backend_unsupported") from None
-    backend = _select_backend(
+    backend = select_audio_cpp_guided_backend(
         settings.guided_backend_preference,
         recipes,
         system=host_system,
-        architecture=host_architecture,
+        architecture=architecture,
     )
     if backend is None:
         raise AudioCppGuidedLaunchError("backend_unsupported") from None
@@ -698,4 +745,6 @@ __all__ = (
     "AudioCppGuidedLaunchError",
     "AudioCppGuidedLaunchErrorCode",
     "materialize_audio_cpp_guided_launch",
+    "revalidate_audio_cpp_guided_packages",
+    "select_audio_cpp_guided_backend",
 )

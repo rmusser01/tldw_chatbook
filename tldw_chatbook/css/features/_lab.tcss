@@ -804,6 +804,12 @@ Input.speech-axis-control {
     color: $ds-text-muted;
 }
 
+.speech-result-provenance {
+    height: auto;
+    min-height: 1;
+    color: $ds-text-muted;
+}
+
 .speech-player-transport {
     height: 1;
 }

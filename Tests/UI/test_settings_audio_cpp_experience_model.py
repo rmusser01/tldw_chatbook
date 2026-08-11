@@ -6,6 +6,7 @@ import os
 
 import pytest
 
+from tldw_chatbook.TTS import audio_cpp_guided_launch as guided_launch_module
 from tldw_chatbook.UI.Screens import settings_speech_tts as settings_model
 from tldw_chatbook.TTS.adapter_types import (
     ProviderHealth,
@@ -16,6 +17,11 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSVoiceDiscoveryResult,
 )
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
+from tldw_chatbook.TTS.audio_cpp_guided_config import (
+    AudioCppAcceptedPackage,
+    AudioCppSafeModelProjection,
+    AudioCppSettingsConfig,
+)
 from tldw_chatbook.UI.Screens.settings_speech_tts import (
     AudioCppExactChoiceState,
     GLOBAL_TTS_PROVIDER_FIELD_IDS,
@@ -28,23 +34,129 @@ from tldw_chatbook.UI.Screens.settings_speech_tts import (
 
 
 def test_audio_cpp_settings_inventory_exposes_both_explicit_modes() -> None:
-    projected = AudioCppConfig().to_mapping()
+    projected = AudioCppSettingsConfig().to_mapping()
     state = load_global_speech_tts_state({}, environment={})
-    managed_fields = {
-        "managed_binary_path",
-        "managed_server_json_path",
-        "managed_startup_timeout_seconds",
-        "managed_health_check_interval_seconds",
-        "managed_termination_grace_seconds",
-    }
 
     assert projected["mode"] == "external"
     assert state.providers["audio_cpp"] == projected
-    assert set(GLOBAL_TTS_PROVIDER_FIELD_IDS["audio_cpp"]) == set(projected) | (
-        managed_fields
-    )
+    assert set(GLOBAL_TTS_PROVIDER_FIELD_IDS["audio_cpp"]) == set(projected)
     assert "mode" in GLOBAL_TTS_PROVIDER_FIELD_IDS["audio_cpp"]
-    assert managed_fields.isdisjoint(projected)
+
+
+def _guided_package(root: str) -> AudioCppAcceptedPackage:
+    return AudioCppAcceptedPackage(
+        package_uuid="d3f6d610-6fd9-4cde-9ea7-cc5175ca445b",
+        recipe_id="audio-cpp-0.5.1.supertonic.supertonic_3_orig",
+        recipe_revision=1,
+        package_variant="supertonic_3_orig",
+        public_model_id="narrator",
+        canonical_root=root,
+        canonical_root_identity="1" * 64,
+        configuration_identity="2" * 64,
+        weight_identity="3" * 64,
+        projection=AudioCppSafeModelProjection(
+            family="supertonic",
+            task="tts",
+            mode="offline",
+            model_relative_path="supertonic-3-orig.gguf",
+        ),
+    )
+
+
+def test_guided_settings_load_save_and_reload_preserve_all_dormant_sources(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Guided edits round-trip without erasing dormant External or JSON values."""
+
+    binary = tmp_path / "audiocpp_server"
+    binary.write_bytes(b"synthetic-binary")
+    binary.chmod(0o700)
+    package = _guided_package(str(tmp_path))
+    raw = AudioCppSettingsConfig(
+        mode="managed",
+        base_url="https://external.example.test:8443",
+        managed_setup_source="guided",
+        managed_binary_path="/manual/audiocpp_server",
+        managed_server_json_path="/manual/server.json",
+        guided_binary_path=str(binary),
+        guided_binary_source="manual",
+        guided_packages=(package,),
+        guided_default_model_id="narrator",
+        guided_backend_preference="cpu",
+        guided_device=0,
+        guided_threads=4,
+    ).to_mapping()
+    settings = {"COMPREHENSIVE_CONFIG_RAW": {"app_tts": {"audio_cpp": raw}}}
+    original = load_global_speech_tts_state(settings, environment={})
+    draft = deepcopy(original)
+    draft.providers["audio_cpp"]["guided_threads"] = 6
+    manual_validator_calls: list[object] = []
+
+    def reject_manual_validation(_config: object) -> None:
+        manual_validator_calls.append(_config)
+        raise AssertionError("Guided Save entered the user-JSON validator")
+
+    monkeypatch.setattr(
+        settings_model,
+        "validate_audio_cpp_managed_launch",
+        reject_manual_validation,
+    )
+
+    proposal = build_global_speech_tts_save_proposal(
+        original,
+        draft,
+        configure_provider="audio_cpp",
+    )
+    settings_model.validate_audio_cpp_managed_settings(draft.providers["audio_cpp"])
+    reloaded = load_global_speech_tts_state(
+        {"COMPREHENSIVE_CONFIG_RAW": {"app_tts": proposal.settings}},
+        environment={},
+    )
+
+    assert proposal.settings["audio_cpp"] == {
+        **raw,
+        "guided_threads": 6,
+    }
+    assert reloaded.providers["audio_cpp"] == proposal.settings["audio_cpp"]
+    assert reloaded.providers["audio_cpp"]["base_url"] == (
+        "https://external.example.test:8443"
+    )
+    assert reloaded.providers["audio_cpp"]["managed_server_json_path"] == (
+        "/manual/server.json"
+    )
+    assert manual_validator_calls == []
+
+
+def test_guided_save_rejects_backend_without_host_recipe_evidence(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Passive Save rejects a backend the exact host/package tuple cannot run."""
+
+    binary = tmp_path / "audiocpp_server"
+    binary.write_bytes(b"synthetic-binary")
+    binary.chmod(0o700)
+    package = _guided_package(str(tmp_path))
+    values = AudioCppSettingsConfig(
+        mode="managed",
+        managed_setup_source="guided",
+        guided_binary_path=str(binary),
+        guided_packages=(package,),
+        guided_default_model_id="narrator",
+        guided_backend_preference="cuda",
+    ).to_mapping()
+    monkeypatch.setattr(guided_launch_module.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(guided_launch_module.platform, "machine", lambda: "arm64")
+
+    with pytest.raises(GlobalSpeechTTSValidationError) as error:
+        settings_model.validate_audio_cpp_managed_settings(values)
+
+    assert error.value.field_id == "guided_backend_preference"
+    assert str(error.value) == (
+        "Choose Auto or a backend supported by every reviewed package on this host."
+    )
+    assert str(tmp_path) not in str(error.value)
 
 
 def test_managed_load_retains_the_dormant_external_origin() -> None:
@@ -71,7 +183,10 @@ def test_managed_load_retains_the_dormant_external_origin() -> None:
         environment={},
     )
 
-    assert state.providers["audio_cpp"] == raw
+    assert state.providers["audio_cpp"] == {
+        **AudioCppSettingsConfig().to_mapping(),
+        **raw,
+    }
 
 
 def test_managed_save_persists_the_external_origin_for_a_later_switch() -> None:

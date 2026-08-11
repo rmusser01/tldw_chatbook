@@ -131,16 +131,23 @@ for the ownership, privacy, backup, and deferred-scope decisions.
 
 ### Setting up audio.cpp
 
-Chatbook supports two explicit audio.cpp connection modes. Open **Global
-Settings → Speech & TTS → audio.cpp** and choose the mode that matches who owns
-the server process:
+Open **Global Settings → Speech & TTS → audio.cpp** and choose the setup path
+that matches who owns the server process and configuration:
 
 - **External server** connects to a compatible `audiocpp_server` that you start
   and manage yourself. Chatbook never stops or adopts that process.
-- **Managed local server** launches and supervises one local process from a
-  prebuilt binary and existing `server.json` that you provide. Chatbook does
-  not download audio.cpp, create or edit its configuration, or automatically
-  restart a failed child.
+- **Managed local server → Guided setup — no JSON editing** launches and
+  supervises one local process from a separately installed server and one or
+  more reviewed model packages. Chatbook creates an owner-private runtime
+  configuration only when a deliberate Speech Lab action needs it.
+- **Managed local server → Use an existing server.json** launches and supervises one
+  local process from a prebuilt binary and existing configuration that you
+  provide. Chatbook does not edit that file.
+
+Chatbook never downloads or updates `audiocpp_server`. Installing the server
+and obtaining model files remain explicit user actions. Guided compatibility
+claims apply only to the exact package recipes and server release shown in the
+package review; finding another GGUF file does not imply support.
 
 Managed local server is currently offered on qualified POSIX hosts. On
 Windows, use External server until the native managed-process lifecycle is
@@ -169,17 +176,64 @@ To connect to a server you manage yourself:
 10. In Console, use **Speak** on a response to synthesize and play it with the
     same saved defaults.
 
-#### Managed local server
+#### Guided managed setup — no JSON editing
 
-Managed mode is for a local build you trust. Review the executable's source and
-provenance before allowing Chatbook to run it, then:
+Guided setup is the shortest supported first-time path:
+
+1. Install a compatible `audiocpp_server` separately and obtain a reviewed
+   model package. The package review identifies the exact supported audio.cpp
+   release, model family, and variant.
+2. Select **Managed local server**, then **Guided setup — no JSON editing**.
+   Choose **Use detected audiocpp_server** to fill the unsaved draft from the
+   command search path, or use **Browse** to select the executable.
+3. Choose **Add local package…** and select the package directory; selection
+   starts the bounded scan. Review every accepted candidate. The review shows
+   its exact family/variant, task capabilities,
+   compatibility evidence, public model ID, a path-safe package summary, and
+   lazy-loading/resident-memory behavior. Multiple matches are never selected
+   silently; remove any package you do not want in the shared server.
+   A standalone PocketTTS GGUF is registered but marked **voice setup
+   required** because it does not include a usable voice embedding. Choose a
+   text-ready Supertonic package as the default for the one-click first sample.
+4. Choose the default Guided model and backend. **Auto** selects only the
+   reviewed portable CPU baseline; it does not infer an accelerated backend
+   from the host. An unavailable or unevidenced model/backend combination is
+   rejected with recovery guidance.
+5. Choose **Save Settings**. Saving revalidates the selected package identities
+   and persists configuration, but it does not launch a process, open a socket,
+   contact audio.cpp, generate a runtime `server.json`, synthesize speech, or
+   modify model files. The panel reports **Configuration saved — ready to
+   test**.
+6. For a text-ready default, choose **Open Speech Lab & Hear a Sample**. A
+   voice-required default instead offers **Open Speech Lab to Test
+   Connection** and does not promise generation. The handoff focuses Speech
+   Lab's one current primary action, which may be **Start & Generate Sample**,
+   **Restart & Apply Settings**, **Retry Sample**, or **Test Connection**.
+7. Run **Start & Generate Sample**. Chatbook lazily creates one private,
+   generation-local configuration, starts one child, verifies the selected
+   catalog entry, and generates one complete validated WAV.
+8. The current result exposes **Play/Pause**, duration and validation status,
+   safe provider/model/voice/configuration/process provenance, **Generate
+   again**, and **Save WAV**. Optional automatic playback is a separate Speech
+   Studio preference; Guided setup never changes it.
+
+All accepted models are registered in the same lazy child. Selecting another
+accepted model reuses that child rather than launching a second server. A model
+loaded by audio.cpp may remain resident in memory until **Shut down server**;
+the interface does not promise per-model unloading.
+
+#### Managed local server with your server.json
+
+The manual source is for a local build and configuration you trust. Review the
+executable and JSON provenance before allowing Chatbook to run them, then:
 
 1. Make sure you already have a compatible prebuilt `audiocpp_server` binary
    and its existing `server.json`. Chatbook never downloads, updates, or edits
    either artifact.
-2. Select **Managed local server**. Choose **Use detected audiocpp_server** to
-   fill the draft from your command search path, or use **Browse** to select
-   the executable yourself. Detection changes only the unsaved form.
+2. Select **Managed local server**, then **Use an existing server.json**.
+   Choose **Use detected audiocpp_server** to fill the draft from your command
+   search path, or use **Browse** to select the executable yourself. Detection
+   changes only the unsaved form.
 3. Browse to the existing `server.json`. It must be a strict JSON object that
    binds exactly to `127.0.0.1` and declares an unused port. Remote or wildcard
    hosts are intentionally rejected in Managed mode.
@@ -225,6 +279,12 @@ To return to a server you manage yourself, select **External server**, enter its
 origin, and save. If a managed child is still active, Speech Lab shows the
 pending handoff; choose **Apply Settings & Stop Managed Server**. The next
 External test or generation contacts only the saved external origin.
+
+Global Settings owns connection details, reviewed Guided packages, and global
+defaults used by ordinary consumers such as Console. **Speech Studio
+preferences** are a separate, Studio-only layer: they may override selections
+and optional auto-play for Studio without changing Global Settings. Speech Lab
+links back to Global Settings instead of duplicating durable connection fields.
 
 Console offers **Speak** only on completed assistant responses. When selected,
 Chatbook captures the exact visible response and selected variant in a

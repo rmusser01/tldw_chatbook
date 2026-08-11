@@ -105,6 +105,7 @@ class _Response:
         audio_format: str = "wav",
         content_type: str = "audio/wav",
         metadata: Mapping[str, str | int | float | bool | None] | None = None,
+        sample_rate: int | None = None,
     ) -> None:
         self.provider_id = provider_id
         self.model_id = model_id
@@ -112,6 +113,7 @@ class _Response:
         self.content_type = content_type
         self.byte_stream = stream
         self.metadata = metadata or {}
+        self.sample_rate = sample_rate
         self.close_calls = 0
 
     async def aclose(self) -> None:
@@ -630,7 +632,8 @@ async def test_audio_cpp_native_generation_consumes_and_closes_one_wav_response(
     stream = _CountingStream((b"RIFF", b"audio"))
     response = _Response(
         stream,
-        metadata={"sample_rate": 24_000, "engine": "audio.cpp"},
+        metadata={"engine": "audio.cpp"},
+        sample_rate=24_000,
     )
     service = _NativeService(response)
     handler = _handler(service)

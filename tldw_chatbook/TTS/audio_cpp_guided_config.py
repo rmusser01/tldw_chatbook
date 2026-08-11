@@ -174,6 +174,21 @@ def _bounded_number(
     return float(value)
 
 
+def _defensive_config_copy(value: object) -> object:
+    """Copy JSON-like configuration values, including immutable registry views."""
+
+    if isinstance(value, Mapping):
+        return {
+            deepcopy(key): _defensive_config_copy(nested)
+            for key, nested in value.items()
+        }
+    if isinstance(value, tuple):
+        return tuple(_defensive_config_copy(item) for item in value)
+    if isinstance(value, list):
+        return [_defensive_config_copy(item) for item in value]
+    return deepcopy(value)
+
+
 class _FrozenModel(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -563,7 +578,9 @@ class AudioCppSettingsConfig(_FrozenModel):
         if not isinstance(values, Mapping):
             raise ValueError("audio.cpp settings configuration must be a mapping")
         projected = {
-            name: deepcopy(values[name]) for name in cls.model_fields if name in values
+            name: _defensive_config_copy(values[name])
+            for name in cls.model_fields
+            if name in values
         }
         return cls(**projected)
 

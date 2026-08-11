@@ -380,10 +380,14 @@ launch it; external-process ownership remains with the user.
 ### Managed audio.cpp runtime and UI (Slices 4–5)
 
 External mode remains the default and owns no server process. Managed mode is
-an explicit alternative in canonical Global Settings, where the user selects a
-trusted prebuilt executable and existing `server.json`. Settings preserves the
-dormant fields for both modes but validates and projects only the selected mode;
-Save is passive and performs no launch, probe, discovery, or synthesis.
+an explicit alternative in canonical Global Settings. Its manual source uses a
+trusted prebuilt executable and existing `server.json`; its Guided source uses
+a separately installed executable plus explicitly reviewed package identities
+and defers private configuration materialization to a deliberate runtime
+operation. Settings preserves dormant fields across External, manual, and
+Guided sources but validates and projects only the selected source. Save is
+passive and performs no launch, probe, discovery, synthesis, or generated-
+artifact creation.
 
 The application constructs one provider-specific `AudioCppSupervisor` beside
 the sealed registry and service. A Managed configuration carries one absolute
@@ -503,6 +507,15 @@ multiple exact candidates never chooses one silently; explicitly reviewed
 candidates remain individually identifiable even when they share one selected
 root.
 
+The exact recipe, not the family task label alone, determines first-sample
+readiness. Supertonic is text-ready. PocketTTS standalone GGUF recipes are
+revision 2 with `Reference: Required`: release-0.5.1 registers them, but the
+GGUF file does not contain the separate voice embedding required by real
+synthesis. The PocketTTS Safetensors layout includes reviewed embeddings and
+remains `Reference: Optional`. A voice-required default is still registered in
+the one child, but Settings hands off to **Test Connection** rather than
+promising **Hear a Sample**.
+
 Saving Guided Settings remains passive. The first deliberate Test, Start,
 Restart & Apply, catalog refresh, voice refresh, or synthesis revalidates the
 exact accepted package identities off the event loop, validates the selected
@@ -534,6 +547,45 @@ closed with sanitized, path-independent errors. The user-provided JSON source
 retains its existing JSON-parent working directory and ownership semantics.
 Windows guided launch remains out of scope until native handle, ACL, lifecycle,
 and real-process parity are implemented and evidenced.
+
+The canonical Settings panel exposes Guided as a first-class source rather
+than another connection mode. Its bounded asynchronous scanner projects exact
+recipe family/variant, speech tasks, evidence state, public model ID, path-safe
+package identity, and lazy/resident-memory truth. The draft owns its accepted
+candidate identities; a newer scan, source switch, or unmount fences late
+results. Save revalidates those identities off the Textual message loop before
+publishing settings. A changed or deleted package blocks persistence and asks
+the user to scan again, while a successful save announces
+`Configuration saved — ready to test` and offers a no-work navigation handoff
+to Speech Lab's current primary action. It does not mutate separate Studio
+preferences.
+
+For a saved Guided configuration, the immutable runtime observation carries
+only the path-safe facts needed to project the one primary action. A first-use
+state yields **Start & Generate Sample**; pending live settings yield the
+existing exact apply/restart action; a failed combined sample yields **Retry
+Sample**. The click retains that displayed projection, so provider switches or
+late observations cannot turn the visible action into another lifecycle
+operation. The combined action composes existing service seams: prepare/start,
+refresh and verify the exact saved default catalog entry, recheck provider,
+configuration, catalog, and process fences, then issue the ordinary complete-
+WAV synthesis request. It does not introduce a second adapter, player, or
+streaming protocol.
+
+The current-result region retains the complete validated WAV independently of
+later discovery failures. It reports duration and safe provider/model/voice,
+configuration-revision, and process-generation provenance, and exposes the
+existing Play/Pause/Stop behavior plus **Generate again** and **Save WAV**.
+Optional autoplay is read only from the persisted Studio preference and never
+changed by Global Settings or Guided setup. All result and lifecycle controls
+derive their disabled reason and tooltip from the same current state; live
+announcements cover meaningful state transitions rather than progress ticks.
+
+Accepted Guided models stay registered in one lazy multi-model child. Exact
+model changes reuse its process generation, and the UI warns that audio.cpp may
+retain a loaded model until explicit shutdown. Console continues to capture
+the exact global selection and Roleplay the exact character-profile selection;
+passive browsing and observation do not launch Guided mode.
 
 ### Catalog-driven STTS Playground (Slice 3)
 

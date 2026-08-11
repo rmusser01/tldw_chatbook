@@ -63,9 +63,13 @@ from ..Workbench.workbench_state import WorkbenchAction
 from .speech_action_strip import SpeechActionStrip
 from .speech_axis_row import AXIS_EMPTY_PROMPTS, SpeechAxisRow
 from .audio_cpp_runtime_card import (
+    AudioCppRuntimeAction,
     AudioCppRuntimeCard,
+    AudioCppRuntimeCardObservation,
     AudioCppRuntimeOperation,
+    AudioCppSampleState,
     project_audio_cpp_runtime_card,
+    project_audio_cpp_unknown_action,
 )
 from .speech_catalog_mixin import SpeechCatalogMixin
 from .speech_playback_mixin import EXAMPLE_TEXTS, SpeechPlaybackMixin
@@ -165,26 +169,32 @@ PLAYER_ACTIONS: tuple[WorkbenchAction, ...] = (
     WorkbenchAction(
         id="audio-play-btn",
         label="Play",
-        tooltip="Play the current result (Ctrl+P)",
+        tooltip="Generate audio before playing the current result",
         disabled=True,
         primary=True,
     ),
     WorkbenchAction(
         id="pause-audio-btn",
         label="Pause",
-        tooltip="Pause or resume playback",
+        tooltip="Generate audio before pausing playback",
         disabled=True,
     ),
     WorkbenchAction(
         id="stop-audio-btn",
         label="Stop",
-        tooltip="Stop playback (Ctrl+S)",
+        tooltip="Generate audio before stopping playback",
+        disabled=True,
+    ),
+    WorkbenchAction(
+        id="audio-generate-again-btn",
+        label="Generate again",
+        tooltip="Generate audio before generating another result",
         disabled=True,
     ),
     WorkbenchAction(
         id="audio-export-btn",
-        label="Export",
-        tooltip="Keep a copy of the current result",
+        label="Save as…",
+        tooltip="Generate audio before saving a current result",
         disabled=True,
     ),
 )
@@ -233,17 +243,11 @@ class SpeechPlaygroundPane(
 
     _tts_service: Any
 
-    #: The legacy widget's shortcuts, carried over verbatim. Deleting it
-    #: took its BINDINGS with it while the `action_*` methods survived in
-    #: `SpeechPlaybackMixin` -- five shortcuts silently stopped working, and
-    #: the screen still advertised them. Nothing in the per-view tests could
-    #: have noticed: the methods were all still there and still callable.
+    #: Pane-local accelerators that do not shadow ADR-031 global or terminal
+    #: keys. The containing STTS screen owns its plain single-letter actions.
     BINDINGS = [
         Binding("ctrl+g", "generate_tts", "Generate Speech"),
-        Binding("ctrl+r", "random_text", "Sample Text"),
         Binding("ctrl+l", "clear_text", "Clear Text"),
-        Binding("ctrl+p", "play_audio", "Play Audio"),
-        Binding("ctrl+s", "stop_audio", "Stop Audio"),
     ]
 
     def __init__(
@@ -313,8 +317,18 @@ class SpeechPlaygroundPane(
             runtime_status_store or SpeechTTSRuntimeStatusStore()
         )
         self._audio_cpp_runtime_observation: AudioCppRuntimeObservation | None = None
+        self._audio_cpp_runtime_status_failed = False
         self._audio_cpp_runtime_request_generation = 0
         self._audio_cpp_lifecycle_busy: AudioCppRuntimeOperation | None = None
+        self._audio_cpp_lifecycle_action: AudioCppRuntimeAction | None = None
+        self._audio_cpp_primary_action: AudioCppRuntimeAction | None = None
+        self._audio_cpp_primary_observation: AudioCppRuntimeCardObservation | None = (
+            None
+        )
+        self._audio_cpp_action_generation = 0
+        self._audio_cpp_sample_state: AudioCppSampleState = "not_attempted"
+        self._audio_cpp_sample_identity: tuple[int, int, int] | None = None
+        self._audio_cpp_sample_focus_target: str | None = None
         self.init_synthesis_state()
         self.init_catalog_state()
         self._seed_session_control_snapshot()
@@ -556,16 +570,16 @@ class SpeechPlaygroundPane(
 
         if self._selected_runtime_provider() != "audio_cpp":
             return False
-        observation = self._audio_cpp_runtime_observation
-        if observation is None:
-            self._request_audio_cpp_lifecycle("test", from_primary=True)
-            return True
-        action = project_audio_cpp_runtime_card(observation).primary_action
+        action = self._audio_cpp_primary_action or project_audio_cpp_unknown_action()
         if not action.enabled:
             if action.disabled_reason:
                 self.app.notify(action.disabled_reason, severity="warning")
             return True
-        self._request_audio_cpp_lifecycle(action.operation, from_primary=True)
+        self._request_audio_cpp_lifecycle(
+            action.operation,
+            projected_action=action,
+            projected_observation=self._audio_cpp_primary_observation,
+        )
         return True
 
     @on(Switch.Changed)
@@ -1210,6 +1224,8 @@ class SpeechPlaygroundPane(
     ) -> str | None:
         """Fence both button and keyboard generation during managed transitions."""
 
+        if provider_id == "audio_cpp" and self._audio_cpp_runtime_status_failed:
+            return "Runtime status must be checked before this action is available."
         error = super()._generation_readiness_error(provider_id, model_id)
         if error is not None:
             return error
@@ -1227,13 +1243,21 @@ class SpeechPlaygroundPane(
             card = self.query_one("#audio-cpp-runtime-card", AudioCppRuntimeCard)
         except NoMatches:
             return
+        self._audio_cpp_action_generation += 1
         selected = provider_id == "audio_cpp"
         card.display = selected
         if selected:
+            self._audio_cpp_runtime_status_failed = False
             if self._audio_cpp_lifecycle_busy is not None:
-                self._render_audio_cpp_lifecycle_busy(self._audio_cpp_lifecycle_busy)
+                lifecycle_action = self._audio_cpp_lifecycle_action
+                if lifecycle_action is not None:
+                    self._render_audio_cpp_lifecycle_busy(lifecycle_action)
             else:
                 self._audio_cpp_runtime_observation = None
+                self._set_audio_cpp_primary_action(
+                    project_audio_cpp_unknown_action(),
+                    None,
+                )
                 loading_reason = (
                     "Runtime status is loading; Test Connection starts a fresh "
                     "audio.cpp check."
@@ -1264,6 +1288,9 @@ class SpeechPlaygroundPane(
             self._request_audio_cpp_runtime_observation()
             return
         self._audio_cpp_runtime_request_generation += 1
+        self._audio_cpp_runtime_status_failed = False
+        self._audio_cpp_primary_action = None
+        self._audio_cpp_primary_observation = None
         self._sync_audio_cpp_probe_label(None)
         try:
             primary = self.query_one("#tts-test-connection-btn", Button)
@@ -1273,6 +1300,46 @@ class SpeechPlaygroundPane(
             primary.refresh(layout=True)
         except NoMatches:
             pass
+
+    @staticmethod
+    def _audio_cpp_observation_identity(
+        observation: AudioCppRuntimeObservation,
+    ) -> tuple[int, int, int]:
+        return (
+            observation.saved_configuration_generation,
+            observation.applied_configuration_generation,
+            observation.process.process_generation,
+        )
+
+    def _audio_cpp_card_observation(
+        self,
+        observation: AudioCppRuntimeObservation,
+    ) -> AudioCppRuntimeCardObservation:
+        """Combine service truth with only matching pane-owned sample truth."""
+
+        sample_state = self._audio_cpp_sample_state
+        identity = self._audio_cpp_observation_identity(observation)
+        if (
+            self._audio_cpp_sample_identity is not None
+            and self._audio_cpp_sample_identity != identity
+        ):
+            self._audio_cpp_sample_state = "not_attempted"
+            self._audio_cpp_sample_identity = None
+            sample_state = "not_attempted"
+        return AudioCppRuntimeCardObservation(
+            runtime=observation,
+            sample_state=sample_state,
+        )
+
+    def _set_audio_cpp_primary_action(
+        self,
+        action: AudioCppRuntimeAction,
+        observation: AudioCppRuntimeCardObservation | None,
+    ) -> None:
+        """Retain the exact immutable action represented by the visible control."""
+
+        self._audio_cpp_primary_action = action
+        self._audio_cpp_primary_observation = observation
 
     def _sync_audio_cpp_probe_label(
         self,
@@ -1308,7 +1375,8 @@ class SpeechPlaygroundPane(
         self,
         operation: AudioCppRuntimeOperation,
         *,
-        from_primary: bool = False,
+        projected_action: AudioCppRuntimeAction | None = None,
+        projected_observation: AudioCppRuntimeCardObservation | None = None,
     ) -> None:
         """Accept one non-overlapping deliberate lifecycle action."""
 
@@ -1320,26 +1388,41 @@ class SpeechPlaygroundPane(
                 severity="warning",
             )
             return
+        action = projected_action
+        card_observation = projected_observation
         observation = self._audio_cpp_runtime_observation
-        if observation is not None:
-            projection = project_audio_cpp_runtime_card(observation)
-            action = (
-                projection.primary_action
-                if from_primary
-                else {
-                    "test": projection.primary_action,
+        if action is None:
+            if observation is None:
+                action = project_audio_cpp_unknown_action()
+            else:
+                card_observation = self._audio_cpp_card_observation(observation)
+                projection = project_audio_cpp_runtime_card(card_observation)
+                action = {
+                    "test": project_audio_cpp_unknown_action(),
+                    "sample": projection.primary_action,
                     "restart": projection.restart_action,
                     "shutdown": projection.shutdown_action,
                 }[operation]
+        if action.operation != operation:
+            self.app.notify(
+                "The visible audio.cpp action changed; review it and try again.",
+                severity="warning",
             )
-            if operation != "test" and not action.enabled:
-                if action.disabled_reason:
-                    self.app.notify(action.disabled_reason, severity="warning")
-                return
+            return
+        if not action.enabled:
+            if action.disabled_reason:
+                self.app.notify(action.disabled_reason, severity="warning")
+            return
+        action_generation = self._audio_cpp_action_generation
         self._audio_cpp_lifecycle_busy = operation
-        self._render_audio_cpp_lifecycle_busy(operation)
+        self._audio_cpp_lifecycle_action = action
+        self._render_audio_cpp_lifecycle_busy(action)
         self.app.run_worker(
-            self._run_audio_cpp_lifecycle(operation),
+            self._run_audio_cpp_lifecycle(
+                action,
+                card_observation,
+                action_generation,
+            ),
             name=f"speech_audio_cpp_{operation}",
             group="speech-audio-cpp-lifecycle",
             exclusive=True,
@@ -1348,15 +1431,21 @@ class SpeechPlaygroundPane(
 
     def _render_audio_cpp_lifecycle_busy(
         self,
-        operation: AudioCppRuntimeOperation,
+        action: AudioCppRuntimeAction,
     ) -> None:
         """Render immediate busy state without replacing focused controls."""
 
         busy_reason = "An audio.cpp operation is in progress."
+        operation = action.operation
         observation = self._audio_cpp_runtime_observation
         if observation is not None and observation.applied_mode == "managed":
             busy_state = {
                 "test": (
+                    "starting"
+                    if observation.process.state in {"stopped", "unavailable"}
+                    else observation.process.state
+                ),
+                "sample": (
                     "starting"
                     if observation.process.state in {"stopped", "unavailable"}
                     else observation.process.state
@@ -1373,23 +1462,11 @@ class SpeechPlaygroundPane(
                     "#audio-cpp-runtime-card",
                     AudioCppRuntimeCard,
                 ).apply_observation(busy_observation)
-                primary_label = {
-                    "test": (
-                        "Starting & Testing…"
-                        if busy_state == "starting"
-                        else "Testing…"
-                    ),
-                    "restart": (
-                        "Applying & Stopping…"
-                        if observation.saved_mode == "external"
-                        else "Restarting & Applying…"
-                    ),
-                    "shutdown": "Shutting down…",
-                }[operation]
+                primary_label = action.progress_label
             except NoMatches:
                 primary_label = "Working…"
         else:
-            primary_label = "Testing…" if operation == "test" else "Applying…"
+            primary_label = action.progress_label
             try:
                 self.query_one("#audio-cpp-runtime-status", Static).update(
                     "[CHECKING] Testing the external audio.cpp connection."
@@ -1417,9 +1494,9 @@ class SpeechPlaygroundPane(
             "#audio-cpp-runtime-shutdown",
         ):
             try:
-                action = self.query_one(selector, Button)
-                action.disabled = True
-                action.tooltip = busy_reason
+                control = self.query_one(selector, Button)
+                control.disabled = True
+                control.tooltip = busy_reason
             except NoMatches:
                 continue
         try:
@@ -1432,34 +1509,57 @@ class SpeechPlaygroundPane(
 
     async def _run_audio_cpp_lifecycle(
         self,
-        operation: AudioCppRuntimeOperation,
+        action: AudioCppRuntimeAction,
+        accepted_observation: AudioCppRuntimeCardObservation | None,
+        action_generation: int,
     ) -> None:
         """Execute an accepted service operation and reconcile passive UI state."""
 
+        operation = action.operation
         catalog = None
+        completed_observation: AudioCppRuntimeObservation | None = None
         failure_copy: str | None = None
         try:
             service = self._tts_service
             if service is None:
                 service = await self._tts_service_factory()
                 self._tts_service = service
-            if operation == "test":
+            if operation in {"test", "sample"}:
                 catalog = await service.start_and_test_audio_cpp()
             elif operation == "restart":
                 catalog = await service.restart_audio_cpp()
             else:
                 await service.shutdown_audio_cpp()
+            if operation == "sample":
+                completed_observation = await service.audio_cpp_runtime_observation()
         except asyncio.CancelledError:
             raise
         except Exception as error:
             failure_copy = self._catalog_error_copy(error, "audio_cpp")
         finally:
             self._audio_cpp_lifecycle_busy = None
+            self._audio_cpp_lifecycle_action = None
 
         if not self.is_mounted:
             return
         audio_cpp_selected = self._selected_runtime_provider() == "audio_cpp"
+        action_is_current = bool(
+            audio_cpp_selected
+            and action_generation == self._audio_cpp_action_generation
+        )
+        if operation == "sample" and not action_is_current:
+            self._stale_providers.add("audio_cpp")
+            if audio_cpp_selected:
+                self._request_audio_cpp_runtime_observation()
+            return
         if failure_copy is not None:
+            if operation == "sample":
+                self._audio_cpp_sample_state = "failed"
+                self._audio_cpp_sample_identity = (
+                    self._audio_cpp_observation_identity(accepted_observation.runtime)
+                    if accepted_observation is not None
+                    else None
+                )
             self.app.notify(failure_copy, severity="error")
             if audio_cpp_selected:
                 try:
@@ -1467,6 +1567,73 @@ class SpeechPlaygroundPane(
                 except NoMatches:
                     pass
                 self._sync_generate_enabled()
+        elif operation == "sample" and catalog is not None:
+            expected_model = self._audio_cpp_sample_model(accepted_observation)
+            sample_error = self._audio_cpp_sample_catalog_error(
+                catalog,
+                expected_model,
+                accepted_observation,
+                completed_observation,
+            )
+            if sample_error is not None:
+                self._audio_cpp_sample_state = "failed"
+                self._audio_cpp_sample_identity = (
+                    self._audio_cpp_observation_identity(completed_observation)
+                    if completed_observation is not None
+                    else None
+                )
+                self.app.notify(sample_error, severity="error")
+                self._stale_providers.add("audio_cpp")
+                self._catalog_generation_allowed = False
+                self._sync_generate_enabled()
+                self.call_after_refresh(
+                    self._focus_audio_cpp_action_target,
+                    "#tts-test-connection-btn",
+                )
+            else:
+                assert expected_model is not None
+                assert completed_observation is not None
+                self._audio_cpp_runtime_observation = completed_observation
+                self._accept_audio_cpp_sample_catalog(catalog, expected_model)
+                self._audio_cpp_sample_state = "generating"
+                self._audio_cpp_sample_identity = self._audio_cpp_observation_identity(
+                    completed_observation
+                )
+                self._audio_cpp_sample_focus_target = action.post_operation_focus
+                card_observation = self._audio_cpp_card_observation(
+                    completed_observation
+                )
+                try:
+                    projection = self.query_one(
+                        "#audio-cpp-runtime-card",
+                        AudioCppRuntimeCard,
+                    ).apply_observation(card_observation)
+                    self._set_audio_cpp_primary_action(
+                        projection.primary_action,
+                        card_observation,
+                    )
+                    primary = self.query_one("#tts-test-connection-btn", Button)
+                    primary.label = projection.primary_action.label
+                    primary.disabled = not projection.primary_action.enabled
+                    primary.tooltip = projection.primary_action.tooltip
+                    primary.refresh(layout=True)
+                except NoMatches:
+                    pass
+                text_area = self.query_one("#tts-text-input", TextArea)
+                if not text_area.text.strip():
+                    text_area.text = (
+                        "Hello from Chatbook. This is a sample generated by your "
+                        "local audio.cpp model."
+                    )
+                self._generate_tts()
+                if self._generation_operation_id is None:
+                    self._audio_cpp_sample_state = "failed"
+                    self._audio_cpp_sample_focus_target = None
+                    self._render_current_audio_cpp_observation()
+                    self.call_after_refresh(
+                        self._focus_audio_cpp_action_target,
+                        "#tts-test-connection-btn",
+                    )
         elif catalog is not None:
             if audio_cpp_selected:
                 self._load_provider_catalog("audio_cpp", refresh=False)
@@ -1482,6 +1649,162 @@ class SpeechPlaygroundPane(
                 except NoMatches:
                     pass
         self._request_audio_cpp_runtime_observation()
+        if operation != "sample" or failure_copy is not None:
+            self.call_after_refresh(
+                self._focus_audio_cpp_action_target,
+                action.post_operation_focus
+                if failure_copy is None
+                else "#tts-test-connection-btn",
+            )
+
+    def _focus_audio_cpp_action_target(self, selector: str) -> None:
+        """Focus a retained action target only while audio.cpp remains visible."""
+
+        if self._selected_runtime_provider() != "audio_cpp":
+            return
+        try:
+            self.query_one(selector).focus()
+        except NoMatches:
+            return
+
+    @staticmethod
+    def _audio_cpp_sample_model(
+        observation: AudioCppRuntimeCardObservation | None,
+    ) -> str | None:
+        if observation is None:
+            return None
+        runtime = observation.runtime
+        if runtime.process.state in {"running", "unhealthy", "draining"}:
+            return runtime.applied_guided_default_model_id
+        return runtime.saved_guided_default_model_id
+
+    @staticmethod
+    def _audio_cpp_sample_catalog_error(
+        catalog: Any,
+        expected_model: str | None,
+        accepted: AudioCppRuntimeCardObservation | None,
+        completed: AudioCppRuntimeObservation | None,
+    ) -> str | None:
+        if expected_model is None or accepted is None:
+            return "The Guided sample selection is no longer available."
+        if completed is None:
+            return "The audio.cpp runtime result could not be verified."
+        source = accepted.runtime
+        if (
+            completed.saved_configuration_generation
+            != source.saved_configuration_generation
+            or completed.applied_configuration_generation
+            != source.saved_configuration_generation
+            or completed.saved_guided_default_model_id != expected_model
+            or completed.applied_guided_default_model_id != expected_model
+            or completed.process.state != "running"
+            or completed.tts_capability != "available"
+            or not completed.catalog_fresh
+        ):
+            return "The saved Guided setup changed before the sample could run."
+        if catalog.provider_id != "audio_cpp":
+            return "The audio.cpp server returned an incompatible model catalog."
+        if catalog.health.state != "available" or not catalog.health.fresh:
+            return "The audio.cpp model catalog is not ready for a sample."
+        model = next(
+            (
+                candidate
+                for candidate in catalog.models
+                if candidate.model_id == expected_model
+            ),
+            None,
+        )
+        if model is None or model.upstream_mode != "tts":
+            return "The saved Guided default model was not exposed for text-to-speech."
+        return None
+
+    def _accept_audio_cpp_sample_catalog(
+        self,
+        catalog: Any,
+        expected_model: str,
+    ) -> None:
+        """Publish the exact lifecycle catalog before using the normal generate path."""
+
+        service = self._tts_service
+        if service is None:
+            return
+        model = next(
+            candidate
+            for candidate in catalog.models
+            if candidate.model_id == expected_model
+        )
+        observed_at = datetime.now(timezone.utc)
+        self._catalogs["audio_cpp"] = catalog
+        self._catalog_configuration_revisions["audio_cpp"] = (
+            service.configuration_revision("audio_cpp")
+        )
+        self._catalog_observed_at["audio_cpp"] = observed_at
+        self._catalog_runtime_observed_at["audio_cpp"] = observed_at
+        self._catalog_checking_providers.discard("audio_cpp")
+        self._catalog_unavailable_providers.discard("audio_cpp")
+        self._stale_providers.discard("audio_cpp")
+        self._pending_voice_selections.pop("audio_cpp", None)
+        self._discovered_voices[("audio_cpp", expected_model)] = tuple(model.voices)
+        snapshot = self._provider_control_snapshots.setdefault("audio_cpp", {})
+        snapshot["model_id"] = expected_model
+        snapshot["voice_id"] = None
+        snapshot["response_format"] = "wav"
+        snapshot["speed"] = 1.0
+        self._apply_catalog("audio_cpp", catalog)
+
+    def _render_current_audio_cpp_observation(self) -> None:
+        observation = self._audio_cpp_runtime_observation
+        if (
+            observation is None
+            or self._selected_runtime_provider() != "audio_cpp"
+            or self._audio_cpp_lifecycle_busy is not None
+        ):
+            return
+        card_observation = self._audio_cpp_card_observation(observation)
+        try:
+            projection = self.query_one(
+                "#audio-cpp-runtime-card",
+                AudioCppRuntimeCard,
+            ).apply_observation(card_observation)
+            primary = self.query_one("#tts-test-connection-btn", Button)
+        except NoMatches:
+            return
+        self._set_audio_cpp_primary_action(
+            projection.primary_action,
+            card_observation,
+        )
+        primary.label = projection.primary_action.label
+        primary.disabled = not projection.primary_action.enabled
+        primary.tooltip = projection.primary_action.tooltip
+        primary.refresh(layout=True)
+
+    def _on_generation_result(self, artifact: Any) -> None:
+        """Project Retry/ready state only for the guided sample now in flight."""
+
+        if self._audio_cpp_sample_state != "generating":
+            return
+        observation = self._audio_cpp_runtime_observation
+        expected_model = (
+            None if observation is None else observation.applied_guided_default_model_id
+        )
+        succeeded = bool(
+            artifact is not None
+            and artifact.provider_id == "audio_cpp"
+            and artifact.model_id == expected_model
+        )
+        focus_target = self._audio_cpp_sample_focus_target
+        self._audio_cpp_sample_focus_target = None
+        self._audio_cpp_sample_state = "ready" if succeeded else "failed"
+        self._render_current_audio_cpp_observation()
+        if (
+            succeeded
+            and focus_target is not None
+            and self._audio_cpp_lifecycle_busy is None
+        ):
+            self.call_after_refresh(
+                self._focus_audio_cpp_action_target,
+                focus_target,
+            )
 
     def _request_audio_cpp_runtime_observation(self) -> None:
         """Reserve stale-result identity before starting a passive read worker."""
@@ -1524,20 +1847,24 @@ class SpeechPlaygroundPane(
             return
         if not self._audio_cpp_runtime_observation_is_current_enough(observation):
             return
+        self._audio_cpp_runtime_status_failed = False
         self._audio_cpp_runtime_observation = observation
         if self._audio_cpp_lifecycle_busy is not None:
             return
+        card_observation = self._audio_cpp_card_observation(observation)
         try:
             card = self.query_one("#audio-cpp-runtime-card", AudioCppRuntimeCard)
-            projection = card.apply_observation(observation)
+            projection = card.apply_observation(card_observation)
             primary = self.query_one("#tts-test-connection-btn", Button)
         except NoMatches:
             return
+        self._set_audio_cpp_primary_action(
+            projection.primary_action,
+            card_observation,
+        )
         primary.label = projection.primary_action.label
         primary.disabled = not projection.primary_action.enabled
-        primary.tooltip = (
-            projection.primary_action.disabled_reason or projection.primary_action.label
-        )
+        primary.tooltip = projection.primary_action.tooltip
         primary.refresh(layout=True)
         self._sync_audio_cpp_probe_label(observation)
 
@@ -1584,7 +1911,12 @@ class SpeechPlaygroundPane(
         )
         self._stale_providers.add("audio_cpp")
         self._catalog_generation_allowed = False
+        self._audio_cpp_runtime_status_failed = True
         self._audio_cpp_runtime_observation = None
+        self._set_audio_cpp_primary_action(
+            project_audio_cpp_unknown_action(),
+            None,
+        )
         try:
             self.query_one("#audio-cpp-runtime-status", Static).update(
                 "[UNAVAILABLE] Runtime status could not be read."
@@ -1860,6 +2192,12 @@ class SpeechPlaygroundPane(
                 "Generate speech to create a temporary result.",
                 id="audio-result-lifecycle",
                 classes="speech-result-lifecycle",
+                markup=False,
+            )
+            yield Static(
+                "No captured provider or model yet.",
+                id="audio-result-provenance",
+                classes="speech-result-provenance",
                 markup=False,
             )
             with Horizontal(

@@ -5,6 +5,7 @@ from copy import deepcopy
 import pytest
 
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
+from tldw_chatbook.TTS.audio_cpp_guided_config import AudioCppSettingsConfig
 from tldw_chatbook.UI.Screens.settings_speech_tts import (
     BUILT_IN_TTS_PROVIDER_ORDER,
     CredentialIntent,
@@ -250,7 +251,7 @@ def test_ordinary_save_excludes_credentials_and_targets_only_changed_provider() 
     assert proposal.changed_provider_ids == ("audio_cpp",)
     assert proposal.settings == {
         "audio_cpp": {
-            **AudioCppConfig().to_mapping(),
+            **AudioCppSettingsConfig().to_mapping(),
             "base_url": "http://127.0.0.1:18001",
             "synthesis_timeout_seconds": 321.0,
         }

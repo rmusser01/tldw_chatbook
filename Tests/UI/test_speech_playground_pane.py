@@ -25,7 +25,10 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSRegistryClosedError,
 )
 from tldw_chatbook.TTS.audio_player import PlaybackState
-from tldw_chatbook.TTS.playground_types import STTSGeneratedAudio
+from tldw_chatbook.TTS.playground_types import (
+    STTSGeneratedAudio,
+    TTSRequestedSelectionSnapshot,
+)
 from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferencesSnapshot
 from tldw_chatbook.UI.Speech.speech_axis_row import axis_chip_id
 from tldw_chatbook.UI.Speech.speech_playground_model import AXIS_CONTROLS
@@ -77,7 +80,12 @@ async def _speech_screen(app):
     return screen
 
 
-def _generated_artifact(tmp_path, *, metadata=None) -> STTSGeneratedAudio:
+def _generated_artifact(
+    tmp_path,
+    *,
+    metadata=None,
+    requested_selection: TTSRequestedSelectionSnapshot | None = None,
+) -> STTSGeneratedAudio:
     path = tmp_path / "current-result.wav"
     path.write_bytes(b"RIFF")
     return STTSGeneratedAudio(
@@ -90,6 +98,7 @@ def _generated_artifact(tmp_path, *, metadata=None) -> STTSGeneratedAudio:
         audio_format="wav",
         content_type="audio/wav",
         metadata=metadata or {},
+        requested_selection=requested_selection,
     )
 
 
@@ -451,6 +460,141 @@ async def test_current_result_reports_only_known_artifact_facts(
         assert "temporary" in lifecycle.casefold()
         assert "export" in lifecycle.casefold()
         assert "0:00 / 0:00" not in time_copy
+
+
+@pytest.mark.asyncio
+async def test_complete_wav_result_has_safe_provenance_and_repeat_save_actions(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_load_provider_catalog",
+        lambda self, *args, **kwargs: None,
+    )
+    app = _AxisHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        pane = app.query_one(SpeechPlaygroundPane)
+        generate_calls: list[bool] = []
+        monkeypatch.setattr(
+            pane,
+            "_generate_tts",
+            lambda: generate_calls.append(True),
+        )
+        selection = TTSRequestedSelectionSnapshot(
+            provider_id="audio_cpp",
+            model_id="model-a",
+            voice_id=None,
+            response_format="wav",
+            speed=1.0,
+            options={},
+            configuration_revision=12,
+        )
+        artifact = _generated_artifact(
+            tmp_path,
+            metadata={
+                "delivery": "complete_wav",
+                "frame_count": 48_000,
+                "sample_rate": 24_000,
+                "process_generation": 7,
+                "private_path": "/private/model/root",
+            },
+            requested_selection=selection,
+        )
+
+        pane._generation_complete(artifact)
+        await pilot.pause()
+
+        status = str(app.query_one("#audio-player-status", Static).renderable)
+        provenance = str(app.query_one("#audio-result-provenance", Static).renderable)
+        repeat = app.query_one("#audio-generate-again-btn", Button)
+        save = app.query_one("#audio-export-btn", Button)
+        assert status == "Ready · Complete WAV · 0:02"
+        assert provenance == (
+            "Provider: audio.cpp · Model: model-a · Voice: Server default · "
+            "configuration revision 12 · process generation 7"
+        )
+        assert "Synthetic UAT text" not in provenance
+        assert "/private/" not in provenance
+        assert str(repeat.label) == "Generate again"
+        assert repeat.disabled is False
+        assert str(save.label) == "Save WAV as…"
+        assert save.disabled is False
+        play = app.query_one("#audio-play-btn", Button)
+        assert "Ctrl+" not in str(play.tooltip)
+        pane._sync_active_transport_actions()
+        assert "Ctrl+" not in str(app.query_one("#stop-audio-btn", Button).tooltip)
+
+        repeat.press()
+        await pilot.pause()
+        assert generate_calls == [True]
+
+
+def test_current_result_provenance_bounds_and_flattens_provider_identifiers(
+    tmp_path: Path,
+) -> None:
+    """Provider-controlled identifiers cannot break the one-line result card."""
+
+    path = tmp_path / "provider-identifiers.wav"
+    path.write_bytes(b"RIFF")
+    artifact = STTSGeneratedAudio(
+        path=path,
+        provider_id="legacy\nprovider" + ("p" * 200),
+        model_id="model\tidentifier" + ("m" * 200),
+        voice_id="voice\r\x00\u200bidentifier" + ("v" * 200),
+        source_text="Synthetic text",
+        operation_id="provider-identifier-operation",
+        audio_format="wav",
+        content_type="audio/wav",
+    )
+
+    copy = SpeechPlaygroundPane._current_result_provenance_copy(artifact)
+
+    assert all(character not in copy for character in "\r\n\t\x00\u200b")
+    assert len(copy) <= 270
+    assert copy.count("…") == 3
+
+
+@pytest.mark.asyncio
+async def test_current_result_disabled_actions_explain_the_current_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_load_provider_catalog",
+        lambda self, *args, **kwargs: None,
+    )
+    app = _AxisHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        pane = app.query_one(SpeechPlaygroundPane)
+
+        for selector in (
+            "#audio-play-btn",
+            "#pause-audio-btn",
+            "#stop-audio-btn",
+            "#audio-generate-again-btn",
+            "#audio-export-btn",
+        ):
+            action = app.query_one(selector, Button)
+            assert action.disabled is True
+            assert "generate" in str(action.tooltip).lower()
+
+        pane._generation_complete(_generated_artifact(tmp_path))
+        await pilot.pause()
+
+        for selector in ("#pause-audio-btn", "#stop-audio-btn"):
+            action = app.query_one(selector, Button)
+            assert action.disabled is True
+            assert "start playback" in str(action.tooltip).lower()
+
+        app._is_generating = True
+        pane._sync_generate_enabled()
+        repeat = app.query_one("#audio-generate-again-btn", Button)
+        assert repeat.disabled is True
+        assert "in progress" in str(repeat.tooltip).lower()
 
 
 @pytest.mark.asyncio

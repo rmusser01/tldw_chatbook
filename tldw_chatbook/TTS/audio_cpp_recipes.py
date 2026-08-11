@@ -20,6 +20,7 @@ from .audio_cpp_guided_config import (
     AudioCppBackendPreference,
     AudioCppRecipeOption,
     AudioCppSafeModelProjection,
+    AudioCppSettingsConfig,
 )
 
 
@@ -711,6 +712,8 @@ def _recipe(
     required_files: tuple[AudioCppFileSignal, ...],
     model_relative_path: str | None,
     language: str | None = None,
+    recipe_revision: int = 1,
+    reference_requirement: AudioCppReferenceRequirement | None = None,
 ) -> AudioCppPackageRecipe:
     options = (
         ()
@@ -728,7 +731,7 @@ def _recipe(
     return AudioCppPackageRecipe(
         schema_version=AUDIO_CPP_RECIPE_SCHEMA_VERSION,
         recipe_id=f"audio-cpp-0.5.1.{family}.{package_variant}",
-        recipe_revision=1,
+        recipe_revision=recipe_revision,
         audio_cpp_release=AUDIO_CPP_PINNED_RELEASE,
         audio_cpp_commit=AUDIO_CPP_PINNED_COMMIT,
         family=family,
@@ -742,7 +745,9 @@ def _recipe(
         projection=projection,
         default_public_model_id=package_variant.replace("_", "-"),
         reference_requirement=(
-            AudioCppReferenceRequirement.OPTIONAL
+            reference_requirement
+            if reference_requirement is not None
+            else AudioCppReferenceRequirement.OPTIONAL
             if "clone" in capabilities
             else AudioCppReferenceRequirement.NONE
         ),
@@ -842,6 +847,8 @@ _INITIAL_RECIPES = (
             required_files=(_gguf_file(filename),),
             model_relative_path=filename,
             language=language,
+            recipe_revision=2,
+            reference_requirement=AudioCppReferenceRequirement.REQUIRED,
         )
         for variant, display, precision, language, filename in _POCKET_GGUF_VARIANTS
     ),
@@ -872,6 +879,40 @@ _INITIAL_RECIPES = (
 )
 
 AUDIO_CPP_RECIPE_REGISTRY = AudioCppRecipeRegistry(_INITIAL_RECIPES)
+
+
+def audio_cpp_guided_default_is_text_ready(
+    settings: AudioCppSettingsConfig,
+    *,
+    registry: AudioCppRecipeRegistry = AUDIO_CPP_RECIPE_REGISTRY,
+) -> bool:
+    """Return whether the exact Guided default can generate without a reference.
+
+    Args:
+        settings: Validated full audio.cpp Settings snapshot.
+        registry: Sealed recipe registry used to validate accepted identities.
+
+    Returns:
+        ``True`` only when the exact default package is a reviewed text-to-speech
+        recipe that does not require a voice reference.
+    """
+
+    default_model_id = settings.guided_default_model_id
+    if default_model_id is None:
+        return False
+    for package in settings.guided_packages:
+        if package.public_model_id != default_model_id:
+            continue
+        try:
+            recipe = registry.validate_accepted(package)
+        except ValueError:
+            return False
+        return bool(
+            recipe.projection.task == "tts"
+            and recipe.reference_requirement
+            is not AudioCppReferenceRequirement.REQUIRED
+        )
+    return False
 
 
 _RELEASE_PACKAGES: dict[str, tuple[str, ...]] = {
@@ -982,4 +1023,5 @@ __all__ = (
     "AudioCppReferenceRequirement",
     "AudioCppReleaseAccountingEntry",
     "AudioCppVerifiedSupportClaim",
+    "audio_cpp_guided_default_is_text_ready",
 )

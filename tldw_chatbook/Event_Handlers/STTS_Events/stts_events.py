@@ -767,6 +767,9 @@ class STTSEventHandler:
             )
         )
         self._track_operation_file(snapshot.operation_id, path)
+        artifact_metadata = dict(response.metadata)
+        if type(response.sample_rate) is int and response.sample_rate > 0:
+            artifact_metadata["sample_rate"] = response.sample_rate
         try:
             return STTSGeneratedAudio(
                 path=path,
@@ -777,7 +780,7 @@ class STTSEventHandler:
                 operation_id=snapshot.operation_id,
                 audio_format=response.audio_format,
                 content_type=response.content_type,
-                metadata=response.metadata,
+                metadata=artifact_metadata,
                 requested_selection=requested_selection,
             )
         except BaseException:

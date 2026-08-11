@@ -1,14 +1,4 @@
-"""The Playground's keyboard shortcuts must survive its rebuild.
-
-`SpeechPlaygroundPane` bound five of them. Deleting that class took its
-BINDINGS with it while the `action_*` methods moved into
-`SpeechPlaybackMixin` -- so every method still existed, was still callable,
-and no test failed, while Ctrl+G through Ctrl+S quietly stopped doing
-anything. The screen went on advertising them in its shortcut line.
-
-An action with no binding and a binding with no action fail in opposite
-directions and neither raises, so both halves are asserted.
-"""
+"""Speech Playground shortcuts preserve actions without shadowing global keys."""
 
 from __future__ import annotations
 
@@ -19,14 +9,12 @@ from tldw_chatbook.UI.Screens.stts_screen import STTSScreen
 from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
 from Tests.UI.app_factory import _build_test_app
 
-#: (key, action) exactly as the legacy widget bound them.
-LEGACY_SHORTCUTS = {
+#: Pane-local chords that do not conflict with ADR-031's global/terminal keys.
+SUPPORTED_PANE_SHORTCUTS = {
     "ctrl+g": "generate_tts",
-    "ctrl+r": "random_text",
     "ctrl+l": "clear_text",
-    "ctrl+p": "play_audio",
-    "ctrl+s": "stop_audio",
 }
+FORBIDDEN_PANE_SHORTCUTS = {"ctrl+r", "ctrl+p", "ctrl+s"}
 
 
 def _bindings() -> dict[str, str]:
@@ -38,20 +26,28 @@ def _bindings() -> dict[str, str]:
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("key,action", sorted(LEGACY_SHORTCUTS.items()))
-def test_each_legacy_shortcut_is_still_bound(key, action):
+@pytest.mark.parametrize("key,action", sorted(SUPPORTED_PANE_SHORTCUTS.items()))
+def test_each_supported_pane_shortcut_is_bound(key, action):
+    """Every approved pane-local chord keeps its documented action."""
+
     bound = _bindings()
     assert key in bound, f"{key} ({action}) is no longer bound"
     assert bound[key] == action, f"{key} now runs {bound[key]!r}, not {action!r}"
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("action", sorted(set(LEGACY_SHORTCUTS.values())))
+@pytest.mark.parametrize("action", sorted(set(SUPPORTED_PANE_SHORTCUTS.values())))
 def test_every_bound_action_exists(action):
     """A binding naming a missing method fails only when the key is pressed."""
     assert callable(getattr(SpeechPlaygroundPane, f"action_{action}", None)), (
         f"action_{action} does not exist, so its binding is dead"
     )
+
+
+def test_pane_does_not_shadow_reserved_or_terminal_shortcuts() -> None:
+    """Pane-local bindings leave global and terminal-convention chords free."""
+
+    assert FORBIDDEN_PANE_SHORTCUTS.isdisjoint(_bindings())
 
 
 # --------------------------------------------------------------------------
