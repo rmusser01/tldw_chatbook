@@ -33,7 +33,7 @@ from tldw_chatbook.Widgets.Console.console_inspector_section import (
 
 
 def _rows(
-    n: int, *, clickable: bool = False, status: str = ""
+    n: int, *, clickable: bool = False, status: str = "", cancellable: bool = False
 ) -> tuple[InspectorSectionRow, ...]:
     return tuple(
         InspectorSectionRow(
@@ -42,6 +42,7 @@ def _rows(
             secondary_text=f"last step {i}",
             status=status,
             clickable=clickable,
+            cancellable=cancellable,
         )
         for i in range(n)
     )
@@ -82,6 +83,7 @@ class _SectionHarness(App[None]):
         super().__init__()
         self._section = section
         self.activated: list[tuple[str, str]] = []
+        self.cancel_requested: list[tuple[str, str]] = []
         self.view_all_events: list[str] = []
         self.collapse_events: list[tuple[str, bool]] = []
 
@@ -91,6 +93,12 @@ class _SectionHarness(App[None]):
     @on(ConsoleInspectorSection.RowActivated)
     def _on_row_activated(self, event: ConsoleInspectorSection.RowActivated) -> None:
         self.activated.append((event.section_id, event.row_id))
+
+    @on(ConsoleInspectorSection.RowCancelRequested)
+    def _on_row_cancel_requested(
+        self, event: ConsoleInspectorSection.RowCancelRequested
+    ) -> None:
+        self.cancel_requested.append((event.section_id, event.row_id))
 
     @on(ConsoleInspectorSection.ViewAllRequested)
     def _on_view_all(self, event: ConsoleInspectorSection.ViewAllRequested) -> None:
@@ -573,6 +581,147 @@ async def test_row_becoming_clickable_via_sync_state_does_not_recompose():
         await pilot.click("#console-inspector-section-agents-row-0")
         await pilot.pause()
         assert app.activated == [("agents", "alpha")]
+
+
+@pytest.mark.asyncio
+async def test_pressing_delete_on_a_cancellable_row_posts_row_cancel_requested():
+    """PR2b Task 5 (per-row cancel): Delete -- not Enter/Space -- is the
+    cancel gesture, so it can coexist with a clickable row's own
+    drill-in gesture without contention (see the "both at once" test
+    below)."""
+    section = ConsoleInspectorSection(
+        title="Agents",
+        section_id="agents",
+        rows=_rows(1, cancellable=True),
+        id="section",
+    )
+    app = _SectionHarness(section)
+    async with app.run_test(size=(60, 12)) as pilot:
+        await pilot.pause()
+        row_widget = app.query_one(
+            "#console-inspector-section-agents-row-0", ConsoleInspectorSectionRow
+        )
+        assert row_widget.can_focus is True
+        row_widget.focus()
+        await pilot.pause()
+        await pilot.press("delete")
+        await pilot.pause()
+        assert app.cancel_requested == [("agents", "row-0")]
+        assert app.activated == []
+
+
+@pytest.mark.asyncio
+async def test_pressing_delete_on_a_non_cancellable_row_posts_nothing():
+    section = ConsoleInspectorSection(
+        title="Agents",
+        section_id="agents",
+        rows=_rows(1, cancellable=False),
+        id="section",
+    )
+    app = _SectionHarness(section)
+    async with app.run_test(size=(60, 12)) as pilot:
+        await pilot.pause()
+        row_widget = app.query_one(
+            "#console-inspector-section-agents-row-0", ConsoleInspectorSectionRow
+        )
+        # Not focusable at all: neither clickable nor cancellable.
+        assert row_widget.can_focus is False
+        row_widget.focus()
+        await pilot.pause()
+        await pilot.press("delete")
+        await pilot.pause()
+        assert app.cancel_requested == []
+
+
+@pytest.mark.asyncio
+async def test_a_row_can_be_both_clickable_and_cancellable_independently():
+    """Enter drills in; Delete cancels -- the same row answers to both
+    gestures without either interfering with the other, proving `clickable`
+    and `cancellable` are genuinely independent dimensions."""
+    row = InspectorSectionRow(
+        row_id="alpha",
+        primary_text="Agent alpha - running",
+        clickable=True,
+        cancellable=True,
+    )
+    section = ConsoleInspectorSection(
+        title="Agents", section_id="agents", rows=(row,), id="section"
+    )
+    app = _SectionHarness(section)
+    async with app.run_test(size=(60, 12)) as pilot:
+        await pilot.pause()
+        row_widget = app.query_one(
+            "#console-inspector-section-agents-row-0", ConsoleInspectorSectionRow
+        )
+        row_widget.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.activated == [("agents", "alpha")]
+        assert app.cancel_requested == []
+
+        await pilot.press("delete")
+        await pilot.pause()
+        assert app.cancel_requested == [("agents", "alpha")]
+        assert app.activated == [("agents", "alpha")]  # unchanged
+
+
+@pytest.mark.asyncio
+async def test_cancellable_re_syncs_on_an_in_place_patch():
+    """Mirrors `test_row_becoming_clickable_via_sync_state_does_not_
+    recompose` for the new `cancellable` field -- a running -> done
+    transition (cancellable -> not) must patch in place, not recompose,
+    and the row must stop answering to Delete afterward."""
+    rows = (
+        InspectorSectionRow(
+            row_id="alpha",
+            primary_text="Agent alpha - running",
+            status="running",
+            cancellable=True,
+        ),
+    )
+    section = ConsoleInspectorSection(
+        title="Agents", section_id="agents", rows=rows, id="section"
+    )
+    app = _SectionHarness(section)
+    async with app.run_test(size=(60, 12)) as pilot:
+        await pilot.pause()
+        row_widget = app.query_one(
+            "#console-inspector-section-agents-row-0", ConsoleInspectorSectionRow
+        )
+        assert row_widget.can_focus is True
+
+        updated_rows = (
+            InspectorSectionRow(
+                row_id="alpha",
+                primary_text="Agent alpha - done",
+                status="done",
+                cancellable=False,
+            ),
+        )
+        section.sync_state(
+            ConsoleInspectorSectionState(rows=updated_rows, summary="")
+        )
+        await pilot.pause()
+
+        # Same row_id sequence -> in-place, even though cancellability
+        # flipped (mirrors clickable's own exclusion from the structural
+        # key).
+        assert section.recompose_count == 0
+        assert (
+            app.query_one(
+                "#console-inspector-section-agents-row-0", ConsoleInspectorSectionRow
+            )
+            is row_widget
+        )
+        assert row_widget.cancellable is False
+        assert row_widget.can_focus is False
+
+        row_widget.focus()
+        await pilot.pause()
+        await pilot.press("delete")
+        await pilot.pause()
+        assert app.cancel_requested == []
 
 
 @pytest.mark.asyncio

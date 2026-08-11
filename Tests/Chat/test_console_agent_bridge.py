@@ -3883,6 +3883,93 @@ def test_fleet_teardown_pop_is_identity_checked_not_blind(tmp_path):
     assert bridge.fleet_snapshot("conv-resend") == []
 
 
+# -- PR2b Task 5: ConsoleAgentBridge.cancel_subagent delegation ----------
+
+
+def test_cancel_subagent_returns_false_for_an_unknown_conversation(tmp_path):
+    """No run has ever touched this conversation id -- a clean `False`,
+    matching `fleet_snapshot`'s own no-service degradation."""
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=None)
+    assert bridge.cancel_subagent("never-seen-conversation", "whatever") is False
+
+
+def test_cancel_subagent_delegates_to_the_published_services_live_handle(
+    tmp_path,
+):
+    """PR2b Task 5: `cancel_subagent` resolves the RIGHT `AgentService` for
+    a conversation (the same `_fleet_services` publish `fleet_snapshot`
+    itself reads) and forwards `handle_id` straight through with no
+    resolution step -- a real, live handle id succeeds; an unrelated id on
+    the SAME conversation does not (proving this is not a blanket "any id
+    on a known conversation succeeds" stub); and once the run has
+    completed (the handle is terminal), the same real handle id no longer
+    succeeds either.
+
+    The full cooperative-cancel-revokes-approval-cards mechanism this
+    delegates into is proven directly against `AgentService.cancel_
+    subagent` in `Tests/Agents/test_fleet_runtime.py::test_cancel_
+    subagent_revokes_approval_cards_mid_run` -- this test's job is only to
+    pin the bridge's OWN one-line lookup-and-forward, not re-prove the
+    mechanism underneath it.
+    """
+    gate = threading.Event()
+    gateway = _FleetTwoChildGateway(
+        parent_script=[
+            [_fence("spawn_subagent", {"task": "task A"})],  # primary turn 1
+            ["parent final"],  # primary turn 2
+        ],
+        child_result=["child answer"],
+        gate=gate,
+        needed=1,
+    )
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=gateway
+    )
+
+    result: dict = {}
+
+    def do_run():
+        result["outcome"] = _run(
+            bridge, store, session, assistant.id, conversation_id="conv-cancel"
+        )
+
+    runner = threading.Thread(target=do_run, name="test-bridge-cancel-subagent-run")
+    runner.start()
+    try:
+        assert gateway.entered_event.wait(5), (
+            "the child never reached its gated turn"
+        )
+        live = bridge.fleet_snapshot("conv-cancel")
+        assert len(live) == 1
+        handle_id = live[0].handle_id
+
+        # An unrelated id on the SAME (real, live) conversation does not
+        # succeed -- this is not a blanket "known conversation" stub.
+        assert bridge.cancel_subagent("conv-cancel", "not-a-real-handle") is False
+
+        assert bridge.cancel_subagent("conv-cancel", handle_id) is True
+    finally:
+        gate.set()
+    runner.join(10)
+    assert not runner.is_alive(), "run_reply never returned"
+
+    # The run has finished -- `run_reply`'s own teardown has popped this
+    # conversation's `_fleet_services` entry (mirroring `fleet_snapshot`'s
+    # own post-completion behavior, pinned by `test_fleet_snapshot_
+    # reflects_two_live_handles_in_flight_then_empty_after_run_completes`
+    # above), so the same real handle id no longer succeeds either.
+    assert bridge.cancel_subagent("conv-cancel", handle_id) is False
+
+
 # -- PR2b Task 2: real per-child status on the live `subagents` rows -----
 
 

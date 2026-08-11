@@ -39,6 +39,7 @@ from tldw_chatbook.Agents.fleet_coordinator import FleetHandle
 from tldw_chatbook.Chat.console_agent_bridge import AgentLiveSnapshot
 from tldw_chatbook.Widgets.Console.console_inspector_section import (
     ConsoleInspectorSection,
+    ConsoleInspectorSectionRow,
 )
 
 _AGENT_SECTION_SIZE = (180, 48)
@@ -66,11 +67,21 @@ class _FleetBridge:
         self._handles = list(handles)
         self._by_run_id = {h.run_id: h for h in handles if h.run_id}
         self._conversation_id = conversation_id
+        #: PR2b Task 5: every `cancel_subagent(conversation_id, handle_id)`
+        #: call this fake received, in order -- the seam the per-row-cancel
+        #: wiring tests assert against.
+        self.cancel_calls: list[tuple[str, str]] = []
 
     def fleet_snapshot(self, conversation_id: str) -> list[FleetHandle]:
         if conversation_id != self._conversation_id:
             return []
         return list(self._handles)
+
+    def cancel_subagent(self, conversation_id: str, handle_id: str) -> bool:
+        self.cancel_calls.append((conversation_id, handle_id))
+        return conversation_id == self._conversation_id and any(
+            h.handle_id == handle_id for h in self._handles
+        )
 
     def live_snapshot(self, conversation_id: str) -> AgentLiveSnapshot:
         if conversation_id != self._conversation_id:
@@ -450,3 +461,140 @@ async def test_clicking_the_first_row_drills_into_that_child_directly():
         await pilot.pause()
 
         assert console._console_agent_drilldown_run_id == "run-1"
+
+
+# -- PR2b Task 5: per-child token spend + per-row cancel -------------------
+
+
+@pytest.mark.asyncio
+async def test_state_2_secondary_line_shows_token_spend_for_a_finished_child():
+    """A finished child's measured `total_tokens` (`FleetHandle.
+    total_tokens`, PR2b Task 5) appends a ` · N tok` segment to its row's
+    secondary line -- a still-running child (0, not yet final) shows none,
+    covered by every OTHER state-2 test above never setting it."""
+    handles = (
+        FleetHandle(
+            handle_id="h1",
+            run_id="run-1",
+            agent="writer",
+            task="draft summary",
+            status="done",
+            result="drafted the summary",
+            started_at=1000.0,
+            finished_at=1002.0,
+            total_tokens=1234,
+        ),
+    )
+    bridge = _FleetBridge(handles)
+
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
+        console = await _setup_console(pilot, host, bridge)
+        fleet_section = console.query_one(
+            "#console-agent-section-subagents", ConsoleInspectorSection
+        )
+        fleet_section.set_open(True)
+        await pilot.pause()
+        await _scroll_into_view(
+            pilot, console, f"#console-inspector-section-{_SECTION_ID}-row-0"
+        )
+
+        secondary = console.query_one(
+            f"#console-inspector-section-{_SECTION_ID}-row-0-secondary", Static
+        )
+        _assert_widget_and_ancestors_displayed(secondary)
+        _assert_painted_at_own_region(host, secondary)
+        text = str(secondary.renderable)
+        assert "drafted the summary" in text
+        assert "1.2k tok" in text
+
+
+@pytest.mark.asyncio
+async def test_pressing_delete_on_a_running_row_cancels_the_child_through_the_bridge():
+    """PR2b Task 5 (per-row cancel), end to end through the REAL screen
+    handler: a real Delete keypress on a running (cancellable) row reaches
+    `ConsoleAgentBridge.cancel_subagent` with the row's own handle id --
+    the row-initiated cancel's actual production wiring, not just the
+    controller method in isolation."""
+    handles = (
+        FleetHandle(
+            handle_id="h1",
+            run_id="run-1",
+            agent="researcher",
+            task="find pricing",
+            status="running",
+            started_at=1000.0,
+        ),
+    )
+    bridge = _FleetBridge(handles)
+
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
+        console = await _setup_console(pilot, host, bridge)
+        fleet_section = console.query_one(
+            "#console-agent-section-subagents", ConsoleInspectorSection
+        )
+        fleet_section.set_open(True)
+        await pilot.pause()
+        await _scroll_into_view(
+            pilot, console, f"#console-inspector-section-{_SECTION_ID}-row-0"
+        )
+
+        row_widget = console.query_one(
+            f"#console-inspector-section-{_SECTION_ID}-row-0",
+            ConsoleInspectorSectionRow,
+        )
+        assert row_widget.cancellable is True
+        row_widget.focus()
+        await pilot.pause()
+        await pilot.press("delete")
+        await pilot.pause()
+
+        assert bridge.cancel_calls == [("conv-A", "h1")]
+
+
+@pytest.mark.asyncio
+async def test_pressing_delete_on_a_finished_row_does_nothing():
+    """A terminal child is not cancellable (`_fleet_row_from_handle`'s
+    `status not in TERMINAL_RUN_STATUSES` gate) -- Delete on that row must
+    never reach the bridge at all."""
+    handles = (
+        FleetHandle(
+            handle_id="h1",
+            run_id="run-1",
+            agent="researcher",
+            task="find pricing",
+            status="done",
+            result="42",
+            started_at=1000.0,
+            finished_at=1001.0,
+        ),
+    )
+    bridge = _FleetBridge(handles)
+
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
+        console = await _setup_console(pilot, host, bridge)
+        fleet_section = console.query_one(
+            "#console-agent-section-subagents", ConsoleInspectorSection
+        )
+        fleet_section.set_open(True)
+        await pilot.pause()
+        await _scroll_into_view(
+            pilot, console, f"#console-inspector-section-{_SECTION_ID}-row-0"
+        )
+
+        row_widget = console.query_one(
+            f"#console-inspector-section-{_SECTION_ID}-row-0",
+            ConsoleInspectorSectionRow,
+        )
+        assert row_widget.cancellable is False
+        row_widget.focus()
+        await pilot.pause()
+        await pilot.press("delete")
+        await pilot.pause()
+
+        assert bridge.cancel_calls == []

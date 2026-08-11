@@ -145,6 +145,7 @@ from loguru import logger
 from textual.message_pump import NoActiveAppError
 
 from ...Agents.agent_models import TERMINAL_RUN_STATUSES
+from ...Chat.cost_display import format_token_count
 from ...Widgets.Console.console_inspector_section import (
     ConsoleInspectorSectionState,
     InspectorSectionRow,
@@ -224,6 +225,18 @@ def _fleet_row_from_handle(handle: "FleetHandle", *, now: float) -> InspectorSec
 
     ``clickable`` requires a non-empty ``run_id`` -- there is nothing to
     drill into yet for a handle whose run hasn't attached.
+
+    ``cancellable`` (PR2b Task 5) is true only while ``status`` is still
+    live (not in ``TERMINAL_RUN_STATUSES``) -- a finished/errored/cancelled
+    child has nothing left to cooperatively stop, and offering the gesture
+    for a stale row would just make ``AgentService.cancel_subagent`` no-op
+    silently on press.
+
+    The secondary line's trailing token segment (PR2b Task 5) reads
+    ``handle.total_tokens`` -- 0, and so omitted, until ``FleetCoordinator.
+    finish()`` records the child's real ``RunOutcome.total_tokens`` spend;
+    a still-running child's spend is not final, so nothing is shown for it
+    rather than a partial, growing-then-frozen number.
     """
     status = handle.status or "running"
     glyph = _AGENT_STATUS_GLYPHS.get(status, "●")
@@ -235,12 +248,16 @@ def _fleet_row_from_handle(handle: "FleetHandle", *, now: float) -> InspectorSec
         if elapsed:
             primary = f"{primary} · {elapsed}"
     secondary = (handle.error or handle.result or handle.task or "").strip()
+    if handle.total_tokens:
+        token_segment = f"{format_token_count(handle.total_tokens)} tok"
+        secondary = f"{secondary} · {token_segment}" if secondary else token_segment
     return InspectorSectionRow(
         row_id=handle.handle_id,
         primary_text=primary,
         secondary_text=secondary,
         status=status,
         clickable=bool(handle.run_id),
+        cancellable=status not in TERMINAL_RUN_STATUSES,
     )
 
 
@@ -971,6 +988,76 @@ class ConsoleAgentController:
         if subagent_runs is None:
             return ()
         return tuple(_fleet_row_from_record(record) for record in subagent_runs(conversation_id))
+
+    def _console_agent_fleet_token_total(self) -> int:
+        """Sum the active conversation's LIVE fleet's measured token spend.
+
+        PR2b Task 5 (cost rollup): the aggregate the Console cost ticker
+        reaches for -- feeds ``build_cost_snapshot``'s ``fleet_tokens``
+        keyword (see ``chat_screen.py``'s ``_build_console_cost_state``).
+        Sums ``FleetHandle.total_tokens`` directly off
+        ``bridge.fleet_snapshot(conversation_id)`` -- the SAME live source
+        ``_console_agent_fleet_rows`` reads for its live tier, so the
+        aggregate here and each row's own token segment can never disagree.
+        A still-running handle's ``total_tokens`` is 0 (see
+        ``_fleet_row_from_handle``'s docstring), so it naturally contributes
+        nothing until it finishes -- no separate "only count terminal rows"
+        filter is needed.
+
+        Returns 0 -- never raises -- when there is no bridge, no active
+        conversation, or (the common historical/resumed case) no LIVE
+        fleet for it: this deliberately does NOT fall back to the
+        historical/DB-derived tiers `_console_agent_fleet_rows` also reads,
+        since per-child spend is not persisted there (see `FleetHandle.
+        total_tokens`'s docstring) -- there is nothing honest to sum for a
+        resumed conversation this process has never run.
+        """
+        bridge = self._ensure_console_agent_bridge()
+        if bridge is None:
+            return 0
+        conversation_id = self._current_console_rail_conversation_id() or ""
+        if not conversation_id:
+            return 0
+        fleet_snapshot = getattr(bridge, "fleet_snapshot", None)
+        if fleet_snapshot is None:
+            return 0
+        return sum(handle.total_tokens for handle in fleet_snapshot(conversation_id))
+
+    def _cancel_console_agent_fleet_row(self, row_id: str) -> bool:
+        """Cooperatively cancel a LIVE fleet row's child (PR2b Task 5).
+
+        ``row_id`` is the row's structural identity as built by
+        ``_fleet_row_from_handle`` -- the ``FleetCoordinator`` handle id --
+        so this reaches ``ConsoleAgentBridge.cancel_subagent`` with NO
+        resolution step, unlike drill-in's ``_console_agent_drilldown_
+        target_run_id`` (which must also accept a historical row's run id).
+        A historical/fallback row is never cancellable (``_fleet_row_from_
+        summary``/``_fleet_row_from_record`` leave ``cancellable`` at its
+        ``False`` default), so in practice ``row_id`` reaching this method
+        is always a live handle id.
+
+        Routes through ``ConsoleAgentBridge.cancel_subagent`` ->
+        ``AgentService.cancel_subagent`` -> the SAME ``_cancel_fleet_
+        handles`` cooperative-cancel + approval-revoke path
+        ``_settle_fleet`` already uses at end of turn (PR 2a's guarantee
+        that cancelling a child revokes its pending approval cards) -- no
+        second cancellation mechanism.
+
+        Returns:
+            Whether the handle was live and the cancel request was
+            actually issued -- ``False`` for no bridge, no active
+            conversation, or an unknown/already-terminal handle.
+        """
+        bridge = self._ensure_console_agent_bridge()
+        if bridge is None:
+            return False
+        conversation_id = self._current_console_rail_conversation_id() or ""
+        if not conversation_id or not row_id:
+            return False
+        cancel_subagent = getattr(bridge, "cancel_subagent", None)
+        if cancel_subagent is None:
+            return False
+        return bool(cancel_subagent(conversation_id, row_id))
 
     def _console_agent_fleet_section_state(self) -> ConsoleInspectorSectionState:
         """Build the fleet mini-section's rows + header summary (states 1/2).

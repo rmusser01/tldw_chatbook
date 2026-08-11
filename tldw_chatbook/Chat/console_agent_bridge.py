@@ -2660,6 +2660,34 @@ class ConsoleAgentBridge:
             return []
         return service.fleet_snapshot()
 
+    def cancel_subagent(self, conversation_id: str, handle_id: str) -> bool:
+        """Cooperatively cancel ONE live child of this conversation's fleet.
+
+        PR2b Task 5 (per-row cancel): delegates straight to
+        `AgentService.cancel_subagent`, the same seam `fleet_snapshot`
+        above reads through -- no new cancellation mechanism, and no
+        id-resolution here either: a live fleet row's `row_id` IS the
+        `FleetCoordinator` handle id (`_fleet_row_from_handle` in
+        `Console_Modules/agent.py`), so `handle_id` passes straight
+        through to the coordinator's own `_cancel_fleet_handles` ->
+        `_revoke_handle_approvals` path -- PR 2a's guarantee that
+        cancelling a child revokes its pending approval cards.
+
+        Args:
+            conversation_id: The conversation whose fleet to look up.
+            handle_id: The handle to cancel.
+
+        Returns:
+            `False` -- never raises -- when this conversation has no fleet
+            currently published (never run, already finished, or the
+            published run's fleet is off) or `handle_id` is unknown/already
+            terminal; `True` when a live handle was found and cancelled.
+        """
+        service = self._fleet_services.get(conversation_id)
+        if service is None:
+            return False
+        return service.cancel_subagent(handle_id)
+
     def historical_snapshot(self, conversation_id: str) -> AgentLiveSnapshot:
         """Rail summary derived from ``AgentRunsDB`` for a conversation this
         bridge instance has never run in-process (Plan-B agent-runtime gate

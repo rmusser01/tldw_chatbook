@@ -74,6 +74,20 @@ class ConsoleCostSnapshot:
         row_count: Number of transcript rows that contributed to the
             totals above (priced or estimated); rows with neither usage
             nor content are not counted.
+        fleet_tokens: PR2b Task 5 (cost rollup) -- sub-agent fleet token
+            spend for the active session, ALREADY folded into
+            ``total_tokens`` (see :func:`build_cost_snapshot`'s
+            ``fleet_tokens`` parameter) and broken out again here only so
+            the chip's tooltip can name it. Never contributes to
+            ``total_usd``: a fleet child's measured spend
+            (``FleetHandle.total_tokens``) is a single combined
+            prompt+completion figure with no input/output split, so there
+            is no honest per-model rate to price it at -- shown as an
+            unpriced token count rather than either a fabricated dollar
+            figure or (the other extreme) silently dropping the primary
+            transcript's own already-known pricing to "unknown" just
+            because a fleet ran. 0 when the session has no fleet spend to
+            report.
     """
 
     total_usd: Optional[float]
@@ -81,6 +95,7 @@ class ConsoleCostSnapshot:
     pricing_known: bool
     has_estimated_entries: bool
     row_count: int
+    fleet_tokens: int = 0
 
 
 @dataclass(frozen=True)
@@ -430,7 +445,11 @@ def fingerprint_break_reason(
 
 
 def build_cost_snapshot(
-    messages: Sequence[Any], *, provider: str, model: Optional[str]
+    messages: Sequence[Any],
+    *,
+    provider: str,
+    model: Optional[str],
+    fleet_tokens: int = 0,
 ) -> ConsoleCostSnapshot:
     """Sum dollar/token totals across a Console session's transcript rows.
 
@@ -468,6 +487,12 @@ def build_cost_snapshot(
             normalized form ("google").
         model: Current session model, used to price estimated rows. May be
             ``None`` when no model is selected yet.
+        fleet_tokens: PR2b Task 5 -- sub-agent fleet token spend to fold
+            into ``total_tokens`` (see :class:`ConsoleCostSnapshot`.
+            ``fleet_tokens``'s docstring for why this contributes tokens
+            but never dollars). Defaults to 0, byte-identical to this
+            function's pre-Task-5 behavior for every caller that doesn't
+            pass it.
 
     Returns:
         A :class:`ConsoleCostSnapshot`. Never raises -- an unexpected
@@ -522,6 +547,10 @@ def build_cost_snapshot(
 
         pricing_known = usd_known and row_count > 0
         total_usd = round(total_usd_accum, 6) if pricing_known else None
+        # Real, measured tokens (not estimated) -- always folded into the
+        # total, never priced (see ConsoleCostSnapshot.fleet_tokens).
+        fleet_tokens = max(0, fleet_tokens)
+        total_tokens += fleet_tokens
 
         return ConsoleCostSnapshot(
             total_usd=total_usd,
@@ -529,6 +558,7 @@ def build_cost_snapshot(
             pricing_known=pricing_known,
             has_estimated_entries=has_estimated,
             row_count=row_count,
+            fleet_tokens=fleet_tokens,
         )
     except Exception:
         logger.opt(exception=True).warning(
@@ -540,6 +570,7 @@ def build_cost_snapshot(
             pricing_known=False,
             has_estimated_entries=False,
             row_count=0,
+            fleet_tokens=0,
         )
 
 
@@ -607,6 +638,11 @@ def build_cost_state(
             tooltip_lines = [f"Tokens: {_format_tokens(snapshot.total_tokens)}"]
             if snapshot.has_estimated_entries:
                 tooltip_lines.append("Includes estimated (unsent) rows.")
+            if snapshot.fleet_tokens:
+                tooltip_lines.append(
+                    f"Sub-agents: {_format_tokens(snapshot.fleet_tokens)} tok "
+                    "(not priced)"
+                )
             # F3: narrate cache state even without a dollar total, so a
             # warm/expired/alerting chip's tooltip explains itself instead
             # of showing only a token count.
@@ -643,6 +679,11 @@ def build_cost_state(
         if snapshot.has_estimated_entries:
             total_line += " (includes estimated rows)"
         tooltip_lines = [total_line, f"Tokens: {_format_tokens(snapshot.total_tokens)}"]
+        if snapshot.fleet_tokens:
+            tooltip_lines.append(
+                f"Sub-agents: {_format_tokens(snapshot.fleet_tokens)} tok "
+                "(not priced)"
+            )
         tooltip_lines.append(
             _cache_state_line(
                 cache_state,

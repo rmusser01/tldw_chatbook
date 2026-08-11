@@ -542,6 +542,37 @@ async def test_build_console_cost_state_counts_staged_evidence_before_send():
 
 
 @pytest.mark.asyncio
+async def test_build_console_cost_state_includes_fleet_token_spend():
+    """PR2b Task 5 (cost rollup): the active conversation's LIVE sub-agent
+    fleet spend reaches the cost chip's tooltip -- the aggregate this task
+    wires from `ConsoleAgentController._console_agent_fleet_token_total`
+    into `build_cost_snapshot`'s `fleet_tokens` keyword. Overrides the
+    controller method directly (rather than wiring a fake bridge through
+    the rail's own conversation-id plumbing) so this test pins the ONE
+    thing new here -- that `_build_console_cost_state` actually reads and
+    forwards that seam -- without re-deriving the fleet-token-total math
+    itself (already covered in `Tests/UI/test_console_agent_rail.py`).
+    """
+    app = _build_test_app()
+    _configure_anthropic_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-cost-chip")
+
+        baseline = console._build_console_cost_state()
+        assert baseline is not None
+        assert "Sub-agents:" not in baseline.tooltip
+
+        console._agent._console_agent_fleet_token_total = lambda: 4200
+
+        state = console._build_console_cost_state()
+        assert state is not None
+        assert "Sub-agents: 4.2k tok (not priced)" in state.tooltip
+
+
+@pytest.mark.asyncio
 async def test_sync_cost_chip_hides_the_chip_when_state_is_none():
     app = _build_test_app()
     host = ConsoleHarness(app)

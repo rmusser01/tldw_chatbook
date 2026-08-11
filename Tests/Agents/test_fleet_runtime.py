@@ -1138,6 +1138,161 @@ def test_cancelling_and_abandoning_a_child_revokes_its_approval_cards(db):
         never.set()
 
 
+# -- PR2b Task 5: per-row cancel + cost rollup ----------------------------
+
+
+def test_cancel_subagent_revokes_approval_cards_mid_run(db):
+    """PR2b Task 5: a UI-initiated per-row cancel (``AgentService.
+    cancel_subagent``) revokes the child's pending approval cards
+    SYNCHRONOUSLY, mid-run -- the same PR2a guarantee
+    ``_cancel_fleet_handles`` already provides at end-of-turn (see
+    ``test_cancelling_and_abandoning_a_child_revokes_its_approval_cards``
+    above), now reachable on demand for ONE specific handle without
+    waiting for the whole run to finish. This is the Console rail's
+    per-row Cancel action's actual production path
+    (``ConsoleAgentBridge.cancel_subagent`` -> here).
+    """
+    never = threading.Event()
+    entered = threading.Event()
+
+    def wedged_child():
+        entered.set()
+        never.wait(30.0)  # released in the finally below, not by the run
+        return "unreachable"
+
+    revoked: list[str] = []
+    cfg = AgentConfig(
+        model="test-model",
+        system_prompt="You are helpful.",
+        allowed_tools=(SPAWN_TOOL_NAME,),
+        budget=RunBudget(
+            max_steps=40,
+            max_model_turns=40,
+            max_subagents=2,
+            max_wall_seconds=30.0,
+        ),
+    )
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [fence(SPAWN_TOOL_NAME, {"task": "wedged"}), "parent done"],
+        {"wedged": [wedged_child]},
+        revoke_approvals=revoked.append,
+    )
+
+    result: dict = {}
+
+    def do_run():
+        result["outcome"] = service.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go"}],
+            config=cfg,
+            api_endpoint="llama_cpp",
+        )
+
+    runner = threading.Thread(target=do_run, name="test-cancel-subagent-run")
+    runner.start()
+    try:
+        assert entered.wait(5), "child never reached its wedged call"
+        # `attach_run` (fired from inside `_run_one`) races this thread's
+        # own read of the handle -- poll briefly rather than assume it has
+        # already landed by the time `entered` is set.
+        handle = None
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            snapshot = coordinator.snapshot()
+            if snapshot and snapshot[0].run_id:
+                handle = snapshot[0]
+                break
+            time.sleep(0.01)
+        assert handle is not None and handle.run_id, (
+            "the child's handle never attached a run id"
+        )
+        assert handle.status == "running"
+
+        # An unknown handle id is a clean no-op, discriminated from the
+        # real, live one below.
+        assert service.cancel_subagent("not-a-real-handle") is False
+        assert revoked == []
+
+        assert service.cancel_subagent(handle.handle_id) is True
+        # The revoke happens SYNCHRONOUSLY inside `cancel_subagent` --
+        # observable immediately, well before the run itself finishes (the
+        # child is still wedged; nothing else has had a chance to revoke
+        # anything yet).
+        assert revoked == [handle.run_id]
+    finally:
+        never.set()
+    runner.join(10)
+    assert not runner.is_alive(), "run_turn never returned"
+
+
+def test_cancel_subagent_returns_false_with_no_fleet_yet(db):
+    """A service that has never run a turn has no live fleet to cancel
+    against -- a clean `False`, not an `AttributeError` on `self._fleet`."""
+    service, _chat, _coordinator = make_fleet_service(
+        db, ["never used"], allow_unconsumed=True
+    )
+    assert service.cancel_subagent("whatever") is False
+
+
+def test_cancel_subagent_returns_false_for_an_already_terminal_handle(db):
+    """A child that already finished normally cannot be cancelled again --
+    `_pending_handles` (the same liveness test `_settle_fleet` itself
+    uses) reports it done, so `cancel_subagent` no-ops rather than issuing
+    a pointless (and, per `_revoke_handle_approvals`, redundant-revoke)
+    cancel against a handle nothing is waiting on anymore."""
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "task one"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "combined answer",
+        ],
+        {"task one": ["answer one"]},
+    )
+    service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+    )
+    handle = coordinator.snapshot()[0]
+    assert handle.status == RUN_DONE
+    assert service.cancel_subagent(handle.handle_id) is False
+
+
+def test_finished_children_record_their_measured_token_spend_on_the_handle(db):
+    """PR2b Task 5 (cost rollup): ``FleetHandle.total_tokens`` is
+    populated from each child's own ``RunOutcome.total_tokens`` once it
+    finishes -- the live source ``Console_Modules/agent.py`` sums for the
+    fleet rail's per-row token segment and the Console cost ticker's fleet
+    aggregate (``ConsoleAgentController._console_agent_fleet_token_
+    total``).
+    """
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "task one"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "combined answer",
+        ],
+        {"task one": ["a real answer with enough text to have a real token count"]},
+    )
+    service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+    )
+    assert coordinator.all_finished()
+    handle = coordinator.snapshot()[0]
+    assert handle.status == RUN_DONE
+    # No provider `usage` block in this scripted reply, so the runtime
+    # estimated it (`_usage_total_tokens` -> the local estimator fallback,
+    # `agent_service.py`) -- still a REAL, non-placeholder measured figure.
+    assert handle.total_tokens > 0
+
+
 def test_wait_agents_is_bounded_by_the_runs_remaining_wall_clock(
     db, monkeypatch
 ):

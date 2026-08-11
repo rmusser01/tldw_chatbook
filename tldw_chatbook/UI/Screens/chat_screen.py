@@ -1981,6 +1981,31 @@ class ChatScreen(BaseAppScreen):
         message.stop()
         self._agent._drill_into_console_agent_subagent(message.row_id)
 
+    @on(ConsoleInspectorSection.RowCancelRequested)
+    def on_console_agent_fleet_row_cancel_requested(
+        self, message: ConsoleInspectorSection.RowCancelRequested
+    ) -> None:
+        """Cooperatively cancel a fleet row's child (PR2b Task 5).
+
+        Same ``section_id`` guard as the drill-in handler above, for the
+        same reason. Routes through ``ConsoleAgentController._cancel_
+        console_agent_fleet_row``, which itself routes through the
+        EXISTING cancellation path (``AgentService.cancel_subagent`` ->
+        ``_cancel_fleet_handles``) -- no second mechanism.
+
+        A burst of cancels (the user cancelling more than one row in quick
+        succession) each requests a coalesced fleet-section resync rather
+        than a synchronous one, so N cancels in the same UI tick still
+        produce exactly one ``_sync_console_agent_section`` run (task-5
+        coalescing) instead of N redundant ones.
+        """
+        if message.section_id != CONSOLE_AGENT_FLEET_SECTION_ID:
+            return
+        message.stop()
+        cancelled = self._agent._cancel_console_agent_fleet_row(message.row_id)
+        if cancelled:
+            self._request_console_agent_fleet_sync()
+
     @on(Button.Pressed, "#console-context-rail-collapse")
     def on_console_context_rail_collapse(self, event: Button.Pressed) -> None:
         """Collapse the Console context rail and persist the preference."""
@@ -3303,6 +3328,11 @@ class ChatScreen(BaseAppScreen):
             tuple[str, str, ConsoleInspectorSectionState, str, bool, bool, bool]
             | None
         ) = None
+        # PR2b Task 5: coalescing flag for `_request_console_agent_fleet_
+        # sync` -- mirrors `_console_control_bar_sync_scheduled` exactly
+        # (see that flag's own call site, `_request_console_control_bar_
+        # sync`, for the precedent this follows).
+        self._console_agent_fleet_sync_scheduled = False
         self._console_rail_system_line_last: tuple[str, bool] | None = None
         self._console_rail_prune_dispatched = False
         # The six Console controllers -- their construction and every
@@ -4153,6 +4183,36 @@ class ChatScreen(BaseAppScreen):
                 recovery.styles.display = "none"
 
         self._sync_console_rail_system_line()
+        self._sync_console_agent_section()
+
+    def _request_console_agent_fleet_sync(self) -> None:
+        """Coalesce Agent-fleet-section syncs into one trailing run (task-5).
+
+        Mirrors ``_request_console_control_bar_sync`` exactly -- a
+        scheduled-flag + ``call_after_refresh`` trailing run, not a timer.
+        That precedent's own docstring records the measurement that
+        motivated the shape (one screen push ran a ~47ms sync 14 times --
+        0.65s of a ~1.2s push, every caller individually justified, nothing
+        deduplicating them); this is the same shape applied to the Agent
+        fleet mini-section's own sync (``_sync_console_agent_section``)
+        instead, for its own bursty callers -- e.g. the per-row Cancel
+        handler below, which can fire several times in a row (a user
+        cancelling more than one child in quick succession) while only one
+        resync is ever needed to reflect all of them.
+
+        Requests landing before the trailing run fires fold into it; the
+        run always calls ``_sync_console_agent_section`` fresh (itself
+        still equality-guarded against the last applied payload), so the
+        last-writer semantics every caller relies on are preserved.
+        """
+        if self._console_agent_fleet_sync_scheduled:
+            return
+        self._console_agent_fleet_sync_scheduled = True
+        self.call_after_refresh(self._run_coalesced_console_agent_fleet_sync)
+
+    def _run_coalesced_console_agent_fleet_sync(self) -> None:
+        """Execute one coalesced Agent-fleet-section sync (task-5)."""
+        self._console_agent_fleet_sync_scheduled = False
         self._sync_console_agent_section()
 
     def _sync_console_agent_section(self) -> None:
@@ -8194,8 +8254,21 @@ class ChatScreen(BaseAppScreen):
                     SimpleNamespace(role="user", content=staged_text, usage=None)
                 ]
             provider, model, _settings = self._active_console_provider_model_display()
+            # PR2b Task 5 (cost rollup): the active conversation's LIVE
+            # sub-agent fleet spend, folded into the snapshot's token total
+            # (never priced -- see `ConsoleCostSnapshot.fleet_tokens`'s
+            # docstring for why). Read straight off the SAME live source
+            # the fleet rail rows themselves read
+            # (`_console_agent_fleet_token_total` sums `bridge.fleet_
+            # snapshot(...)`'s `FleetHandle.total_tokens`), so the chip and
+            # the rail can never disagree about a conversation's fleet
+            # spend.
+            fleet_tokens = self._agent._console_agent_fleet_token_total()
             snapshot = build_cost_snapshot(
-                snapshot_messages, provider=provider, model=model
+                snapshot_messages,
+                provider=provider,
+                model=model,
+                fleet_tokens=fleet_tokens,
             )
 
             controller = self._console_chat_controller

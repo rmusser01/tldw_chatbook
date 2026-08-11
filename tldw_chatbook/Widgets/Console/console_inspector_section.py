@@ -78,6 +78,11 @@ class InspectorSectionRow:
             "running", "done", "error", "blocked"); ``""`` applies none.
         clickable: Whether activating the row (click, Enter, or Space)
             posts ``ConsoleInspectorSection.RowActivated``.
+        cancellable: Whether pressing Delete on the row (PR2b Task 5)
+            posts ``ConsoleInspectorSection.RowCancelRequested``.
+            Independent of ``clickable`` -- a row can be either, both, or
+            neither; the two are separate gestures (Enter/Space to drill
+            in, Delete to cancel) so they never contend for the same key.
     """
 
     row_id: str
@@ -85,6 +90,7 @@ class InspectorSectionRow:
     secondary_text: str = ""
     status: str = ""
     clickable: bool = False
+    cancellable: bool = False
 
 
 @dataclass(frozen=True)
@@ -153,6 +159,23 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
 
     class RowActivated(Message):
         """Posted when a clickable row is activated (click, Enter, Space)."""
+
+        def __init__(self, section_id: str, row_id: str) -> None:
+            self.section_id = section_id
+            self.row_id = row_id
+            super().__init__()
+
+    class RowCancelRequested(Message):
+        """Posted when a cancellable row's cancel gesture (Delete) fires.
+
+        PR2b Task 5 (per-row cancel). Deliberately a SEPARATE message from
+        ``RowActivated`` rather than an overload of it -- a row can be both
+        clickable (drill in) and cancellable (stop it) at once, and the two
+        must never be conflated into one ambiguous "activate" outcome. This
+        module stays generic (see the module docstring): cancelling is a
+        plausible action for rows in any future section built on this
+        component, not Agents-specific vocabulary.
+        """
 
         def __init__(self, section_id: str, row_id: str) -> None:
             self.section_id = section_id
@@ -507,7 +530,12 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
         # here, unconditionally, whether or not this specific call's
         # `row.clickable` differs from `previous_row.clickable`.
         row_widget.clickable = row.clickable
-        row_widget.can_focus = row.clickable
+        row_widget.can_focus = row.clickable or row.cancellable
+        # `cancellable` -- like `clickable` immediately above -- is NOT part
+        # of the structural key (same reasoning: a row transitioning
+        # running -> done flips it without changing row identity/order), so
+        # it too is always re-synced here, unconditionally.
+        row_widget.cancellable = row.cancellable
         if row.primary_text != previous_row.primary_text:
             self.query_one(f"#{self._row_primary_id(index)}", Static).update(
                 row.primary_text
@@ -539,6 +567,10 @@ class ConsoleInspectorSectionRow(Vertical):
     BINDINGS = [
         Binding("enter", "activate_row", "Activate row", show=False),
         Binding("space", "activate_row", "Activate row", show=False),
+        # PR2b Task 5: Delete, not Enter/Space -- cancelling and drilling in
+        # are separate gestures so a row that is both clickable and
+        # cancellable never has to arbitrate which one a shared key means.
+        Binding("delete", "cancel_row", "Cancel row", show=False),
     ]
 
     def __init__(
@@ -553,7 +585,8 @@ class ConsoleInspectorSectionRow(Vertical):
         self.section_id = section_id
         self.row_id = row.row_id
         self.clickable = row.clickable
-        self.can_focus = row.clickable
+        self.cancellable = row.cancellable
+        self.can_focus = row.clickable or row.cancellable
         self._index = index
         self._primary_text = row.primary_text
         self._secondary_text = row.secondary_text
@@ -585,3 +618,10 @@ class ConsoleInspectorSectionRow(Vertical):
         if not self.clickable:
             return
         self.post_message(ConsoleInspectorSection.RowActivated(self.section_id, self.row_id))
+
+    def action_cancel_row(self) -> None:
+        if not self.cancellable:
+            return
+        self.post_message(
+            ConsoleInspectorSection.RowCancelRequested(self.section_id, self.row_id)
+        )

@@ -17,6 +17,7 @@ from tldw_chatbook.Chat.console_agent_bridge import (
     SubAgentSummary,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunStatus
+from tldw_chatbook.Agents.fleet_coordinator import FleetHandle
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Widgets.Console.console_run_log_modal import ConsoleRunLogModal
 from tldw_chatbook.Workspaces.conversation_browser_state import (
@@ -1037,3 +1038,117 @@ async def test_clicking_a_specific_subagent_row_drills_into_that_run_directly():
         # overview directly, regardless of which row was last drilled into.
         console._console_agent_drilldown_run_id = None
         assert console._console_agent_drilldown_run_id is None
+
+
+# -- PR2b Task 5: fleet token rollup + per-row cancel (controller unit) ---
+
+
+@pytest.mark.asyncio
+async def test_console_agent_fleet_token_total_sums_live_handles():
+    """Sums `FleetHandle.total_tokens` off the LIVE fleet snapshot -- the
+    same source `_console_agent_fleet_rows` itself reads for the row
+    builders, so the ticker's aggregate and each row's own token segment
+    can never disagree. A still-running handle's 0 naturally contributes
+    nothing (no separate "terminal only" filter needed)."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
+
+        handles = (
+            FleetHandle(
+                handle_id="h1", run_id="run-1", agent="a", task="t1",
+                status="done", total_tokens=100,
+            ),
+            FleetHandle(
+                handle_id="h2", run_id="run-2", agent="a", task="t2",
+                status="running", total_tokens=0,
+            ),
+            FleetHandle(
+                handle_id="h3", run_id="run-3", agent="a", task="t3",
+                status="done", total_tokens=250,
+            ),
+        )
+
+        class _FakeBridge:
+            def fleet_snapshot(self, conversation_id):
+                return list(handles) if conversation_id == "conv-A" else []
+
+        console._console_agent_bridge = _FakeBridge()
+        console._current_console_rail_conversation_id = lambda: "conv-A"
+
+        assert console._agent._console_agent_fleet_token_total() == 350
+        # An unrelated conversation id never sees this fleet's spend.
+        console._current_console_rail_conversation_id = lambda: "conv-other"
+        assert console._agent._console_agent_fleet_token_total() == 0
+
+
+@pytest.mark.asyncio
+async def test_console_agent_fleet_token_total_is_zero_with_no_bridge():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
+        console._console_agent_bridge = None
+        assert console._agent._console_agent_fleet_token_total() == 0
+
+
+@pytest.mark.asyncio
+async def test_cancel_console_agent_fleet_row_delegates_to_the_bridge():
+    """`_cancel_console_agent_fleet_row` forwards the ACTIVE conversation
+    id plus the row's own id straight through to `ConsoleAgentBridge.
+    cancel_subagent` -- no resolution step, matching how a live row's
+    `row_id` already IS the handle id (`_fleet_row_from_handle`)."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
+
+        calls = []
+
+        class _FakeBridge:
+            def cancel_subagent(self, conversation_id, handle_id):
+                calls.append((conversation_id, handle_id))
+                return True
+
+        console._console_agent_bridge = _FakeBridge()
+        console._current_console_rail_conversation_id = lambda: "conv-A"
+
+        assert console._agent._cancel_console_agent_fleet_row("h1") is True
+        assert calls == [("conv-A", "h1")]
+
+
+@pytest.mark.asyncio
+async def test_cancel_console_agent_fleet_row_returns_false_with_no_bridge():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
+        console._console_agent_bridge = None
+        assert console._agent._cancel_console_agent_fleet_row("h1") is False
+
+
+@pytest.mark.asyncio
+async def test_cancel_console_agent_fleet_row_returns_false_with_no_row_id():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
+
+        class _FakeBridge:
+            def cancel_subagent(self, conversation_id, handle_id):
+                raise AssertionError("must not be called with an empty row id")
+
+        console._console_agent_bridge = _FakeBridge()
+        console._current_console_rail_conversation_id = lambda: "conv-A"
+        assert console._agent._cancel_console_agent_fleet_row("") is False

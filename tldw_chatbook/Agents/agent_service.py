@@ -1413,6 +1413,14 @@ class AgentService:
                 status = RUN_ERROR
                 result_text = ""
                 error_text = ""
+                # PR2b Task 5 (cost rollup): only ever set from a
+                # SUCCESSFULLY-returned `child_outcome` below -- a child
+                # that raised before `_run_one` returned has no measured
+                # spend to report, so this stays 0 (never a fabricated or
+                # partial figure) exactly like `result_text`/`error_text`
+                # staying at their own "nothing to report" defaults on that
+                # path.
+                total_tokens_spent = 0
                 try:
                     _child_id, child_outcome = self._run_one(
                         should_cancel=child_should_cancel,
@@ -1423,6 +1431,7 @@ class AgentService:
                     )
                     status = child_outcome.status
                     result_text = child_outcome.final_text
+                    total_tokens_spent = child_outcome.total_tokens
                     if status != RUN_DONE:
                         error_text = f"sub-agent {status}"
                 except BaseException as exc:  # noqa: BLE001 — see below
@@ -1443,6 +1452,7 @@ class AgentService:
                         status,
                         result=result_text,
                         error=error_text,
+                        total_tokens=total_tokens_spent,
                     )
                     # Review fix (PR2a final review): `_persist` -- called
                     # from INSIDE `_run_one`'s own try/except -- is
@@ -2493,3 +2503,43 @@ class AgentService:
         """
         fleet = self._fleet
         return fleet.snapshot() if fleet is not None else []
+
+    def cancel_subagent(self, handle_id: str) -> bool:
+        """Cooperatively cancel ONE live child, on demand (PR2b Task 5).
+
+        The public counterpart to `_settle_fleet`'s own end-of-turn
+        `_cancel_fleet_handles` call -- a UI-initiated per-row Cancel
+        reaches the EXACT SAME cancel-Event-plus-approval-revoke path
+        (`_cancel_fleet_handles` -> `_revoke_handle_approvals`), just for
+        one handle, on demand, mid-turn rather than waiting for turn end.
+        No second cancellation mechanism is introduced.
+
+        `_pending_handles` (not a raw `fleet.get(handle_id).status` check)
+        decides liveness: it already encodes "vanished counts as finished"
+        and is the same liveness test every other fleet-cancel caller in
+        this module uses, so a row that just turned terminal (finished
+        between the UI's last poll and this call) reports `False` here
+        exactly as it would to `_settle_fleet`, rather than issuing a
+        cancel that would silently no-op inside the coordinator anyway.
+
+        Args:
+            handle_id: The `FleetCoordinator` handle to cancel -- for the
+                Console rail, the fleet mini-section row's own `row_id`
+                (`Console_Modules/agent.py`'s `_fleet_row_from_handle`
+                keys a live row's identity on `handle.handle_id` directly,
+                so no id-resolution step is needed between the row and
+                this call).
+
+        Returns:
+            `True` when a live handle was found and the cancel request was
+            actually issued; `False` (a no-op) when there is no live fleet
+            for this service instance right now, or `handle_id` names an
+            unknown or already-terminal handle.
+        """
+        fleet = self._fleet
+        if fleet is None:
+            return False
+        if not self._pending_handles(fleet, [handle_id]):
+            return False
+        self._cancel_fleet_handles([handle_id])
+        return True
