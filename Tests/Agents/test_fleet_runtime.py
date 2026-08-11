@@ -215,9 +215,14 @@ _CARD_TIMEOUT = 10.0
 
 #: `FLEET_CFG` with a wall clock short enough that a REGRESSION (a settle
 #: that waits for a child parked on a card nobody will answer until the
-#: turn is over) fails in 20s instead of the 240s default. A survivor's
-#: own budget is clamped from this, so it must still leave the child room
-#: to finish its work after the turn.
+#: turn is over) fails in 20s instead of the 240s default. PR3a-1 Task 5
+#: correction: a THREADED survivor's own budget is no longer clamped
+#: from this config's `max_wall_seconds=20.0` at all -- it gets
+#: `contain_child_budget`'s independent ceiling
+#: (`agent_service.DEFAULT_CHILD_MAX_WALL_SECONDS`, 1800s by default),
+#: unrelated to this 20s value. This config's short wall clock only
+#: bounds a TURN-SCOPED child (`clamp_child_budget` still derives from
+#: it) and the parent's own settle-loop timing.
 CARD_CFG = AgentConfig(
     model="test-model",
     system_prompt="You are helpful.",
@@ -1234,20 +1239,37 @@ def test_children_outlive_their_turn_by_default():
     assert agent_service.SUBAGENTS_OUTLIVE_TURN_KEY == "subagents_outlive_turn"
 
 
-# -- containment: replacing clamp_child_budget's parent-remainder clamp ----
+# -- containment for a THREADED survivor: replacing clamp_child_budget's --
+# -- parent-remainder clamp on THAT path only (spec Sec 5)             ----
 #
-# PR3a-1 Task 5 (spec Sec 5 "Containment"). A background child deliberately
-# outlives its parent (Task 2's default), so its own wall-clock ceiling can
-# no longer be `min(child, parent's remaining budget)` -- that made a
-# surviving child's effective bound an accident of WHEN in the turn it was
-# spawned. The replacement: `agent_models.contain_child_budget` gives the
-# child its OWN independent ceiling, resolved from `[agents]
-# child_max_wall_seconds` (default `DEFAULT_CHILD_MAX_WALL_SECONDS`) --
-# same `_setting`-driven config chain as `max_live_subagents` above. The
-# live-children COUNT cap (`max_live_subagents`) and the per-child SPEND
-# ceiling (`max_total_tokens`, passed through unchanged) are untouched by
-# this task -- they already bound the fleet independently of the parent's
-# lifetime.
+# PR3a-1 Task 5 (spec Sec 5 "Containment"), scope corrected after review
+# (Defect 1): a THREADED, non-inline background child deliberately
+# outlives its parent (Task 2's default), so its own wall-clock ceiling
+# can no longer be `min(child, parent's remaining budget)` for THAT
+# child -- that made a surviving child's effective bound an accident of
+# WHEN in the turn it was spawned. The replacement:
+# `agent_models.contain_child_budget` gives a threaded child its OWN
+# independent ceiling, resolved from `[agents] child_max_wall_seconds`
+# (default `DEFAULT_CHILD_MAX_WALL_SECONDS`) -- same `_setting`-driven
+# config chain as `max_live_subagents` above. A TURN-SCOPED or
+# `inline=True` child is UNAFFECTED by any of this: `AgentService.spawn`
+# branches on `fleet is None or inline`, and that child still gets
+# `clamp_child_budget`'s old parent-remainder clamp, byte-identical to
+# every release before this task (see
+# `test_clamp_child_budget_for_the_turn_scoped_path_*` in
+# `test_agent_models.py`, and `test_an_inline_childs_budget_still_clamps_
+# to_the_parents_remainder` below).
+#
+# SPEND (`max_total_tokens`, passed through unchanged) is untouched by
+# this task and already bounds each run independently of the parent's
+# lifetime. COUNT is NOT: `[agents] max_live_subagents` bounds live
+# children WITHIN one `run_turn` call only -- it is NOT a cross-turn cap
+# (Task 5 review, Defect 2, disproved by execution: two consecutive
+# `run_turn` calls each spawning 2 blocking children yielded 4
+# simultaneously running against a cap of 2, see
+# `test_live_children_are_not_capped_across_turns` below). Fixing that is
+# PR3a-1 Task 6's job (a long-lived per-conversation coordinator), not
+# this one's.
 
 
 @pytest.mark.parametrize(
@@ -1275,11 +1297,14 @@ def test_coerce_child_max_wall_seconds(configured, expected):
     assert agent_service._coerce_child_max_wall_seconds(configured) == expected
 
 
-def test_a_spawned_childs_own_wall_clock_matches_the_config_default(db):
-    """A child's persisted budget carries the INDEPENDENT default ceiling,
-    not the parent's own (`FLEET_CFG.budget.max_wall_seconds == 240.0`,
-    deliberately different from the default below so this distinguishes
-    old vs new behaviour). Also pins the depth-1 guarantee end to end.
+def test_a_threaded_childs_own_wall_clock_matches_the_config_default(db):
+    """A THREADED child's persisted budget carries the INDEPENDENT
+    default ceiling, not the parent's own (`FLEET_CFG.budget.
+    max_wall_seconds == 240.0`, deliberately different from the default
+    below so this distinguishes old vs new behaviour). `make_fleet_service`
+    builds an explicit coordinator, so `fleet is not None` and this spawn
+    call is non-inline -- the `contain_child_budget` branch. Also pins
+    the depth-1 guarantee end to end.
     """
     service, chat, coordinator = make_fleet_service(
         db,
@@ -1302,10 +1327,12 @@ def test_a_spawned_childs_own_wall_clock_matches_the_config_default(db):
     assert child["budget"]["max_subagents"] == 0  # depth-1 preserved
 
 
-def test_a_spawned_childs_wall_clock_ceiling_respects_a_config_override(
+def test_a_threaded_childs_wall_clock_ceiling_respects_a_config_override(
     db, monkeypatch
 ):
-    """The config key actually reaches the spawn call, not just the default."""
+    """The config key actually reaches the THREADED spawn call, not just
+    the default (`make_fleet_service` -> non-inline, so this exercises
+    `contain_child_budget`, not `clamp_child_budget`)."""
     pin_agent_settings(monkeypatch, child_max_wall_seconds="77.0")
     service, chat, coordinator = make_fleet_service(
         db,
@@ -1323,11 +1350,14 @@ def test_a_spawned_childs_wall_clock_ceiling_respects_a_config_override(
     assert child["budget"]["max_wall_seconds"] == 77.0
 
 
-def test_a_spawned_childs_other_budget_fields_still_inherit_the_parents(db):
-    """The 'turn-scoped budget is unchanged' half, end to end through the
-    real spawn() closure: everything except the wall clock and the
-    subagent count still comes from the parent's own budget, same as
-    `clamp_child_budget` always passed through."""
+def test_a_threaded_childs_other_budget_fields_still_inherit_the_parents(db):
+    """`contain_child_budget`'s own "everything but wall clock and
+    subagent count is unchanged" half, end to end through the real
+    spawn() closure on the THREADED path (`make_fleet_service` below
+    builds an explicit coordinator, so `fleet is not None` and this
+    spawn call is non-inline): the child still inherits the parent's
+    round budget, same fields `clamp_child_budget` passes through
+    unchanged on the turn-scoped/inline path."""
     cfg = AgentConfig(
         model="test-model",
         system_prompt="You are helpful.",
@@ -1357,6 +1387,227 @@ def test_a_spawned_childs_other_budget_fields_still_inherit_the_parents(db):
     assert child["budget"]["max_steps"] == 40
     assert child["budget"]["max_total_tokens"] == 5000
     assert child["budget"]["max_tool_call_seconds"] == 45.0
+
+
+def test_an_inline_childs_budget_still_clamps_to_the_parents_remainder(
+    db, monkeypatch
+):
+    """PR3a-1 Task 5 review, Defect 1 (Major, blocking) -- the regression
+    this pins.
+
+    The first version of this task swapped the child-budget call at
+    `AgentService.spawn`'s ONE spawn site with no branch, so it hit the
+    INLINE path too: every skill call (`functools.partial(spawn,
+    inline=True)`), and every spawn when the fleet is off entirely
+    (`fleet is None`, this test's own setup via `max_live_subagents = 1`).
+    An inline child is turn-scoped by construction -- it blocks the
+    parent inside `deps.spawn`, and there is no `_settle_fleet` to bound
+    it externally -- so handing it `contain_child_budget`'s INDEPENDENT
+    ceiling (unrelated to how much of the parent's own wall clock was
+    left) violated the plan's Global Constraint verbatim: "Turn-scoped
+    behaviour must stay byte-identical when no child outlives its turn."
+    Proved by execution at review time: a child with a 30s ceiling ran
+    1.5s past a parent whose own ceiling was 1.0s and returned RUN_DONE;
+    reverted to the parent-remainder clamp, it correctly went `stuck`
+    instead of returning done.
+
+    This test pins the FIXED behaviour: an inline child's persisted
+    budget still comes from `clamp_child_budget` (parent-remainder),
+    never from `contain_child_budget`'s independent
+    `DEFAULT_CHILD_MAX_WALL_SECONDS` default.
+    """
+    cfg = AgentConfig(
+        model="test-model",
+        system_prompt="You are helpful.",
+        allowed_tools=("calculator", SPAWN_TOOL_NAME),
+        budget=RunBudget(
+            max_steps=10, max_model_turns=10, max_subagents=1, max_wall_seconds=100.0
+        ),
+    )
+    service, _chat = make_inline_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "child task"}),
+            "sub answer",  # consumed by the child, INLINE and in order
+            "handled",
+        ],
+        monkeypatch,
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=cfg,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    assert service._fleet is None  # confirms this really is the inline path
+    child = next(r for r in db.list_runs("c") if r["agent_kind"] == "subagent")
+    # NOT the independent default -- the defect this pins would have made
+    # this equal DEFAULT_CHILD_MAX_WALL_SECONDS (1800.0) regardless of the
+    # parent's own 100.0s ceiling.
+    assert (
+        child["budget"]["max_wall_seconds"]
+        != agent_service.DEFAULT_CHILD_MAX_WALL_SECONDS
+    )
+    # Clamped to (approximately) the parent's own remaining wall clock at
+    # spawn time -- never exceeding the parent's own ceiling, the
+    # pre-Task-5 invariant, restored byte-identical.
+    assert 0 < child["budget"]["max_wall_seconds"] <= cfg.budget.max_wall_seconds
+    assert child["budget"]["max_subagents"] == 0  # depth-1 still holds
+
+
+def test_live_children_are_not_capped_across_turns(db, monkeypatch):
+    """PR3a-1 Task 5 review, Defect 2 (Major) -- NOT this task's bug to
+    fix, but a claim this task must not make. `[agents]
+    max_live_subagents` only bounds live children WITHIN one `run_turn`
+    call: `AgentService._run_one` builds a brand-new `FleetCoordinator`
+    every `run_turn` call that did NOT have one injected at construction
+    time (`self._injected_fleet_coordinator is None`) -- no cross-turn
+    accounting -- and Console constructs a new `AgentService` per
+    `run_reply` with no `fleet_coordinator=` at all, so production always
+    takes that branch. This test therefore builds the service the SAME
+    way (no `fleet_coordinator=` kwarg -- NOT `make_fleet_service`, whose
+    helper injects one, which would make `run_turn` REUSE that same
+    coordinator's cap across calls and actually enforce a cross-turn
+    bound, the opposite of what production does).
+
+    Sequential by construction, not concurrent threads: PR3a-1 Task 2
+    made a still-running child outlive the `run_turn` call that spawned
+    it BY DEFAULT, so turn 1's `run_turn()` returns once its own primary
+    answers -- without waiting for its two spawned children, which stay
+    running in the background -- before this test ever calls turn 2's
+    `run_turn()`. Both children stay blocked on the same `Event` until
+    released at teardown. `FleetChat`'s parent-reply queue is per
+    PRIMARY-run-at-a-time (task-vs-no-task addressing, not run-id), so
+    two truly concurrent primaries sharing one `FleetChat` would race on
+    it -- sequential calls sidestep that entirely and still prove the gap,
+    since the defect is about COUNT accounting, not concurrency.
+    """
+    released = threading.Event()
+
+    def blocked_child():
+        released.wait(10.0)
+        return "released"
+
+    _patch_max_live(monkeypatch, 2)
+    cfg = AgentConfig(
+        model="test-model",
+        system_prompt="You are helpful.",
+        allowed_tools=(SPAWN_TOOL_NAME,),
+        budget=RunBudget(max_steps=10, max_model_turns=10, max_subagents=2),
+    )
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    chat = FleetChat(
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "a"}),
+            fence(SPAWN_TOOL_NAME, {"task": "b"}),
+            "turn 1 done",
+        ]
+        + [
+            fence(SPAWN_TOOL_NAME, {"task": "c"}),
+            fence(SPAWN_TOOL_NAME, {"task": "d"}),
+            "turn 2 done",
+        ],
+        {
+            "a": [blocked_child],
+            "b": [blocked_child],
+            "c": [blocked_child],
+            "d": [blocked_child],
+        },
+        allow_unconsumed=True,
+    )
+    # No `fleet_coordinator=` -- mirrors Console's real construction, so
+    # `run_turn` builds its own fresh `FleetCoordinator` from
+    # `[agents] max_live_subagents` every call (agent_service.py's
+    # `self._injected_fleet_coordinator is None` branch).
+    service = AgentService(db=db, registry=registry, chat_call=chat)
+    fleet_1 = fleet_2 = None  # bound here so `finally` can drain either
+    try:
+        run_id_1, outcome_1 = service.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go 1"}],
+            config=cfg,
+            api_endpoint="llama_cpp",
+        )
+        assert outcome_1.status == RUN_DONE
+        fleet_1 = service._fleet  # turn 1's coordinator, captured before reassignment
+        assert fleet_1 is not None
+        deadline = time.monotonic() + _JOIN_TIMEOUT
+        while (
+            len([h for h in fleet_1.snapshot() if h.status == RUN_RUNNING]) < 2
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.01)
+        turn_1_running = len(
+            [h for h in fleet_1.snapshot() if h.status == RUN_RUNNING]
+        )
+        assert turn_1_running == 2, (
+            f"turn 1's 2 children never both started running "
+            f"(saw {turn_1_running})"
+        )
+
+        # Turn 2: a SECOND, independent `run_turn` call. If COUNT were
+        # bounded across turns, this would refuse to spawn (the cap of 2
+        # is "already full" from turn 1's perspective) or block waiting
+        # for a slot. Neither happens: `run_turn` builds a brand-new
+        # `FleetCoordinator` from the SAME config, which starts empty and
+        # has no idea turn 1's children exist.
+        run_id_2, outcome_2 = service.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go 2"}],
+            config=cfg,
+            api_endpoint="llama_cpp",
+        )
+        assert outcome_2.status == RUN_DONE
+        fleet_2 = service._fleet  # turn 2's coordinator -- a DIFFERENT object
+        assert fleet_2 is not None
+        assert fleet_2 is not fleet_1
+        deadline = time.monotonic() + _JOIN_TIMEOUT
+        while (
+            len([h for h in fleet_2.snapshot() if h.status == RUN_RUNNING]) < 2
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.01)
+
+        n1 = len([h for h in fleet_1.snapshot() if h.status == RUN_RUNNING])
+        n2 = len([h for h in fleet_2.snapshot() if h.status == RUN_RUNNING])
+        total = n1 + n2
+        # The headline: 4 simultaneously running against a cap of 2 --
+        # COUNT is per-run_turn only, not a cross-turn or per-conversation
+        # bound. A fixed Task 6 coordinator (long-lived, per-conversation)
+        # would make this assertion FAIL (capped at 2) -- that is the
+        # intended signal to update this test when Task 6 lands, not
+        # silently re-green it.
+        assert total == 4, (
+            f"expected the cap-of-2 gap to allow 4 concurrent children "
+            f"across two turns; saw {n1} (turn 1) + {n2} (turn 2) = {total}"
+        )
+    finally:
+        # Unblocks every child across BOTH turns (they share one Event).
+        # `run_child`'s threads are daemon (agent_service.py), so an
+        # unjoined straggler cannot hang the suite; turn 1's threads are
+        # no longer tracked in `service._fleet_threads` by this point
+        # (that dict resets at the top of every `run_turn` call, Task 2's
+        # per-turn scoping), so there is nothing to `.join()` directly.
+        # Drain by polling both coordinators for terminal status instead
+        # (bounded, not a blind sleep) -- purely to avoid a background
+        # thread still finishing its post-release persistence work racing
+        # a narrow/filtered pytest invocation's process teardown; harmless
+        # either way since the threads are daemon.
+        released.set()
+        drain_deadline = time.monotonic() + 2.0
+        while time.monotonic() < drain_deadline:
+            pending = [
+                h
+                for fleet in (fleet_1, fleet_2)
+                if fleet is not None
+                for h in fleet.snapshot()
+                if h.status == RUN_RUNNING
+            ]
+            if not pending:
+                break
+            time.sleep(0.02)
 
 
 def test_config_above_one_builds_a_fleet_and_threads_spawns(db, monkeypatch):
@@ -1906,8 +2157,11 @@ def test_setup_phase_exception_still_persists_a_terminal_db_status(
     real_initial_disclosure = agent_service.initial_disclosure
 
     def exploding_initial_disclosure(registry, budget):
-        # Only a depth-1 CHILD's budget is clamped to max_subagents == 0
-        # (`clamp_child_budget`); the primary's is > 0. This fires only
+        # Only a depth-1 CHILD's budget has max_subagents == 0 -- zeroed
+        # by whichever containment function built it (this test's child
+        # is threaded, via `contain_child_budget`; an inline child would
+        # get the same zero from `clamp_child_budget` instead, PR3a-1
+        # Task 5) -- the primary's is > 0. This fires only
         # for the child -- standing in for a misbehaving provider's
         # `list_catalog()` recursing into the tool catalog's RLock
         # (Task 4's own documented trigger for this exact exception).

@@ -1,6 +1,7 @@
 """Pure model tests: values, defaults, and the child-budget clamp."""
 
 import dataclasses
+import math
 
 from tldw_chatbook.Agents.agent_models import (
     CHECK_AGENTS_TOOL_NAME,
@@ -83,10 +84,27 @@ def test_budget_defaults():
     ) == (8, 240.0, 2, 24, 4000)
 
 
-def test_run_budget_default_model_turns_unreachable_and_child_clamp_carries():
+# -- clamp_child_budget: the TURN-SCOPED / INLINE path ONLY --------------
+#
+# PR3a-1 Task 5 review (Defect 1) caught this cluster reading as the
+# SYSTEM's live containment contract -- it is not, and was never meant to
+# be after this task. `clamp_child_budget` is production's call site for
+# exactly ONE path: a turn-scoped or explicitly `inline=True` child that
+# blocks the parent inside `spawn()` and has no `_settle_fleet` to bound
+# it externally (see `AgentService.spawn`'s branch on
+# `fleet is None or inline`). A THREADED child that can actually survive
+# past `_settle_fleet` (PR3a-1 Task 2) never reaches this function -- it
+# goes through `contain_child_budget` instead, which has its OWN
+# independent ceiling and its OWN test cluster below. Every test in this
+# cluster describes ONLY the turn-scoped/inline path's contract; none of
+# them is evidence about what bounds a surviving background child.
+
+
+def test_run_budget_default_model_turns_unreachable_and_turn_scoped_child_clamp_carries():
     """Pin the engine-default unreachability invariant and child passthrough.
 
-    At ``RunBudget()`` the model-turn cap must be at least ``max_steps`` (so
+    Turn-scoped/inline path only (see cluster header above). At
+    ``RunBudget()`` the model-turn cap must be at least ``max_steps`` (so
     the model-turn check can never fire before the step check), and
     ``clamp_child_budget`` must carry ``max_model_turns`` through unclamped.
     """
@@ -104,14 +122,19 @@ def test_run_budget_default_model_turns_unreachable_and_child_clamp_carries():
     assert child.max_model_turns == 3
 
 
-def test_clamp_child_budget_clamps_wall_clock_and_zeroes_spawn():
+def test_clamp_child_budget_for_the_turn_scoped_path_clamps_wall_clock_and_zeroes_spawn():
+    """Turn-scoped/inline path only (see cluster header above) -- NOT a
+    system-wide "a child can never outlive its parent" guarantee. A
+    threaded survivor candidate is bounded by `contain_child_budget`
+    instead; see that function's own test cluster."""
     child = clamp_child_budget(RunBudget(), parent_remaining_seconds=30.0)
     assert child.max_wall_seconds == 30.0  # min(240, 30)
     assert child.max_subagents == 0  # depth 1: children never spawn
     assert child.max_steps == 8  # steps are per-run, not clamped
 
 
-def test_clamp_child_budget_floors_at_one_second():
+def test_clamp_child_budget_for_the_turn_scoped_path_floors_at_one_second():
+    """Turn-scoped/inline path only (see cluster header above)."""
     child = clamp_child_budget(RunBudget(), parent_remaining_seconds=-5.0)
     assert child.max_wall_seconds == 1.0
 
@@ -159,33 +182,49 @@ def test_runoutcome_total_tokens_defaults_zero():
     assert RunOutcome(RUN_DONE, [], total_tokens=123).total_tokens == 123
 
 
-def test_clamp_child_budget_preserves_max_total_tokens():
+def test_clamp_child_budget_for_the_turn_scoped_path_preserves_max_total_tokens():
+    """``clamp_child_budget`` is production's call site for the
+    turn-scoped/inline spawn path ONLY (see ``AgentService.spawn``'s
+    branch on ``fleet is None or inline``) -- not a system-wide "a child
+    can never outlive its parent" guarantee. A threaded survivor
+    candidate goes through ``contain_child_budget`` instead."""
     from tldw_chatbook.Agents.agent_models import RunBudget, clamp_child_budget
     child = RunBudget(max_total_tokens=7000)
     assert clamp_child_budget(child, 10.0).max_total_tokens == 7000
 
 
-def test_clamp_child_budget_preserves_max_tool_result_chars():
+def test_clamp_child_budget_for_the_turn_scoped_path_preserves_max_tool_result_chars():
+    """Turn-scoped/inline spawn path only -- see the sibling test above
+    for the full scope note; not a system-wide invariant."""
     from tldw_chatbook.Agents.agent_models import RunBudget, clamp_child_budget
     child = RunBudget(max_tool_result_chars=0)
     assert clamp_child_budget(child, 10.0).max_tool_result_chars == 0
 
 
-def test_clamp_child_budget_propagates_tool_call_seconds():
+def test_clamp_child_budget_for_the_turn_scoped_path_propagates_tool_call_seconds():
+    """Turn-scoped/inline spawn path only -- see the sibling test above
+    for the full scope note; not a system-wide invariant."""
     parent = RunBudget(max_tool_call_seconds=45.0)
     child = clamp_child_budget(parent, 30.0)
     assert child.max_tool_call_seconds == 45.0   # taken from the child arg (== parent here)
     assert child.max_subagents == 0              # existing invariant still holds
 
 
-# -- contain_child_budget (PR3a-1 Task 5) -----------------------------------
+# -- contain_child_budget: the THREADED SURVIVOR CANDIDATE path only -----
 #
-# `clamp_child_budget` above is UNCHANGED and stays in the module -- it is
-# not production's call site anymore (see `agent_service.spawn`), but its
-# own contract (and every test above) is untouched. `contain_child_budget`
+# PR3a-1 Task 5 review (Defect 1) corrected an over-broad first cut: this
+# function does NOT replace `clamp_child_budget` as production's ONLY
+# call site -- `AgentService.spawn` BRANCHES on `fleet is None or inline`
+# (the exact predicate the dispatch below it also tests), and
+# `clamp_child_budget` above is still production's call site for the
+# turn-scoped/inline half of that branch, unmodified, with its own
+# six-test cluster above stating that scope explicitly. `contain_child_
+# budget` is production's call site for the OTHER half only: a THREADED,
+# non-inline child, the one kind that can actually survive past
+# `_settle_fleet` (PR3a-1 Task 2). For that path only, this function
 # replaces the "child can never outlive its parent" clamp with an
-# independent per-child ceiling: PR3a-1 Task 2 made surviving the turn the
-# DEFAULT, so a child's own wall-clock bound can no longer depend on how
+# independent per-child ceiling: surviving the turn is the DEFAULT for a
+# threaded child, so its own wall-clock bound can no longer depend on how
 # much of the PARENT's budget happened to be left at spawn time -- that
 # made a background child's effective ceiling an accident of WHEN in the
 # turn it was spawned, not a real bound. `run_agent_loop`'s own wall-clock
@@ -216,6 +255,28 @@ def test_contain_child_budget_signature_has_no_parent_remainder_argument():
 
 def test_contain_child_budget_floors_at_one_second():
     child = contain_child_budget(RunBudget(), max_wall_seconds=-5.0)
+    assert child.max_wall_seconds == 1.0
+
+
+def test_contain_child_budget_floors_nan_instead_of_disabling_the_ceiling():
+    """Review-caught: `max(float("nan"), 1.0)` evaluates to `nan` in
+    Python (`1.0 > nan` is False, so `max` keeps its first argument), and
+    `deps.clock() - started > nan` -- run_agent_loop's own wall-clock
+    check -- is then always False, silently disabling the ceiling rather
+    than flooring it. Production's only call site can't reach this
+    (`_coerce_child_max_wall_seconds` falls back to the config default
+    first), but the pure function's own floor must hold for ANY caller.
+    """
+    child = contain_child_budget(RunBudget(), max_wall_seconds=float("nan"))
+    assert child.max_wall_seconds == 1.0
+    assert math.isfinite(child.max_wall_seconds)
+
+
+def test_contain_child_budget_floors_infinity_too():
+    """Same failure shape as NaN: `deps.clock() - started > inf` is also
+    always False, so an infinite ceiling is just as disabling as NaN --
+    both are floored rather than passed through."""
+    child = contain_child_budget(RunBudget(), max_wall_seconds=float("inf"))
     assert child.max_wall_seconds == 1.0
 
 
