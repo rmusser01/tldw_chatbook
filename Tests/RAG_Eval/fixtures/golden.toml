@@ -453,7 +453,7 @@ relevant_slugs = []
 #          uniquely in scope — it failed both halves of the rule)
 
 # ---------------------------------------------------------------------------
-# scoped (7) — keyword-findable inside the scope, invisible to the vector leg
+# scoped (7) — keyword-findable inside the scope, outside the vector top-10
 # ---------------------------------------------------------------------------
 #
 # Each of these runs under a real `EffectiveScope` built from `scope_slugs`
@@ -482,12 +482,44 @@ relevant_slugs = []
 #     after  (2026-08-11)       0.000        1.000         1.000
 #                                                    (MRR 0.163, NDCG 0.348)
 #
-# The rescued rows arrive late (ranks 3, 4, 9, 9, 9, 9, 9), which is the
-# mechanism showing through: an FTS-only document scores 0.3 * 1/(rrf_k+1) in
-# the fusion, exactly tying the semantic leg's rank 9 at rrf_k=5. At the old
-# rrf_k=60 it would have scored 0.0049 against the semantic leg's tenth at
-# 0.0100 and stayed invisible. These fixtures measure the two P2 decisions
-# together, and their cells move with the fusion knobs like any other cell.
+# The rescued rows arrive late, and NOT all by the same mechanism. Per-fixture
+# fusion provenance, read off `metadata["hybrid_fusion"]` on the live rows
+# (k=10, alpha=0.7, vector leg over-fetched to 2*k=20):
+#
+#   fixture                       fts_rank  vector_rank  rank@rrf_k=5  @rrf_k=60
+#   sc-pump-chamber-inspection           1         none             9       miss
+#   sc-storm-overflow-record             1           12             3          1
+#   sc-intake-screen-survey              1         none             9       miss
+#   sc-meter-box-key                     1         none             9       miss
+#   sc-valve-pit-access                  1           20             4          1
+#   sc-sample-point-sign                 1         none             9       miss
+#   sc-duty-board-notice                 1         none             9       miss
+#                            scoped hybrid recall:      1.000      0.286
+#
+# FIVE of the seven are FTS-only: absent from the vector leg's pool entirely,
+# they score `(1.0 - alpha) * 1/(rrf_k + 1)`. TWO are not — their targets sit
+# at vector rank 12 and 20, inside the over-fetched pool though far outside
+# the top-10 the admission rule was stated at, so they carry BOTH legs and
+# land at rank 1 even at rrf_k=60. Any blanket "this class is FTS-only" claim
+# is wrong for those two, and the k=60 counterfactual is 0.286, not 0.000.
+#
+# The float detail matters, because it is what actually orders the list.
+# `fusion.reciprocal_rank_fusion` computes `(1.0 - alpha) * fts_rrf`, and
+# `1.0 - 0.7` is 0.30000000000000004 — so an FTS-only row scores exactly 0.05
+# while the semantic leg's rank 9 scores 0.7 * 1/14 = 0.049999999999999996.
+# The paper form (0.3 * 1/6) is bit-identical to the semantic value; the
+# shipped form rounds UP and wins STRICTLY, by 6.94e-18. The tie-break
+# convention never runs. Measured in the live ladder: rank 9 = 0.05,
+# rank 10 = 0.049999999999999996.
+#
+# Two different fragilities follow, and they are not the same size. INCLUSION
+# has a real margin: the FTS-only row at 0.05 displaces the semantic leg's
+# rank 10 at 0.7/15 = 0.0467. PLACEMENT at 9 rather than 10 is the 1-ULP win
+# above. So recall 1.000 does not hang on a float artefact — but five of the
+# seven sit one position from the bottom of the top-10, and a smaller k or
+# any change to alpha/rrf_k moves them. These fixtures measure the two P2
+# decisions together (B1 routing + TASK-3994's rrf_k), and their cells move
+# with the fusion knobs like any other cell.
 #
 # The per-fixture `# admitted:` lines below are dated records of the probe
 # that ADMITTED each fixture, taken before the flip. `hybrid=miss` on those

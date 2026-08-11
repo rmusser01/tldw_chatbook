@@ -92,10 +92,14 @@ def test_the_fusion_strategy_matrix_over_the_real_fixtures(tmp_path, capsys):
         # across this whole matrix because no fusion knob was on their code
         # path at all. TASK-15020/B1 ended both facts: scoped queries run the
         # fused path, so the exemption is dead code, and their scores now MOVE
-        # with the fusion knobs like every other query's. (Measured: the
-        # shipped scoped targets are FTS-only rows that reach the fused top-10
-        # only because `rrf_k` is 5 — at 60 an FTS rank-1-only document scores
-        # below the semantic leg's tenth.)
+        # with the fusion knobs like every other query's. Measured, at
+        # `alpha` 0.7: all seven shipped scoped targets are `fts_rank` 1, five
+        # of them FTS-ONLY (no vector rank at all) and reaching the top-10
+        # only because `rrf_k` is 5; the other two carry a vector rank as well
+        # (12 and 20, inside the over-fetched pool) and lead the list at
+        # `rrf_k=60` too. Scoped hybrid recall is 1.000 at 5 and 0.286 at 60 —
+        # so this class is fusion-SENSITIVE, but "FTS-only" is true of 5/7,
+        # not of the class.
         backends = tuple(
             sorted(
                 {

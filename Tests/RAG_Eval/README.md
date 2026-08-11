@@ -312,16 +312,42 @@ Every golden query carries one of five categories:
   routing assertions were flipped when it did.
 
   *What the flip bought, measured.* The seven shipped scoped fixtures are
-  keyword-findable inside their scope (`plain` rank 1 on every one) and
-  invisible to the vector leg (absent from the semantic top-10 on every
-  one). Diverted, hybrid scored them 0.000; fused, it scores **recall
-  1.000** (MRR 0.163 — the rescued rows arrive late, at ranks 3-9). The
-  mechanism is an FTS-only row surviving fusion, which is only true at the
-  `rrf_k` this harness measured its way to: at `rrf_k=5` an FTS rank-1-only
-  document scores 0.3/6 = 0.05 and ties the semantic leg's rank 9, while at
-  the old `rrf_k=60` it would score 0.3/61 = 0.0049 against the semantic
-  leg's tenth at 0.01 — below the cut. The scoped cells therefore move with
-  the fusion knobs like any other cell.
+  keyword-findable inside their scope (`plain` rank 1 on every one, and
+  `fts_rank` 1 in the engine's own leg) and outside the vector leg's top-10
+  on every one. Diverted, hybrid scored them 0.000; fused, it scores
+  **recall 1.000** (MRR 0.163 — the rescued rows arrive late, at ranks 3-9).
+
+  Two mechanisms, not one, and the difference is worth knowing before
+  reading these cells as one number. Per-fixture fusion provenance
+  (`metadata["hybrid_fusion"]`, k=10, `alpha` 0.7, vector leg over-fetched
+  to `2*k`):
+
+  | fixture | fts_rank | vector_rank | rank @`rrf_k`=5 | @`rrf_k`=60 |
+  |---|---|---|---|---|
+  | `sc-pump-chamber-inspection` | 1 | — | 9 | miss |
+  | `sc-storm-overflow-record` | 1 | 12 | 3 | 1 |
+  | `sc-intake-screen-survey` | 1 | — | 9 | miss |
+  | `sc-meter-box-key` | 1 | — | 9 | miss |
+  | `sc-valve-pit-access` | 1 | 20 | 4 | 1 |
+  | `sc-sample-point-sign` | 1 | — | 9 | miss |
+  | `sc-duty-board-notice` | 1 | — | 9 | miss |
+  | | | **scoped recall** | **1.000** | **0.286** |
+
+  Five are FTS-only and reach the top-10 only because `rrf_k` is 5. Two are
+  not FTS-only at all — their targets sit at vector rank 12 and 20, inside
+  the over-fetched pool, so they carry both legs and lead the list even at
+  `rrf_k=60`. The counterfactual for this class at the old constant is
+  **0.286, not 0.000**.
+
+  One float detail decides the ordering. `reciprocal_rank_fusion` computes
+  `(1.0 - alpha) * fts_rrf`, and `1.0 - 0.7` is `0.30000000000000004`, so an
+  FTS-only row scores exactly `0.05` where the semantic leg's rank 9 scores
+  `0.7/14` = `0.049999999999999996`: a **strict win by 6.94e-18**, not the
+  tie the paper form (`0.3 * 1/6`) would give. The tie-break convention never
+  runs. Inclusion, though, has a real margin — the row displaced is the
+  semantic leg's rank 10 at `0.7/15` = 0.0467 — so recall 1.000 is not a
+  float artefact; only the 9-versus-10 placement is. The scoped cells move
+  with the fusion knobs like any other cell.
 
 ## Reading the summary table
 
