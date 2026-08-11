@@ -73,6 +73,26 @@ EXPECTED_INPUT_KEYS = {
 }
 EXPECTED_NODE_KEYS = frozenset({"_meta", "class_type", "inputs"})
 EXPECTED_METADATA_KEYS = frozenset({"title"})
+EXPECTED_NODE_TITLES = {
+    "114": "Load Image",
+    "121": "Load VAE",
+    "124": "VAE Decode",
+    "125": "KSamplerSelect",
+    "126": "BasicScheduler",
+    "127": "SamplerCustomAdvanced",
+    "128": "Basic Guider",
+    "129": "Load Diffusion Model",
+    "130": "Load CLIP",
+    "131": "RandomNoise",
+    "133": "MiniMax H3 Image to Video",
+    "139": "Frame Length",
+    "140": "Get Image Size",
+    "141": "Scale Image to Total Pixels",
+    "144": "Get Image from Batch",
+    "149": "Resize Image/Mask",
+    "150": "Get Image Size",
+    "165": "Save Output Image",
+}
 
 # Transcribed from the approved design, not inferred from graph connectivity.
 EXPECTED_DIRECT_LINKS = {
@@ -153,6 +173,10 @@ _APPROVED_LITERAL_PATHS = {
     "114.inputs.image": EXPECTED_NEUTRAL_LITERALS["114.image"],
     "165.inputs.filename_prefix": EXPECTED_NEUTRAL_LITERALS["165.filename_prefix"],
 }
+_APPROVED_TITLE_PATHS = {
+    f"{node_id}._meta.title": title
+    for node_id, title in EXPECTED_NODE_TITLES.items()
+}
 
 LOAD_ERROR = "Packaged workflow could not be loaded as a nonempty JSON object"
 STRUCTURE_ERROR = "Packaged workflow structure does not match the approved contract"
@@ -232,11 +256,13 @@ def _is_absolute_or_uri(value: str) -> bool:
 
 
 def _is_relative_path_like(value: str) -> bool:
-    if any(character.isspace() for character in value):
-        return False
     if "/" in value or "\\" in value:
         return True
     return bool(Path(value).suffix)
+
+
+def _is_separator_free_basename(value: str) -> bool:
+    return "/" not in value and "\\" not in value and Path(value).name == value
 
 
 def _validate_workflow_structure(graph: Mapping[str, Any]) -> None:
@@ -252,6 +278,7 @@ def _validate_workflow_structure(graph: Mapping[str, Any]) -> None:
         _require(set(inputs) == EXPECTED_INPUT_KEYS[node_id], STRUCTURE_ERROR)
         _require(isinstance(metadata, Mapping), STRUCTURE_ERROR)
         _require(set(metadata) == EXPECTED_METADATA_KEYS, STRUCTURE_ERROR)
+        _require(metadata.get("title") == EXPECTED_NODE_TITLES[node_id], STRUCTURE_ERROR)
 
 
 def _validate_workflow_privacy(graph: Mapping[str, Any]) -> None:
@@ -265,9 +292,15 @@ def _validate_workflow_privacy(graph: Mapping[str, Any]) -> None:
             continue
         dotted_path = ".".join(path)
         approved_value = _APPROVED_LITERAL_PATHS.get(dotted_path)
-        allowed = (
+        approved_title = _APPROVED_TITLE_PATHS.get(dotted_path)
+        operational_basename = (
             dotted_path in _OPERATIONAL_FILE_SELECTOR_INPUTS
+            and _is_separator_free_basename(value)
+        )
+        allowed = (
+            operational_basename
             or approved_value == value
+            or approved_title == value
         )
         _require(allowed, PRIVACY_ERROR)
 
@@ -386,6 +419,26 @@ def _workflow_with_relative_path() -> dict[str, Any]:
     return graph
 
 
+def _workflow_with_spaced_relative_path() -> dict[str, Any]:
+    graph = copy.deepcopy(_load_workflow())
+    graph["114"]["_meta"]["title"] = "relative folder/harmless sentinel.txt"
+    return graph
+
+
+def _workflow_with_unapproved_title() -> dict[str, Any]:
+    graph = copy.deepcopy(_load_workflow())
+    graph["114"]["_meta"]["title"] = "Harmless Display Title"
+    return graph
+
+
+def _workflow_with_operational_selector_path() -> dict[str, Any]:
+    graph = copy.deepcopy(_load_workflow())
+    graph["121"]["inputs"]["vae_name"] = (
+        "relative folder/harmless selector.safetensors"
+    )
+    return graph
+
+
 def _workflow_with_uri() -> dict[str, Any]:
     graph = copy.deepcopy(_load_workflow())
     graph["114"]["_meta"]["title"] = "harmless-scheme://example.invalid/item"
@@ -413,6 +466,33 @@ def test_structure_validator_rejects_unexpected_input_without_echo() -> None:
 
 def test_privacy_validator_rejects_relative_path_without_echo() -> None:
     graph = _workflow_with_relative_path()
+
+    _assert_constant_refusal(
+        lambda: _validate_workflow_privacy(graph),
+        PRIVACY_ERROR,
+    )
+
+
+def test_privacy_validator_rejects_spaced_relative_path_without_echo() -> None:
+    graph = _workflow_with_spaced_relative_path()
+
+    _assert_constant_refusal(
+        lambda: _validate_workflow_privacy(graph),
+        PRIVACY_ERROR,
+    )
+
+
+def test_structure_validator_rejects_unapproved_title_without_echo() -> None:
+    graph = _workflow_with_unapproved_title()
+
+    _assert_constant_refusal(
+        lambda: _validate_workflow_structure(graph),
+        STRUCTURE_ERROR,
+    )
+
+
+def test_privacy_validator_rejects_operational_selector_path_without_echo() -> None:
+    graph = _workflow_with_operational_selector_path()
 
     _assert_constant_refusal(
         lambda: _validate_workflow_privacy(graph),
