@@ -12,6 +12,8 @@ import zipfile
 from pathlib import Path
 
 from Tests.Image_Generation.test_comfyui_workflow_assets import (
+    EXPECTED_DIRECT_LINKS,
+    EXPECTED_NEUTRAL_LITERALS,
     EXPECTED_NODE_CLASSES,
     WORKFLOW_FILENAME,
 )
@@ -21,6 +23,16 @@ WORKFLOW_MEMBER = (
     "tldw_chatbook/Image_Generation/workflows/" + WORKFLOW_FILENAME
 )
 SDIST_INCLUDE = "recursive-include tldw_chatbook/Image_Generation/workflows *.json"
+BUILD_ERROR = "H3 workflow distributions could not be built"
+SDIST_ERROR = "H3 workflow sdist inventory does not match the approved contract"
+WHEEL_ERROR = "H3 workflow wheel inventory does not match the approved contract"
+INSTALL_ERROR = "H3 workflow wheel could not be installed"
+INSTALLED_PROBE_ERROR = "Installed H3 workflow probe failed"
+
+
+def _require(condition: bool, message: str) -> None:
+    if not condition:
+        raise AssertionError(message)
 
 
 def _copy_build_inputs(destination: Path) -> None:
@@ -68,13 +80,10 @@ def _build_distributions(source_root: Path) -> tuple[Path, Path]:
         text=True,
         timeout=300,
     )
-    assert completed.returncode == 0, (
-        f"command: {command}\nstdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
-    )
+    _require(completed.returncode == 0, BUILD_ERROR)
     sdists = sorted(dist_dir.glob("*.tar.gz"))
     wheels = sorted(dist_dir.glob("*.whl"))
-    assert len(sdists) == 1
-    assert len(wheels) == 1
+    _require(len(sdists) == 1 and len(wheels) == 1, BUILD_ERROR)
     return sdists[0], wheels[0]
 
 
@@ -82,7 +91,7 @@ def _sdist_members(path: Path) -> set[str]:
     with tarfile.open(path, "r:gz") as archive:
         files = [member.name for member in archive.getmembers() if member.isfile()]
     roots = {name.split("/", 1)[0] for name in files}
-    assert len(roots) == 1
+    _require(len(roots) == 1, SDIST_ERROR)
     return {name.split("/", 1)[1] for name in files if "/" in name}
 
 
@@ -119,10 +128,10 @@ def _install_wheel(wheel: Path, target: Path) -> None:
         text=True,
         timeout=300,
     )
-    assert completed.returncode == 0, completed.stdout + completed.stderr
+    _require(completed.returncode == 0, INSTALL_ERROR)
 
 
-def _load_installed_workflow(target: Path) -> dict[str, object]:
+def _probe_installed_workflow(target: Path) -> None:
     script = r"""
 import json
 import sys
@@ -130,31 +139,100 @@ from pathlib import Path
 
 target = Path(sys.argv[1]).resolve()
 checkout = Path(sys.argv[2]).resolve()
+expected = json.loads(sys.argv[3])
+
+def require(condition, message):
+    if not condition:
+        raise AssertionError(message)
+
 sys.path.insert(0, str(target))
 for entry in sys.path:
     if not entry:
         continue
     resolved_entry = Path(entry).resolve()
-    assert resolved_entry != checkout
-    assert not resolved_entry.is_relative_to(checkout)
+    require(resolved_entry != checkout, "Installed probe import confinement failed")
+    require(
+        not resolved_entry.is_relative_to(checkout),
+        "Installed probe import confinement failed",
+    )
 
 from tldw_chatbook.Image_Generation.adapters import comfyui_image_adapter as adapter
 
-assert Path(adapter.__file__).resolve().is_relative_to(target)
+require(
+    Path(adapter.__file__).resolve().is_relative_to(target),
+    "Installed adapter did not load from the wheel target",
+)
 first = adapter._load_packaged_workflow()
 second = adapter._load_packaged_workflow()
-assert first is not second
+require(first is not second, "Installed loader did not return a fresh workflow")
 first["114"]["inputs"]["image"] = "mutation"
-assert second["114"]["inputs"]["image"] == "h3_edit_input.png"
-for invalid_key in ("other", "../minimax_h3_image_edit", "nested/key", "nested\\key"):
+require(
+    second["114"]["inputs"]["image"] == expected["neutral"]["114.image"],
+    "Installed loader returned shared workflow state",
+)
+for invalid_key in (
+    "",
+    None,
+    "other",
+    "minimax_h3_image_edit.json",
+    "../minimax_h3_image_edit",
+    "nested/key",
+    "nested\\key",
+):
     try:
         adapter._load_packaged_workflow(invalid_key)
     except ValueError:
         pass
     else:
-        raise AssertionError(f"unconfined workflow key accepted: {invalid_key!r}")
-print(json.dumps({"classes": {key: node["class_type"] for key, node in second.items()}}))
+        raise AssertionError("Installed loader accepted a forbidden workflow key")
+
+classes = {key: node.get("class_type") for key, node in second.items()}
+require(classes == expected["classes"], "Installed workflow node classes mismatch")
+
+def walk(value, parts):
+    if isinstance(value, dict):
+        for key, child in value.items():
+            yield from walk(child, [*parts, str(key)])
+    else:
+        yield ".".join(parts), value
+
+def direct_link(value):
+    return (
+        isinstance(value, list)
+        and len(value) == 2
+        and isinstance(value[0], str)
+        and isinstance(value[1], int)
+        and not isinstance(value[1], bool)
+    )
+
+leaves = {}
+for node_id, node in second.items():
+    leaves.update(walk(node.get("inputs", {}), [node_id]))
+links = {path: value for path, value in leaves.items() if direct_link(value)}
+require(links == expected["links"], "Installed workflow direct links mismatch")
+for path, approved in expected["neutral"].items():
+    require(leaves.get(path) == approved, "Installed workflow neutral controls mismatch")
+
+restored_output = (
+    second["165"]["inputs"]["images"] == ["149", 0]
+    and second["149"]["inputs"]["input"] == ["144", 0]
+    and second["149"]["inputs"]["resize_type.width"] == ["150", 0]
+    and second["149"]["inputs"]["resize_type.height"] == ["150", 1]
+    and second["150"]["inputs"]["image"] == ["114", 0]
+)
+require(restored_output, "Installed workflow restored output path mismatch")
+print("PASS")
 """
+    expected = json.dumps(
+        {
+            "classes": EXPECTED_NODE_CLASSES,
+            "links": {
+                path: list(source) for path, source in EXPECTED_DIRECT_LINKS.items()
+            },
+            "neutral": EXPECTED_NEUTRAL_LITERALS,
+        },
+        sort_keys=True,
+    )
     completed = subprocess.run(
         [
             sys.executable,
@@ -164,6 +242,7 @@ print(json.dumps({"classes": {key: node["class_type"] for key, node in second.it
             script,
             str(target),
             str(REPO_ROOT),
+            expected,
         ],
         cwd=target.parent,
         env={key: value for key, value in os.environ.items() if key != "PYTHONPATH"},
@@ -171,8 +250,8 @@ print(json.dumps({"classes": {key: node["class_type"] for key, node in second.it
         text=True,
         timeout=60,
     )
-    assert completed.returncode == 0, completed.stdout + completed.stderr
-    return json.loads(completed.stdout)
+    _require(completed.returncode == 0, INSTALLED_PROBE_ERROR)
+    _require(completed.stdout.strip() == "PASS", INSTALLED_PROBE_ERROR)
 
 
 def test_workflow_ships_in_wheel_and_sdist_and_loads_from_wheel(
@@ -182,19 +261,23 @@ def test_workflow_ships_in_wheel_and_sdist_and_loads_from_wheel(
         line.strip()
         for line in (REPO_ROOT / "MANIFEST.in").read_text(encoding="utf-8").splitlines()
     }
-    assert SDIST_INCLUDE in manifest_lines
+    _require(SDIST_INCLUDE in manifest_lines, SDIST_ERROR)
 
     source_root = tmp_path / "source"
     source_root.mkdir()
     _copy_build_inputs(source_root)
     sdist, wheel = _build_distributions(source_root)
 
-    assert _image_workflow_members(_sdist_members(sdist)) == {WORKFLOW_MEMBER}
-    assert _image_workflow_members(_wheel_members(wheel)) == {WORKFLOW_MEMBER}
+    _require(
+        _image_workflow_members(_sdist_members(sdist)) == {WORKFLOW_MEMBER},
+        SDIST_ERROR,
+    )
+    _require(
+        _image_workflow_members(_wheel_members(wheel)) == {WORKFLOW_MEMBER},
+        WHEEL_ERROR,
+    )
 
     installed = tmp_path / "installed"
     installed.mkdir()
     _install_wheel(wheel, installed)
-    loaded = _load_installed_workflow(installed)
-
-    assert loaded == {"classes": EXPECTED_NODE_CLASSES}
+    _probe_installed_workflow(installed)

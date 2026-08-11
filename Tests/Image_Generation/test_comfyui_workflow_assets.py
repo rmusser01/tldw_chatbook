@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 from collections.abc import Iterator, Mapping
@@ -38,6 +39,40 @@ EXPECTED_NODE_CLASSES = {
     "150": "GetImageSize",
     "165": "SaveImage",
 }
+
+# Transcribed independently from the approved graph contract. Literal values are
+# deliberately excluded so schema failures cannot reveal operational data.
+EXPECTED_INPUT_KEYS = {
+    "114": frozenset({"image"}),
+    "121": frozenset({"vae_name"}),
+    "124": frozenset({"samples", "vae"}),
+    "125": frozenset({"sampler_name"}),
+    "126": frozenset({"denoise", "model", "scheduler", "steps"}),
+    "127": frozenset({"guider", "latent_image", "noise", "sampler", "sigmas"}),
+    "128": frozenset({"conditioning", "model"}),
+    "129": frozenset({"unet_name", "weight_dtype"}),
+    "130": frozenset({"clip_name", "device", "type"}),
+    "131": frozenset({"noise_seed"}),
+    "133": frozenset({"clip", "first_frame", "height", "length", "prompt", "vae", "width"}),
+    "139": frozenset({"value"}),
+    "140": frozenset({"image"}),
+    "141": frozenset({"image", "megapixels", "resolution_steps", "upscale_method"}),
+    "144": frozenset({"batch_index", "image", "length"}),
+    "149": frozenset(
+        {
+            "input",
+            "resize_type",
+            "resize_type.crop",
+            "resize_type.height",
+            "resize_type.width",
+            "scale_method",
+        }
+    ),
+    "150": frozenset({"image"}),
+    "165": frozenset({"filename_prefix", "images"}),
+}
+EXPECTED_NODE_KEYS = frozenset({"_meta", "class_type", "inputs"})
+EXPECTED_METADATA_KEYS = frozenset({"title"})
 
 # Transcribed from the approved design, not inferred from graph connectivity.
 EXPECTED_DIRECT_LINKS = {
@@ -90,17 +125,53 @@ _CONTROL_INPUT_NAMES = {
     "prompt",
     "filename_prefix",
 }
-_PATHISH_FIELD = re.compile(
-    r"(?:^|_)(?:path|filepath|source|original|provenance|export)(?:$|_)",
-    re.IGNORECASE,
+_PROVENANCE_KEY_TOKENS = frozenset(
+    {
+        "source",
+        "original",
+        "provenance",
+        "export",
+        "path",
+        "filepath",
+        "hash",
+        "digest",
+        "checksum",
+    }
 )
+_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_KEY_TOKEN = re.compile(r"[a-z0-9]+")
+_URI_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 _WINDOWS_ABSOLUTE_PATH = re.compile(r"^[A-Za-z]:[\\/]")
+_OPERATIONAL_FILE_SELECTOR_INPUTS = frozenset(
+    {
+        "121.inputs.vae_name",
+        "129.inputs.unet_name",
+        "130.inputs.clip_name",
+    }
+)
+_APPROVED_LITERAL_PATHS = {
+    "114.inputs.image": EXPECTED_NEUTRAL_LITERALS["114.image"],
+    "165.inputs.filename_prefix": EXPECTED_NEUTRAL_LITERALS["165.filename_prefix"],
+}
+
+LOAD_ERROR = "Packaged workflow could not be loaded as a nonempty JSON object"
+STRUCTURE_ERROR = "Packaged workflow structure does not match the approved contract"
+LINK_ERROR = "Packaged workflow direct links do not match the approved contract"
+OUTPUT_ERROR = "Packaged workflow output path does not match the approved contract"
+CONTROL_ERROR = "Packaged workflow controlled literals do not match the approved contract"
+PRIVACY_ERROR = "Packaged workflow contains prohibited provenance data"
+RESOURCE_ERROR = "Image workflow resource inventory does not match the approved contract"
+
+
+def _require(condition: bool, message: str) -> None:
+    if not condition:
+        raise AssertionError(message)
 
 
 def _load_workflow() -> dict[str, Any]:
-    assert WORKFLOW_PATH.is_file(), f"missing packaged workflow: {WORKFLOW_FILENAME}"
+    _require(WORKFLOW_PATH.is_file(), LOAD_ERROR)
     graph = json.loads(WORKFLOW_PATH.read_text(encoding="utf-8"))
-    assert isinstance(graph, dict) and graph
+    _require(isinstance(graph, dict) and bool(graph), LOAD_ERROR)
     return graph
 
 
@@ -118,7 +189,7 @@ def _walk_input_leaves(
 def _input_leaves(graph: Mapping[str, Any]) -> Iterator[tuple[str, Any]]:
     for node_id, node in graph.items():
         inputs = node.get("inputs", {})
-        assert isinstance(inputs, Mapping), f"node {node_id} inputs must be an object"
+        _require(isinstance(inputs, Mapping), STRUCTURE_ERROR)
         yield from _walk_input_leaves(inputs, (node_id,))
 
 
@@ -132,34 +203,89 @@ def _is_direct_link(value: Any) -> bool:
     )
 
 
-def _walk_json(value: Any) -> Iterator[tuple[str | None, Any]]:
+def _walk_json(value: Any, path: tuple[str, ...] = ()) -> Iterator[tuple[tuple[str, ...], str | None, Any]]:
     if isinstance(value, Mapping):
         for key, child in value.items():
-            yield str(key), child
-            yield from _walk_json(child)
+            key_text = str(key)
+            child_path = (*path, key_text)
+            yield child_path, key_text, child
+            yield from _walk_json(child, child_path)
     elif isinstance(value, list):
-        for child in value:
-            yield None, child
-            yield from _walk_json(child)
+        for index, child in enumerate(value):
+            child_path = (*path, str(index))
+            yield child_path, None, child
+            yield from _walk_json(child, child_path)
+
+
+def _key_has_provenance_token(key: str) -> bool:
+    normalized = _CAMEL_BOUNDARY.sub("_", key)
+    tokens = set(_KEY_TOKEN.findall(normalized.casefold()))
+    return bool(tokens & _PROVENANCE_KEY_TOKENS)
+
+
+def _is_absolute_or_uri(value: str) -> bool:
+    return (
+        bool(_URI_SCHEME.match(value))
+        or value.startswith(("/", "~/", "\\\\", "//"))
+        or bool(_WINDOWS_ABSOLUTE_PATH.match(value))
+    )
+
+
+def _is_relative_path_like(value: str) -> bool:
+    if any(character.isspace() for character in value):
+        return False
+    if "/" in value or "\\" in value:
+        return True
+    return bool(Path(value).suffix)
+
+
+def _validate_workflow_structure(graph: Mapping[str, Any]) -> None:
+    _require(set(graph) == set(EXPECTED_NODE_CLASSES), STRUCTURE_ERROR)
+    for node_id, expected_class in EXPECTED_NODE_CLASSES.items():
+        node = graph.get(node_id)
+        _require(isinstance(node, Mapping), STRUCTURE_ERROR)
+        _require(set(node) == EXPECTED_NODE_KEYS, STRUCTURE_ERROR)
+        _require(node.get("class_type") == expected_class, STRUCTURE_ERROR)
+        inputs = node.get("inputs")
+        metadata = node.get("_meta")
+        _require(isinstance(inputs, Mapping), STRUCTURE_ERROR)
+        _require(set(inputs) == EXPECTED_INPUT_KEYS[node_id], STRUCTURE_ERROR)
+        _require(isinstance(metadata, Mapping), STRUCTURE_ERROR)
+        _require(set(metadata) == EXPECTED_METADATA_KEYS, STRUCTURE_ERROR)
+
+
+def _validate_workflow_privacy(graph: Mapping[str, Any]) -> None:
+    for path, key, value in _walk_json(graph):
+        if key is not None:
+            _require(not _key_has_provenance_token(key), PRIVACY_ERROR)
+        if not isinstance(value, str):
+            continue
+        _require(not _is_absolute_or_uri(value), PRIVACY_ERROR)
+        if not _is_relative_path_like(value):
+            continue
+        dotted_path = ".".join(path)
+        approved_value = _APPROVED_LITERAL_PATHS.get(dotted_path)
+        allowed = (
+            dotted_path in _OPERATIONAL_FILE_SELECTOR_INPUTS
+            or approved_value == value
+        )
+        _require(allowed, PRIVACY_ERROR)
+
+
+def _validate_resource_inventory(resources: set[str]) -> None:
+    _require(resources == {WORKFLOW_FILENAME}, RESOURCE_ERROR)
 
 
 def test_workflow_has_exact_normative_node_class_inventory() -> None:
     graph = _load_workflow()
 
-    actual = {
-        node_id: node.get("class_type")
-        for node_id, node in graph.items()
-        if isinstance(node, Mapping)
-    }
-
-    assert actual == EXPECTED_NODE_CLASSES
-    assert set(graph) == set(EXPECTED_NODE_CLASSES)
-    assert "154" not in graph
-    assert "166" not in graph
+    _validate_workflow_structure(graph)
+    _require("154" not in graph and "166" not in graph, STRUCTURE_ERROR)
 
 
 def test_workflow_has_exact_normative_direct_links() -> None:
     graph = _load_workflow()
+    _validate_workflow_structure(graph)
 
     actual = {
         destination: (value[0], value[1])
@@ -167,11 +293,12 @@ def test_workflow_has_exact_normative_direct_links() -> None:
         if _is_direct_link(value)
     }
 
-    assert actual == EXPECTED_DIRECT_LINKS
+    _require(actual == EXPECTED_DIRECT_LINKS, LINK_ERROR)
 
 
 def test_node_165_is_the_only_output_and_uses_the_restored_edit_path() -> None:
     graph = _load_workflow()
+    _validate_workflow_structure(graph)
     outputs = {
         node_id: node["class_type"]
         for node_id, node in graph.items()
@@ -179,21 +306,26 @@ def test_node_165_is_the_only_output_and_uses_the_restored_edit_path() -> None:
         or str(node.get("class_type", "")).startswith("Save")
     }
 
-    assert outputs == {"165": "SaveImage"}
-    assert graph["165"]["inputs"]["images"] == ["149", 0]
-    assert {
+    linked_output_inputs = {
         key: value
         for key, value in graph["165"]["inputs"].items()
         if _is_direct_link(value)
-    } == {"images": ["149", 0]}
-    assert graph["149"]["inputs"]["input"] == ["144", 0]
-    assert graph["149"]["inputs"]["resize_type.width"] == ["150", 0]
-    assert graph["149"]["inputs"]["resize_type.height"] == ["150", 1]
-    assert graph["150"]["inputs"]["image"] == ["114", 0]
+    }
+    restored_path_matches = (
+        outputs == {"165": "SaveImage"}
+        and graph["165"]["inputs"]["images"] == ["149", 0]
+        and linked_output_inputs == {"images": ["149", 0]}
+        and graph["149"]["inputs"]["input"] == ["144", 0]
+        and graph["149"]["inputs"]["resize_type.width"] == ["150", 0]
+        and graph["149"]["inputs"]["resize_type.height"] == ["150", 1]
+        and graph["150"]["inputs"]["image"] == ["114", 0]
+    )
+    _require(restored_path_matches, OUTPUT_ERROR)
 
 
 def test_workflow_has_only_the_approved_controlled_literals() -> None:
     graph = _load_workflow()
+    _validate_workflow_structure(graph)
     leaves = dict(_input_leaves(graph))
     controlled = {
         path
@@ -202,23 +334,20 @@ def test_workflow_has_only_the_approved_controlled_literals() -> None:
         and not _is_direct_link(value)
     }
 
-    assert controlled == EXPECTED_CONTROLLED_LITERALS
+    _require(controlled == EXPECTED_CONTROLLED_LITERALS, CONTROL_ERROR)
     for path, expected in EXPECTED_NEUTRAL_LITERALS.items():
-        assert leaves[path] == expected
-    assert {
+        _require(leaves.get(path) == expected, CONTROL_ERROR)
+    prompt_paths = {
         path for path in leaves if path.rsplit(".", 1)[-1] == "prompt"
-    } == {"133.prompt"}
+    }
+    _require(prompt_paths == {"133.prompt"}, CONTROL_ERROR)
 
 
 def test_workflow_contains_no_path_like_provenance_fields_or_values() -> None:
     graph = _load_workflow()
 
-    for key, value in _walk_json(graph):
-        if key is not None:
-            assert not _PATHISH_FIELD.search(key), f"provenance-like field: {key}"
-        if isinstance(value, str):
-            assert not value.startswith(("/", "~/", "\\\\"))
-            assert not _WINDOWS_ABSOLUTE_PATH.match(value)
+    _validate_workflow_structure(graph)
+    _validate_workflow_privacy(graph)
 
 
 def test_resource_directory_contains_only_the_sanitized_workflow() -> None:
@@ -229,4 +358,90 @@ def test_resource_directory_contains_only_the_sanitized_workflow() -> None:
         else set()
     )
 
-    assert resources == {WORKFLOW_FILENAME}
+    _validate_resource_inventory(resources)
+
+
+def _assert_constant_refusal(
+    operation: Any,
+    expected_message: str,
+) -> None:
+    try:
+        operation()
+    except AssertionError as exc:
+        if str(exc) != expected_message:
+            raise AssertionError("Workflow guard refusal was not sanitized") from None
+    else:
+        raise AssertionError("Workflow guard accepted prohibited test data")
+
+
+def _workflow_with_unexpected_input() -> dict[str, Any]:
+    graph = copy.deepcopy(_load_workflow())
+    graph["114"]["inputs"]["harmlessSentinelInput"] = "harmless-value"
+    return graph
+
+
+def _workflow_with_relative_path() -> dict[str, Any]:
+    graph = copy.deepcopy(_load_workflow())
+    graph["114"]["_meta"]["title"] = "relative/harmless-sentinel.txt"
+    return graph
+
+
+def _workflow_with_uri() -> dict[str, Any]:
+    graph = copy.deepcopy(_load_workflow())
+    graph["114"]["_meta"]["title"] = "harmless-scheme://example.invalid/item"
+    return graph
+
+
+def _workflow_with_camel_hash_metadata() -> dict[str, Any]:
+    graph = copy.deepcopy(_load_workflow())
+    graph["114"]["_meta"]["sourceChecksum"] = "harmless-marker"
+    return graph
+
+
+def _resource_inventory_with_unexpected_filename() -> set[str]:
+    return {WORKFLOW_FILENAME, "unexpected-harmless-sentinel.json"}
+
+
+def test_structure_validator_rejects_unexpected_input_without_echo() -> None:
+    graph = _workflow_with_unexpected_input()
+
+    _assert_constant_refusal(
+        lambda: _validate_workflow_structure(graph),
+        STRUCTURE_ERROR,
+    )
+
+
+def test_privacy_validator_rejects_relative_path_without_echo() -> None:
+    graph = _workflow_with_relative_path()
+
+    _assert_constant_refusal(
+        lambda: _validate_workflow_privacy(graph),
+        PRIVACY_ERROR,
+    )
+
+
+def test_privacy_validator_rejects_uri_without_echo() -> None:
+    graph = _workflow_with_uri()
+
+    _assert_constant_refusal(
+        lambda: _validate_workflow_privacy(graph),
+        PRIVACY_ERROR,
+    )
+
+
+def test_privacy_validator_rejects_camel_hash_metadata_without_echo() -> None:
+    graph = _workflow_with_camel_hash_metadata()
+
+    _assert_constant_refusal(
+        lambda: _validate_workflow_privacy(graph),
+        PRIVACY_ERROR,
+    )
+
+
+def test_resource_inventory_refusal_does_not_echo_unexpected_filename() -> None:
+    resources = _resource_inventory_with_unexpected_filename()
+
+    _assert_constant_refusal(
+        lambda: _validate_resource_inventory(resources),
+        RESOURCE_ERROR,
+    )
