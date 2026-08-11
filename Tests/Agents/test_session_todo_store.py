@@ -1095,6 +1095,178 @@ def test_update_rejects_version_exhaustion_atomically(status: str) -> None:
     assert callbacks == []
 
 
+def test_update_allows_last_version_and_callbacks_max_snapshot() -> None:
+    maximum = todo_store_module.MAX_TODO_NUMBER
+    callbacks: list[list[dict[str, object]]] = []
+    store = SessionTodoStore.from_snapshot(
+        {
+            "next_id": 2,
+            "tasks": [
+                {
+                    "id": "1",
+                    "version": maximum - 1,
+                    "content": "Before boundary update",
+                    "status": "pending",
+                }
+            ],
+        }
+    )
+    expected = {
+        "id": "1",
+        "version": maximum,
+        "content": "At numeric ceiling",
+        "status": "completed",
+    }
+
+    result = store.update(
+        task_id="1",
+        expected_version=maximum - 1,
+        content="At numeric ceiling",
+        status="completed",
+        on_change=callbacks.append,
+    )
+
+    assert result == expected
+    assert store.get("1") == expected
+    assert callbacks == [[expected]]
+
+
+def test_delete_allows_last_version_and_callbacks_empty_snapshot() -> None:
+    maximum = todo_store_module.MAX_TODO_NUMBER
+    callbacks: list[list[dict[str, object]]] = []
+    store = SessionTodoStore.from_snapshot(
+        {
+            "next_id": 2,
+            "tasks": [
+                {
+                    "id": "1",
+                    "version": maximum - 1,
+                    "content": "Delete at boundary",
+                    "status": "pending",
+                }
+            ],
+        }
+    )
+
+    result = store.update(
+        task_id="1",
+        expected_version=maximum - 1,
+        status="deleted",
+        on_change=callbacks.append,
+    )
+
+    assert result == {"id": "1", "deleted": True, "version": maximum}
+    with pytest.raises(TodoStoreError, match="^task not found$"):
+        store.get("1")
+    assert callbacks == [[]]
+
+
+def test_stale_conflict_precedes_version_exhaustion_at_max() -> None:
+    maximum = todo_store_module.MAX_TODO_NUMBER
+    content = "CURRENT-VERSION-CONTENT-SENTINEL"
+    payload = {
+        "next_id": 2,
+        "tasks": [
+            {
+                "id": "1",
+                "version": maximum,
+                "content": content,
+                "status": "pending",
+            }
+        ],
+    }
+    callbacks: list[list[dict[str, object]]] = []
+    store = SessionTodoStore.from_snapshot(payload)
+
+    with pytest.raises(
+        TodoStoreError,
+        match="^task version conflict; use todo_get and retry$",
+    ) as exc_info:
+        store.update(
+            task_id="1",
+            expected_version=maximum - 1,
+            status="completed",
+            on_change=callbacks.append,
+        )
+
+    assert exc_info.value.args == ("task version conflict; use todo_get and retry",)
+    assert str(maximum) not in str(exc_info.value)
+    assert content not in str(exc_info.value)
+    assert store.export_snapshot() == payload
+    assert callbacks == []
+
+
+@pytest.mark.parametrize(
+    ("task_id", "expected_version"),
+    [
+        ("2", todo_store_module.MAX_TODO_NUMBER),
+        ("1", todo_store_module.MAX_TODO_NUMBER - 1),
+        ("1", todo_store_module.MAX_TODO_NUMBER),
+    ],
+    ids=["before-lookup", "before-cas", "before-exhaustion"],
+)
+def test_delete_only_validation_precedes_version_exhaustion_at_max(
+    task_id: str,
+    expected_version: int,
+) -> None:
+    maximum = todo_store_module.MAX_TODO_NUMBER
+    payload = {
+        "next_id": 2,
+        "tasks": [
+            {
+                "id": "1",
+                "version": maximum,
+                "content": "Unchanged at maximum",
+                "status": "pending",
+            }
+        ],
+    }
+    callbacks: list[list[dict[str, object]]] = []
+    store = SessionTodoStore.from_snapshot(payload)
+
+    with pytest.raises(
+        TodoStoreError, match="^delete must be the only mutation field$"
+    ):
+        store.update(
+            task_id=task_id,
+            expected_version=expected_version,
+            status="deleted",
+            content="Invalid extra field",
+            on_change=callbacks.append,
+        )
+
+    assert store.export_snapshot() == payload
+    assert callbacks == []
+
+
+def test_invalid_expected_version_precedes_exhaustion_at_max() -> None:
+    maximum = todo_store_module.MAX_TODO_NUMBER
+    payload = {
+        "next_id": 2,
+        "tasks": [
+            {
+                "id": "1",
+                "version": maximum,
+                "content": "Unchanged at maximum",
+                "status": "pending",
+            }
+        ],
+    }
+    callbacks: list[list[dict[str, object]]] = []
+    store = SessionTodoStore.from_snapshot(payload)
+
+    with pytest.raises(TodoStoreError, match="^invalid expected_version$"):
+        store.update(
+            task_id="2",
+            expected_version=maximum + 1,
+            status="completed",
+            on_change=callbacks.append,
+        )
+
+    assert store.export_snapshot() == payload
+    assert callbacks == []
+
+
 def test_update_rejects_expected_version_above_numeric_bound() -> None:
     callbacks: list[list[dict[str, object]]] = []
     store = SessionTodoStore()
