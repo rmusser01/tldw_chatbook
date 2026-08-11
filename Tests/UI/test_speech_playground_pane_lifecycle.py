@@ -222,6 +222,31 @@ def _clone_setup(model_id: str = "clone-voice") -> AudioCppCloneSetupProjection:
     )
 
 
+def test_clone_transcript_boundary_runs_shared_input_validation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, int, bool]] = []
+
+    def validate_text_input(
+        text: str,
+        max_length: int = 10_000,
+        allow_html: bool = False,
+    ) -> bool:
+        calls.append((text, max_length, allow_html))
+        return True
+
+    monkeypatch.setattr(
+        playground_pane_module,
+        "validate_text_input",
+        validate_text_input,
+    )
+
+    assert playground_pane_module._validate_clone_transcript_input("  spoken words  ") == (
+        "spoken words"
+    )
+    assert calls == [("  spoken words  ", 4_096, True)]
+
+
 def test_reference_required_guided_model_projects_setup_actions() -> None:
     stopped = _runtime_observation(
         saved_setup_source="guided",

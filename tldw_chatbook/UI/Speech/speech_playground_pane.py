@@ -105,11 +105,27 @@ from .speech_settings_contracts import (
 )
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.TTS.profile_reference_audio import canonicalize_reference_wav
-from tldw_chatbook.TTS.profile_reference_types import validate_reference_text
+from tldw_chatbook.TTS.profile_reference_types import (
+    MAX_REFERENCE_TEXT_CHARACTERS,
+    validate_reference_text,
+)
 from tldw_chatbook.Third_Party.textual_fspicker import Filters
+from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
 
 _AUDIO_CPP_RUNTIME_POLL_SECONDS = 5.0
+
+
+def _validate_clone_transcript_input(value: str) -> str:
+    """Apply shared boundary checks before clone-specific normalization."""
+
+    if not validate_text_input(
+        value,
+        max_length=MAX_REFERENCE_TEXT_CHARACTERS,
+        allow_html=True,
+    ):
+        raise ValueError("reference_text")
+    return validate_reference_text(value)
 
 if TYPE_CHECKING:
     pass
@@ -637,7 +653,7 @@ class SpeechPlaygroundPane(
             return
         transcript = self._clone_transcript()
         try:
-            normalized_text = validate_reference_text(transcript)
+            normalized_text = _validate_clone_transcript_input(transcript)
         except Exception:
             self._clone_setup_canonical = None
             self._clone_setup_error = "Enter the exact spoken transcript."
@@ -953,7 +969,7 @@ class SpeechPlaygroundPane(
                 return
             canonical = self._clone_setup_canonical
             try:
-                transcript = validate_reference_text(event.text_area.text)
+                transcript = _validate_clone_transcript_input(event.text_area.text)
             except Exception:
                 self._clone_setup_canonical = None
                 self._clone_setup_error = "Enter the exact spoken transcript."

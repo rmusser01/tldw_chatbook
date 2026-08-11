@@ -9,7 +9,6 @@ from textual.widgets import Button, Static, TextArea
 
 from tldw_chatbook.TTS import AudioCppCloneSetupProjection
 from tldw_chatbook.TTS.profile_reference_types import MAX_REFERENCE_TEXT_CHARACTERS
-
 from .audio_cpp_runtime_card import AudioCppCloneDraftState
 
 
@@ -38,6 +37,8 @@ class SpeechCloneSetup(Vertical):
         self.transcript = transcript
 
     def compose(self) -> ComposeResult:
+        """Compose the bounded clone-reference controls and guidance."""
+
         projection = self.projection
         yield Static(
             f"Voice setup · {projection.family_label}",
