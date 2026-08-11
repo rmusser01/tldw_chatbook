@@ -1,9 +1,10 @@
 ---
 id: TASK-3402
 title: H3 static image edit through Image_Generation
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-09 04:39'
+updated_date: '2026-08-11 02:34'
 labels:
   - image
   - generation
@@ -22,6 +23,21 @@ Package a sanitized H3 static image-edit workflow inside the existing Image_Gene
 
 - [Approved design specification](../../Docs/superpowers/specs/2026-08-10-comfyui-h3-image-edit-design.md)
 - [ADR-052 — ComfyUI H3 image edits stay inside the Image Generation provider boundary](../decisions/052-comfyui-h3-image-edit-provider-boundary.md)
+
+## Implementation Plan
+
+- [Detailed implementation plan](../../Docs/superpowers/plans/2026-08-10-comfyui-h3-image-edit.md)
+- ADR required: yes
+- ADR path: `backlog/decisions/052-comfyui-h3-image-edit-provider-boundary.md`
+- Reason: the task introduces an image-provider runtime, exact-origin trust, cancellation/lifecycle semantics, and a cross-module persistence contract; ADR-052 already records the approved boundary.
+
+1. Package the privately sanitized exact H3 graph and prove source/wheel/sdist distribution without recording the external source.
+2. Extend the existing Image Generation request/result/reference/cancellation contracts at the single validation choke point.
+3. Add independent explicit-opt-in ComfyUI Image Generation config, registry, listing, and canonical F9 settings.
+4. Implement and mutation-test the strict packaged-workflow adapter, bounded exact-origin transport, node-165 PNG output, and prompt-scoped cancellation.
+5. Add exact pending-attachment identity, cancellation propagation, and allowlisted effective metadata to the existing image persistence boundary.
+6. Implement the app-owned Console operation/remount lifecycle, exact-once durable success, identity-gated cleanup, and H3 Regenerate refusal.
+7. Run only the authorized focused gates, complete sanitized live UAT, perform whole-task review, and close the task only after all evidence passes.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
