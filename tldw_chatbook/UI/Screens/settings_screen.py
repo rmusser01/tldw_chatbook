@@ -106,6 +106,7 @@ from ...config import (
     MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
     _default_base_data_dir,
+    apply_settings_mutation_to_cli_config,
     coerce_bool_setting,
     coerce_int_setting,
     get_cli_config_path,
@@ -4241,9 +4242,12 @@ class SettingsScreen(BaseAppScreen):
     ) -> None:
         raw_config = SettingsConfigAdapter().load()
         sections, deletions = image_gen_diff_to_sections(draft_values, raw_config)
-        ok = save_settings_to_cli_config(sections, delete_keys=deletions)
-        if ok:
+        mutation = apply_settings_mutation_to_cli_config(
+            sections, delete_keys=deletions
+        )
+        if mutation.file_replaced:
             reset_image_generation_runtime()
+        ok = mutation.failure_phase is None
         self.app.call_from_thread(self._apply_image_gen_save_result, ok, warnings)
 
     async def _apply_image_gen_save_result(

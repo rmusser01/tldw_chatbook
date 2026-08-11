@@ -6,6 +6,8 @@ import json
 import math
 import os
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit
@@ -365,6 +367,8 @@ class ImageGenerationConfig:
 
 _config_cache: ImageGenerationConfig | None = None
 _IMAGE_GENERATION_RUNTIME_LOCK = threading.RLock()
+_IMAGE_GENERATION_CONFIG_SNAPSHOT = threading.local()
+_NO_CONFIG_SNAPSHOT = object()
 
 
 def _coerce_int(value: Any, default: int) -> int:
@@ -730,8 +734,29 @@ def _get_image_generation_config_unlocked(
     return config
 
 
+@contextmanager
+def _use_image_generation_config_snapshot(
+    config: ImageGenerationConfig,
+) -> Iterator[None]:
+    """Make one registry-owned config visible to constructors on this thread."""
+    previous = getattr(
+        _IMAGE_GENERATION_CONFIG_SNAPSHOT, "config", _NO_CONFIG_SNAPSHOT
+    )
+    _IMAGE_GENERATION_CONFIG_SNAPSHOT.config = config
+    try:
+        yield
+    finally:
+        if previous is _NO_CONFIG_SNAPSHOT:
+            del _IMAGE_GENERATION_CONFIG_SNAPSHOT.config
+        else:
+            _IMAGE_GENERATION_CONFIG_SNAPSHOT.config = previous
+
+
 def get_image_generation_config(*, reload: bool = False) -> ImageGenerationConfig:
     """Return one process-wide config snapshot, serialized with runtime reset."""
+    captured = getattr(_IMAGE_GENERATION_CONFIG_SNAPSHOT, "config", None)
+    if captured is not None and not reload:
+        return captured
     with _IMAGE_GENERATION_RUNTIME_LOCK:
         return _get_image_generation_config_unlocked(reload=reload)
 

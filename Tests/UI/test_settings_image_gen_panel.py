@@ -12,6 +12,7 @@ from ``Tests/Internal_Prompts/conftest.py``).
 from __future__ import annotations
 
 import threading
+import time
 import tomllib
 
 import pytest
@@ -34,6 +35,7 @@ from tldw_chatbook.Image_Generation.config import (
     get_image_generation_config,
     reset_image_generation_config_cache,
 )
+from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_image_gen_defaults import (
@@ -63,6 +65,27 @@ def _reset_image_gen_cache():
 
 async def _open_image_gen(pilot) -> None:
     await _open_settings_category(pilot, "#settings-category-image_generation")
+
+
+async def _open_real_settings_destination(app, pilot, *, timeout: float = 5.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if getattr(app, "_initial_screen_pushed", False):
+            break
+        await pilot.pause(0.02)
+    else:
+        raise AssertionError("app never finished pushing its initial destination")
+
+    await app.handle_screen_navigation(NavigateToScreen("settings"))
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        screen = app.screen
+        if type(screen).__name__ == "SettingsScreen" and list(
+            screen.query("#settings-category-image_generation")
+        ):
+            return screen
+        await pilot.pause(0.02)
+    raise AssertionError("Settings destination never mounted its Image Gen category")
 
 
 @pytest.mark.asyncio
@@ -1204,14 +1227,7 @@ enabled_backends = ["openrouter", "swarmui"]
     )
     app = _build_test_app()
     async with app.run_test(size=size) as pilot:
-        # The splash screen (1.5s) must close before handle_screen_
-        # navigation's switch_screen call is valid -- calling it while the
-        # splash is still the top screen raises IndexError from Textual's
-        # own result-callback bookkeeping.
-        await pilot.pause(2.0)
-        await app.handle_screen_navigation(NavigateToScreen("settings"))
-        await pilot.pause(0.3)
-        screen = app.screen
+        screen = await _open_real_settings_destination(app, pilot)
         screen._select_category("image_generation")
         await pilot.pause(0.2)
 
@@ -1542,8 +1558,11 @@ async def test_failed_image_gen_persistence_does_not_reset_runtime(
     )
     monkeypatch.setattr(
         settings_screen_module,
-        "save_settings_to_cli_config",
-        lambda section_values, *, delete_keys=None: False,
+        "apply_settings_mutation_to_cli_config",
+        lambda section_values, *, delete_keys=None: ConfigMutationResult(
+            False, False, "before_replace"
+        ),
+        raising=False,
     )
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -1579,11 +1598,11 @@ default_seed = 7
     )
     resets: list[None] = []
     atomic_calls = []
-    real_atomic_save = settings_screen_module.save_settings_to_cli_config
+    from tldw_chatbook.config import save_settings_to_cli_config as real_atomic_save
 
     def fail_atomic_mutation(section_values, *, delete_keys=None):
         atomic_calls.append((section_values, delete_keys))
-        return False
+        return ConfigMutationResult(False, False, "before_replace")
 
     def old_split_write(_self, section_values):
         return real_atomic_save(section_values)
@@ -1606,8 +1625,9 @@ default_seed = 7
     )
     monkeypatch.setattr(
         settings_screen_module,
-        "save_settings_to_cli_config",
+        "apply_settings_mutation_to_cli_config",
         fail_atomic_mutation,
+        raising=False,
     )
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -1646,6 +1666,55 @@ default_seed = 7
         )
     ]
     assert resets == []
+
+
+@pytest.mark.asyncio
+async def test_post_replace_cache_failure_refreshes_image_runtime_and_reports_failure(
+    scratch_config, monkeypatch, tmp_path
+):
+    import tldw_chatbook.config as app_config
+
+    scratch_config(
+        """
+[image_generation]
+default_backend = "comfyui"
+enabled_backends = ["comfyui"]
+
+[image_generation.comfyui]
+base_url = "http://127.0.0.1:8188"
+"""
+    )
+    before = get_image_generation_config(reload=True)
+
+    def fail_cache_publication():
+        raise RuntimeError("synthetic cache publication failure")
+
+    monkeypatch.setattr(
+        app_config, "_publish_runtime_config_unlocked", fail_cache_publication
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_image_gen(pilot)
+        screen.query_one(
+            "#settings-imagegen-field-comfyui-base_url", Input
+        ).value = "http://127.0.0.1:8288"
+        await pilot.pause()
+        await pilot.click("#settings-imagegen-save")
+        await _wait_for_settings_text(
+            screen, pilot, "Failed to save Image Gen defaults."
+        )
+        after = get_image_generation_config()
+        assert after is not before
+        assert after.comfyui_image_base_url == "http://127.0.0.1:8288"
+
+    with open(tmp_path / "config.toml", "rb") as stream:
+        saved = tomllib.load(stream)
+    assert saved["image_generation"]["comfyui"]["base_url"] == (
+        "http://127.0.0.1:8288"
+    )
 
 
 @pytest.mark.asyncio

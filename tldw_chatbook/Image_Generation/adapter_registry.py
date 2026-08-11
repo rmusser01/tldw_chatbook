@@ -11,6 +11,7 @@ from loguru import logger
 from tldw_chatbook.Image_Generation.adapters.base import ImageGenerationAdapter
 from tldw_chatbook.Image_Generation.config import (
     _IMAGE_GENERATION_RUNTIME_LOCK,
+    _use_image_generation_config_snapshot,
     get_image_generation_config,
 )
 
@@ -96,7 +97,8 @@ class ImageAdapterRegistry:
 
         try:
             adapter_cls = self._resolve_adapter_class(spec)
-            adapter = adapter_cls()  # type: ignore[call-arg]
+            with _use_image_generation_config_snapshot(self.config):
+                adapter = adapter_cls()  # type: ignore[call-arg]
             self._adapters[name] = adapter
             return adapter
         except Exception as exc:
