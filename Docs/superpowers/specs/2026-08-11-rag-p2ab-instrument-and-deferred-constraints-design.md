@@ -149,12 +149,20 @@ Authoring lessons that bind (from P1/weighting, incident-backed):
 ### B1 — Scope-aware hybrid (allowlists reach the FTS legs)
 
 - The engine's `metadata_allowlist` guard ("semantic only", raising for
-  hybrid/keyword) is REMOVED for hybrid: the allowlist is translated into
-  per-sub-leg ID filters — each FTS sub-leg adds a parameterized
-  `id IN (...)` restriction from the allowlist's ids for its source type
-  (media ids to the media sub-leg, note ids to notes, conversation ids to
-  conversations; a sub-leg whose allowlist set is empty is SKIPPED, not
-  unfiltered — fail-closed, matching the semantic side's semantics).
+  hybrid/keyword) is REMOVED for hybrid ONLY. (Code-verified at review:
+  `build_semantic_allowlists` already returns a LIST of per-source-type
+  dicts, each `{"source_type": {type}, "source_id": ids}` — deliberately
+  one entry per type because a flat AND-ed dict cannot express the union.
+  The B1 translation is therefore nearly direct: each entry feeds its
+  matching sub-leg's ID filter.) Each FTS sub-leg adds a parameterized
+  `id IN (...)` restriction from its entry's `source_id` set; a sub-leg
+  with NO entry (source type absent from the scope) is SKIPPED, not
+  unfiltered — fail-closed, matching the semantic side's semantics.
+- **Keyword-mode + allowlist keeps raising** (explicit non-goal): the
+  engine's `search_type="keyword"` + allowlist ValueError stays —
+  unreachable from the Library (plain-profile scoped `rag` uses the
+  four-seam Library path, which is already scope-aware). B1's guard
+  removal is hybrid-scoped; widening it would be unmeasured scope creep.
 - SQLite parameter-cap discipline (the fusion cluster's recorded concern):
   large allowlists chunk or use a json_each/temp-table form — read how the
   ORM's own id-filtered queries handle it (`search_notes`' id_filter uses
@@ -176,10 +184,12 @@ Authoring lessons that bind (from P1/weighting, incident-backed):
 - A fourth read-only sub-leg over the Prompts DB, exactly the chacha
   pattern (private-sqlite seam owner registration + inventory row +
   ratchet bump; read-only URI; soft-delete filters replicated from the
-  ORM's own prompt search — read Prompts_DB.py's FTS shape first; if the
-  Prompts DB has NO FTS table, STOP at plan time and re-scope B2 to
-  "decline with reasons recorded" rather than building FTS
-  infrastructure).
+  ORM's own prompt search). **Go/no-go RESOLVED at spec review: the
+  Prompts DB HAS FTS5** — `prompts_fts(name, author, details,
+  system_prompt, user_prompt)` with rowid = prompt id (Prompts_DB.py
+  ~L270; `prompt_keywords_fts` also exists but is out of scope). The plan
+  still reads the ORM's own search for the exact deleted-filter columns
+  and rank expression before mirroring.
 - Rows stamp `source_type: "prompt"` (singular — extend the fusion-key
   vocabulary pins), title, source_id. The fusion key, canonicalization,
   and Library post-filter maps gain the `prompt` vocabulary WITH
@@ -187,17 +197,26 @@ Authoring lessons that bind (from P1/weighting, incident-backed):
   FTS-only — the rescue path is their ONLY path; that is the point).
 - The Library gate's `_FTS_SERVABLE_SOURCE_TYPES` gains prompts; the
   "no keyword leg for the selected sources" note narrows accordingly.
-- Corpus/golden support: Half A adds prompt fixture docs + a small
-  keyword-category quota targeting them (the harness's ingest gains a
-  prompts writer via the real API).
+- Corpus/golden support: Half A authors the prompt fixture docs + golden
+  queries (the harness's ingest gains a prompts writer via the real API).
+  **Their before-state is total absence by construction** — pre-B2, prompt
+  docs are invisible to EVERY mode (no vector index, no keyword sub-leg),
+  so like the scoped category they are admitted structurally, not
+  probe-admitted; the gated before-pin asserts recall 0 in all modes, and
+  B2 flips it as a disclosed oracle update.
 
 ### B3 — Library window honors the profile
 
-- `LIBRARY_RAG_DEFAULT_TOP_K = 5` is replaced by the profile's
+- **The DEFAULT only, never the user's control** (code-verified: the
+  canvas carries a real top_k control, coerced via
+  `_coerce_positive_int(top_k, LIBRARY_RAG_DEFAULT_TOP_K)` against
+  `LIBRARY_RAG_TOP_K_MAX = 50`): an explicit user value keeps winning
+  unchanged. What changes is what "unset/invalid" resolves to —
+  `LIBRARY_RAG_DEFAULT_TOP_K = 5` is replaced by the profile's
   `default_top_k` resolution, mirroring the Console chip's P0 fix
   (`_console_library_rag_profile_top_k` precedent — one shared resolution
-  seam if reachable, else a twin with a coupling test); fallback to the
-  literal 5 only when the profile is unresolvable.
+  seam if import-reachable without a cycle, else a twin with a coupling
+  test); fallback to the literal 5 only when the profile is unresolvable.
 - Measured by: the harness (k=10) and the surface stop disagreeing;
   the README's "Library window is tighter than these numbers" bound
   RETIRES; the User Guide's evidence-list description updates + stamp.
