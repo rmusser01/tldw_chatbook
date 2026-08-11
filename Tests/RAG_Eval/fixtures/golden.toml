@@ -500,7 +500,11 @@ relevant_slugs = []
 # they score `(1.0 - alpha) * 1/(rrf_k + 1)`. TWO are not — their targets sit
 # at vector rank 12 and 20, inside the over-fetched pool though far outside
 # the top-10 the admission rule was stated at, so they carry BOTH legs and
-# land at rank 1 even at rrf_k=60. Any blanket "this class is FTS-only" claim
+# land at rank 1 even at rrf_k=60. Pool-edge caveat: sc-valve-pit-access's
+# vector rank 20 is the LAST row of the 2*k pool — a hybrid_pool_multiplier
+# of 1 (pool = k = 10) would demote it to FTS-only and change this table;
+# re-derive the provenance before trusting it under a different multiplier.
+# Any blanket "this class is FTS-only" claim
 # is wrong for those two, and the k=60 counterfactual is 0.286, not 0.000.
 #
 # The float detail matters, because it is what actually orders the list.
