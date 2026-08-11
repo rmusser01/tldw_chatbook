@@ -2900,9 +2900,12 @@ def load_characters(db: CharactersRAGDB) -> Dict[str, Dict[str, Any]]:
     start_time = time.time()
     characters_map: Dict[str, Dict[str, Any]] = {}
     try:
-        # list_character_cards returns List[Dict[str, Any]]
+        # list_character_cards returns List[Dict[str, Any]]. This function
+        # base64-encodes each card's `image` below, so it needs the BLOB --
+        # unlike every other list_character_cards caller (task-15474), which
+        # defaults to an image-free projection.
         all_cards_list = db.list_character_cards(
-            limit=10000
+            limit=10000, include_image=True
         )  # Assuming not too many cards for now
 
         for card_dict in all_cards_list:
