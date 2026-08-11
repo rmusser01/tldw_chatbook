@@ -138,13 +138,13 @@
           "node": "Tests/Local_Ingestion/test_parakeet_v2_artifact.py::test_run_parakeet_v2_preflight_and_provision_against_localhost_fixture",
           "classification": "sandbox_loopback_bind_denied",
           "detail": "PermissionError [Errno 1] Operation not permitted while binding 127.0.0.1.",
-          "isolated_rerun": "not run; the concrete environmental cause was already established"
+          "isolated_rerun": "passed outside the sandbox in a combined two-node run: 2 passed in 1.62 seconds"
         },
         {
           "node": "Tests/Local_Ingestion/test_parakeet_v2_artifact.py::test_vad_only_preflight_and_provision_never_include_a_parakeet_root",
           "classification": "sandbox_loopback_bind_denied",
           "detail": "PermissionError [Errno 1] Operation not permitted while binding 127.0.0.1.",
-          "isolated_rerun": "not run; the concrete environmental cause was already established"
+          "isolated_rerun": "passed outside the sandbox in a combined two-node run: 2 passed in 1.62 seconds"
         },
         {
           "node": "Tests/STT/test_parakeet_dispatch.py::test_resolver_never_loads_download_layers_and_fails_without_installed_artifact",

@@ -55,7 +55,9 @@ Final reviewed-head result at `bdd2f25e3`: **3 failed, 1262 passed, 1 skipped,
 and passed in this union; the earlier First Run union-order failure also passed.
 Two localhost artifact fixtures were still denied permission to bind
 `127.0.0.1` by the sandbox. The remaining dispatch import-state assertion
-passed in isolation in 0.37 seconds. The union was not run again.
+passed in isolation in 0.37 seconds. Both localhost fixture nodes then passed
+outside the sandbox in one focused run (2 passed in 1.62 seconds). The union
+was not run again.
 
 ## Static verification
 

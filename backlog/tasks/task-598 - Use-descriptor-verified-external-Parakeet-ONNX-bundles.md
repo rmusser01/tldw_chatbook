@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-24 01:03'
-updated_date: '2026-08-11 22:19'
+updated_date: '2026-08-11 22:20'
 labels:
   - stt
   - artifacts
@@ -71,9 +71,9 @@ Implemented descriptor-verified, user-owned external Parakeet v2/v3 INT8/F32 sou
 
 TASK-598 macOS arm64 evidence is recorded in Docs/STT_Evaluation/task-598/README.md and macos-evidence.json. A bounded production app-owned source-service -> coordinator -> executor -> ONNX CPU smoke transcribed known in-memory PCM through a verified user-owned external v2 INT8 root while the scratch managed store contained VAD only. Artifact/VAD hashes and mtimes and real profile/store snapshots were invariant; no runtime network, copy, activation, or unmanaged VAD was used. This is not mounted-picker or microphone evidence.
 
-The exact 24-file changed Python test union ran twice. The final reviewed-head run at bdd2f25e3 produced 1262 passed, 3 failed, 1 skipped, and 9 warnings in 376.78 seconds. Two failures were sandbox denials while binding localhost fixtures; the remaining union import-state assertion passed alone in 0.37 seconds. The two previously reproducible UI test-double failures and the prior First Run union-order failure passed in the final union. Scoped py_compile and git diff --check passed. Ruff retained two findings and format debt that both reproduce from origin/dev; no bulk format was applied.
+The exact 24-file changed Python test union ran twice. The final reviewed-head run at bdd2f25e3 produced 1262 passed, 3 failed, 1 skipped, and 9 warnings in 376.78 seconds. Two failures were sandbox denials while binding localhost fixtures; both exact nodes passed outside the sandbox in a combined focused run (2 passed in 1.62 seconds). The remaining union import-state assertion passed alone in 0.37 seconds. The two previously reproducible UI test-double failures and the prior First Run union-order failure passed in the final union. Scoped py_compile and git diff --check passed. Ruff retained two findings and format debt that both reproduce from origin/dev; no bulk format was applied.
 
 Final review also added exact managed-VAD revalidation before external resident reuse, moved optional managed-copy planning off the Textual event loop with cancellation fencing, unified path-private recovery copy, and removed private-test callback compatibility branches. Impacted focused files passed (283 Model Artifacts, 151 STT, and 222 UI/Wizard tests), with targeted mutations and correctness/Ponytail re-reviews clean.
 
-Acceptance criteria 1-6 are implemented and evidenced. Criterion 7 stays open because the exact union cannot bind its two localhost fixtures in this sandbox and native Linux x86_64, Linux aarch64, Windows x86_64, and macOS x86_64 source verification/copy-delete/real ONNX CPU gates remain unavailable. TASK-598 remains In Progress; no Linux or Windows readiness claim is made.
+Acceptance criteria 1-6 are implemented and evidenced. Criterion 7 stays open because native Linux x86_64, Linux aarch64, Windows x86_64, and macOS x86_64 source verification/copy-delete/real ONNX CPU gates remain unavailable. TASK-598 remains In Progress; no Linux or Windows readiness claim is made.
 <!-- SECTION:NOTES:END -->
