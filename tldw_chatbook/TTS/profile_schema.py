@@ -845,6 +845,7 @@ def _run_migrations(connection: sqlite3.Connection, from_version: int) -> None:
         ) = None
         while version < CURRENT_PROFILE_SCHEMA_VERSION:
             if version == 2:
+                validate_profile_store_rows(connection)
                 v2_domain_snapshot = _migration_domain_snapshot(connection)
             migration = MIGRATIONS.get(version)
             if migration is None:
@@ -870,6 +871,7 @@ def _run_migrations(connection: sqlite3.Connection, from_version: int) -> None:
             raise RuntimeError
         if _migration_domain_snapshot(connection) != v2_domain_snapshot:
             raise RuntimeError
+        validate_profile_store_rows(connection)
         connection.commit()
     except BaseException as error:
         body_error = error

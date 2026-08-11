@@ -407,6 +407,39 @@ async def test_v2_migration_retains_private_online_backup_before_migration(
 
 
 @pytest.mark.asyncio
+async def test_uncertain_version_peek_cannot_bypass_exclusive_v2_backup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _repository_module()
+    database_path = tmp_path / "profiles.sqlite3"
+    _build_populated_v2_store_at(database_path)
+    backup_path = module._v2_migration_backup_path(database_path)
+    modes: list[ProfileStoreLockMode] = []
+    real_lease = module.ProfileStoreLease
+
+    def tracked_lease(
+        path: Path, mode: ProfileStoreLockMode, **kwargs: object
+    ) -> ProfileStoreLease:
+        modes.append(mode)
+        return real_lease(path, mode, **kwargs)
+
+    monkeypatch.setattr(module, "peek_profile_store_schema_version", lambda _path: None)
+    monkeypatch.setattr(module, "ProfileStoreLease", tracked_lease)
+
+    repository = module.TTSProfileRepository(database_path)
+    await repository.open()
+    await repository.close()
+
+    assert modes == [ProfileStoreLockMode.EXCLUSIVE, ProfileStoreLockMode.SHARED]
+    assert backup_path.is_file()
+    backup = sqlite3.connect(backup_path)
+    try:
+        assert backup.execute("PRAGMA user_version").fetchone()[0] == 2
+    finally:
+        backup.close()
+
+
+@pytest.mark.asyncio
 async def test_v2_migration_reuses_equivalent_retained_backup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -459,6 +492,51 @@ async def test_v2_migration_atomically_replaces_stale_retained_backup(
 
     assert backup_calls == 1
     assert _stored_profile_name(backup_path) == "Updated"
+
+
+@pytest.mark.asyncio
+async def test_v2_migration_directory_fsync_failure_restores_prior_backup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _repository_module()
+    database_path = tmp_path / "profiles.sqlite3"
+    _build_populated_v2_store_at(database_path)
+    backup_path = module._v2_migration_backup_path(database_path)
+    _test_online_backup(database_path, backup_path)
+    prior_backup = backup_path.read_bytes()
+    connection = sqlite3.connect(database_path)
+    connection.execute(
+        "UPDATE tts_generation_profiles SET display_name = 'Updated', normalized_name = 'updated'"
+    )
+    connection.commit()
+    connection.close()
+
+    def fail_directory_fsync(_path: Path) -> None:
+        raise RuntimeError("PRIVATE directory fsync detail")
+
+    monkeypatch.setattr(module, "_fsync_directory", fail_directory_fsync)
+    repository = module.TTSProfileRepository(database_path)
+
+    with pytest.raises(ProfileRepositoryError, match="migration_failed") as caught:
+        await repository.open()
+    await repository.close()
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert backup_path.read_bytes() == prior_backup
+    assert _stored_profile_name(backup_path) == "Legacy"
+    assert list(tmp_path.glob(f".{backup_path.name}.*.rollback")) == []
+    source = sqlite3.connect(database_path)
+    try:
+        assert source.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert (
+            source.execute(
+                "SELECT display_name FROM tts_generation_profiles"
+            ).fetchone()[0]
+            == "Updated"
+        )
+    finally:
+        source.close()
 
 
 @pytest.mark.asyncio

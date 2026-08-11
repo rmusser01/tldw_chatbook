@@ -250,6 +250,34 @@ def test_canonicalizer_rejects_source_replaced_during_read(
         canonicalize_reference_wav(source_path, "Text")
 
 
+def test_canonicalizer_rejects_source_mutated_in_place_during_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_path = tmp_path / "reference.wav"
+    source_path.write_bytes(_valid_wav())
+    real_read = reference_audio.os.read
+    mutated = False
+
+    def mutating_read(descriptor: int, size: int) -> bytes:
+        nonlocal mutated
+        payload = real_read(descriptor, size)
+        if payload and not mutated:
+            mutated = True
+            with source_path.open("r+b") as source:
+                source.seek(-1, os.SEEK_END)
+                final_byte = source.read(1)
+                source.seek(-1, os.SEEK_END)
+                source.write(bytes((final_byte[0] ^ 0xFF,)))
+                source.flush()
+                os.fsync(source.fileno())
+        return payload
+
+    monkeypatch.setattr(reference_audio.os, "read", mutating_read)
+
+    with _safe_error():
+        canonicalize_reference_wav(source_path, "Text")
+
+
 def test_canonicalizer_public_error_graph_contains_no_source_path(
     tmp_path: Path,
 ) -> None:

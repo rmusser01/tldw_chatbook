@@ -1103,24 +1103,30 @@ class TTSProfileRepository:
         (:meth:`_worker_initialize_store`) -- a shared lease is documented
         and relied on elsewhere as read-only.
 
-        This peeks the on-disk version first (best effort;
-        :func:`~tldw_chatbook.TTS.profile_schema.peek_profile_store_schema_version`
-        returning ``None`` means no opinion) and, only when it is confirmed
-        to sit strictly between zero and current, runs the upgrade under the
-        same exclusive-guarded path used for first-time initialization
-        before any shared open is attempted. A concurrent racer already
-        upgrading under its own exclusive lease is handled exactly like the
-        existing missing/schema_partial fallback below: fall through and let
-        the shared open simply wait for it.
+        This peeks the on-disk version first. A confirmed old version, or an
+        uncertain result for a file that exists, enters the same
+        exclusive-guarded path used for first-time initialization before any
+        shared open is attempted. A genuinely absent path stays on the normal
+        create/missing-store path. A concurrent racer already upgrading under
+        its own exclusive lease is handled exactly like the existing
+        missing/schema_partial fallback below: fall through and let the shared
+        open simply wait for it.
         """
 
         version = peek_profile_store_schema_version(active_path)
-        if version is None or not (0 < version < CURRENT_PROFILE_SCHEMA_VERSION):
+        if version is None and not active_path.exists():
+            return
+        if version is not None and not (0 < version < CURRENT_PROFILE_SCHEMA_VERSION):
             return
         try:
             self._worker_initialize_store(active_path)
         except ProfileRepositoryError as error:
             if error.code != "lock_timeout":
+                raise
+            if (
+                peek_profile_store_schema_version(active_path)
+                != CURRENT_PROFILE_SCHEMA_VERSION
+            ):
                 raise
 
     def _worker_open(self) -> None:
@@ -1252,7 +1258,7 @@ class TTSProfileRepository:
         lease_error: BaseException | None = None
         try:
             lease.acquire()
-            if peek_profile_store_schema_version(active_path) == 2:
+            if self._worker_exact_schema_version(active_path) == 2:
                 self._worker_retain_v2_migration_backup(active_path)
             connection = open_profile_store(active_path)
             validate_profile_store_rows(connection)
@@ -1286,6 +1292,42 @@ class TTSProfileRepository:
             connection_error,
             lease_error,
         )
+
+    def _worker_exact_schema_version(self, active_path: Path) -> int | None:
+        """Read the exact version without authorizing migration or creation."""
+
+        if not active_path.exists():
+            return None
+        connection: sqlite3.Connection | None = None
+        body_error: BaseException | None = None
+        close_error: BaseException | None = None
+        version: int | None = None
+        try:
+            connection = connect_private_sqlite(
+                "tts.profile_migration_backup",
+                active_path,
+                must_exist=True,
+                isolation_level=None,
+            )
+            value = connection.execute("PRAGMA user_version").fetchone()[0]
+            if type(value) is not int:
+                raise ValueError
+            version = value
+        except BaseException as error:
+            body_error = error
+        if connection is not None:
+            try:
+                connection.close()
+            except BaseException as error:
+                close_error = error
+                self._connection = connection
+                self._active_database_path = active_path
+        for pending_error in (body_error, close_error):
+            if pending_error is not None and not isinstance(pending_error, Exception):
+                raise pending_error
+        if body_error is not None or close_error is not None or version is None:
+            raise _repository_error("migration_failed")
+        return version
 
     def _worker_validate_v2_connection(
         self,
@@ -1354,10 +1396,12 @@ class TTSProfileRepository:
         """Atomically publish one validated current-source online backup."""
 
         temporary_path: Path | None = None
+        rollback_path: Path | None = None
         destination: sqlite3.Connection | None = None
         body_error: BaseException | None = None
         cleanup_errors: list[BaseException] = []
         published = False
+        replaced = False
         try:
             descriptor, temporary_name = tempfile.mkstemp(
                 prefix=f".{backup_path.name}.",
@@ -1387,11 +1431,54 @@ class TTSProfileRepository:
             ):
                 raise _repository_error("migration_failed")
             _fsync_file(temporary_path)
+            try:
+                prior_state = backup_path.lstat()
+            except FileNotFoundError:
+                prior_state = None
+            if prior_state is not None:
+                if not stat.S_ISREG(prior_state.st_mode) or (
+                    os.name == "posix"
+                    and (
+                        stat.S_IMODE(prior_state.st_mode) != 0o600
+                        or prior_state.st_nlink != 1
+                    )
+                ):
+                    raise _repository_error("migration_failed")
+                rollback_descriptor, rollback_name = tempfile.mkstemp(
+                    prefix=f".{backup_path.name}.",
+                    suffix=".rollback",
+                    dir=backup_path.parent,
+                )
+                rollback_path = Path(rollback_name)
+                os.close(rollback_descriptor)
+                rollback_path.unlink()
+                os.link(backup_path, rollback_path, follow_symlinks=False)
+                rollback_state = rollback_path.lstat()
+                if (
+                    not stat.S_ISREG(rollback_state.st_mode)
+                    or rollback_state.st_dev != prior_state.st_dev
+                    or rollback_state.st_ino != prior_state.st_ino
+                ):
+                    raise _repository_error("migration_failed")
             os.replace(temporary_path, backup_path)
-            published = True
+            replaced = True
             _fsync_directory(backup_path.parent)
+            published = True
+            if rollback_path is not None:
+                rollback_path.unlink()
+                rollback_path = None
         except BaseException as error:
             body_error = error
+            if replaced:
+                try:
+                    if rollback_path is None:
+                        _unlink_path_if_present(backup_path)
+                    else:
+                        os.replace(rollback_path, backup_path)
+                        rollback_path = None
+                    _fsync_directory(backup_path.parent)
+                except BaseException as restore_error:
+                    cleanup_errors.append(restore_error)
 
         if destination is not None:
             try:
@@ -1420,6 +1507,11 @@ class TTSProfileRepository:
                     )
                 except BaseException as error:
                     cleanup_errors.append(error)
+        if rollback_path is not None:
+            try:
+                _unlink_path_if_present(rollback_path)
+            except BaseException as error:
+                cleanup_errors.append(error)
 
         for pending_error in (body_error, *cleanup_errors):
             if pending_error is not None and not isinstance(pending_error, Exception):

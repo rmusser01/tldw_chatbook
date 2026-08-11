@@ -275,6 +275,38 @@ def test_v2_migration_rolls_back_domain_mutation(
     assert _domain_rows(path) == before
 
 
+def test_v2_migration_rejects_invalid_existing_domain_before_commit(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    _create_populated_v2(path)
+    raw = sqlite3.connect(path)
+    raw.execute("UPDATE tts_generation_profiles SET revision = 0")
+    raw.commit()
+    raw.close()
+
+    with _safe_error("migration_failed") as caught:
+        open_profile_store(path)
+
+    check = sqlite3.connect(path)
+    try:
+        assert check.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert (
+            check.execute(
+                "SELECT count(*) FROM sqlite_schema WHERE name = ?", (REFERENCE_TABLE,)
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            check.execute("SELECT revision FROM tts_generation_profiles").fetchone()[0]
+            == 0
+        )
+    finally:
+        check.close()
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
 def test_v2_migration_runs_full_integrity_inside_transaction(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
