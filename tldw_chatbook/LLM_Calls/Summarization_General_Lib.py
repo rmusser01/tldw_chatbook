@@ -2465,13 +2465,11 @@ def summarize_with_google(
             return "Google: API Key Not Provided/Found in Config file or is empty"
 
         google_api_key = api_key
-        logging.debug(f"Google: Using API Key: {api_key[:5]}...{api_key[-5:]}")
+        logging.debug("Google: Credential configured")
 
         # Input data handling
         logging.debug(f"Google: Raw input data type: {type(input_data)}")
-        logging.debug(
-            f"Google: Raw input data (first 500 chars): {str(input_data)[:500]}..."
-        )
+        logging.debug("Google: Raw input received")
 
         if isinstance(input_data, str):
             if input_data.strip().startswith("{"):
@@ -2482,7 +2480,10 @@ def summarize_with_google(
                 try:
                     data = json.loads(input_data)
                 except json.JSONDecodeError as e:
-                    logging.error(f"Google: Error parsing JSON string: {str(e)}")
+                    logging.error(
+                        "Google: JSON input parsing failed; exception_type=%s",
+                        safe_metadata_token(type(e).__name__),
+                    )
                     return f"Google: Error parsing JSON input: {str(e)}"
             else:
                 logging.debug("Google: Using provided string data for summarization")
@@ -2491,7 +2492,7 @@ def summarize_with_google(
             data = input_data
 
         logging.debug(f"Google: Processed data type: {type(data)}")
-        logging.debug(f"Google: Processed data (first 500 chars): {str(data)[:500]}...")
+        logging.debug("Google: Processed input ready")
 
         # Text extraction
         if isinstance(data, dict):
@@ -2509,8 +2510,12 @@ def summarize_with_google(
         else:
             raise ValueError(f"Google: Invalid input data format: {type(data)}")
 
-        logging.debug(f"Google: Extracted text (first 500 chars): {text[:500]}...")
-        logging.debug(f"Google: Custom prompt: {custom_prompt_arg}")
+        logging.debug("Google: Input prepared; character_count=%s", len(text))
+        google_prompt = f"{text} \n\n\n\n{custom_prompt_arg}"
+        logging.debug(
+            "Google: Prompt prepared; character_count=%s",
+            len(google_prompt),
+        )
 
         google_model = get_cli_setting("google_api", "model", "gemini-1.5-pro")
         logging.debug(f"Google: Using model: {google_model}")
@@ -2520,11 +2525,7 @@ def summarize_with_google(
             "Content-Type": "application/json",
         }
 
-        logging.debug(
-            f"Google API Key: {google_api_key[:5]}...{google_api_key[-5:] if google_api_key else None}"
-        )
         logging.debug("openai: Preparing data + prompt for submittal")
-        google_prompt = f"{text} \n\n\n\n{custom_prompt_arg}"
         # if temp is None:
         #    temp = 0.7
         if system_message is None:
@@ -2590,13 +2591,11 @@ def summarize_with_google(
                                 )
                                 yield chunk
                             except json.JSONDecodeError:
-                                logging.error(
-                                    f"Google: Error decoding JSON from line: {decoded_line}"
-                                )
+                                logging.error("Google Stream: JSON decode failed")
                                 continue
-                            except KeyError as e:
+                            except KeyError:
                                 logging.error(
-                                    f"Google: Key error: {str(e)} in line: {decoded_line}"
+                                    "Google Stream: Response event missing required field"
                                 )
                                 continue
 
@@ -2635,7 +2634,8 @@ def summarize_with_google(
                     summary = response_data["choices"][0]["message"]["content"].strip()
                     logging.debug("Google: Summarization successful")
                     logging.debug(
-                        f"Google: Summary (first 500 chars): {summary[:500]}..."
+                        "Google: Summary generated; character_count=%s",
+                        len(summary),
                     )
                     return summary
                 else:
@@ -2645,16 +2645,24 @@ def summarize_with_google(
                 logging.error(
                     f"Google: Summarization failed with status code {response.status_code}"
                 )
-                logging.error(f"Google: Error response: {response.text}")
                 return f"Google: Failed to process summary. Status code: {response.status_code}"
     except json.JSONDecodeError as e:
-        logging.error(f"Google: Error decoding JSON: {str(e)}", exc_info=True)
+        logging.error(
+            "Google: JSON decoding failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Google: Error decoding JSON input: {str(e)}"
     except requests.RequestException as e:
-        logging.error(f"Google: Error making API request: {str(e)}", exc_info=True)
+        logging.error(
+            "Google: API request failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Google: Error making API request: {str(e)}"
     except Exception as e:
-        logging.error(f"Google: Unexpected error: {str(e)}", exc_info=True)
+        logging.error(
+            "Google: Processing failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Google: Unexpected error occurred: {str(e)}"
 
 
@@ -2678,10 +2686,8 @@ def summarize_with_mock_llm(
         logging.debug(
             f"MOCK-LLM (MOCK): Received text length: {len(str(text_to_summarize))}"
         )
-        logging.debug(f"MOCK-LLM (MOCK): Custom prompt: {custom_prompt_arg}")
-        logging.debug(
-            f"MOCK-LLM (MOCK): Temperature: {temp}, System Message: {system_message}, Streaming: {streaming}"
-        )
+        logging.debug("MOCK-LLM (MOCK): Custom prompt received")
+        logging.debug("MOCK-LLM (MOCK): Request options prepared")
 
         # Extract a sample of text to include in mock response
         sample_text = (
@@ -2716,7 +2722,10 @@ def summarize_with_mock_llm(
             return mock_summary
 
     except Exception as e:
-        logging.error(f"OpenAI (MOCK): Unexpected error: {str(e)}", exc_info=True)
+        logging.error(
+            "OpenAI (MOCK): Processing failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Error: OpenAI mock function unexpected error: {str(e)}"
 
 
@@ -2745,7 +2754,10 @@ def summarize_chunk(
             for chunk in result:
                 # Check for error chunks first
                 if isinstance(chunk, str) and chunk.startswith("Error:"):
-                    logging.warning(f"Streaming error from {api_name}: {chunk}")
+                    logging.warning(
+                        "Streaming summarization failed; provider=%s",
+                        safe_metadata_token(api_name),
+                    )
                     return chunk
                 collected_chunks.append(chunk)
             final_result = "".join(collected_chunks)
@@ -2755,7 +2767,10 @@ def summarize_chunk(
         # Handle regular string responses
         elif isinstance(result, str):
             if result.startswith("Error:"):
-                logging.warning(f"Summarization with {api_name} failed: {result}")
+                logging.warning(
+                    "Summarization failed; provider=%s",
+                    safe_metadata_token(api_name),
+                )
                 return None
             logging.info(f"Summarization with {api_name} successful")
             return result
@@ -2767,7 +2782,9 @@ def summarize_chunk(
 
     except Exception as e:
         logging.error(
-            f"Error in summarize_chunk with {api_name}: {str(e)}", exc_info=True
+            "Error in summarize_chunk; provider=%s exception_type=%s",
+            safe_metadata_token(api_name),
+            safe_metadata_token(type(e).__name__),
         )
         return None
 

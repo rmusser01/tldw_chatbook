@@ -388,6 +388,19 @@ MISTRAL_RESPONSE_CANARY = "MISTRAL_RESPONSE_CANARY_3796"
 MISTRAL_STREAM_CANARY = "MISTRAL_STREAM_CANARY_3796"
 MISTRAL_EXCEPTION_CANARY = "MISTRAL_EXCEPTION_CANARY_3796"
 MISTRAL_PRIVATE_STREAMING_VALUE = "MISTRAL_PRIVATE_STREAMING_VALUE_3796"
+GOOGLE_CREDENTIAL_CANARY = "G00GL3_K3Y_GGEND"
+GOOGLE_INPUT_CANARY = "GOOGLE_INPUT_CANARY_3796"
+GOOGLE_PROMPT_CANARY = "GOOGLE_PROMPT_CANARY_3796"
+GOOGLE_RESPONSE_CANARY = "GOOGLE_RESPONSE_CANARY_3796"
+GOOGLE_STREAM_CANARY = "GOOGLE_STREAM_CANARY_3796"
+GOOGLE_EXCEPTION_CANARY = "GOOGLE_EXCEPTION_CANARY_3796"
+GOOGLE_PRIVATE_STREAMING_VALUE = "GOOGLE_PRIVATE_STREAMING_VALUE_3796"
+MOCK_PROMPT_CANARY = "MOCK_PROMPT_CANARY_3796"
+MOCK_SYSTEM_CANARY = "MOCK_SYSTEM_CANARY_3796"
+MOCK_PRIVATE_STREAMING_VALUE = "MOCK_PRIVATE_STREAMING_VALUE_3796"
+MOCK_EXCEPTION_CANARY = "MOCK_EXCEPTION_CANARY_3796"
+CHUNK_RESPONSE_CANARY = "CHUNK_RESPONSE_CANARY_3796"
+CHUNK_EXCEPTION_CANARY = "CHUNK_EXCEPTION_CANARY_3796"
 
 
 @dataclass(frozen=True)
@@ -705,6 +718,15 @@ def _general_streaming_provider_settings() -> dict[tuple[str, str], object]:
         ("mistral_api", "model"): "fixed-mistral-model",
         ("mistral_api", "api_retries"): 0,
         ("mistral_api", "api_retry_delay"): 0,
+    }
+
+
+def _google_provider_settings() -> dict[tuple[str, str], object]:
+    return {
+        ("google_api", "api_key"): "fixed-google-key",
+        ("google_api", "model"): "fixed-google-model",
+        ("google_api", "api_retries"): 0,
+        ("google_api", "api_retry_delay"): 0,
     }
 
 
@@ -5417,3 +5439,503 @@ def test_general_streaming_provider_missing_config_credential_is_truthful(
     assert settings_calls == [((settings_key[0], settings_key[1]), {})]
     assert post_calls == []
     assert f"{provider_name}: Credential configured" not in captured.text
+
+
+def test_no_pending_general_tail_sites() -> None:
+    private = [
+        site
+        for site in _ledger_sites()
+        if site["group"] == "general_tail"
+        and site["starting_classification"] == "private"
+    ]
+
+    assert len(private) == 20
+    assert not [site for site in private if site["outcome"] == "pending"], (
+        "general_tail has pending private diagnostics: "
+        f"{[site['site_id'] for site in private if site['outcome'] == 'pending']}"
+    )
+    assert sum(site["outcome"] in {"metadata", "deleted"} for site in private) == 20
+
+
+def test_google_success_hides_credential_input_prompt_and_response(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class PromptValue:
+        calls = 0
+
+        def __str__(self) -> str:
+            self.calls += 1
+            return GOOGLE_PROMPT_CANARY
+
+    prompt = PromptValue()
+    config_calls = _install_signature_bound_general_config_loader(monkeypatch)
+    settings_calls = _install_signature_bound_general_settings(
+        monkeypatch,
+        _google_provider_settings(),
+    )
+    response = _FakeResponse(
+        json_data={"choices": [{"message": {"content": GOOGLE_RESPONSE_CANARY}}]}
+    )
+    post_calls = _install_signature_bound_general_session_post(monkeypatch, response)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_google(
+            GOOGLE_CREDENTIAL_CANARY,
+            GOOGLE_INPUT_CANARY,
+            prompt,
+            system_message="fixed system",
+        )
+
+    assert result == GOOGLE_RESPONSE_CANARY
+    assert prompt.calls == 1
+    assert config_calls == [((), {})]
+    assert settings_calls == [
+        (("google_api", "model", "gemini-1.5-pro"), {}),
+        (("google_api", "api_retries", 3), {}),
+        (("google_api", "api_retry_delay", 5), {}),
+    ]
+    assert len(post_calls) == 1
+    post_args, post_kwargs = post_calls[0]
+    assert post_args == ("https://generativelanguage.googleapis.com/v1beta/openai/",)
+    assert post_kwargs["headers"]["Authorization"] == (
+        f"Bearer {GOOGLE_CREDENTIAL_CANARY}"
+    )
+    assert post_kwargs["json"]["messages"][1]["content"] == (
+        f"{GOOGLE_INPUT_CANARY} \n\n\n\n{GOOGLE_PROMPT_CANARY}"
+    )
+    for canary in (
+        GOOGLE_CREDENTIAL_CANARY,
+        GOOGLE_CREDENTIAL_CANARY[:5],
+        GOOGLE_CREDENTIAL_CANARY[-5:],
+        GOOGLE_INPUT_CANARY,
+        GOOGLE_PROMPT_CANARY,
+        GOOGLE_RESPONSE_CANARY,
+    ):
+        assert canary not in captured.text
+    assert "Google: Credential configured" in captured.text
+    assert "Google: Input prepared; character_count=" in captured.text
+    assert "Google: Prompt prepared; character_count=" in captured.text
+    assert "Google: Summary generated; character_count=" in captured.text
+
+
+def test_google_missing_config_credential_does_not_claim_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings = _google_provider_settings()
+    settings[("google_api", "api_key")] = ""
+    _install_signature_bound_general_config_loader(monkeypatch)
+    settings_calls = _install_signature_bound_general_settings(monkeypatch, settings)
+    post_calls = _install_signature_bound_general_session_post(
+        monkeypatch,
+        AssertionError("transport must not run without a credential"),
+    )
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_google(
+            "",
+            "fixed input",
+            "fixed prompt",
+        )
+
+    assert result == "Google: API Key Not Provided/Found in Config file or is empty"
+    assert settings_calls == [(("google_api", "api_key"), {})]
+    assert post_calls == []
+    assert "Google: Credential configured" not in captured.text
+
+
+def test_google_stream_preserves_yields_and_hides_rejected_lines(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_general_config_loader(monkeypatch)
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _google_provider_settings(),
+    )
+    response = _FakeResponse(
+        lines=(
+            f"data: {{{GOOGLE_STREAM_CANARY}".encode(),
+            f"data: {json.dumps({'private': GOOGLE_STREAM_CANARY})}".encode(),
+            b'data: {"choices":[{"delta":{"content":"fixed google chunk"}}]}',
+            b"data: [DONE]",
+        )
+    )
+    post_calls = _install_signature_bound_general_session_post(monkeypatch, response)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        stream = general_summarization.summarize_with_google(
+            GOOGLE_CREDENTIAL_CANARY,
+            "fixed input",
+            "fixed prompt",
+            streaming=GOOGLE_PRIVATE_STREAMING_VALUE,
+        )
+        assert inspect.isgenerator(stream)
+        assert response.iter_lines_started is False
+        chunks = list(stream)
+
+    assert chunks == ["fixed google chunk"]
+    assert response.iter_lines_started is True
+    assert len(post_calls) == 1
+    assert post_calls[0][1]["json"]["stream"] == GOOGLE_PRIVATE_STREAMING_VALUE
+    assert post_calls[0][1]["stream"] is True
+    for canary in (
+        GOOGLE_CREDENTIAL_CANARY,
+        GOOGLE_STREAM_CANARY,
+        GOOGLE_PRIVATE_STREAMING_VALUE,
+    ):
+        assert canary not in captured.text
+    assert "Google Stream: JSON decode failed" in captured.text
+    assert "Google Stream: Response event missing required field" in captured.text
+
+
+def test_google_status_failure_hides_response_body_and_preserves_return(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_general_config_loader(monkeypatch)
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _google_provider_settings(),
+    )
+    _install_signature_bound_general_session_post(
+        monkeypatch,
+        _FakeResponse(status_code=503, text=GOOGLE_RESPONSE_CANARY),
+    )
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_google(
+            GOOGLE_CREDENTIAL_CANARY,
+            "fixed input",
+            "fixed prompt",
+        )
+
+    assert result == "Google: Failed to process summary. Status code: 503"
+    assert GOOGLE_RESPONSE_CANARY not in captured.text
+    assert "Google: Summarization failed with status code 503" in captured.text
+
+
+def test_google_input_json_error_hides_detail_and_preserves_return(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    real_loads = general_summarization.json.loads
+    signature = inspect.signature(real_loads)
+    error = json.JSONDecodeError(GOOGLE_EXCEPTION_CANARY, "x", 0)
+
+    def failing_loads(*args: object, **kwargs: object) -> object:
+        signature.bind(*args, **kwargs)
+        raise error
+
+    _install_signature_bound_general_config_loader(monkeypatch)
+    monkeypatch.setattr(general_summarization.json, "loads", failing_loads)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_google(
+            GOOGLE_CREDENTIAL_CANARY,
+            "{fixed invalid json",
+            "fixed prompt",
+        )
+
+    assert result == f"Google: Error parsing JSON input: {error}"
+    assert GOOGLE_EXCEPTION_CANARY not in captured.text
+    assert "Google: JSON input parsing failed; exception_type=JSONDecodeError" in (
+        captured.text
+    )
+
+
+def test_google_response_json_error_hides_detail_and_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_general_config_loader(monkeypatch)
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _google_provider_settings(),
+    )
+    error = json.JSONDecodeError(GOOGLE_EXCEPTION_CANARY, "x", 0)
+    _install_signature_bound_general_session_post(
+        monkeypatch,
+        _FakeResponse(json_data=error),
+    )
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_google(
+            GOOGLE_CREDENTIAL_CANARY,
+            "fixed input",
+            "fixed prompt",
+        )
+
+    assert result == f"Google: Error decoding JSON input: {error}"
+    assert GOOGLE_EXCEPTION_CANARY not in captured.text
+    assert (
+        "Google: JSON decoding failed; exception_type=JSONDecodeError" in captured.text
+    )
+    assert not [record for record in captured.caplog.records if record.exc_info]
+
+
+def test_google_request_exception_hides_detail_and_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_general_config_loader(monkeypatch)
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _google_provider_settings(),
+    )
+    _install_signature_bound_general_session_post(
+        monkeypatch,
+        general_summarization.requests.RequestException(GOOGLE_EXCEPTION_CANARY),
+    )
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_google(
+            GOOGLE_CREDENTIAL_CANARY,
+            "fixed input",
+            "fixed prompt",
+        )
+
+    assert result == f"Google: Error making API request: {GOOGLE_EXCEPTION_CANARY}"
+    assert GOOGLE_EXCEPTION_CANARY not in captured.text
+    assert (
+        "Google: API request failed; exception_type=RequestException" in captured.text
+    )
+    assert not [record for record in captured.caplog.records if record.exc_info]
+
+
+def test_google_unexpected_exception_hides_detail_and_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    real_get_cli_setting = general_summarization.get_cli_setting
+    signature = inspect.signature(real_get_cli_setting)
+
+    def failing_setting(*args: object, **kwargs: object) -> object:
+        bound = signature.bind(*args, **kwargs)
+        if (
+            bound.arguments["section"],
+            bound.arguments.get("key"),
+        ) == ("google_api", "model"):
+            raise RuntimeError(GOOGLE_EXCEPTION_CANARY)
+        return bound.arguments.get("default")
+
+    _install_signature_bound_general_config_loader(monkeypatch)
+    monkeypatch.setattr(
+        general_summarization,
+        "get_cli_setting",
+        failing_setting,
+    )
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_google(
+            GOOGLE_CREDENTIAL_CANARY,
+            "fixed input",
+            "fixed prompt",
+        )
+
+    assert result == f"Google: Unexpected error occurred: {GOOGLE_EXCEPTION_CANARY}"
+    assert GOOGLE_EXCEPTION_CANARY not in captured.text
+    assert "Google: Processing failed; exception_type=RuntimeError" in captured.text
+    assert not [record for record in captured.caplog.records if record.exc_info]
+
+
+@pytest.mark.parametrize("streaming", [False, MOCK_PRIVATE_STREAMING_VALUE])
+def test_mock_llm_hides_prompt_system_and_arbitrary_streaming_value(
+    streaming: bool | str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr(general_summarization.time, "sleep", lambda seconds: None)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_mock_llm(
+            "fixed input",
+            MOCK_PROMPT_CANARY,
+            temp=0.2,
+            system_message=MOCK_SYSTEM_CANARY,
+            streaming=streaming,
+        )
+        if streaming:
+            assert inspect.isgenerator(result)
+            result = list(result)
+
+    if streaming:
+        assert result == ["Mocked summary for: fixed input..."]
+    else:
+        assert isinstance(result, str)
+        assert f"Custom prompt: '{MOCK_PROMPT_CANARY}'" in result
+        assert f"System message: '{MOCK_SYSTEM_CANARY}'" in result
+    for canary in (
+        MOCK_PROMPT_CANARY,
+        MOCK_SYSTEM_CANARY,
+        MOCK_PRIVATE_STREAMING_VALUE,
+    ):
+        assert canary not in captured.text
+    assert "MOCK-LLM (MOCK): Request options prepared" in captured.text
+
+
+def test_mock_llm_exception_hides_detail_and_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def failing_sleep(seconds: float) -> None:
+        assert seconds == 0.5
+        raise RuntimeError(MOCK_EXCEPTION_CANARY)
+
+    monkeypatch.setattr(general_summarization.time, "sleep", failing_sleep)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_mock_llm(
+            "fixed input",
+            "fixed prompt",
+        )
+
+    assert result == (
+        f"Error: OpenAI mock function unexpected error: {MOCK_EXCEPTION_CANARY}"
+    )
+    assert MOCK_EXCEPTION_CANARY not in captured.text
+    assert "OpenAI (MOCK): Processing failed; exception_type=RuntimeError" in (
+        captured.text
+    )
+    assert not [record for record in captured.caplog.records if record.exc_info]
+
+
+@pytest.mark.parametrize(
+    ("analyze_result", "expected"),
+    [
+        (f"Error: {CHUNK_RESPONSE_CANARY}", None),
+        ("fixed summary", "fixed summary"),
+    ],
+    ids=["error", "success"],
+)
+def test_summarize_chunk_string_result_hides_private_output(
+    analyze_result: str,
+    expected: str | None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    real_analyze = general_summarization.analyze
+    signature = inspect.signature(real_analyze)
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def fake_analyze(*args: object, **kwargs: object) -> str:
+        signature.bind(*args, **kwargs)
+        calls.append((args, kwargs))
+        return analyze_result
+
+    monkeypatch.setattr(general_summarization, "analyze", fake_analyze)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_chunk(
+            "fixed-provider",
+            "fixed input",
+            "fixed prompt",
+            "fixed key",
+            temp=0.2,
+            system_message="fixed system",
+        )
+
+    assert result == expected
+    assert len(calls) == 1
+    assert CHUNK_RESPONSE_CANARY not in captured.text
+    if analyze_result.startswith("Error:"):
+        assert "Summarization failed; provider=fixed-provider" in captured.text
+
+
+def test_summarize_chunk_stream_preserves_result_and_hides_error_chunk(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    real_analyze = general_summarization.analyze
+    signature = inspect.signature(real_analyze)
+
+    def fake_analyze(*args: object, **kwargs: object) -> Iterator[str]:
+        signature.bind(*args, **kwargs)
+
+        def stream() -> Iterator[str]:
+            yield "fixed prefix"
+            yield f"Error: {CHUNK_RESPONSE_CANARY}"
+
+        return stream()
+
+    monkeypatch.setattr(general_summarization, "analyze", fake_analyze)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_chunk(
+            "fixed-provider",
+            "fixed input",
+            "fixed prompt",
+            "fixed key",
+        )
+
+    assert result == f"Error: {CHUNK_RESPONSE_CANARY}"
+    assert CHUNK_RESPONSE_CANARY not in captured.text
+    assert "Streaming summarization failed; provider=fixed-provider" in captured.text
+
+
+def test_summarize_chunk_exception_hides_detail_and_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    real_analyze = general_summarization.analyze
+    signature = inspect.signature(real_analyze)
+
+    def failing_analyze(*args: object, **kwargs: object) -> object:
+        signature.bind(*args, **kwargs)
+        raise RuntimeError(CHUNK_EXCEPTION_CANARY)
+
+    monkeypatch.setattr(general_summarization, "analyze", failing_analyze)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_chunk(
+            "fixed-provider",
+            "fixed input",
+            "fixed prompt",
+            "fixed key",
+        )
+
+    assert result is None
+    assert CHUNK_EXCEPTION_CANARY not in captured.text
+    assert (
+        "Error in summarize_chunk; provider=fixed-provider exception_type=RuntimeError"
+        in captured.text
+    )
+    assert not [record for record in captured.caplog.records if record.exc_info]
+
+
+def test_general_tail_completes_general_module_private_inventory() -> None:
+    general = [
+        site
+        for site in _ledger_sites()
+        if site["module"].endswith("Summarization_General_Lib.py")
+    ]
+
+    assert len(general) == 281
+    assert (
+        sum(site["starting_classification"] == "reviewed_safe" for site in general)
+        == 182
+    )
+    assert sum(site["outcome"] == "frozen" for site in general) == 182
+    assert not [site for site in general if site["outcome"] == "pending"]
+    assert sum(site["outcome"] in {"metadata", "deleted"} for site in general) == 99
+
+
+def test_general_tail_complete_ledger_reconciles_without_private_sites() -> None:
+    sites = _ledger_sites()
+
+    assert len(sites) == 523
+    assert (
+        sum(site["starting_classification"] == "reviewed_safe" for site in sites) == 324
+    )
+    assert sum(site["outcome"] == "frozen" for site in sites) == 324
+    assert sum(site["outcome"] in {"metadata", "deleted"} for site in sites) == 199
+    assert not [site for site in sites if site["outcome"] == "pending"]
+
+    deleted_count = sum(site["outcome"] == "deleted" for site in sites)
+    discovered = []
+    for module in MODULE_COUNTS:
+        source = (REPO_ROOT / module).read_text(encoding="utf-8")
+        discovered.extend(_guard().discover_diagnostic_calls(source, module=module))
+    assert len(discovered) == 523 - deleted_count
+    test_ledger_current_state_matches_sources()
