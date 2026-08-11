@@ -103,6 +103,19 @@ The general form: **an env var that adds a search path is not isolation.** Befor
 trusting a negative-condition run, confirm the resource is genuinely unreachable — the
 setup should fail the way the real broken environment fails.
 
+**A third incident, same rule (TASK-15482).** A post-run payload-invariant probe
+set a scratch `TLDW_CONFIG_PATH` before importing the visual evaluator. The import
+created the scratch config as intended, but `load_settings()` still logged that it
+ensured `chat_dicts` beneath the normal `~/.local/share/tldw_cli/default_user`
+profile. The directory already existed and before/after fingerprints proved no
+file changed, but the log exposed that the probe was not actually data-isolated.
+
+**What to do.** For an ad hoc run that imports application config, create the
+scratch config before the import and set its `[paths].data_dir` to a scratch
+directory. `TLDW_CONFIG_PATH` controls the config file only; it does not relocate
+data paths selected from that config. Keep before/after fingerprints as the final
+backstop because path isolation and proof of non-mutation are separate claims.
+
 ---
 
 ## A schema bump is a one-way door for every OTHER worktree on this machine (2026-08-04)
