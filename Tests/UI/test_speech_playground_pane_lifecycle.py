@@ -38,10 +38,12 @@ import threading
 import wave
 from collections.abc import Callable
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
+from uuid import UUID
 
 import pytest
 from rich.text import Text
@@ -66,8 +68,10 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
 from tldw_chatbook.TTS import (
     AudioCppCloneSetupProjection,
     AudioCppRuntimeObservation,
+    LoadedTTSProfile,
     ProfileRepositoryError,
     ProfileServiceError,
+    TTSGenerationProfile,
     TTSPlaygroundSelectionPreset,
 )
 from tldw_chatbook.TTS.adapter_types import (
@@ -90,6 +94,7 @@ from tldw_chatbook.TTS.playground_types import (
 from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferencesSnapshot
 from tldw_chatbook.UI import stts_profile_library as profile_library_module
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.Constants import TAB_PERSONAS
 from tldw_chatbook.UI.stts_playground_catalog import (
     LOADING_SELECT_VALUE,
     SERVER_DEFAULT_VOICE_ID,
@@ -2109,6 +2114,155 @@ class _PaneHost(App[None]):
             self.navigation.append(message)
             return True
         return super().post_message(message)
+
+
+def _saved_clone_profile(*, profile_id: int, name: str) -> TTSGenerationProfile:
+    timestamp = datetime(2026, 8, 11, tzinfo=UTC)
+    return TTSGenerationProfile(
+        profile_id=UUID(int=profile_id),
+        display_name=name,
+        normalized_name=name.casefold(),
+        provider_id="audio_cpp",
+        model_id="artifact/model",
+        voice_id="artifact/voice",
+        response_format="wav",
+        speed=1.0,
+        options={},
+        revision=2,
+        created_at=timestamp,
+        updated_at=timestamp,
+    )
+
+
+@pytest.mark.asyncio
+async def test_clone_profile_save_handoff_carries_exact_saved_identity_without_assignment(
+    tmp_path: Path,
+) -> None:
+    """The pane routes only the committed profile identity to Roleplay."""
+
+    service = _SaveProfileService()
+    app = _PaneHost(profile_service=service)
+    saved_profile = _saved_clone_profile(profile_id=123, name="Story voice")
+    loaded = LoadedTTSProfile(repository_generation=17, profile=saved_profile)
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        pane = app.query_one(SpeechPlaygroundPane)
+        source_path = tmp_path / "clone.wav"
+        source_path.write_bytes(b"RIFF")
+        source = _native_profile_artifact(source_path)
+        projection = replace(
+            STTSPlaygroundResultProjection.from_artifact(source),
+            clone_profile_save_eligible=True,
+        )
+        pane.current_audio_artifact = projection
+        pane.current_audio_file = projection.path
+        app.push_screen_wait = AsyncMock(
+            return_value=profile_library_module.TTSCloneProfileSaveReview(
+                display_name="Story voice",
+                choose_character=True,
+            )
+        )
+        save = AsyncMock(return_value=loaded)
+        app._stts_handler = SimpleNamespace(save_current_playground_profile=save)
+
+        await pane._save_current_result_as_profile()
+        await pilot.pause()
+
+    save.assert_awaited_once_with(projection.operation_id, "Story voice", service)
+    assert len(app.navigation) == 1
+    navigation = app.navigation[0]
+    assert navigation.screen_name == TAB_PERSONAS
+    suggestion = navigation.screen_context["voice_profile_suggestion"]
+    assert suggestion.profile_id == saved_profile.profile_id
+    assert suggestion.repository_generation == 17
+    assert suggestion.profile_revision == 2
+    assert set(navigation.screen_context) == {"view", "voice_profile_suggestion"}
+    assert navigation.screen_context["view"] == "characters"
+
+
+@pytest.mark.asyncio
+async def test_clone_profile_save_unassigned_does_not_navigate(
+    tmp_path: Path,
+) -> None:
+    service = _SaveProfileService()
+    app = _PaneHost(profile_service=service)
+    saved_profile = _saved_clone_profile(profile_id=124, name="Unassigned voice")
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        pane = app.query_one(SpeechPlaygroundPane)
+        source_path = tmp_path / "clone-unassigned.wav"
+        source_path.write_bytes(b"RIFF")
+        source = _native_profile_artifact(source_path)
+        pane.current_audio_artifact = replace(
+            STTSPlaygroundResultProjection.from_artifact(source),
+            clone_profile_save_eligible=True,
+        )
+        pane.current_audio_file = source.path
+        app.push_screen_wait = AsyncMock(
+            return_value=profile_library_module.TTSCloneProfileSaveReview(
+                display_name="Unassigned voice",
+                choose_character=False,
+            )
+        )
+        app._stts_handler = SimpleNamespace(
+            save_current_playground_profile=AsyncMock(
+                return_value=LoadedTTSProfile(17, saved_profile)
+            )
+        )
+
+        await pane._save_current_result_as_profile()
+
+    assert app.navigation == []
+
+
+@pytest.mark.asyncio
+async def test_clone_profile_review_completion_cannot_save_replaced_result(
+    tmp_path: Path,
+) -> None:
+    profile_service = _SaveProfileService()
+    app = _PaneHost(profile_service=profile_service)
+    old_path = tmp_path / "old-clone.wav"
+    new_path = tmp_path / "new-clone.wav"
+    old_path.write_bytes(b"RIFF-old")
+    new_path.write_bytes(b"RIFF-new")
+    old = _native_profile_artifact(old_path, operation_id="old-clone")
+    new = _native_profile_artifact(new_path, operation_id="new-clone")
+    handler = STTSEventHandler(app)
+    handler._accept_playground_artifact(old)
+    app._stts_handler = handler
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        pane = app.query_one(SpeechPlaygroundPane)
+        pane.current_audio_artifact = replace(
+            STTSPlaygroundResultProjection.from_artifact(old),
+            clone_profile_save_eligible=True,
+        )
+        pane.current_audio_file = old.path
+
+        async def replace_before_review_returns(_modal: object) -> object:
+            handler._accept_playground_artifact(new)
+            pane._store_delivered_artifact(new, announce=False)
+            return profile_library_module.TTSCloneProfileSaveReview(
+                display_name="Stale voice",
+                choose_character=True,
+            )
+
+        app.push_screen_wait = replace_before_review_returns
+        await pane._save_current_result_as_profile()
+
+        assert profile_service.create_calls == []
+        assert app.navigation == []
+        assert pane.current_audio_artifact is not None
+        assert pane.current_audio_artifact.operation_id == "new-clone"
+        assert str(app.query_one("#audio-player-status", Static).render()) == (
+            profile_library_module.PROFILE_ACTION_FAILED_COPY
+        )
 
 
 @pytest.mark.asyncio

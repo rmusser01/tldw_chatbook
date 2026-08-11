@@ -3,6 +3,7 @@
 
 import asyncio
 from copy import deepcopy
+from dataclasses import replace
 from datetime import UTC, datetime
 import inspect
 import json
@@ -10105,6 +10106,8 @@ class _CharacterTTSProfileService:
         self.detach_calls: list[tuple[CharacterTTSAssignment, int]] = []
         self.update_calls: list[tuple[LoadedTTSProfile, TTSProfileDraft]] = []
         self.set_error: BaseException | None = None
+        self.extra_profiles: dict[UUID, LoadedTTSProfile] = {}
+        self.get_profile_calls: list[UUID] = []
 
     async def get_assigned_profile(
         self, character_ref: CharacterRef
@@ -10118,6 +10121,13 @@ class _CharacterTTSProfileService:
         assert search is None
         assert offset == 0
         return self.page
+
+    async def get_profile(self, profile_id: UUID) -> LoadedTTSProfile:
+        self.get_profile_calls.append(profile_id)
+        loaded = self.extra_profiles.get(profile_id)
+        if loaded is None:
+            raise ProfileRepositoryError("missing")
+        return loaded
 
     async def observe_availability(
         self, page: TTSProfilePageSnapshot
@@ -10296,6 +10306,44 @@ async def test_character_tts_widget_emits_id_only_intents_for_available_profiles
         assert app.actions[0].profile_id == available.profile_id
         assert vars(app.actions[0]).keys() >= {"action", "profile_id"}
         assert "authority" not in vars(app.actions[0])
+
+
+async def test_character_tts_suggestion_is_guidance_not_assignment() -> None:
+    profile = _character_tts_profile(1)
+    option = CharacterTTSProfileOption(
+        profile.profile_id,
+        profile.display_name,
+        "available",
+    )
+    app = _CharacterTTSWidgetHost()
+    async with app.run_test() as pilot:
+        widget = app.query_one(PersonasCharacterTTSWidget)
+        widget.apply_state(
+            CharacterTTSPresentationState(
+                profiles=(option,),
+                selected_profile_id=None,
+                suggested_profile_id=profile.profile_id,
+                status="Using the global speech default.",
+                controls_enabled=True,
+            )
+        )
+        await pilot.pause()
+        selector = widget.query_one(Select)
+
+        assert selector.value == "__global__"
+        assert app.actions == []
+        assert "Suggested" in next(
+            str(label)
+            for label, value in selector._options
+            if value == str(profile.profile_id)
+        )
+
+        selector.value = str(profile.profile_id)
+        await pilot.pause()
+
+        assert [(message.action, message.profile_id) for message in app.actions] == [
+            ("assign", profile.profile_id)
+        ]
 
 
 async def test_character_tts_widget_accepts_unverified_profile_assignment_without_laundering_it() -> (
@@ -10477,6 +10525,151 @@ async def test_character_tts_population_requires_one_generation_and_observes_off
         assert screen.query_one("#ccp-character-editor-view").display is False
         assert card_control.presentation_state.assignment_count == 4
         assert "Unavailable" in card_control.presentation_state.status
+        actions = card_control.query_one(".personas-character-tts-actions")
+        for button in actions.query(Button):
+            if button.display:
+                assert actions.region.contains_region(button.region), str(button.label)
+
+
+async def test_roleplay_profile_suggestion_requires_character_choice_and_exact_fresh_revision(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    profile = replace(_character_tts_profile(1), revision=2)
+    service = _CharacterTTSProfileService(
+        page=TTSProfilePageSnapshot(
+            repository_generation=7,
+            profiles=(profile,),
+            total=1,
+        ),
+        assigned=LoadedCharacterTTSAssignment(7, None),
+    )
+    _configure_character_tts_app(mock_app_instance, service)
+    suggestion = personas_screen_module.CharacterTTSProfileSuggestion(
+        profile_id=profile.profile_id,
+        repository_generation=7,
+        profile_revision=2,
+    )
+    app = PersonasTestApp(mock_app_instance)
+    screen = PersonasScreen(mock_app_instance)
+    screen.apply_navigation_context(
+        {"view": "characters", "voice_profile_suggestion": suggestion}
+    )
+
+    async with app.run_test() as pilot:
+        await app.push_screen(screen)
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert screen.state.selected_entity_id is None
+        assert service.set_calls == []
+
+        await screen._select_character("1", "Detective Sam")
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        state = screen._character_tts_presentation
+        assert state.selected_profile_id is None
+        assert state.suggested_profile_id == profile.profile_id
+        assert service.set_calls == []
+        selector = screen.query_one(
+            "#personas-character-card-tts .personas-character-tts-profile",
+            Select,
+        )
+        assert selector.value == "__global__"
+        assert app.focused is selector
+        actions = screen.query_one(
+            "#personas-character-card-tts .personas-character-tts-actions"
+        )
+        for button in actions.query(Button):
+            if button.display:
+                assert actions.region.contains_region(button.region), str(button.label)
+
+        selector.value = str(profile.profile_id)
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+
+        assert service.set_calls == [
+            (
+                screen._character_tts_snapshot.character_ref,
+                LoadedTTSProfile(7, profile),
+                None,
+            )
+        ]
+        assert screen._character_tts_profile_suggestion is None
+
+
+async def test_roleplay_profile_suggestion_clears_when_generation_or_revision_is_stale(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    profile = replace(_character_tts_profile(1), revision=3)
+    service = _CharacterTTSProfileService(
+        page=TTSProfilePageSnapshot(7, (profile,), 1),
+        assigned=LoadedCharacterTTSAssignment(7, None),
+    )
+    _configure_character_tts_app(mock_app_instance, service)
+    suggestion = personas_screen_module.CharacterTTSProfileSuggestion(
+        profile_id=profile.profile_id,
+        repository_generation=7,
+        profile_revision=2,
+    )
+    app = PersonasTestApp(mock_app_instance)
+    screen = PersonasScreen(mock_app_instance)
+    screen.apply_navigation_context(
+        {"view": "characters", "voice_profile_suggestion": suggestion}
+    )
+
+    async with app.run_test() as pilot:
+        await app.push_screen(screen)
+        await pilot.app.workers.wait_for_complete()
+        await screen._select_character("1", "Detective Sam")
+        await pilot.app.workers.wait_for_complete()
+
+        assert screen._character_tts_profile_suggestion is None
+        assert screen._character_tts_presentation.suggested_profile_id is None
+        assert service.set_calls == []
+
+
+async def test_roleplay_profile_suggestion_resolves_exact_profile_beyond_first_page(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    first_page = _character_tts_profile(1)
+    suggested_profile = replace(_character_tts_profile(51), revision=2)
+    service = _CharacterTTSProfileService(
+        page=TTSProfilePageSnapshot(7, (first_page,), 51),
+        assigned=LoadedCharacterTTSAssignment(7, None),
+    )
+    service.extra_profiles[suggested_profile.profile_id] = LoadedTTSProfile(
+        7,
+        suggested_profile,
+    )
+    _configure_character_tts_app(mock_app_instance, service)
+    suggestion = personas_screen_module.CharacterTTSProfileSuggestion(
+        profile_id=suggested_profile.profile_id,
+        repository_generation=7,
+        profile_revision=2,
+    )
+    app = PersonasTestApp(mock_app_instance)
+    screen = PersonasScreen(mock_app_instance)
+    screen.apply_navigation_context(
+        {"view": "characters", "voice_profile_suggestion": suggestion}
+    )
+
+    async with app.run_test() as pilot:
+        await app.push_screen(screen)
+        await pilot.app.workers.wait_for_complete()
+        await screen._select_character("1", "Detective Sam")
+        await pilot.app.workers.wait_for_complete()
+
+        assert service.get_profile_calls == [suggested_profile.profile_id]
+        assert (
+            screen._character_tts_presentation.suggested_profile_id
+            == suggested_profile.profile_id
+        )
+        assert screen._character_tts_presentation.selected_profile_id is None
+        assert service.set_calls == []
 
 
 async def test_character_tts_population_rejects_mixed_repository_generations(

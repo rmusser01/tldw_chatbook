@@ -351,6 +351,130 @@ class TTSProfileNameModal(ModalScreen[str | None]):
         self.dismiss(None)
 
 
+@dataclass(frozen=True, slots=True)
+class TTSCloneProfileSaveReview:
+    """Validated clone-profile name and explicit post-save destination."""
+
+    display_name: str
+    choose_character: bool
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.display_name) is not str
+            or not self.display_name
+            or self.display_name != self.display_name.strip()
+        ):
+            raise ValueError("clone profile name must be trimmed and non-empty")
+        if type(self.choose_character) is not bool:
+            raise TypeError("choose_character must be a boolean")
+
+
+class TTSCloneProfileSaveReviewModal(
+    ModalScreen[TTSCloneProfileSaveReview | None]
+):
+    """Review a clone result and choose whether to continue to Roleplay."""
+
+    BINDINGS = (("escape", "dismiss", "Cancel"),)
+
+    DEFAULT_CSS = """
+    TTSCloneProfileSaveReviewModal {
+        align: center middle;
+        background: $background 75%;
+    }
+
+    #stts-clone-profile-dialog {
+        width: 100%;
+        max-width: 72;
+        height: auto;
+        background: $panel;
+        border: round $accent;
+        padding: 1;
+    }
+
+    #stts-clone-profile-title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    #stts-clone-profile-copy, #stts-clone-profile-error {
+        height: auto;
+    }
+
+    #stts-clone-profile-error {
+        color: $warning;
+    }
+
+    #stts-clone-profile-actions {
+        height: auto;
+        margin-top: 1;
+    }
+
+    #stts-clone-profile-actions Button {
+        width: 100%;
+        min-width: 0;
+        height: 3;
+        border: none;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="stts-clone-profile-dialog"):
+            yield Label("Save cloned voice", id="stts-clone-profile-title")
+            yield Static(
+                "Name this exact generated voice. Saving does not change the "
+                "global default or assign it to a character.",
+                id="stts-clone-profile-copy",
+            )
+            yield Input(
+                placeholder="Voice profile name",
+                id="stts-clone-profile-name",
+            )
+            yield Static("", id="stts-clone-profile-error")
+            with Vertical(id="stts-clone-profile-actions"):
+                yield Button(
+                    "Save unassigned",
+                    id="stts-clone-profile-save-unassigned",
+                )
+                yield Button(
+                    "Save & choose character",
+                    id="stts-clone-profile-save-choose-character",
+                    variant="primary",
+                )
+                yield Button("Cancel", id="stts-clone-profile-cancel")
+
+    def on_mount(self) -> None:
+        self.query_one("#stts-clone-profile-name", Input).focus()
+
+    def _submit(self, *, choose_character: bool) -> None:
+        name = self.query_one("#stts-clone-profile-name", Input).value.strip()
+        if not name:
+            self.query_one("#stts-clone-profile-error", Static).update(
+                Text(_PROFILE_NAME_REQUIRED_COPY)
+            )
+            return
+        self.dismiss(TTSCloneProfileSaveReview(name, choose_character))
+
+    @on(Button.Pressed, "#stts-clone-profile-save-unassigned")
+    def _handle_save_unassigned(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._submit(choose_character=False)
+
+    @on(Button.Pressed, "#stts-clone-profile-save-choose-character")
+    def _handle_save_choose_character(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._submit(choose_character=True)
+
+    @on(Input.Submitted, "#stts-clone-profile-name")
+    def _handle_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self._submit(choose_character=False)
+
+    @on(Button.Pressed, "#stts-clone-profile-cancel")
+    def _handle_cancel(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss(None)
+
+
 class TTSProfileEditorModal(ModalScreen[TTSProfileDraft | None]):
     """Focused exact-value editor for one immutable loaded profile token."""
 

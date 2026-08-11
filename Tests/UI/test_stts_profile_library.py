@@ -1693,6 +1693,79 @@ async def test_save_result_blank_name_uses_name_specific_not_saved_copy() -> Non
 
 
 @pytest.mark.asyncio
+async def test_clone_profile_review_requires_name_and_returns_explicit_post_save_choice() -> None:
+    """Clone review distinguishes an unassigned save from a Roleplay handoff."""
+
+    modal = profile_library_module.TTSCloneProfileSaveReviewModal()
+    results: list[object] = []
+
+    class _ModalHost(App[None]):
+        def compose(self) -> ComposeResult:
+            yield Static("host")
+
+    app = _ModalHost()
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.push_screen(modal, results.append)
+        await pilot.pause()
+
+        modal.query_one("#stts-clone-profile-name", Input).value = "   "
+        await pilot.click("#stts-clone-profile-save-unassigned")
+        await pilot.pause()
+        assert results == []
+        assert "Enter a profile name" in str(
+            modal.query_one("#stts-clone-profile-error", Static).render()
+        )
+
+        modal.query_one("#stts-clone-profile-name", Input).value = "  Story voice  "
+        await pilot.click("#stts-clone-profile-save-choose-character")
+        await _wait_until(pilot, lambda: len(results) == 1)
+
+    assert results == [
+        profile_library_module.TTSCloneProfileSaveReview(
+            display_name="Story voice",
+            choose_character=True,
+        )
+    ]
+
+
+@pytest.mark.parametrize("size", ((80, 24), (100, 30), (120, 35)))
+@pytest.mark.asyncio
+async def test_clone_profile_review_actions_fit_and_are_keyboard_reachable(
+    size: tuple[int, int],
+) -> None:
+    modal = profile_library_module.TTSCloneProfileSaveReviewModal()
+
+    class _ModalHost(App[None]):
+        def compose(self) -> ComposeResult:
+            yield Static("host")
+
+    app = _ModalHost()
+    async with app.run_test(size=size) as pilot:
+        app.push_screen(modal)
+        await pilot.pause()
+        dialog = modal.query_one("#stts-clone-profile-dialog")
+        controls = (
+            modal.query_one("#stts-clone-profile-name", Input),
+            modal.query_one("#stts-clone-profile-save-unassigned", Button),
+            modal.query_one("#stts-clone-profile-save-choose-character", Button),
+            modal.query_one("#stts-clone-profile-cancel", Button),
+        )
+        for control in controls:
+            assert control.region.width > 0
+            assert dialog.region.contains_region(control.region)
+            control.focus()
+            await pilot.pause()
+            assert control.has_focus
+
+        painted = "\n".join(
+            "".join(segment.text for segment in strip)
+            for strip in modal._compositor.render_strips()
+        )
+        for label in ("Save unassigned", "Save & choose character", "Cancel"):
+            assert label in painted
+
+
+@pytest.mark.asyncio
 async def test_profile_editor_refuses_a_cleared_voice_for_a_legacy_provider() -> None:
     """Clearing "Exact voice" on a legacy profile must not save silently.
 
