@@ -7921,16 +7921,42 @@ class ConsoleChatController:
             CompactionDecision.UNKNOWN_WINDOW,
             CompactionDecision.NON_COMPACTABLE,
         }:
+            # A missing compaction threshold or an empty set of replaceable
+            # units is not itself a provider overflow.  Unknown/new models
+            # historically remained sendable with an explicit unverified
+            # label, and reaching a policy high-water mark while the exact
+            # request still fits must not turn that advisory threshold into
+            # an admission failure.  Block only when the immutable prepared
+            # request proves that the effective input ceiling is exceeded.
+            if not prepared_before.known_overflow:
+                return [dict(row) for row in semantic.flattened_messages()], None
             if (
                 resolved.policy.failure_behavior
                 is CompactionFailureBehavior.OMIT_OLDER_CONTEXT
             ):
                 return [dict(row) for row in semantic.flattened_messages()], None
+            if decision is CompactionDecision.NON_COMPACTABLE:
+                limiting_reason = (
+                    "No older complete conversation turns are available to compact."
+                )
+                recovery = (
+                    "Reduce the active request, system/tool/source context, or "
+                    "response maximum."
+                )
+            else:
+                limiting_reason = (
+                    resolved.validation_errors[0]
+                    if resolved.validation_errors
+                    else "The effective model input ceiling is unavailable."
+                )
+                recovery = (
+                    "Repair the model limit, reduce mandatory context or the "
+                    "response maximum, or allow older turns to be omitted."
+                )
             result = blocked(
                 (
                     "Conversation compaction cannot run safely for this request. "
-                    "Choose a bounded context limit, reduce mandatory context, "
-                    "or allow older turns to be omitted."
+                    f"{limiting_reason} {recovery}"
                 )
             )
             return provider_messages, result
