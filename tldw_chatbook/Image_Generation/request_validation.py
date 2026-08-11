@@ -33,6 +33,12 @@ _REFERENCE_MIME_BY_FORMAT = {
     "PNG": "image/png",
     "WEBP": "image/webp",
 }
+_pillow_warning_pixels = Image.MAX_IMAGE_PIXELS
+_PILLOW_DECOMPRESSION_WARNING_MAX_PIXELS: int = (
+    _pillow_warning_pixels
+    if type(_pillow_warning_pixels) is int and _pillow_warning_pixels > 0
+    else DEFAULT_MAX_PIXELS
+)
 
 
 @dataclass(frozen=True)
@@ -310,7 +316,13 @@ def _validate_reference_image_content(
                     _issue("reference image height out of range", "reference_image")
                 )
                 header_valid = False
-            if decoded_width * decoded_height > max_pixels:
+            decoded_pixels = decoded_width * decoded_height
+            if decoded_pixels > _PILLOW_DECOMPRESSION_WARNING_MAX_PIXELS:
+                issues.append(
+                    _issue("reference image exceeds safe decode limits", "reference_image")
+                )
+                header_valid = False
+            if decoded_pixels > max_pixels:
                 issues.append(
                     _issue(
                         "reference image dimensions exceed max pixels",

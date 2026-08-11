@@ -374,6 +374,58 @@ def test_reference_image_decompression_bomb_error_is_sanitized(rv):
     )
 
 
+def test_reference_image_warning_band_ceiling_is_sanitized_before_load(
+    rv,
+    monkeypatch,
+):
+    from types import SimpleNamespace
+
+    warning_ceiling = Image.MAX_IMAGE_PIXELS
+    assert type(warning_ceiling) is int
+    assert warning_ceiling > 0
+    width = 100_000
+    height = warning_ceiling // width + 1
+    decoded_pixels = width * height
+    assert warning_ceiling < decoded_pixels <= 2 * warning_ceiling
+    content = _png_with_dimensions(width, height)
+    config = SimpleNamespace(
+        max_prompt_length=10_000,
+        max_width=width + 1,
+        max_height=height + 1,
+        max_pixels=decoded_pixels + 1,
+        max_steps=100,
+    )
+    load_calls = []
+
+    def spy_load(*args, **kwargs):
+        load_calls.append(True)
+
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", None)
+    monkeypatch.setattr(PngImagePlugin.PngImageFile, "load", spy_load)
+    bad = {
+        "backend": "fal",
+        "prompt": "cat",
+        "extra_params": {},
+        "reference_image": _ref(
+            content=content,
+            bytes_len=len(content),
+            width=None,
+            height=None,
+        ),
+    }
+
+    issues = rv.validate_image_generation_request(bad, config=config)
+
+    assert load_calls == []
+    assert issues == [
+        rv.ImageGenerationValidationIssue(
+            code="image_params_invalid",
+            message="reference image exceeds safe decode limits",
+            path="reference_image",
+        )
+    ]
+
+
 def test_reference_validation_does_not_mutate_warning_filters_during_concurrent_warning(
     rv,
     monkeypatch,
