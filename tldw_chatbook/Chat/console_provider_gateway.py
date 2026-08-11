@@ -29,7 +29,6 @@ from tldw_chatbook.Chat.Chat_Deps import (
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_provider_endpoints import (
     effective_provider_endpoint,
-    first_configured_endpoint,
     generic_endpoint_differs,
     provider_uses_endpoint,
     unsaved_endpoint_copy,
@@ -1270,11 +1269,7 @@ class ConsoleProviderGateway:
 
         api_mode: str | None = None
         qwencloud_configured_base_url: str | None = None
-        effective_base_url = effective_provider_endpoint(
-            identity.readiness_key,
-            selection.base_url,
-            provider_settings,
-        )
+        effective_base_url: str | None
         if identity.execution_key == "qwencloud":
             try:
                 api_mode = normalize_qwencloud_api_mode(
@@ -1293,13 +1288,37 @@ class ConsoleProviderGateway:
                     readiness_key=identity.readiness_key,
                     execution_key=identity.execution_key,
                 )
-            try:
-                effective_base_url = normalize_qwencloud_base_url(effective_base_url)
-                configured_base_url = first_configured_endpoint(provider_settings)
-                if configured_base_url is not None:
-                    qwencloud_configured_base_url = normalize_qwencloud_base_url(
-                        configured_base_url
+
+            configured_base_url: str | None = None
+            if "api_base_url" in provider_settings:
+                raw_configured_base_url = provider_settings["api_base_url"]
+                if not isinstance(raw_configured_base_url, str) or not (
+                    raw_configured_base_url.strip()
+                ):
+                    return self._blocked_resolution(
+                        selection,
+                        provider=selection.provider,
+                        model=model,
+                        visible_copy=(
+                            "QwenCloud blocked: invalid API base URL setting. Enter "
+                            "an absolute HTTP(S) compatible-mode base URL in Settings."
+                        ),
+                        readiness_key=identity.readiness_key,
+                        execution_key=identity.execution_key,
                     )
+                configured_base_url = raw_configured_base_url
+
+            try:
+                qwencloud_configured_base_url = normalize_qwencloud_base_url(
+                    configured_base_url
+                )
+                selected_base_url = selection.base_url
+                if selected_base_url is None or (
+                    isinstance(selected_base_url, str) and not selected_base_url.strip()
+                ):
+                    effective_base_url = qwencloud_configured_base_url
+                else:
+                    effective_base_url = normalize_qwencloud_base_url(selected_base_url)
             except ChatConfigurationError:
                 return self._blocked_resolution(
                     selection,
@@ -1312,16 +1331,21 @@ class ConsoleProviderGateway:
                     readiness_key=identity.readiness_key,
                     execution_key=identity.execution_key,
                 )
+        else:
+            effective_base_url = effective_provider_endpoint(
+                identity.readiness_key,
+                selection.base_url,
+                provider_settings,
+            )
 
-        endpoint_differs = generic_endpoint_differs(
-            selection.base_url, provider_settings
-        )
-        if identity.execution_key == "qwencloud" and (
-            isinstance(selection.base_url, str) and selection.base_url.strip()
-        ):
+        if identity.execution_key == "qwencloud":
             endpoint_differs = (
                 qwencloud_configured_base_url is None
                 or effective_base_url != qwencloud_configured_base_url
+            )
+        else:
+            endpoint_differs = generic_endpoint_differs(
+                selection.base_url, provider_settings
             )
 
         if (
@@ -1854,16 +1878,27 @@ class ConsoleProviderGateway:
         stop_event = threading.Event()
         response_lock = threading.Lock()
         retained_response: Any = None
+        close_requested = False
         response_close_attempted = False
 
-        def retain_response(response: Any) -> None:
-            nonlocal retained_response
+        def retain_response(response: Any) -> bool:
+            nonlocal retained_response, response_close_attempted
+            close = None
             with response_lock:
                 retained_response = response
+                iteration_permitted = not close_requested
+                if close_requested and not response_close_attempted:
+                    response_close_attempted = True
+                    close = getattr(retained_response, "close", None)
+            if callable(close):
+                with contextlib.suppress(Exception):
+                    close()
+            return iteration_permitted
 
         def close_response() -> None:
-            nonlocal response_close_attempted
+            nonlocal close_requested, response_close_attempted
             with response_lock:
+                close_requested = True
                 if response_close_attempted or retained_response is None:
                     return
                 response_close_attempted = True
@@ -1885,18 +1920,22 @@ class ConsoleProviderGateway:
                 accumulator = _ToolCallAccumulator() if request.tools else None
                 if accumulator is not None:
                     response = _tee_tool_calls(response, accumulator)
-                retain_response(response)
+                if not retain_response(response) or stop_event.is_set():
+                    return
                 emitted_content = False
                 # tools= runs: fallback UI copy must never leak into agent
                 # history, so it is suppressed at GENERATION (not filtered
                 # by string equality — review minor m4: a real answer that
                 # happens to equal the copy text now flows through).
-                for text in self.normalize_provider_response(
+                normalized_response = self.normalize_provider_response(
                     response,
                     suppress_fallback_copy=accumulator is not None,
                     signals=signals,
-                ):
-                    if stop_event.is_set():
+                )
+                while not stop_event.is_set():
+                    try:
+                        text = next(normalized_response)
+                    except StopIteration:
                         break
                     if text:
                         emitted_content = True

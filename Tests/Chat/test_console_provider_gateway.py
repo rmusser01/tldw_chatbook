@@ -961,6 +961,56 @@ async def test_qwencloud_resolution_rejects_invalid_mode_before_dispatch(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    "configured_base_url",
+    [42, False, [], {}, "", "   ", None],
+    ids=("integer", "boolean", "list", "mapping", "empty", "whitespace", "none"),
+)
+async def test_qwencloud_resolution_rejects_present_malformed_saved_base_before_network_or_dispatch(
+    configured_base_url: object,
+) -> None:
+    requests: list[httpx.Request] = []
+    dispatches: list[dict[str, object]] = []
+
+    async def network_trap(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"data": [{"id": "unexpected-model"}]})
+
+    def dispatch_trap(**kwargs: object) -> object:
+        dispatches.append(dict(kwargs))
+        return {"choices": [{"message": {"content": "unexpected"}}]}
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(network_trap)) as client:
+        gateway = ConsoleProviderGateway(
+            http_client=client,
+            config_provider=lambda: {
+                "api_settings": {
+                    "qwencloud": {
+                        "api_key": "QWENCLOUD-KEY-CANARY",
+                        "api_mode": "responses",
+                        "api_base_url": configured_base_url,
+                        "model": "PAYLOAD-MODEL-CANARY",
+                    }
+                }
+            },
+            environ={},
+            chat_api_call_fn=dispatch_trap,
+        )
+
+        resolved = await gateway.resolve_for_send(
+            ConsoleProviderSelection(provider="QwenCloud")
+        )
+
+    assert resolved.ready is False
+    assert "QwenCloud" in resolved.visible_copy
+    assert "API base URL" in resolved.visible_copy
+    assert "QWENCLOUD-KEY-CANARY" not in resolved.visible_copy
+    assert "PAYLOAD-MODEL-CANARY" not in resolved.visible_copy
+    assert requests == []
+    assert dispatches == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     ("provider", "model", "settings"),
     [
         ("openai", "gpt-4.1", {"api_key": "openai-key"}),
@@ -3791,6 +3841,155 @@ async def test_qwencloud_responses_terminal_usage_reaches_console_signals_withou
     assert normalized.uncached_input == 7
     assert normalized.cache_read == 2
     assert normalized.output == 3
+
+
+class _FirstNextBlockingCloseTrackingIterator:
+    def __init__(self) -> None:
+        self.next_entered = threading.Event()
+        self.released = threading.Event()
+        self.closed = threading.Event()
+        self._state_lock = threading.Lock()
+        self.next_calls = 0
+        self.close_calls = 0
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        with self._state_lock:
+            self.next_calls += 1
+        self.next_entered.set()
+        self.released.wait(timeout=5)
+        raise StopIteration
+
+    def close(self) -> None:
+        with self._state_lock:
+            self.close_calls += 1
+        self.closed.set()
+        self.released.set()
+
+
+@pytest.mark.asyncio
+async def test_gateway_cancellation_before_qwencloud_iterator_retention_closes_without_iteration() -> (
+    None
+):
+    provider_call_entered = threading.Event()
+    allow_provider_return = threading.Event()
+    provider_iterator = _FirstNextBlockingCloseTrackingIterator()
+
+    def delayed_chat_api_call(**_kwargs):
+        provider_call_entered.set()
+        allow_provider_return.wait(timeout=5)
+        return provider_iterator
+
+    gateway = ConsoleProviderGateway(chat_api_call_fn=delayed_chat_api_call)
+    resolution = ConsoleProviderResolution(
+        provider="QwenCloud",
+        base_url="https://workspace.example.test/compatible-mode/v1",
+        model="qwen3.8-max",
+        ready=True,
+        readiness_key="qwencloud",
+        execution_key="qwencloud",
+        api_key="qwen-test-key",
+        streaming=True,
+        api_mode="responses",
+    )
+    stream = gateway.stream_chat(
+        resolution,
+        [{"role": "user", "content": "hi"}],
+    )
+    pending = asyncio.create_task(anext(stream))
+
+    try:
+        assert await asyncio.to_thread(provider_call_entered.wait, 1)
+        pending.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+
+        allow_provider_return.set()
+        for _ in range(100):
+            if (
+                provider_iterator.closed.is_set()
+                or provider_iterator.next_entered.is_set()
+            ):
+                break
+            await asyncio.sleep(0.01)
+
+        assert provider_iterator.next_calls == 0
+        assert provider_iterator.closed.is_set()
+        assert provider_iterator.close_calls == 1
+        await stream.aclose()
+        assert provider_iterator.close_calls == 1
+    finally:
+        allow_provider_return.set()
+        if provider_iterator.next_entered.is_set():
+            provider_iterator.released.set()
+        if not pending.done():
+            pending.cancel()
+        await stream.aclose()
+
+
+@pytest.mark.asyncio
+async def test_gateway_cancellation_after_retention_before_normalization_does_not_iterate(
+    monkeypatch,
+) -> None:
+    normalization_entered = threading.Event()
+    allow_normalization = threading.Event()
+    provider_iterator = _FirstNextBlockingCloseTrackingIterator()
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=lambda **_kwargs: provider_iterator
+    )
+    original_normalize = gateway.normalize_provider_response
+
+    def paused_normalize(response, *, suppress_fallback_copy=False, signals=None):
+        normalization_entered.set()
+        allow_normalization.wait(timeout=5)
+        return original_normalize(
+            response,
+            suppress_fallback_copy=suppress_fallback_copy,
+            signals=signals,
+        )
+
+    monkeypatch.setattr(gateway, "normalize_provider_response", paused_normalize)
+    resolution = ConsoleProviderResolution(
+        provider="QwenCloud",
+        base_url="https://workspace.example.test/compatible-mode/v1",
+        model="qwen3.8-max",
+        ready=True,
+        readiness_key="qwencloud",
+        execution_key="qwencloud",
+        api_key="qwen-test-key",
+        streaming=True,
+        api_mode="responses",
+    )
+    stream = gateway.stream_chat(
+        resolution,
+        [{"role": "user", "content": "hi"}],
+    )
+    pending = asyncio.create_task(anext(stream))
+
+    try:
+        assert await asyncio.to_thread(normalization_entered.wait, 1)
+        pending.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+        assert provider_iterator.closed.wait(timeout=1)
+        assert provider_iterator.close_calls == 1
+
+        allow_normalization.set()
+        for _ in range(20):
+            if provider_iterator.next_entered.is_set():
+                break
+            await asyncio.sleep(0.01)
+        assert provider_iterator.next_calls == 0
+        await stream.aclose()
+        assert provider_iterator.close_calls == 1
+    finally:
+        allow_normalization.set()
+        provider_iterator.released.set()
+        if not pending.done():
+            pending.cancel()
+        await stream.aclose()
 
 
 class _BlockingCloseTrackingIterator:
