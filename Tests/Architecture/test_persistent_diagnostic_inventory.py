@@ -8,11 +8,16 @@ import re
 import subprocess
 import sys
 from collections import Counter, defaultdict
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from Tests.LLM_Calls.summarization_diagnostic_guard import (
+    DiagnosticCall,
+    discover_diagnostic_calls,
+)
 from scripts import check_persistent_diagnostic_inventory as diagnostic_inventory
 
 
@@ -487,7 +492,7 @@ def test_inventory_counts_chained_logger_diagnostic_calls() -> None:
 
 TASK_15103_REVIEW_PATH = REPO_ROOT / "Docs/security/task-15103-diagnostic-review.json"
 TASK_15103_RECORDED_BASE = "6d72f15f8332b6469a5d644d409b80914634a8dd"
-TASK_15103_PLANNING_BASE = "6754133f51ce31ebd40ddfcc4a59c0ccc628371b"
+TASK_15103_PLANNING_BASE = "6af8c96da6e9f959c1322b8a7ba7473aeabd9f9a"
 TASK_15103_OWNER_STARTING = {
     "tldw_chatbook/Agents/agent_service.py": (9, "578de6bb91649fc9fc87"),
     "tldw_chatbook/Chat/console_agent_bridge.py": (
@@ -495,8 +500,8 @@ TASK_15103_OWNER_STARTING = {
         "7caa9d8c2694081e94e9",
     ),
     "tldw_chatbook/Chat/console_chat_controller.py": (
-        32,
-        "491f364f638ff7ddc093",
+        35,
+        "5361a9926d2d6bede509",
     ),
     "tldw_chatbook/Chat/console_chat_store.py": (
         40,
@@ -539,6 +544,10 @@ TASK_15103_OWNER_STARTING = {
         "c14a8222d35aec3a6e34",
     ),
     "tldw_chatbook/app.py": (305, "dec5c30c1ad1b1b1c8fc"),
+    "tldw_chatbook/UI/Screens/settings_screen.py": (
+        31,
+        "62ea61e3ba363d516a6e",
+    ),
 }
 _TASK_15103_DISPOSITIONS = {
     "reviewed-safe",
@@ -546,21 +555,21 @@ _TASK_15103_DISPOSITIONS = {
     "justified-deletion",
 }
 TASK_15103_EXPECTED_DISPOSITION_COUNTS = {
-    "reviewed-safe": 44,
-    "metadata-repair": 37,
+    "reviewed-safe": 45,
+    "metadata-repair": 40,
     "justified-deletion": 6,
 }
 TASK_15103_EXPECTED_ATOM_MULTIPLICITY = {
     "tldw_chatbook/Agents/agent_service.py": (9, 9),
     "tldw_chatbook/Chat/console_agent_bridge.py": (0, 1),
-    "tldw_chatbook/Chat/console_chat_controller.py": (5, 5),
+    "tldw_chatbook/Chat/console_chat_controller.py": (8, 8),
     "tldw_chatbook/Chat/console_chat_store.py": (4, 4),
     "tldw_chatbook/Chat/console_context_compaction.py": (2, 2),
     "tldw_chatbook/Chat/console_provider_gateway.py": (1, 1),
     "tldw_chatbook/MCP/client.py": (10, 36),
     "tldw_chatbook/MCP/local_server_tools.py": (1, 1),
     "tldw_chatbook/MCP/prompts.py": (5, 1),
-    "tldw_chatbook/MCP/server.py": (3, 1),
+    "tldw_chatbook/MCP/server.py": (4, 2),
     "tldw_chatbook/RAG_Search/fusion.py": (4, 3),
     "tldw_chatbook/RAG_Search/simplified/rag_service.py": (2, 5),
     "tldw_chatbook/RAG_Search/simplified/search_service.py": (1, 1),
@@ -568,6 +577,7 @@ TASK_15103_EXPECTED_ATOM_MULTIPLICITY = {
     "tldw_chatbook/UI/Screens/chat_screen.py": (0, 0),
     "tldw_chatbook/UI/Screens/library_screen.py": (2, 2),
     "tldw_chatbook/app.py": (12, 9),
+    "tldw_chatbook/UI/Screens/settings_screen.py": (0, 1),
 }
 _TASK_15103_SEVERITIES = {
     "critical",
@@ -726,7 +736,9 @@ def _task_15103_validate_review_ledger(ledger: Any) -> None:
     if "integration_checkpoint" in ledger:
         top_level.add("integration_checkpoint")
     _task_15103_exact_keys(ledger, top_level, location="ledger")
-    assert ledger["schema_version"] == 1, "schema_version must be 1"
+    assert type(ledger["schema_version"]) is int and ledger["schema_version"] == 1, (
+        "schema_version must be integer 1"
+    )
 
     incident_fields = {"recorded_base", "planning_base"}
     if status == "reviewed":
@@ -869,6 +881,503 @@ def _task_15103_validate_review_ledger(ledger: Any) -> None:
             )
 
 
+def _task_15103_semantic_contract(call: DiagnosticCall) -> dict[str, Any]:
+    return {
+        "method": call.method,
+        "event": call.event,
+        "message_shape": call.message_shape,
+        "expressions": list(call.expressions),
+        "captures_exception": call.captures_exception,
+        "level_expression": call.level_expression,
+    }
+
+
+def _task_15103_semantic_digest(contract: dict[str, Any]) -> str:
+    compact = json.dumps(contract, separators=(",", ":"), sort_keys=True)
+    return hashlib.sha256(compact.encode("utf-8")).hexdigest()
+
+
+@lru_cache(maxsize=None)
+def _task_15103_git_source(revision: str, path: str) -> str | None:
+    commit = subprocess.run(
+        ["git", "cat-file", "-e", f"{revision}^{{commit}}"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    assert commit.returncode == 0, f"missing Git revision {revision}: {commit.stderr}"
+    result = subprocess.run(
+        ["git", "show", f"{revision}:{path}"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    return result.stdout if result.returncode == 0 else None
+
+
+@lru_cache(maxsize=None)
+def _task_15103_calls_at(revision: str, path: str) -> tuple[DiagnosticCall, ...]:
+    source = _task_15103_git_source(revision, path)
+    if source is None:
+        return ()
+    return tuple(discover_diagnostic_calls(source, module=path))
+
+
+def _task_15103_population(
+    calls: tuple[DiagnosticCall, ...],
+) -> tuple[Counter[str], dict[str, DiagnosticCall]]:
+    population: Counter[str] = Counter()
+    details: dict[str, DiagnosticCall] = {}
+    for call in calls:
+        digest = _task_15103_semantic_digest(_task_15103_semantic_contract(call))
+        population[digest] += 1
+        previous = details.setdefault(digest, call)
+        assert _task_15103_semantic_contract(previous) == (
+            _task_15103_semantic_contract(call)
+        ), "semantic SHA-256 collision"
+    return population, details
+
+
+@lru_cache(maxsize=None)
+def _task_15103_population_at(
+    revision: str, path: str
+) -> tuple[tuple[tuple[str, int], ...], tuple[tuple[str, DiagnosticCall], ...]]:
+    population, details = _task_15103_population(_task_15103_calls_at(revision, path))
+    return tuple(sorted(population.items())), tuple(sorted(details.items()))
+
+
+def _task_15103_population_and_details_at(
+    revision: str, path: str
+) -> tuple[Counter[str], dict[str, DiagnosticCall]]:
+    population, details = _task_15103_population_at(revision, path)
+    return Counter(dict(population)), dict(details)
+
+
+@lru_cache(maxsize=None)
+def _task_15103_recorded_revision(
+    planning_base: str, path: str, call_count: int, diagnostic_digest: str
+) -> str:
+    history = subprocess.run(
+        [
+            "git",
+            "log",
+            "--follow",
+            "--format=%H",
+            planning_base,
+            "--",
+            path,
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    assert history.returncode == 0, history.stderr
+    for revision in history.stdout.splitlines():
+        source = _task_15103_git_source(revision, path)
+        if source is None:
+            continue
+        diagnostics, _sinks = diagnostic_inventory.scan_source(
+            source, filename=f"{revision}:{path}"
+        )
+        if (
+            len(diagnostics) == call_count
+            and diagnostic_inventory.diagnostic_digest(diagnostics) == diagnostic_digest
+        ):
+            return revision
+    raise AssertionError(
+        f"could not reconstruct stored diagnostic population for {path}"
+    )
+
+
+@lru_cache(maxsize=1)
+def _task_15103_current_inventory() -> dict[str, Any]:
+    return diagnostic_inventory.build_inventory()
+
+
+def _task_15103_atom_counter(atoms: list[dict[str, Any]]) -> Counter[str]:
+    return Counter(
+        {atom["semantic_digest"]: atom["multiplicity_delta"] for atom in atoms}
+    )
+
+
+def _task_15103_group_atom_counter(
+    groups: list[dict[str, Any]], side: str
+) -> Counter[str]:
+    population: Counter[str] = Counter()
+    for group in groups:
+        population.update(_task_15103_atom_counter(group[side]))
+    return population
+
+
+def _task_15103_synthetic_contract(group: dict[str, Any]) -> dict[str, Any]:
+    assert len(group["proposed_surviving"]) == 1, (
+        f"{group['id']} metadata repair must have one aggregated target atom"
+    )
+    method = group["proposed_surviving"][0]["method"]
+    expressions = [field["expression"] for field in group["permitted_fields"]]
+    suffix = f", {', '.join(expressions)}" if expressions else ""
+    source = (
+        "from loguru import logger\n\n"
+        "def emit():\n"
+        f"    logger.{method}({group['fixed_event']!r}{suffix})\n"
+    )
+    calls = discover_diagnostic_calls(source, module="task_15103_synthetic")
+    assert len(calls) == 1
+    return _task_15103_semantic_contract(calls[0])
+
+
+def _task_15103_severity(method: str) -> str:
+    return "error" if method == "exception" else method
+
+
+def _task_15103_assignment_values(
+    source: str, name: str, *, scope: str
+) -> list[ast.AST]:
+    tree = ast.parse(source)
+    scopes = diagnostic_inventory._scope_names(tree)
+    local_values: list[ast.AST] = []
+    module_values: list[ast.AST] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+            value = node.value
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets = [node.target]
+            value = node.value
+        else:
+            continue
+        if not any(
+            isinstance(target, ast.Name) and target.id == name for target in targets
+        ):
+            continue
+        node_scope = scopes.get(id(node), "")
+        if node_scope == scope:
+            local_values.append(value)
+        elif node_scope == "":
+            module_values.append(value)
+    return local_values or module_values
+
+
+def _task_15103_contains_int_conversion(node: ast.AST) -> bool:
+    return any(
+        isinstance(child, ast.Call)
+        and isinstance(child.func, ast.Name)
+        and child.func.id == "int"
+        for child in ast.walk(node)
+    )
+
+
+def _task_15103_call_returns_int(source: str, node: ast.AST) -> bool:
+    if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+        return False
+    for candidate in ast.walk(ast.parse(source)):
+        if not isinstance(candidate, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if candidate.name != node.func.id or candidate.returns is None:
+            continue
+        return ast.unparse(candidate.returns) == "int"
+    return False
+
+
+def _task_15103_expected_field_provenance(
+    expression: str, *, source: str, scope: str
+) -> str:
+    value_text = expression
+    keyword = re.fullmatch(r"[A-Za-z_]\w*=(.+)", expression)
+    if keyword is not None:
+        value_text = keyword.group(1)
+    node = ast.parse(value_text, mode="eval").body
+    if isinstance(node, ast.Constant):
+        return (
+            "The value is a fixed code literal, not provider-, user-, or "
+            "model-controlled data."
+        )
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "len"
+        and len(node.args) == 1
+        and not node.keywords
+    ):
+        return (
+            "A local len(...) over in-memory capability collections yields only "
+            "an integer count."
+        )
+    if (
+        isinstance(node, ast.Attribute)
+        and node.attr == "__name__"
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Name)
+        and node.value.func.id == "type"
+        and len(node.value.args) == 1
+    ):
+        subject = node.value.args[0]
+        if isinstance(subject, ast.Name) and subject.id in {"e", "exc", "error"}:
+            return (
+                "The exception class name is ADR-029 metadata and excludes the "
+                "exception message and traceback."
+            )
+        return "The runtime class name is code metadata and excludes object contents."
+    if isinstance(node, ast.Name):
+        values = _task_15103_assignment_values(source, node.id, scope=scope)
+        assert values, f"no source assignment proves permitted field {expression!r}"
+        if any(_task_15103_contains_int_conversion(value) for value in values):
+            return (
+                "The value has crossed the production integer conversion branch "
+                "before this diagnostic."
+            )
+        if any(
+            isinstance(value, ast.Constant) and type(value.value) in {int, float}
+            for value in values
+        ) or any(_task_15103_call_returns_int(source, value) for value in values):
+            return (
+                "The value is a code-owned numeric constant reviewed at the "
+                "recorded provenance revision."
+            )
+    raise AssertionError(
+        f"no code/source evidence proves permitted field {expression!r}"
+    )
+
+
+def _task_15103_assert_group_contract(
+    group: dict[str, Any],
+    *,
+    introduced: Counter[str],
+    removed: Counter[str],
+    before_details: dict[str, DiagnosticCall],
+    after_details: dict[str, DiagnosticCall],
+    source: str,
+) -> None:
+    disposition = group["disposition"]
+    contract: dict[str, Any]
+    scope: str
+    if disposition == "metadata-repair":
+        contract = _task_15103_synthetic_contract(group)
+        actual_removed = _task_15103_atom_counter(group["removed"]) & (
+            introduced + removed
+        )
+        assert actual_removed, f"{group['id']} has no Git-backed atom to repair"
+        digest = next(iter(actual_removed))
+        scope = (after_details.get(digest) or before_details[digest]).qualname
+    elif disposition == "reviewed-safe":
+        assert len(group["proposed_surviving"]) == 1
+        digest = group["proposed_surviving"][0]["semantic_digest"]
+        assert digest in after_details, (
+            f"{group['id']} semantic multiset reconciliation missing introduced atom"
+        )
+        call = after_details[digest]
+        contract = _task_15103_semantic_contract(call)
+        scope = call.qualname
+    else:
+        assert not group["proposed_surviving"]
+        assert not group["permitted_fields"]
+        digest = group["removed"][0]["semantic_digest"]
+        call = before_details[digest]
+        assert group["fixed_event"] == call.event
+        assert group["severity"] == _task_15103_severity(call.method)
+        return
+
+    target_digest = _task_15103_semantic_digest(contract)
+    for atom in group["proposed_surviving"]:
+        assert atom["semantic_digest"] == target_digest, (
+            f"{group['id']} semantic contract digest mismatch"
+        )
+        assert atom["method"] == contract["method"]
+    assert group["fixed_event"] == contract["event"], (
+        f"{group['id']} semantic contract digest mismatch"
+    )
+    assert group["severity"] == _task_15103_severity(contract["method"])
+    assert group["captures_exception"] == contract["captures_exception"]
+    expressions = list(dict.fromkeys(contract["expressions"]))
+    permitted = [field["expression"] for field in group["permitted_fields"]]
+    assert permitted == expressions, f"{group['id']} permitted fields mismatch"
+    for field in group["permitted_fields"]:
+        expected = _task_15103_expected_field_provenance(
+            field["expression"], source=source, scope=scope
+        )
+        assert field["provenance"] == expected, (
+            f"{group['id']} permitted-field provenance mismatch"
+        )
+
+
+def _task_15103_counter_is_subset(expected: Counter[str], actual: Counter[str]) -> bool:
+    return not (expected - actual)
+
+
+def _task_15103_assert_group_provenance(
+    group: dict[str, Any],
+) -> tuple[
+    Counter[str],
+    Counter[str],
+    dict[str, DiagnosticCall],
+    dict[str, DiagnosticCall],
+    str,
+]:
+    provenance = group["provenance"]
+    path = group["owner_path"]
+    if "exact_commit" in provenance:
+        end = provenance["exact_commit"]
+        parent = subprocess.run(
+            ["git", "rev-parse", f"{end}^"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            check=True,
+            text=True,
+        ).stdout.strip()
+        start = parent
+    else:
+        verified_range = provenance["verified_range"]
+        start = verified_range["start_exclusive"]
+        end = verified_range["end_inclusive"]
+    before, before_details = _task_15103_population_and_details_at(start, path)
+    after, after_details = _task_15103_population_and_details_at(end, path)
+    introduced = after - before
+    removed = before - after
+    actual_positive: Counter[str] = Counter()
+    actual_negative: Counter[str] = Counter()
+    disposition = group["disposition"]
+    for atom in group["removed"]:
+        digest = atom["semantic_digest"]
+        multiplicity = atom["multiplicity_delta"]
+        introduced_count = introduced[digest]
+        removed_count = removed[digest]
+        if disposition == "metadata-repair" and introduced_count >= multiplicity:
+            actual_positive[digest] += multiplicity
+        elif removed_count >= multiplicity:
+            actual_negative[digest] += multiplicity
+        elif introduced_count or removed_count:
+            raise AssertionError(
+                f"{group['id']} semantic multiset reconciliation has wrong "
+                f"multiplicity for {digest}"
+            )
+    for atom in group["proposed_surviving"]:
+        digest = atom["semantic_digest"]
+        multiplicity = atom["multiplicity_delta"]
+        if introduced[digest] >= multiplicity:
+            actual_positive[digest] += multiplicity
+        elif introduced[digest]:
+            raise AssertionError(
+                f"{group['id']} semantic multiset reconciliation has wrong "
+                f"multiplicity for {digest}"
+            )
+        elif disposition != "metadata-repair":
+            continue
+    assert actual_positive or actual_negative, (
+        f"{group['id']} provenance does not introduce or remove its owned atom(s)"
+    )
+    if "verified_range" not in provenance:
+        return actual_positive, actual_negative, before_details, after_details, end
+    revisions = subprocess.run(
+        ["git", "rev-list", "--ancestry-path", "--reverse", f"{start}..{end}"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        check=True,
+        text=True,
+    ).stdout.splitlines()
+    relevant: list[str] = []
+    for revision in revisions:
+        parent = subprocess.run(
+            ["git", "rev-parse", f"{revision}^"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            check=True,
+            text=True,
+        ).stdout.strip()
+        step_before, _ = _task_15103_population_and_details_at(parent, path)
+        step_after, _ = _task_15103_population_and_details_at(revision, path)
+        if (actual_positive & (step_after - step_before)) or (
+            actual_negative & (step_before - step_after)
+        ):
+            relevant.append(revision)
+    assert relevant and relevant[-1] == end
+    assert len(relevant) > 1, f"{group['id']} verified range is non-minimal"
+    return actual_positive, actual_negative, before_details, after_details, end
+
+
+def _task_15103_validate_canonical_reconciliation(ledger: Any) -> None:
+    """Tie the planned ledger to canonical AST populations and Git changes."""
+    _task_15103_validate_review_ledger(ledger)
+    planning_base = ledger["incident"]["planning_base"]
+    stored_inventory = json.loads(
+        diagnostic_inventory.INVENTORY_PATH.read_text(encoding="utf-8")
+    )
+    current_inventory = _task_15103_current_inventory()
+    assert (
+        stored_inventory["persistent_sink_topology"]
+        == current_inventory["persistent_sink_topology"]
+    )
+    stored_rows = {row["path"]: row for row in stored_inventory["owners"]}
+    current_rows = {row["path"]: row for row in current_inventory["owners"]}
+    changed_paths = {
+        path
+        for path in set(stored_rows) | set(current_rows)
+        if stored_rows.get(path) != current_rows.get(path)
+    }
+    assert changed_paths == set(TASK_15103_OWNER_STARTING), (
+        "canonical inventory delta must contain the exact 18-owner path set"
+    )
+
+    groups_by_owner: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
+    for group in ledger["change_groups"]:
+        groups_by_owner[group["owner_path"]].append(group)
+
+    for owner in ledger["owners"]:
+        path = owner["path"]
+        source = _task_15103_git_source(planning_base, path)
+        assert source is not None
+        current, _current_details = _task_15103_population_and_details_at(
+            planning_base, path
+        )
+        assert (
+            len(_task_15103_calls_at(planning_base, path))
+            == (owner["starting"]["call_count"])
+        )
+        stored_row = stored_rows.get(path)
+        if stored_row is None:
+            recorded: Counter[str] = Counter()
+        else:
+            recorded_revision = _task_15103_recorded_revision(
+                planning_base,
+                path,
+                stored_row["call_count"],
+                stored_row["diagnostic_digest"],
+            )
+            recorded, _recorded_details = _task_15103_population_and_details_at(
+                recorded_revision, path
+            )
+        added = current - recorded
+        removed = recorded - current
+        groups = groups_by_owner[path]
+        actual_positive: Counter[str] = Counter()
+        actual_negative: Counter[str] = Counter()
+        for group in groups:
+            (
+                group_positive,
+                group_negative,
+                before_details,
+                after_details,
+                provenance_end,
+            ) = _task_15103_assert_group_provenance(group)
+            provenance_source = _task_15103_git_source(provenance_end, path)
+            assert provenance_source is not None
+            _task_15103_assert_group_contract(
+                group,
+                introduced=group_positive,
+                removed=group_negative,
+                before_details=before_details,
+                after_details=after_details,
+                source=provenance_source,
+            )
+            actual_positive.update(group_positive)
+            actual_negative.update(group_negative)
+        assert (actual_positive - actual_negative) == added and (
+            actual_negative - actual_positive
+        ) == removed, f"{path} semantic multiset reconciliation failed"
+
+
 def _task_15103_synthetic_planned_ledger() -> dict[str, Any]:
     owners = [
         {
@@ -942,7 +1451,7 @@ def _task_15103_checkpoint_evidence(seed: str) -> dict[str, Any]:
 def test_task_15103_review_ledger_canonical_planned_schema_and_arithmetic() -> None:
     ledger = json.loads(TASK_15103_REVIEW_PATH.read_text(encoding="utf-8"))
 
-    _task_15103_validate_review_ledger(ledger)
+    _task_15103_validate_canonical_reconciliation(ledger)
 
     assert ledger["review_status"] == "planned"
     starting = {
@@ -967,7 +1476,7 @@ def test_task_15103_review_ledger_canonical_planned_schema_and_arithmetic() -> N
         group["disposition"] for group in ledger["change_groups"]
     )
     assert disposition_counts == TASK_15103_EXPECTED_DISPOSITION_COUNTS
-    assert len(ledger["change_groups"]) == 87
+    assert len(ledger["change_groups"]) == 91
     atom_multiplicity: defaultdict[str, Counter[str]] = defaultdict(Counter)
     for group in ledger["change_groups"]:
         owner_path = group["owner_path"]
@@ -983,8 +1492,8 @@ def test_task_15103_review_ledger_canonical_planned_schema_and_arithmetic() -> N
         for path in TASK_15103_OWNER_STARTING
     }
     assert reconciled == TASK_15103_EXPECTED_ATOM_MULTIPLICITY
-    assert sum(pair[0] for pair in reconciled.values()) == 62
-    assert sum(pair[1] for pair in reconciled.values()) == 82
+    assert sum(pair[0] for pair in reconciled.values()) == 66
+    assert sum(pair[1] for pair in reconciled.values()) == 87
 
 
 def test_task_15103_review_ledger_canonical_provenance_revisions_exist() -> None:
@@ -1298,6 +1807,69 @@ def test_task_15103_review_ledger_rejects_invalid_digest_or_multiplicity(
     ledger = _task_15103_synthetic_planned_ledger()
     ledger["change_groups"][0]["proposed_surviving"][0][field] = value
     with pytest.raises(AssertionError, match=match):
+        _task_15103_validate_review_ledger(ledger)
+
+
+def test_task_15103_review_ledger_rejects_valid_but_wrong_semantic_digest() -> None:
+    ledger = json.loads(TASK_15103_REVIEW_PATH.read_text(encoding="utf-8"))
+    ledger["change_groups"][0]["proposed_surviving"][0]["semantic_digest"] = "f" * 64
+
+    with pytest.raises(AssertionError, match="semantic contract digest mismatch"):
+        _task_15103_validate_canonical_reconciliation(ledger)
+
+
+def test_task_15103_review_ledger_rejects_unrelated_existing_ancestor() -> None:
+    ledger = json.loads(TASK_15103_REVIEW_PATH.read_text(encoding="utf-8"))
+    ledger["change_groups"][0]["provenance"] = {
+        "exact_commit": TASK_15103_RECORDED_BASE
+    }
+
+    with pytest.raises(AssertionError, match="does not introduce or remove"):
+        _task_15103_validate_canonical_reconciliation(ledger)
+
+
+def test_task_15103_review_ledger_rejects_false_permitted_field_provenance() -> None:
+    ledger = json.loads(TASK_15103_REVIEW_PATH.read_text(encoding="utf-8"))
+    group = next(
+        group for group in ledger["change_groups"] if group["permitted_fields"]
+    )
+    group["permitted_fields"][0]["provenance"] = "Well-formed but false evidence."
+
+    with pytest.raises(AssertionError, match="permitted-field provenance mismatch"):
+        _task_15103_validate_canonical_reconciliation(ledger)
+
+
+def test_task_15103_review_ledger_rejects_rebalanced_atom_multiplicity() -> None:
+    ledger = json.loads(TASK_15103_REVIEW_PATH.read_text(encoding="utf-8"))
+    first = next(
+        group for group in ledger["change_groups"] if group["id"] == "TASK-15103-G024"
+    )
+    duplicate = next(
+        group for group in ledger["change_groups"] if group["id"] == "TASK-15103-G055"
+    )
+    first["proposed_surviving"][0]["multiplicity_delta"] += 1
+    duplicate["proposed_surviving"][0]["multiplicity_delta"] -= 1
+
+    with pytest.raises(AssertionError, match="semantic multiset reconciliation"):
+        _task_15103_validate_canonical_reconciliation(ledger)
+
+
+def test_task_15103_review_ledger_rejects_contract_digest_mismatch() -> None:
+    ledger = json.loads(TASK_15103_REVIEW_PATH.read_text(encoding="utf-8"))
+    ledger["change_groups"][0]["fixed_event"] += " altered"
+
+    with pytest.raises(AssertionError, match="semantic contract digest mismatch"):
+        _task_15103_validate_canonical_reconciliation(ledger)
+
+
+@pytest.mark.parametrize("schema_version", [True, 1.0])
+def test_task_15103_review_ledger_requires_exact_integer_schema_version(
+    schema_version: Any,
+) -> None:
+    ledger = _task_15103_synthetic_planned_ledger()
+    ledger["schema_version"] = schema_version
+
+    with pytest.raises(AssertionError, match="schema_version must be integer 1"):
         _task_15103_validate_review_ledger(ledger)
 
 

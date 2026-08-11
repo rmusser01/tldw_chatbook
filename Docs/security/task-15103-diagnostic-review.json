@@ -1630,10 +1630,7 @@
         }
       ],
       "provenance": {
-        "verified_range": {
-          "end_inclusive": "fefbc29544c4d80a04ae420582403d577d608373",
-          "start_exclusive": "c2b78586ea2aaacd27b9c4ce08b1bfc26a94814e"
-        }
+        "exact_commit": "fefbc29544c4d80a04ae420582403d577d608373"
       },
       "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
       "removed": [
@@ -1641,7 +1638,7 @@
           "method": "error",
           "multiplicity_delta": 1,
           "qualified_scope": "TldwMCPServer._init_databases",
-          "semantic_digest": "6007d32e1305cb02a7b6d54889a0b4834a882094f6811e479317989a865c679f"
+          "semantic_digest": "c6bdbfb2887b51d6a338523b821aeca73dbcbc377c61b89268ef058ba5af5522"
         }
       ],
       "severity": "error"
@@ -2356,10 +2353,138 @@
         }
       ],
       "severity": "info"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "console_visual_compaction_prepared",
+      "id": "TASK-15103-G088",
+      "owner_path": "tldw_chatbook/Chat/console_chat_controller.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "info",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleChatController._apply_conversation_memory_preflight",
+          "semantic_digest": "012b8385ffeeb026b38494711230178c7a4f1be418f912e39742e9b72cae259d"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "88f5f535a30fc882f8fd604f27d8bf393cd04d59"
+      },
+      "rationale": "The starting call exposes a private conversation identifier and unbounded bound values; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "info",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleChatController._apply_conversation_memory_preflight",
+          "semantic_digest": "7defac50d88ef6276a77b316354e6613ee8d70b61162879b803f3caa364f392f"
+        }
+      ],
+      "severity": "info"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "console_visual_compaction_fell_back_to_text",
+      "id": "TASK-15103-G089",
+      "owner_path": "tldw_chatbook/Chat/console_chat_controller.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "info",
+          "multiplicity_delta": 2,
+          "qualified_scope": "ConsoleChatController._apply_conversation_memory_preflight",
+          "semantic_digest": "150a6f095d4b27939a9d896401a285da685401c968a50fef26fbb1d7f8a3f42a"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "88f5f535a30fc882f8fd604f27d8bf393cd04d59"
+      },
+      "rationale": "Both starting calls expose a private conversation identifier and unbounded bound values; the aggregated proposed multiset preserves the fallback state and severity without claiming unique before/after identities.",
+      "removed": [
+        {
+          "method": "info",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleChatController._apply_conversation_memory_preflight",
+          "semantic_digest": "14dee8aadbd06432929f8c45b211bcd3bb293f4e4807dfb42c9e1cf8aa09fae8"
+        },
+        {
+          "method": "info",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleChatController._apply_conversation_memory_preflight",
+          "semantic_digest": "12216013d3b5c0604194947d32361279af6b4909c9fd8b4ae6417742222ed24b"
+        }
+      ],
+      "severity": "info"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "Console appearance refresh failed after settings save (screen_type=%s, generation=%s, error_type=%s).",
+      "id": "TASK-15103-G090",
+      "owner_path": "tldw_chatbook/UI/Screens/settings_screen.py",
+      "permitted_fields": [
+        {
+          "expression": "type(screen).__name__",
+          "provenance": "The runtime class name is code metadata and excludes object contents."
+        },
+        {
+          "expression": "generation",
+          "provenance": "The value has crossed the production integer conversion branch before this diagnostic."
+        },
+        {
+          "expression": "type(exc).__name__",
+          "provenance": "The exception class name is ADR-029 metadata and excludes the exception message and traceback."
+        }
+      ],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "SettingsScreen._signal_console_appearance_refresh",
+          "semantic_digest": "466532bb5187801950c477f2dfd355b1d200e51e7466f1a65556ea0bd3915548"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "49e8e57f1245eddddc675a940e5c5dfc49d376dc"
+      },
+      "rationale": "The surviving event is fixed operational text with only a runtime code type, an integer generation counter, and an exception class name; it captures neither object contents nor exception details.",
+      "removed": [],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "Failed to initialize databases.",
+      "id": "TASK-15103-G091",
+      "owner_path": "tldw_chatbook/MCP/server.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "error",
+          "multiplicity_delta": 1,
+          "qualified_scope": "TldwMCPServer._init_databases",
+          "semantic_digest": "c6bdbfb2887b51d6a338523b821aeca73dbcbc377c61b89268ef058ba5af5522"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "fab1cf4fe414a7ecc08824f59df6826c8fa118a8"
+      },
+      "rationale": "The historical call exposed the exception message; this exact intermediate repair replaced it with fixed operational text before the later reviewed-safe rewording.",
+      "removed": [
+        {
+          "method": "error",
+          "multiplicity_delta": 1,
+          "qualified_scope": "TldwMCPServer._init_databases",
+          "semantic_digest": "6007d32e1305cb02a7b6d54889a0b4834a882094f6811e479317989a865c679f"
+        }
+      ],
+      "severity": "error"
     }
   ],
   "incident": {
-    "planning_base": "6754133f51ce31ebd40ddfcc4a59c0ccc628371b",
+    "planning_base": "6af8c96da6e9f959c1322b8a7ba7473aeabd9f9a",
     "recorded_base": "6d72f15f8332b6469a5d644d409b80914634a8dd"
   },
   "owners": [
@@ -2380,8 +2505,8 @@
     {
       "path": "tldw_chatbook/Chat/console_chat_controller.py",
       "starting": {
-        "call_count": 32,
-        "diagnostic_digest": "491f364f638ff7ddc093"
+        "call_count": 35,
+        "diagnostic_digest": "5361a9926d2d6bede509"
       }
     },
     {
@@ -2480,6 +2605,13 @@
       "starting": {
         "call_count": 305,
         "diagnostic_digest": "dec5c30c1ad1b1b1c8fc"
+      }
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/settings_screen.py",
+      "starting": {
+        "call_count": 31,
+        "diagnostic_digest": "62ea61e3ba363d516a6e"
       }
     }
   ],
