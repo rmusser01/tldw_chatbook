@@ -57,9 +57,10 @@ def test_three_mode_eval_run_over_the_real_fixtures(tmp_path, capsys):
     category_counts = Counter(query.category for query in golden)
     # Cells: every category except negatives (which have nothing to score).
     # Averaged: that set minus scoped, which is measured in its own cell but
-    # kept out of the cross-mode overall row (a scope diverts hybrid to
-    # semantic — see `runner`'s module docstring). No scoped queries exist
-    # yet, so both derivations are unchanged until they are authored.
+    # kept out of the cross-mode overall row — a scoped query is asked over
+    # its 100-document scope, not over the corpus, so it is a different task
+    # rather than the same task under a different mode (see `runner`'s module
+    # docstring).
     scored_categories = sorted(set(category_counts) - {NEGATIVE_CATEGORY})
     scored_total = sum(
         count
@@ -100,30 +101,29 @@ def test_three_mode_eval_run_over_the_real_fixtures(tmp_path, capsys):
         assert len(mode_report.queries) == len(golden), (
             f"{mode}: ran {len(mode_report.queries)} of {len(golden)} queries"
         )
-        # Judged over the UNSCOPED queries only. A scoped query's route is
-        # not the mode's to decide today: a scope diverts the hybrid profile
-        # to the semantic path (the engine's allowlist pushdown is
-        # semantic-only), so once scoped fixtures exist hybrid's recorded
-        # backends legitimately include "rag-semantic" — by design, not by a
-        # failed config flip. `test_harness_scoped.py` pins that divert and is
-        # the test that must change when scope-aware hybrid lands; this one is
-        # about the per-mode flip, and asking it about scoped queries would
-        # send a reader debugging config plumbing that is fine.
-        unscoped_backends = tuple(
+        # EVERY query, scoped included. This used to exempt the scoped
+        # category, because a scope diverted the hybrid profile to the
+        # semantic path (the engine's allowlist pushdown was semantic-only),
+        # so hybrid's recorded backends legitimately included "rag-semantic"
+        # — by design, not by a failed config flip. TASK-15020/B1 removed the
+        # divert: a scoped query now routes exactly as its mode says, so the
+        # exemption was dead code and dropping it makes this assertion the
+        # check that the divert has not come back.
+        backends = tuple(
             sorted(
                 {
                     outcome.runtime_backend
                     for outcome in mode_report.queries
-                    if outcome.category != SCOPED_CATEGORY
-                    and outcome.runtime_backend
+                    if outcome.runtime_backend
                 }
             )
         )
-        assert unscoped_backends == (EXPECTED_BACKEND[mode],), (
-            f"{mode}: expected every unscoped query to route to "
-            f"{EXPECTED_BACKEND[mode]!r}, got {unscoped_backends} — "
-            "the per-mode config flip did not take effect (or a stale cached "
-            "result was reused across modes)"
+        assert backends == (EXPECTED_BACKEND[mode],), (
+            f"{mode}: expected every query to route to "
+            f"{EXPECTED_BACKEND[mode]!r}, got {backends} — "
+            "the per-mode config flip did not take effect, a stale cached "
+            "result was reused across modes, or a scope is once again "
+            "re-routing the queries that carry one"
         )
 
         # Every non-negative category is present and complete: a category

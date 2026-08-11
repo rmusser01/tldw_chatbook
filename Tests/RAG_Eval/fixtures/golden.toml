@@ -460,10 +460,9 @@ relevant_slugs = []
 # (100 site documents — the whole P2ab collection, media and notes; a scope
 # has no conversations by rule, `rag_scope` spec D5). The target sits INSIDE
 # the scope and is resolved uniquely by the keyword path: `plain=1` on every
-# one of them. What fails is the route — a scope diverts a hybrid profile to
-# the semantic path, and in a 100-document scope the vector leg puts a
-# heritage note or an angling description nowhere near a query that reads
-# like works maintenance.
+# one of them, and it is nowhere in the vector leg's top-10 — in a
+# 100-document scope the vector leg puts a heritage note or an angling
+# description nowhere near a query that reads like works maintenance.
 #
 # The scope size is load-bearing and was measured: at 32 documents in scope,
 # 1 of 8 candidates failed (a top-10 over 32 documents can hardly exclude
@@ -471,10 +470,28 @@ relevant_slugs = []
 # scope reports recall 1.000 for a reason that has nothing to do with
 # retrieval.
 #
-# These are the before-numbers for scope-aware hybrid. When the allowlists
-# reach the FTS legs, the keyword path that already finds every one of these
-# at rank 1 becomes reachable from a scoped hybrid search, and this whole
-# block flips from recall 0.000 to recall 1.000 as a disclosed oracle update.
+# THE FLIP, measured (2026-08-11, TASK-15020/B1). These were authored as the
+# before-numbers for scope-aware hybrid: a scope used to divert a hybrid
+# profile to the semantic path, so the hybrid column scored what the semantic
+# column scored, 0.000. B1 pushed the scope allowlists into the engine's FTS
+# sub-legs and deleted the divert, and the keyword path that already finds
+# every one of these at rank 1 became reachable from a scoped hybrid search:
+#
+#     scoped cell, k=10      semantic        plain        hybrid
+#     before (2026-08-10)       0.000        1.000         0.000
+#     after  (2026-08-11)       0.000        1.000         1.000
+#                                                    (MRR 0.163, NDCG 0.348)
+#
+# The rescued rows arrive late (ranks 3, 4, 9, 9, 9, 9, 9), which is the
+# mechanism showing through: an FTS-only document scores 0.3 * 1/(rrf_k+1) in
+# the fusion, exactly tying the semantic leg's rank 9 at rrf_k=5. At the old
+# rrf_k=60 it would have scored 0.0049 against the semantic leg's tenth at
+# 0.0100 and stayed invisible. These fixtures measure the two P2 decisions
+# together, and their cells move with the fusion knobs like any other cell.
+#
+# The per-fixture `# admitted:` lines below are dated records of the probe
+# that ADMITTED each fixture, taken before the flip. `hybrid=miss` on those
+# lines is history, not a current score.
 
 # admitted: 2026-08-10 hybrid=miss semantic=miss plain=1
 # heritage note; the works' own pump/inspection writing buries it

@@ -25,6 +25,7 @@ by keyword matching for a token-shape reason either.
 """
 from __future__ import annotations
 
+import hashlib
 import re
 import tomllib
 from collections import Counter
@@ -791,6 +792,64 @@ def test_the_shared_scoped_scope_is_the_size_its_own_measurement_requires(golden
         f"{SHIPPED_SCOPE_SIZE}: at 40 documents only 4 of these 7 fixtures "
         "still fail, so a trimmed scope reports a before-number that is not "
         "0.000 while every other test stays green (see this test's docstring)"
+    )
+
+
+#: SHA-256 over the shared scope's membership — the COMPOSITION pin that the
+#: size pin above cannot be. Regenerate it only alongside a re-probe of every
+#: scoped fixture: `_scope_digest(next(iter(_scoped_scopes(golden).values())))`.
+SHIPPED_SCOPE_SHA256 = (
+    "9678a923e4c32be3643452dd223867f3355f1f2fd78e95a2e0e77336072fc54a"
+)
+
+
+def _scope_digest(scope: tuple[str, ...]) -> str:
+    """Order-independent digest of a scope's membership.
+
+    Sorted, because the slug order inside the TOML list is formatting: a
+    reflowed list is the same haystack and must not red the pin. Then
+    length-delimited per slug, the `baseline_io._fixture_digest` idiom, so a
+    character moved from the end of one slug to the start of the next is not
+    hashed as no change at all.
+    """
+    digest = hashlib.sha256()
+    for slug in sorted(scope):
+        digest.update(f"{len(slug)}:".encode("ascii"))
+        digest.update(slug.encode("utf-8"))
+    return digest.hexdigest()
+
+
+def test_the_shared_scoped_scope_is_the_composition_it_was_measured_on(golden):
+    """WHICH hundred documents, not how many.
+
+    The two tests above pin identity (all seven scopes agree) and cardinality
+    (all seven are exactly 100). Together they still admit a mutation that
+    changes what these fixtures measure: swap a slug for another corpus slug
+    in all seven lists at once, and the scopes stay identical to each other,
+    stay 100 long, and every guard stays green — while the haystack each
+    scoped cell is scored against has silently changed. That gap was found by
+    review during the fail-first authoring pass and is what this pin closes.
+
+    It matters because the scoped class is authored ON its haystack: each
+    fixture was admitted by probing it against THESE hundred documents (the
+    `# admitted:` line in `golden.toml` records the run), and the class's
+    whole claim — keyword-findable in scope, invisible to the vector leg — is
+    a claim about which documents are competing. Swap the competition and the
+    claim is untested, at unchanged numbers.
+
+    The correct response to this failing is never to regenerate the constant.
+    It is to re-probe every scoped fixture against the new collection and
+    rewrite its `# admitted:` line with what the new scope actually produces —
+    then regenerate the constant, because the instrument really did change.
+    """
+    scopes = _scoped_scopes(golden)
+    digests = {query_id: _scope_digest(scope) for query_id, scope in scopes.items()}
+    assert set(digests.values()) == {SHIPPED_SCOPE_SHA256}, (
+        "the scoped fixtures' shared scope is no longer the collection these "
+        "fixtures were probed against: digests "
+        f"{sorted(set(digests.values()))} != {SHIPPED_SCOPE_SHA256!r}. Same "
+        "size and same list in all seven files is not the same haystack (see "
+        "this test's docstring)."
     )
 
 

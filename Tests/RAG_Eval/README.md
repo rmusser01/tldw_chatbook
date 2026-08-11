@@ -291,22 +291,37 @@ Every golden query carries one of five categories:
   `EffectiveScope` object, using the runtime ids the real writers assigned,
   and passes it to the seam's own `scope=` parameter. Scoped queries are
   **excluded from the cross-mode overall row** — the same treatment
-  negatives get, for the same "these columns are not comparable" reason,
-  but here it is routing rather than metric semantics: while the engine's
-  allowlist pushdown is semantic-only, the seam diverts a hybrid profile to
-  the semantic path whenever a scope is active, so a scoped row's `hybrid`
-  and `semantic` columns are one measurement wearing two names. They are
-  still measured, in their own `scoped` cell, and each scoped query records
-  **which route actually executed** (`runtime_backend` plus the seam's
-  `route_notes` disclosure) — that record is what makes a later routing
-  change visible as a change in the report. `test_harness_scoped.py` pins
-  today's diverted routing, deliberately, so that change cannot land
-  silently.
+  negatives get, but for a different reason than either negatives or the
+  one this bullet used to give: a scoped query is asked over the hundred
+  documents of its scope, while every other query is asked over the whole
+  172-document corpus. Those are two different questions, and an average
+  over both answers neither. They are still measured, in their own `scoped`
+  cell, and each scoped query records **which route actually executed**
+  (`runtime_backend` plus the seam's `route_notes` disclosure) — that record
+  is what made B1's routing change visible as a change in the report rather
+  than as a number that moved.
 
-  *Status:* the schema and the runner machinery ship ahead of the fixtures.
-  Until scoped fixtures are authored, this category has no queries, is
-  absent from `REQUIRED_CATEGORIES`, and no `scoped` cell appears in any
-  report or baseline.
+  *Routing, before and after.* Until TASK-15020/B1 (2026-08-11) the engine's
+  allowlist pushdown was semantic-only, so the seam diverted a hybrid
+  profile to the semantic path whenever a scope was active and a scoped
+  row's `hybrid` and `semantic` columns were one measurement wearing two
+  names. B1 pushed the allowlists into the FTS sub-legs and deleted the
+  divert: a scoped query now runs its profile's own route, with no
+  disclosure. `test_harness_scoped.py` pins that — it pinned the divert
+  first, deliberately, so the change could not land silently, and its three
+  routing assertions were flipped when it did.
+
+  *What the flip bought, measured.* The seven shipped scoped fixtures are
+  keyword-findable inside their scope (`plain` rank 1 on every one) and
+  invisible to the vector leg (absent from the semantic top-10 on every
+  one). Diverted, hybrid scored them 0.000; fused, it scores **recall
+  1.000** (MRR 0.163 — the rescued rows arrive late, at ranks 3-9). The
+  mechanism is an FTS-only row surviving fusion, which is only true at the
+  `rrf_k` this harness measured its way to: at `rrf_k=5` an FTS rank-1-only
+  document scores 0.3/6 = 0.05 and ties the semantic leg's rank 9, while at
+  the old `rrf_k=60` it would score 0.3/61 = 0.0049 against the semantic
+  leg's tenth at 0.01 — below the cut. The scoped cells therefore move with
+  the fusion knobs like any other cell.
 
 ## Reading the summary table
 

@@ -247,8 +247,16 @@ SCOPED_GOLDEN = [
     GoldenQuery(id=NEGATIVE, query=NEGATIVE, category="negative", relevant_slugs=()),
 ]
 
-#: The seam's own disclosure that a hybrid profile was diverted by a scope.
-SCOPED_ROUTE_NOTE = "A hybrid profile ran semantic because a scope is active."
+#: A route disclosure for the fake seam to emit, carried through verbatim.
+#: Deliberately NOT a quotation of any production note: what these tests pin
+#: is that the runner records whatever the seam disclosed, per query, without
+#: interpreting it. This constant used to quote the scope divert ("A hybrid
+#: profile ran semantic because a scope is active.") alongside a
+#: `rag-semantic` backend for the scoped query — a sentence production
+#: stopped emitting when TASK-15020/B1 made scoped queries run the fused
+#: path. A fake seam quoting a retired disclosure reads, to the next person,
+#: as documentation of a live behaviour.
+SCOPED_ROUTE_NOTE = "fake seam: a routing disclosure, recorded verbatim"
 
 
 class _ScopeRecordingSeam:
@@ -262,9 +270,14 @@ class _ScopeRecordingSeam:
     async def search(self, query, source_types, mode, **kwargs):
         type(self).calls.append((query, kwargs.get("scope")))
         if query == SCOPED:
+            # Same backend as the unscoped answer below — after B1 a scope
+            # does not change the route, and a double that said otherwise
+            # would teach the reader a behaviour production no longer has.
+            # The per-query attribution these tests check is carried by the
+            # disclosure, which only this query gets.
             return {
                 "results": [_MEDIA_ROW],
-                "runtime_backend": "rag-semantic",
+                "runtime_backend": "rag-hybrid",
                 "diagnostics": {
                     LIBRARY_RAG_ROUTE_NOTES_KEY: [SCOPED_ROUTE_NOTE]
                 },
@@ -308,10 +321,13 @@ def test_scoped_queries_are_excluded_from_the_averages_but_keep_their_own_cell(
 ):
     """The negatives mechanism, applied to scoped.
 
-    Scoped retrieval is not comparable across modes while a scope forces one
-    mode's routing (a hybrid profile runs semantic under a scope), so folding
-    it into the overall row would move a cross-mode number for a reason that
-    is about routing, not quality. It is still measured — in its own cell.
+    A scoped query is asked over its scope; every other query is asked over
+    the whole corpus. Folding it into the overall row would average two
+    different haystacks into one number, so it is kept out — and still
+    measured, in its own cell. (The reason this rule was FIRST written was
+    routing: a scope diverted a hybrid profile to semantic, making two
+    columns one measurement. TASK-15020/B1 ended that; the rule outlived its
+    original reason because the haystack reason never depended on it.)
     """
     for mode in MODES:
         mode_report = scoped_report.modes[mode]
@@ -338,7 +354,7 @@ def test_the_executed_route_is_recorded_per_scoped_query(scoped_report):
         outcome = next(
             q for q in scoped_report.modes[mode].queries if q.query_id == SCOPED
         )
-        assert outcome.runtime_backend == "rag-semantic"
+        assert outcome.runtime_backend == "rag-hybrid"
         assert outcome.route_notes == (SCOPED_ROUTE_NOTE,)
         assert outcome.to_dict()["route_notes"] == [SCOPED_ROUTE_NOTE]
 
@@ -350,8 +366,17 @@ def test_the_executed_route_is_recorded_per_scoped_query(scoped_report):
 def test_the_summary_names_the_scoped_exclusion(scoped_report):
     summary = scoped_report.format_summary()
     assert SCOPED_CATEGORY in summary
-    assert "rag-semantic" in summary, (
+    # The route, per scoped query, on the face of the report. Asserted
+    # through the arrow the scoped section draws and the disclosure only that
+    # section renders — a bare "rag-hybrid" would also match the mode table's
+    # backend column and prove nothing about this section existing.
+    assert SCOPED in summary
+    assert "-> rag-hybrid" in summary, (
         "the scoped section must show which route each scoped query took"
+    )
+    assert SCOPED_ROUTE_NOTE in summary, (
+        "the scoped section must show the seam's own disclosure, not only the "
+        "backend label: the label says which path ran, the disclosure why"
     )
 
 

@@ -94,11 +94,14 @@ NEGATIVE_CATEGORY = "negative"
 
 #: The one category permitted to carry ``scope_slugs`` -- and required to.
 #: A scoped query measures retrieval under a real ``EffectiveScope`` built
-#: from those slugs, and is reported in its own cell rather than averaged
-#: across modes (see `runner.run_eval`): while a scope forces a hybrid
-#: profile down the semantic path, the "hybrid" and "semantic" columns of a
-#: scoped row are the same measurement, and averaging them into the overall
-#: row would move a cross-mode number for a routing reason.
+#: from those slugs, and is reported in its own cell rather than folded into
+#: the cross-mode overall row (see `runner.run_eval`): it is asked over the
+#: hundred documents of its scope while every other query is asked over the
+#: whole corpus, so averaging the two mixes two haystacks into one number.
+#: (Until TASK-15020/B1 the stated reason was routing -- a scope forced a
+#: hybrid profile down the semantic path, making a scoped row's "hybrid" and
+#: "semantic" columns one measurement. That divert is gone; the exclusion is
+#: not, because the haystack reason never depended on it.)
 SCOPED_CATEGORY = "scoped"
 
 #: Categories that must have at least one query for the set to be valid.

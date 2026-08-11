@@ -33,15 +33,27 @@ separately: how much a mode returned anyway, and how confident it was.
 query in the ``scoped`` category runs under a real `EffectiveScope` built
 from the runtime's own ids (`build_query_scope`) and passed to the seam's
 `scope=` parameter — the same object production passes. It is excluded from
-the cross-mode overall row for the same reason negatives are excluded from
-everything: the modes are not comparable there. A scope forces the seam to
-divert a hybrid profile to the semantic path (the engine's allowlist
-pushdown is semantic-only), so the "hybrid" and "semantic" columns of a
-scoped row are one measurement wearing two names, and folding them into the
-overall row would move a cross-mode number for a routing reason. Which route
-each scoped query actually took is recorded per query
+the cross-mode overall row, though no longer for the reason it originally
+was: until TASK-15020/B1 a scope forced the seam to divert a hybrid profile
+to the semantic path (the engine's allowlist pushdown was semantic-only), so
+a scoped row's "hybrid" and "semantic" columns were one measurement wearing
+two names. That is over — the allowlists reach both engine legs, and a
+scoped query now routes exactly as its mode says, which makes the modes
+genuinely comparable to each other on a scoped query. The exclusion stands
+on what was always the deeper reason: **a scoped query is asked over a
+different universe.** Its haystack is the hundred documents of its scope;
+every other query's is the whole corpus. Recall@10 over 100 documents and
+recall@10 over 172 are two different questions, and one average over both
+answers neither. The overall row is also what the baseline gate compares
+across re-stamps, so folding scoped in would let an edit to a *scope* — a
+fixture-side decision the size and composition pins exist to make
+deliberate — move the headline retrieval number of the whole harness.
+
+Which route each scoped query actually took is still recorded per query
 (``runtime_backend`` + ``route_notes``), so a change in routing shows up as
-a change in the report rather than only in the score.
+a change in the report rather than only in the score. That record is what
+made B1's flip readable, and it is what would make a regression back to the
+divert readable too.
 
 **An erroring query is reported, not scored.** The run continues, the error
 is recorded against that query and surfaced in the mode's ``errors`` list,
@@ -86,10 +98,11 @@ __all__ = [
 MODES: tuple[str, ...] = ("semantic", "plain", "hybrid")
 
 #: The Library scope identifiers passed to the seam (plural — the scope
-#: vocabulary, not the ingestion one). All three corpus source types, and
-#: `media` in particular: the seam degrades a hybrid profile to semantic
-#: when media is deselected, so dropping it would silently make the hybrid
-#: pass a second semantic pass.
+#: vocabulary, not the ingestion one). All three corpus source types: the
+#: seam degrades a hybrid profile to semantic when NONE of the selected
+#: types is one the engine's FTS leg can serve, and these three are exactly
+#: that set (`_FTS_SERVABLE_SOURCE_TYPES`), so narrowing this tuple towards
+#: `prompts` would silently make the hybrid pass a second semantic pass.
 SOURCE_TYPES: tuple[str, ...] = ("media", "notes", "conversations")
 
 #: Metric keys `evaluate_retrieval_batch` returns (short names — see the
@@ -98,7 +111,8 @@ _METRIC_KEYS: tuple[str, ...] = ("precision", "recall", "mrr", "ndcg", "f1")
 
 #: Categories measured, but never folded into the cross-mode overall row:
 #: negatives (no relevant document, so no meaningful precision/recall) and
-#: scoped (routing makes the modes incomparable — see the module docstring).
+#: scoped (a different haystack, so a different question — see the module
+#: docstring; the ROUTING reason this line used to give died with B1).
 #: One definition, because every "how many queries did that average cover"
 #: count in this package must be the same count: `count_scored` below, the
 #: `averaged` set in `_build_mode_report`, and the fusion sweep's own header
@@ -605,10 +619,10 @@ def _build_mode_report(
         if outcome.category != NEGATIVE_CATEGORY and outcome.error is None
     ]
     # Scoped queries ARE scored — into their own cell — but never into the
-    # cross-mode overall row: a scope diverts a hybrid profile to the
-    # semantic path, so those two columns hold one measurement, and averaging
-    # it in would move a cross-mode number for a routing reason. Same
-    # mechanism as the negative exclusion above, one category further out.
+    # cross-mode overall row: they are asked over their scope, not over the
+    # corpus, so averaging them in would mix two different haystacks into one
+    # number. Same mechanism as the negative exclusion above, one category
+    # further out.
     averaged = [
         outcome
         for outcome in scored
@@ -792,10 +806,13 @@ def _scoped_lines(report: EvalReport) -> list[str]:
 
     Omitted entirely for a set with no scoped queries (the header's scoped
     count is always shown, so "0 scoped" is never silent). The route, not
-    just the score, is the point:
-    while a scope diverts a hybrid profile to semantic, the hybrid column of
-    a scoped row is a second semantic column, and this section is what says
-    so on the face of the report instead of in a docstring.
+    just the score, is the point. It was written when a scope diverted a
+    hybrid profile to semantic, so that the hybrid column of a scoped row
+    announced itself as a second semantic column on the face of the report
+    rather than in a docstring; TASK-15020/B1 ended the divert, and this
+    section is now what shows — in the same place, in the same shape — that
+    every scoped query ran its profile's own route with nothing to disclose.
+    A silent divert is the failure it exists to prevent, in either direction.
     """
     if not report.num_scoped:
         return []
