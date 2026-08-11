@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Remove private values from all 199 verified summarization diagnostics while preserving useful bounded metadata and every existing summarization return, error, retry, and streaming contract.
+**Goal:** Remove private values from all 200 verified summarization diagnostics while preserving useful bounded metadata and every existing summarization return, error, retry, and streaming contract.
 
-**Architecture:** Repair diagnostic arguments directly in the two existing summarization modules; do not add a production logging wrapper. A test-only AST ledger reconciles the 199 strict replacements/deletions and 324 frozen reviewed-safe calls against all 523 starting logger calls using stable module/function/event identities, while direct production-function sentinels prove private values do not reach stdlib logging or Loguru.
+**Architecture:** Repair diagnostic arguments directly in the two existing summarization modules; do not add a production logging wrapper. A test-only AST ledger reconciles the 200 strict replacements/deletions and 323 frozen reviewed-safe calls against all 523 starting logger calls using stable module/function/event identities, while direct production-function sentinels prove private values do not reach stdlib logging or Loguru.
 
 **Tech Stack:** Python 3.11+, pytest, stdlib `ast`/`logging`, Loguru capture, Requests transport seams, Ruff, the existing production diagnostic inventory checker.
 
@@ -25,7 +25,7 @@
 ### Production files
 
 - Modify: `tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py` — remove private diagnostic arguments from 100 inventoried sites; add only the existing `safe_metadata_token` import needed for bounded exception/type tokens.
-- Modify: `tldw_chatbook/LLM_Calls/Summarization_General_Lib.py` — remove private diagnostic arguments from 99 inventoried sites; add only the existing `safe_metadata_token` import needed for bounded exception/type tokens.
+- Modify: `tldw_chatbook/LLM_Calls/Summarization_General_Lib.py` — remove private diagnostic arguments from 100 inventoried sites; add only the existing `safe_metadata_token` import needed for bounded exception/type tokens.
 - Modify: `Docs/security/production-diagnostic-inventory.json` — regenerate exactly the two summarization-owner entries after every privacy gate is green.
 
 ### Test and verification files
@@ -41,9 +41,9 @@ All production line ranges below are pre-change navigation aids. Resolve the nam
 
 ### Non-negotiable implementation invariants
 
-- The immutable starting arithmetic is exact: `199 private + 324 reviewed_safe = 523` calls, distributed `242 Local + 281 General`. Repair progress is a separate `outcome` field and never overwrites this provenance.
-- Private-site batches are exact: Local `24 + 23 + 22 + 31 = 100`; General `36 + 23 + 20 + 20 = 99`.
-- The 324 reviewed-safe calls retain their exact normalized expression structures unless a newly verified misclassification is first added to TASK-3796 and approved.
+- The immutable starting arithmetic is exact: `200 private + 323 reviewed_safe = 523` calls, distributed `242 Local + 281 General`. Repair progress is a separate `outcome` field and never overwrites this provenance.
+- Private-site batches are exact: Local `24 + 23 + 22 + 31 = 100`; General `36 + 24 + 20 + 20 = 100`.
+- The 323 reviewed-safe calls retain their exact normalized expression structures unless a newly verified misclassification is first added to TASK-3796 and approved.
 - A repaired message uses fixed event text and lazy metadata arguments. A dynamic string replacement must pass through `safe_metadata_token()` and accept its fixed `invalid` result.
 - Never call `str(exc)`, render an exception object, log `response.text`, render a response/payload/decoded line, or enable traceback capture.
 - Do not move returns, raises, yields, retries, or transport calls. Do not consume a generator in production merely to log metadata.
@@ -139,7 +139,7 @@ Run:
 git diff --stat 59cf35d6e..origin/dev -- tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py tldw_chatbook/LLM_Calls/Summarization_General_Lib.py Tests/LLM_Calls/test_summarization_analyze.py Tests/Chat/test_cohere_summarize_v2.py Tests/Internal_Prompts/test_summarization_migration.py Tests/Internal_Prompts/test_summarization_prompt_parity.py
 ```
 
-Expected: either no scoped upstream change, or a fully reviewed delta reconciled into the task/spec before continuing. Never carry the old 523/199/324 counts across an upstream logger change without a fresh all-call review.
+Expected: either no scoped upstream change, or a fully reviewed delta reconciled into the task/spec before continuing. Never carry old inventory counts across an upstream logger change or verified misclassification without a fresh all-call review.
 
 - [ ] **Step 4: Run only the focused behavioral baseline**
 
@@ -268,14 +268,14 @@ Emit the extractor snapshot to stdout, then add the reviewed JSON with `apply_pa
 }
 ```
 
-The 199 task-table entries use `starting_classification: "private"` and begin with `outcome: "pending"`. Every other discovered call uses `starting_classification: "reviewed_safe"`, `outcome: "frozen"`, exact normalized expressions, and a reason from the approved categories. `starting` never changes. `current` follows the repaired source and becomes `null` only for a reviewed deletion. Verify exact totals and groups:
+The 200 task-table entries use `starting_classification: "private"` and begin with `outcome: "pending"`. Every other discovered call uses `starting_classification: "reviewed_safe"`, `outcome: "frozen"`, exact normalized expressions, and a reason from the approved categories. `starting` never changes. `current` follows the repaired source and becomes `null` only for a reviewed deletion. Verify exact totals and groups:
 
 ```text
 Local: 242 = 100 starting-private + 142 reviewed-safe
   local_core 24; local_adapters 23; local_vllm_ollama 22; local_custom 31
-General: 281 = 99 starting-private + 182 reviewed-safe
-  general_core 36; general_mid 23; general_streaming 20; general_tail 20
-Overall: 523 = 199 starting-private + 324 reviewed-safe
+General: 281 = 100 starting-private + 181 reviewed-safe
+  general_core 36; general_mid 24; general_streaming 20; general_tail 20
+Overall: 523 = 200 starting-private + 323 reviewed-safe
 ```
 
 - [ ] **Step 5: Add the real-source reconciliation test**
@@ -285,8 +285,8 @@ def test_ledger_retains_all_523_starting_sites() -> None:
     ledger = load_review_ledger()
     assert len(ledger) == 523
     assert Counter(item.starting_classification for item in ledger) == {
-        "private": 199,
-        "reviewed_safe": 324,
+        "private": 200,
+        "reviewed_safe": 323,
     }
     assert starting_projection_digest(ledger) == STARTING_PROJECTION_SHA256
 
@@ -308,7 +308,7 @@ Run:
 ../../.venv/bin/python -m ruff format --check Tests/LLM_Calls/summarization_diagnostic_guard.py Tests/LLM_Calls/test_summarization_diagnostic_privacy.py
 ```
 
-Expected: all selected tests pass with exact `523/199/324` reconciliation.
+Expected: all selected tests pass with exact `523/200/323` reconciliation.
 
 - [ ] **Step 7: Commit the test-only foundation**
 
@@ -652,18 +652,18 @@ Cover Google's input, prompt, credential, response/stream, and exception paths p
 def test_general_module_has_no_pending_private_sites() -> None:
     general = general_ledger_entries()
     assert len(general) == 281
-    assert sum(item.starting_classification == "reviewed_safe" for item in general) == 182
-    assert sum(item.outcome == "frozen" for item in general) == 182
+    assert sum(item.starting_classification == "reviewed_safe" for item in general) == 181
+    assert sum(item.outcome == "frozen" for item in general) == 181
     assert not [item for item in general if item.outcome == "pending"]
-    assert sum(item.outcome in {"metadata", "deleted"} for item in general) == 99
+    assert sum(item.outcome in {"metadata", "deleted"} for item in general) == 100
 
 
 def test_complete_ledger_reconciles_without_private_sites() -> None:
     ledger = load_review_ledger()
     assert len(ledger) == 523
-    assert sum(item.starting_classification == "reviewed_safe" for item in ledger) == 324
-    assert sum(item.outcome == "frozen" for item in ledger) == 324
-    assert sum(item.outcome in {"metadata", "deleted"} for item in ledger) == 199
+    assert sum(item.starting_classification == "reviewed_safe" for item in ledger) == 323
+    assert sum(item.outcome == "frozen" for item in ledger) == 323
+    assert sum(item.outcome in {"metadata", "deleted"} for item in ledger) == 200
     assert not [item for item in ledger if item.outcome == "pending"]
     assert_ledger_matches_source(ledger, scan_reviewed_modules())
 ```
@@ -763,7 +763,7 @@ git status --short
 ../../.venv/bin/python -B -m pytest -q Tests/LLM_Calls/test_summarization_diagnostic_privacy.py -vv
 ```
 
-Expected: hashes match Step 1, clean status, all new tests green, 324 frozen reviewed-safe records unchanged, 199 repaired/deleted records reconciled, and zero pending/unclassified records.
+Expected: hashes match Step 1, clean status, all new tests green, 323 frozen reviewed-safe records unchanged, 200 repaired/deleted records reconciled, and zero pending/unclassified records.
 
 ---
 
@@ -806,6 +806,10 @@ git commit -m "chore(security): reconcile summarization diagnostic inventory"
 
 ### Task 13: Run focused final verification, review, and close TASK-3796
 
+#### Final-review audit correction
+
+Tasks 2–12 were executed against the then-approved `199 private / 324 reviewed-safe` ledger. Final review identified `general-2efc909241862caf` as a misclassified provider-controlled Cohere response value. The approved correction changes the authoritative starting arithmetic to `200/323`, General to `100/181`, `general_mid` to 24, and response/output content to 72; final outcomes are `177 metadata + 23 deleted + 323 frozen = 523`. The canonical starting-projection digest consequently changes from historical `a4c9ba5f999199f02fd1c6186d1d88120f6d5f696071127ee192dff2c3503047` to corrected `85a5c6b74f0cd4eb15f8ca0f8abfa5e18ca7f26f749d97fc7b781090cabd7733`. The earlier commit history and test transcripts remain valid evidence of the pre-correction audit state, but all final gates and closeout notes use the corrected arithmetic and the added direct Cohere sentinel/mutation evidence.
+
 **Files:**
 - Modify: `backlog/tasks/task-3796 - Remove-private-summarization-values-from-diagnostics.md`
 - Modify: `Docs/superpowers/specs/2026-08-10-task-3796-summarization-diagnostic-privacy-design.md`
@@ -822,7 +826,22 @@ Repeat Task 1 Steps 1–3. Rerun the 523-call reconciliation against the new bas
 ../../.venv/bin/python -B -m pytest -q Tests/LLM_Calls/test_summarization_diagnostic_privacy.py Tests/LLM_Calls/test_summarization_analyze.py Tests/Chat/test_cohere_summarize_v2.py Tests/Internal_Prompts/test_summarization_migration.py Tests/Internal_Prompts/test_summarization_prompt_parity.py Tests/Architecture/test_persistent_diagnostic_inventory.py
 ```
 
-Expected: all selected tests pass. Do not run repository-wide pytest.
+Expected: all selected tests pass. The sole permitted deviation is
+`test_production_diagnostic_inventory_and_sink_topology_are_unchanged` failing with
+the exact unrelated latest-dev baseline reproduced in a detached worktree at the
+recorded Step 1 base: these 15 owner paths only —
+`Agents/agent_service.py`, `Chat/console_agent_bridge.py`,
+`Chat/console_chat_controller.py`, `Chat/console_chat_store.py`,
+`Chat/console_context_compaction.py`, `Chat/console_provider_gateway.py`,
+`MCP/client.py`, `MCP/local_server_tools.py`, `MCP/prompts.py`, `MCP/server.py`,
+`RAG_Search/fusion.py`, `RAG_Search/simplified/rag_service.py`,
+`RAG_Search/simplified/search_service.py`, `UI/Screens/chat_screen.py`, and
+`UI/Screens/library_screen.py` — with the unchanged detached-base manifest-diff
+fingerprint `2a17c75f2756f03c38d24d209a673797fbd720800cea7c268a70cddf1af559d3`
+(`40` additions, `26` deletions, six persistent-sink files). That drift must have
+separate backlog ownership and must not be written into TASK-3796's manifest. Any
+different failed node, owner set, diff fingerprint, or sink topology is a real
+failure. Do not run repository-wide pytest.
 
 - [ ] **Step 3: Run final static and formatting gates**
 
@@ -870,7 +889,7 @@ Use `@superpowers:requesting-code-review` with the exact `origin/dev...HEAD` ran
 
 Use the Backlog CLI to set Done and add concise implementation notes, then use `apply_patch` to preserve the detailed notes and check all four acceptance criteria. Notes must record:
 
-- exact final `523 / 324 / 199 / deleted_count` reconciliation;
+- exact final `523 / 323 / 200 / 23 deleted` reconciliation;
 - per-module/category and batch totals;
 - direct sentinel and 12-mutation evidence;
 - unchanged return/error/streaming contracts;
