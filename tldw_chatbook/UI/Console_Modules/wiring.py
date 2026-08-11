@@ -45,6 +45,7 @@ hand back the same object. Patch a controller on the module that defines it;
 do not reintroduce a re-export in `chat_screen.py` to patch through.
 """
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from .agent import ConsoleAgentController
@@ -52,6 +53,10 @@ from .dictation import ConsoleDictationController
 from .hands_free import ConsoleHandsFreeController
 from .message import ConsoleMessageController
 from .prompts import ConsolePromptsController
+from .prompt_queue import (
+    ConsolePromptQueueUIController,
+    commit_queued_draft_transaction,
+)
 from .session import ConsoleSessionController
 from .workspace import ConsoleWorkspaceController
 
@@ -61,8 +66,13 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 __all__ = ["build_console_controllers"]
 
 
-def build_console_controllers(screen: "ChatScreen") -> None:
-    """Construct the Console screen's seven controllers and attach them.
+def build_console_controllers(
+    screen: "ChatScreen",
+    *,
+    rag_source_types_accessor: Callable[[], tuple[str, ...]],
+    rag_top_k_accessor: Callable[[], int],
+) -> None:
+    """Construct the Console screen's eight controllers and attach them.
 
     Assigns, in this order, `screen._workspace`, `screen._session`,
     `screen._dictation`, `screen._hands_free`, `screen._message`,
@@ -231,6 +241,11 @@ def build_console_controllers(screen: "ChatScreen") -> None:
         provider_readiness_app_config=(
             lambda: screen._provider_readiness_app_config()
         ),
+        build_provider_selection=(
+            lambda session_id: screen._build_console_provider_selection(session_id)
+        ),
+        rag_source_types_accessor=rag_source_types_accessor,
+        rag_top_k_accessor=rag_top_k_accessor,
         sync_native_console_chat_ui=lambda: screen._sync_native_console_chat_ui(),
         sync_chat_core_state=lambda: screen._sync_console_chat_core_state(),
         sync_temporary_chip=lambda: screen._sync_console_temporary_chip(),
@@ -662,4 +677,59 @@ def build_console_controllers(screen: "ChatScreen") -> None:
         sync_native_console_chat_ui_accessor=(
             lambda: screen._sync_native_console_chat_ui
         ),
+    )
+    screen._prompt_queue = ConsolePromptQueueUIController(
+        chat_controller_accessor=(
+            lambda: screen._ensure_console_chat_controller()
+        ),
+        ensure_active_session=(
+            lambda: screen._session._ensure_active_console_session_settings()
+        ),
+        blocked_reason_accessor=lambda: screen._console_send_blocked_reason(),
+        setup_blocked_reason_accessor=(
+            lambda: screen._console_setup_blocked_reason()
+        ),
+        restore_stash=lambda stash: screen._restore_console_send_stash(stash),
+        append_system_message=(
+            lambda text: screen._append_native_console_system_message(text)
+        ),
+        notify=(
+            lambda text, severity: screen.app_instance.notify(
+                text, severity=severity
+            )
+        ),
+        focus_composer=(
+            lambda: screen._focus_console_composer_if_needed(force=True)
+        ),
+        inflight_stashes_accessor=(
+            lambda: screen._console_inflight_send_stashes
+        ),
+        note_follow_intent=lambda: screen._note_console_follow_intent(),
+        launch_chain=(
+            lambda draft, session_id: screen.run_worker(
+                screen._submit_console_native_draft(draft, session_id),
+                exclusive=True,
+                group=f"console-run-{session_id}",
+            )
+        ),
+        commit_queued_draft=(
+            lambda session_id, stash: commit_queued_draft_transaction(
+                session_id,
+                stash,
+                composer=screen._console_composer_or_none(),
+                visible_session_id=screen._console_visible_draft_session_id,
+                undo_histories=screen._console_undo_histories,
+                store=screen._ensure_console_chat_store(),
+                sync_command_popup=screen._sync_console_command_popup,
+            )
+        ),
+        edit_refusal=(
+            lambda text: (
+                "Slash commands cannot be queued."
+                if screen._console_command_registry.parse(text).kind
+                in {"command", "fallback"}
+                else ""
+            )
+        ),
+        sync_ui=lambda: screen._sync_native_console_chat_ui(),
     )

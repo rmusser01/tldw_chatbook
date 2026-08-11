@@ -10,7 +10,7 @@ established and wave 2's `ConsoleWorkspaceController`/`ConsoleHandsFreeControlle
 already applied (see `dictation.py`'s own docstring for the canonical
 statement; restated briefly here):
 
-1. **Framework services** (`run_worker`, `push_screen`) live-read from the
+1. **Framework services** (`run_worker`, `push_screen`, `push_screen_wait`) live-read from the
    screen via `@property` on every access -- never snapshotted.
 2. **A sibling cluster's own attribute, not this cluster's business** is a
    disclosed, temporary live `@property` straight through `screen`:
@@ -126,6 +126,7 @@ from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
     DEFAULT_CONSOLE_SESSION_TITLE,
+    ConsoleLifecycleImpact,
 )
 from ...Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from ...Chat.console_context_policy import (
@@ -144,7 +145,9 @@ from ...Chat.console_session_settings import (
     build_console_settings_readiness,
     build_default_console_session_settings,
 )
+from ...Chat.console_turn_context import ConsoleTurnExecutionContext
 from ...Chat.provider_readiness import provider_config_key
+from ...config import coerce_bool_setting
 from ...Widgets.Console import ConsoleComposerUndoHistory, ConsoleRenameSessionModal
 from ...Widgets.Console.console_session_switcher_modal import ConsoleSwitcherChoice
 from ...Workspaces import ConsoleConversationBrowserRow
@@ -157,6 +160,19 @@ if TYPE_CHECKING:
     from ..Screens.chat_screen import ChatScreen
 
 logger = logger.bind(module="ChatScreen")
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleSessionCloseImpact:
+    """Content-free snapshot pinned to one requested Console session."""
+
+    session_id: str
+    transcript_message_count: int
+    lifecycle: ConsoleLifecycleImpact
+
+    @property
+    def has_loss_risk(self) -> bool:
+        return bool(self.transcript_message_count or self.lifecycle.has_loss_risk)
 
 
 # -- Module-level pure helpers this cluster owns (see module docstring) -----
@@ -383,6 +399,9 @@ class ConsoleSessionController:
         composer_accessor: Callable[[], Any],
         effective_console_provider_model: Callable[[], tuple[Any, Any]],
         provider_readiness_app_config: Callable[[], Any],
+        build_provider_selection: Callable[[str], Any],
+        rag_source_types_accessor: Callable[[], tuple[str, ...]],
+        rag_top_k_accessor: Callable[[], int],
         sync_native_console_chat_ui: Callable[[], Any],
         sync_chat_core_state: Callable[[], Any],
         sync_temporary_chip: Callable[[], None],
@@ -445,6 +464,9 @@ class ConsoleSessionController:
                 settings`.
             provider_readiness_app_config: `ChatScreen._provider_readiness_
                 app_config`.
+            build_provider_selection: Owning-session provider selection builder.
+            rag_source_types_accessor: Current normalized Console RAG source kinds.
+            rag_top_k_accessor: Current active-profile RAG result count.
             sync_native_console_chat_ui: `ChatScreen._sync_native_console_
                 chat_ui` -- a coroutine FUNCTION, called (not awaited
                 directly) by every moved body exactly as the original did.
@@ -513,6 +535,9 @@ class ConsoleSessionController:
         self._composer_accessor = composer_accessor
         self._effective_console_provider_model_fn = effective_console_provider_model
         self._provider_readiness_app_config_fn = provider_readiness_app_config
+        self._build_provider_selection_fn = build_provider_selection
+        self._rag_source_types_accessor = rag_source_types_accessor
+        self._rag_top_k_accessor = rag_top_k_accessor
         self._sync_native_console_chat_ui_fn = sync_native_console_chat_ui
         self._sync_chat_core_state_fn = sync_chat_core_state
         self._sync_temporary_chip_fn = sync_temporary_chip
@@ -537,6 +562,7 @@ class ConsoleSessionController:
         self._console_visible_draft_session_id: str | None = None
         self._console_undo_histories: dict[str, ConsoleComposerUndoHistory] = {}
         self._console_draft_switch_snapshot: tuple[str | None, str, int] | None = None
+        self._closing_session_requests: set[str] = set()
 
     # -- Framework services (live-read via `@property`) --------------------
 
@@ -550,6 +576,12 @@ class ConsoleSessionController:
     def push_screen(self) -> Any:
         """`Screen.app.push_screen`, bound. See `__init__`'s docstring."""
         return self._screen.app.push_screen
+
+    @property
+    def push_screen_wait(self) -> Any:
+        """`Screen.app.push_screen_wait`, bound. See `__init__`'s docstring."""
+
+        return self._screen.app.push_screen_wait
 
     # -- Sibling cluster's reach-back (disclosed) ---------------------------
 
@@ -789,7 +821,7 @@ class ConsoleSessionController:
     # belongs with the id string it mirrors.
 
     async def _close_console_session_tab(self, session_id: str) -> None:
-        """Close one native session tab, confirming first if it has messages.
+        """Close one native session after one revision-pinned confirmation.
 
         Moved verbatim out of `ChatScreen.on_button_pressed`'s
         `console-close-session-tab-` branch (wave-4 task 2), the
@@ -803,41 +835,156 @@ class ConsoleSessionController:
             session_id: The session behind the pressed ``×``, parsed by the
                 screen from the button id.
         """
+        async def _complete_close() -> None:
+            store = self._ensure_console_chat_store()
+            try:
+                closing_ids = [
+                    message.id for message in store.messages_for_session(session_id)
+                ]
+            except KeyError:
+                return
+            _state, cache = self._ensure_console_image_view()
+            cache.evict_session(closing_ids)
+            self._ensure_console_chat_controller().close_session(session_id)
+            self._console_undo_histories.pop(session_id, None)
+            await self._sync_native_console_chat_ui()
+
+        while True:
+            impact = self._session_close_impact(session_id)
+            if impact is None:
+                return
+            if not impact.has_loss_risk:
+                await _complete_close()
+                return
+            if not await self._confirm_session_close(impact):
+                return
+            current = self._session_close_impact(session_id)
+            if current is None:
+                return
+            if current == impact:
+                await _complete_close()
+                return
+            self.app_instance.notify(
+                "Session activity changed; review the updated close impact.",
+                severity="warning",
+            )
+
+    def start_close_console_session_tab(self, session_id: str) -> None:
+        """Dispatch one non-blocking confirmation flow for ``session_id``."""
+
+        if not session_id or session_id in self._closing_session_requests:
+            return
+        self._closing_session_requests.add(session_id)
+
+        async def _run() -> None:
+            try:
+                await self._close_console_session_tab(session_id)
+            finally:
+                self._closing_session_requests.discard(session_id)
+
+        close_flow = _run()
+        try:
+            self.run_worker(
+                close_flow,
+                group=f"console-close-session:{session_id}",
+                exclusive=True,
+                exit_on_error=False,
+            )
+        except Exception:
+            close_flow.close()
+            self._closing_session_requests.discard(session_id)
+            logger.opt(exception=True).warning(
+                "Could not start Console session close flow for {}", session_id
+            )
+
+    def _session_close_impact(
+        self, session_id: str
+    ) -> ConsoleSessionCloseImpact | None:
+        """Capture transcript and controller loss impact for one exact session."""
+
         store = self._ensure_console_chat_store()
         try:
             messages = store.messages_for_session(session_id)
         except KeyError:
-            messages = []
-        closing_ids = [m.id for m in messages]
+            return None
+        controller = self._ensure_console_chat_controller()
+        return ConsoleSessionCloseImpact(
+            session_id=session_id,
+            transcript_message_count=len(messages),
+            lifecycle=controller.lifecycle_impact(session_id=session_id),
+        )
 
-        def _evict_closing_session_images() -> None:
-            _state, cache = self._ensure_console_image_view()
-            cache.evict_session(closing_ids)
+    async def _await_confirmation(self, dialog: Any) -> bool:
+        """Await a modal from a worker so application input remains routable."""
 
-        if messages:
-            from ...Widgets.confirmation_dialog import ConfirmationDialog
+        worker = self.run_worker(
+            self.push_screen_wait(dialog),
+            exclusive=False,
+            exit_on_error=False,
+        )
+        return bool(await worker.wait())
 
-            async def _do_close() -> None:
-                self._ensure_console_chat_controller().close_session(session_id)
-                # TASK-1281: drop the closed session's undo/redo history
-                # too -- it can never be switched back into.
-                self._console_undo_histories.pop(session_id, None)
-                _evict_closing_session_images()
-                await self._sync_native_console_chat_ui()
+    async def _confirm_session_close(self, impact: ConsoleSessionCloseImpact) -> bool:
+        from ...Widgets.confirmation_dialog import ConfirmationDialog
 
+        lifecycle = impact.lifecycle
+        dialog = ConfirmationDialog(
+            title="Close Console session?",
+            message=(
+                "Closing this session will discard or cancel:\n\n"
+                f"Transcript messages: {impact.transcript_message_count}\n"
+                f"Live agent turns: {lifecycle.live_run_count}\n"
+                f"Unsent queued prompts: {lifecycle.unsent_prompt_count}\n\n"
+                "Close this session?"
+            ),
+            confirm_label="Close",
+            cancel_label="Stay",
+        )
+        return await self._await_confirmation(dialog)
+
+    async def _confirm_fleet_loss(self, controller: Any, *, quitting: bool) -> bool:
+        """Confirm one revision-stable Console fleet loss snapshot."""
+
+        from ...Widgets.confirmation_dialog import ConfirmationDialog
+
+        while True:
+            impact = controller.lifecycle_impact()
+            if not impact.has_loss_risk:
+                return True
+            action = "Quitting Chatbook" if quitting else "Leaving Console"
+            question = "Quit Chatbook?" if quitting else "Leave Console?"
+            confirm_label = "Quit" if quitting else "Leave"
             dialog = ConfirmationDialog(
-                title="Close Tab",
-                message="This tab has messages that will be lost.\n\nClose it anyway?",
-                confirm_label="Close",
-                cancel_label="Keep",
-                confirm_callback=_do_close,
+                title=question,
+                message=(
+                    f"{action} will cancel or discard:\n\n"
+                    f"Live agent runs: {impact.live_run_count}\n"
+                    f"Sessions with queued prompts: {impact.queued_session_count}\n"
+                    f"Unsent queued prompts: {impact.unsent_prompt_count}\n\n"
+                    f"{question}"
+                ),
+                confirm_label=confirm_label,
+                cancel_label="Stay",
             )
-            self.push_screen(dialog)
-        else:
-            self._ensure_console_chat_controller().close_session(session_id)
-            self._console_undo_histories.pop(session_id, None)
-            _evict_closing_session_images()
-            await self._sync_native_console_chat_ui()
+            if not await self._await_confirmation(dialog):
+                return False
+            current = controller.lifecycle_impact()
+            if current == impact:
+                return True
+            self.app_instance.notify(
+                "Console activity changed; review the updated impact.",
+                severity="warning",
+            )
+
+    async def confirm_navigation(self, controller: Any) -> bool:
+        """Confirm revision-stable Console loss before navigation."""
+
+        return await self._confirm_fleet_loss(controller, quitting=False)
+
+    async def confirm_quit(self, controller: Any) -> bool:
+        """Confirm revision-stable Console loss before application quit."""
+
+        return await self._confirm_fleet_loss(controller, quitting=True)
 
     async def _handle_console_session_tab_press(self, session_id: str) -> None:
         """Activate a tab, or rename it when it is already the active one.
@@ -948,6 +1095,109 @@ class ConsoleSessionController:
             return store.session_settings(store.active_session_id)
         except KeyError:
             return None
+
+    def _console_session_settings(
+        self, session_id: str
+    ) -> ConsoleSessionSettings | None:
+        """Return settings for an owning session without switching the UI."""
+        store = self._console_chat_store
+        if store is None:
+            return None
+        try:
+            return store.session_settings(session_id)
+        except KeyError:
+            return None
+
+    def _build_console_turn_execution_context(
+        self, session_id: str
+    ) -> ConsoleTurnExecutionContext:
+        """Capture one detached configuration snapshot for an owning session."""
+        from ...Chat.attachment_core import max_history_images
+        from ...Tools.workspace_file_roots import folder_binding_roots
+        from ..Screens.settings_library_rag_defaults import (
+            load_direct_library_tools,
+        )
+        from ...model_capabilities import is_vision_capable
+
+        app_config = self._provider_readiness_app_config()
+        selection = self._build_provider_selection_fn(session_id)
+        settings = self._console_session_settings(session_id)
+        model = selection.explicit_model or selection.configured_model
+        console_config = (
+            app_config.get("console", {}) if isinstance(app_config, Mapping) else {}
+        )
+        chat_defaults = (
+            app_config.get("chat_defaults", {})
+            if isinstance(app_config, Mapping)
+            else {}
+        )
+        if not isinstance(console_config, Mapping):
+            console_config = {}
+        if not isinstance(chat_defaults, Mapping):
+            chat_defaults = {}
+        workspace_id = self._ensure_console_chat_store().session_workspace_id(
+            session_id
+        )
+        try:
+            workspace_roots = tuple(folder_binding_roots(workspace_id))
+        except Exception:  # noqa: BLE001 -- optional roots never block a send
+            workspace_roots = ()
+
+        return ConsoleTurnExecutionContext.capture(
+            session_id=session_id,
+            provider_selection=selection,
+            session_settings=settings,
+            workspace_roots=workspace_roots,
+            capabilities={
+                "vision": bool(model)
+                and is_vision_capable(selection.provider, model or ""),
+                "max_history_images": max_history_images(
+                    selection.provider, model
+                ),
+            },
+            rag_defaults={
+                "auto_retrieve_on_send": coerce_bool_setting(
+                    chat_defaults.get("rag_auto_retrieve_on_send", False),
+                    False,
+                ),
+                "source_types": tuple(self._rag_source_types_accessor()),
+                "top_k": self._rag_top_k_accessor(),
+            },
+            tool_configuration={
+                "agent_runtime_enabled": coerce_bool_setting(
+                    console_config.get("agent_runtime", True),
+                    True,
+                ),
+                "native_tool_calls_enabled": coerce_bool_setting(
+                    console_config.get("native_tool_calls", True),
+                    True,
+                ),
+                "local_tools_enabled": coerce_bool_setting(
+                    console_config.get("local_tools_enabled", False),
+                    False,
+                ),
+                "workspace_root": str(
+                    console_config.get("workspace_root", "") or ""
+                ).strip(),
+                "direct_library_tools": load_direct_library_tools(app_config),
+            },
+            provider_payload_settings={
+                "streaming": selection.streaming,
+                "temperature": selection.temperature,
+                "top_p": selection.top_p,
+                "min_p": selection.min_p,
+                "top_k": selection.top_k,
+                "max_tokens": selection.max_tokens,
+                "seed": selection.seed,
+                "presence_penalty": selection.presence_penalty,
+                "frequency_penalty": selection.frequency_penalty,
+                "reasoning_effort": selection.reasoning_effort,
+                "reasoning_summary": selection.reasoning_summary,
+                "verbosity": selection.verbosity,
+                "thinking_effort": selection.thinking_effort,
+                "thinking_budget_tokens": selection.thinking_budget_tokens,
+            },
+        )
 
     def _default_console_session_settings(self) -> ConsoleSessionSettings:
         """Build the default settings snapshot for a new native Console session."""

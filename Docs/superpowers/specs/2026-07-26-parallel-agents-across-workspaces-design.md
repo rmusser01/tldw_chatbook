@@ -2,6 +2,12 @@
 
 Date: 2026-07-26
 Status: approved design, pending implementation
+Amended by: [Console prompt queue design](2026-08-09-console-prompt-queue-design.md)
+and [ADR-046](../../../backlog/decisions/046-visible-bounded-console-prompt-queue.md).
+The amendment permits a visible, text-only FIFO queue of at most ten prompts
+behind an already accepted turn in the same session. The no-hidden-queue rule
+below remains authoritative for idle sessions blocked only by the global cap;
+there is still no global-cap waiting queue or restart-persistent run queue.
 Companion to: `Docs/superpowers/specs/2026-07-26-settings-workspaces-category-design.md`
 (merged as PRs #943/#944) — that train's **run-bound folder roots** are this
 program's enabling primitive and need no changes here (ADR-028).

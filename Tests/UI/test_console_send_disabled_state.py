@@ -5,8 +5,9 @@ conveyed only via CSS classes and a hover tooltip (and an empty draft got no
 tooltip at all), while the ``#console-send-disabled-reason`` Static stayed
 permanently ``display:none``. These tests pin the new contract:
 
-- Send is genuinely disabled whenever send is blocked (setup/run) or the
-  draft is empty, and re-enabled the moment a send is possible.
+- Send is genuinely disabled whenever setup/pre-acceptance/full-queue state
+  blocks dispatch or the draft is empty, and becomes Queue once an accepted
+  turn can own the next prompt.
 - The blocked/empty reason is perceivable WITHOUT hover: the reason strip
   renders inline (the 1fr draft yields the cells; the strip never adds
   height to the one-row composer) and clears immediately.
@@ -32,7 +33,7 @@ from Tests.UI.test_console_native_chat_flow import (
     _wait_for_text,
 )
 from Tests.UI.test_console_regenerate_feedback import GatedGateway
-from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+from Tests.UI.test_destination_shells import _build_test_app
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
@@ -281,18 +282,8 @@ async def test_enter_hotkey_still_sends_when_send_is_enabled():
 
 
 @pytest.mark.asyncio
-async def test_enter_hotkey_while_run_blocked_still_shows_feedback():
-    """Enter on a disabled Send must still produce the blocked-attempt feedback.
-
-    ``Button.press()`` no-ops on a disabled control (Textual 8.x), so this
-    exercises the key handler's direct dispatch of the Pressed handler --
-    the same funnel the click path used before Send gained a real disabled
-    state. A run in flight is the reachable blocked state here: the
-    setup-blocked state covers the composer with the blocking setup modal,
-    which swallows Enter long before the send branch in both the old and
-    new behavior (FR-09), and the setup/readiness system-row branch rides
-    the very same dispatch exercised below.
-    """
+async def test_enter_hotkey_queues_draft_behind_accepted_run():
+    """An accepted live turn changes Send to Queue and preserves exact text."""
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
@@ -325,34 +316,43 @@ async def test_enter_hotkey_while_run_blocked_still_shows_feedback():
         )
 
         try:
-            # Mid-run the composer is genuinely send-blocked...
+            # An empty draft stays disabled, but the action truthfully names
+            # the now-available queue path.
             await _wait_for_condition(pilot, lambda: send_button.disabled is True)
+            assert send_button.label.plain == "Queue"
             assert reason.styles.display == "block"
-            assert (
-                reason.renderable.plain
-                == "Send blocked — wait for the active run to finish"
-            )
+            assert reason.renderable.plain == "Send disabled: type a message"
 
-            # ...and Enter still drives the refusal feedback instead of
-            # dying on the disabled button's no-op press().
+            # A real draft enables Queue; Enter admits the exact text behind
+            # the accepted turn through the same dispatcher as the button.
             composer.load_draft("queued behind run")
             composer.focus()
             await pilot.pause(0.1)
+            assert send_button.disabled is False
             await pilot.press("enter")
 
             await _wait_for_condition(
                 pilot,
-                lambda: any(
-                    call.args
-                    and "A run is already running in this tab." in call.args[0]
-                    and call.kwargs.get("severity") == "warning"
-                    for call in notify_mock.call_args_list
-                ),
+                lambda: console._ensure_console_chat_controller()
+                .prompt_queue_registry.snapshot(store.active_session_id)
+                .total_count
+                == 1,
             )
-            # The refused draft is restored for correction, not eaten --
-            # and the stash is gone, so the next Enter is not swallowed as
-            # a duplicate.
-            assert composer.draft_text() == "queued behind run"
+            snapshot = (
+                console._ensure_console_chat_controller()
+                .prompt_queue_registry.snapshot(store.active_session_id)
+            )
+            queued = snapshot.entries[0]
+            text = (
+                console._ensure_console_chat_controller()
+                .prompt_queue_registry.read_waiting_text(
+                    store.active_session_id,
+                    entry_id=queued.entry_id,
+                    expected_revision=snapshot.revision,
+                )
+            )
+            assert text.text == "queued behind run"
+            assert composer.draft_text() == ""
             assert console._console_pending_send_stash is None
         finally:
             gateway.release.set()

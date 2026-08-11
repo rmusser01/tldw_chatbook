@@ -38,6 +38,61 @@ class ConsoleRunStatus(str, Enum):
     RETRYING = "retrying"
 
 
+class ConsoleSubmissionOrigin(str, Enum):
+    """Origin of a Console turn entering the accepted-send boundary."""
+
+    MANUAL = "manual"
+    QUEUED = "queued"
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleQueuedAcceptanceEvent:
+    """Content-free notice that one claimed queue entry became a real turn."""
+
+    session_id: str
+    entry_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleControllerActivity:
+    """Single content-free lifecycle projection for Console fleet consumers."""
+
+    session_id: str
+    occupies_slot: bool
+    preparing_before_acceptance: bool
+    accepted_live_turn: bool
+    needs_approval: bool
+    queued_count: int
+    queue_paused: bool
+    terminal_notification_eligible: bool
+
+    @property
+    def has_queued_work(self) -> bool:
+        """Return whether queue-owned future work controls this session."""
+
+        return self.queued_count > 0
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleLifecycleImpact:
+    """Revisioned, content-free loss impact derived from Console activity."""
+
+    revision: int
+    live_run_count: int
+    queued_session_count: int
+    unsent_prompt_count: int
+
+    @property
+    def has_loss_risk(self) -> bool:
+        """Return whether leaving would discard or cancel Console work."""
+
+        return bool(
+            self.live_run_count
+            or self.queued_session_count
+            or self.unsent_prompt_count
+        )
+
+
 class ConsoleRunMarker(str, Enum):
     """Fleet-visible run marker for a session (parallel-agents spec §6).
 

@@ -1810,7 +1810,9 @@ async def test_navigating_away_with_busy_fleet_confirms_and_records_teardown() -
             control="#cancel-button",
         )
         assert isinstance(dialog, ConfirmationDialog)
-        assert "1 agent run" in dialog.message
+        assert "Live agent runs: 1" in dialog.message
+        assert "Sessions with queued prompts: 0" in dialog.message
+        assert "Unsent queued prompts: 0" in dialog.message
         assert "Console" in dialog.message
         dialog.query_one("#cancel-button", Button).press()  # Stay
         await _wait_for_screen("ChatScreen")
@@ -1930,10 +1932,9 @@ async def test_navigation_guard_survives_stay_then_renavigate_then_leave_by_coor
     def _button_offset(label: str) -> tuple[int, int]:
         """Rendered (x, y) of the Stay/Leave button LABEL on the dialog's
         actual button row -- located the way a real user's terminal would
-        show it (scanning rendered text), not via widget introspection.
-        The dialog's own keyboard-hint copy also contains the words
-        "Stay"/"Leave" in prose, so the real button row is specifically
-        the one where nothing but whitespace separates the two labels.
+        show it (scanning rendered text), not via widget introspection. The
+        real button row is specifically the one where nothing but whitespace
+        separates the two labels.
         """
         for y, line in enumerate(_render_lines()):
             idx_stay = line.find("Stay")
@@ -1948,6 +1949,16 @@ async def test_navigation_guard_survives_stay_then_renavigate_then_leave_by_coor
             mid = idx + len(label) // 2
             return cell_len(line[:mid]), y
         raise AssertionError(f"button row for {label!r} not rendered")
+
+    async def _wait_for_button_offset(label: str) -> tuple[int, int]:
+        """Wait until Textual has composed and painted the modal buttons."""
+
+        for _ in range(100):
+            try:
+                return _button_offset(label)
+            except AssertionError:
+                await asyncio.sleep(0.02)
+        return _button_offset(label)
 
     async def _real_click(x: int, y: int) -> None:
         """A REAL mouse click: raw MouseDown+MouseUp through the App's own
@@ -2012,8 +2023,7 @@ async def test_navigation_guard_survives_stay_then_renavigate_then_leave_by_coor
         app.post_message(NavigateToScreen("home"))
         dialog1 = await _wait_for_screen("ConfirmationDialog")
         assert isinstance(dialog1, ConfirmationDialog)
-        await asyncio.sleep(0.1)
-        x, y = _button_offset("Stay")
+        x, y = await _wait_for_button_offset("Stay")
         await _real_click(x, y)
 
         await asyncio.wait_for(_wait_for_screen("ChatScreen"), timeout=5)
@@ -2027,10 +2037,8 @@ async def test_navigation_guard_survives_stay_then_renavigate_then_leave_by_coor
         app.post_message(NavigateToScreen("home"))
         dialog2 = await _wait_for_screen("ConfirmationDialog")
         assert dialog2 is not dialog1, "a fresh dialog instance, not a stale one"
-        await asyncio.sleep(0.1)
-
         # -- click LEAVE at ITS rendered coordinates. --
-        x2, y2 = _button_offset("Leave")
+        x2, y2 = await _wait_for_button_offset("Leave")
         await _real_click(x2, y2)
 
         await asyncio.wait_for(_wait_for_screen("HomeScreen"), timeout=5)

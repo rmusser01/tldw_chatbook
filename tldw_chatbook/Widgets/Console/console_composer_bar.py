@@ -509,6 +509,10 @@ class ConsoleComposerBar(Horizontal):
         self._redo_stack: list[_DraftHistorySnapshot] = []
         self._coalescing_active = False
         self._run_active = False
+        self._queued_prompt_count = 0
+        self._queue_paused = False
+        self._send_button_width = 6
+        self._send_label = "Send"
         self._send_blocked = False
         self._setup_blocked_reason = ""
         #: Last rendered `#console-send-disabled-reason` copy, tracked so a
@@ -609,6 +613,17 @@ class ConsoleComposerBar(Horizontal):
         actions.styles.width = width
         actions.styles.min_width = width
         actions.styles.max_width = width
+
+    def _actions_row_width(self, *, attachment_visible: bool | None = None) -> int:
+        """Return the current dynamic-label action-row budget."""
+
+        if attachment_visible is None:
+            attachment_visible = self._pending_attachment_label is not None
+        return (
+            BASE_ACTIONS_WIDTH
+            + (self._send_button_width - 6)
+            + (4 if attachment_visible else 0)
+        )
 
     def draft_text(self) -> str:
         """Return the canonical native Console draft payload.
@@ -1266,6 +1281,7 @@ class ConsoleComposerBar(Horizontal):
             send_blocked=self._send_blocked,
             setup_blocked_reason=self._setup_blocked_reason,
             ephemeral=self._ephemeral,
+            send_label=self._send_label,
         )
 
     def _sync_send_disabled_reason(self, reason: str, *, muted: bool) -> None:
@@ -1320,6 +1336,7 @@ class ConsoleComposerBar(Horizontal):
         send_blocked: bool = False,
         setup_blocked_reason: str = "",
         ephemeral: bool = False,
+        send_label: str = "Send",
     ) -> None:
         """Refresh composer action priority and disabled state.
 
@@ -1350,8 +1367,19 @@ class ConsoleComposerBar(Horizontal):
         try:
             send_button = self.query_one("#console-send-message", Button)
             stop_button = self.query_one("#console-stop-generation", Button)
+            actions = self.query_one("#console-composer-actions", Horizontal)
         except NoMatches:
             return
+
+        normalized_send_label = send_label.strip() or "Send"
+        self._send_label = normalized_send_label
+        self._send_button_width = max(6, cell_len(normalized_send_label) + 2)
+        send_button.label = normalized_send_label
+        send_button.styles.width = self._send_button_width
+        send_button.styles.min_width = self._send_button_width
+        send_button.styles.max_width = self._send_button_width
+        if not self._voice_full_width_preparing:
+            self._set_actions_row_width(actions, self._actions_row_width())
 
         send_ready = has_draft and not send_blocked
 
@@ -2216,7 +2244,19 @@ class ConsoleComposerBar(Horizontal):
             parts.append("Draft retained")
         if self._pending_attachment_label is not None:
             parts.append("Attachment retained")
+        if self._queued_prompt_count:
+            state = "Paused" if self._queue_paused else "Queued"
+            parts.append(f"{state} {self._queued_prompt_count}")
         return " · ".join(parts)
+
+    def sync_prompt_queue_state(self, *, count: int, paused: bool) -> None:
+        """Sync the collapsed composer's content-free queue indicator."""
+
+        next_state = (max(0, int(count)), bool(paused))
+        if next_state == (self._queued_prompt_count, self._queue_paused):
+            return
+        self._queued_prompt_count, self._queue_paused = next_state
+        self._sync_collapsed_presentation()
 
     def _sync_collapsed_presentation(self) -> None:
         """Synchronize stable presentation containers from cached widget state."""
@@ -4252,7 +4292,9 @@ class ConsoleComposerBar(Horizontal):
             indicator.styles.width = "auto"
             indicator.styles.max_width = 28
             clear_button.styles.display = "block"
-            self._set_actions_row_width(actions, ATTACHMENT_ACTIONS_WIDTH)
+            self._set_actions_row_width(
+                actions, self._actions_row_width(attachment_visible=True)
+            )
             # CN-04 (TASK-2154.13): one phrase with the compose-time tooltip
             # ("Remove the pending attachment."), not a second "Clear" verb.
             if count > 1:
@@ -4264,7 +4306,9 @@ class ConsoleComposerBar(Horizontal):
             indicator.styles.display = "none"
             indicator.styles.width = 0
             clear_button.styles.display = "none"
-            self._set_actions_row_width(actions, BASE_ACTIONS_WIDTH)
+            self._set_actions_row_width(
+                actions, self._actions_row_width(attachment_visible=False)
+            )
         if self._voice_full_width_preparing:
             self._sync_full_width_voice_presentation(True)
 
@@ -4407,7 +4451,7 @@ class ConsoleComposerBar(Horizontal):
         clear_attachment.styles.display = "block" if attachment_visible else "none"
         self._set_actions_row_width(
             actions,
-            ATTACHMENT_ACTIONS_WIDTH if attachment_visible else BASE_ACTIONS_WIDTH,
+            self._actions_row_width(attachment_visible=attachment_visible),
         )
         self._sync_collapsed_presentation()
         self._sync_send_disabled_reason(
@@ -4576,7 +4620,7 @@ class ConsoleComposerBar(Horizontal):
             actions = Horizontal(
                 id="console-composer-actions", classes="console-composer-actions"
             )
-            self._set_actions_row_width(actions, BASE_ACTIONS_WIDTH)
+            self._set_actions_row_width(actions, self._actions_row_width())
             actions.styles.height = 1
             actions.styles.min_height = 1
             actions.styles.max_height = 1

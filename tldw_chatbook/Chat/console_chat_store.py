@@ -627,6 +627,16 @@ class ConsoleChatStore:
         # mutations, so the cost chip knows when its cache-break fingerprint
         # needs recomputing. Process-local, like the speech revisions above.
         self._payload_revisions: dict[str, int] = {}
+        # Prompt-queue context safety: a narrower process-local token than
+        # `_payload_revisions`. Ordinary linear turn growth and streaming do
+        # not move it; out-of-band changes to the effective active provider
+        # context do. It is intentionally absent from persistence/snapshots.
+        self._conversation_context_epochs: dict[str, int] = {}
+        # A failed assistant row is excluded from ordinary provider payloads.
+        # Retrying it reuses that row in place, so the eventual complete or
+        # stopped terminal must advance the context epoch when the row becomes
+        # provider-visible history. A repeat failure stays excluded and stable.
+        self._failed_retry_message_ids: set[str] = set()
 
     def ensure_session(
         self,
@@ -681,6 +691,7 @@ class ConsoleChatStore:
         self._children_by_parent[session.id] = {}
         self._active_leaf_by_session[session.id] = None
         self._context_summary_by_session[session.id] = (None, None)
+        self._conversation_context_epochs[session.id] = 0
         self.active_session_id = session.id
         return session
 
@@ -953,6 +964,7 @@ class ConsoleChatStore:
             self._pending_persistence_message_ids.discard(message_id)
             self._variant_stream_bases.pop(message_id, None)
             self._variant_restored_message_ids.discard(message_id)
+            self._failed_retry_message_ids.discard(message_id)
             self._message_speech_revisions.pop(message_id, None)
             self._native_parent_by_message.pop(message_id, None)
             self._roleplay_message_projection_candidates.pop(message_id, None)
@@ -964,6 +976,7 @@ class ConsoleChatStore:
         self._active_leaf_by_session.pop(session_id, None)
         self._context_summary_by_session.pop(session_id, None)
         self._roleplay_system_projection_candidates.pop(session_id, None)
+        self._conversation_context_epochs.pop(session_id, None)
         self._sessions.pop(session_id, None)
 
         if self.active_session_id != session_id:
@@ -1226,8 +1239,10 @@ class ConsoleChatStore:
         # never cleared on restore, leaking across a state replacement.
         self._variant_stream_bases.clear()
         self._variant_restored_message_ids.clear()
+        self._failed_retry_message_ids.clear()
         self._message_speech_revisions.clear()
         self._payload_revisions.clear()
+        self._conversation_context_epochs.clear()
         self._nodes_by_session.clear()
         self._children_by_parent.clear()
         self._native_parent_by_message.clear()
@@ -1241,6 +1256,7 @@ class ConsoleChatStore:
             self._children_by_parent[session.id] = {}
             self._active_leaf_by_session[session.id] = None
             self._context_summary_by_session[session.id] = (None, None)
+            self._conversation_context_epochs[session.id] = 0
             self._messages_by_session[session.id] = []
             self._ingest_linear_messages(
                 session.id, messages_by_session.get(session.id, ())
@@ -1487,6 +1503,7 @@ class ConsoleChatStore:
         # the old ``set_active_leaf`` call with a still-``None`` id, which is fine.
         self._persist_active_leaf(session_id, message.id)
         self._bump_payload_revision(session_id)
+        self._bump_conversation_context_epoch(session_id)
         return self._snapshot(message)
 
     def append_generation_message(
@@ -1653,6 +1670,7 @@ class ConsoleChatStore:
         """
         self._session_or_raise(session_id)
         message = self._message_or_raise(message_id)
+        owner_session_id = self._message_session_index[message.id]
         if not message.generation_metadata:
             raise ValueError(
                 "append_generation_variant requires a generation message "
@@ -1684,6 +1702,8 @@ class ConsoleChatStore:
                     f"persistence assigned {persisted_position}"
                 )
         self._bump_payload_revision(session_id)
+        if self._message_is_on_active_path(message_id):
+            self._bump_conversation_context_epoch(owner_session_id)
         return new_position
 
     def keep_generation_variant(
@@ -1724,6 +1744,7 @@ class ConsoleChatStore:
         """
         self._session_or_raise(session_id)
         message = self._message_or_raise(message_id)
+        owner_session_id = self._message_session_index[message.id]
         if position <= 0 or position >= len(message.attachments):
             raise ValueError(
                 f"No attachment at position {position} to keep for message"
@@ -1750,6 +1771,8 @@ class ConsoleChatStore:
                 message.persisted_message_id, position
             )
         self._bump_payload_revision(session_id)
+        if self._message_is_on_active_path(message_id):
+            self._bump_conversation_context_epoch(owner_session_id)
 
     def hydrate_generation_metadata(
         self,
@@ -2079,6 +2102,9 @@ class ConsoleChatStore:
         self._materialize_stream_buffer(message)
         if message.status in {"pending", "streaming"}:
             raise ValueError("Wait for response to finish before editing this message.")
+        session_id = self._message_session_index[message.id]
+        previous_content = message.content
+        on_active_path = self._message_is_on_active_path(message.id)
         provenance_cleared = (
             message.metadata is not None
             and message.metadata.template_kind == "character_greeting"
@@ -2103,9 +2129,11 @@ class ConsoleChatStore:
             message.content = message.variants.current.content
         self._bump_message_speech_revision(message.id)
         if provenance_cleared:
-            self._bump_identity_revision(self._message_session_index[message.id])
+            self._bump_identity_revision(session_id)
         else:
-            self._bump_payload_revision(self._message_session_index[message.id])
+            self._bump_payload_revision(session_id)
+        if on_active_path and message.content != previous_content:
+            self._bump_conversation_context_epoch(session_id)
         self._persist_existing_message(
             message, force_metadata_write=provenance_cleared
         )
@@ -2955,6 +2983,7 @@ class ConsoleChatStore:
             self._pending_persistence_message_ids.discard(node_id)
             self._variant_stream_bases.pop(node_id, None)
             self._variant_restored_message_ids.discard(node_id)
+            self._failed_retry_message_ids.discard(node_id)
             self._message_speech_revisions.pop(node_id, None)
         # Only when the deleted branch was on the active path does the leaf move
         # (up to the deleted node's parent); an off-path delete leaves it alone.
@@ -2963,6 +2992,8 @@ class ConsoleChatStore:
             self._active_leaf_by_session[session_id] = parent_native_id
         self._recompute_active_path(session_id)
         self._bump_payload_revision(session_id)
+        if on_active_path:
+            self._bump_conversation_context_epoch(session_id)
         return self._snapshot(message)
 
     def session_id_for_message(self, message_id: str) -> str:
@@ -3001,10 +3032,13 @@ class ConsoleChatStore:
         nodes = self._nodes_by_session.get(session_id, {})
         if message_id is not None and message_id not in nodes:
             raise KeyError(f"Unknown Console message: {message_id}")
+        previous_leaf = self._active_leaf_by_session.get(session_id)
         self._active_leaf_by_session[session_id] = message_id
         self._recompute_active_path(session_id)
         self._persist_active_leaf(session_id, message_id)
         self._bump_payload_revision(session_id)
+        if message_id != previous_leaf:
+            self._bump_conversation_context_epoch(session_id)
 
     def session_context_summary(self, session_id: str) -> tuple[str | None, str | None]:
         """Return the session's in-memory ``(summary, boundary_native_id)`` pair.
@@ -3046,9 +3080,13 @@ class ConsoleChatStore:
             KeyError: If the session is unknown.
         """
         self._session_or_raise(session_id)
-        self._context_summary_by_session[session_id] = (summary, boundary_native_id)
+        previous = self._context_summary_by_session.get(session_id, (None, None))
+        updated = (summary, boundary_native_id)
+        self._context_summary_by_session[session_id] = updated
         self._persist_context_summary(session_id, summary, boundary_native_id)
         self._bump_payload_revision(session_id)
+        if updated != previous:
+            self._bump_conversation_context_epoch(session_id)
 
     def active_path_message_ids(self, session_id: str) -> list[str]:
         """Return native ids along the active path, root -> active leaf.
@@ -3244,6 +3282,7 @@ class ConsoleChatStore:
         message = self._message_or_raise(message_id)
         self._validate_can_mark_terminal(message)
         self._materialize_stream_buffer(message)
+        session_id = self._message_session_index[message.id]
         finalizer = self._terminal_citation_finalizers.pop(message.id, None)
         terminal_persistence = (
             finalizer is not None
@@ -3253,7 +3292,8 @@ class ConsoleChatStore:
         if not terminal_persistence:
             message.status = "complete"
             self._bump_message_speech_revision(message.id)
-            self._bump_payload_revision(self._message_session_index[message.id])
+            self._bump_payload_revision(session_id)
+            self._settle_failed_retry_context(message, provider_visible=True)
             self._persist_existing_message(message)
             return self._snapshot(message)
 
@@ -3261,7 +3301,8 @@ class ConsoleChatStore:
             if not message.content:
                 message.status = "complete"
                 self._bump_message_speech_revision(message.id)
-                self._bump_payload_revision(self._message_session_index[message.id])
+                self._bump_payload_revision(session_id)
+                self._settle_failed_retry_context(message, provider_visible=True)
                 self._persist_existing_message(message)
                 return self._snapshot(message)
 
@@ -3273,8 +3314,8 @@ class ConsoleChatStore:
                     logger.warning("terminal_finalizer_unavailable")
             message.status = "complete"
             self._bump_message_speech_revision(message.id)
-            session_id = self._message_session_index[message.id]
             self._bump_payload_revision(session_id)
+            self._settle_failed_retry_context(message, provider_visible=True)
             try:
                 self._persist_new_message(
                     session_id=session_id,
@@ -3313,6 +3354,7 @@ class ConsoleChatStore:
         message = self._message_or_raise(message_id)
         self._validate_can_mark_terminal(message)
         self._materialize_stream_buffer(message)
+        session_id = self._message_session_index[message.id]
         self.clear_terminal_citation_state(message.id)
         base = self._variant_stream_bases.pop(message.id, None)
         if base is not None:
@@ -3324,7 +3366,11 @@ class ConsoleChatStore:
             message.status = "stopped"
             self._variant_restored_message_ids.discard(message.id)
         self._bump_message_speech_revision(message.id)
-        self._bump_payload_revision(self._message_session_index[message.id])
+        self._bump_payload_revision(session_id)
+        self._settle_failed_retry_context(
+            message,
+            provider_visible=message.status != "failed",
+        )
         self._persist_existing_message(message)
         return self._snapshot(message)
 
@@ -3349,6 +3395,7 @@ class ConsoleChatStore:
         message = self._message_or_raise(message_id)
         self._validate_can_mark_terminal(message)
         self._materialize_stream_buffer(message)
+        session_id = self._message_session_index[message.id]
         self.clear_terminal_citation_state(message.id)
         base = self._variant_stream_bases.pop(message.id, None)
         if base is not None:
@@ -3360,7 +3407,11 @@ class ConsoleChatStore:
             message.status = "failed"
             self._variant_restored_message_ids.discard(message.id)
         self._bump_message_speech_revision(message.id)
-        self._bump_payload_revision(self._message_session_index[message.id])
+        self._bump_payload_revision(session_id)
+        self._settle_failed_retry_context(
+            message,
+            provider_visible=message.status != "failed",
+        )
         self._persist_existing_message(message)
         return self._snapshot(message)
 
@@ -3447,6 +3498,7 @@ class ConsoleChatStore:
         self._stream_materialized_counts.pop(message.id, None)
         # A new generation starts here -- see `begin_variant_stream`.
         self._variant_restored_message_ids.discard(message.id)
+        self._failed_retry_message_ids.add(message.id)
         self._bump_message_speech_revision(message.id)
         self._bump_payload_revision(self._message_session_index[message.id])
         return self._snapshot(message)
@@ -3457,6 +3509,9 @@ class ConsoleChatStore:
         self._materialize_stream_buffer(message)
         if message.role is not ConsoleMessageRole.ASSISTANT:
             raise ValueError("Only assistant messages can receive variants.")
+        session_id = self._message_session_index[message.id]
+        previous_content = message.content
+        on_active_path = self._message_is_on_active_path(message.id)
         if message.variants is None:
             message.variants = ConsoleVariantSet.from_contents(
                 turn_id=message.turn_id or message.id,
@@ -3470,7 +3525,9 @@ class ConsoleChatStore:
         self._bump_message_speech_revision(message.id)
         provenance_cleared = self._clear_character_greeting_provenance(message)
         if not provenance_cleared:
-            self._bump_payload_revision(self._message_session_index[message.id])
+            self._bump_payload_revision(session_id)
+        if on_active_path and message.content != previous_content:
+            self._bump_conversation_context_epoch(session_id)
         self._persist_existing_message(
             message, force_metadata_write=provenance_cleared
         )
@@ -3530,6 +3587,8 @@ class ConsoleChatStore:
         new_content = message.content
         base_entry = self._variant_stream_bases.pop(message.id, None)
         base = base_entry.content if base_entry is not None else ""
+        session_id = self._message_session_index[message.id]
+        on_active_path = self._message_is_on_active_path(message.id)
         if message.variants is None:
             message.variants = ConsoleVariantSet.from_contents(
                 turn_id=message.turn_id or message.id,
@@ -3544,7 +3603,9 @@ class ConsoleChatStore:
         self._bump_message_speech_revision(message.id)
         provenance_cleared = self._clear_character_greeting_provenance(message)
         if not provenance_cleared:
-            self._bump_payload_revision(self._message_session_index[message.id])
+            self._bump_payload_revision(session_id)
+        if on_active_path and message.content != base:
+            self._bump_conversation_context_epoch(session_id)
         self._persist_existing_message(
             message, force_metadata_write=provenance_cleared
         )
@@ -3560,10 +3621,15 @@ class ConsoleChatStore:
             raise ValueError("Message has no variants.")
         if selected_index < 0 or selected_index >= len(message.variants.variants):
             raise ValueError("selected_index must reference an existing variant")
+        session_id = self._message_session_index[message.id]
+        previous_content = message.content
+        on_active_path = self._message_is_on_active_path(message.id)
         message.variants.selected_index = selected_index
         message.content = message.variants.current.content
         self._bump_message_speech_revision(message.id)
-        self._bump_payload_revision(self._message_session_index[message.id])
+        self._bump_payload_revision(session_id)
+        if on_active_path and message.content != previous_content:
+            self._bump_conversation_context_epoch(session_id)
         self._persist_existing_message(message)
         return self._snapshot(message)
 
@@ -4794,6 +4860,49 @@ class ConsoleChatStore:
         self._payload_revisions[session_id] = (
             self._payload_revisions.get(session_id, 0) + 1
         )
+
+    def _bump_conversation_context_epoch(self, session_id: str) -> None:
+        """Advance one live session's provider-context change token."""
+        self._conversation_context_epochs[session_id] += 1
+
+    def conversation_context_epoch(self, session_id: str) -> int:
+        """Return the process-local provider-context epoch for a live session.
+
+        Unlike ``payload_revision``, ordinary linear appends, response streaming,
+        terminal status, and persistence bookkeeping do not advance this token.
+        It exists for deferred-turn safety and is never serialized.
+
+        Raises:
+            KeyError: If ``session_id`` is not a live Console session.
+        """
+        self._session_or_raise(session_id)
+        return self._conversation_context_epochs[session_id]
+
+    def _message_is_on_active_path(self, message_id: str) -> bool:
+        """Return whether a registered tree node affects the active transcript."""
+        session_id = self._message_session_index[message_id]
+        return message_id in self.active_path_message_ids(session_id)
+
+    def _settle_failed_retry_context(
+        self,
+        message: ConsoleChatMessage,
+        *,
+        provider_visible: bool,
+    ) -> None:
+        """Finish failed-row retry tracking and advance on visible recovery.
+
+        A failed row is excluded from normal future payloads. Once an in-place
+        retry finishes as complete or stopped, that same row becomes history and
+        therefore changes effective provider context even when its text is byte-
+        identical to the failed attempt. Another failed terminal stays excluded.
+        """
+        was_failed_retry = message.id in self._failed_retry_message_ids
+        self._failed_retry_message_ids.discard(message.id)
+        if not was_failed_retry or not provider_visible:
+            return
+        if self._message_is_on_active_path(message.id):
+            session_id = self._message_session_index[message.id]
+            self._bump_conversation_context_epoch(session_id)
 
     def payload_revision(self, session_id: str) -> int:
         """Monotonic per-session counter of payload-affecting mutations."""

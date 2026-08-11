@@ -59,6 +59,7 @@ def _session_tab_tooltip(
     *,
     active: bool,
     marker: ConsoleRunMarker = ConsoleRunMarker.NONE,
+    queued_count: int = 0,
 ) -> str:
     """Return action copy for a Console session tab.
 
@@ -105,6 +106,8 @@ def _session_tab_tooltip(
         # ONE short name; the "not saved locally" scope sentence stays in
         # the chip's own tooltip.
         text = f"{text} Temporary — not saved."
+    if queued_count:
+        text = f"{text} Queue {queued_count}."
     return _escape_markup(text)
 
 
@@ -315,6 +318,7 @@ class ConsoleSessionSurface(Vertical):
         *,
         active: bool,
         marker: ConsoleRunMarker = ConsoleRunMarker.NONE,
+        queued_count: int = 0,
     ) -> Button:
         """Build a stable-width Console session tab title button."""
         classes = "console-session-tab"
@@ -322,7 +326,10 @@ class ConsoleSessionSurface(Vertical):
             classes = f"{classes} console-session-tab-active"
         button = ConsoleSessionTabButton(
             self._tab_label(
-                session.title, marker=marker, ephemeral=session.ephemeral
+                session.title,
+                marker=marker,
+                ephemeral=session.ephemeral,
+                queued_count=queued_count,
             ),
             id=f"console-session-tab-{session.id}",
             classes=classes,
@@ -330,7 +337,10 @@ class ConsoleSessionSurface(Vertical):
             session_id=session.id,
         )
         button.tooltip = _session_tab_tooltip(
-            session, active=active, marker=marker
+            session,
+            active=active,
+            marker=marker,
+            queued_count=queued_count,
         )
         button.styles.width = CONSOLE_SESSION_TAB_WIDTH
         button.styles.min_width = CONSOLE_SESSION_TAB_WIDTH
@@ -347,6 +357,7 @@ class ConsoleSessionSurface(Vertical):
         *,
         marker: ConsoleRunMarker = ConsoleRunMarker.NONE,
         ephemeral: bool = False,
+        queued_count: int = 0,
     ) -> str:
         """Return the tab label, prefixed with its fleet run-marker glyph.
 
@@ -368,6 +379,8 @@ class ConsoleSessionSurface(Vertical):
         # promotion saves verbatim.
         if ephemeral:
             label = f"{resolve_glyph(GLYPH_TEMPORARY)} {label}"
+        if queued_count:
+            label = f"Q{queued_count} {label}"
         return label
 
     @staticmethod
@@ -432,6 +445,7 @@ class ConsoleSessionSurface(Vertical):
         active_session_id: str | None,
         streaming_session_id: str | None = None,
         run_markers: dict[str, ConsoleRunMarker] | None = None,
+        queue_counts: dict[str, int] | None = None,
     ) -> None:
         """Update labels, tooltips, and active state without stealing focus."""
         session_by_id = {session.id: session for session in sessions}
@@ -448,12 +462,16 @@ class ConsoleSessionSurface(Vertical):
                     run_markers=run_markers,
                 )
                 child.label = self._tab_label(
-                    session.title, marker=marker, ephemeral=session.ephemeral
+                    session.title,
+                    marker=marker,
+                    ephemeral=session.ephemeral,
+                    queued_count=(queue_counts or {}).get(session_id, 0),
                 )
                 child.tooltip = _session_tab_tooltip(
                     session,
                     active=session.id == active_session_id,
                     marker=marker,
+                    queued_count=(queue_counts or {}).get(session_id, 0),
                 )
                 child.set_class(
                     session.id == active_session_id,
@@ -480,6 +498,7 @@ class ConsoleSessionSurface(Vertical):
         active_session_id: str | None,
         streaming_session_id: str | None = None,
         run_markers: dict[str, ConsoleRunMarker] | None = None,
+        queue_counts: dict[str, int] | None = None,
     ) -> None:
         """Render native Console session tabs from controller-owned state.
 
@@ -510,6 +529,7 @@ class ConsoleSessionSurface(Vertical):
                     active_session_id=active_session_id,
                     streaming_session_id=streaming_session_id,
                     run_markers=run_markers,
+                    queue_counts=queue_counts,
                 )
                 return
 
@@ -529,6 +549,7 @@ class ConsoleSessionSurface(Vertical):
                         session,
                         active=is_active,
                         marker=marker,
+                        queued_count=(queue_counts or {}).get(session.id, 0),
                     )
                 )
                 await tab_strip.mount(self._build_close_tab_button(session))

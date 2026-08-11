@@ -109,7 +109,7 @@ was.
 Tabs with unwatched activity carry a status marker, listed in F1 help:
 
 > Status markers: ● running · ◆ needs approval · ✓ finished · ✗ failed —
-> clears once you visit that tab.
+> clears once you visit that tab. `Qn` is the tab's unsent prompt count.
 
 - A background run that hits a tool approval **parks**: its tab gets a `◆`
   badge and you get exactly one toast — "Agent in <tab> (<workspace>) needs
@@ -119,6 +119,10 @@ Tabs with unwatched activity carry a status marker, listed in F1 help:
   finished." (or "failed.").
 - The left rail pins a fleet summary line whenever other tabs are busy:
   "N other agents running, M waiting for approval."
+- Open session tabs show `Qn`, and open conversation rows show `Queue n`,
+  without revealing queued text. Switch to that tab to see its queue shelf.
+- A successful multi-prompt drain reports one final background completion;
+  intermediate queued turns do not add completion toasts or finished markers.
 
 ### Named agents
 
@@ -237,10 +241,16 @@ Import…** and submit its URL; Console does not advertise the retired
   run are cancelled with it, and any of their approval cards still pending
   are withdrawn (denied) at the same time — a sibling sub-agent's card
   belonging to a *different* tab's run is untouched. The partial reply is
-  tagged `[stopped]` and a System row records "Response stopped by user."
+  `[stopped]` and a System row records "Response stopped by user." If that
+  tab has queued prompts, they pause. Choose **Retry stopped** to retry the
+  stopped turn before continuing, or **Resume next** to keep the stopped turn
+  and continue with the next prompt.
 - Leaving the Console screen is different: after the "Leave Console?" confirm,
   **every** in-flight run is cancelled and every pending or parked approval is
-  denied — never approved. Details in
+  denied — never approved. The warning also counts queued sessions and unsent
+  prompts. Staying leaves the queue and manager focus untouched; leaving
+  clears process-memory queues. Closing one tab uses the same count-aware
+  warning for that tab, and quitting the app reports the whole fleet. Details in
   [Console agent runs are screen-scoped](../index.md#console-agent-runs-are-screen-scoped).
 
 ## Common tasks

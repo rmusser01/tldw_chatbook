@@ -247,7 +247,10 @@ def test_app_quit_save_writes_active_file_not_default(isolated_config_paths):
 
     app = TldwCli()
     try:
-        app.action_quit()
+        # TASK-14806 moved this blocking persistence behind the asynchronous
+        # quit worker. This regression owns the persistence target boundary,
+        # not worker dispatch, so exercise the extracted blocking phase.
+        app._run_blocking_quit_persistence()
     finally:
         cfg.clear_encryption_password()
 
