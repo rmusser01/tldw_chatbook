@@ -49,6 +49,11 @@ from tldw_chatbook.TTS.profile_reference_types import (
     TTSCloneReference,
     TTSCloneReferenceSummary,
 )
+from tldw_chatbook.TTS.profile_reference_materialization import (
+    TTSCloneMaterializationError,
+    TTSCloneReferenceMaterialization,
+    TTSCloneReferenceMaterializer,
+)
 from tldw_chatbook.TTS.profile_service import (
     LoadedCharacterTTSAssignment,
     LoadedTTSProfile,
@@ -126,6 +131,9 @@ __all__ = [
     "TTSConfigMutation",
     "TTSGenerationProfile",
     "TTSCloneReference",
+    "TTSCloneMaterializationError",
+    "TTSCloneReferenceMaterialization",
+    "TTSCloneReferenceMaterializer",
     "TTSCloneReferenceSummary",
     "TTSModelInfo",
     "TTSNativeCapabilitySnapshot",
