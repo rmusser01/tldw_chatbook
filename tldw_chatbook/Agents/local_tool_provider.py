@@ -1419,6 +1419,22 @@ def _default_specs(
                             {"required": ["status"]},
                             {"required": ["activeForm"]},
                         ],
+                        "allOf": [
+                            {
+                                "if": {
+                                    "properties": {"status": {"const": "deleted"}},
+                                    "required": ["status"],
+                                },
+                                "then": {
+                                    "not": {
+                                        "anyOf": [
+                                            {"required": ["content"]},
+                                            {"required": ["activeForm"]},
+                                        ]
+                                    }
+                                },
+                            }
+                        ],
                         "additionalProperties": False,
                     },
                     handler=_make_todo_update_handler(todo_store, on_todo_change),

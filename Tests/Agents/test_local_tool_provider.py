@@ -1,4 +1,5 @@
 import json
+import logging
 import shutil
 import subprocess
 from collections import UserDict
@@ -1199,6 +1200,75 @@ def test_todo_tool_schemas_pin_exact_keys_bounds_and_mutation_shape(tmp_path):
     )
 
 
+def test_todo_id_and_cursor_schemas_enforce_the_complete_canonical_domain(tmp_path):
+    schemas = _task_schemas(make_provider(root=tmp_path, todo_store=SessionTodoStore()))
+    id_schemas = {
+        "todo_update.id": schemas["todo_update"]["properties"]["id"],
+        "todo_get.id": schemas["todo_get"]["properties"]["id"],
+        "todo_list.cursor": schemas["todo_list"]["properties"]["cursor"],
+    }
+    accepted = (
+        "1",
+        "42",
+        str(MAX_TODO_NUMBER - 1),
+        str(MAX_TODO_NUMBER),
+    )
+    rejected = (
+        "0",
+        "01",
+        "+1",
+        "-1",
+        1,
+        str(MAX_TODO_NUMBER + 1),
+        "9" * 100_000,
+    )
+
+    for label, schema in id_schemas.items():
+        validator = Draft202012Validator(schema)
+        for value in accepted:
+            assert validator.is_valid(value), f"{label} rejected {value!r}"
+        for value in rejected:
+            assert not validator.is_valid(value), f"{label} accepted {value!r}"
+
+
+def test_todo_content_schemas_are_nonblank_without_restricting_active_form(tmp_path):
+    schemas = _task_schemas(make_provider(root=tmp_path, todo_store=SessionTodoStore()))
+    create_content = schemas["todo_create"]["properties"]["content"]
+    update_content = schemas["todo_update"]["properties"]["content"]
+    assert create_content["minLength"] == 1
+    assert update_content["minLength"] == 1
+    assert create_content["pattern"] == r"\S"
+    assert update_content["pattern"] == r"\S"
+
+    for schema in (create_content, update_content):
+        validator = Draft202012Validator(schema)
+        for content in ("task", "雪", "\n  café task\n"):
+            assert validator.is_valid(content)
+        for content in ("", " ", " \t\r\n\f\v"):
+            assert not validator.is_valid(content)
+
+    create_active_form = schemas["todo_create"]["properties"]["activeForm"]
+    update_active_form = schemas["todo_update"]["properties"]["activeForm"]
+    assert Draft202012Validator(create_active_form).is_valid("")
+    assert Draft202012Validator(update_active_form).is_valid("")
+    assert Draft202012Validator(update_active_form).is_valid(None)
+
+
+def test_todo_update_schema_requires_deleted_to_be_the_only_mutation(tmp_path):
+    schema = _task_schemas(make_provider(root=tmp_path, todo_store=SessionTodoStore()))[
+        "todo_update"
+    ]
+    validator = Draft202012Validator(schema)
+    base = {"id": "1", "expected_version": 1}
+
+    assert validator.is_valid({**base, "status": "deleted"})
+    assert not validator.is_valid({**base, "status": "deleted", "content": "private"})
+    assert not validator.is_valid({**base, "status": "deleted", "activeForm": None})
+    assert validator.is_valid({**base, "content": "task"})
+    assert validator.is_valid({**base, "activeForm": None})
+    assert validator.is_valid({**base, "status": "completed", "content": "task"})
+
+
 @pytest.mark.parametrize(
     ("tool_name", "args", "expected_error"),
     [
@@ -1603,7 +1673,24 @@ def test_todo_callback_failure_is_committed_success_with_fixed_private_log(
         if record.name == "tldw_chatbook.Agents.session_todo_store"
     ]
     assert messages == ["Session todo change callback failed."]
-    assert all(fragment not in messages[0] for fragment in sentinel.split())
+    records = [
+        record
+        for record in caplog.records
+        if record.name == "tldw_chatbook.Agents.session_todo_store"
+    ]
+    assert len(records) == 1
+    record = records[0]
+    assert record.exc_info is None
+    assert record.exc_text is None
+    assert record.stack_info is None
+    assert record.args == ()
+    standard_keys = set(logging.makeLogRecord({}).__dict__) | {"message", "asctime"}
+    assert set(record.__dict__) <= standard_keys
+    structured_values = " ".join(repr(value) for value in record.__dict__.values())
+    observed_log = " ".join(
+        (caplog.text, record.getMessage(), repr(record.args), structured_values)
+    )
+    assert all(fragment not in observed_log for fragment in sentinel.split())
 
 
 @pytest.mark.parametrize("character", ["x", "é"], ids=["ascii", "multibyte"])
