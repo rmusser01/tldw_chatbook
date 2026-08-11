@@ -47,6 +47,9 @@ Primary references:
 - Preserve the task records and ID high-water mark across normal in-process
   Console screen navigation.
 - Update the local-tool design, ADR-032, tool inventories, prompts, and tests.
+- Reserve ADR-032's exact external-profile segment `__local__` so an external
+  profile cannot project tools under the Console workspace-tool principal
+  `local:__local__`.
 
 ### Non-goals
 
@@ -57,6 +60,29 @@ Primary references:
   composition supplies no Console session store, so it registers none of the
   four tools.
 - Migrating obsolete persisted permission entries for `local:todo_write`.
+
+### 2.1 Reserved Hub identity
+
+`local:__local__` is the synthetic permission and Hub catalog identity owned
+by the Console's workspace-local tools. An external MCP profile's
+user-controlled `profile_id` normally projects to `local:<profile_id>`; the
+exact profile id `__local__` would therefore alias that reserved principal.
+
+The root cause is incomplete validation at three trust boundaries. The normal
+save path rejected delimiters and whitespace but accepted `__local__`; the
+JSON load path admitted hand-written profile, discovery-snapshot, and runtime
+records without the save validator; and `local_tools_from_record()` trusted a
+raw profile id while constructing its Hub key. A discovered external
+`fs_write` could consequently project as `local:__local__::fs_write`, the same
+identity resolved for the real workspace `fs_write` permission.
+
+The exact `__local__` token is reserved. New profiles are rejected before any
+persistence. Existing persisted reserved profiles and their associated
+discovery/runtime state are ignored on load. Raw reserved catalog records are
+dropped independently as defense in depth. The record is not renamed or
+reinterpreted, and all other currently valid ids retain their existing error
+and normalization semantics. In particular, surrounding whitespace remains
+invalid under the existing rule while case variants remain distinct valid ids.
 
 ## 3. State model
 
@@ -411,6 +437,23 @@ content, workspace path, credential-like string, or raw argument is logged.
 ## 9. Verification
 
 Tests must be RED before production changes and must cover:
+
+- a real profile save accepting `__local__` before the fix and rejecting it
+  without modifying persisted state after the fix;
+- a hand-written persisted `__local__` profile plus discovery/runtime state
+  entering the catalog before the fix and becoming wholly inert after it;
+- raw `local_tools_from_record()` projection producing no tool for
+  `__local__`, independently of store filtering;
+- a spoofed external `fs_write` demonstrating the pre-fix collision with the
+  real workspace tool's `local:__local__::fs_write` permission identity, while
+  a legitimate external profile remains present and independently keyed;
+- mutation probes removing each save, load, and raw-projection guard and
+  proving the corresponding focused assertion turns RED;
+- explicit classification of exact `__local__`, whitespace variants, and case
+  variants without broadening the pre-existing profile-id rules;
+- a current user-guide contract that names workspace, read-only Git, and web
+  Hub tools and rejects wording that presents session todo/task tools as Hub
+  inventory; and
 
 - exact removal of `todo_write` and registration/schema projection of all four
   replacement tools;

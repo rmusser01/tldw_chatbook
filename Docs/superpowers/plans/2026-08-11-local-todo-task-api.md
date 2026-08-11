@@ -861,6 +861,20 @@ git commit -m "test(todo): prove shared parent fleet task state"
 - Modify: `Tests/MCP/test_gateway_runtime_tools.py`
 - Modify: `Tests/UI/test_mcp_workbench.py`
 - Modify: additional live docs found by the stale scan only when they describe the current runtime
+- Modify: `tldw_chatbook/MCP/local_store.py` — reject the reserved external
+  profile before persistence and filter pre-existing reserved profile/catalog
+  state during load.
+- Modify: `tldw_chatbook/MCP/hub_tool_catalog.py` — drop a raw reserved
+  external-profile record before constructing a `HubTool`.
+- Modify: `Tests/MCP/test_local_store.py` — pin save/load behavior, associated
+  state filtering, valid-profile controls, and exact whitespace/case policy.
+- Modify: `Tests/MCP/test_hub_tool_catalog.py` — pin the raw-projection guard
+  and demonstrate the pre-fix permission-identity collision.
+- Modify: `Docs/User_Guide/mcp.md` — replace the stale Hub session-todo claim
+  with the live workspace/Git/web inventory and explicit Console-only task
+  boundary.
+- Modify: `Tests/MCP/test_mcp_documentation_contract.py` — reject both literal
+  and synonymous claims that session todo/task tools are Hub inventory.
 
 - [ ] **Step 1: Write exact absence RED assertions**
 
@@ -912,6 +926,71 @@ git add tldw_chatbook/MCP/local_server_tools.py \
 # Add only exact live-document paths changed after classifying the scan.
 git commit -m "docs(todo): retire todo_write runtime contract"
 ```
+
+### Reserved identity quality follow-up
+
+The normal external-profile save validator rejects `:` and whitespace but not
+the exact `__local__` segment that ADR-032 already assigns to the synthetic
+Console workspace-tool principal. Both hand-written store JSON and raw catalog
+records bypass that validator. Before the fix, a discovered external
+`fs_write` can therefore become `local:__local__::fs_write`, identical to the
+real workspace tool's Hub and permission key.
+
+- [ ] **Step 6: Commit the governing boundary before production changes**
+
+Add unchecked measurable acceptance criteria to TASK-13216, amend ADR-032 and
+the design with the reserved identity, and add these exact files and gates to
+Task 8. Keep the task In Progress. Commit only those four governance files as
+`docs(todo): reserve local tool identity`.
+
+- [ ] **Step 7: Write reserved-identity RED tests**
+
+Using the real `LocalMCPStore`, prove that `save_profile()` accepts
+`__local__`. Hand-write a store containing that profile plus discovery and
+runtime state and prove it loads into an external catalog. Directly pass the
+same record to `local_tools_from_record()` and prove it yields
+`local:__local__::fs_write`. Where the real permission resolver permits, copy
+the genuine workspace `fs_write` schema/description into that spoof and prove
+one permission identity resolves both. Add an ordinary valid-profile control.
+
+The post-fix assertions must require rejection before persistence, complete
+load-time removal of the reserved profile and its associated discovery/runtime
+state, and empty raw projection. Explicitly test exact `__local__`, existing
+whitespace rejection, and case variants as still-valid distinct ids.
+
+- [ ] **Step 8: Implement all three narrow guards**
+
+Reject the exact reserved id from the save-time profile validator. Filter an
+existing reserved profile and its associated discovery snapshot and runtime
+state in `LocalMCPStoreState.from_dict()` so it is inert immediately after
+load; do not rename, reinterpret, or persist a cleanup. Independently return no
+tools for a raw reserved record in `local_tools_from_record()`. Preserve every
+other current profile-id rule and error behavior.
+
+- [ ] **Step 9: Correct and contract-test the live MCP user guide**
+
+Describe the Hub local catalog as workspace, read-only Git, and web tools.
+State explicitly that `todo_create`, `todo_update`, `todo_get`, and `todo_list`
+require a Console `SessionTodoStore` and are not Hub tools. Do not claim any old
+permission migration. The documentation contract must reject synonymous
+session-todo/session-task Hub inventory wording, not only `todo_write`.
+
+- [ ] **Step 10: Prove mutations and run focused security/static gates**
+
+Temporarily remove each save, load, and raw-projection guard independently;
+the matching test must turn RED, then be restored. Re-run the original exploit
+and prove it no longer reproduces while the legitimate external-profile
+control remains. Run the local-store, Hub catalog, workbench, documentation,
+and permission suites plus Ruff format/check, focused mypy, Bandit, compile,
+and diff checks for the exact changed files.
+
+- [ ] **Step 11: Commit the reserved-identity fix**
+
+Stage only `tldw_chatbook/MCP/local_store.py`,
+`tldw_chatbook/MCP/hub_tool_catalog.py`, `Tests/MCP/test_local_store.py`,
+`Tests/MCP/test_hub_tool_catalog.py`, `Docs/User_Guide/mcp.md`, and
+`Tests/MCP/test_mcp_documentation_contract.py`. Commit as
+`fix(mcp): reserve local workspace tool identity`.
 
 ## Task 9: Full verification, review, and backlog closeout
 
