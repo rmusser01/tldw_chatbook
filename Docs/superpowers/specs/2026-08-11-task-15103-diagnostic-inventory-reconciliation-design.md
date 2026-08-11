@@ -107,30 +107,56 @@ history and the current AST inventory:
 3. use content-sensitive Git history and source inspection to enumerate every
    added, removed, reworded, re-levelled, or structurally changed diagnostic;
 4. record a disposition for every delta: reviewed-safe, metadata repair, or
-   justified deletion.
+   justified deletion; and
+5. persist the complete review in
+   `Docs/security/task-15103-diagnostic-review.json`.
 
-The final task Implementation Notes retain the exact owner and disposition
-counts. A mismatch, ambiguous call, or eighteenth owner stops reconciliation;
-it is not guessed or silently absorbed.
+The review artifact records the exact incident and final base revisions plus
+one row for every changed diagnostic. Each row carries the owner path, stable
+before and after call identities (method, content digest, and duplicate
+ordinal, with `null` for an addition or deletion), introducing commit,
+disposition, rationale, permitted dynamic fields, and their proven provenance.
+It also records the starting and reviewed-final complete call-count/digest pair
+for each of the 17 owners. Removed and rewritten historical calls therefore
+remain reviewable rather than disappearing behind aggregate counts.
+
+The final task Implementation Notes retain the exact ledger hash and reconcile
+its per-owner and per-disposition totals. A mismatch, ambiguous call, missing
+ledger row, or eighteenth owner stops reconciliation; it is not guessed or
+silently absorbed.
 
 ### Permanent review boundary
 
 `Tests/Architecture/test_persistent_diagnostic_inventory.py` remains the
 canonical source-level guard. Its reviewed metadata map is extended for the
 TASK-15103 call sites that survive the audit. Each entry identifies a fixed
-diagnostic label and the exact permitted dynamic expressions. The guard
-rejects:
+diagnostic label, exact permitted dynamic expressions, and the provenance that
+makes each value ADR-029 metadata rather than private content. An expression
+named `status`, `provider`, `operation`, or similar is not safe by spelling
+alone. It must be code-bounded, reduced to a closed enum, or proven through the
+real production boundary not to carry an adversarial private sentinel. The
+guard rejects:
 
-- raw positional, f-string, percent-format, `.format`, keyword, or bound
-  private expressions;
+- wholly dynamic messages plus raw positional, f-string, percent-format,
+  `.format`, concatenation, keyword, or bound private expressions;
 - `logger.exception`, dynamic `logger.opt(exception=...)`, stdlib `exc_info`,
   or `stack_info` capture;
 - labels that are missing, duplicated, or rewritten without review; and
 - fields that differ from the explicitly reviewed metadata schema.
 
-Synthetic mutation tests must prove the guard rejects at least private
-positional data, bound/keyword data, exception messages, and traceback
-capture. Tests operate on source or real production functions; no Textual
+Synthetic mutation tests must independently prove rejection of a wholly
+dynamic message, positional data, f-string data, percent formatting,
+`.format`, concatenation, bound data, keyword data, an exception message,
+`logger.exception`, constant and dynamic `logger.opt(exception=...)`, stdlib
+`exc_info`, and `stack_info`. Each mutant must fail on the assertion that owns
+that syntax, not merely make some other test red.
+
+For every permitted dynamic field whose source is not statically code-bounded,
+a direct real-production-function sentinel supplies a distinctive private
+value through the actual config, transport, provider, filesystem, or state
+boundary. The test first proves the legitimate behavior and then proves the
+sentinel is absent from captured diagnostics while the intended metadata event
+remains. Tests operate on source or real production functions; no Textual
 application, test application, reduced application, or simplified substitute
 is constructed.
 
@@ -172,6 +198,28 @@ The candidate is compared against both the original branch base and the final
 source. Unknown top-level data, an unreviewed owner, a changed classification,
 or sink-topology movement fails closed.
 
+The comparison uses deep copies of the complete checked and generated
+documents. It removes only the exact 17 reviewed owner rows from the general
+owner-list equality check, then validates those rows separately for exact path,
+owner, reason, reviewed call count, and reviewed digest. Every other field,
+section, list order, exclusion, classification rule, owner row, and sink row
+must remain deeply equal. Both documents' summary totals are independently
+recomputed from their own owner and topology rows before any normalization;
+summary equality produced by the generator is not trusted as independent
+evidence.
+
+Mutation tests must make this boundary red for an unknown top-level field, a
+forged derived summary, an eighteenth owner, an owner/reason classification
+change on one of the 17 paths, and a persistent-sink change. Each mutant is
+restored before the next, and byte hashes plus clean status prove restoration.
+
+Immediately before the final rebase, record the complete diagnostic-call
+multiset for every one of the 17 owners, not only its inventory entry. After
+rebasing onto the final `origin/dev`, compare every complete population with
+that checkpoint. Any added, removed, or changed call—including a new call
+inside an already-authorized owner—reopens the per-call audit, provenance
+review, ledger, tests, and manifest comparison before closeout.
+
 ## Error and behavior preservation
 
 Diagnostic repair must not turn a formerly lazy operation eager, suppress or
@@ -194,12 +242,17 @@ Verification remains limited to touched files and affected functionality:
 2. focused source guards for the exact reviewed calls;
 3. direct production-function tests where a repair can affect evaluation,
    exceptions, ordering, transport, cancellation, or returned results;
-4. mutation checks that restore representative historical private-value and
-   traceback shapes and make their owning tests fail for the intended reason;
-5. Ruff lint and focused formatting for edited Python, `py_compile`, JSON
+4. the complete syntax/provenance mutation matrix plus representative
+   historical private-value and traceback shapes, each failing its owning
+   assertion for the intended reason;
+5. independent manifest-boundary mutations for unknown data, forged derived
+   totals, an eighteenth owner, classification change, and sink change;
+6. ledger reconciliation proving every historical delta has exactly one
+   disposition and every reviewed-final owner digest matches generated source;
+7. Ruff lint and focused formatting for edited Python, `py_compile`, JSON
    parsing, and `git diff --check`; and
-6. a final current-`dev` rebase followed by the same touched-scope gates and an
-   exact branch-scope audit.
+8. a final current-`dev` rebase followed by the complete 17-owner call-population
+   comparison, the same touched-scope gates, and an exact branch-scope audit.
 
 Repository-wide pytest is not run. Application tests, test applications,
 reduced applications, and simplified application substitutes are prohibited.
@@ -212,7 +265,8 @@ reduced applications, and simplified application substitutes are prohibited.
   changes and the exact original six-file sink topology.
 - **AC3:** the architecture checker and focused regressions pass without an
   application harness.
-- **AC4:** the durable disposition ledger and permanent guard cover every
+- **AC4:** the durable per-call disposition ledger, provenance evidence,
+  complete owner-population reconciliation, and permanent guard cover every
   generated-versus-stored delta for all 17 owners under ADR-029.
 
 ## Out of scope
