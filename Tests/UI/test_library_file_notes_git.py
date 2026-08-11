@@ -3447,6 +3447,12 @@ async def test_hidden_action_summary_is_presented_after_reopen(
             lambda: not owner.mutation_active(binding),
             "hidden Stage did not settle",
         )
+        assert _text(
+            workspace.query_one("#file-notes-git-status", Static)
+        ) == (
+            "Status: STALE — Git action finished while Review session changes "
+            "was hidden. Open it again to Refresh."
+        )
         assert len(git_service.status_calls) == 1
 
         entry.press()
@@ -4553,7 +4559,7 @@ async def test_mutation_blocks_root_and_path_while_path_lease_blocks_mutation(
         assert workspace.root == root.resolve()
         assert (
             _text(workspace.query_one("#file-notes-action-status", Static))
-            == "Session Git mutation in progress; structural actions are busy."
+            == "Git operation in progress; structural actions are busy."
         )
 
         workspace._set_action_status("")
@@ -4563,14 +4569,14 @@ async def test_mutation_blocks_root_and_path_while_path_lease_blocks_mutation(
         assert workspace._opened.relative_path == "two.md"
         assert (
             _text(workspace.query_one("#file-notes-action-status", Static))
-            == "Session Git mutation in progress; structural actions are busy."
+            == "Git operation in progress; structural actions are busy."
         )
 
         workspace._set_action_status("")
         assert not await workspace.open_path("two.md")
         assert (
             _text(workspace.query_one("#file-notes-action-status", Static))
-            == "Session Git mutation in progress; structural actions are busy."
+            == "Git operation in progress; structural actions are busy."
         )
         assert workspace.query_one("#file-notes-choose-root", Button).disabled
         assert workspace.query_one("#file-notes-save-copy", Button).disabled

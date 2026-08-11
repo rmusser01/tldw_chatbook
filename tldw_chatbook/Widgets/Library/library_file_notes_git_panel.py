@@ -2664,13 +2664,23 @@ class LibraryFileNotesGitPanel(Vertical):
         self._update_actions()
 
     def set_current_status(self, detail: str, *, complete: bool = False) -> None:
-        """Set repository freshness/recovery without changing last action."""
+        """Set repository freshness/recovery without changing last action.
+
+        Args:
+            detail: Status copy to render.
+            complete: Preserve the complete copy instead of fitting two lines.
+        """
         self._current_status_text = detail
         self._current_status_complete = complete
         self._fit_fixed_regions()
 
     def set_last_action(self, detail: str, *, complete: bool = False) -> None:
-        """Set the latest action result independently of current freshness."""
+        """Set the latest action result independently of current freshness.
+
+        Args:
+            detail: Latest-action copy to render.
+            complete: Preserve the complete copy instead of fitting two lines.
+        """
         widget = self.query_one("#file-notes-git-action-status", Static)
         self._last_action_text = detail
         self._last_action_complete = complete
@@ -3458,7 +3468,7 @@ class SessionGitTrustDialog(ConfirmationDialog):
             markup=True,
         )
         super().__init__(
-            title="Trust Session Git repository?",
+            title="Trust repository for session changes?",
             message=(
                 f"Repository: {display_path}\n\n"
                 "Trust lasts only for this application process. Git status "

@@ -103,7 +103,7 @@ _SAVE_STATE_COPY: dict[SaveState, str] = {
 }
 _UNSET = object()
 _SESSION_GIT_MUTATION_BUSY = (
-    "Session Git mutation in progress; structural actions are busy."
+    "Git operation in progress; structural actions are busy."
 )
 _TreeData = tuple[Literal["file", "folder", "deleted"], str]
 
@@ -523,8 +523,7 @@ class LibraryFileNotesWorkspace(Vertical):
     .file-notes-toolbar.-confirm-delete {
         grid-size: 2;
         grid-columns: 1fr 1fr;
-        grid-rows: 1 1;
-        height: 2;
+        height: auto;
     }
 
     LibraryFileNotesWorkspace.-stack-editor-actions
@@ -3472,7 +3471,7 @@ class LibraryFileNotesWorkspace(Vertical):
             )
         elif mutation_active:
             busy_reason = (
-                "Session Git mutation in progress; editor actions are temporarily "
+                "Git operation in progress; editor actions are temporarily "
                 "unavailable."
             )
         self.query_one("#file-notes-action-status", Static).update(
@@ -3635,7 +3634,7 @@ class LibraryFileNotesWorkspace(Vertical):
         if expected_binding is not None and root_lease is None:
             if self._session_owner.mutation_active(expected_binding):
                 self._set_action_status(
-                    "Session Git mutation in progress; root change is busy."
+                    "Git operation in progress; root change is busy."
                 )
             return False
         self._root_generation += 1
@@ -5295,8 +5294,8 @@ class LibraryFileNotesWorkspace(Vertical):
                         self._git_refresh_after_mutation = True
                         if self._active and self.is_mounted:
                             self._git_panel_widget.mark_stale(
-                                "Git action finished while Prepare session was "
-                                "hidden. Reopen it to Refresh.",
+                                "Git action finished while Review session changes "
+                                "was hidden. Open it again to Refresh.",
                                 retain_rows=self._git_can_retain_rows(binding),
                             )
 

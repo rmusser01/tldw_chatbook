@@ -254,14 +254,14 @@ def _assert_visible_editor_actions_fit(
     """Assert disclosed actions keep complete labels inside the editor pane."""
     pane = workspace.query_one("#file-notes-editor-pane")
     visible = tuple(
-        button
+        (toolbar, button)
         for toolbar in pane.query(".file-notes-toolbar")
         if toolbar.display
         for button in toolbar.query(Button)
         if button.display
     )
     assert visible
-    for button in visible:
+    for toolbar, button in visible:
         label = str(button.label)
         assert button.render_line(0).text.strip() == label, (
             button.id,
@@ -273,6 +273,12 @@ def _assert_visible_editor_actions_fit(
         )
         assert button.render().plain == label
         assert cell_len(label) <= button.content_region.width
+        assert toolbar.content_region.contains_region(button.region), (
+            toolbar.id,
+            toolbar.content_region,
+            button.id,
+            button.region,
+        )
         assert pane.content_region.contains_region(button.region)
 
 
@@ -2893,7 +2899,7 @@ async def test_file_notes_discloses_actions_by_editor_state_and_redirects_focus(
     replica.close()
 
 
-@pytest.mark.parametrize("size", ((160, 45), (120, 40), (64, 28)))
+@pytest.mark.parametrize("size", ((160, 45), (120, 40), (64, 28), (40, 20)))
 @pytest.mark.asyncio
 async def test_file_notes_disclosed_actions_fit_wide_and_compact_layouts(
     tmp_path: Path,

@@ -66,4 +66,6 @@ Renamed the Git entry and panel to `Review session changes`, described its curre
 Verification: 50 File Notes workspace tests passed; 19 focused Git/compact-terminal tests passed; 109 shared focus/CSS integrity tests passed; final five-test copy/disclosure regression selection passed; targeted Ruff, Python compilation, and `git diff --check` passed. The full Git module remains at 144 passed and one documented pre-existing baseline failure in the unrelated Protect-button stage gate (`test_stage_flushes_then_gate_keeps_editor_back_and_one_latest_refresh`).
 
 ADR required: no. The implementation conforms to ADR-011, ADR-029, ADR-031, and ADR-035. Modified the File Notes workspace and Git panel, their focused regression suites, and the Impeccable critique artifact.
+
+Qodo follow-up: added Google-style parameter documentation for the complete-copy APIs; relaxed the stacked delete-confirmation toolbar so all dirty-state controls remain contained at 40×20; and removed retired `Prepare session` / `Session Git mutation` wording from user-visible recovery, busy, and trust copy. The review regression was reproduced before the layout fix, then the six focused mounted cases and the complete 51-test workspace suite passed. Targeted Ruff, Python compilation, and diff checks also passed.
 <!-- SECTION:NOTES:END -->
