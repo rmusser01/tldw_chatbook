@@ -14,6 +14,7 @@ import pytest
 
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Chat.console_chat_models import GenerationVariantMeta
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -31,6 +32,19 @@ def _meta(seed):
         seed=seed,
         style=None,
         params={},
+    )
+
+
+def _pending(name: str) -> PendingAttachment:
+    return PendingAttachment(
+        file_path=f"/unused/{name}",
+        display_name=name,
+        file_type="image",
+        insert_mode="attachment",
+        data=b"source",
+        mime_type="image/png",
+        original_size=6,
+        processed_size=6,
     )
 
 
@@ -103,6 +117,114 @@ def test_append_generation_message_sets_metadata_and_mirror(store_with_session):
     assert msg.image_data == b"a"  # position-0 mirror
     assert [m.seed for m in msg.generation_metadata] == [1, 2]
     assert [a.position for a in msg.attachments] == [0, 1]
+
+
+def test_consume_pending_attachment_removes_only_exact_identity_in_order(
+    store_with_session,
+):
+    store, sid = store_with_session
+    first, target, last = (
+        _pending("first.png"),
+        _pending("target.png"),
+        _pending("last.png"),
+    )
+    for attachment in (first, target, last):
+        assert store.add_pending_attachment(sid, attachment)
+
+    assert store.consume_pending_attachment(sid, target.attachment_id) is True
+    assert store.pending_attachments(sid) == [first, last]
+    assert store.consume_pending_attachment(sid, target.attachment_id) is False
+    assert store.pending_attachments(sid) == [first, last]
+
+
+def test_consume_pending_attachment_mismatch_and_replacement_are_noops(
+    store_with_session,
+):
+    store, sid = store_with_session
+    original = _pending("original.png")
+    replacement = _pending("replacement.png")
+    store.set_pending_attachment(sid, original)
+
+    assert store.consume_pending_attachment(sid, "not-the-owner") is False
+    store.set_pending_attachment(sid, replacement)
+    assert store.consume_pending_attachment(sid, original.attachment_id) is False
+    assert store.pending_attachments(sid) == [replacement]
+
+
+def test_consume_pending_attachment_missing_session_uses_store_keyerror_contract(
+    store_with_session,
+):
+    store, _sid = store_with_session
+    with pytest.raises(KeyError):
+        store.consume_pending_attachment("missing-session", "attachment")
+
+
+def test_pending_attachment_identity_never_enters_generation_persistence_rows(
+    store_with_session, fake_persistence
+):
+    store, sid = store_with_session
+    source = _pending("source.png")
+    store.add_pending_attachment(sid, source)
+
+    store.append_generation_message(
+        sid,
+        content="[image] edit",
+        variants=[(b"png", "image/png", _meta(1))],
+        persist=True,
+    )
+
+    persisted = fake_persistence.created_messages[-1]
+    assert "attachment_id" not in persisted
+    assert all("attachment_id" not in row for row in persisted["attachments"])
+    assert all(
+        "attachment_id" not in row for row in persisted["generation_metadata"]
+    )
+
+
+@pytest.mark.integration
+def test_merge_persisted_generation_message_is_exact_idempotent_and_isolated(tmp_path):
+    db = CharactersRAGDB(tmp_path / "generation_merge.sqlite", "test_client")
+    try:
+        writer = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        writer_session = writer.create_session(title="writer")
+        generated = writer.append_generation_message(
+            writer_session.id,
+            content="[image] edit",
+            variants=[(b"exact-png", "image/png", _meta(41))],
+            persist=True,
+        )
+        conversation_id = writer_session.persisted_conversation_id
+        assert conversation_id is not None
+
+        reader = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        reader_session = reader.create_session(title="reader")
+        reader_session.persisted_conversation_id = conversation_id
+        unrelated = reader.append_message(
+            reader_session.id, role="user", content="unrelated", persist=False
+        )
+        unrelated_before = reader.get_message(unrelated.id)
+
+        first = reader.merge_persisted_generation_message(
+            reader_session.id, generated.id
+        )
+        second = reader.merge_persisted_generation_message(
+            reader_session.id, generated.id
+        )
+
+        assert first is not None and second is not None
+        assert first.id == generated.id == second.id
+        assert first.persisted_message_id == generated.id
+        assert first.image_data == b"exact-png"
+        assert first.image_mime_type == "image/png"
+        assert first.attachments == second.attachments
+        assert first.generation_metadata == (_meta(41),)
+        assert sum(
+            node.persisted_message_id == generated.id
+            for node in reader._nodes_by_session[reader_session.id].values()
+        ) == 1
+        assert reader.get_message(unrelated.id) == unrelated_before
+    finally:
+        db.close_connection()
 
 
 def test_keep_swaps_in_memory_and_calls_persistence(store_with_session, fake_persistence):
