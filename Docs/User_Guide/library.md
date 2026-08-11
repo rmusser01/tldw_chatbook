@@ -64,9 +64,10 @@ pages:
     row label ever cuts off mid-word and the count always stays visible.
     The three Study rows are hand-offs (they are a
     two-step trip out of Library), so they group under their own section
-    and add a second "opens staging canvas" line — that click opens a
-    Library-local staging canvas, not the Study screen itself; **Continue
-    in Study** inside that canvas is the click that actually leaves. The
+    and add a second "see what carries over" line — that click opens a
+    Library-local staging canvas showing what will carry into Study, not
+    the Study screen itself; **Continue in Study** inside that canvas is
+    the click that actually leaves, and **Escape** returns to the hub. The
     selected row is marked **▸**, and the Flashcards row shows "due: N"
     instead of a plain count;
   - a **Details** section, collapsed by default (see below). Section
@@ -76,16 +77,20 @@ pages:
   the landing hub: per-source counts, quick actions (Import… /
   Search / New note, also reachable with **i** and **n**), and one
   clickable row per recent item that jumps straight into it, under
-  the guidance line "Search everything, pick a section on the left, or
+  the guidance line "Search everything, pick a section, or
   add something new."
 - **Footer** — shows the keys that work where you are: "/ focus search"
   and "F6 next pane" on every canvas; the landing adds "i import content"
   and "n new note" (single-letter accelerators for the hub actions);
   the Search / RAG canvas adds "u use Library
   context in Console", "enter select evidence", and "o open evidence";
-  a Media/Notes/Prompts/Skills list adds "esc focus rail"; and that
-  list's item viewer/editor (or the media viewer) adds "esc back to
-  list" instead.
+  a Media/Notes/Prompts/Skills/Collections list adds "esc focus rail";
+  that list's item viewer/editor (or the media viewer) adds "esc back to
+  list" instead; the Export canvas adds "esc back to Media" (or whichever
+  canvas opened it — "esc back to hub" from the rail); and a Study
+  staging canvas adds "esc back to hub". Every hint is a per-key
+  "key action" pair — the Notes editor, for example, shows "ctrl+s save
+  note | esc back to notes".
 
 One special case: selecting **Notes** adds a **Database | Files** strip
 above the workbench. **Files** swaps the canvas pane for the File Notes
@@ -279,9 +284,10 @@ here in Library.
   Library…** box) first.
 - **Clicking Study decks / Flashcards / Quizzes doesn't open Study.**
   That's by design — the row opens a Library-local staging canvas first
-  ("opens staging canvas"); press **Continue in Study** inside it to
-  actually leave Library. Generation and review run in the Study screen;
-  **Escape** there returns to this staging canvas.
+  ("see what carries over"); press **Continue in Study** inside it to
+  actually leave Library, or **Escape** to return to the hub. Generation
+  and review run in the Study screen; Escape there returns to this
+  staging canvas.
 - **The palette found "Notes" but opened Library.** The standalone
   Notes, Prompts, Skills, Ingest, Research, and Media screens were
   retired; their names now route to the matching Library row.
@@ -352,3 +358,18 @@ panel is titled for the surface it describes ("Library Shortcuts —
 Media"), lists each key exactly once, includes "F6 next pane" on
 Search/RAG (whose footer now spells it verbatim), and a second F1 closes
 the panel.)*
+*Verified against fix/settings-appearance-crash @ 57ad075de — 2026-08-10
+(task-4023 AC#5–#7: one footer grammar everywhere — the Notes workflow's
+run-on hints ("Ctrl+S Save · Esc Notes") became per-key pairs, and the
+global cluster spells the pane key "F6 next pane" to match; value-cycle
+buttons ("type: All", "sort: Newest", "quality: thumbnail", "mode:
+Search") carry a trailing "⇄" with a tooltip listing the full cycle —
+a trailing "▸/▾" is now always a section-header disclosure and a leading
+"▸ " always the selected list row (Collections rows included); the Media
+toolbar is a single horizontal row like its siblings; canvas list titles
+render in full instead of the rail's 17-character cut; the landing line
+reads "pick a section" (no "on the left" — at ≤100 columns the shell
+shows one pane at a time); Escape now works on Export (back to the
+canvas that opened it, or the hub), Collections (focus rail), and the
+Study staging canvases (back to hub); the staging rows' second line
+reads "see what carries over".)*

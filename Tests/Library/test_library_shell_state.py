@@ -133,7 +133,7 @@ def test_empty_selection_yields_landing_canvas():
     assert shell.canvas_kind == "empty"
     assert (
         shell.canvas_empty_copy
-        == "Search everything, pick a section on the left, or add something new."
+        == "Search everything, pick a section, or add something new."
     )
 
 

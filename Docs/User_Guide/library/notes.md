@@ -224,3 +224,9 @@ the branch was unreachable by any exit path. Restored: the check now
 treats that literal seed as blank too, and the fix is proven at every exit
 seam (Back, Escape, rail switch, screen leave), not just the two this
 paragraph's prose already covered).*
+*Verified against fix/settings-appearance-crash @ 57ad075de — 2026-08-10
+(task-4023 AC#5: the Notes footer speaks the shared per-key grammar —
+"ctrl+n new note | / find note | esc focus rail" on the list, "ctrl+s
+save note | esc back to notes" in the editor (with shorter labels at
+compact widths); locked states such as a running sync advertise no dead
+keys.)*

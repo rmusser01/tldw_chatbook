@@ -109,10 +109,10 @@ In server mode the **Export** rail row is disabled, with the tooltip
   once everything fits.
 
 **Export bundle (.zip)** is a single form: the "Export bundle (.zip)"
-header, a scope line ("Everything: 128 media · 542 conversations · 87
+header, a scope line ("All media, conversations & notes: 128 media · 542 conversations · 87
 notes", or "Notes · 87 items" when you arrived scoped; "Counting…" while
 it tallies), the "Export name" and "Description (optional)" fields, a
-"quality: … ▸" button with a helper line matching whichever option is
+"quality: … ⇄" button with a helper line matching whichever option is
 actually selected (task-2859: "keeps a small preview image instead of the
 full file" / "shrinks media files before adding them to the zip" /
 "copies full media files into the zip" for thumbnail/compressed/original
@@ -174,7 +174,7 @@ the warnings the whole time.
 | Export control | What it does |
 |---|---|
 | "Export name" | Pre-filled "Library export 2026-07-31" (today's date); becomes the bundle's display name. |
-| "quality: thumbnail ▸" | Cycles thumbnail → compressed → original; the helper line underneath always describes the option currently showing. Only "original" copies full media files into the zip; the others keep the package small. |
+| "quality: thumbnail ⇄" | Cycles thumbnail → compressed → original; the helper line underneath always describes the option currently showing. Only "original" copies full media files into the zip; the others keep the package small. |
 | "Choose destination…" | Opens "Choose Export Destination". Whatever you pick is normalized to end in `.zip`; if that file already exists, an "Overwrites <name>" note appears (informational — exporting proceeds and replaces it). |
 | "Export bundle (.zip)" | Enabled once counting has finished, the scope is non-empty, and a destination is chosen. "Nothing to export in this scope." appears when the scope is empty; either way, hovering the button always shows a tooltip naming the same reason it's disabled (or "Write the bundle to the chosen destination." once it's ready) — a disabled press can never look like it silently did nothing. |
 | "Cancel" | Visible only while an export is running; stops it. |
@@ -550,3 +550,10 @@ saying the gap affects imports on this machine only.*
 while its gate is closed the submit button reads "○ Export bundle (.zip)"
 — the Library's non-colour disabled marker — and renders at 7.25:1
 (measured live; it was 1.44:1), with its F-018 reason tooltip unchanged).*
+*Verified against fix/settings-appearance-crash @ 57ad075de — 2026-08-10
+(task-4023 AC#7: the widest export scope reads "All media, conversations
+& notes: …" — the bundle never includes prompts, skills, or Collections,
+so it no longer claims "Everything"; the quality control is a "⇄" cycle
+button whose tooltip lists thumbnail → compressed → original; Escape on
+the Export canvas returns to the canvas whose Export… opened it, or to
+the hub when you came from the rail.)*

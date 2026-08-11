@@ -658,3 +658,23 @@ put the keyword-only document in the last visible slot and the reverted value
 put an ordinary vector row there, with the four rows above it byte-identical in
 both runs — which also proves the change did not disturb the ranking it was not
 supposed to touch.
+
+## Importing the test harness outside pytest is NOT config-isolated (2026-08-10, task-4023 Task 3)
+
+**Incident.** While root-causing a scroll race, three quick probes ran
+`python - <<EOF` scripts that imported `Tests.UI.test_library_shell`'s harness
+helpers directly and drove a real `LibraryScreen` (typed a query, pressed Run).
+The probes "used the same harness as the green tests", so they looked safe —
+but the `TLDW_CONFIG_PATH` bootstrap that isolates the suite lives in
+`Tests/conftest.py`, which only runs UNDER PYTEST. The probe's app therefore
+resolved the REAL user config, and the query it executed ("tides") was
+persisted into the live `~/.config/tldw_cli/config.toml`
+`[library.search] history` by `_save_library_search_history`. Found only
+because the close-out self-review greped the live config; repaired by hand.
+
+**Rule.** The harness is not the isolation — the conftest is. Any ad-hoc
+`python` invocation that imports app or test modules must set
+`TLDW_CONFIG_PATH` to a scratch config itself, or be written as a real
+(possibly throwaway) pytest test. After ANY non-pytest probe that could have
+driven app behavior, grep the live config for the probe's own inputs before
+declaring the session clean.

@@ -131,3 +131,9 @@ message deduplicated, three enable-Create sentences collapsed into one)*
 the three form buttons measured 2.30:1 while disabled — legible now
 (5.91:1 measured live via ANSI decode), with the "○" disabled marker;
 typing a valid name flips Create back in place without the marker).*
+*Verified against fix/settings-appearance-crash @ 57ad075de — 2026-08-10
+(task-4023 AC#5/#7: the empty state is two lines — "No Collections yet."
+plus one create-one-below sentence; the selected Collection row carries
+the shared leading "▸ " marker; Escape on the Collections canvas moves
+focus to the rail search box, matching every other list canvas, and the
+footer advertises "esc focus rail".)*
