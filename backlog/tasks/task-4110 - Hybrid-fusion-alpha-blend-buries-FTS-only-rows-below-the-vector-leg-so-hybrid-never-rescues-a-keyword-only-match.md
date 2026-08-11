@@ -3,10 +3,10 @@ id: TASK-4110
 title: >-
   Hybrid fusion alpha blend buries FTS-only rows below the vector leg, so hybrid
   never rescues a keyword-only match
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-09 20:22'
-updated_date: '2026-08-10 21:32'
+updated_date: '2026-08-11 02:47'
 labels:
   - rag
   - retrieval
@@ -25,7 +25,7 @@ Found closing the TASK-3994/3995/3996 fusion cluster (plan Task 6), by the fixtu
 <!-- AC:BEGIN -->
 - [x] #1 A document that only the keyword leg finds can appear in hybrid's top-k when the vector leg returns k or more distinct documents (the case that is structurally impossible today - a thin vector leg already lets keyword-only rows through and is not evidence)
 - [x] #2 The chosen weighting is justified against a measurement, not asserted: the before/after numbers for the affected golden queries appear in the PR
-- [ ] #3 Tests/RAG_Eval baselines are re-stamped in the same PR, and the hybrid cell for kw-plant-maintenance-record moves from miss to hit
+- [x] #3 Tests/RAG_Eval baselines are re-stamped in the same PR, and the hybrid cell for kw-plant-maintenance-record moves from miss to hit
 - [x] #4 A regression test pins that an FTS-only row outranks at least one vector-only row under the shipped default alpha and rrf_k
 - [x] #5 A test asserts the vector-blind fixture is STILL vector-blind - semantic mode does not return note-saltmarsh-hide for kw-plant-maintenance-record - so a future model bump or re-stamp cannot silently return the corpus to the state where it cannot distinguish coverage from noise
 <!-- AC:END -->
@@ -58,4 +58,61 @@ See Docs/superpowers/plans/2026-08-10-rag-fusion-weighting.md (Task 4 sweep + Ta
 **Oracle updates, all disclosed:** `test_defaults_unchanged` → `test_shipped_defaults` (pinned `rrf_k == 60`, now pins 5 plus the unchanged fallback), and four `TestPipelineRrfMerge` cases in `Tests/RAG/test_fusion.py` that hand-computed `1/(60+rank)` on the profile-resolved path (now `PROFILE_K`). Nothing else moved: `local_citation_capture` fixtures record k per row and were unaffected; `Tests/RAG_Eval` baselines are NOT re-stamped here.
 
 **Files:** `RAG_Search/simplified/config.py` (the default + its justification), `RAG_Search/fusion.py`, `RAG_Search/simplified/rag_service.py`, `RAG_Search/pipeline_builder_simple.py`, `Library/library_rag_score_kinds.py`, `Library/library_rag_state.py`, `UI/Views/RAGSearch/search_handoff.py`, `Event_Handlers/Chat_Events/chat_rag_events.py` (docstrings that asserted k=60 or the ~0.016 fused ceiling), `Docs/Development/RAG/RAG-Documentation.md`, `backlog/decisions/005-*` (addendum), new `Tests/RAG_Search/test_fusion_rescue_pin.py`, plus `Tests/RAG_Eval/test_harness_run.py` (AC#5 gated guard).
+
+## Implementation Notes (Task 6 — re-stamp, live check, closure)
+
+**AC #3, the deliberate re-stamp.** One re-stamp at the end of the arc, in the
+same commit as the docs and the closures, with both sets of numbers recorded.
+Hybrid moved on 10 of its 20 gated cells and every move is a rise: keyword
+recall **0.938 -> 1.000**, keyword NDCG 0.938 -> 0.957, keyword MRR 0.938 ->
+0.945, keyword P 0.106 -> 0.113, keyword F1 0.189 -> 0.201; overall recall
+0.974 -> 1.000, NDCG 0.974 -> 0.982, MRR 0.974 -> 0.977, P 0.103 -> 0.105, F1
+0.185 -> 0.190. **`semantic` and `plain` moved +0.000 on all 40 of their gated
+metrics** - the check that the change touched hybrid fusion and nothing else,
+and the reason a moved semantic cell would have stopped the stamp. The headline
+cell: `kw-plant-maintenance-record`'s hybrid result goes **miss -> hit at rank
+8**, rescued `fts-only`, probed directly at the shipped default rather than
+inferred from the recall aggregate. The gate re-run afterwards against the new
+baselines reports `PASSED: No regression. 60 metric(s) within 0.05 of
+baseline.` Two report-only movers, both explained rather than absorbed: hybrid
+negatives' `max_top_score` 0.0115 -> 0.1167 is the fused score's *scale*
+(`1/(rrf_k+1)`) moving, not confidence (`max_top_vector_score` is unchanged at
+0.2387), and the latency block churns on process order, as the harness README
+already documents.
+
+**The live check answered the question the corpus could not.** The eval corpus
+is 49 documents at k=10 with every other query already at rank 1; the product's
+Library Search/RAG surface runs at `LIBRARY_RAG_DEFAULT_TOP_K = 5`, i.e. half
+the fused candidate window. Run against the real Library DBs the check would
+have been vacuous - that library has **four** indexed documents (450 of its 453
+embeddings are chunks of one), so the vector leg cannot fill a result list and
+keyword-only rows already pass, which this task's own description says is not
+evidence. So 60 real documentation files were ingested into the scratch profile
+through the app's own indexing path first. On the resulting 64-document
+library, through the running TUI, default Hybrid Basic, default top-5: the
+query "drafted expert" (two words occurring literally in one document, never
+returned by vector retrieval) placed that document at position **5, banded
+`keyword match`**, with positions 1-4 unchanged; with the constant reverted to
+60 and nothing else changed, that slot held an ordinary vector row and the
+document was absent. Ordinary semantic queries were unaffected - one query
+returned a byte-identical list under both constants. The weighting moves the
+bottom of the list, not the ranking above it. Measured over 274 vector-missed
+queries on that library, the k change rescued 9 of them into the visible top-5,
+always into the last slot, which is what the arithmetic predicts.
+
+**What the numbers still do not cover.** "Nothing regressed" remains bounded:
+one corpus, one embedding model, and now one real 64-document library. And the
+eval corpus is now at its ceiling - with the rescue query answered, hybrid
+recall is 1.000 on every scored query, so a future fusion retune can only be
+measured here for *regression*. Any later weighting change that claims to add
+something needs a **new** vector-blind fixture, authored the way this one was.
+
+**Files (Task 6):** `Tests/RAG_Eval/baselines/{hybrid,plain,semantic}.json`
+(re-stamped), `Tests/RAG_Eval/README.md` (progression table + the TASK-4110
+entry retired + the shared-k note + the ceiling and scale bounds),
+`Docs/User_Guide/library/search-and-rag.md` (the fused-score ceiling, the
+keyword-only-row behaviour, and a live-check stamp),
+`Tests/RAG_Search/test_hybrid_fusion_metadata.py` (a module docstring still
+quoting the old ceiling), `backlog/tasks/task-3994 ...` (AC #2b closed with
+evidence).
 <!-- SECTION:NOTES:END -->

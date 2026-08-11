@@ -1,6 +1,6 @@
 {
   "baseline_id": "plain",
-  "created_at": "2026-08-09T20:23:57.412573+00:00",
+  "created_at": "2026-08-11T02:16:38.868759+00:00",
   "pipeline_config": {
     "mode": "plain",
     "k": 10,
@@ -48,10 +48,10 @@
     "report_only": {
       "latency": {
         "count": 45.0,
-        "mean_ms": 3.8,
-        "p95_ms": 5.6,
-        "max_ms": 12.2,
-        "total_s": 0.2
+        "mean_ms": 31.4,
+        "p95_ms": 200.2,
+        "max_ms": 333.1,
+        "total_s": 1.4
       },
       "mean_docs_at_k": 0.368,
       "num_queries": 38,

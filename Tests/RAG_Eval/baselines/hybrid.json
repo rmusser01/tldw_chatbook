@@ -1,6 +1,6 @@
 {
   "baseline_id": "hybrid",
-  "created_at": "2026-08-09T20:23:57.413068+00:00",
+  "created_at": "2026-08-11T02:16:38.869479+00:00",
   "pipeline_config": {
     "mode": "hybrid",
     "k": 10,
@@ -12,16 +12,16 @@
     ]
   },
   "metrics": {
-    "overall.precision": 0.10263157894736843,
-    "overall.recall": 0.9736842105263158,
-    "overall.mrr": 0.9736842105263158,
-    "overall.ndcg": 0.9736842105263158,
-    "overall.f1": 0.1850079744816587,
-    "category.keyword.precision": 0.10625000000000001,
-    "category.keyword.recall": 0.9375,
-    "category.keyword.mrr": 0.9375,
-    "category.keyword.ndcg": 0.9375,
-    "category.keyword.f1": 0.1893939393939394,
+    "overall.precision": 0.10526315789473684,
+    "overall.recall": 1.0,
+    "overall.mrr": 0.9769736842105263,
+    "overall.ndcg": 0.9819859178101507,
+    "overall.f1": 0.189792663476874,
+    "category.keyword.precision": 0.1125,
+    "category.keyword.recall": 1.0,
+    "category.keyword.mrr": 0.9453125,
+    "category.keyword.ndcg": 0.957216554799108,
+    "category.keyword.f1": 0.20075757575757577,
     "category.paraphrase.precision": 0.1,
     "category.paraphrase.recall": 1.0,
     "category.paraphrase.mrr": 1.0,
@@ -48,10 +48,10 @@
     "report_only": {
       "latency": {
         "count": 45.0,
-        "mean_ms": 8.9,
-        "p95_ms": 10.8,
-        "max_ms": 15.7,
-        "total_s": 0.4
+        "mean_ms": 46.7,
+        "p95_ms": 146.1,
+        "max_ms": 190.4,
+        "total_s": 2.1
       },
       "mean_docs_at_k": 10.0,
       "num_queries": 38,
@@ -65,7 +65,7 @@
         "count": 7,
         "returned_any": 7,
         "mean_docs_at_k": 10.0,
-        "max_top_score": 0.0115,
+        "max_top_score": 0.1167,
         "max_top_vector_score": 0.2387
       }
     }

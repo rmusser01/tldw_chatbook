@@ -1,8 +1,10 @@
 """Fusion must preserve original per-leg scores for score-kind-aware display.
 
-RRF-fused scores max out at ~1/(rrf_k+1) ~= 0.016 — far below the UI's
-similarity band thresholds — so the vector leg's original similarity is the
-only honest banding input for hybrid rows (spec Workstream A item 3).
+RRF-fused scores max out at ~1/(rrf_k+1) — ~0.17 at the shipped
+``rrf_k = 5`` (TASK-4110) and ~0.016 at the previous 60. Either way the
+ceiling sits below the UI's similarity band thresholds and moves whenever k
+is retuned, so the vector leg's original similarity is the only honest
+banding input for hybrid rows (spec Workstream A item 3).
 """
 import pytest
 from tldw_chatbook.RAG_Search.simplified.rag_service import RAGService
