@@ -81,6 +81,15 @@ ROUTE_NOTE_PLAIN_PROFILE_TEMPLATE = "{profile}: keyword search (no vectors)"
 # profile runs the profile's own fused search and has no divert to disclose.
 # The constant is deliberately not kept as an alias -- a disclosure nothing
 # can emit is prose that outlives its fact.
+# (TASK-15020/B2) NARROWED, not retired. Until B2 this fired for any
+# selection that was prompts-only, since prompts had no sub-leg; the engine's
+# keyword leg now serves all FOUR of the Search canvas's source types, so no
+# combination of real toggles can reach it any more. What remains reachable
+# is a selection carrying nothing the leg knows -- an empty selection, or one
+# built from identifiers this build does not recognize. The wording still
+# describes exactly that case, so it stays as the disclosure for it rather
+# than becoming a sentence nothing can emit (`ROUTE_NOTE_HYBRID_SCOPED`'s
+# fate, above).
 ROUTE_NOTE_HYBRID_NO_KEYWORD_SOURCES = (
     "no keyword leg for the selected sources — semantic only"
 )
@@ -96,42 +105,58 @@ _SEMANTIC_SOURCE_TYPE_MAP = {
     "conversation": "conversations",
     "conversations": "conversations",
     "chat": "conversations",
+    # TASK-15020/B2. The engine's keyword leg now emits `prompt` rows, and
+    # this map is what the source-type POST-FILTER canonicalizes with: an
+    # unrecognized provenance value passes the filter untouched
+    # (`_semantic_row_matches_scope` returns True), so without this entry a
+    # prompt row would survive a selection that had Prompts turned OFF.
+    "prompt": "prompts",
+    "prompts": "prompts",
 }
-# The canonical source types `_SEMANTIC_SOURCE_TYPE_MAP` can ever produce
+# The canonical source types the SEMANTIC leg can structurally speak to
 # (task-15 finding I2): `prompts` (and `workspaces`/`collections`) has no
-# semantic-index seam at all -- no provenance `source_type` a semantic
-# search row carries will ever canonicalize to it. `selected_source_types`
-# reaching `_search_semantic` is the Search canvas's full scope, which
-# includes `prompts` under its default (all four toggles on, the common
-# case whenever a workspace has >=1 prompt) -- diffing that raw scope
-# against `present` in `_semantic_scope_coverage` would flag `prompts`
-# "uncovered" on every single non-empty rag-mode query, forever, turning a
-# per-query signal ("semantic search looked at X and found nothing") into a
-# permanent false nag with the wrong implicature (prompts are structurally
-# absent from the semantic leg, not "searched and empty"). Used to filter
-# `source_types` down to only what the semantic leg can structurally speak
-# to before computing coverage.
-_SEMANTICALLY_COVERABLE_SOURCE_TYPES = frozenset(_SEMANTIC_SOURCE_TYPE_MAP.values())
+# semantic-index seam at all -- no vector row will ever carry it.
+# `selected_source_types` reaching `_search_semantic` is the Search canvas's
+# full scope, which includes `prompts` under its default (all four toggles
+# on, the common case whenever a workspace has >=1 prompt) -- diffing that
+# raw scope against `present` in `_semantic_scope_coverage` would flag
+# `prompts` "uncovered" on every single non-empty rag-mode query, forever,
+# turning a per-query signal ("semantic search looked at X and found
+# nothing") into a permanent false nag with the wrong implicature (prompts
+# are structurally absent from the semantic leg, not "searched and empty").
+#
+# **Written out, not derived.** This used to read
+# `frozenset(_SEMANTIC_SOURCE_TYPE_MAP.values())`, which was correct only
+# while that map's domain happened to be exactly the vector-indexed types.
+# TASK-15020/B2 added `prompt`/`prompts` to it for the post-filter, and the
+# derivation would have silently re-admitted `prompts` to the coverage
+# partition -- reinstating the exact false nag I2 removed, with every test
+# green. The two sets answer different questions; only one of them is about
+# the vector index.
+_SEMANTICALLY_COVERABLE_SOURCE_TYPES = frozenset({"media", "notes", "conversations"})
 # The Library scope identifiers the ENGINE's keyword (FTS5) leg can serve --
-# `media_fts` plus, since TASK-3996, `notes_fts` and `messages_fts`. Kept
-# separate from `_SEMANTICALLY_COVERABLE_SOURCE_TYPES` (currently the same
-# members) because they answer different questions and can diverge: one is
-# "does the vector index hold this type", the other "does the FTS leg query
-# it". `prompts` is in neither -- it has no engine-side seam at all, which
-# is why a prompts-only selection is the one case that still cannot use
-# hybrid.
-_FTS_SERVABLE_SOURCE_TYPES = frozenset({"media", "notes", "conversations"})
+# `media_fts`, plus `notes_fts`/`messages_fts` since TASK-3996 and
+# `prompts_fts` since TASK-15020/B2. Kept separate from
+# `_SEMANTICALLY_COVERABLE_SOURCE_TYPES` because they answer different
+# questions, and since B2 they genuinely DIVERGE: `prompts` is FTS-servable
+# and has no vector index at all, so a prompt reaches hybrid results through
+# this leg alone (rescued by the fusion weighting) and must never appear in
+# a semantic-coverage claim.
+_FTS_SERVABLE_SOURCE_TYPES = frozenset(
+    {"media", "notes", "conversations", "prompts"}
+)
 # Library scope identifier -> the ENGINE's keyword-leg vocabulary
 # (`rag_service.SOURCE_TYPE_*`, singular). The Library speaks plurals
 # (`notes`, `conversations`); the engine's FTS sub-legs are selected -- and
 # its rows stamped -- with the singular ingestion spelling, and a plural
 # handed to `keyword_source_types` is simply dropped as unknown, which would
 # leave the keyword leg empty rather than scoped. Domain: exactly
-# `_FTS_SERVABLE_SOURCE_TYPES` (`prompts` has no engine-side seam at all).
+# `_FTS_SERVABLE_SOURCE_TYPES`.
 _ENGINE_KEYWORD_SOURCE_TYPES = {
     "media": "media",
     "notes": "note",
     "conversations": "conversation",
+    "prompts": "prompt",
 }
 
 
@@ -694,9 +719,11 @@ class LibraryLocalRagSearchService:
         otherwise its rows would all be dropped by the source-type
         post-filter. That condition used to read "media selected", because
         the engine's FTS leg was media-only; TASK-3996 gave it notes and
-        conversation sub-legs, so media-off + notes-on now runs hybrid
-        instead of being diverted to semantic in exactly the case the FTS leg
-        was extended for. There used to be a SECOND condition -- no scope --
+        conversation sub-legs and TASK-15020/B2 gave it prompts, so every one
+        of the Search canvas's four toggles now keeps the query on the hybrid
+        path -- including a prompts-only selection, whose rows can ONLY come
+        from this leg (prompts have no vector index, so they reach the fused
+        output as FTS-only rows). There used to be a SECOND condition -- no scope --
         because allowlist pushdown was semantic-only; TASK-15020/B1 removed
         it at the engine (each FTS sub-leg takes its entry's ids as a
         parameterized filter, and a sub-leg the scope never names is skipped

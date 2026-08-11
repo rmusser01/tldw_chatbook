@@ -45,14 +45,17 @@ def test_model_downloads_are_blocked_for_the_duration_of_a_harness_run():
     assert transformers_is_offline() is True
 
 
-def test_a_corpus_of_only_unwritable_documents_is_refused(tmp_path):
-    """The one skip that must NOT be quiet.
+def test_a_corpus_with_nothing_semantically_indexable_is_refused(tmp_path):
+    """An empty VECTOR index must NOT be built quietly.
 
-    Skipping the prompt fixtures is the measurement; skipping *everything*
-    is an empty index, and an empty index scores 0.000 on every query in
-    every mode — which reads as total retrieval failure rather than as "the
-    harness wrote nothing". Named here so that failure has a cause attached
-    to it.
+    DISCLOSED UPDATE (2026-08-11, TASK-15020/B2): this used to be "a corpus
+    of only UNWRITABLE documents", because prompts had no writer. They have
+    one now, so a prompts-only corpus is written and keyword-retrievable —
+    and still has an empty vector index, which is the condition that
+    actually matters. Semantic would score 0.000 on every query and read as
+    total retrieval failure; worse than before, hybrid would report real
+    numbers beside it, so the confusion is now MORE plausible rather than
+    less.
     """
     import pytest
 
@@ -64,7 +67,7 @@ def test_a_corpus_of_only_unwritable_documents_is_refused(tmp_path):
     ]
     with pytest.raises(EvalRuntimeError) as excinfo:
         build_eval_runtime(only_prompts, tmp_path)
-    assert "unwritable" in str(excinfo.value)
+    assert "no semantically indexable document" in str(excinfo.value)
 
 
 def test_corpus_ingests_and_semantic_search_finds_a_planted_doc(tmp_path):
@@ -75,35 +78,37 @@ def test_corpus_ingests_and_semantic_search_finds_a_planted_doc(tmp_path):
     from Tests.RAG_Eval.harness.goldenset import CORPUS_PATH, load_corpus
     from Tests.RAG_Eval.harness.ingest import build_eval_runtime
 
-    from Tests.RAG_Eval.harness.ingest import UNWRITABLE_SOURCE_TYPES
+    from Tests.RAG_Eval.harness.ingest import UNINDEXED_SOURCE_TYPES
 
     corpus = load_corpus(CORPUS_PATH)
     runtime = build_eval_runtime(corpus, tmp_path)
     try:
-        # Every WRITABLE fixture document reached a real source DB and was
-        # mapped. The prompt fixtures are deliberately not written (there is
-        # no prompts writer and no seam that would serve them), so the
-        # accounting is stated in both directions rather than loosened: the
-        # skipped set is exactly the unwritable source types, and everything
-        # else is present. A bare `>=` here would have hidden a silently
-        # dropped note.
-        writable = [
-            doc for doc in corpus if doc.source_type not in UNWRITABLE_SOURCE_TYPES
-        ]
-        assert len(runtime.slug_to_source) == len(writable)
-        assert set(runtime.unwritable) == {
-            doc.slug for doc in corpus if doc.source_type in UNWRITABLE_SOURCE_TYPES
+        # TWO-SIDED ACCOUNTING (updated for TASK-15020/B2). Before B2 the
+        # two sides were "written" and "skipped"; prompts are written now,
+        # so the split that remains is "in the vector index" vs "in a source
+        # DB and reachable only through the keyword leg". Every fixture is
+        # mapped either way — being in `slug_to_source` is what makes a
+        # document scoreable — and the unindexed set is stated rather than
+        # inferred, because a prompt scoring 0.000 in SEMANTIC is a
+        # structural fact and a note scoring 0.000 in semantic is a finding.
+        # A bare `>=` here would have hidden a silently dropped note.
+        assert len(runtime.slug_to_source) == len(corpus)
+        assert set(runtime.unindexed) == {
+            doc.slug for doc in corpus if doc.source_type in UNINDEXED_SOURCE_TYPES
         }
-        assert runtime.unwritable, (
-            "no document was skipped, so this accounting proves nothing — the "
+        assert runtime.unindexed, (
+            "nothing is unindexed, so this accounting proves nothing — the "
             "corpus should still carry the prompt fixtures"
         )
 
-        # Every written fixture document reached the vector store. Chunks,
+        # Every INDEXABLE fixture document reached the vector store. Chunks,
         # not documents, so `>=`: the long fixtures split into several.
+        indexable = [
+            doc for doc in corpus if doc.source_type not in UNINDEXED_SOURCE_TYPES
+        ]
         stats = runtime.service.vector_store.get_collection_stats()
         assert not stats.get("error"), stats
-        assert stats["count"] >= len(writable)
+        assert stats["count"] >= len(indexable)
 
         # ... and comes back through the PRODUCTION seam, not the engine.
         seam = LibraryLocalRagSearchService(runtime.app)

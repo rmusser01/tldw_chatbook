@@ -185,7 +185,12 @@ def test_two_distinct_unknown_rows_stay_distinct_and_one_repeat_dedups():
     ]
 
 
-def test_prompt_rows_are_unknown_rather_than_silently_dropped():
+def test_unclaimed_prompt_rows_are_unknown_rather_than_silently_dropped():
+    """A prompt row no fixture claims still occupies its top-k slot.
+
+    `LOOKUP` deliberately maps no prompt, which since TASK-15020/B2 is the
+    unusual case rather than the only one — see the sibling test below.
+    """
     row = {
         "source_id": "4",
         "chunk_id": "",
@@ -195,6 +200,27 @@ def test_prompt_rows_are_unknown_rather_than_silently_dropped():
         "provenance": {"source_type": "prompt"},
     }
     assert rows_to_doc_ids([row], LOOKUP) == [f"{UNKNOWN_PREFIX}prompt:4"]
+
+
+def test_a_claimed_prompt_row_resolves_to_its_fixture_slug():
+    """TASK-15020/B2: prompt rows are SCORED now, not counted as noise.
+
+    The engine's prompts sub-leg stamps the singular `prompt` and the bare
+    prompt id, which is exactly the shape `slug_to_source` records — so a
+    prompt hit resolves without the document-id-prefix fallback the media
+    rows need. If this ever regressed to `unknown:`, the prompt category
+    would read 0.000 with a working sub-leg underneath it.
+    """
+    lookup = slug_lookup_from({**SLUG_TO_SOURCE, "prompt-shift": ("prompt", "4")})
+    row = {
+        "source_id": "4",
+        "chunk_id": "",
+        "title": "A prompt",
+        "snippet": "...",
+        "score": None,
+        "provenance": {"source_type": "prompt"},
+    }
+    assert rows_to_doc_ids([row], lookup) == ["prompt-shift"]
 
 
 @pytest.mark.parametrize(

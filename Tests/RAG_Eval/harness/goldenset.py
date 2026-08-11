@@ -57,13 +57,15 @@ __all__ = [
 
 #: Source types a corpus document may declare (the app's ITEM_TYPE_* values).
 #:
-#: ``prompt`` is here without a writer behind it. The harness ingests media,
-#: notes and conversations through the real writer APIs; prompts have no
-#: writer, no keyword sub-leg and no vector index, so a prompt document is
-#: declared, validated and then *skipped* at ingestion
-#: (`ingest.UNWRITABLE_SOURCE_TYPES`). That is deliberate: the prompt
-#: fixtures' before-state is total absence, and a before-number authored
-#: after the seam exists is not a before-number.
+#: All four are written through the real writer APIs. ``prompt`` was the odd
+#: one out until TASK-15020/B2 — declared, validated and then *skipped* at
+#: ingestion, because there was no writer, no keyword sub-leg and no vector
+#: index; its before-state was total absence, and a before-number authored
+#: after the seam exists is not a before-number. B2 shipped the writer and
+#: the sub-leg, so prompts are ingested and scored like everything else. The
+#: one asymmetry that survives is the vector index: prompts still never
+#: enter it (`ingest.UNINDEXED_SOURCE_TYPES`), so they are reachable through
+#: the keyword leg alone.
 SOURCE_TYPES: tuple[str, ...] = ("note", "media", "conversation", "prompt")
 
 #: Capability categories a golden query may declare.

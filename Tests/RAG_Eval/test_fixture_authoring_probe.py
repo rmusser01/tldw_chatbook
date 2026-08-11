@@ -13,13 +13,15 @@ probe that quietly returned "miss" for everything would have admitted every
 candidate it was shown, and the corpus would now be full of fixtures nobody
 can improve because nothing was ever wrong.
 
-The second test is the prompts sub-leg's before-number. Prompt fixtures are
-admitted STRUCTURALLY, not by a measured ranking: the harness has no prompts
-writer, the engine's keyword leg has no prompts sub-leg, and prompts have no
-vector index, so those documents are absent from retrieval by construction.
-This pins both halves — absent from the runtime, and missed by all three
-modes — so that when the prompts sub-leg lands, the flip is a failing test
-with an explanation rather than a number that moved.
+The second test was the prompts sub-leg's before-number and is now its
+after-number (TASK-15020/B2, 2026-08-11). Prompt fixtures were admitted
+STRUCTURALLY rather than by a measured ranking — the harness had no prompts
+writer, the engine's keyword leg had no prompts sub-leg, and prompts have no
+vector index, so those documents were absent from retrieval by construction.
+B2 shipped the first two; the third is deliberately still true. The test now
+pins the three-way split that produces (hybrid finds, semantic cannot, plain
+is a harness gap), keeping the same job: a prompt cell is EXPLAINED rather
+than assumed, in whichever direction it reads.
 
 Skipped unless `RAG_EVAL=1` plus the embeddings extras plus a warm model
 cache — see `harness/environment.py`.
@@ -85,47 +87,123 @@ def test_the_probe_rejects_a_fixture_todays_pipeline_answers(tmp_path, capsys):
     assert f"hybrid={hybrid.best_rank}" in comment
 
 
-def test_every_prompt_fixture_is_invisible_to_all_three_modes(tmp_path, capsys):
-    """THE BEFORE-PIN of the prompts sub-leg.
+#: A keyword-SHAPED query for the same prompt `PROMPT_REACHABILITY_SLUG`
+#: names. Every token of it occurs in that fixture, which is the whole
+#: point: see the reachability half of the pin below.
+PROMPT_REACHABILITY_QUERY = "shift log summary supervisor"
+PROMPT_REACHABILITY_SLUG = "prompt-shift-summary"
 
-    State as of 2026-08-10: every `prompt` golden query scores recall 0.000
-    in semantic, plain and hybrid, because its target was never written into
-    any DB (`ingest.UNWRITABLE_SOURCE_TYPES`) and no seam serves prompts.
 
-    When the prompts keyword sub-leg lands, this test FAILS — deliberately.
-    The fix is to flip the expectation (prompt queries become findable in
-    plain and hybrid, and stay missing in semantic, which has no prompt
-    index) and keep the absence assertion on `runtime.unwritable` only until
-    the harness gains a prompts writer. Do not delete the test: what it
-    guards is that a prompt cell reading 0.000 is explained rather than
-    assumed.
+def test_prompt_fixtures_are_reachable_but_their_golden_queries_are_not(
+    tmp_path, capsys
+):
+    """THE PROMPTS SUB-LEG'S OUTCOME — both states, dated, and the surprise.
+
+    **Before (2026-08-10 → 2026-08-11, TASK-15020/B2):** every `prompt`
+    golden query scored recall 0.000 in semantic, plain AND hybrid, because
+    its target was never written into any DB (`ingest.UNWRITABLE_SOURCE_
+    TYPES`, as it was then called) and no seam served prompts. That was
+    absence, not a retrieval failure, and the before-pin asserted the
+    absence first so the misses had a stated cause.
+
+    **After (this commit):** the harness writes prompts through
+    `PromptsDatabase.add_prompt` and the engine has a prompts keyword
+    sub-leg — and **the category's numbers did not move**. All three modes
+    still miss all five queries. The cause changed completely, which is why
+    this test changed shape rather than expectation:
+
+    * **semantic** misses structurally, as before and by design: nothing
+      indexes prompts into the vector store (`ingest.UNINDEXED_SOURCE_
+      TYPES`); B2 deliberately left semantic indexing of prompts out of
+      scope.
+    * **plain** misses because this harness wires
+      `prompt_scope_service=None`. Plain mode never touches the engine — it
+      fans out over the Library's own four seams — so its prompt column is a
+      HARNESS gap, not a pipeline one; the shipped app's plain mode does
+      find prompts.
+    * **hybrid** misses for the finding this task actually produced: the
+      engine's keyword leg builds its MATCH as an implicit AND over EVERY
+      query token, function words included (`_escape_fts5_query`, TASK-3995)
+      and with no plural/singular widening. The five prompt queries are
+      natural-language sentences, so each is one to five absent tokens away
+      from matching (`about`, `into`, `turns`, `terms` vs `term`, ...) and
+      the leg returns NOTHING for them. Measured across the whole golden
+      set at authoring time: the keyword leg returns zero rows for 40 of 60
+      queries, firing only for the two categories whose queries are
+      keyword-shaped (`keyword` 13/16, `scoped` 7/7). For media, notes and
+      conversations the semantic leg hides that completely. Prompts have no
+      semantic leg, so they are where it becomes visible.
+
+    **The reachability half is what keeps this from being indistinguishable
+    from "B2 never shipped".** A keyword-shaped query for the same fixture,
+    through the same runtime and the same production seam, returns it at
+    the top of hybrid. The sub-leg works; the golden prompt queries measure
+    a capability prompts structurally do not have.
+
+    The queries are deliberately NOT re-authored to make the number move:
+    fixtures rewritten after seeing the result measure the rewrite. Which
+    side should change (the engine's MATCH construction, which the
+    Library's own four-seam path already solves with
+    `build_fts_match_query`, or the prompt fixtures) is a decision with its
+    own measurement, filed rather than smuggled in here.
     """
+    from tldw_chatbook.Library.library_local_rag_search_service import (
+        LibraryLocalRagSearchService,
+    )
+
     from Tests.RAG_Eval.harness.fixture_probe import format_probe_report, probe_candidates
-    from Tests.RAG_Eval.harness.goldenset import load_fixtures
+    from Tests.RAG_Eval.harness.goldenset import GoldenQuery, load_fixtures
     from Tests.RAG_Eval.harness.ingest import build_eval_runtime
-    from Tests.RAG_Eval.harness.runner import MODES
+    from Tests.RAG_Eval.harness.runner import SOURCE_TYPES
 
     corpus, golden = load_fixtures()
     prompts = [query for query in golden if query.category == "prompt"]
     assert len(prompts) >= 4, (
-        f"only {len(prompts)} prompt fixtures; the before-number this pins "
-        "needs the category's floor"
+        f"only {len(prompts)} prompt fixtures; the number this pins needs "
+        "the category's floor"
+    )
+    reachability = GoldenQuery(
+        "pm-reachability-probe",
+        PROMPT_REACHABILITY_QUERY,
+        "prompt",
+        (PROMPT_REACHABILITY_SLUG,),
     )
 
     runtime = build_eval_runtime(corpus, tmp_path)
     try:
-        # Absence FIRST: it is the reason for the misses below, and a miss
-        # whose cause is unknown is not a before-number.
+        # Presence FIRST, the mirror image of the before-pin's absence
+        # assertion: a miss can only be attributed to retrieval once the
+        # target is known to be in the runtime at all.
         prompt_slugs = {doc.slug for doc in corpus if doc.source_type == "prompt"}
-        assert set(runtime.unwritable) == prompt_slugs, (
-            f"ingestion wrote or skipped something unexpected: "
-            f"unwritable={sorted(runtime.unwritable)}"
+        assert prompt_slugs <= set(runtime.slug_to_source), (
+            "a prompt fixture never reached the runtime's slug map, so these "
+            "misses would be absence again rather than the new finding"
         )
-        assert not (prompt_slugs & set(runtime.slug_to_source)), (
-            "a prompt fixture reached the runtime's slug map, so it is "
-            "retrievable and this pin no longer measures absence"
+        # ...and the surviving structural absence, stated rather than
+        # inferred from a semantic column of zeros.
+        assert set(runtime.unindexed) == prompt_slugs, (
+            f"ingestion indexed or skipped something unexpected: "
+            f"unindexed={sorted(runtime.unindexed)}"
         )
         results = probe_candidates(corpus, prompts, tmp_path, k=K, runtime=runtime)
+        reachable = probe_candidates(
+            corpus, [reachability], tmp_path, k=K, runtime=runtime
+        )[0]
+        # The fusion provenance for that same hit, READ off the engine's own
+        # `hybrid_fusion` block rather than recomputed. Task 6's lesson: a
+        # mechanism sentence is an oracle, and paper arithmetic has already
+        # refuted itself twice in this arc.
+        runtime.service.config.search.default_search_mode = "hybrid"
+        payload = runtime.run(
+            LibraryLocalRagSearchService(runtime.app).search(
+                PROMPT_REACHABILITY_QUERY, SOURCE_TYPES, "rag", top_k=K
+            )
+        )
+        prompt_provenance = [
+            (position, row["source_id"], row["provenance"].get("hybrid_fusion"))
+            for position, row in enumerate(payload["results"], start=1)
+            if (row.get("provenance") or {}).get("source_type") == "prompt"
+        ]
     finally:
         try:
             runtime.close()
@@ -133,23 +211,60 @@ def test_every_prompt_fixture_is_invisible_to_all_three_modes(tmp_path, capsys):
             print(f"NOTE: runtime.close() failed after the pin: {exc!r}")
 
     with capsys.disabled():
-        print("\n" + format_probe_report(results, k=K))
+        print("\n" + format_probe_report([*results, reachable], k=K))
+        for position, source_id, fusion in prompt_provenance:
+            print(
+                f"reachability provenance: rank {position} prompt {source_id} "
+                f"{fusion}"
+            )
 
     for result in results:
-        for mode in MODES:
+        for mode in ("semantic", "plain", "hybrid"):
             cell = result.cell(mode)
             assert cell is not None and cell.error is None, (
-                f"{result.query_id}/{mode}: the query erred, so its miss "
+                f"{result.query_id}/{mode}: the query erred, so its result "
                 f"proves nothing: {cell}"
             )
             assert cell.is_miss, (
                 f"{result.query_id}: {mode} returned {result.target_slugs} at "
-                f"rank {cell.best_rank}. If a prompts seam has landed, flip "
-                "this pin (see the docstring) rather than deleting it."
+                f"rank {cell.best_rank}. The docstring explains why each mode "
+                "misses; whichever reason stopped being true, update it here "
+                "rather than deleting the pin."
             )
-        # Vacuity check on the mode that could otherwise miss for the wrong
-        # reason: plain returns nothing for many queries, so its miss alone
-        # would be weak evidence. Hybrid returning rows proves retrieval ran.
+        # Vacuity check: hybrid returning rows proves retrieval ran and the
+        # prompt simply was not among them.
         assert result.cell("hybrid").docs_returned > 0, (
             f"{result.query_id}: hybrid returned no rows at all"
         )
+
+    # THE REACHABILITY HALF. Same runtime, same seam, keyword-shaped query.
+    hybrid = reachable.cell("hybrid")
+    assert hybrid is not None and hybrid.error is None, hybrid
+    assert not hybrid.is_miss, (
+        f"a keyword-shaped query ({PROMPT_REACHABILITY_QUERY!r}) did not "
+        f"return {PROMPT_REACHABILITY_SLUG!r} within k={K}. Then the prompts "
+        "sub-leg itself is broken, and the misses above are NOT the "
+        "query-shape finding this test describes."
+    )
+    assert reachable.cell("semantic").is_miss, (
+        "the semantic leg returned a prompt, so something is indexing "
+        "prompts into the vector store and this whole class measures "
+        "something else now"
+    )
+    # ...and it got there as an FTS-ONLY row. This is the property the whole
+    # sub-leg rests on: prompts have no vector twin, so every prompt row in a
+    # fused result is one the weighting rescued.
+    assert prompt_provenance, (
+        "the production seam returned no prompt row for the keyword-shaped "
+        "query, though the probe found one — the two paths disagree"
+    )
+    for position, source_id, fusion in prompt_provenance:
+        assert fusion is not None, (
+            f"prompt {source_id} at rank {position} carries no fusion "
+            "provenance, so it cannot be shown to be FTS-only"
+        )
+        assert fusion["vector_rank"] is None and fusion["vector_score"] is None, (
+            f"prompt {source_id} at rank {position} carries a vector "
+            f"contribution: {fusion}"
+        )
+        assert fusion["fts_rank"] is not None

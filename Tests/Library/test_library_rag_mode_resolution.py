@@ -182,6 +182,25 @@ def _conversation_result(source_id: str = "conv-1", score: float = 0.85):
     }
 
 
+def _prompt_result(source_id: str = "prompt-1", score: float = 0.8):
+    """A hybrid row as the engine's PROMPTS sub-leg stamps it (TASK-15020/B2).
+
+    `source_type` is the singular `prompt` -- the same string the keyword
+    leg writes and the Library's own `_prompt_row` uses -- so this row is
+    only kept by the source-type post-filter when `prompts` is selected.
+    """
+    return {
+        "id": f"prompt_{source_id}",
+        "score": score,
+        "document": "Prompt evidence.",
+        "metadata": {
+            "title": "Prompt doc",
+            "source_id": source_id,
+            "source_type": "prompt",
+        },
+    }
+
+
 def _scoped(**allowlist: set) -> EffectiveScope:
     return EffectiveScope(
         state="scoped",
@@ -324,20 +343,24 @@ async def test_scoped_hybrid_sends_one_allowlist_entry_per_scoped_source_type():
 
 
 @pytest.mark.asyncio
-async def test_scoped_hybrid_without_an_fts_servable_source_still_diverts():
-    """The one surviving divert: hybrid needs a source the FTS leg serves.
+async def test_scoped_selection_with_no_servable_source_still_diverts():
+    """The surviving divert: hybrid needs a source the FTS leg serves.
 
-    Scope is no longer a reason to leave the hybrid path, but a prompts-only
-    selection still is (the engine has no prompts sub-leg at all), and the
-    diverted semantic search must still carry the scope's allowlists -- a
-    divert that dropped the scope would silently widen retrieval.
+    DISCLOSED UPDATE (2026-08-11, TASK-15020/B2). This test used to make its
+    point with a prompts-only selection, because prompts had no sub-leg;
+    B2 gave them one, so all FOUR of the Search canvas's source types are
+    now FTS-servable and the divert is reachable only through a selection
+    carrying nothing the leg knows. The property under test is unchanged and
+    still worth pinning: whatever diverts to semantic must still carry the
+    scope's allowlists -- a divert that dropped the scope would silently
+    widen retrieval.
     """
     rag = _ProfileRagService(mode="hybrid", results=[_note_result()])
     service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=rag))
     scope = _scoped(**{SOURCE_TYPE_MEDIA: {"media-1"}})
 
     result = await service.search(
-        "credential", ("prompts",), "rag", top_k=5, scope=scope
+        "credential", ("workspaces",), "rag", top_k=5, scope=scope
     )
 
     assert [call["search_type"] for call in rag.calls] == ["semantic"]
@@ -348,11 +371,40 @@ async def test_scoped_hybrid_without_an_fts_servable_source_still_diverts():
         "source_type": {SOURCE_TYPE_MEDIA},
         "source_id": {"media-1"},
     }
-    # A prompts-only selection drops every semantic row in the post-filter
-    # (prompts have no semantic seam), so this lands on the scoped path's own
-    # zero-results outcome -- labeled semantic, which is what actually ran.
+    # An unknown selection drops every semantic row in the post-filter, so
+    # this lands on the scoped path's own zero-results outcome -- labeled
+    # semantic, which is what actually ran.
     assert isinstance(result, LibraryRagSearchOutcome)
     assert result.runtime_backend == "rag-semantic"
+
+
+@pytest.mark.asyncio
+async def test_scoped_prompts_only_selection_now_routes_hybrid_and_fails_closed():
+    """TASK-15020/B2: prompts are FTS-servable, so they keep the hybrid path.
+
+    The pair of facts this pins is the whole of B2's interaction with B1's
+    scope. A prompts-only selection routes HYBRID now (it did not before),
+    and the engine is handed both the translated selection (`{"prompt"}`)
+    and the scope's allowlists -- which can never NAME prompts, because the
+    scope vocabulary is media/note only (spec D5). The engine's own
+    fail-closed rule then skips the prompts sub-leg entirely rather than
+    running it unfiltered (pinned at the engine in
+    `test_keyword_leg_prompts.test_a_scope_skips_the_prompts_sub_leg_
+    entirely`). Scoped prompt search is therefore structurally out of the
+    scope vocabulary today, and this is where that is written down.
+    """
+    rag = _ProfileRagService(mode="hybrid", results=[_note_result()])
+    service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=rag))
+    scope = _scoped(**{SOURCE_TYPE_MEDIA: {"media-1"}})
+
+    await service.search("credential", ("prompts",), "rag", top_k=5, scope=scope)
+
+    assert [call["search_type"] for call in rag.calls] == ["hybrid"]
+    assert rag.calls[0]["keyword_source_types"] == {"prompt"}
+    allowlist = rag.calls[0]["metadata_allowlist"]
+    assert all(
+        "prompt" not in entry.get("source_type", ()) for entry in allowlist
+    ), f"the scope named prompts, which spec D5 says it cannot: {allowlist}"
 
 
 @pytest.mark.asyncio
@@ -413,20 +465,47 @@ async def test_hybrid_runs_for_any_fts_servable_source_without_media(
 
 @pytest.mark.asyncio
 async def test_hybrid_profile_with_only_unservable_sources_stays_semantic():
-    """`prompts` has no FTS leg in the engine at all -- not media-only.
+    """A selection with nothing the FTS leg serves still stays semantic.
 
-    A prompts-only selection is the one remaining case where the keyword
-    leg could contribute nothing, so hybrid is still skipped, and the
-    disclosure has to say what is actually true now.
+    DISCLOSED UPDATE (2026-08-11, TASK-15020/B2): this used to be spelled
+    with `prompts`, "the one remaining case where the keyword leg could
+    contribute nothing". B2 removed that case -- prompts have a sub-leg now
+    -- so the gate is exercised with a selection the build does not know at
+    all. The gate itself is unchanged and still load-bearing: without it,
+    hybrid would run and every one of its rows would be dropped by the
+    source-type post-filter, turning a search into a silent empty result.
     """
     rag = _ProfileRagService(mode="hybrid", results=[_note_result()])
     service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=rag))
 
-    result = await service.search("credential", ("prompts",), "rag", top_k=5)
+    result = await service.search("credential", ("workspaces",), "rag", top_k=5)
 
     assert [call["search_type"] for call in rag.calls] == ["semantic"]
     assert result["runtime_backend"] == "rag-semantic"
     assert _NOTE_HYBRID_NO_KEYWORD_SOURCES in _route_notes(result)
+
+
+@pytest.mark.asyncio
+async def test_hybrid_runs_for_a_prompts_only_selection():
+    """TASK-15020/B2: prompts-only is a hybrid search now, not a divert.
+
+    The rows a prompts-only hybrid returns can only have come from the FTS
+    leg -- prompts have no vector index -- which is exactly why the divert
+    had to go: sending this selection to the semantic leg searched the one
+    index that structurally cannot answer it.
+    """
+    rag = _ProfileRagService(mode="hybrid", results=[_prompt_result()])
+    service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=rag))
+
+    result = await service.search("credential", ("prompts",), "rag", top_k=5)
+
+    assert [call["search_type"] for call in rag.calls] == ["hybrid"]
+    assert rag.calls[0]["keyword_source_types"] == {"prompt"}
+    assert result["runtime_backend"] == "rag-hybrid"
+    assert _NOTE_HYBRID_NO_KEYWORD_SOURCES not in _route_notes(result)
+    # And the row survives the source-type post-filter, which it only does
+    # because `prompt` canonicalizes to the `prompts` toggle.
+    assert [row["source_id"] for row in result["results"]] == ["prompt-1"]
 
 
 @pytest.mark.asyncio

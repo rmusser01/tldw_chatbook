@@ -6,9 +6,10 @@ throwaway but *genuine* installation of the app's retrieval stack:
 
 * the fixture corpus written through the **real writer APIs**
   (`MediaDatabase.add_media_with_keywords`, `NotesInteropService.add_note`,
-  `CharactersRAGDB.add_conversation`/`add_message`) into scratch SQLite
-  files, so FTS triggers, id assignment and row shapes are the production
-  ones and not a fixture's guess at them;
+  `CharactersRAGDB.add_conversation`/`add_message`,
+  `PromptsDatabase.add_prompt`) into scratch SQLite files, so FTS triggers,
+  id assignment and row shapes are the production ones and not a fixture's
+  guess at them;
 * those rows read back through the **same readers production reads them
   with**, turned into documents by the **real document builders**
   (`media_document`/`note_document`/`conversation_document`, reached via
@@ -19,9 +20,10 @@ throwaway but *genuine* installation of the app's retrieval stack:
   production seam — rather than by calling the engine directly.
 
 Nothing here is shared with the running app: the vector store persists under
-the caller's `tmp_path`, the keyword leg is pointed at the scratch media and
-ChaChaNotes DBs (`config.search.media_db_path` -- P0's validated injection
-point -- and `config.search.chachanotes_db_path`, TASK-3996's), and
+the caller's `tmp_path`, the keyword leg is pointed at the scratch media,
+ChaChaNotes and Prompts DBs (`config.search.media_db_path` -- P0's validated
+injection point -- plus `config.search.chachanotes_db_path`, TASK-3996's, and
+`config.search.prompts_db_path`, TASK-15020/B2's), and
 `get_shared_rag_service()` is never called. A harness that measured the
 process-wide singleton would measure whatever an earlier test left in it.
 
@@ -63,7 +65,7 @@ __all__ = [
     "EvalRuntime",
     "EvalRuntimeError",
     "NOTES_USER_ID",
-    "UNWRITABLE_SOURCE_TYPES",
+    "UNINDEXED_SOURCE_TYPES",
     "build_eval_runtime",
 ]
 
@@ -84,22 +86,29 @@ MEDIA_TYPE = "document"
 #: therefore embedding batching) is the production one.
 INDEX_BATCH_SIZE = 16
 
-#: Corpus source types this harness cannot write, and therefore records as
-#: absent rather than ingesting.
+#: Corpus source types that are written to a real database but never reach
+#: the VECTOR index — retrievable through the keyword leg alone.
 #:
-#: ``prompt`` is the only one, and its absence is the measurement. Prompts
-#: have no writer here, no keyword sub-leg in the engine and no vector index
-#: anywhere, so a prompt fixture is invisible to every retrieval mode — which
-#: is exactly the before-state the prompts golden queries pin (recall 0.000
-#: in all three modes). Skipping is therefore not a degradation to warn
-#: about but the thing being measured; the skipped slugs are recorded on the
-#: runtime (`EvalRuntime.unwritable`) so a reader can tell "not written" from
-#: "written and not found", which are different findings with the same score.
+#: This constant used to be `UNWRITABLE_SOURCE_TYPES`, and `prompt` was in
+#: it for a stronger reason: before TASK-15020/B2 there was no prompts
+#: writer here, no prompts sub-leg in the engine and no vector index either,
+#: so a prompt fixture was invisible to every mode and the harness recorded
+#: it as absent rather than pretending to have ingested it. B2 shipped the
+#: writer and the sub-leg; what it deliberately did NOT ship is semantic
+#: indexing of prompts (spec: out of scope, a P4-adjacent ingestion
+#: question). So prompts are now written like everything else, live in
+#: `slug_to_source`, and are reachable through hybrid's FTS leg — while
+#: staying structurally invisible to the semantic leg.
+#:
+#: That surviving asymmetry is worth recording rather than inferring, which
+#: is what `EvalRuntime.unindexed` is for: "in the corpus but not in the
+#: vector store" and "in the vector store and not retrieved" are different
+#: findings that can produce the same 0.000.
 #:
 #: An UNDECLARED source type still raises: a typo'd `source_type` must never
-#: reach this quiet path (`goldenset.validate` rejects it first, and the
-#: raise below is the second line of that defence).
-UNWRITABLE_SOURCE_TYPES: tuple[str, ...] = ("prompt",)
+#: reach a quiet path (`goldenset.validate` rejects it first, and the raise
+#: in `build_eval_runtime` is the second line of that defence).
+UNINDEXED_SOURCE_TYPES: tuple[str, ...] = ("prompt",)
 
 
 class EvalRuntimeError(RuntimeError):
@@ -123,14 +132,17 @@ class EvalRuntime:
         slug_to_source: Fixture slug -> (source_type, source_id). Source ids
             are assigned by the real writers at write time, so the golden
             set's slugs are the only stable handle; this is the map that
-            resolves them. A skipped (`unwritable`) fixture is absent from
-            it, which is what makes it unretrievable by construction.
+            resolves them. Every corpus document is in here, prompts
+            included (TASK-15020/B2) — being present here is what makes a
+            document *scoreable*, not what makes it semantically indexed.
         index_summary: The accumulated `index_entries` summary
             ({'indexed', 'skipped', 'failed', 'errors'}).
-        unwritable: Fixture slug -> source_type, for every corpus document
-            this harness declined to write (`UNWRITABLE_SOURCE_TYPES`). Kept
-            so a zero score can be attributed: "never ingested" and
-            "ingested and not retrieved" are different findings.
+        unindexed: Fixture slug -> source_type, for every corpus document
+            that was written to its real database but never entered the
+            VECTOR index (`UNINDEXED_SOURCE_TYPES`). Kept so a zero score
+            can be attributed: "the semantic leg cannot see this type at
+            all" and "the semantic leg saw it and ranked it badly" are
+            different findings with the same number.
     """
 
     app: SimpleNamespace
@@ -140,7 +152,7 @@ class EvalRuntime:
     _loop: asyncio.AbstractEventLoop
     _closers: list[Callable[[], None]] = field(default_factory=list)
     _closed: bool = False
-    unwritable: dict[str, str] = field(default_factory=dict)
+    unindexed: dict[str, str] = field(default_factory=dict)
 
     def run(self, awaitable: Awaitable[T]) -> T:
         """Drive an awaitable on this runtime's loop.
@@ -246,11 +258,42 @@ def _write_conversation(
     return str(conversation_id), (dict(conversation), [dict(m) for m in messages])
 
 
+def _write_prompt(prompts_db: Any, doc: CorpusDoc) -> str:
+    """Write one prompt fixture through `PromptsDatabase`'s own writer.
+
+    `add_prompt` is what every prompt-creating surface in the app calls, and
+    it is what maintains `prompts_fts` (the index the engine's prompts
+    sub-leg reads). Writing the row with raw SQL would leave the FTS index
+    empty and measure nothing.
+
+    The fixture body goes into `system_prompt`: these fixtures are saved
+    instructions to a model, which is what that column holds, and it is one
+    of the three body columns the sub-leg renders as the row's document
+    (`rag_service.PROMPT_DOCUMENT_COLUMNS`). `details` and `user_prompt` are
+    left unset, exactly as a real one-field saved prompt would be.
+
+    Unlike the other three writers there is no read-back: prompts are not
+    semantically indexed (`UNINDEXED_SOURCE_TYPES`), so there is no index
+    entry to build from the row, and the id `add_prompt` returns is the FTS
+    rowid the sub-leg will emit as `source_id`.
+    """
+    prompt_id, _uuid, message = prompts_db.add_prompt(
+        name=doc.title,
+        author=None,
+        details=None,
+        system_prompt=doc.content,
+    )
+    if prompt_id is None:
+        raise EvalRuntimeError(f"prompt write failed for {doc.slug!r}: {message}")
+    return str(prompt_id)
+
+
 def _build_config(
     profile_name: str,
     persist_directory: Path,
     media_db_path: Path,
     chachanotes_db_path: Path,
+    prompts_db_path: Path,
 ):
     """Clone the profile's config and repoint it at this run's scratch state.
 
@@ -292,6 +335,11 @@ def _build_config(
     # docs unreachable, exactly the defect being fixed); outside it, the
     # harness would read the developer's own notes and conversations.
     config.search.chachanotes_db_path = chachanotes_db_path
+    # And the prompts sub-leg (TASK-15020/B2). Same hazard, one step worse:
+    # prompts have no vector index, so an unset override does not merely bias
+    # the keyword leg — it makes the prompt category unmeasurable in every
+    # mode while the run still reports numbers.
+    config.search.prompts_db_path = prompts_db_path
     return config
 
 
@@ -322,6 +370,7 @@ def build_eval_runtime(
     """
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+    from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
     from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingService
     from tldw_chatbook.Media.media_reading_scope_service import MediaReadingScopeService
     from tldw_chatbook.Notes.Notes_Library import NotesInteropService
@@ -337,18 +386,25 @@ def build_eval_runtime(
 
     if not corpus:
         raise EvalRuntimeError("refusing to build an eval runtime over an empty corpus")
-    if all(doc.source_type in UNWRITABLE_SOURCE_TYPES for doc in corpus):
-        # Every document skipped is not a runtime, it is an empty index that
-        # would score 0.000 everywhere and read as total retrieval failure.
+    if all(doc.source_type in UNINDEXED_SOURCE_TYPES for doc in corpus):
+        # An empty VECTOR index is not a runtime: semantic would score 0.000
+        # on every query and read as total retrieval failure rather than as
+        # "this corpus has nothing the semantic leg can hold". Since
+        # TASK-15020/B2 such a corpus is no longer entirely unretrievable
+        # (its prompts are reachable through the keyword leg), which makes
+        # the confusion MORE likely, not less — hybrid would report real
+        # numbers next to a semantic column of zeros.
         raise EvalRuntimeError(
-            "refusing to build an eval runtime whose every document has an "
-            f"unwritable source type ({', '.join(UNWRITABLE_SOURCE_TYPES)})"
+            "refusing to build an eval runtime with no semantically indexable "
+            "document: every corpus document has an unindexed source type "
+            f"({', '.join(UNINDEXED_SOURCE_TYPES)})"
         )
 
     tmp_path = Path(tmp_path)
     persist_directory = tmp_path / "chroma"
     media_db_path = tmp_path / "eval_media.db"
     chachanotes_db_path = tmp_path / "eval_chachanotes.db"
+    prompts_db_path = tmp_path / "eval_prompts.db"
     notes_user_dbs = tmp_path / "notes_user_dbs"
     notes_user_dbs.mkdir(mode=0o700, parents=True, exist_ok=True)
 
@@ -360,6 +416,8 @@ def build_eval_runtime(
         closers.append(media_db.close_connection)
         chachanotes_db = CharactersRAGDB(chachanotes_db_path, client_id=CLIENT_ID)
         closers.append(chachanotes_db.close_connection)
+        prompts_db = PromptsDatabase(prompts_db_path, client_id=CLIENT_ID)
+        closers.append(prompts_db.close_connection)
         notes_service = NotesInteropService(
             base_db_directory=notes_user_dbs,
             api_client_id=CLIENT_ID,
@@ -377,16 +435,10 @@ def build_eval_runtime(
         )
 
         slug_to_source: dict[str, tuple[str, str]] = {}
-        unwritable: dict[str, str] = {}
+        unindexed: dict[str, str] = {}
         entries: list[IndexEntry] = []
         for doc in corpus:
-            if doc.source_type in UNWRITABLE_SOURCE_TYPES:
-                # Recorded, not written and not raised: see
-                # UNWRITABLE_SOURCE_TYPES. The document stays out of
-                # `slug_to_source`, so every mode misses it and its golden
-                # queries score 0.000 — the measurement, not a failure.
-                unwritable[doc.slug] = doc.source_type
-                continue
+            entry: IndexEntry | None
             if doc.source_type == "media":
                 source_id, row = _write_media(media_db, doc)
                 entry = media_index_entry(row)
@@ -398,6 +450,16 @@ def build_eval_runtime(
                     chachanotes_db, doc
                 )
                 entry = conversation_index_entry(conversation, messages)
+            elif doc.source_type == "prompt":
+                # Written for real (TASK-15020/B2) and then deliberately NOT
+                # indexed: there is no `prompt_index_entry`, because nothing
+                # in the app indexes prompts semantically. Recording the slug
+                # keeps that a stated property of the run rather than
+                # something a reader has to infer from a column of zeros.
+                source_id = _write_prompt(prompts_db, doc)
+                unindexed[doc.slug] = doc.source_type
+                slug_to_source[doc.slug] = (doc.source_type, source_id)
+                continue
             else:
                 raise EvalRuntimeError(
                     f"corpus doc {doc.slug!r} has unsupported source_type "
@@ -416,7 +478,11 @@ def build_eval_runtime(
             entries.append(entry)
 
         config = _build_config(
-            profile_name, persist_directory, media_db_path, chachanotes_db_path
+            profile_name,
+            persist_directory,
+            media_db_path,
+            chachanotes_db_path,
+            prompts_db_path,
         )
         service = create_rag_service(profile_name, config=config)
         closers.append(service.close)
@@ -456,12 +522,20 @@ def build_eval_runtime(
                 server_service=None,
             ),
             notes_user_id=NOTES_USER_ID,
-            # No prompts seam. Prompts ARE a corpus source type now
-            # (`goldenset.SOURCE_TYPES`), but nothing here writes or serves
-            # them: a None service is the shape the seam already handles, and
-            # the resulting total absence is what the prompt fixtures
-            # measure. Wiring a prompts service here without a writer behind
-            # it would change the shape and not the answer.
+            # No prompts seam, deliberately, and this is now a REAL gap
+            # rather than a shape convenience — record it when reading the
+            # numbers. Prompts are written and indexed-in-FTS as of
+            # TASK-15020/B2, so hybrid retrieves them through the engine's
+            # keyword leg; PLAIN mode does not go through the engine at all,
+            # it fans out over the Library's own four seams, and the prompts
+            # one is this attribute. Leaving it None means the harness's
+            # plain column reports 0.000 for prompts while the shipped app's
+            # plain mode does find them. B2's deliverable is the ENGINE leg
+            # (the spec puts the four-seam path out of scope), so wiring a
+            # `PromptScopeService` here is left to the Library work rather
+            # than smuggled in — and would move plain-mode numbers for
+            # NON-prompt queries too, since the seam appends its rows to
+            # every plain fan-out.
             prompt_scope_service=None,
             # An UNSTAMPED `_rag_service` wins outright in the seam's
             # resolver (`semantic_availability.current_app_rag_service`'s
@@ -488,5 +562,5 @@ def build_eval_runtime(
         index_summary=summary,
         _loop=loop,
         _closers=closers,
-        unwritable=unwritable,
+        unindexed=unindexed,
     )

@@ -231,6 +231,18 @@ _SQLITE_OWNER_POLICIES = {
         "permissions on a file another owner already governs.",
         preserve_read_only_source_mode=True,
     ),
+    "rag.prompts_keyword_leg": SQLiteOwnerPolicy(
+        "tldw_chatbook/RAG_Search/simplified/rag_service",
+        _READ_ONLY_URI,
+        "The RAG keyword leg reads saved prompts out of the live Prompts "
+        "database (TASK-15020/B2) -- the only retrieval path prompts have, "
+        "since nothing indexes them semantically. Read-only URI only: "
+        "search must never write to, create, or migrate the user's prompts "
+        "database, and this owner preserves the source file's mode rather "
+        "than reasserting private permissions on a file another owner "
+        "already governs.",
+        preserve_read_only_source_mode=True,
+    ),
     "research.local": SQLiteOwnerPolicy(
         "tldw_chatbook/Research_Interop/local_research_service",
         _PRIVATE_OR_MEMORY,

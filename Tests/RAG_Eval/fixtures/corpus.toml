@@ -1690,18 +1690,22 @@ Rotation moves forward rather than back, since forward rotation costs less sleep
 """
 
 # ===========================================================================
-# PROMPT FIXTURES (6) — the source type with no writer and no index yet
+# PROMPT FIXTURES (6) — written and keyword-searchable, never vector-indexed
 # ===========================================================================
 #
-# These documents are `source_type = "prompt"`, and NOTHING retrieves them
-# today: the harness's ingest has no prompts writer (`ingest.UNWRITABLE_
-# SOURCE_TYPES`), the engine's keyword leg covers media/notes/conversations
-# only, and prompts have no vector index at all. Their golden queries
-# therefore score recall 0.000 in every mode, by construction rather than by
-# a retrieval defect — the before-number the prompts sub-leg later flips.
+# These documents are `source_type = "prompt"`. When they were authored
+# (2026-08-10) NOTHING retrieved them: no prompts writer in the harness, no
+# prompts sub-leg in the engine, no vector index anywhere — recall 0.000 in
+# every mode by construction rather than by a retrieval defect. They were
+# authored here, beside the classes they sit with, because a before-number
+# written after the fix is not a before-number.
 #
-# They are authored here, with the classes they sit beside, because a
-# before-number written after the fix is not a before-number.
+# TASK-15020/B2 (2026-08-11) shipped the writer (`PromptsDatabase.add_prompt`,
+# body in `system_prompt`) and the engine's prompts keyword sub-leg. Prompts
+# are now ingested, mapped and reachable — through the FTS leg alone, since
+# B2 deliberately did not add semantic indexing of prompts
+# (`ingest.UNINDEXED_SOURCE_TYPES`). The golden prompt cells nonetheless did
+# not move, for reasons recorded at the prompt class header in golden.toml.
 
 [[doc]]
 slug = "prompt-shift-summary"

@@ -125,13 +125,26 @@ DEFAULT_BATCH_SIZE = _rag_service_config.get(
 SOURCE_TYPE_MEDIA = "media"
 SOURCE_TYPE_NOTE = "note"
 SOURCE_TYPE_CONVERSATION = "conversation"
+# TASK-15020/B2. Unlike the three above, this one has no vector-leg twin to
+# agree with: nothing indexes prompts semantically. It is the singular
+# spelling anyway, because the OTHER consumers of this string are shared with
+# the three that do -- `_fusion_doc_key`, the Library's provenance
+# canonicalization (`_prompt_row` already stamps `prompt`) and the eval
+# harness's `SOURCE_TYPE_ALIASES`. A plural here would leave prompt rows
+# present but unable to merge or to be post-filtered by the Prompts toggle.
+SOURCE_TYPE_PROMPT = "prompt"
 
 # Every source type the keyword (FTS5) leg has a sub-leg for, and the two of
 # those that live in the ChaChaNotes database. A caller's
 # ``keyword_source_types`` selection is expressed in THIS vocabulary (the
 # engine's singular spelling), never in a UI's plural scope identifiers.
 KEYWORD_LEG_SOURCE_TYPES = frozenset(
-    {SOURCE_TYPE_MEDIA, SOURCE_TYPE_NOTE, SOURCE_TYPE_CONVERSATION}
+    {
+        SOURCE_TYPE_MEDIA,
+        SOURCE_TYPE_NOTE,
+        SOURCE_TYPE_CONVERSATION,
+        SOURCE_TYPE_PROMPT,
+    }
 )
 CHACHA_KEYWORD_SOURCE_TYPES = frozenset({SOURCE_TYPE_NOTE, SOURCE_TYPE_CONVERSATION})
 
@@ -402,6 +415,47 @@ def _json_id_param(allowed_ids: Collection[str]) -> str:
     return json.dumps(sorted(str(value) for value in allowed_ids))
 
 
+#: The ``prompts_fts`` columns that make up a prompt's DOCUMENT, in the
+#: order the ORM and the Prompts UI present them. The other two indexed
+#: columns are this row's metadata, not its text: ``name`` becomes the
+#: title and ``author`` the author field, exactly as the media sub-leg
+#: treats them.
+PROMPT_DOCUMENT_COLUMNS = ("details", "system_prompt", "user_prompt")
+
+
+def _prompt_document_text(row: Any) -> str:
+    """Render a prompt row's body as this sub-leg's document text.
+
+    A saved prompt is not one text field: `prompts_fts` indexes five
+    columns, and a query can match any of them. Concatenating the three
+    BODY columns (skipping the empty ones -- the writer stores ``""`` for a
+    missing field, so most prompts have two of the three blank) is the
+    honest answer to "show me what matched", and it is also the text the
+    citation/snippet builders then search for the query's tokens.
+
+    A match on ``name`` or ``author`` alone therefore yields a row whose
+    document does not contain the query term. That is not a defect and is
+    not special-cased: the media sub-leg has had exactly that property
+    since it existed (a title match returns the body), and the title is on
+    the row for the user to see.
+
+    Args:
+        row: A ``sqlite3.Row``/mapping carrying the body columns.
+
+    Returns:
+        The non-empty body columns joined by a blank line, in
+        ``PROMPT_DOCUMENT_COLUMNS`` order; ``""`` when all three are empty
+        (a prompt with only a name), which the row processing renders as an
+        empty document rather than dropping the row.
+    """
+    parts = []
+    for column in PROMPT_DOCUMENT_COLUMNS:
+        value = row[column]
+        if value and str(value).strip():
+            parts.append(str(value).strip())
+    return "\n\n".join(parts)
+
+
 # Sanity ceiling for _resolve_hybrid_pool_multiplier (TASK-4110 review,
 # minor a). Fusion still narrows back to top_k regardless of how wide the
 # legs over-fetch, so a multiplier this large protects nothing further and
@@ -487,7 +541,12 @@ def _fusion_doc_key(result: Any) -> Hashable:
 
     ``source_type`` is compared as the raw string the indexers write (the
     singular ``ITEM_TYPE_*`` vocabulary: ``media`` / ``note`` /
-    ``conversation``); it keeps note 15 and media 15 apart.
+    ``conversation``); it keeps note 15 and media 15 apart. The keyword leg
+    adds a fourth value, ``prompt`` (TASK-15020/B2), which no indexer writes
+    -- prompts have no vector twin to merge with, so a prompt row is always
+    an unmerged FTS-only row. It still has to be in this key's vocabulary:
+    without ``source_type``, prompt 15 and note 15 would collide on
+    ``source_id`` alone and fusion would merge two different documents.
 
     Args:
         result: A leg result (``SearchResult`` / ``SearchResultWithCitations``).
@@ -1368,24 +1427,34 @@ class RAGService:
         metadata_allowlist: Optional[MetadataAllowlist] = None,
     ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
         """
-        Perform keyword (FTS5) search across media, notes and conversations.
+        Perform keyword (FTS5) search across media, notes, conversations and
+        saved prompts.
 
         TASK-3996: this leg used to join ``media_fts`` and nothing else, so
         the keyword half of hybrid search could only ever return media rows
         -- notes and conversations were structurally unreachable through it
         no matter what the query said (29 of the P1 fixture corpus's 49
-        documents). It is now three sub-legs over two databases:
+        documents). It is now four sub-legs over three databases:
 
         * media -- ``media_fts`` in the media DB, via the connection pool;
         * notes -- ``notes_fts`` in the ChaChaNotes DB;
         * conversations -- ``messages_fts`` in the ChaChaNotes DB, one row
-          per matching conversation.
+          per matching conversation;
+        * prompts -- ``prompts_fts`` in the Prompts DB (TASK-15020/B2).
 
-        The two ChaChaNotes sub-legs run over a READ-ONLY raw connection
-        (never ``CharactersRAGDB``, whose constructor does schema work), and
-        each sub-leg degrades independently: a missing chacha DB costs the
-        notes/conversation rows and leaves media untouched, and vice versa.
-        The leg is empty only when every sub-leg is empty or unavailable.
+        The ChaChaNotes and Prompts sub-legs run over READ-ONLY raw
+        connections (never ``CharactersRAGDB``/``PromptsDatabase``, whose
+        constructors do schema work), and each sub-leg degrades
+        independently: a missing chacha DB costs the notes/conversation rows
+        and leaves media and prompts untouched, and so on. The leg is empty
+        only when every sub-leg is empty or unavailable.
+
+        **Prompts are the one type with no other path.** Media, notes and
+        conversations are all indexed semantically, so a hybrid search can
+        reach them through either leg; nothing indexes prompts, so this
+        sub-leg is the ONLY way a prompt ever enters hybrid results, and it
+        gets there as an FTS-only row rescued by the fusion weighting
+        (``config.DEFAULT_HYBRID_RRF_K``).
 
         The sub-legs are merged rank-fairly (``interleave_rankings``, round
         robin by rank position) rather than concatenated: FTS5 scores from
@@ -1408,8 +1477,8 @@ class RAGService:
             filter_metadata: Optional metadata equality filters.
             include_citations: Whether to build citation-carrying rows.
             keyword_source_types: Source types to serve, in the engine's
-                vocabulary (``media``/``note``/``conversation``). ``None``
-                serves all three; an empty collection serves none and
+                vocabulary (``media``/``note``/``conversation``/``prompt``).
+                ``None`` serves all four; an empty collection serves none and
                 returns ``[]`` without a database lookup; unrecognized
                 values are dropped (see ``_resolve_keyword_source_types``).
             metadata_allowlist: A retrieval scope (TASK-15020/B1). Each
@@ -1456,7 +1525,7 @@ class RAGService:
             return []
 
         chacha_types = selected & CHACHA_KEYWORD_SOURCE_TYPES
-        media_ranking, chacha_rankings = await asyncio.gather(
+        media_ranking, chacha_rankings, prompts_ranking = await asyncio.gather(
             self._media_keyword_subleg(
                 query,
                 top_k,
@@ -1485,10 +1554,24 @@ class RAGService:
             )
             if chacha_types
             else _no_keyword_rows(),
+            self._prompts_keyword_subleg(
+                query,
+                top_k,
+                filter_metadata,
+                include_citations,
+                allowed_ids=(
+                    None if allowlist_ids is None
+                    else allowlist_ids.get(SOURCE_TYPE_PROMPT)
+                ),
+            )
+            if SOURCE_TYPE_PROMPT in selected
+            else _no_keyword_rows(),
         )
 
         rankings = [
-            ranking for ranking in (media_ranking, *chacha_rankings) if ranking
+            ranking
+            for ranking in (media_ranking, *chacha_rankings, prompts_ranking)
+            if ranking
         ]
         if not rankings:
             return []
@@ -2105,6 +2188,319 @@ class RAGService:
             logger.warning(
                 "Conversations keyword sub-leg failed; returning no conversation "
                 "rows (error_type={})",
+                type(e).__name__,
+            )
+            return []
+
+    async def _prompts_keyword_subleg(
+        self,
+        query: str,
+        top_k: int,
+        filter_metadata: Optional[Dict[str, Any]] = None,
+        include_citations: bool = True,
+        *,
+        allowed_ids: Optional[Collection[str]] = None,
+    ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
+        """The saved-prompts sub-leg, over a read-only Prompts DB.
+
+        TASK-15020/B2, built to the chacha sub-legs' pattern exactly (path
+        resolution -> read-only private-SQLite open -> one FTS query ->
+        the shared row processing). What is NOT the same is the stake:
+        prompts have no vector index anywhere, so this sub-leg is the only
+        retrieval path a saved prompt has in the engine, and the fused
+        result it produces is always an FTS-only row.
+
+        Args:
+            query: Raw user query (escaped for FTS5 downstream).
+            top_k: Maximum rows this sub-leg contributes.
+            filter_metadata: Optional metadata equality filters.
+            include_citations: Whether to build citation-carrying rows.
+            allowed_ids: Prompt ids this sub-leg may return
+                (TASK-15020/B1's shape). Always ``None`` in practice today:
+                the retrieval scope's vocabulary is media/note only (spec
+                D5), so no allowlist can NAME prompts and a scoped search
+                skips this sub-leg entirely before reaching here. The
+                parameter exists so the day the scope vocabulary grows a
+                prompt dimension, the filter is already pushed down rather
+                than bolted on -- and so this sub-leg cannot accidentally
+                become the one that runs unfiltered under a scope.
+
+        Returns:
+            Prompt rows, best first; ``[]`` on any failure (this sub-leg
+            never breaks the other three).
+        """
+        # Nothing below may raise: `_hybrid_search` gathers this leg with the
+        # semantic one without `return_exceptions`, so an escaping exception
+        # would fail the whole search rather than degrade one sub-leg.
+        try:
+            db_path = self._resolve_prompts_db_path()
+            if db_path is None:
+                return []
+
+            loop = asyncio.get_event_loop()
+            items = await loop.run_in_executor(
+                None,
+                self._prompts_fts_rows,
+                db_path,
+                query,
+                top_k * SEARCH_RESULT_MULTIPLIER,  # Get extra for filtering
+                allowed_ids,
+            )
+            if not items:
+                return []
+
+            if include_citations:
+                rows = await self._process_keyword_results_with_citations(
+                    items, query, filter_metadata, top_k, source_type=SOURCE_TYPE_PROMPT
+                )
+            else:
+                rows = self._process_keyword_results_basic(
+                    items, filter_metadata, top_k, source_type=SOURCE_TYPE_PROMPT
+                )
+            logger.debug("Prompts keyword sub-leg found {} results", len(rows))
+            return rows
+        except Exception as e:
+            logger.warning(
+                "Prompts keyword sub-leg failed; the other sub-legs are "
+                "unaffected (error_type={})",
+                type(e).__name__,
+            )
+            return []
+
+    def _resolve_prompts_db_path(self) -> Optional[Path]:
+        """Resolve (and validate) the Prompts DB path for the FTS leg.
+
+        Mirrors ``_resolve_chachanotes_db_path`` exactly: an explicit config
+        override wins, otherwise the single authoritative resolver
+        (``get_prompts_db_path``) decides -- no guessing across candidate
+        filenames, and never a create-on-miss. The config-sourced override
+        is run through ``path_validation``'s traversal/injection screen plus
+        lexical normalization before it reaches a filesystem check.
+
+        Returns:
+            The validated, existing path, or ``None`` (with one logged
+            warning naming the reason) when the prompts sub-leg is skipped.
+        """
+        from tldw_chatbook.Utils.path_validation import validate_path_simple
+        from tldw_chatbook.Utils.private_paths import lexical_path
+
+        try:
+            from tldw_chatbook.config import get_prompts_db_path
+
+            db_path_raw = (
+                self.config.search.prompts_db_path or get_prompts_db_path()
+            )
+        except Exception as e:
+            logger.warning(
+                "Could not resolve the Prompts database path; the prompts "
+                "keyword sub-leg returns no results (error_type={})",
+                type(e).__name__,
+            )
+            return None
+
+        try:
+            db_path = lexical_path(
+                validate_path_simple(
+                    Path(str(db_path_raw)).expanduser(),
+                    require_exists=False,
+                    probe_existing=False,
+                )
+            )
+        except ValueError as e:
+            logger.warning(
+                "Rejected prompts_db_path from config; the prompts keyword "
+                "sub-leg returns no results (error_type={})",
+                type(e).__name__,
+            )
+            return None
+
+        # Existence only. Every other filesystem question -- symlinked
+        # components, untrusted parent directories, a no-follow open of the
+        # file itself -- belongs to the private SQLite seam this leg opens
+        # through (see `_connect_prompts_readonly`).
+        if not db_path.exists() or not db_path.is_file():
+            logger.warning(
+                "Prompts database not found; the prompts keyword sub-leg "
+                "returns no results (a search never creates a database)."
+            )
+            return None
+
+        return db_path
+
+    def _connect_prompts_readonly(
+        self, db_path: Union[str, Path]
+    ) -> sqlite3.Connection:
+        """Open the Prompts database read-only, without the ORM.
+
+        The same three properties ``_connect_chacha_readonly`` documents,
+        for the same reasons: a ``mode=ro`` URI built by the seam (so a
+        write raises rather than being trusted not to happen);
+        ``PromptsDatabase``'s constructor-time schema creation, migration
+        and integrity work never runs on a search path; and
+        ``connect_private_sqlite`` (owner ``rag.prompts_keyword_leg``)
+        walks every path component with ``O_NOFOLLOW`` and opens the file
+        itself no-follow, which a final-component ``is_symlink()`` check
+        would not. ``preserve_read_only_source_mode`` keeps this reader from
+        reasserting permissions on a file ``db.prompts.primary`` owns.
+
+        Args:
+            db_path: An absolute database path (existence already checked).
+
+        Returns:
+            A read-only connection with ``sqlite3.Row`` rows. The caller
+            owns closing it.
+
+        Raises:
+            PrivatePathError / sqlite3.Error / OSError / ValueError: when
+            the path or the file fails the seam's checks. Callers degrade
+            (warn + no rows); they never let it reach the search.
+        """
+        from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+
+        conn = connect_private_sqlite(
+            "rag.prompts_keyword_leg",
+            Path(db_path),
+            read_only=True,
+        )
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _prompts_fts_rows(
+        self,
+        db_path: Path,
+        query: str,
+        limit: int,
+        allowed_ids: Optional[Collection[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Run the prompts FTS sub-query on one read-only connection.
+
+        Args:
+            db_path: Validated path to the Prompts database.
+            query: Raw user query.
+            limit: Maximum rows.
+            allowed_ids: Optional prompt-id restriction; ``None`` is
+                unrestricted.
+
+        Returns:
+            Row dicts (``id``/``title``/``content``/``author``), best match
+            first -- an unopenable database or a failing sub-query yields
+            ``[]`` plus one logged warning, never an exception.
+        """
+        escaped_query = self._escape_fts5_query(query)
+        if not escaped_query:
+            return []
+
+        if not isinstance(limit, int) or limit < 1:
+            limit = DEFAULT_FTS5_LIMIT
+        limit = min(limit, MAX_FTS5_LIMIT)
+
+        try:
+            conn = self._connect_prompts_readonly(db_path)
+        except (sqlite3.Error, ValueError, OSError) as e:
+            # `PrivatePathError` is an `OSError`, so a path the seam refuses
+            # (symlinked component, untrusted parent) lands here alongside a
+            # genuinely unopenable file -- both degrade this sub-leg only.
+            logger.warning(
+                "Could not open the Prompts database read-only; the prompts "
+                "keyword sub-leg returns no results (error_type={})",
+                type(e).__name__,
+            )
+            return []
+
+        with closing(conn):
+            return self._prompts_fts(conn, escaped_query, limit, allowed_ids)
+
+    @staticmethod
+    def _prompts_fts(
+        conn: sqlite3.Connection,
+        escaped_query: str,
+        limit: int,
+        allowed_ids: Optional[Collection[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Prompts sub-query: mirrors ``PromptsDatabase``'s own prompt search.
+
+        ``search_prompts`` and ``search_prompts_by_text`` both resolve
+        ``prompts_fts`` rowids and then read ``Prompts`` with
+        ``deleted = 0``; this is that pair of statements collapsed into one
+        join, with the ORM's ``deleted`` filter kept verbatim.
+
+        Two deliberate departures from the ORM, both because this is a
+        RETRIEVAL leg rather than a list view:
+
+        * **``ORDER BY rank``**, not ``last_modified DESC`` /
+          ``name COLLATE NOCASE``. The other three sub-legs hand fusion a
+          relevance ranking, and RRF fuses *positions* -- feeding it a
+          recency order would make a prompt's fused score a function of when
+          it was last edited.
+        * **``prompt_keywords_fts`` is not consulted.** ``search_prompts``
+          unions keyword matches in when the caller asks for the ``keywords``
+          field; the keyword table is a separate index with its own rowid
+          space (``PromptKeywordsTable``), so a union would need a second
+          query and a merge with no comparable rank. Out of scope by the
+          spec, and named here so its absence is a decision rather than an
+          oversight.
+
+        The ``deleted = 0`` predicate reads as redundant -- ``_delete_fts_
+        prompt`` evicts the row from the index on soft delete -- and is not:
+        an external-content ``'rebuild'`` re-indexes the content table,
+        deleted rows included, and this predicate is then the only thing
+        keeping a deleted prompt out of search results (pinned by
+        ``test_deleted_prompts_are_excluded``, which rebuilds the index
+        first; without the rebuild, dropping this line changes nothing).
+
+        The join reads ``fts.rowid = main.id`` because ``prompts_fts``
+        declares ``content_rowid='id'`` -- the id is the FTS rowid by
+        construction, which is also why ``source_id`` below is directly
+        comparable with the id every other prompt surface uses.
+
+        Args:
+            conn: Read-only Prompts connection.
+            escaped_query: A per-token-quoted FTS5 MATCH expression.
+            limit: Maximum rows.
+            allowed_ids: Optional prompt ids this sub-leg may return; the
+                filter mirrors the notes sub-leg's ``json_each`` clause.
+
+        Returns:
+            Row dicts (``id``/``title``/``content``/``author``), best first.
+        """
+        params: List[Any] = [escaped_query]
+        id_filter_sql = ""
+        if allowed_ids is not None:
+            id_filter_sql = "AND main.id IN (SELECT value FROM json_each(?))"
+            params.append(_json_id_param(allowed_ids))
+        params.append(limit)
+
+        sql = f"""
+        SELECT
+            main.id AS id,
+            main.name AS name,
+            main.author AS author,
+            main.details AS details,
+            main.system_prompt AS system_prompt,
+            main.user_prompt AS user_prompt
+        FROM prompts_fts fts
+        JOIN Prompts main ON fts.rowid = main.id
+        WHERE fts.prompts_fts MATCH ?
+          AND main.deleted = 0
+          {id_filter_sql}
+        ORDER BY rank
+        LIMIT ?
+        """
+        try:
+            with closing(conn.execute(sql, tuple(params))) as cursor:
+                return [
+                    {
+                        "id": row["id"],
+                        "title": row["name"] or f"Prompt {row['id']}",
+                        "content": _prompt_document_text(row),
+                        "author": row["author"] or None,
+                    }
+                    for row in cursor
+                ]
+        except sqlite3.Error as e:
+            logger.warning(
+                "Prompts keyword sub-leg failed; returning no prompt rows "
+                "(error_type={})",
                 type(e).__name__,
             )
             return []

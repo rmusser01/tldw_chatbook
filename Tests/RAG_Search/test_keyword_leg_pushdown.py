@@ -672,7 +672,14 @@ def test_every_hybrid_routable_source_type_has_a_translation():
 
 @pytest.mark.asyncio
 async def test_library_hybrid_translates_every_fts_servable_type():
-    """All three plural identifiers translate; `prompts` has no leg at all."""
+    """All FOUR plural identifiers translate to the engine's singular ones.
+
+    DISCLOSED UPDATE (2026-08-11, TASK-15020/B2): this read "all three
+    plural identifiers translate; `prompts` has no leg at all" until the
+    prompts keyword sub-leg landed. The Search canvas's whole toggle set now
+    maps onto engine sub-legs, so a selection can no longer lose a type
+    between the Library and the leg.
+    """
     rag = _HybridSpyRagService(results=[_note_row()])
     service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=rag))
 
@@ -684,4 +691,9 @@ async def test_library_hybrid_translates_every_fts_servable_type():
         include_citations=True,
     )
 
-    assert rag.calls[0]["keyword_source_types"] == {"note", "media", "conversation"}
+    assert rag.calls[0]["keyword_source_types"] == {
+        "note",
+        "media",
+        "conversation",
+        "prompt",
+    }

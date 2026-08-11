@@ -356,10 +356,20 @@ def test_a_source_type_with_no_sub_leg_is_named_in_a_warning(
 
     Two ways to land here, both real: the Library's PLURAL spelling
     (`notes`), and a source type that reaches the scope vocabulary before it
-    has an FTS sub-leg -- which is precisely B2's prompt sequencing. Both
-    sibling paths (`_resolve_keyword_source_types`, the Library's translation
-    map) name what they dropped; this one must too, or "why did my notes
-    vanish" has no thread to pull.
+    has an FTS sub-leg. Both sibling paths
+    (`_resolve_keyword_source_types`, the Library's translation map) name
+    what they dropped; this one must too, or "why did my notes vanish" has
+    no thread to pull.
+
+    DISCLOSED UPDATE (2026-08-11, TASK-15020/B2): the second example used to
+    be `prompt`, since prompts reached the scope vocabulary before they had
+    a sub-leg. They have one now, so `character` stands in for the class.
+    That swap also fixed a pass this test had started getting for the wrong
+    reason: the warning's SECOND half lists the types the leg does serve, so
+    once `prompt` joined that list, `"'prompt'" in named[0]` was satisfied by
+    the serves-list rather than by the dropped-list. The assertion below now
+    splits the message at the serves-list boundary, so it can only be
+    satisfied by the half it is about.
     """
     service = _service_for(corpus)
 
@@ -368,7 +378,7 @@ def test_a_source_type_with_no_sub_leg_is_named_in_a_warning(
             QUERY,
             top_k=10,
             metadata_allowlist={
-                "source_type": {"notes", "prompt"},
+                "source_type": {"notes", "character"},
                 "source_id": set(corpus["note"]),
             },
         )
@@ -377,7 +387,8 @@ def test_a_source_type_with_no_sub_leg_is_named_in_a_warning(
     assert results == []
     named = [m for m in warnings_captured if "no keyword sub-leg serves" in m]
     assert named, "an unservable scoped source type must leave a warning"
-    assert "'notes'" in named[0] and "'prompt'" in named[0], named[0]
+    dropped_half = named[0].split("the leg serves")[0]
+    assert "'notes'" in dropped_half and "'character'" in dropped_half, named[0]
 
 
 # --- Per-sub-leg id filtering, one test per source type ---------------------

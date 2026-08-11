@@ -885,21 +885,26 @@ def test_negation_queries_carry_a_cue_their_target_never_uses(golden, by_slug):
     assert weak == {}
 
 
-def test_prompt_fixtures_are_the_source_type_nothing_can_write(golden, by_slug):
-    """The prompt class's before-state is total absence, by construction.
+def test_prompt_fixtures_are_the_source_type_the_vector_index_never_holds(
+    golden, by_slug
+):
+    """The prompt class measures the KEYWORD leg alone, by construction.
 
-    Its queries score 0.000 in every mode because the harness declines to
-    write a prompt document at all — so this test pins the two halves of
-    that claim together: the golden queries target only prompt documents,
-    and `prompt` is exactly the source type ingestion skips. If a prompts
-    writer lands and this coupling is not revisited, the prompt cell would
-    keep being read as "invisible by design" while quietly measuring
-    retrieval.
+    DISCLOSED UPDATE (2026-08-11, TASK-15020/B2). This test used to be
+    "the source type nothing can write": prompts had no writer, so the
+    class's 0.000 was total absence. B2 shipped the writer and the engine's
+    prompts sub-leg, so the queries are now answered — through the FTS leg
+    only, because nothing indexes prompts semantically. The coupling worth
+    pinning is therefore the surviving one: the prompt queries target only
+    prompt documents, and `prompt` is exactly the source type ingestion
+    writes-but-never-indexes. Without this, a prompt cell reading 0.000 in
+    the semantic column would be read as a retrieval defect instead of as
+    the structural fact it is.
     """
-    from Tests.RAG_Eval.harness.ingest import UNWRITABLE_SOURCE_TYPES
+    from Tests.RAG_Eval.harness.ingest import UNINDEXED_SOURCE_TYPES
 
-    assert set(UNWRITABLE_SOURCE_TYPES) == {"prompt"}
-    assert set(UNWRITABLE_SOURCE_TYPES) < set(SOURCE_TYPES)
+    assert set(UNINDEXED_SOURCE_TYPES) == {"prompt"}
+    assert set(UNINDEXED_SOURCE_TYPES) < set(SOURCE_TYPES)
 
     for query in golden:
         targets = {by_slug[slug].source_type for slug in query.relevant_slugs}
@@ -908,7 +913,8 @@ def test_prompt_fixtures_are_the_source_type_nothing_can_write(golden, by_slug):
         else:
             assert "prompt" not in targets, (
                 f"{query.id} ({query.category}) targets a prompt document, which "
-                "nothing retrieves — its cell would report a retrieval failure"
+                "the semantic leg cannot reach — its cell would blame retrieval "
+                "for a missing index"
             )
 
 

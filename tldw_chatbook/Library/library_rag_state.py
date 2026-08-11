@@ -204,10 +204,13 @@ _OPEN_SOURCE_TYPE_MAP = {
 # Prompts off would never hide a prompt row. Mirrors
 # `_SEMANTIC_SOURCE_TYPE_MAP` in `library_local_rag_search_service.py`
 # (the retrieval-time analogue of this same filter, applied to rag mode's
-# semantic leg before rows even land) -- extended with "prompt"/"prompts",
-# which that map deliberately omits (prompts have no semantic-index seam,
-# but DO have a keyword-mode retrieval leg that emits singular "prompt"
-# rows, see `_prompt_row`).
+# rows before they land). That map used to omit "prompt"/"prompts" because
+# nothing on the rag path could emit one; TASK-15020/B2's prompts keyword
+# sub-leg does, so the two maps now agree on prompts as well, and this one
+# keeps the extra "workspace"/"collection" entries no retrieval path emits.
+# Prompts still have no SEMANTIC seam -- that fact moved to
+# `_SEMANTICALLY_COVERABLE_SOURCE_TYPES`, which is about the vector index
+# rather than about canonicalization.
 _SCOPE_SOURCE_TYPE_MAP = {
     "note": "notes",
     "notes": "notes",

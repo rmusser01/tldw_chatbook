@@ -811,21 +811,49 @@ category = "negation"
 relevant_slugs = ["note-tarn-foot-mast"]
 
 # ---------------------------------------------------------------------------
-# prompt (5) — admitted structurally: nothing retrieves a prompt today
+# prompt (5) — the keyword leg reaches prompts; these queries do not reach it
 # ---------------------------------------------------------------------------
 #
-# These five are not probe-admitted in the same sense as the classes above,
-# and the distinction matters. Their targets are `source_type = "prompt"`
-# corpus documents, and the harness has no prompts writer, the engine's
-# keyword leg has no prompts sub-leg, and prompts have no vector index
-# anywhere. They are absent from `slug_to_source` by construction
-# (`ingest.UNWRITABLE_SOURCE_TYPES`), so recall is 0.000 in all three modes
-# for a reason that is structural rather than measured.
+# These five are not probe-admitted in the same sense as the classes above.
+# Their targets are `source_type = "prompt"` corpus documents, and when they
+# were authored (2026-08-10) the harness had no prompts writer, the engine's
+# keyword leg had no prompts sub-leg, and prompts had no vector index
+# anywhere: recall 0.000 in all three modes, structurally.
 #
-# The probe was still run against them, and the recorded ranks are what it
-# returned — evidence that they are absent rather than merely unfound.
-# When the prompts sub-leg lands, these queries are the before-number it
-# flips.
+# TASK-15020/B2 (2026-08-11) shipped the writer and the sub-leg, and the
+# cells DID NOT MOVE. All five still read 0.000 in all three modes, now for
+# three separate reasons, each measured:
+#
+#   * semantic — still structural, and deliberately so: nothing indexes
+#     prompts into the vector store (B2 left that out of scope), so prompts
+#     are reachable through the FTS leg alone.
+#   * plain — a HARNESS gap, not a product one: plain mode fans out over the
+#     Library's own four seams and the eval harness wires no
+#     `prompt_scope_service`. The shipped app's plain mode does find prompts.
+#   * hybrid — THE FINDING. The engine's keyword leg ANDs every token of the
+#     query, function words included (`_escape_fts5_query`, TASK-3995), with
+#     no plural/singular widening. These five are natural-language sentences,
+#     so each misses by one to five absent tokens ("about", "into", "turns",
+#     "terms" vs the document's "term"...) and the leg returns NOTHING.
+#     Measured over this whole golden set: the keyword leg returns zero rows
+#     for 40 of 60 queries, firing only where the queries are keyword-shaped
+#     (keyword 13/16, scoped 7/7). The semantic leg hides that for every
+#     other source type. Prompts have no semantic leg, so this is where it
+#     shows.
+#
+# The sub-leg itself works, measured through the production seam on the same
+# runtime: the keyword-shaped "shift log summary supervisor" returns
+# prompt-shift-summary at HYBRID RANK 9, as an FTS-only row —
+# `hybrid_fusion = {fts_rank: 1, vector_rank: None, fts_rrf: 0.1666...,
+# vector_score: None, alpha: 0.7, rrf_k: 5}`, read off the engine, the same
+# rescue signature (and the same one-rank-from-the-edge fragility) the
+# scoped class carries.
+#
+# These queries are deliberately NOT re-worded to make the number move: a
+# fixture rewritten after seeing the result measures the rewrite. Which side
+# should change is a decision with its own measurement.
+# `test_fixture_authoring_probe.test_prompt_fixtures_are_reachable_but_
+# their_golden_queries_are_not` holds both halves down.
 
 # admitted: 2026-08-10 hybrid=miss semantic=miss plain=miss
 [[query]]

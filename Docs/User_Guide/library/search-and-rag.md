@@ -106,13 +106,19 @@ follows whichever **search mode** your active RAG profile
   instead — see [Evidence rows](#evidence-rows) below).
 - **Semantic** profiles run vector retrieval, same as before.
 - **Hybrid** profiles blend keyword and vector retrieval whenever at least
-  one **keyword-indexed source** is selected — Media, Notes or
-  Conversations, all three of which the keyword leg now searches. A query
-  narrowed by a RAG scope stays on the hybrid path: the scope is pushed
-  into *both* legs, so keyword matches from inside your scope reach the
-  results and nothing from outside it can. The one remaining fallback to
-  semantic-only retrieval is a selection of **Prompts alone**, which the
-  keyword leg cannot search — and it is disclosed rather than silent.
+  one **keyword-indexed source** is selected — which is now all four of
+  Media, Notes, Conversations and Prompts. A query narrowed by a RAG scope
+  stays on the hybrid path: the scope is pushed into *both* legs, so
+  keyword matches from inside your scope reach the results and nothing from
+  outside it can. (A scope can only name media and notes, so an active
+  scope excludes conversations and prompts from retrieval entirely rather
+  than searching them unrestricted.)
+- **Prompts are keyword-only.** Nothing builds a vector index over your
+  saved prompts, so a prompt reaches hybrid results through the keyword leg
+  alone. In practice that means prompts answer *keyword-shaped* queries —
+  the words you type have to appear in the prompt's name or body. A long
+  natural-language question that would find a note by meaning will not find
+  a prompt.
 
 A quiet one-line disclosure can appear above the evidence rows,
 alongside the "No strong semantic matches" / "Semantic search found
@@ -299,8 +305,11 @@ you to guess whether it has nothing relevant or was never searched. Under a
 **hybrid** profile a source can also be on screen purely from the keyword
 leg; that reads "Keyword matches only from: Notes." rather than claiming
 the search found nothing from a source whose rows you are looking at.
-Search mode never shows this line; its keyword leg always queries every
-selected source.
+Prompts never appear in any of these lines, in either direction: the line
+is a statement about the *semantic* leg, and prompts are outside it
+entirely, so saying "semantic search found nothing from Prompts" would
+blame a search that was never run. Search mode never shows this line; its
+keyword leg always queries every selected source.
 
 ### Recent searches
 
@@ -465,12 +474,14 @@ only." Every one of those route notes rendered on zero-row outcomes too.*
 > holds: the keyword leg now covers notes and conversations as well as
 > media, so turning Media off while Notes or Conversations stay selected
 > runs the fused hybrid path instead of falling back to semantic, and the
-> "Media excluded — semantic only." disclosure no longer exists. Semantic
-> fallback under a hybrid profile now happens only for a Prompts-only
-> selection, disclosed as "No keyword leg for the selected sources —
-> semantic only." (A scoped query was the other fallback until
-> TASK-15020/B1 pushed scope allowlists into both legs; it now stays on the
-> hybrid path.) The rest of that walkthrough stands.
+> "Media excluded — semantic only." disclosure no longer exists. Two later
+> changes finished the job: TASK-15020/B1 pushed scope allowlists into both
+> legs, so a scoped query stays on the hybrid path, and TASK-15020/B2 gave
+> the keyword leg a prompts sub-leg, so a **Prompts-only** selection runs
+> hybrid too. No combination of the four source toggles now falls back to
+> semantic-only, and the "No keyword leg for the selected sources —
+> semantic only." disclosure survives only for a selection with nothing in
+> it this build recognizes. The rest of that walkthrough stands.
 
 *Verified against ec1ed811e — 2026-08-09 (hybrid-fusion cluster live check,
 scratch profile holding a copy of the real Library DBs and vector index,

@@ -98,12 +98,18 @@ __all__ = [
 MODES: tuple[str, ...] = ("semantic", "plain", "hybrid")
 
 #: The Library scope identifiers passed to the seam (plural — the scope
-#: vocabulary, not the ingestion one). All three corpus source types: the
+#: vocabulary, not the ingestion one). All FOUR corpus source types: the
 #: seam degrades a hybrid profile to semantic when NONE of the selected
-#: types is one the engine's FTS leg can serve, and these three are exactly
-#: that set (`_FTS_SERVABLE_SOURCE_TYPES`), so narrowing this tuple towards
-#: `prompts` would silently make the hybrid pass a second semantic pass.
-SOURCE_TYPES: tuple[str, ...] = ("media", "notes", "conversations")
+#: types is one the engine's FTS leg can serve, and these four are exactly
+#: that set since TASK-15020/B2 (`_FTS_SERVABLE_SOURCE_TYPES`), so dropping
+#: one would silently make the hybrid pass a second semantic pass.
+#:
+#: `prompts` is load-bearing twice over and was added by B2: without it the
+#: seam never asks the engine for the prompts sub-leg (`keyword_source_
+#: types` is built from this tuple), AND the source-type post-filter drops
+#: every prompt row that came back anyway. Either alone is enough to make
+#: the prompt category read 0.000 while the sub-leg works perfectly.
+SOURCE_TYPES: tuple[str, ...] = ("media", "notes", "conversations", "prompts")
 
 #: Metric keys `evaluate_retrieval_batch` returns (short names — see the
 #: port note in `RAG_Search/eval/metrics.py`).

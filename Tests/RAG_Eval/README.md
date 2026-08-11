@@ -6,9 +6,9 @@ profile-driven retrieval reachable from Console and Library search but
 deliberately made no quality claims. P1 (TASK-3894) builds the thing that
 can make those claims: ported precision/recall/MRR/NDCG/F1@k metrics, a
 regression/gating layer with fingerprinted committed baselines, a
-deterministic fixture corpus + golden query set spanning notes, media and
-conversations, and an env-gated pytest harness that runs every golden query
-through the real seam across all three profile modes.
+deterministic fixture corpus + golden query set spanning notes, media,
+conversations and saved prompts, and an env-gated pytest harness that runs
+every golden query through the real seam across all three profile modes.
 
 > **Reading this during the P2ab arc.** The fixture set has been renewed
 > (172 documents, 60 queries) with fail-first classes — `scoped`,
@@ -366,6 +366,24 @@ Two columns need context before you read the P/R/MRR/NDCG numbers as
   plain's 0.4 docs/query and P=0.875-on-keyword means "when it returned
   anything it was almost always right," not "it ranked ten results well."
   Compare `docs` before comparing precision across modes.
+- **The keyword (FTS) leg is silent for most of this golden set, and the
+  `prompt` category is where that shows.** `_escape_fts5_query` builds the
+  engine leg's MATCH as an implicit AND over EVERY query token, function
+  words included (TASK-3995 chose that over phrase-quoting), with no
+  plural/singular widening — so a natural-language query almost never
+  matches. Measured over this golden set at TASK-15020/B2 (2026-08-11): the
+  keyword leg returns **zero rows for 40 of the 60 queries**, firing only
+  where the queries are keyword-shaped (`keyword` 13/16 targets found by
+  the FTS leg alone, `scoped` 7/7; `paraphrase` 0/13,
+  `vocabulary_mismatch` 0/9, `negation` 0/3, `prompt` 0/5). For media,
+  notes and conversations the semantic leg covers that completely. Prompts
+  have no semantic leg — B2 gave them an FTS sub-leg and deliberately no
+  vector index — so the `prompt` category reads 0.000 in all three modes
+  even though the sub-leg works: the same runtime answers the
+  keyword-shaped "shift log summary supervisor" with the right prompt at
+  hybrid rank 9, as an FTS-only row. Do not read a `prompt` 0.000 as a
+  prompts-retrieval defect, and do not read the other categories' hybrid
+  numbers as evidence that the keyword leg is contributing to them.
 - **Plain's MRR and NDCG track recall, not ranking.** The four-seam keyword
   path deliberately drops the FTS rank ("an FTS ranking artifact, not a
   retrieval similarity score" — every plain row carries `score=None`), and
