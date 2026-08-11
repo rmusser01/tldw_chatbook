@@ -2506,10 +2506,23 @@ class ConsoleTranscript(VerticalScroll):
                 self._row_signatures.pop(row.key, None)
                 return
             if not row_was_mounted:
-                if previous_widget is None:
-                    self.move_child(widget, before=0)
-                else:
-                    self.move_child(widget, after=previous_widget)
+                # TASK-15453: `move_child` is several O(rows) NodeList scans
+                # plus a `refresh(layout=True)` plus a DOM-version bump --
+                # expensive to pay for a row that is already where it needs
+                # to be. Every already-processed row (0..index-1) is correct
+                # by induction (mounts above always land at the walk's
+                # current slot), so this row is in place iff it already
+                # sits at `index` in the ACTUAL child list -- read fresh
+                # every iteration (never cached) because earlier mounts in
+                # this same pass shift indices out from under a snapshot.
+                already_in_position = (
+                    index < len(self.children) and self.children[index] is widget
+                )
+                if not already_in_position:
+                    if previous_widget is None:
+                        self.move_child(widget, before=0)
+                    else:
+                        self.move_child(widget, after=previous_widget)
             previous_widget = widget
         self._paint_debug_dump("after-reconcile")
 
