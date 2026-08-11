@@ -21,6 +21,7 @@ TASK_2511 = (
     / "task-2511 - Smoke-test-FastMCP-local-tool-binding-with-the-mcp-extra.md"
 )
 DESIGN_DOCUMENT = DOCUMENTS[0]
+USER_GUIDE_DOCUMENT = DOCUMENTS[1]
 LOCAL_LIBRARY_TOOLS_DOCUMENT = (
     REPO_ROOT / "Docs" / "Development" / "Agent-Tools" / "local-library-tools.md"
 )
@@ -143,6 +144,25 @@ def _mutate_inventory(
     return text.replace(block, mutated_block, 1)
 
 
+def _assert_hub_task_boundary(text: str) -> None:
+    normalized = " ".join(text.split())
+    assert "workspace file, read-only Git, and web tools" in normalized
+    assert all(
+        tool_name in normalized
+        for tool_name in ("todo_create", "todo_update", "todo_get", "todo_list")
+    )
+    assert "require Console session state and are not Hub tools" in normalized
+    assert (
+        re.search(
+            r"(?:includes?|alongside|provides?|offers?)\s+"
+            r"(?:[^.]{0,80}\s)?session[- ](?:todo|task)\s+tools",
+            normalized,
+            re.IGNORECASE,
+        )
+        is None
+    )
+
+
 def test_documents_publish_exact_install_and_launch_commands(
     document: tuple[Path, str],
 ) -> None:
@@ -191,6 +211,25 @@ def test_local_library_tools_documentation_uses_current_standalone_inventory() -
         "retired `ingest_media` is absent, and persistent URL/file ingestion "
         "uses Library Import."
     ) in normalized
+
+
+def test_user_guide_keeps_session_task_tools_out_of_hub_inventory() -> None:
+    _assert_hub_task_boundary(USER_GUIDE_DOCUMENT.read_text(encoding="utf-8"))
+
+
+def test_user_guide_hub_inventory_contract_rejects_session_task_synonym() -> None:
+    text = USER_GUIDE_DOCUMENT.read_text(encoding="utf-8")
+    normalized = " ".join(text.split())
+    mutated = normalized.replace(
+        "workspace file, read-only Git, and web tools",
+        "workspace file, read-only Git, and web tools. "
+        "It also includes session task tools",
+        1,
+    )
+
+    assert mutated != normalized
+    with pytest.raises(AssertionError):
+        _assert_hub_task_boundary(mutated)
 
 
 @pytest.mark.parametrize("path", DOCUMENTS, ids=lambda path: path.name)

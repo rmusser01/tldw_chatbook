@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 _MAX_TAGS = 5
+_RESERVED_EXTERNAL_PROFILE_ID = "__local__"
 
 
 @dataclass(frozen=True)
@@ -106,13 +107,15 @@ def local_tools_from_record(record: dict) -> list[HubTool]:
         One `HubTool` per tool in `discovery_snapshot["tools"]`, or an
         empty list when there is no snapshot.
     """
+    profile_id = _text(record.get("profile_id"))
+    if profile_id == _RESERVED_EXTERNAL_PROFILE_ID:
+        return []
     snapshot = record.get("discovery_snapshot")
     if not isinstance(snapshot, Mapping):
         return []
     raw_tools = snapshot.get("tools")
     if not isinstance(raw_tools, list):
         return []
-    profile_id = _text(record.get("profile_id"))
     server_key = f"local:{profile_id}"
     stale = not record.get("is_connected")
     tools: list[HubTool] = []
