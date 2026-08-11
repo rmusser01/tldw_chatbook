@@ -13,12 +13,17 @@ and inspect the JSON payload actually sent.
 """
 
 import json
+from copy import deepcopy
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
 
 from tldw_chatbook.Chat.Chat_Deps import ChatProviderError
 from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+from tldw_chatbook.Agents.session_todo_store import SessionTodoStore
+from tldw_chatbook.LLM_Calls.LLM_API_Calls import _google_tools_payload
 
 
 def _gemini_text_response(text="ok"):
@@ -70,6 +75,21 @@ def _call_google(mock_post, messages, **extra):
     return mock_post.call_args[1]["json"]
 
 
+def _todo_tool(name):
+    provider = LocalToolProvider(
+        workspace_root=Path("."), todo_store=SessionTodoStore()
+    )
+    schema = provider.load_schema(f"local:{name}")
+    return {
+        "type": "function",
+        "function": {
+            "name": schema.name,
+            "description": schema.description,
+            "parameters": schema.parameters,
+        },
+    }
+
+
 @patch("requests.Session.post")
 def test_openai_tools_wrap_as_function_declarations(mock_post):
     sent = _call_google(
@@ -83,7 +103,7 @@ def test_openai_tools_wrap_as_function_declarations(mock_post):
                 {
                     "name": "calculator",
                     "description": "Evaluate math.",
-                    "parameters": OPENAI_TOOLS[0]["function"]["parameters"],
+                    "parametersJsonSchema": OPENAI_TOOLS[0]["function"]["parameters"],
                 }
             ]
         }
@@ -117,11 +137,49 @@ def test_blank_name_openai_tool_dropped_locally(mock_post):
                 {
                     "name": "calculator",
                     "description": "Evaluate math.",
-                    "parameters": OPENAI_TOOLS[0]["function"]["parameters"],
+                    "parametersJsonSchema": OPENAI_TOOLS[0]["function"]["parameters"],
                 }
             ]
         }
     ]
+
+
+def test_strict_todo_schemas_use_full_json_schema_field_without_aliasing():
+    tools = [_todo_tool("todo_create"), _todo_tool("todo_update")]
+    original = deepcopy(tools)
+
+    converted = _google_tools_payload(tools)
+    declarations = converted[0]["functionDeclarations"]
+
+    for declaration, source, source_before in zip(
+        declarations, tools, original, strict=True
+    ):
+        assert "parameters" not in declaration
+        assert (
+            declaration["parametersJsonSchema"]
+            == source_before["function"]["parameters"]
+        )
+        assert (
+            declaration["parametersJsonSchema"] is not source["function"]["parameters"]
+        )
+    assert tools == original
+
+    declarations[1]["parametersJsonSchema"]["properties"]["id"]["pattern"] = "changed"
+    assert tools == original
+
+
+def test_openai_tool_without_parameters_uses_full_json_object_schema():
+    converted = _google_tools_payload(
+        [{"type": "function", "function": {"name": "no_args"}}]
+    )
+    declaration = converted[0]["functionDeclarations"][0]
+
+    assert declaration == {
+        "name": "no_args",
+        "description": "",
+        "parametersJsonSchema": {"type": "object", "properties": {}},
+    }
+    assert "parameters" not in declaration
 
 
 @patch("requests.Session.post")
@@ -1017,8 +1075,7 @@ def test_google_api_key_comes_from_the_api_settings_google_table(mock_post):
         )
 
     assert (
-        mock_post.call_args[1]["headers"]["x-goog-api-key"]
-        == "google-config-table-key"
+        mock_post.call_args[1]["headers"]["x-goog-api-key"] == "google-config-table-key"
     )
 
 

@@ -25,6 +25,7 @@
 import json
 import time
 from collections.abc import Mapping
+from copy import deepcopy
 from typing import List, Any, Optional, Tuple, Dict, Union
 from urllib.parse import urlparse
 
@@ -1386,7 +1387,9 @@ def chat_with_anthropic(
         "anthropic-version": anthropic_config.get("api_version", "2023-06-01"),
         "Content-Type": "application/json",
     }
-    caching_active = _anthropic_supports_caching(current_model) and _anthropic_caching_enabled()
+    caching_active = (
+        _anthropic_supports_caching(current_model) and _anthropic_caching_enabled()
+    )
     data = {
         "model": current_model,
         "max_tokens": current_max_tokens,  # Changed from max_tokens_to_sample to the parameter
@@ -1934,12 +1937,78 @@ def chat_with_anthropic(
         ) from e
 
 
+_COHERE_UNSUPPORTED_SCHEMA_KEYWORDS = frozenset(
+    {
+        "allOf",
+        "oneOf",
+        "not",
+        "if",
+        "then",
+        "else",
+        "minimum",
+        "maximum",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "multipleOf",
+        "minLength",
+        "maxLength",
+        "pattern",
+        "minItems",
+        "maxItems",
+        "uniqueItems",
+        "contains",
+        "minContains",
+        "maxContains",
+        "minProperties",
+        "maxProperties",
+        "propertyNames",
+        "patternProperties",
+        "dependentRequired",
+        "dependentSchemas",
+        "dependencies",
+        "unevaluatedProperties",
+        "unevaluatedItems",
+    }
+)
+
+
+def _cohere_schema_projection(schema: dict) -> dict:
+    """Return a fresh Cohere strict-tools disclosure subset of ``schema``."""
+    projected: dict = {}
+    for key, value in schema.items():
+        if key in _COHERE_UNSUPPORTED_SCHEMA_KEYWORDS:
+            continue
+        if key == "type" and isinstance(value, list):
+            projected["anyOf"] = [{"type": deepcopy(item)} for item in value]
+        elif key == "properties" and isinstance(value, dict):
+            projected[key] = {
+                name: _cohere_schema_projection(property_schema)
+                if isinstance(property_schema, dict)
+                else deepcopy(property_schema)
+                for name, property_schema in value.items()
+            }
+        elif isinstance(value, dict):
+            projected[key] = _cohere_schema_projection(value)
+        elif isinstance(value, list) and key in {"anyOf", "items"}:
+            projected[key] = [
+                _cohere_schema_projection(item)
+                if isinstance(item, dict)
+                else deepcopy(item)
+                for item in value
+            ]
+        else:
+            projected[key] = deepcopy(value)
+    return projected
+
+
 def _cohere_tools_payload(tools: list) -> list:
-    """Normalize OpenAI-format ``tools`` entries for Cohere v2 -- v2 IS
-    OpenAI-shaped end-to-end, so this is passthrough with a light validity
-    filter: entries missing ``function.name`` are dropped with a warning
-    instead of being forwarded into a 400 (mirrors `_google_tools_payload`'s
-    blank-name guard, task-267 Task 2).
+    """Normalize OpenAI-format tools for Cohere v2's schema subset.
+
+    Cohere v2 keeps the OpenAI-shaped outer tool envelope, while strict-tools
+    accepts only a subset of JSON Schema. Each parameter schema is therefore
+    projected into a fresh transport disclosure; exact raw tool validation
+    remains authoritative. Entries missing ``function.name`` are dropped
+    locally instead of being forwarded into a 400.
 
     Args:
         tools: The ``tools`` list as received (OpenAI shaped).
@@ -1969,14 +2038,13 @@ def _cohere_tools_payload(tools: list) -> list:
                     "function": {
                         "name": name,
                         "description": str(function.get("description") or ""),
-                        "parameters": parameters,
+                        "parameters": _cohere_schema_projection(parameters),
                     },
                 }
             )
         else:
-            # v2's native tools shape IS the OpenAI shape -- anything that
-            # isn't a valid function entry is junk and would 400 the request
-            # (Qodo #690-6).
+            # Cohere v2's outer tools shape is OpenAI-like; anything outside
+            # that function envelope is junk and would 400 the request.
             logger.warning(
                 "Cohere: dropping tools entry that is not a valid function tool."
             )
@@ -3086,7 +3154,7 @@ def _google_tools_payload(tools: list) -> list:
                 {
                     "name": name,
                     "description": str(function.get("description") or ""),
-                    "parameters": parameters,
+                    "parametersJsonSchema": deepcopy(parameters),
                 }
             )
         else:

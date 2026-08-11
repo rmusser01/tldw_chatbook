@@ -1,3 +1,5 @@
+import ast
+import inspect
 import json
 import logging
 import shutil
@@ -20,6 +22,7 @@ from tldw_chatbook.Agents.session_todo_store import (
     MAX_TODO_CONTENT_CHARS,
     MAX_TODO_ITEMS,
     MAX_TODO_NUMBER,
+    TODO_STATUSES,
     SessionTodoStore,
 )
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
@@ -1145,12 +1148,7 @@ def test_todo_tool_schemas_pin_exact_keys_bounds_and_mutation_shape(tmp_path):
     assert update_props["content"]["maxLength"] == MAX_TODO_CONTENT_CHARS
     assert update_props["activeForm"]["type"] == ["string", "null"]
     assert update_props["activeForm"]["maxLength"] == MAX_TODO_CONTENT_CHARS
-    assert update_props["status"]["enum"] == [
-        "pending",
-        "in_progress",
-        "completed",
-        "deleted",
-    ]
+    assert update_props["status"]["enum"] == [*TODO_STATUSES, "deleted"]
     assert update["anyOf"] == [
         {"required": ["content"]},
         {"required": ["status"]},
@@ -1198,6 +1196,25 @@ def test_todo_tool_schemas_pin_exact_keys_bounds_and_mutation_shape(tmp_path):
     assert not Draft202012Validator(schemas["todo_update"]).is_valid(
         {"id": "1", "expected_version": 1}
     )
+
+
+def test_todo_status_schema_uses_the_store_status_source_of_truth(tmp_path):
+    import tldw_chatbook.Agents.local_tool_provider as provider_module
+
+    schemas = _task_schemas(make_provider(root=tmp_path, todo_store=SessionTodoStore()))
+    default_specs_tree = ast.parse(inspect.getsource(provider_module._default_specs))
+
+    assert not hasattr(provider_module, "_TODO_STATUSES")
+    assert any(
+        isinstance(node, ast.Starred)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "TODO_STATUSES"
+        for node in ast.walk(default_specs_tree)
+    )
+    assert schemas["todo_update"]["properties"]["status"]["enum"] == [
+        *TODO_STATUSES,
+        "deleted",
+    ]
 
 
 def test_todo_id_and_cursor_schemas_enforce_the_complete_canonical_domain(tmp_path):

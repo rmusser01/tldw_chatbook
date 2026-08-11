@@ -30,6 +30,7 @@ from .session_todo_store import (
     MAX_TODO_CONTENT_CHARS,
     MAX_TODO_ITEMS,
     MAX_TODO_NUMBER,
+    TODO_STATUSES,
     SessionTodoStore,
     TodoChangeCallback,
     TodoRecord,
@@ -707,7 +708,6 @@ class LocalToolProvider:
             )
 
 
-_TODO_STATUSES = ("pending", "in_progress", "completed", "deleted")
 _TODO_ID_PATTERN = (
     r"^(?:"
     r"[1-9][0-9]{0,14}|"
@@ -1410,7 +1410,10 @@ def _default_specs(
                                 "maximum": MAX_TODO_NUMBER,
                             },
                             "content": dict(content_schema),
-                            "status": {"type": "string", "enum": list(_TODO_STATUSES)},
+                            "status": {
+                                "type": "string",
+                                "enum": [*TODO_STATUSES, "deleted"],
+                            },
                             "activeForm": update_active_form_schema,
                         },
                         "required": ["id", "expected_version"],

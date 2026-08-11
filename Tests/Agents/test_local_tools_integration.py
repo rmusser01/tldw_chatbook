@@ -35,6 +35,7 @@ from tldw_chatbook.Agents.local_tool_provider import (
     _default_specs,
 )
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
+from tldw_chatbook.Agents.session_todo_store import SessionTodoStore
 from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
     ToolCatalogRegistry,
@@ -78,8 +79,18 @@ def workspace(tmp_path):
     return root
 
 
-def make_service(db, workspace, replies, approvals, approval_calls, *,
-                 state=None, extra_specs=(), specs=None, todo_store=None):
+def make_service(
+    db,
+    workspace,
+    replies,
+    approvals,
+    approval_calls,
+    *,
+    state=None,
+    extra_specs=(),
+    specs=None,
+    todo_store: SessionTodoStore | None = None,
+):
     """Assemble the run exactly as the bridge does: registry with builtins +
     the local provider, the build_local_review_hook batch hook, and the
     provider's stamp_scope as review_state_scope.
@@ -87,8 +98,8 @@ def make_service(db, workspace, replies, approvals, approval_calls, *,
     ``specs`` replaces the default local spec set (used to keep the composed
     catalog at/under the direct-disclosure threshold for approval-flow
     tests); ``extra_specs`` appends to whichever base set is in use.
-    ``todo_store`` wires a live session todo list into the default spec set
-    (todo_write is only registered when a store is handed in)."""
+    ``todo_store`` wires a live stable-ID session task store into the default
+    spec set (the four ``todo_*`` operations are only registered then)."""
     base = (
         list(specs)
         if specs is not None
@@ -97,8 +108,9 @@ def make_service(db, workspace, replies, approvals, approval_calls, *,
     provider = LocalToolProvider(
         workspace_root=workspace,
         specs=base + list(extra_specs),
-        resolve_state=lambda hub: state
-        or EffectiveToolState(state="ask", origin="global_default"),
+        resolve_state=lambda hub: (
+            state or EffectiveToolState(state="ask", origin="global_default")
+        ),
     )
 
     def request_approvals(pending):
@@ -517,51 +529,49 @@ def test_find_load_path_executes_web_fetch_after_approve_once(db, workspace):
     assert pending.arguments == {"url": "http://example.com/"}
 
 
-def test_todo_write_mutates_session_list_after_approve_once(db, workspace):
-    """find_tools("todo") -> load_tools("local:todo_write") -> todo_write:
-    the discovered tool replaces the injected session todo list in place,
-    behind ONE approval round trip. (With a store wired, the default catalog
-    is 11 entries — past the threshold — so todo_write must be discovered
-    via find/load before the fence call is permitted to execute.)
+def test_todo_create_mutates_session_store_after_approve_once(db, workspace):
+    """find_tools("todo") -> load_tools("local:todo_create") -> todo_create:
+    the discovered tool creates a stable-ID task in the injected session store,
+    behind ONE approval round trip. With a store wired, the catalog is past the
+    disclosure threshold, so todo_create must be discovered before execution.
 
     resolve_state is constructed deliberately as what
-    MCP.permission_store.resolve_effective_state returns for todo_write
+    MCP.permission_store.resolve_effective_state returns for todo_create
     (tags=("mutates",), which intersects HIGH_RISK_TAGS) under an INHERITED
     allow (origin="global_default"): the high-risk floor downgrades it to
     ``ask`` with ``risk_floored=True``. An explicit tool_override allow is
     never floored and would skip the gate entirely — that path is already
     pinned by test_allow_state_executes_without_approval_round_trip."""
-    todos = []
-    new_todos = [
-        {
-            "content": "Write the report",
-            "status": "in_progress",
-            "activeForm": "Writing the report",
-        },
-        {"content": "Review the report", "status": "pending"},
-    ]
+    todo_store = SessionTodoStore()
+    assert "todo_write" not in {
+        spec.name for spec in _default_specs(workspace, todo_store=todo_store)
+    }
+    create_args = {
+        "content": "Write the report",
+        "activeForm": "Writing the report",
+    }
     approval_calls = []
     service, chat = make_service(
         db,
         workspace,
         [
             fence("find_tools", {"query": "todo"}),
-            fence("load_tools", {"ids": ["local:todo_write"]}),
-            fence("todo_write", {"todos": new_todos}),
-            "Todos updated.",
+            fence("load_tools", {"ids": ["local:todo_create"]}),
+            fence("todo_create", create_args),
+            "Task created.",
         ],
-        {"todo_write": "approve_once"},
+        {"todo_create": "approve_once"},
         approval_calls,
         state=EffectiveToolState(
             state="ask", origin="global_default", risk_floored=True
         ),
-        todo_store=todos,
+        todo_store=todo_store,
     )
     config = AgentConfig(
         model="test-model",
         system_prompt="You are helpful.",
-        allowed_tools=("todo_write",),
-        # find + load + write + final: past the 8-step default (precedent:
+        allowed_tools=("todo_create",),
+        # find + load + create + final: past the 8-step default (precedent:
         # max_steps=16 in the fs_edit find/load test above).
         budget=RunBudget(max_steps=16, max_model_turns=8),
     )
@@ -575,24 +585,33 @@ def test_todo_write_mutates_session_list_after_approve_once(db, workspace):
     )
 
     assert outcome.status == RUN_DONE
-    assert outcome.final_text == "Todos updated."
-    assert len(chat.calls) == 4  # find + load + write + final
+    assert outcome.final_text == "Task created."
+    assert len(chat.calls) == 4  # find + load + create + final
 
     # The scripted discovery sequence ran in order.
     called = [s.tool_name for s in outcome.steps if s.kind == "tool_call"]
-    assert called == ["find_tools", "load_tools", "todo_write"]
+    assert called == ["find_tools", "load_tools", "todo_create"]
+    assert "todo_write" not in called
 
-    # The session list was replaced with the validated items.
-    assert todos == new_todos
+    created = {
+        "id": "1",
+        "version": 1,
+        "content": "Write the report",
+        "status": "pending",
+        "activeForm": "Writing the report",
+    }
+    assert todo_store.get("1") == created
 
     # The tool step's result is the confirmation line, not an error.
     tool_results = [s for s in outcome.steps if s.kind == "tool_result"]
     assert [s.tool_name for s in tool_results] == [
         "find_tools",
         "load_tools",
-        "todo_write",
+        "todo_create",
     ]
-    assert tool_results[-1].result == "2 todos (1 in progress)"
+    assert tool_results[-1].result == json.dumps(
+        created, ensure_ascii=False, allow_nan=False, separators=(",", ":")
+    )
 
     # Exactly ONE approval round trip, gated on the local server key with
     # the risk floor as the stated reason.
@@ -601,7 +620,8 @@ def test_todo_write_mutates_session_list_after_approve_once(db, workspace):
     pending = approval_calls[0][0]
     assert isinstance(pending, MCPPendingCall)
     assert pending.server_key == LOCAL_SERVER_KEY
-    assert pending.llm_name == "todo_write"
+    assert pending.llm_name == "todo_create"
+    assert pending.arguments == create_args
     assert pending.reason == "risk_floored"
 
 
