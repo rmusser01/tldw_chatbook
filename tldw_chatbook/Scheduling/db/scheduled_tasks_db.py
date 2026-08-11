@@ -134,6 +134,19 @@ class ScheduledTasksDB(BaseDB):
     ):
         super().__init__(db_path, client_id, check_integrity_on_startup)
 
+    def _get_connection(self) -> sqlite3.Connection:
+        conn = super()._get_connection()
+        if not self.is_memory_db:
+            conn.execute("PRAGMA journal_mode = WAL")
+        # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
+        # lose the last commit, acceptable for this local reminder/automation
+        # store) and avoids an fsync per commit. This DB opens a fresh
+        # connection per operation (`closing(self._get_connection())` /
+        # `transaction()` throughout this file), so synchronous must be
+        # re-applied on every open, not just the first (task-15465).
+        conn.execute("PRAGMA synchronous = NORMAL")
+        return conn
+
     def _initialize_schema(self) -> None:
         """Create tables, indexes, and schema version row."""
         from tldw_chatbook.Scheduling.db.migrations.v0_to_v1 import migrate

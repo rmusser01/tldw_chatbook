@@ -2765,6 +2765,13 @@ UPDATE db_schema_version
                 conn.row_factory = sqlite3.Row
                 if not self.is_memory_db:
                     conn.execute("PRAGMA journal_mode=WAL;")
+                # NORMAL is safe under WAL (app-crash-safe; only an OS/power
+                # crash can lose the last commit or two, acceptable for this
+                # local cache) and avoids an fsync on every commit -- the
+                # default FULL was fsyncing the WAL on every commit despite
+                # WAL already being enabled. See Library_Ingest_Jobs_DB.py:
+                # 57-61 for the original template (task-15465).
+                conn.execute("PRAGMA synchronous=NORMAL;")
 
                 conn.execute("PRAGMA foreign_keys = ON;")
                 self._local.conn = conn

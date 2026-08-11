@@ -73,6 +73,13 @@ class AgentRunsDB(BaseDB):
         conn.execute("PRAGMA busy_timeout = 5000")
         if not self.is_memory_db:
             conn.execute("PRAGMA journal_mode = WAL")
+        # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
+        # lose the last commit or two, acceptable for this local agent-run
+        # ledger) and avoids an fsync on every commit -- the default FULL was
+        # fsyncing the WAL on every commit despite WAL already being enabled,
+        # on a per-agent-step persistence path. See Library_Ingest_Jobs_DB.py:
+        # 57-61 for the original template (task-15465).
+        conn.execute("PRAGMA synchronous = NORMAL")
         conn.row_factory = sqlite3.Row
         # task-3012: the held (long-lived) connection needs true autocommit.
         # Python's default isolation mode auto-BEGINs on any DML, and an

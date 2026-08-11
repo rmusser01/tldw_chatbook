@@ -193,6 +193,16 @@ class SubscriptionsDB(BaseDB):
         """
         conn = super()._get_connection()
         conn.execute("PRAGMA foreign_keys = ON;")
+        if not self.is_memory_db:
+            conn.execute("PRAGMA journal_mode = WAL;")
+        # NORMAL is safe under WAL (SQLite-documented pairing: app-crash-safe,
+        # only an OS/power crash can lose the last commit or two -- acceptable
+        # for this local watchlist/feed cache) and avoids an fsync on every
+        # commit; DELETE mode's default FULL previously made every writer
+        # exclusive-lock readers too, a multi-second-stall candidate on slow
+        # disks (task-15465). Unconditional: synchronous is per-connection,
+        # so every connection this DB opens needs it, not just the first.
+        conn.execute("PRAGMA synchronous = NORMAL;")
         return conn
 
     def _initialize_schema(self):
