@@ -72,7 +72,7 @@ Selecting a row repaints the canvas for that item; the highest-priority item
 | **Open details** | Navigates to the owning screen — "Opening Library import job details." lands on Library's import queue; a watchlist run opens Watchlists at that run. |
 | **Open in Console** | Only offered for watchlist runs and Chatbook artifacts — opens Console following that work. |
 | **Approve** / **Reject** / **Pause** / **Resume** | **Decorative today.** Each shows the same warning toast — "\<Label\> is not connected to an active run service yet. Open details or Console to inspect the work." — and changes nothing. Decide approvals on the owning screen. |
-| **Review flashcards** | On the "Flashcards due: N" row — opens Study directly at its flashcards section, a genuine first click (see Quirks for what Escape does next, task-4011). |
+| **Review flashcards** | On the "Flashcards due: N" row — opens Study directly at its flashcards section. Study's breadcrumb reads "Home ▸ Study" and Escape returns here, to Home (task-4011). |
 
 ### The next-action ladder
 
@@ -181,16 +181,10 @@ Palette entries that land here: "Tab Navigation: Switch to Home".
   fold are simply invisible and unreachable (backlog task-2762).
 - **"Review notifications" opened Watchlists.** Correct, if surprising —
   notifications live on the Watchlists screen.
-- **Escape from Study (reached via Review flashcards) does not return to
-  Home.** The first click is honest — it lands directly on Study's
-  flashcards section — but Study's breadcrumb and Escape are hardcoded to
-  "Library ▸ Study" / "Esc: back to Library" regardless of where you came
-  from, so pressing Escape lands on Library's "Study decks" staging canvas
-  instead of back on Home (backlog task-4011).
 - **No "Conversations: … · Notes: …" line at all.** Either you truly have no
   content, or the count queries failed silently — the two cases look
   identical, and a failed count also revives the "Import Library sources"
   suggestion for a full Library.
 
 —
-*Verified against dev @ 4d0232358 — 2026-08-09*
+*Verified against dev @ 642567627 — 2026-08-10*

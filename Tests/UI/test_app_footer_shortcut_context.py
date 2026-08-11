@@ -256,8 +256,8 @@ async def test_footer_reflows_when_counts_change_without_a_resize():
     # "Tokens: --" placeholder's 10 cells; the chip now starts hidden and
     # empty, so the same push-over-the-edge exercise runs at 90 cols.
     # Merge recalibration (82 cols): the merged footer's no-context hint set
-    # is the four-key global strip ("F1 help · F6 panes · Ctrl+P palette ·
-    # Ctrl+Q quit"), wider than the two-key default this budget was tuned
+    # is the four-key global strip ("F1 help · F6 next pane · Ctrl+P palette
+    # · Ctrl+Q quit"), wider than the two-key default this budget was tuned
     # against. 82 terminal cols puts the widget at exactly the DB-stats
     # minimum width (80, after the footer's 2-cell padding): the stats fit
     # with the compact hints (71 cells) and the grown word count pushes

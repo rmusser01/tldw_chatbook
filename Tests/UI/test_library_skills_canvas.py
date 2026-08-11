@@ -1983,16 +1983,16 @@ def test_skills_empty_state_copy_names_real_paths():
 
 
 def test_skill_toggle_labels_read_as_plain_statements():
-    assert skill_user_invocable_label(True) == "User can invoke: yes ▸"
-    assert skill_user_invocable_label(False) == "User can invoke: no ▸"
+    assert skill_user_invocable_label(True) == "User can invoke: yes ⇄"
+    assert skill_user_invocable_label(False) == "User can invoke: no ⇄"
     # Polarity inverted for display: the stored field stays
     # disable_model_invocation, the label answers the user's question.
-    assert skill_disable_model_label(False) == "Agent can invoke: yes ▸"
-    assert skill_disable_model_label(True) == "Agent can invoke: no ▸"
+    assert skill_disable_model_label(False) == "Agent can invoke: yes ⇄"
+    assert skill_disable_model_label(True) == "Agent can invoke: no ⇄"
     assert (
-        skill_context_toggle_label("inline") == "Runs in: inline (this conversation) ▸"
+        skill_context_toggle_label("inline") == "Runs in: inline (this conversation) ⇄"
     )
-    assert skill_context_toggle_label("fork") == "Runs in: fork (sub-agent) ▸"
+    assert skill_context_toggle_label("fork") == "Runs in: fork (sub-agent) ⇄"
 
 
 @pytest.mark.asyncio

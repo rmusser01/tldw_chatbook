@@ -2132,8 +2132,13 @@ def build_ingest_queue_groups(
             else "running"
         )
         parts = _batch_outcome_parts(members)
+        # Whole-branch review M-D (pre-existing conformance fix): no leading
+        # "▸ " bullet -- the task-4023 AC#5 glyph convention reserves that
+        # prefix for the SELECTED row of a list, and this header is a plain
+        # grouping Static (library_ingest_canvas.py), not a row or a
+        # disclosure.
         header = (
-            f"▸ {source} — {count} {'file' if count == 1 else 'files'}"
+            f"{source} — {count} {'file' if count == 1 else 'files'}"
             f" · {age}"
         )
         if parts:

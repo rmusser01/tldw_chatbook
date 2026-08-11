@@ -624,8 +624,10 @@ def library_rag_query_status_children(state: LibraryRagPanelState) -> list[Widge
 
 
 def _mode_toggle_label(state: LibraryRagPanelState) -> str:
-    """Return the visible mode-cycle button label."""
-    return f"mode: {state.query_state.mode_label} ▸"
+    """Return the visible mode-cycle button label (AC#5: cycle glyph)."""
+    from ...Library.library_shell_state import library_cycle_label
+
+    return library_cycle_label("mode", state.query_state.mode_label)
 
 
 def _other_mode_label(state: LibraryRagPanelState) -> str:

@@ -26,6 +26,10 @@ from tldw_chatbook.Library.library_prompts_state import (
     definition_state_display_label,
     prompt_editor_meta_line,
 )
+from tldw_chatbook.Library.library_shell_state import (
+    library_cycle_label,
+    library_cycle_tooltip,
+)
 from tldw_chatbook.UI.Library_Modules.prompt_history_region import (
     LibraryPromptHistoryRegion,
 )
@@ -178,10 +182,14 @@ class LibraryPromptsListCanvas(Vertical):
             value=self.filter_value,
         )
         yield Button(
-            f"collection: {escape_markup(self.collection_label)} ▸",
+            library_cycle_label("collection", escape_markup(self.collection_label)),
             id="library-prompts-collection",
             classes="library-canvas-action",
             compact=True,
+            # AC#5: cycle controls say what a press cycles through. The
+            # collection set is user-data (dynamic), so the tooltip names
+            # the cycle's shape rather than a stale enumeration.
+            tooltip="Cycles the prompt scope: All prompts, then each collection.",
         )
         # One horizontal ds-toolbar row for sort/Import -- mirrors
         # library_notes_canvas.py's toolbar exactly (same render-safe shape:
@@ -196,10 +204,15 @@ class LibraryPromptsListCanvas(Vertical):
         toolbar.styles.height = "auto"
         with toolbar:
             yield Button(
-                f"sort: {_SORT_LABELS.get(self.sort_mode, 'Newest')} ▸",
+                library_cycle_label(
+                    "sort", _SORT_LABELS.get(self.sort_mode, "Newest")
+                ),
                 id="library-prompts-sort",
                 classes="library-canvas-action",
                 compact=True,
+                tooltip=library_cycle_tooltip(
+                    "the sort order", tuple(_SORT_LABELS.values())
+                ),
             )
             yield Button(
                 "Import…",
