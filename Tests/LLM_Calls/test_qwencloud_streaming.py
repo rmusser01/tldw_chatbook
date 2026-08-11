@@ -5,7 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 import inspect
 import json
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from typing import Any
 
 import pytest
@@ -495,6 +495,46 @@ def test_stream_caps_provider_controlled_event_and_record_sizes(
     assert session.close_calls == 1
 
 
+@pytest.mark.parametrize("cap", ("segments", "data-lines"))
+def test_stream_caps_sse_reference_counts_and_closes(
+    monkeypatch: pytest.MonkeyPatch,
+    cap: str,
+) -> None:
+    if cap == "segments":
+        monkeypatch.setattr(
+            qwencloud_streaming, "_MAX_SSE_LINE_SEGMENTS", 2, raising=False
+        )
+        event = json.dumps(_chat_text_terminal(), separators=(",", ":")).encode()
+        chunks = [b"data: ", event[:1], event[1:], b"\n\ndata: [DONE]\n\n"]
+    else:
+        monkeypatch.setattr(
+            qwencloud_streaming, "_MAX_SSE_DATA_LINES", 2, raising=False
+        )
+        chunks = [
+            b'data: {"id":"RAW-SSE-REFERENCE-CANARY",\n',
+            b'data: "choices":\n',
+            b'data: [{"index":0,"delta":{"content":"safe"},',
+            b'"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+        ]
+    response = _ByteStreamResponse(chunks)
+    session = _ByteStreamSession([response])
+    stream = QwenCloudStream(
+        response=response,  # type: ignore[arg-type]
+        session=session,  # type: ignore[arg-type]
+        api_mode="chat_completions",
+    )
+
+    with pytest.raises(ChatProviderError) as exc_info:
+        list(stream)
+
+    assert exc_info.value.provider == "qwencloud"
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
+    assert "RAW-SSE-REFERENCE-CANARY" not in str(exc_info.value)
+    assert response.close_calls == 1
+    assert session.close_calls == 1
+
+
 def test_sse_accepts_long_valid_record_below_private_caps(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -650,7 +690,13 @@ def test_responses_accumulated_output_cap_is_typed_and_redacted(
     monkeypatch: pytest.MonkeyPatch,
     kind: str,
 ) -> None:
-    monkeypatch.setattr(qwencloud_streaming, "_MAX_OUTPUT_CHARS", 5, raising=False)
+    metadata_chars = len("msg_cap") if kind == "text" else len("fc_capcall_caplookup")
+    monkeypatch.setattr(
+        qwencloud_streaming,
+        "_MAX_OUTPUT_CHARS",
+        metadata_chars + 5,
+        raising=False,
+    )
     translator = QwenResponsesStreamTranslator()
     if kind == "text":
         translator.feed(_message_added(0, 0, "msg_cap"))
@@ -693,6 +739,111 @@ def test_responses_text_and_argument_fragments_use_linear_lists_then_release() -
     translator.feed(_arguments_done(8, 1, "fc_fragments", '{"a":1}'))
     assert call_state.argument_fragments == []
     assert call_state.final_arguments == '{"a":1}'
+
+
+def test_responses_retained_metadata_is_charged_exactly_once() -> None:
+    translator = QwenResponsesStreamTranslator()
+    expected_characters = 0
+    for index in range(500):
+        item_id = f"fc_{index}_" + "i" * 64
+        call_id = f"call_{index}_" + "c" * 64
+        name = f"tool_{index}_" + "n" * 64
+        translator.feed(_function_added(index, index, item_id, call_id, name))
+        expected_characters += len(item_id) + len(call_id) + len(name)
+
+    assert translator._output_chars == expected_characters  # noqa: SLF001
+    last_item_id = "fc_499_" + "i" * 64
+    translator.feed(_arguments_delta(500, 499, last_item_id, "{}"))
+    assert translator._output_chars == expected_characters + 2  # noqa: SLF001
+
+
+@pytest.mark.parametrize(
+    "field",
+    ("message-id", "reasoning-id", "function-id", "call-id", "name", "cumulative"),
+)
+def test_responses_retained_metadata_fields_are_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+) -> None:
+    monkeypatch.setattr(qwencloud_streaming, "_MAX_METADATA_CHARS", 8, raising=False)
+    monkeypatch.setattr(qwencloud_streaming, "_MAX_OUTPUT_CHARS", 16, raising=False)
+    too_long = "RAW-METADATA-CANARY"
+    if field == "message-id":
+        event = _message_added(0, 0, too_long)
+    elif field == "reasoning-id":
+        event = _reasoning_added(0, 0, too_long)
+    else:
+        event = _function_added(
+            0,
+            0,
+            too_long
+            if field == "function-id"
+            else "item12"
+            if field == "cumulative"
+            else "item",
+            too_long
+            if field == "call-id"
+            else "call12"
+            if field == "cumulative"
+            else "call",
+            too_long
+            if field == "name"
+            else "tool12"
+            if field == "cumulative"
+            else "tool",
+        )
+
+    with pytest.raises(ChatProviderError) as exc_info:
+        QwenResponsesStreamTranslator().feed(event)
+
+    assert exc_info.value.provider == "qwencloud"
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
+    assert too_long not in str(exc_info.value)
+
+
+@pytest.mark.parametrize("field", ("id", "name", "cumulative"))
+def test_chat_retained_tool_metadata_is_bounded_and_charged_once(
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+) -> None:
+    monkeypatch.setattr(qwencloud_streaming, "_MAX_METADATA_CHARS", 8, raising=False)
+    monkeypatch.setattr(qwencloud_streaming, "_MAX_OUTPUT_CHARS", 16, raising=False)
+    start = _chat_tool_start()
+    tool = start["choices"][0]["delta"]["tool_calls"][0]
+    too_long = "RAW-METADATA-CANARY"
+    if field == "id":
+        tool["id"] = too_long
+    elif field == "name":
+        tool["function"]["name"] = too_long
+    else:
+        tool["id"] = "12345678"
+        tool["function"]["name"] = "abcdefgh"
+        tool["function"]["arguments"] = "x"
+    stream, response, session = _chat_stream([start, _chat_tool_terminal()])
+
+    with pytest.raises(ChatProviderError) as exc_info:
+        list(stream)
+
+    assert exc_info.value.provider == "qwencloud"
+    assert too_long not in str(exc_info.value)
+    assert response.close_calls == 1
+    assert session.close_calls == 1
+
+
+def test_chat_repeated_tool_metadata_is_not_double_charged() -> None:
+    start = _chat_tool_start()
+    terminal = _chat_tool_terminal()
+    terminal_tool = terminal["choices"][0]["delta"]["tool_calls"][0]
+    terminal_tool["id"] = "call_metadata"
+    terminal_tool["type"] = "function"
+    terminal_tool["function"]["name"] = "lookup"
+    stream, _, _ = _chat_stream([start, terminal])
+
+    list(stream)
+
+    expected = len("call_metadata") + len("lookup") + len('{"safe":true}')
+    assert stream._translator._output_chars == expected  # noqa: SLF001
 
 
 def test_responses_terminal_replay_is_strict_and_finish_safe() -> None:
@@ -752,6 +903,41 @@ def test_responses_sequence_replay_uses_type_sensitive_json_equality(
         translator.feed(conflict)
 
     assert exc_info.value.provider == "qwencloud"
+
+
+def test_responses_direct_feed_rejects_non_json_nested_containers() -> None:
+    event = {
+        "type": "response.created",
+        "sequence_number": 0,
+        "response": {
+            "id": "resp_direct",
+            "status": "in_progress",
+            "output": ({"index": 0},),
+        },
+    }
+
+    with pytest.raises(ChatProviderError) as exc_info:
+        QwenResponsesStreamTranslator().feed(event)
+
+    assert exc_info.value.provider == "qwencloud"
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
+
+
+def test_responses_direct_feed_accepts_top_level_mapping_copy() -> None:
+    event = MappingProxyType(
+        {
+            "type": "response.created",
+            "sequence_number": 0,
+            "response": {
+                "id": "resp_direct",
+                "status": "in_progress",
+                "output": [],
+            },
+        }
+    )
+
+    assert QwenResponsesStreamTranslator().feed(event) == ()
 
 
 def test_responses_terminal_usage_finish_and_empty_delta() -> None:
@@ -1556,6 +1742,142 @@ def test_chat_stream_drops_unvalidated_private_extras_without_coercion() -> None
         ],
     }
     assert "RAW-PRIVATE-CANARY" not in repr(emitted)
+    assert response.close_calls == 1
+    assert session.close_calls == 1
+
+
+@pytest.mark.parametrize("nullable_field", ("tool_calls", "usage"))
+def test_chat_stream_nullable_projection_paths_close_normally(
+    nullable_field: str,
+) -> None:
+    terminal = _chat_text_terminal()
+    if nullable_field == "tool_calls":
+        terminal["choices"][0]["delta"]["tool_calls"] = None
+    else:
+        terminal["usage"] = None
+    stream, response, session = _chat_stream([terminal])
+
+    assert list(stream) == [_chat_text_terminal()]
+    assert response.close_calls == 1
+    assert session.close_calls == 1
+
+
+def test_chat_stream_nullable_fields_preserve_valid_accumulator_flow() -> None:
+    events = [
+        {
+            "id": "chatcmpl_nullable",
+            "usage": None,
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_nullable",
+                                "type": "function",
+                                "function": {"name": "lookup", "arguments": ""},
+                            }
+                        ],
+                    },
+                    "finish_reason": None,
+                }
+            ],
+        },
+        {
+            "id": "chatcmpl_nullable",
+            "usage": None,
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"content": "safe", "tool_calls": None},
+                    "finish_reason": None,
+                }
+            ],
+        },
+        {
+            "id": "chatcmpl_nullable",
+            "usage": None,
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "function": {"arguments": '{"safe":true}'},
+                            }
+                        ]
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+        },
+        {
+            "id": "chatcmpl_nullable",
+            "choices": [],
+            "usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5},
+        },
+    ]
+    expected = deepcopy(events)
+    for event in expected[:3]:
+        event.pop("usage")
+    expected[0]["choices"][0]["delta"].pop("content")
+    expected[1]["choices"][0]["delta"].pop("tool_calls")
+    stream, response, session = _chat_stream(events)
+
+    chunks = list(stream)
+
+    from tldw_chatbook.Chat.console_provider_gateway import _ToolCallAccumulator
+
+    accumulator = _ToolCallAccumulator()
+    for chunk in chunks:
+        accumulator.feed_payload(chunk)
+    assert chunks == expected
+    assert accumulator.calls() == (
+        {
+            "id": "call_nullable",
+            "type": "function",
+            "function": {"name": "lookup", "arguments": '{"safe":true}'},
+        },
+    )
+    assert response.close_calls == 1
+    assert session.close_calls == 1
+
+
+@pytest.mark.parametrize("stage", ("decode", "feed", "finish"))
+def test_stream_unexpected_exceptions_are_typed_redacted_and_closed(
+    stage: str,
+) -> None:
+    canary = "RAW-UNEXPECTED-STREAM-CANARY"
+    stream, response, session = _chat_stream([_chat_text_terminal()])
+
+    def explode(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError(canary)
+
+    if stage == "decode":
+        stream._decode_event = explode  # type: ignore[method-assign]  # noqa: SLF001
+    elif stage == "feed":
+        stream._translator.feed = explode  # type: ignore[method-assign]  # noqa: SLF001
+    else:
+        stream._translator.finish = explode  # type: ignore[method-assign]  # noqa: SLF001
+
+    records: list[str] = []
+    sink_id = logger.add(lambda message: records.append(str(message)), level="DEBUG")
+    try:
+        if stage == "finish":
+            assert next(stream)["choices"][0]["finish_reason"] == "stop"
+        with pytest.raises(ChatProviderError) as exc_info:
+            next(stream)
+    finally:
+        logger.remove(sink_id)
+
+    assert exc_info.value.provider == "qwencloud"
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
+    assert canary not in str(exc_info.value) + "".join(records)
     assert response.close_calls == 1
     assert session.close_calls == 1
 

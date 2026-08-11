@@ -22,13 +22,20 @@ if TYPE_CHECKING:
 _JSON_DECODE_FAILED = object()
 _STREAM_END = object()
 _STREAM_READ_FAILED = object()
+_STREAM_TRANSLATION_FAILED = object()
 _FINGERPRINT_FAILED = object()
+_MAPPING_COPY_FAILED = object()
 
 # These ceilings are deliberately far above supported model outputs while
 # bounding memory and CPU controlled by a provider stream.
 _MAX_SSE_LINE_CHARS = 16 * 1024 * 1024
 _MAX_SSE_RECORD_CHARS = 16 * 1024 * 1024
+# Bound Python object overhead independently of decoded character ceilings.
+_MAX_SSE_LINE_SEGMENTS = 65_536
+_MAX_SSE_DATA_LINES = 65_536
 _MAX_OUTPUT_CHARS = 32 * 1024 * 1024
+# Provider identities and function names are retained for stream correlation.
+_MAX_METADATA_CHARS = 4 * 1024
 _MAX_STREAM_EVENTS = 200_000
 _MAX_TRACKED_SEQUENCES = 200_000
 _MAX_JSON_DEPTH = 128
@@ -74,8 +81,8 @@ def _json_shape_is_safe(value: Any) -> bool:
             node, depth = stack.pop()
             if depth > _MAX_JSON_DEPTH:
                 return False
-            if isinstance(node, Mapping):
-                for key, child in node.items():
+            if type(node) is dict:
+                for key, child in cast(dict[Any, Any], node).items():
                     if not isinstance(key, str):
                         return False
                     scheduled_nodes += 1
@@ -83,8 +90,8 @@ def _json_shape_is_safe(value: Any) -> bool:
                         return False
                     stack.append((child, depth + 1))
                 continue
-            if isinstance(node, Sequence) and not isinstance(node, (str, bytes)):
-                for child in node:
+            if type(node) is list:
+                for child in cast(list[Any], node):
                     scheduled_nodes += 1
                     if scheduled_nodes > _MAX_JSON_NODES:
                         return False
@@ -116,6 +123,13 @@ def _canonical_json_digest(value: Any) -> bytes | object:
     return hashlib.sha256(canonical).digest()
 
 
+def _copy_top_mapping(value: Mapping[str, Any]) -> dict[str, Any] | object:
+    try:
+        return dict(value)
+    except Exception:
+        return _MAPPING_COPY_FAILED
+
+
 def _required_index(event: Mapping[str, Any], name: str) -> int:
     value = event.get(name)
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
@@ -130,6 +144,12 @@ def _required_string(
     if not isinstance(value, str) or (not allow_empty and not value.strip()):
         _raise_malformed("QwenCloud stream event identity is malformed.")
     return value
+
+
+def _metadata_characters(*values: str) -> int:
+    if any(len(value) > _MAX_METADATA_CHARS for value in values):
+        _raise_malformed("QwenCloud stream metadata limit was exceeded.")
+    return sum(len(value) for value in values)
 
 
 @dataclass
@@ -187,8 +207,10 @@ class QwenResponsesStreamTranslator:
         """Consume one decoded Responses event and return normalized chunks."""
         if not isinstance(event, Mapping):
             _raise_malformed("QwenCloud stream event must be an object.")
-        if not _json_shape_is_safe(event):
+        event_copy = _copy_top_mapping(event)
+        if event_copy is _MAPPING_COPY_FAILED or not _json_shape_is_safe(event_copy):
             _raise_malformed("QwenCloud stream event is malformed.")
+        event = cast(dict[str, Any], event_copy)
         sequence = event.get("sequence_number")
         if not isinstance(sequence, int) or isinstance(sequence, bool) or sequence < 0:
             _raise_malformed("QwenCloud stream sequence number is malformed.")
@@ -265,13 +287,16 @@ class QwenResponsesStreamTranslator:
             _raise_malformed("QwenCloud stream output item identity was reused.")
         if item_type not in {"message", "reasoning", "function_call"}:
             _raise_malformed("QwenCloud stream output item type is unsupported.")
-        self._output_items[output_index] = _OutputItemState(item_id, item_type)
         if item_type == "function_call":
             call_id = _required_string(item, "call_id")
             name = _required_string(item, "name")
             arguments = _required_string(item, "arguments", allow_empty=True)
             if call_id in self._call_ids:
                 _raise_malformed("QwenCloud stream function-call ID was reused.")
+            self._reserve_output(
+                _metadata_characters(item_id, call_id, name) + len(arguments)
+            )
+            self._output_items[output_index] = _OutputItemState(item_id, item_type)
             self._call_ids.add(call_id)
             call_state = _FunctionCallState(
                 item_id=item_id,
@@ -280,7 +305,6 @@ class QwenResponsesStreamTranslator:
                 tool_index=output_index,
                 argument_fragments=[arguments] if arguments else [],
             )
-            self._reserve_output(len(arguments))
             self._function_calls[output_index] = call_state
             return (
                 self._tool_chunk(
@@ -289,6 +313,8 @@ class QwenResponsesStreamTranslator:
                     include_identity=True,
                 ),
             )
+        self._reserve_output(_metadata_characters(item_id))
+        self._output_items[output_index] = _OutputItemState(item_id, item_type)
         return ()
 
     def _message_state(
@@ -780,9 +806,10 @@ class _ChatCompletionsStreamTranslator:
             _raise_malformed("QwenCloud chat stream role is malformed.")
         if "content" in delta:
             content = delta.get("content")
-            if not isinstance(content, str):
+            if content is not None and not isinstance(content, str):
                 _raise_malformed("QwenCloud chat stream content is malformed.")
-            self._reserve_output(len(content))
+            if isinstance(content, str):
+                self._reserve_output(len(content))
         tool_calls = delta.get("tool_calls")
         if tool_calls is None:
             return
@@ -799,13 +826,14 @@ class _ChatCompletionsStreamTranslator:
             function = tool_call.get("function")
             if not isinstance(function, Mapping):
                 _raise_malformed("QwenCloud chat stream tool function is malformed.")
+            argument_chars = 0
             if "arguments" in function:
                 arguments = function.get("arguments")
                 if not isinstance(arguments, str):
                     _raise_malformed(
                         "QwenCloud chat stream tool arguments are malformed."
                     )
-                self._reserve_output(len(arguments))
+                argument_chars = len(arguments)
             existing = state.tools.get(tool_index)
             if existing is None:
                 call_id = _required_string(tool_call, "id")
@@ -814,6 +842,9 @@ class _ChatCompletionsStreamTranslator:
                 name = _required_string(function, "name")
                 if call_id in state.call_ids:
                     _raise_malformed("QwenCloud chat stream tool ID was duplicated.")
+                self._reserve_output(
+                    _metadata_characters(call_id, name) + argument_chars
+                )
                 state.call_ids.add(call_id)
                 state.tools[tool_index] = _ChatToolState(call_id=call_id, name=name)
                 continue
@@ -823,6 +854,7 @@ class _ChatCompletionsStreamTranslator:
                 _raise_malformed("QwenCloud chat stream tool type conflicts.")
             if "name" in function and function.get("name") != existing.name:
                 _raise_malformed("QwenCloud chat stream tool name conflicts.")
+            self._reserve_output(argument_chars)
 
     def _reserve_output(self, characters: int) -> None:
         if characters < 0 or self._output_chars + characters > _MAX_OUTPUT_CHARS:
@@ -841,10 +873,11 @@ class _ChatCompletionsStreamTranslator:
             safe_choice: dict[str, Any] = {"index": choice["index"]}
             delta = cast(Mapping[str, Any], choice["delta"])
             safe_delta: dict[str, Any] = {}
-            for key in ("role", "content"):
-                if key in delta:
-                    safe_delta[key] = delta[key]
-            if "tool_calls" in delta:
+            if "role" in delta:
+                safe_delta["role"] = delta["role"]
+            if isinstance(delta.get("content"), str):
+                safe_delta["content"] = delta["content"]
+            if delta.get("tool_calls") is not None:
                 safe_tools: list[dict[str, Any]] = []
                 for tool in cast(Sequence[Mapping[str, Any]], delta["tool_calls"]):
                     safe_tool: dict[str, Any] = {"index": tool["index"]}
@@ -865,7 +898,7 @@ class _ChatCompletionsStreamTranslator:
                 safe_choice["finish_reason"] = choice["finish_reason"]
             safe_choices.append(safe_choice)
         result["choices"] = safe_choices
-        if "usage" in event:
+        if isinstance(event.get("usage"), Mapping):
             result["usage"] = deepcopy(dict(cast(Mapping[str, Any], event["usage"])))
         return result
 
@@ -903,10 +936,13 @@ class QwenCloudStream(Iterator[dict[str, Any]]):
             record_result = self._read_record()
             if record_result is _STREAM_END:
                 try:
-                    self._pending.extend(self._translator.finish())
+                    finish_result = self._finish_translation()
                 except ChatProviderError:
                     self.close()
                     raise
+                if finish_result is _STREAM_TRANSLATION_FAILED:
+                    self.close()
+                    raise _stream_error("QwenCloud returned malformed streaming data.")
                 self.close()
                 if not self._pending:
                     raise StopIteration
@@ -918,37 +954,56 @@ class QwenCloudStream(Iterator[dict[str, Any]]):
 
             if record == "[DONE]":
                 try:
-                    self._pending.extend(self._translator.finish())
+                    finish_result = self._finish_translation()
                 except ChatProviderError:
                     self.close()
                     raise
+                if finish_result is _STREAM_TRANSLATION_FAILED:
+                    self.close()
+                    raise _stream_error("QwenCloud returned malformed streaming data.")
                 self.close()
                 if not self._pending:
                     raise StopIteration
                 break
 
             try:
-                event = self._decode_event(record)
-                if self._event_count >= _MAX_STREAM_EVENTS:
-                    _raise_malformed("QwenCloud stream event limit was exceeded.")
-                self._event_count += 1
-                self._pending.extend(self._translator.feed(event))
+                translation_result = self._translate_record(record)
             except ChatProviderError:
                 self.close()
                 raise
+            if translation_result is _STREAM_TRANSLATION_FAILED:
+                self.close()
+                raise _stream_error("QwenCloud returned malformed streaming data.")
         return self._pending.popleft()
+
+    def _finish_translation(self) -> object:
+        try:
+            self._pending.extend(self._translator.finish())
+        except ChatProviderError:
+            raise
+        except Exception:
+            return _STREAM_TRANSLATION_FAILED
+        return None
+
+    def _translate_record(self, record: str) -> object:
+        try:
+            event = self._decode_event(record)
+            if self._event_count >= _MAX_STREAM_EVENTS:
+                _raise_malformed("QwenCloud stream event limit was exceeded.")
+            self._event_count += 1
+            self._pending.extend(self._translator.feed(event))
+        except ChatProviderError:
+            raise
+        except Exception:
+            return _STREAM_TRANSLATION_FAILED
+        return None
 
     def _read_record(self) -> str | object:
         try:
             return next(self._records)
         except StopIteration:
             return _STREAM_END
-        except (
-            TypeError,
-            UnicodeDecodeError,
-            ValueError,
-            requests.exceptions.RequestException,
-        ):
+        except Exception:
             return _STREAM_READ_FAILED
 
     def close(self) -> None:
@@ -1006,6 +1061,8 @@ def _iter_utf8_lines(chunks: Iterable[bytes]) -> Iterator[tuple[str, bool]]:
                 line_chars += len(segment)
                 if line_chars > _MAX_SSE_LINE_CHARS:
                     raise ValueError("QwenCloud SSE line limit was exceeded.")
+                if len(segments) >= _MAX_SSE_LINE_SEGMENTS:
+                    raise ValueError("QwenCloud SSE line segment limit was exceeded.")
                 segments.append(segment)
             yield "".join(segments), True
             segments.clear()
@@ -1022,6 +1079,8 @@ def _iter_utf8_lines(chunks: Iterable[bytes]) -> Iterator[tuple[str, bool]]:
             line_chars += len(segment)
             if line_chars > _MAX_SSE_LINE_CHARS:
                 raise ValueError("QwenCloud SSE line limit was exceeded.")
+            if len(segments) >= _MAX_SSE_LINE_SEGMENTS:
+                raise ValueError("QwenCloud SSE line segment limit was exceeded.")
             segments.append(segment)
     if segments:
         yield "".join(segments), False
@@ -1070,6 +1129,8 @@ def iter_sse_data_records(chunks: Iterable[bytes]) -> Iterator[str]:
         added_chars = len(value) + (1 if data_lines else 0)
         if record_chars + added_chars > _MAX_SSE_RECORD_CHARS:
             raise ValueError("QwenCloud SSE record limit was exceeded.")
+        if len(data_lines) >= _MAX_SSE_DATA_LINES:
+            raise ValueError("QwenCloud SSE data line limit was exceeded.")
         record_chars += added_chars
         data_lines.append(value)
 
