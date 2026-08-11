@@ -185,6 +185,7 @@ class ConsoleContextRepository:
             row = cursor.execute(
                 """
             SELECT budget_mode, custom_budget_tokens, compaction_mode,
+                   compaction_representation,
                    trigger_ratio, target_ratio, summary_max_tokens,
                    failure_behavior, carry_forward_mode, policy_revision
               FROM console_conversation_context_policy
@@ -233,14 +234,16 @@ class ConsoleContextRepository:
                 """
                 INSERT INTO console_conversation_context_policy(
                     conversation_id, budget_mode, custom_budget_tokens,
-                    compaction_mode, trigger_ratio, target_ratio,
+                    compaction_mode, compaction_representation,
+                    trigger_ratio, target_ratio,
                     summary_max_tokens, failure_behavior, carry_forward_mode,
                     policy_revision, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
                 ON CONFLICT(conversation_id) DO UPDATE SET
                     budget_mode = excluded.budget_mode,
                     custom_budget_tokens = excluded.custom_budget_tokens,
                     compaction_mode = excluded.compaction_mode,
+                    compaction_representation = excluded.compaction_representation,
                     trigger_ratio = excluded.trigger_ratio,
                     target_ratio = excluded.target_ratio,
                     summary_max_tokens = excluded.summary_max_tokens,
@@ -254,6 +257,7 @@ class ConsoleContextRepository:
                     values.get("budget_mode"),
                     values.get("custom_budget_tokens"),
                     values.get("compaction_mode"),
+                    values.get("compaction_representation"),
                     values.get("trigger_ratio"),
                     values.get("target_ratio"),
                     values.get("summary_max_tokens"),

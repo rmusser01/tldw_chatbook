@@ -92,7 +92,10 @@ from tldw_chatbook.Chat.console_context_policy import (
     CompactionFailureBehavior,
     ConsoleContextCapacity,
     ConsoleContextPolicyOverrides,
+    ContextCarryForwardMode,
+    ContextCompactionRepresentation,
     context_policy_overrides_from_console_config,
+    merge_context_policy,
     resolve_context_policy,
 )
 from tldw_chatbook.Chat.console_context_repository import (
@@ -103,6 +106,13 @@ from tldw_chatbook.Chat.console_prepared_request import (
     PreparedConsoleRequest,
     build_console_request,
     tagged_memory_message,
+    tagged_visual_memory_message,
+)
+from tldw_chatbook.Chat.console_visual_transcript import (
+    count_semantic_images,
+    plan_visual_compaction,
+    render_visual_transcript,
+    resolve_effective_compaction_representation,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_roleplay_identity import (
@@ -7560,6 +7570,7 @@ class ConsoleChatController:
             "conversation_budget_mode",
             "conversation_budget_tokens",
             "compaction_mode",
+            "compaction_representation",
             "compaction_trigger_ratio",
             "compaction_target_ratio",
             "compaction_summary_max_tokens",
@@ -7680,7 +7691,13 @@ class ConsoleChatController:
             return False, self._blocked_visible_copy(
                 getattr(resolution, "visible_copy", "")
             )
-        _overrides, _global, before_memory = self.context_control_inputs(session_id)
+        overrides, global_overrides, before_memory = self.context_control_inputs(
+            session_id
+        )
+        requested_representation = merge_context_policy(
+            global_overrides=global_overrides,
+            conversation_overrides=overrides,
+        ).compaction_representation
         _messages, blocked_result = await self._apply_conversation_memory_preflight(
             session_id=session_id,
             resolution=resolution,
@@ -7699,6 +7716,15 @@ class ConsoleChatController:
             before_memory is not None
             and after_memory.memory_id == before_memory.memory_id
         ):
+            if (
+                requested_representation
+                is ContextCompactionRepresentation.VISUAL_TRANSCRIPT
+                and is_vision_capable(resolution.provider, resolution.model or "")
+            ):
+                return (
+                    True,
+                    "Visual transcript fits and will be regenerated locally for each request; transcript unchanged.",
+                )
             return False, "There are not enough older complete turns to compact yet."
         return True, "Conversation memory updated; transcript messages were unchanged."
 
@@ -7858,6 +7884,14 @@ class ConsoleChatController:
             global_overrides=global_overrides,
             conversation_overrides=owner.context_policy_overrides,
         )
+
+        def prepare_main(request: PreparedConsoleRequest):
+            return prepare(
+                resolution,
+                request,
+                apply_safety_window=False,
+            )
+
         units = compactable_units_after(
             snapshots,
             boundary_message_id=(
@@ -7913,7 +7947,7 @@ class ConsoleChatController:
             result = blocked(
                 (
                     "Conversation context reached its compaction threshold. "
-                    "Review and approve summarization before sending again."
+                    "Review and approve compaction before sending again."
                 )
             )
             return provider_messages, result
@@ -7962,16 +7996,75 @@ class ConsoleChatController:
             )
             return provider_messages, result
 
+        requested_representation = resolved.policy.compaction_representation
+        vision_available = False
+        if requested_representation is not ContextCompactionRepresentation.TEXT_SUMMARY:
+            try:
+                vision_available = is_vision_capable(
+                    resolution.provider, resolution.model or ""
+                )
+            except Exception:
+                vision_available = False
+        effective_representation, visual_fallback_reason = (
+            resolve_effective_compaction_representation(
+                requested_representation,
+                vision_available=vision_available,
+            )
+        )
+
+        if effective_representation is ContextCompactionRepresentation.VISUAL_TRANSCRIPT:
+            budget = resolved.effective_conversation_budget_tokens
+            visual_plan = None
+            if budget is not None:
+                try:
+                    visual_plan = await asyncio.to_thread(
+                        plan_visual_compaction,
+                        semantic=semantic,
+                        prepared_before=prepared_before,
+                        durable_units=units,
+                        budget_tokens=budget,
+                        target_ratio=resolved.policy.target_ratio,
+                        max_images=max_history_images(
+                            resolution.provider, resolution.model or ""
+                        ),
+                        keep_latest_exchange=(
+                            resolved.policy.carry_forward_mode
+                            is ContextCarryForwardMode.MEMORY_WITH_LATEST_EXCHANGE
+                        ),
+                        prepare_main=prepare_main,
+                    )
+                except Exception:
+                    visual_fallback_reason = "local_visual_render_failed"
+            if visual_plan is not None and visual_plan.plan is not None:
+                logger.bind(
+                    conversation_id=conversation_id,
+                    requested_representation=requested_representation.value,
+                    effective_representation=effective_representation.value,
+                    page_count=visual_plan.plan.artifact.page_count,
+                    renderer_version=visual_plan.plan.artifact.renderer_version,
+                ).info("console_visual_compaction_prepared")
+                return [
+                    dict(row) for row in visual_plan.plan.semantic.flattened_messages()
+                ], None
+            effective_representation = ContextCompactionRepresentation.TEXT_SUMMARY
+            if visual_fallback_reason is None:
+                visual_fallback_reason = (
+                    visual_plan.reason
+                    if visual_plan is not None
+                    else "visual_compaction_unavailable"
+                )
+
+        if visual_fallback_reason is not None:
+            logger.bind(
+                conversation_id=conversation_id,
+                requested_representation=requested_representation.value,
+                effective_representation=effective_representation.value,
+                fallback_reason=visual_fallback_reason,
+            ).info("console_visual_compaction_fell_back_to_text")
+
         prompt = CompactionPromptSnapshot(
             get_internal_prompt("console.rewind_summarize")
         )
-
-        def prepare_main(request: PreparedConsoleRequest):
-            return prepare(
-                resolution,
-                request,
-                apply_safety_window=False,
-            )
 
         def prepare_auxiliary(messages, output_cap):
             return prepare(
@@ -8036,9 +8129,66 @@ class ConsoleChatController:
             prefix_messages=snapshots[: boundary_index + 1],
         )
         if transaction.terminal is CompactionTerminal.SUCCEEDED:
+            memory_rows_after: tuple[Mapping[str, Any], ...] = (
+                tagged_memory_message(transaction.memory.summary_text),
+            )
+            if effective_representation is ContextCompactionRepresentation.HYBRID:
+                hybrid_visual_added = False
+                hybrid_fallback_reason = "hybrid_visual_does_not_fit"
+                try:
+                    image_limit = max_history_images(
+                        resolution.provider, resolution.model or ""
+                    )
+                    remaining_image_capacity = image_limit - count_semantic_images(
+                        planned.plan.remaining_semantic
+                    )
+                    if remaining_image_capacity > 0:
+                        artifact = await asyncio.to_thread(
+                            render_visual_transcript,
+                            planned.plan.selected_units,
+                            summarized_prefix_digest=(
+                                transaction.memory.summarized_prefix_digest
+                            ),
+                            max_pages=remaining_image_capacity,
+                        )
+                        visual_row = tagged_visual_memory_message(
+                            [page.png_bytes for page in artifact.pages],
+                            page_hashes=[page.png_sha256 for page in artifact.pages],
+                        )
+                        hybrid_semantic = PreparedConsoleRequest(
+                            system=planned.plan.remaining_semantic.system,
+                            memory=memory_rows_after + (visual_row,),
+                            mandatory=planned.plan.remaining_semantic.mandatory,
+                            compactable=planned.plan.remaining_semantic.compactable,
+                            active_request=planned.plan.remaining_semantic.active_request,
+                            tools=planned.plan.remaining_semantic.tools,
+                        )
+                        hybrid_prepared = prepare_main(hybrid_semantic)
+                        hybrid_conversation_tokens = (
+                            hybrid_prepared.accounting.memory_tokens
+                            + hybrid_prepared.accounting.compactable_tokens
+                        )
+                        if (
+                            not hybrid_prepared.known_overflow
+                            and hybrid_conversation_tokens
+                            <= planned.plan.target_conversation_tokens
+                        ):
+                            memory_rows_after += (visual_row,)
+                            hybrid_visual_added = True
+                except Exception:
+                    hybrid_fallback_reason = "hybrid_visual_render_failed"
+                if not hybrid_visual_added:
+                    logger.bind(
+                        conversation_id=conversation_id,
+                        requested_representation=requested_representation.value,
+                        effective_representation=(
+                            ContextCompactionRepresentation.TEXT_SUMMARY.value
+                        ),
+                        fallback_reason=hybrid_fallback_reason,
+                    ).info("console_visual_compaction_fell_back_to_text")
             after = PreparedConsoleRequest(
                 system=planned.plan.remaining_semantic.system,
-                memory=(tagged_memory_message(transaction.memory.summary_text),),
+                memory=memory_rows_after,
                 mandatory=planned.plan.remaining_semantic.mandatory,
                 compactable=planned.plan.remaining_semantic.compactable,
                 active_request=planned.plan.remaining_semantic.active_request,

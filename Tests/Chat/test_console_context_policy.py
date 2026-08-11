@@ -9,6 +9,7 @@ from tldw_chatbook.Chat.console_context_policy import (
     ContextBudgetMode,
     ContextCarryForwardMode,
     ContextCompactionMode,
+    ContextCompactionRepresentation,
     ContextPolicyError,
     context_policy_overrides_from_console_config,
     merge_context_policy,
@@ -21,6 +22,7 @@ def test_policy_precedence_is_field_by_field() -> None:
         budget_mode=ContextBudgetMode.CUSTOM,
         custom_budget_tokens=40_000,
         compaction_mode=ContextCompactionMode.AUTOMATIC,
+        compaction_representation=ContextCompactionRepresentation.HYBRID,
         trigger_ratio=0.85,
         target_ratio=0.60,
         failure_behavior=CompactionFailureBehavior.OMIT_OLDER_CONTEXT,
@@ -39,6 +41,7 @@ def test_policy_precedence_is_field_by_field() -> None:
     assert policy.budget_mode is ContextBudgetMode.CUSTOM
     assert policy.custom_budget_tokens == 24_000
     assert policy.compaction_mode is ContextCompactionMode.OFF
+    assert policy.compaction_representation is ContextCompactionRepresentation.HYBRID
     assert policy.trigger_ratio == 0.85
     assert policy.target_ratio == 0.60
     assert (
@@ -143,6 +146,7 @@ def test_global_console_config_uses_canonical_keys() -> None:
             "conversation_budget_mode": "custom",
             "conversation_budget_tokens": "16000",
             "compaction_mode": "automatic",
+            "compaction_representation": "visual_transcript",
             "compaction_trigger_ratio": 0.9,
             "compaction_target_ratio": 0.6,
             "compaction_summary_max_tokens": 512,
@@ -154,6 +158,10 @@ def test_global_console_config_uses_canonical_keys() -> None:
     assert overrides.budget_mode is ContextBudgetMode.CUSTOM
     assert overrides.custom_budget_tokens == 16_000
     assert overrides.compaction_mode is ContextCompactionMode.AUTOMATIC
+    assert (
+        overrides.compaction_representation
+        is ContextCompactionRepresentation.VISUAL_TRANSCRIPT
+    )
     assert overrides.failure_behavior is CompactionFailureBehavior.OMIT_OLDER_CONTEXT
     assert (
         overrides.carry_forward_mode

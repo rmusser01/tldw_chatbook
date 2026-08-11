@@ -13,6 +13,7 @@ from ...Chat.console_context_policy import (
     ContextBudgetMode,
     ContextCarryForwardMode,
     ContextCompactionMode,
+    ContextCompactionRepresentation,
     ContextPolicyError,
     application_context_policy_defaults,
     context_policy_overrides_from_console_config,
@@ -28,6 +29,7 @@ CONTEXT_MEMORY_CONFIG_KEYS = (
     "conversation_budget_mode",
     "conversation_budget_tokens",
     "compaction_mode",
+    "compaction_representation",
     "compaction_trigger_ratio",
     "compaction_target_ratio",
     "compaction_summary_max_tokens",
@@ -43,6 +45,7 @@ class SettingsContextMemoryValues:
     conversation_budget_mode: str
     conversation_budget_tokens: int | str
     compaction_mode: str
+    compaction_representation: str
     compaction_trigger_ratio: float
     compaction_target_ratio: float
     compaction_summary_max_tokens: int
@@ -109,6 +112,11 @@ def normalize_context_memory_values(
         ContextCompactionMode,
         "Compaction mode",
     )
+    compaction_representation = _enum_value(
+        values.get("compaction_representation"),
+        ContextCompactionRepresentation,
+        "Compaction representation",
+    )
     failure_behavior = _enum_value(
         values.get("compaction_failure_behavior"),
         CompactionFailureBehavior,
@@ -131,6 +139,7 @@ def normalize_context_memory_values(
             budget_mode=budget_mode,
             custom_budget_tokens=custom_budget,
             compaction_mode=compaction_mode,
+            compaction_representation=compaction_representation,
             trigger_ratio=trigger,
             target_ratio=target,
             summary_max_tokens=summary_max,
@@ -278,6 +287,7 @@ def _values_from_policy(
         conversation_budget_mode=policy.budget_mode.value,
         conversation_budget_tokens=policy.custom_budget_tokens or "",
         compaction_mode=policy.compaction_mode.value,
+        compaction_representation=policy.compaction_representation.value,
         compaction_trigger_ratio=policy.trigger_ratio,
         compaction_target_ratio=policy.target_ratio,
         compaction_summary_max_tokens=policy.summary_max_tokens,

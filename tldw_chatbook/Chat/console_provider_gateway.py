@@ -41,6 +41,7 @@ from tldw_chatbook.Chat.console_prepared_request import (
     resolve_request_capacity,
     thaw_json,
 )
+from tldw_chatbook.Chat.console_history_budget import DEFAULT_PER_IMAGE_TOKENS
 from tldw_chatbook.Chat.console_provider_support import (
     resolve_console_provider_identity,
 )
@@ -888,6 +889,12 @@ class ConsoleProviderGateway:
             model=resolution.model or "",
             provider=resolution.provider,
             capacity=capacity,
+            per_image_tokens=(
+                positive_cap(
+                    "image_input_tokens", "image_tokens", "per_image_tokens"
+                )
+                or DEFAULT_PER_IMAGE_TOKENS
+            ),
             apply_safety_window=apply_safety_window,
         )
 

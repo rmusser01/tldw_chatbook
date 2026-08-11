@@ -50,6 +50,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-051](051-private-tts-clone-reference-assets.md) | Accepted | Store canonical TTS clone references as private profile-owned assets with typed admission and separate explicit portability. |
 | [ADR-052](052-console-conversation-memory-and-compaction-policy.md) | Proposed | Separate model capacity, mandatory request safety, conversation budgets, and branch-valid generated memory across their durable owners. |
 | [ADR-053](053-mcp-unified-standalone-runtime-boundary.md) | Accepted | Replace FastMCP with the public `mcp-unified` strict stdio runtime while preserving Chatbook's standalone catalog, in-app Library boundary, permission policy, and bounded canonical mappings. |
+| [ADR-054](054-deterministic-visual-transcript-compaction.md) | Accepted | Keep visual transcript pages deterministic, on-device, request-scoped, exactly accounted, capability-gated, and safely recoverable through text compaction. |
 
 ## Historical Decision Material
 
