@@ -3001,10 +3001,76 @@ class ConsoleChatController:
         )
         return cancel_event is not None and cancel_event.is_set()
 
-    def _is_session_cancelled(self, session_id: str | None) -> bool:
+    def _bind_round_cancel_signal(
+        self, session_id: str | None
+    ) -> threading.Event | None:
+        """Resolve the cancel Event an approval round must listen to, ONCE,
+        at ARM time -- PR3a-1 Task 6b, audit F4.
+
+        Callers pass the resolved Event to ``_is_session_cancelled`` for
+        the whole life of the round instead of letting that method re-read
+        ``_active_cancel_events[session_id]`` on every poll. The
+        difference only shows up once a run can outlive the turn that
+        started it (``[agents] subagents_outlive_turn``, PR3a-1), and it
+        shows up in both directions, silently:
+
+        * **Between turns** the per-session entry has been popped, so a
+          poll-time ``.get()`` returns ``None`` and the round listens to
+          nothing at all -- until the user sends again.
+        * **During the NEXT turn** the entry is the NEXT turn's Event, so
+          pressing Stop on turn 2 denied turn 1's surviving child's
+          still-open card and failed a legitimate tool call closed, with
+          nothing anywhere saying the denial came from another turn.
+          Reproduced by execution in
+          ``Tests/UI/test_console_mcp_approval.py::test_the_next_turns_
+          stop_does_not_deny_an_earlier_turns_survivors_card`` (the audit
+          had this direction as inference from structure only).
+
+        Binding by value is the same discipline ``_run_agent_reply``'s own
+        ``should_cancel`` closure already applies to this exact Event, and
+        the pull-side counterpart to ``revoke_approval_rounds_for_run``'s
+        run-keyed push: a round is answerable to the run that armed it,
+        never to whatever run happens to own the session later.
+
+        ``None`` -- a round armed with no turn in flight, i.e. a survivor's
+        -- means no SESSION Stop can reach it. That is deliberate and it is
+        not a lost signal: such a round is still released by its own run's
+        revoke (``revoke_approval_rounds_for_run``, what the fleet panel's
+        Cancel presses), by its own approval timeout, and by
+        ``_shutdown_requested`` on teardown. What it is no longer reachable
+        by is an UNRELATED turn's Stop button, which never had any business
+        answering for it. (The Stop button itself no-ops between turns
+        anyway -- ``stop_active_run`` returns ``False`` with no active
+        assistant message -- so nothing that used to work stops working.)
+
+        Args:
+            session_id: The round's OWNING session, or ``None`` for a
+                legacy caller with no session context (which keeps the
+                viewed-session fallback; see ``_is_session_cancelled``).
+
+        Returns:
+            The owning run's cancel Event, or ``None`` when the session has
+            no run in flight right now.
+        """
+        if session_id is None:
+            return None
+        return self._active_cancel_events.get(session_id)
+
+    def _is_session_cancelled(
+        self, session_id: str | None, *, cancel_event: threading.Event | None
+    ) -> bool:
         """Cancellation check for the three worker-thread approval/confirm
-        bridges below, scoped to ``session_id``'s OWN cancel event when
-        known (PA-T9 finding #1 fix).
+        bridges below, scoped to the round's OWN cancel event
+        (PA-T9 finding #1 fix; bound at arm time since PR3a-1 Task 6b).
+
+        ``cancel_event`` is keyword-only and has NO default on purpose:
+        every call site must state which Event this round answers to, so a
+        future bridge cannot silently inherit "no signal" (fail-open) by
+        forgetting the argument. Get it from
+        ``_bind_round_cancel_signal(session_id)`` at arm time -- see that
+        method for why binding by value, rather than re-reading
+        ``_active_cancel_events`` per poll, is what keeps one turn's Stop
+        out of another turn's surviving child's approval round.
 
         Pre-Task-9, all three bridges checked ``self._stop_requested or
         self._is_active_session_cancelled()`` -- the shared global flag
@@ -3095,7 +3161,10 @@ class ConsoleChatController:
         if session_id is not None:
             if self._shutdown_requested.is_set():
                 return True
-            cancel_event = self._active_cancel_events.get(session_id)
+            # PR3a-1 Task 6b (audit F4): the ARM-TIME binding, not a fresh
+            # `self._active_cancel_events.get(session_id)` per poll. See
+            # `_bind_round_cancel_signal` for the two silent cross-turn
+            # failures that re-read produced.
             return cancel_event is not None and cancel_event.is_set()
         return self._shutdown_requested.is_set() or self._is_active_session_cancelled()
 
@@ -3207,6 +3276,10 @@ class ConsoleChatController:
             if session_id is not None
             else (self.store.active_session_id or "")
         )
+        # PR3a-1 Task 6b (audit F4): the cancel signal THIS round answers
+        # to, resolved once, HERE, and passed to every poll below. See
+        # `_bind_round_cancel_signal`.
+        round_cancel_event = self._bind_round_cancel_signal(session_id)
         # PR2a Task 7: which RUN armed this round. Read from the
         # `run_context` ContextVar, which `AgentService` binds around both
         # arming paths -- the per-turn review hook (`build_tool_review_
@@ -3315,7 +3388,9 @@ class ConsoleChatController:
             else:
                 self._marshal_pending_approval(payload)
             while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
-                if self._is_session_cancelled(session_id):
+                if self._is_session_cancelled(
+                    session_id, cancel_event=round_cancel_event
+                ):
                     # Finding I3: a stop/unmount that resolves THIS round
                     # denies every still-undecided call, but
                     # `run_agent_loop`'s own `should_cancel()` check fires
@@ -4308,6 +4383,9 @@ class ConsoleChatController:
             if session_id is not None
             else (self.store.active_session_id or "")
         )
+        # PR3a-1 Task 6b (audit F4): arm-time cancel binding, identical to
+        # `request_mcp_approvals`' -- see `_bind_round_cancel_signal`.
+        round_cancel_event = self._bind_round_cancel_signal(session_id)
         with self._pending_skill_install_lock:
             self._pending_skill_install_rounds[request_id] = {
                 "event": event,
@@ -4355,7 +4433,9 @@ class ConsoleChatController:
             else:
                 self._marshal_pending_skill_install(payload)
             while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
-                if self._is_session_cancelled(session_id):
+                if self._is_session_cancelled(
+                    session_id, cancel_event=round_cancel_event
+                ):
                     break
                 if time.monotonic() >= deadline:
                     break
@@ -4598,6 +4678,9 @@ class ConsoleChatController:
             if session_id is not None
             else (self.store.active_session_id or "")
         )
+        # PR3a-1 Task 6b (audit F4): arm-time cancel binding, identical to
+        # `request_mcp_approvals`' -- see `_bind_round_cancel_signal`.
+        round_cancel_event = self._bind_round_cancel_signal(session_id)
         # PR2a Task 7 (review M1): same run-ownership stamp
         # `request_mcp_approvals` carries, and for a WIDER hazard --
         # `run_skill_script` is all-agents scope (no agent_kind gate in
@@ -4647,7 +4730,9 @@ class ConsoleChatController:
             else:
                 self._marshal_pending_skill_script(card_payload)
             while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
-                if self._is_session_cancelled(session_id):
+                if self._is_session_cancelled(
+                    session_id, cancel_event=round_cancel_event
+                ):
                     break
                 if time.monotonic() >= deadline:
                     break
