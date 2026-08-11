@@ -678,3 +678,20 @@ because the close-out self-review greped the live config; repaired by hand.
 (possibly throwaway) pytest test. After ANY non-pytest probe that could have
 driven app behavior, grep the live config for the probe's own inputs before
 declaring the session clean.
+
+## A refusal gate after imports is not a refusal gate (TASK-15262, 2026-08-11)
+
+**Incident.** The first visual-compaction evaluation CLI checked
+`--confirm-billable` before its explicit `load_settings()` call, which looked
+like a safe charge boundary. A dry `--help` run still imported
+`tldw_chatbook.Chat.console_provider_gateway` at module load. Importing the Chat
+package transitively initialized `config.py` and attempted to create or update
+the normal profile before argument parsing; on the verification machine it
+failed against the real profile path. The command made no provider request, but
+its supposed refusal/help path had already crossed the profile boundary.
+
+**Rule.** For confirmation-gated or profile-isolated CLIs, keep every
+application import that can initialize config behind the validated boundary.
+Prove both `--help` and the unconfirmed refusal path in a subprocess whose
+`TLDW_CONFIG_PATH` points to a nonexistent file, then assert that file was not
+created. A guard is only real if importing the command cannot bypass it.
