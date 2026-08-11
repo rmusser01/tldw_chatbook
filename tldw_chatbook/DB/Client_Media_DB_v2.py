@@ -2072,8 +2072,17 @@ class MediaDatabase:
 
                 # Combine all FTS query parts with OR
                 combined_fts_query = " OR ".join(fts_query_parts)
-                logging.debug(f"Combined FTS query: '{combined_fts_query}'")
-                logging.info(f"Search using FTS with query parts: {fts_query_parts}")
+                # Lazy (task-15474 sweep): route through loguru's opt(lazy=True)
+                # + preview_params, matching this module's execute_query
+                # precedent (~:823-826), so the query-part list is never
+                # stringified unless a sink admits the level.
+                logger.opt(lazy=True).debug(
+                    "Combined FTS query: '{}'", lambda: combined_fts_query
+                )
+                logger.opt(lazy=True).info(
+                    "Search using FTS with query parts: {}",
+                    lambda: preview_params(fts_query_parts),
+                )
 
                 # Add a single MATCH condition
                 conditions.append("fts.media_fts MATCH ?")
@@ -2133,7 +2142,10 @@ class MediaDatabase:
 
             # Add LIKE conditions to the main conditions list
             if like_conditions:
-                logging.info(f"Search using LIKE with patterns: {like_params}")
+                logger.opt(lazy=True).info(
+                    "Search using LIKE with patterns: {}",
+                    lambda: preview_params(like_params),
+                )
                 conditions.append(f"({' OR '.join(like_conditions)})")
                 params.extend(like_params)
 
@@ -2188,8 +2200,16 @@ class MediaDatabase:
             count_sql = (
                 f"SELECT {count_select} {base_from} {join_clause} {where_clause}"
             )
-            logging.debug(f"Search Count SQL ({self.db_path_str}): {count_sql}")
-            logging.debug(f"Search Count Params: {params}")
+            # Lazy (task-15474): count/results params are not BLOB-carrying
+            # today, but route through the same opt(lazy=True) +
+            # preview_params guard as this module's execute_query (~:823-826)
+            # so a future caller can't silently reintroduce an eager repr.
+            logger.opt(lazy=True).debug(
+                "Search Count SQL ({}): {}", lambda: self.db_path_str, lambda: count_sql
+            )
+            logger.opt(lazy=True).debug(
+                "Search Count Params: {}", lambda: preview_params(params)
+            )
 
             try:
                 count_cursor = self.execute_query(count_sql, tuple(params))
@@ -2249,8 +2269,15 @@ class MediaDatabase:
                 # Results Query
                 results_sql = f"{final_select_stmt} {base_from} {join_clause} {where_clause} {order_by_clause_str} LIMIT ? OFFSET ?"
                 paginated_params = tuple(params + [results_per_page, offset])
-                logging.debug(f"Search Results SQL ({self.db_path_str}): {results_sql}")
-                logging.debug(f"Search Results Params: {paginated_params}")
+                logger.opt(lazy=True).debug(
+                    "Search Results SQL ({}): {}",
+                    lambda: self.db_path_str,
+                    lambda: results_sql,
+                )
+                logger.opt(lazy=True).debug(
+                    "Search Results Params: {}",
+                    lambda: preview_params(paginated_params),
+                )
 
                 try:
                     results_cursor = self.execute_query(results_sql, paginated_params)
@@ -5823,8 +5850,12 @@ class MediaDatabase:
             """
 
             # --- Execution ---
-            logging.debug(
-                f"Executing get_all_document_versions query | Params: {params}"
+            # Lazy (task-15474): `params` here is only media_id/limit/offset,
+            # not BLOB-carrying, but route through the shared guard so an
+            # eager repr can't creep back in if this ever grows a params entry.
+            logger.opt(lazy=True).debug(
+                "Executing get_all_document_versions query | Params: {}",
+                lambda: preview_params(params),
             )
             # Use self.execute_query
             cursor = self.execute_query(final_query, tuple(params))

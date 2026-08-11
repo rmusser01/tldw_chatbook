@@ -150,3 +150,93 @@ def test_lib_wrapper_shapes_rows(db):
     }
     assert count_character_page(db) == len(get_character_page_for_ui(db, limit=1000, offset=0))
     assert "x" in list_character_tags(db)
+
+
+# --- task-15474: image-free list/picker projections -----------------------
+#
+# `character_cards.image` is a BLOB (sometimes multi-MB). `list_character_
+# cards_page` backs the Library character list and personas paging, neither
+# of which renders avatars -- so by default it must not even fetch the
+# `image` column. `include_image=True` is the opt-in escape hatch for a
+# caller that genuinely needs it.
+
+_SAMPLE_IMAGE = b"\x89PNG\r\n\x1a\n" + b"fake-png-bytes" * 100
+
+
+def test_page_excludes_image_column_by_default_no_search(db):
+    _add(db, "Imaged", [])
+    char_id = db.add_character_card({"name": "Imaged2", "image": _SAMPLE_IMAGE})
+    rows = db.list_character_cards_page(limit=100, offset=0)
+    assert rows  # sanity: rows were actually returned
+    for row in rows:
+        assert "image" not in row
+    # Confirm the row for the image-carrying card is really in the result
+    # set (i.e. the projection excluded the column, not the row).
+    assert any(r["id"] == char_id for r in rows)
+
+
+def test_page_excludes_image_column_by_default_when_searching(db):
+    db.add_character_card({"name": "Dragon Imaged", "image": _SAMPLE_IMAGE})
+    rows = db.list_character_cards_page(
+        limit=100, offset=0, search_term='"Dragon"*'
+    )
+    assert rows
+    for row in rows:
+        assert "image" not in row
+
+
+def test_page_include_image_true_returns_image_bytes(db):
+    char_id = db.add_character_card({"name": "Imaged3", "image": _SAMPLE_IMAGE})
+    rows = db.list_character_cards_page(limit=100, offset=0, include_image=True)
+    row = next(r for r in rows if r["id"] == char_id)
+    assert row["image"] == _SAMPLE_IMAGE
+
+
+def test_page_include_image_true_returns_image_bytes_when_searching(db):
+    char_id = db.add_character_card({"name": "Dragon Imaged2", "image": _SAMPLE_IMAGE})
+    rows = db.list_character_cards_page(
+        limit=100, offset=0, search_term='"Dragon"*', include_image=True
+    )
+    row = next(r for r in rows if r["id"] == char_id)
+    assert row["image"] == _SAMPLE_IMAGE
+
+
+def test_page_image_free_projection_does_not_regress_other_fields(db):
+    """The column-list projection must still surface every non-image field
+    a consumer relies on (task-15474 must not silently drop e.g. tags)."""
+    char_id = db.add_character_card(
+        {
+            "name": "Full Fields",
+            "description": "desc",
+            "personality": "kind",
+            "scenario": "a scene",
+            "system_prompt": "sp",
+            "post_history_instructions": "phi",
+            "first_message": "hi",
+            "message_example": "ex",
+            "creator_notes": "notes",
+            "alternate_greetings": ["g1", "g2"],
+            "tags": ["x", "y"],
+            "creator": "me",
+            "character_version": "1.0",
+            "extensions": {"a": 1},
+        }
+    )
+    row = next(
+        r for r in db.list_character_cards_page(limit=100, offset=0) if r["id"] == char_id
+    )
+    assert row["description"] == "desc"
+    assert row["personality"] == "kind"
+    assert row["scenario"] == "a scene"
+    assert row["system_prompt"] == "sp"
+    assert row["post_history_instructions"] == "phi"
+    assert row["first_message"] == "hi"
+    assert row["message_example"] == "ex"
+    assert row["creator_notes"] == "notes"
+    assert row["alternate_greetings"] == ["g1", "g2"]
+    assert row["tags"] == ["x", "y"]
+    assert row["creator"] == "me"
+    assert row["character_version"] == "1.0"
+    assert row["extensions"] == {"a": 1}
+    assert "created_at" in row and "last_modified" in row
+    assert "deleted" in row and "client_id" in row and "version" in row
