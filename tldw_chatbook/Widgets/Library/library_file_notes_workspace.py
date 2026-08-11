@@ -629,6 +629,11 @@ class LibraryFileNotesWorkspace(Vertical):
         column-span: 2;
     }
 
+    LibraryFileNotesWorkspace.-stack-editor-actions
+    #file-notes-maintenance-toggle {
+        column-span: 2;
+    }
+
     LibraryFileNotesWorkspace.-stack-editor-actions #file-notes-editor {
         min-height: 3;
     }
@@ -992,7 +997,7 @@ class LibraryFileNotesWorkspace(Vertical):
                         compact=True,
                     )
                     yield Button(
-                        "Maintenance",
+                        "More file actions",
                         id="file-notes-maintenance-toggle",
                         compact=True,
                     )
@@ -3780,7 +3785,9 @@ class LibraryFileNotesWorkspace(Vertical):
             "#file-notes-maintenance-toggle", Button
         )
         maintenance_toggle.label = (
-            "Hide actions" if self._maintenance_expanded else "Maintenance"
+            "Hide file actions"
+            if self._maintenance_expanded
+            else "More file actions"
         )
         maintenance = self.query_one("#file-notes-maintenance-actions")
         maintenance.display = (
@@ -5773,7 +5780,7 @@ class LibraryFileNotesWorkspace(Vertical):
             return
         if self._delete_confirmation_path != opened.relative_path:
             self._set_delete_confirmation(opened.relative_path)
-            self._set_action_status("Click Delete again to confirm.")
+            self._set_action_status("Activate Delete again to confirm.")
             return
         if not await self.flush_pending_work():
             return

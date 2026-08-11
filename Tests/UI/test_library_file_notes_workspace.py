@@ -1936,8 +1936,10 @@ async def test_save_status_names_local_folder_and_preserved_draft(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("size", ((120, 40), (40, 20)))
 async def test_maintenance_disclosure_keeps_secondary_file_actions_reachable(
     tmp_path: Path,
+    size: tuple[int, int],
 ) -> None:
     root = tmp_path / "notes"
     root.mkdir()
@@ -1950,14 +1952,16 @@ async def test_maintenance_disclosure_keeps_secondary_file_actions_reachable(
         autosave_delay=10,
     )
 
-    async with _WorkspaceHarness(workspace).run_test(size=(40, 20)) as pilot:
+    async with _WorkspaceHarness(workspace).run_test(size=size) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
         assert await workspace.open_path("note.md")
         await pilot.pause()
 
         toggle = workspace.query_one("#file-notes-maintenance-toggle", Button)
         maintenance = workspace.query_one("#file-notes-maintenance-actions")
-        assert str(toggle.label) == "Maintenance"
+        assert str(toggle.label) == "More file actions"
+        assert toggle.render_line(0).text.strip() == "More file actions"
+        assert toggle.region.right <= workspace.region.right
         assert not maintenance.display
         assert not workspace.query_one("#file-notes-move", Button).display
         assert not workspace.query_one("#file-notes-protect", Button).display
@@ -1965,7 +1969,9 @@ async def test_maintenance_disclosure_keeps_secondary_file_actions_reachable(
         toggle.focus()
         await pilot.press("enter")
         await pilot.pause()
-        assert str(toggle.label) == "Hide actions"
+        assert str(toggle.label) == "Hide file actions"
+        assert toggle.render_line(0).text.strip() == "Hide file actions"
+        assert toggle.region.right <= workspace.region.right
         assert maintenance.display
         assert toggle.has_focus
         assert {
@@ -1983,7 +1989,7 @@ async def test_maintenance_disclosure_keeps_secondary_file_actions_reachable(
         assert toggle.has_focus, repr(workspace.app.focused)
         toggle.press()
         await pilot.pause()
-        assert str(toggle.label) == "Maintenance"
+        assert str(toggle.label) == "More file actions"
         assert not maintenance.display
         assert toggle.has_focus
 
@@ -3660,6 +3666,9 @@ async def test_file_notes_discloses_actions_by_editor_state_and_redirects_focus(
             pilot,
             lambda: str(delete.label) == "Confirm delete",
             "delete confirmation did not arm",
+        )
+        assert _static_text(workspace, "#file-notes-action-status") == (
+            "Activate Delete again to confirm."
         )
         assert delete.display and delete.has_focus
         delete.press()
