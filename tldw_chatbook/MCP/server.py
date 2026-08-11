@@ -111,7 +111,12 @@ def _load_server_module_ast() -> ast.Module:
     return ast.parse(Path(__file__).read_text(encoding="utf-8"))
 
 
-_AST_SIMPLE_TYPES = {"str": "string", "int": "integer", "float": "number", "bool": "boolean"}
+_AST_SIMPLE_TYPES = {
+    "str": "string",
+    "int": "integer",
+    "float": "number",
+    "bool": "boolean",
+}
 
 
 def _annotation_to_property(node: ast.expr | None) -> dict:
@@ -382,9 +387,7 @@ def build_local_library_tool_service(
         )
 
         return LocalLibraryCollectionsService(
-            LibraryCollectionsDB(
-                get_library_collections_db_path(), CLI_APP_CLIENT_ID
-            )
+            LibraryCollectionsDB(get_library_collections_db_path(), CLI_APP_CLIENT_ID)
         )
 
     _build("collection", _build_collections)
@@ -503,7 +506,9 @@ class TldwMCPServer:
 
             logger.info("Databases initialized successfully")
         except Exception:
-            logger.error("Failed to initialize databases.")
+            logger.bind(operation="initialize_standalone_mcp_databases").error(
+                "Standalone MCP database initialization failed."
+            )
             raise
 
     def _register_tools(self):

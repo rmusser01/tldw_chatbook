@@ -186,7 +186,14 @@ def _is_finite_json_structure(value: object, *, max_depth: int) -> bool:
 
 
 class ChatbookGatewayRuntime:
-    """Register and dispatch Chatbook's standalone built-in tools."""
+    """Register and dispatch Chatbook's standalone built-in tools.
+
+    Args:
+        name: Bounded server identity advertised by the gateway.
+        version: Bounded Chatbook runtime version.
+        tool_descriptors: Canonical built-in tool descriptors to bind before
+            finalization.
+    """
 
     def __init__(
         self,
@@ -254,7 +261,15 @@ class ChatbookGatewayRuntime:
     def tool(
         self, *, name: str | None = None
     ) -> Callable[[_ToolHandler], _ToolHandler]:
-        """Return a decorator that records one async built-in handler."""
+        """Return a decorator that records one async built-in handler.
+
+        Args:
+            name: Optional descriptor name override. The handler's function
+                name is used when omitted.
+
+        Returns:
+            A decorator that validates and records an async tool handler.
+        """
         if self._finalized:
             raise RuntimeError("runtime is finalized")
 
@@ -279,7 +294,12 @@ class ChatbookGatewayRuntime:
     def register_local_tools(
         self, registrations: Iterable[LocalToolRegistration]
     ) -> None:
-        """Validate and publish one complete local-tool registration set."""
+        """Validate and publish one complete local-tool registration set.
+
+        Args:
+            registrations: Local provider registrations to validate and add
+                atomically to the standalone catalog.
+        """
         if self._finalized:
             raise RuntimeError("runtime is finalized")
 
@@ -352,7 +372,14 @@ class ChatbookGatewayRuntime:
         self._local_tool_handlers.update(handlers)
 
     def resource(self, template: str) -> Callable[[_ResourceHandler], _ResourceHandler]:
-        """Return a decorator for one of Chatbook's five resource templates."""
+        """Return a decorator for one supported resource template.
+
+        Args:
+            template: Canonical Chatbook resource URI template.
+
+        Returns:
+            A decorator that validates and records an async resource handler.
+        """
         if self._finalized:
             raise RuntimeError("runtime is finalized")
         variable = _RESOURCE_TEMPLATE_VARIABLES.get(template)
@@ -404,7 +431,16 @@ class ChatbookGatewayRuntime:
         Callable[[_ResourceListHandler], _ResourceListHandler]
         | Awaitable[list[dict[str, Any]]]
     ):
-        """Register the dynamic catalog or return its detached current value."""
+        """Register the dynamic catalog or return its detached current value.
+
+        Args:
+            context: Gateway request context when serving a catalog request;
+                omit it when using this method as a registration decorator.
+
+        Returns:
+            A registration decorator when ``context`` is omitted, otherwise
+            an awaitable that resolves to detached resource descriptors.
+        """
         if context is not None:
             return self._list_resources(context)
         if self._finalized:
@@ -427,7 +463,15 @@ class ChatbookGatewayRuntime:
     def prompt(
         self, *, name: str | None = None
     ) -> Callable[[_PromptHandler], _PromptHandler]:
-        """Return a decorator that records one typed async prompt handler."""
+        """Return a decorator that records one typed async prompt handler.
+
+        Args:
+            name: Optional prompt name override. The handler's function name
+                is used when omitted.
+
+        Returns:
+            A decorator that validates and records an async prompt handler.
+        """
         if self._finalized:
             raise RuntimeError("runtime is finalized")
 
@@ -511,7 +555,14 @@ class ChatbookGatewayRuntime:
     async def list_prompts(
         self, context: GatewayRequestContext
     ) -> list[dict[str, Any]]:
-        """Return detached prompt descriptors in registration order."""
+        """Return detached prompt descriptors in registration order.
+
+        Args:
+            context: Gateway request context supplied by ``mcp-unified``.
+
+        Returns:
+            Defensive copies of the registered prompt descriptors.
+        """
         self._require_finalized()
         return copy.deepcopy(list(self._prompt_descriptors.values()))
 
@@ -521,7 +572,16 @@ class ChatbookGatewayRuntime:
         arguments: dict[str, Any],
         context: GatewayRequestContext,
     ) -> dict[str, Any]:
-        """Validate arguments, invoke one prompt, and map its messages."""
+        """Validate arguments, invoke one prompt, and map its messages.
+
+        Args:
+            name: Registered prompt name.
+            arguments: JSON prompt arguments received from the gateway.
+            context: Gateway request context supplied by ``mcp-unified``.
+
+        Returns:
+            A canonical MCP prompt result containing ordered text messages.
+        """
         self._require_finalized()
         handler = self._prompt_handlers.get(name)
         if handler is None:
@@ -692,7 +752,14 @@ class ChatbookGatewayRuntime:
     async def list_resource_templates(
         self, context: GatewayRequestContext
     ) -> list[dict[str, Any]]:
-        """Return detached resource templates in their accepted order."""
+        """Return detached resource templates in their accepted order.
+
+        Args:
+            context: Gateway request context supplied by ``mcp-unified``.
+
+        Returns:
+            Defensive copies of the registered resource template descriptors.
+        """
         self._require_finalized()
         return copy.deepcopy(
             [
@@ -707,7 +774,16 @@ class ChatbookGatewayRuntime:
         uri: str,
         context: GatewayRequestContext,
     ) -> dict[str, Any]:
-        """Route and map one bounded canonical resource chunk."""
+        """Route and map one bounded canonical resource chunk.
+
+        Args:
+            uri: Requested canonical or continuation resource URI.
+            context: Gateway request context supplied by ``mcp-unified``.
+
+        Returns:
+            A bounded canonical resource result with continuation metadata
+            when more content remains.
+        """
         self._require_finalized()
         base_uri, token = self._parse_resource_uri(uri)
         variable, handler, identifier, canonical_base_uri = self._match_resource(
@@ -1162,7 +1238,14 @@ class ChatbookGatewayRuntime:
             raise RuntimeError("runtime must be finalized before serving")
 
     async def list_tools(self, context: GatewayRequestContext) -> list[dict[str, Any]]:
-        """Return detached descriptors in their constructor order."""
+        """Return detached descriptors in their constructor order.
+
+        Args:
+            context: Gateway request context supplied by ``mcp-unified``.
+
+        Returns:
+            Defensive copies of the finalized tool descriptors.
+        """
         self._require_finalized()
         return copy.deepcopy(list(self._tool_descriptors.values()))
 
@@ -1172,7 +1255,16 @@ class ChatbookGatewayRuntime:
         arguments: dict[str, Any],
         context: GatewayRequestContext,
     ) -> GatewayJSONValue:
-        """Call a registered tool and return its application value raw."""
+        """Call a registered tool and return its application value raw.
+
+        Args:
+            name: Registered tool name.
+            arguments: JSON arguments received from the gateway.
+            context: Gateway request context supplied by ``mcp-unified``.
+
+        Returns:
+            The tool's JSON-compatible application value.
+        """
         self._require_finalized()
         local_handler = self._local_tool_handlers.get(name)
         if local_handler is not None:

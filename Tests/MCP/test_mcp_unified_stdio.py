@@ -1405,17 +1405,33 @@ def test_database_init_failure_log_is_fixed_and_payload_free(
     import tldw_chatbook.config as config
 
     secret = "database-secret-sentinel"
-    logged: list[str] = []
+
+    class RecordingLogger:
+        def __init__(self) -> None:
+            self.contexts: list[dict[str, str]] = []
+            self.messages: list[str] = []
+
+        def bind(self, **context: str) -> "RecordingLogger":
+            self.contexts.append(context)
+            return self
+
+        def error(self, message: str) -> None:
+            self.messages.append(message)
+
+    recorder = RecordingLogger()
 
     def fail_path_resolution() -> Path:
         raise RuntimeError(secret)
 
     monkeypatch.setattr(config, "get_chachanotes_db_path", fail_path_resolution)
-    monkeypatch.setattr(server_module.logger, "error", logged.append)
+    monkeypatch.setattr(server_module, "logger", recorder)
     server = server_module.TldwMCPServer.__new__(server_module.TldwMCPServer)
 
     with pytest.raises(RuntimeError, match=secret):
         server._init_databases()
 
-    assert logged == ["Failed to initialize databases."]
-    assert secret not in logged[0]
+    assert recorder.contexts == [{"operation": "initialize_standalone_mcp_databases"}]
+    assert recorder.messages == ["Standalone MCP database initialization failed."]
+    assert secret not in json.dumps(
+        {"contexts": recorder.contexts, "messages": recorder.messages}
+    )
