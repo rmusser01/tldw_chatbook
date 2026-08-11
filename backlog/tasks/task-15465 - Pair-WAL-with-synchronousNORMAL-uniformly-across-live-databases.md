@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-11 12:05'
-updated_date: '2026-08-11 19:54'
+updated_date: '2026-08-11 20:15'
 labels:
   - perf
   - db
@@ -45,74 +45,34 @@ Stability notes: WAL+NORMAL is the SQLite-documented safe pairing (app-crash-saf
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Paired journal_mode=WAL with synchronous=NORMAL on every live application
-DB's connection-open site(s), matching the Library_Ingest_Jobs_DB.py:57-61
-template.
+FIX ROUND 1 (review): AC#1's "every live application database" was not yet
+true -- 8 live SQLite stores outside the original audit's DB/ enumeration
+were unconverted. Converted all 8 to WAL+NORMAL at every connection-open
+site, same is_memory-guarded convention, rationale comment each:
+Kanban_Interop/local_kanban_db.py, TTS/profile_schema.py (3 sites in
+open_profile_store), Writing_Interop/local_writing_service.py,
+Research_Interop/local_research_service.py,
+Notifications/event_state_repository.py, Sync_Interop/sync_state_repository.py,
+Notes/file_notes_replica.py, Widgets/Tamagotchi/tamagotchi_storage.py
+(no import site found outside its own module -- converted anyway per
+review instruction, dormancy noted in its docstring).
 
-DELETE+FULL -> WAL+NORMAL: Subscriptions_DB, Workspace_DB,
-Library_Collections_DB, RAG_Indexing_DB, client_notifications_db (both the
-file and memory branches), scheduled_tasks_db (added a _get_connection
-override -- it had none before, inheriting BaseDB's plain row-factory-only
-connection).
+Minors fixed same round: Subscriptions_DB.py's ensure_site_configs_schema
+now pairs WAL+NORMAL (previously opened with no pragmas at all); added
+Library_Ingest_Jobs_DB (the template) to the pragma regression test;
+RAG_Indexing_DB.py's comment now documents the WAL lingering-reader/
+unbounded -wal-growth failure mode and points at task-15466; Utils/
+sensitive_paths.py's _DB_PATH_ACCESSOR_NAMES gained the missing
+get_evals_db_path/get_rag_indexing_db_path entries (both honor [database]
+overrides like every other listed accessor; no get_agent_runs_db_path
+accessor exists since that DB's path always derives from ChaChaNotes').
 
-WAL-but-FULL -> WAL+NORMAL: ChaChaNotes_DB, Client_Media_DB_v2, Prompts_DB,
-Evals_DB, AgentRuns_DB -- one added PRAGMA line next to the existing
-journal_mode=WAL each already had.
-
-Every edit carries a one-line rationale comment (crash-safety trade-off +
-why synchronous must be re-applied per connection for the fresh-per-op
-classes). is_memory_db guards WAL only, matching each file's existing
-convention; synchronous=NORMAL is applied unconditionally (harmless on
-:memory:).
-
-AC#1: new Tests/DB/test_pragma_settings.py constructs all 11 classes against
-tmp_path files AND :memory:, asserting wal+NORMAL(1) on file and 'memory'
-(no raise) on :memory:. 22 cases, all pass.
-
-AC#2: scratch microbenchmark (isolated HOME/XDG/TLDW_CONFIG_PATH, not
-committed) drove 300 single-item commits through the real
-persist_subscription_item upsert path (SubscriptionsDB, the watchlist/feed
-item write-hot path) under DELETE+FULL vs WAL+NORMAL. Two runs:
-run 1: DELETE+FULL mean 0.389ms/commit (total 116.7ms) vs WAL+NORMAL mean
-0.115ms/commit (total 34.6ms) -- 3.4x.
-run 2: DELETE+FULL mean 0.397ms/commit (119.2ms) vs WAL+NORMAL mean
-0.121ms/commit (36.2ms) -- 3.3x.
-(Fast M-series SSD; DELETE+FULL's per-commit fsync cost is disk-bound and
-would be larger on slower/networked storage -- consistent with the audit's
-"multiply 3-5x for constrained hardware" note.)
-
-AC#3: audited backup/restore/VACUUM in UI/Tools_Settings_Window.py. All of
-it (copy_private_sqlite/restore_private_sqlite/connect_private_sqlite) funnels
-through DB/private_sqlite.py's centralized seam, which already treats
--wal/-shm/-journal as first-class sidecars (_SIDECAR_SUFFIXES, applied in
-both _prepare_source_artifacts for backup sources and
-_connect_registered_sqlite for every open) and uses SQLite's own backup API
-(never a raw file copy) -- so WAL content gets checkpointed correctly rather
-than needing sidecar files copied at all. Confirmed via grep no raw
-shutil.copy* bypass for any of the 11 DBs. Workspace_DB, Library_Collections_DB,
-AgentRuns_DB, ScheduledTasksDB, and ClientNotificationsDB have no Settings
-backup/restore/VACUUM surface at all today -- a pre-existing coverage gap,
-not a sidecar-correctness bug, and out of scope here. No code changes needed
-for AC#3.
-
-AC#4: every edited connection-open site carries its own one-line rationale
-comment (see diff).
-
-Testing: Tests/DB/test_pragma_settings.py (22 passed) + targeted suites for
-every touched DB (Subscriptions, Workspace, Library_Collections, RAG_Indexing,
-client_notifications, scheduled_tasks, Media, Prompts, Evals, AgentRuns,
-private_sqlite inventory/interop) = 1738 passed, 8 skipped, 0 failed.
-
-Pre-existing, unrelated finding: Tests/ChaChaNotesDB + 12 Tests/DB/
-test_chachanotes_*_migration.py files show 33 failures / 284 passed, all
-tracing to the same root cause -- "Migration from V33 to V34 failed for
-'rag_char_chat_schema': duplicate column name: compaction_representation"
-in ChaChaNotes_DB.py's V33->V34 migration (chachanotes_v33_to_v34_visual_
-compaction_policy.sql, TASK-14914). Confirmed via a manual revert-and-retest
-of the synchronous=NORMAL line that this is 100% present on dev at c0c4753f8
-independent of this task's change (a plain fresh CharactersRAGDB() from v0
-reaches v34 fine; the failure only triggers on the "rewind an existing DB to
-an older version, then reconstruct" test shape used throughout that
-directory). Not fixed here -- out of scope for task-15465, flagging for
-whoever owns TASK-14914/the migration chain.
+Tests/DB/test_pragma_settings.py now covers 19 classes/functions (39
+parametrized cases: 20 file-backed + 19 memory -- tts.profile_store has no
+:memory: target per its private-file-only owner policy). All 39 pass.
+Targeted suites for every newly touched store + the Subscriptions suite:
+1593 passed, 9 skipped, 0 failed. 3 pre-existing, confirmed-unrelated
+failures in Tests/TTS/test_tts_profile_capabilities.py (a Protocol
+isinstance rejection unrelated to SQLite) left untouched per review
+instruction. Commit a2c1298a2.
 <!-- SECTION:NOTES:END -->
