@@ -750,7 +750,7 @@ class ImageGenProbeResult:
 
 def _guarded_get(
     url: str, *, headers: Mapping[str, str] | None = None
-) -> tuple[httpx.Response | None, str | None]:
+) -> tuple[int | None, str | None]:
     """Egress-checked, sanitized GET shared by every network probe.
 
     Runs the SSRF egress check before any request (trusting only ``url``'s
@@ -758,7 +758,7 @@ def _guarded_get(
     short, non-redirect-following GET.
 
     Returns:
-        ``(response, None)`` for any HTTP answer -- including 4xx/5xx, which
+        ``(status_code, None)`` for any HTTP answer -- including 4xx/5xx, which
         still means the server responded -- or ``(None, badge)`` with a
         closed-set ``"Unreachable: <category>"`` badge on failure. Exception
         text is never propagated into the badge: it can carry hosts, ports,
@@ -770,7 +770,10 @@ def _guarded_get(
         return None, "Unreachable: blocked by egress policy"
     try:
         with httpx.Client(timeout=PROBE_TIMEOUT_SECONDS, follow_redirects=False) as client:
-            return client.get(url, headers=dict(headers) if headers else None), None
+            with client.stream(
+                "GET", url, headers=dict(headers) if headers else None
+            ) as response:
+                return response.status_code, None
     except httpx.TimeoutException:
         return None, "Unreachable: timeout"
     except Exception:
@@ -783,7 +786,7 @@ def _guarded_get(
 def _probe_swarmui(base_url: str) -> ImageGenProbeResult:
     """SwarmUI has no models-listing route -- a plain GET on ``base_url``
     that gets *any* HTTP answer (even 4xx/5xx) means the server responded."""
-    _response, blocked_badge = _guarded_get(base_url)
+    _status_code, blocked_badge = _guarded_get(base_url)
     if blocked_badge is not None:
         return ImageGenProbeResult(ok=False, badge=blocked_badge)
     return ImageGenProbeResult(ok=True, badge="Reachable")
@@ -795,13 +798,14 @@ def _probe_comfyui(base_url: str) -> ImageGenProbeResult:
         origin = normalize_comfyui_image_origin(base_url)
     except ValueError:
         return ImageGenProbeResult(ok=False, badge="Unreachable: invalid origin")
-    response, blocked_badge = _guarded_get(f"{origin}/object_info")
+    status_code, blocked_badge = _guarded_get(f"{origin}/object_info")
     if blocked_badge is not None:
         return ImageGenProbeResult(ok=False, badge=blocked_badge)
-    if response is not None and 200 <= response.status_code < 300:
+    if status_code is not None and 200 <= status_code < 300:
         return ImageGenProbeResult(ok=True, badge="Reachable")
-    status_code = response.status_code if response is not None else 0
-    return ImageGenProbeResult(ok=False, badge=f"Unreachable: HTTP {status_code}")
+    return ImageGenProbeResult(
+        ok=False, badge=f"Unreachable: HTTP {status_code or 0}"
+    )
 
 
 def _probe_reachability_only(base_url: str) -> ImageGenProbeResult:
@@ -812,7 +816,7 @@ def _probe_reachability_only(base_url: str) -> ImageGenProbeResult:
     plain reachability GET on the configured base, same shape as
     ``_probe_swarmui`` but reporting the honest "auth unverified" badge
     (unlike swarmui, which has no auth concept at all)."""
-    _response, blocked_badge = _guarded_get(base_url)
+    _status_code, blocked_badge = _guarded_get(base_url)
     if blocked_badge is not None:
         return ImageGenProbeResult(ok=False, badge=blocked_badge)
     return ImageGenProbeResult(ok=True, badge="Reachable (auth unverified)")
@@ -822,16 +826,16 @@ def _probe_openai_compatible(base_url: str, secret: str | None) -> ImageGenProbe
     """openrouter/together: OpenAI-compatible ``GET {base_url}/models``."""
     url = f"{base_url.rstrip('/')}/models"
     headers = {"Authorization": f"Bearer {secret}"} if secret else None
-    response, blocked_badge = _guarded_get(url, headers=headers)
+    status_code, blocked_badge = _guarded_get(url, headers=headers)
     if blocked_badge is not None:
         return ImageGenProbeResult(ok=False, badge=blocked_badge)
     if not secret:
         return ImageGenProbeResult(ok=True, badge="Reachable (auth unverified)")
-    if response.status_code in (401, 403):
+    if status_code in (401, 403):
         return ImageGenProbeResult(ok=False, badge="Auth failed")
-    if 200 <= response.status_code < 300:
+    if status_code is not None and 200 <= status_code < 300:
         return ImageGenProbeResult(ok=True, badge="Reachable")
-    return ImageGenProbeResult(ok=False, badge=f"Unreachable: HTTP {response.status_code}")
+    return ImageGenProbeResult(ok=False, badge=f"Unreachable: HTTP {status_code or 0}")
 
 
 def _probe_gemini(base_url: str, secret: str | None) -> ImageGenProbeResult:
@@ -843,16 +847,16 @@ def _probe_gemini(base_url: str, secret: str | None) -> ImageGenProbeResult:
     semantics."""
     url = f"{base_url.rstrip('/')}/models"
     headers = {"x-goog-api-key": secret} if secret else None
-    response, blocked_badge = _guarded_get(url, headers=headers)
+    status_code, blocked_badge = _guarded_get(url, headers=headers)
     if blocked_badge is not None:
         return ImageGenProbeResult(ok=False, badge=blocked_badge)
     if not secret:
         return ImageGenProbeResult(ok=True, badge="Reachable (auth unverified)")
-    if response.status_code in (401, 403):
+    if status_code in (401, 403):
         return ImageGenProbeResult(ok=False, badge="Auth failed")
-    if 200 <= response.status_code < 300:
+    if status_code is not None and 200 <= status_code < 300:
         return ImageGenProbeResult(ok=True, badge="Reachable")
-    return ImageGenProbeResult(ok=False, badge=f"Unreachable: HTTP {response.status_code}")
+    return ImageGenProbeResult(ok=False, badge=f"Unreachable: HTTP {status_code or 0}")
 
 
 def _probe_sd_cpp(form_values: Mapping[str, str]) -> ImageGenProbeResult:

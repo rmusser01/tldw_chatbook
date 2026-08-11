@@ -611,12 +611,21 @@ def test_adapter_delete_values(tmp_path, monkeypatch):
 
 def _fake_client_cls(*, response=None, raise_exc=None, calls=None):
     """A fake httpx.Client following Tests/Image_Generation/test_http_client.py's
-    style: context-manager stub whose `.get()` either raises or returns a
-    canned response, recording every call for assertions."""
+    style: context-manager stub whose `.stream()` either raises or exposes a
+    canned status response, recording every call for assertions."""
 
     class _FakeResponse:
         def __init__(self, status_code):
             self.status_code = status_code
+
+    class _FakeStreamContext:
+        def __enter__(self):
+            if raise_exc is not None:
+                raise raise_exc
+            return _FakeResponse(response)
+
+        def __exit__(self, *args):
+            return False
 
     class FakeClient:
         def __init__(self, *args, **kwargs):
@@ -628,12 +637,11 @@ def _fake_client_cls(*, response=None, raise_exc=None, calls=None):
         def __exit__(self, *args):
             return False
 
-        def get(self, url, headers=None):
+        def stream(self, method, url, headers=None):
+            assert method == "GET"
             if calls is not None:
                 calls.append((url, dict(headers or {})))
-            if raise_exc is not None:
-                raise raise_exc
-            return _FakeResponse(response)
+            return _FakeStreamContext()
 
     return FakeClient
 
@@ -717,6 +725,58 @@ def test_probe_swarmui_any_http_answer_is_reachable(monkeypatch):
     monkeypatch.setattr(sigd.httpx, "Client", _fake_client_cls(response=404))
     result = probe_backend("swarmui", {"base_url": "http://127.0.0.1:7801"}, None)
     assert result == ImageGenProbeResult(ok=True, badge="Reachable")
+
+
+def test_probe_comfyui_reads_status_without_buffering_object_schema_body(monkeypatch):
+    """The explicit ComfyUI probe must not download its large schema body."""
+
+    class ExplodingSchemaStream(httpx.SyncByteStream):
+        def __init__(self):
+            self.iterations = 0
+            self.closed = False
+
+        def __iter__(self):
+            self.iterations += 1
+            raise AssertionError("ComfyUI object schema body was consumed")
+
+        def close(self):
+            self.closed = True
+
+    body = ExplodingSchemaStream()
+    requests = []
+    clients = []
+    constructor_kwargs = []
+    real_client = httpx.Client
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, stream=body)
+
+    def client_factory(*args, **kwargs):
+        constructor_kwargs.append(dict(kwargs))
+        client = real_client(
+            *args,
+            **kwargs,
+            transport=httpx.MockTransport(handler),
+        )
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr(sigd.httpx, "Client", client_factory)
+
+    result = probe_backend(
+        "comfyui", {"base_url": "http://127.0.0.1:8188"}, None
+    )
+
+    assert result == ImageGenProbeResult(ok=True, badge="Reachable")
+    assert requests[0].method == "GET"
+    assert str(requests[0].url) == "http://127.0.0.1:8188/object_info"
+    assert constructor_kwargs == [
+        {"timeout": PROBE_TIMEOUT_SECONDS, "follow_redirects": False}
+    ]
+    assert body.iterations == 0
+    assert body.closed
+    assert clients[0].is_closed
 
 
 def test_probe_novita_unauthenticated_reachability_only(monkeypatch):
