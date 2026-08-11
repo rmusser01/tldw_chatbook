@@ -1,8 +1,8 @@
 # QwenCloud Dual-API Provider Design
 
 Date: 2026-08-02
-Revised: 2026-08-07
-Status: Architecture approved; pending final document review
+Revised: 2026-08-11
+Status: Approved for implementation
 Backlog task: [TASK-3771](../../../backlog/tasks/task-3771%20-%20Add-QwenCloud-dual-API-provider-support.md)
 Architecture decision: [ADR-045](../../../backlog/decisions/045-qwencloud-dual-api-provider-boundary.md)
 
@@ -34,11 +34,33 @@ provider identity or a Qwen-specific Console/tool runtime.
   name.
 - Some Qwen text-only models reject array-shaped content even when it contains
   only text. Pure text arrays must be collapsed before submission.
+- Responses function results must immediately follow their corresponding
+  `function_call` input item. Chatbook's batched assistant-call/tool-result
+  history therefore needs a pairing mapper rather than a flat shape rewrite.
+- QwenCloud Responses streams function arguments through
+  `response.function_call_arguments.delta` / `.done`; terminal
+  `response.completed` carries usage. Chat Completions streams omit usage
+  unless `stream_options.include_usage` is enabled.
+- `qwen3.8-max` enables preserved thinking by default in Chat Completions and
+  requires historical `reasoning_content` when that behavior is enabled.
+  Chatbook does not retain private reasoning content, so the adapter must
+  explicitly disable preserved-thinking replay.
+- QwenCloud's shared Singapore domain remains functional, while Alibaba now
+  recommends workspace-specific regional domains for production traffic.
+  The endpoint must remain user-configurable.
+- QwenCloud's current OpenAI Responses and Chat Completions references both use
+  `qwen3.8-max` with the shared
+  `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` base. That pair is
+  therefore the embedded default; runtime model discovery and actionable
+  provider errors still own later catalog/entitlement changes.
 
 Primary references:
 
 - [QwenCloud skills index](https://www.qwencloud.com/skills.md)
 - [Qwen3.8-Max API reference](https://www.qwencloud.com/models/qwen3.8-max#api-reference)
+- [QwenCloud OpenAI Chat reference](https://docs.qwencloud.com/api-reference/chat/openai-chat)
+- [QwenCloud OpenAI Responses reference](https://docs.qwencloud.com/api-reference/chat/openai-responses)
+- [QwenCloud streaming guide](https://docs.qwencloud.com/developer-guides/text-generation/streaming)
 - [Qwen through Chat Completions](https://www.alibabacloud.com/help/en/model-studio/qwen-api-via-openai-chat-completions)
 - [Qwen through Responses](https://www.alibabacloud.com/help/en/model-studio/qwen-api-via-openai-responses)
 
@@ -72,8 +94,11 @@ Primary references:
 - Do not restore the retired legacy Chat/CCP streaming pipeline. ADR-026 makes
   native Console the live interactive chat surface; CCP remains a conversation
   management/display surface.
-- Do not use `previous_response_id` or persist QwenCloud server-side response
-  state.
+- Do not use or persist `previous_response_id`, a QwenCloud conversation ID,
+  or other server-side continuation state. Responses requests ask the service
+  not to store a reusable response when the compatible endpoint honors
+  `store=false`; Chatbook does not claim to control provider operational
+  retention.
 - Do not change the conversation database schema or add durable tool metadata.
 - Do not infer model/API compatibility from model-name patterns.
 - Do not make paid requests in the default automated test suite.
@@ -122,19 +147,33 @@ streaming = true
 default `responses`. Surrounding whitespace and case are normalized before
 validation. Aliases and unknown values are rejected before a request.
 
+For Console sends, the resolved value is copied into an explicit optional
+`api_mode` field on `ConsoleProviderResolution`. `_chat_api_kwargs()` forwards
+that pinned value and the pinned QwenCloud base URL to `chat_api_call()`, whose
+signature and `PROVIDER_PARAM_MAP["qwencloud"]` forward them to the adapter.
+Non-Qwen providers receive no `api_mode` argument. Direct/non-Console callers
+may pass a mode explicitly; when they omit it, `chat_with_qwencloud()` resolves
+the same config/default chain and validates before network I/O.
+
 This is a durable provider setting, not a Console session override. A Console
 run resolves the selected provider/model/settings once through the existing
 `ConsoleProviderResolution`; every model turn in that run therefore uses the
-same QwenCloud mode. Credentials remain resolved by the established provider
-credential boundary and are not copied into persisted run state.
+same QwenCloud mode and base URL even if Settings changes mid-run. Credentials
+remain resolved by the established provider credential boundary and are not
+copied into persisted run state.
 
 Credential precedence:
 
 1. Explicit key supplied by a trusted caller.
-2. Environment variable named by `api_key_env_var`.
-3. `DASHSCOPE_API_KEY`.
-4. Existing config-backed credential fallback, if enabled by the shared
-   credential policy.
+2. Explicit modern `api_settings.qwencloud.api_key` configuration.
+3. Environment variable named by `api_key_env_var`, which defaults to
+   `DASHSCOPE_API_KEY`.
+4. A legacy `[API]` QwenCloud key only if the shared config bridge defines one.
+
+This intentionally follows the repository's current readiness/spend policy:
+modern Settings configuration outranks the environment. The adapter does not
+implement an independent credential lookup when Console already supplied the
+pinned readiness key.
 
 QwenCloud must never fall back to OpenAI, DeepSeek, or Custom OpenAI endpoint
 or credential settings.
@@ -195,6 +234,11 @@ The QwenCloud adapter owns only:
 - response and stream-event normalization;
 - QwenCloud error classification and safe retry behavior.
 
+The shared provider-resolution and dispatch seams gain only the neutral data
+plumbing needed to carry QwenCloud's pinned `api_mode` and base URL. They do
+not inspect that mode to choose endpoints, map messages, parse events, or
+execute/continue tools.
+
 The existing systems retain their current ownership:
 
 - Console resolves provider/model/settings and owns streaming/cancellation.
@@ -216,10 +260,13 @@ The configured value is a base API URL. Resolution:
 3. Append `/responses` for Responses mode or `/chat/completions` for Chat
    Completions mode.
 
-Arbitrary HTTP(S) compatible bases are retained for Token Plan or future
-compatible endpoints. Readiness rejects missing schemes, non-HTTP(S) URLs,
-embedded credentials, and malformed endpoint paths. Model discovery uses
-`GET {normalized_base}/models`.
+Arbitrary HTTP(S) compatible bases are retained for workspace-specific
+regional domains, Token Plan, or future compatible endpoints. The shared
+Singapore URL is the zero-configuration default because it remains functional;
+Settings documentation recommends a workspace-specific regional base when the
+account provides one. Readiness rejects missing schemes, non-HTTP(S) URLs,
+embedded credentials, query/fragment endpoint configuration, and malformed
+endpoint paths. Model discovery uses `GET {normalized_base}/models`.
 
 ## Canonical Message Contract
 
@@ -246,16 +293,33 @@ Chat Completions mapping:
 
 Responses mapping:
 
-- Convert ordinary messages to Responses input messages/items.
+- Map the separately supplied leading `system_message` to Responses
+  `instructions`; reject a second conflicting leading system instruction.
+- Convert ordinary user messages to Responses input messages. Convert prior
+  assistant text to the ID-free EasyInputMessage form
+  `{"role":"assistant","content":[{"type":"output_text","text":"..."}]}`.
+  It deliberately omits Responses transport `id`, `status`, and top-level
+  `type`; the mapper must not fabricate a `ResponseOutputMessage` from
+  Chatbook's chat-shaped history.
 - Keep simple text input string-shaped; convert mixed user text/image content
   to `input_text` and `input_image` parts.
-- Convert prior assistant tool calls to `function_call` items.
-- Convert paired tool results to `function_call_output` items using
-  `tool_call_id` as `call_id`.
-- Reject orphaned tool results before network I/O.
+- Treat each canonical assistant `tool_calls` message and its following
+  `role="tool"` rows as one batch. Validate non-empty, unique call IDs and an
+  exact one-result-per-call match. In canonical call order, emit each
+  `function_call` immediately followed by its matching
+  `function_call_output`, using `tool_call_id` as `call_id`. This deliberate
+  within-batch pairing satisfies QwenCloud's adjacency rule even though the
+  internal history stores all calls before all results.
+- If assistant text coexists with the call batch, emit its assistant
+  output-message item before the paired call/output items.
+- Reject missing, duplicate, orphaned, or cross-batch tool results before
+  network I/O. The mapper never mutates or repairs canonical history.
 
-Responses requests are stateless: each continuation sends the necessary
-canonical history. `previous_response_id` is not used.
+Responses requests are stateless from Chatbook's perspective: each
+continuation sends the necessary canonical history. `previous_response_id`
+and QwenCloud conversation IDs are not used, and the request includes
+`store=false` where supported. Provider-side operational retention remains
+governed by QwenCloud's service policy.
 
 ## Existing Function Tools
 
@@ -277,8 +341,11 @@ function fields into the documented Responses function-tool shape.
 
 Validation requires a non-empty name, object-shaped parameters, unique names,
 and `type="function"`. QwenCloud built-in tool types are rejected locally.
-Absent `tool_choice`, `auto`, and `none` are supported; other values require
-separate compatibility work.
+Absent `tool_choice`, `auto`, and `none` are supported by this first slice;
+forced/required choices require separate compatibility work even when the
+external API documents them. The adapter and native runtime accept multiple
+calls in one provider result, but the adapter does not promise that every
+model/mode will generate a parallel batch.
 
 For Responses output, `function_call.call_id` becomes the canonical OpenAI
 tool-call `id`. The output item's separate transport `id` is never used to
@@ -301,15 +368,34 @@ accepts the assistant/tool continuation history produced by `agent_runtime`.
 The adapter constructs payloads from explicit allowlists and never forwards a
 generic kwargs dictionary wholesale.
 
-Responses mode forwards only documented, supported values such as `model`,
-translated `input`, `stream`, `temperature`, `top_p`, function `tools`, and
-supported `tool_choice`. Reasoning effort is forwarded only when QwenCloud
-documents it for this API. Unsupported generic max-token, seed, penalty,
-response-format, verbosity, reasoning-summary, and stop fields are omitted.
+The complete Responses request-key allowlist for this slice is:
+`model`, `input`, `instructions`, `stream`, `store`, `temperature`, `top_p`,
+`max_output_tokens`, `tools`, `tool_choice`, and `reasoning`. `input`,
+`instructions`, tools, and reasoning are translated structures rather than
+generic passthrough values. Chatbook's maximum-output setting maps to
+`max_output_tokens` and must be at least 16 before network I/O. Generic
+reasoning effort maps to `reasoning={"effort": ...}` only for `none`,
+`minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. The adapter-owned
+request invariant `store=false` is sent; `previous_response_id`,
+`conversation`, and session-cache enablement are never sent. Seed, penalties,
+response format, verbosity, reasoning summary, stop, `n`, logprobs, and every
+unknown generic kwarg are omitted.
 
-Chat Completions mode forwards only documented chat parameters. Chatbook's
-maximum output setting maps to `max_completion_tokens` where the endpoint
-supports it. Function tools retain the nested chat shape.
+The complete Chat Completions request-key allowlist for this slice is:
+`model`, `messages`, `stream`, `temperature`, `top_p`, `top_k`,
+`max_completion_tokens`, `seed`, `presence_penalty`, `stop`, `response_format`,
+`n`, `logprobs`, `top_logprobs`, `tools`, `tool_choice`, `reasoning_effort`,
+`preserve_thinking`, and `stream_options`. Function tools retain the nested
+chat shape. `response_format` accepts only the existing `text` and
+`json_object` variants; `n` must be 1 when tools are present. Maximum output
+maps to `max_completion_tokens`. Streaming requests set
+`stream_options={"include_usage": true}` so the standard cost/usage path
+receives the terminal usage chunk. The adapter explicitly sends
+`preserve_thinking=false`: Chatbook intentionally does not store or replay
+`reasoning_content`, and `qwen3.8-max` otherwise defaults preserved thinking
+on and requires exact historical reasoning replay. `min_p`, frequency penalty,
+logit bias, user identifier, reasoning summary, verbosity, Anthropic thinking
+fields, prompt caching, and unknown generic kwargs are omitted.
 
 Settings must explain intentional omissions without suggesting that every
 Qwen model supports both modes.
@@ -326,30 +412,64 @@ existing providers:
       "message": {
         "content": "...",
         "tool_calls": []
-      }
+      },
+      "finish_reason": "stop"
     }
-  ]
+  ],
+  "usage": {}
 }
 ```
 
 Text and tool calls may coexist and neither is discarded. Responses
 `function_call.call_id` becomes the normalized call ID; arguments remain the
-JSON string expected by the existing accumulator/parser.
+JSON string expected by the existing accumulator/parser. Responses usage keeps
+its documented `input_tokens`, `output_tokens`, and `total_tokens` fields (plus
+supported detail mappings). `ProviderUsage.from_provider_payload()` consumes
+the first two/detail fields for the cost ticker, while
+`AgentService._usage_total_tokens()` consumes `total_tokens` for run-budget
+enforcement. Normalized `finish_reason` is `tool_calls` when calls are present,
+`stop` for a completed text result, and `length` for usable partial text
+stopped by `max_output_tokens`. Failed/cancelled terminals and incomplete tool
+calls are typed provider errors.
 
 Streaming Chat Completions preserves normal OpenAI `choices[0].delta`
 fragments. It does not add a second adapter-level complete-call buffer.
 
 Streaming Responses uses a stateful wire translator because typed Responses
-events are not chat deltas. It tracks each output item and emits standard
-`delta.content` and `delta.tool_calls` fragments with stable numeric indexes.
-The existing Console accumulator remains the one owner that merges names,
-IDs, and interleaved argument fragments into complete calls.
+events are not chat deltas. The adapter owns SSE record framing: it ignores
+comment/heartbeat fields, collects `data:` fields until the record boundary,
+parses one JSON event, and never exposes raw Qwen SSE control lines to the
+Console gateway. It tracks `sequence_number`, `output_index`, and item/call
+identity, then emits standard `delta.content` and `delta.tool_calls` mappings
+with stable numeric indexes. The existing Console accumulator remains the one
+owner that merges names, IDs, and interleaved argument fragments into complete
+calls.
 
-The translator must distinguish argument delta events from terminal events so
-a final full-arguments value is not appended after its deltas. Duplicate or
-replayed completion events cannot emit a call twice. A terminal response with
-an incomplete call identity or arguments raises a malformed-provider-response
-error.
+`response.output_item.added` establishes function call identity/name,
+`response.function_call_arguments.delta` emits argument fragments, and
+`response.function_call_arguments.done`, `response.output_item.done`, and
+`response.completed` validate or recover the final full value without
+re-appending already emitted arguments. Exact duplicate sequence events are
+ignored; a conflicting duplicate or decreasing sequence is malformed. A
+terminal response with an incomplete call identity, mismatched reconstructed
+arguments, or invalid JSON arguments raises a malformed-provider-response
+error before the executor sees a call. `response.completed` contributes the
+terminal normalized finish reason and hoists `response.usage` to the top-level
+normalized `usage` mapping expected by `ConsoleProviderStreamSignals`. Its
+normalized terminal chunk includes a standard empty-string `delta.content` so
+the current gateway records usage/finish metadata without misclassifying a
+usage-only mapping as unsupported visible content. Terminal call data is used
+for validation/recovery only and is never emitted again after equivalent
+deltas.
+
+For visible text, every `response.output_text.delta` emits exactly one
+standard `choices[0].delta.content` fragment, keyed by output/item/content
+index. `response.output_text.done`, `response.content_part.done`,
+`response.output_item.done`, and `response.completed` validate the accumulated
+text against the terminal full value. If no text delta was emitted for that
+part, the first terminal full value recovers it once; otherwise terminal values
+are validation-only and never append the full text a second time. A conflicting
+terminal text value is a malformed provider response.
 
 Provider error events raise the project's typed `ChatProviderError` with the
 provider label `qwencloud`; they are never emitted as a successful content
@@ -372,9 +492,11 @@ tool timeouts, model-turn/step/wall/token budgets, cycle detection, result
 truncation, and run logging remain existing runtime behavior. No Qwen-specific
 round cap or session ledger is introduced.
 
-Conversation persistence is unchanged. QwenCloud transport objects and
-`previous_response_id` are not persisted, and credentials never enter the
-conversation or run-log payload.
+Conversation persistence is unchanged. QwenCloud transport objects,
+reasoning items/content, `previous_response_id`, and conversation IDs are not
+persisted, and credentials never enter the conversation or run-log payload.
+Responses asks for `store=false` where supported, but Chatbook documents no
+guarantee about provider operational logs or retention.
 
 ## Readiness And Settings UX
 
@@ -425,6 +547,12 @@ compatibility matrix.
   copy.
 - Rate limits, transient server errors, connection-establishment failures,
   and timeouts use the existing bounded provider retry configuration.
+- `retries` means additional attempts after the initial request, is clamped to
+  a non-negative integer, and passes through `llm_retry_count()` so the shared
+  sensitive-request policy can force it to zero. Retryable statuses are 429,
+  500, 502, 503, and 504 for POST, with `retry_delay` as the exponential
+  backoff factor and provider `Retry-After` honored. Other `4xx` responses are
+  attempted once.
 - Streaming requests are never replayed after the first response byte/event.
 - A successful HTTP status with no usable text or tool calls is a malformed
   provider response, not an empty successful answer.
@@ -445,12 +573,25 @@ Provider-parity tests:
 
 Adapter tests for both modes:
 
-- exact URL, headers, timeout/retry settings, and parameter allowlists;
+- exact URL, headers, timeout/retry settings/counts (including sensitive mode),
+  and the complete request-key allowlists;
 - text-array collapse and supported image conversion without input mutation;
 - function schema and assistant/tool-history translation;
+- pinned `api_mode`/base propagation through `ConsoleProviderResolution`,
+  `_chat_api_kwargs()`, `chat_api_call()`, and the adapter, including a config
+  mutation after resolution that cannot switch a running agent turn;
 - text-only, tool-only, and mixed text/tool results;
-- multiple and interleaved calls with exact `call_id` round-trip;
-- Responses delta/done de-duplication;
+- multiple and interleaved calls with exact `call_id` round-trip and immediate
+  Responses call/output adjacency; missing, duplicate, and orphaned results
+  fail locally;
+- Responses SSE record framing, sequence replay/conflict handling,
+  text/tool delta/done recovery and de-duplication, completion status, finish
+  reasons, and terminal usage without visible fallback copy;
+- Responses `total_tokens` reaches native-agent budget enforcement while its
+  detailed input/output usage reaches the Console cost ticker;
+- Responses `store=false`/state exclusions and max-output mapping;
+- Chat `preserve_thinking=false`, streaming usage opt-in, and
+  max-completion mapping;
 - typed errors, malformed terminals, retry counts, and no retry after stream
   consumption;
 - secret-redaction checks.
@@ -464,7 +605,9 @@ Joined consumer tests:
   tool validation/execution error, and cancellation before a partial call can
   execute;
 - assert the second request contains the exact assistant/tool continuation and
-  does not create a synthetic user message.
+  does not create a synthetic user message;
+- assert cancellation closes the provider iterator/response and never exposes
+  a partial call to execution.
 
 Settings/model-catalog tests cover selector visibility, defaulting,
 persistence isolation, validation, help copy, `/models` normalization, cache
@@ -488,10 +631,12 @@ identifying response content rather than merely asserting no exception.
 
 ## Documentation And Delivery
 
-Provider documentation records setup, credential variable, international base
-URL, both `api_mode` values and default, parameter limitations, existing
-function-tool support, built-in-tool exclusion, configurable compatible bases,
-and optional live-test instructions.
+Provider documentation records setup, credential variable, the functional
+shared Singapore default plus workspace-specific regional override guidance,
+both `api_mode` values and default, state/storage limitations, reasoning replay
+behavior, parameter limitations, existing function-tool support,
+built-in-tool exclusion, configurable compatible bases, and optional live-test
+instructions.
 
 No schema migration is required. Configuration remains TOML-backed.
 

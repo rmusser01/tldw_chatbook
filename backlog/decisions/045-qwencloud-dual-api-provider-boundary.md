@@ -18,13 +18,28 @@ the dedicated QwenCloud adapter's endpoint, request mapping, and response/event
 translation. It does not create separate provider identities, model catalogs,
 readiness systems, Console paths, or agent runtimes.
 
+Console resolves and pins that value, with the effective QwenCloud base URL,
+in its ordinary provider resolution before a run. Shared resolution and
+dispatch code only carries those values; it never branches on the mode to map
+wire formats or continue tools. Direct callers may pass an explicit mode, and
+the adapter otherwise applies the same config/default resolution.
+
 Both external APIs normalize to Chatbook's existing OpenAI-style internal
 message contract. QwenCloud therefore uses the existing provider dispatcher,
 Console gateway, native tool-call accumulator, `AgentService`, `agent_runtime`,
 approval/execution policies, budgets, cancellation, run logs, and model-catalog
 pipeline. Responses continuations are stateless translations of the canonical
 assistant `tool_calls` and paired `role="tool"` history; Chatbook does not use
-or persist `previous_response_id`.
+or persist `previous_response_id` or a QwenCloud conversation ID. The
+Responses mapper emits each `function_call` immediately followed by its paired
+`function_call_output`, as QwenCloud requires, even though canonical history
+stores a call batch before its result batch.
+
+Chatbook does not persist private reasoning content. The Chat Completions
+adapter therefore disables preserved-thinking replay, which `qwen3.8-max`
+otherwise enables by default and requires callers to echo exactly. Responses
+requests include `store=false` where the compatible endpoint honors it, but
+Chatbook makes no claim about provider operational retention.
 
 Only existing Chatbook function tools are supported in this tranche.
 QwenCloud-hosted built-in tools are excluded and require a separate decision
@@ -72,9 +87,15 @@ those established boundaries to QwenCloud's two external APIs.
 - The adapter is more involved than a simple OpenAI-compatible wrapper because
   Responses needs bidirectional message/tool translation and stream-event
   normalization.
+- The Responses mapper validates exact one-to-one tool call/results and
+  reorders only within a canonical call/result batch to meet the external
+  adjacency rule.
+- Chat Completions deliberately gives up preserved historical reasoning until
+  Chatbook has an explicit, privacy-reviewed reasoning-content contract.
 - Tool behavior remains provider-neutral: the adapter never executes a tool or
   decides continuation policy.
-- No schema migration or durable QwenCloud response state is introduced.
+- No schema migration or durable QwenCloud response/conversation state is
+  introduced.
 - Adding hosted QwenCloud tools, per-session API-mode overrides, or server-side
   Responses state later requires a new ADR check.
 
@@ -88,6 +109,11 @@ forwards schemas, returns canonical calls, and accepts canonical tool history.
 
 Optional paid live checks remain explicitly gated, credential-isolated, and
 outside the default suite.
+
+The contract suite also proves mode/base pinning through the shared resolution
+and dispatcher, Responses call/output adjacency, Qwen SSE framing and
+delta/terminal de-duplication, terminal usage/finish normalization, Chat
+streaming usage opt-in, and the adapter-owned state/reasoning invariants.
 
 ## Links
 
