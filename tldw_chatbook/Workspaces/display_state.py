@@ -900,6 +900,43 @@ def _safe_item_memberships(
     return tuple(memberships or ())
 
 
+def library_item_context_handoff(
+    state: LibraryWorkspaceDepthState,
+    *,
+    item_type: str,
+    item_id: str,
+) -> tuple[bool, str]:
+    """Decide one item's Console/RAG handoff from its OWN row (TASK-15423).
+
+    The aggregate `context_handoff_enabled` requires ``blocked_count == 0``
+    across every visible Library row, which is the right policy for bulk
+    staging but wrongly let one foreign-workspace item veto single-item
+    actions ("Open in Console" on one conversation, "Use in Console" on the
+    open media item) for fully eligible items. Per-row eligibility already
+    exists; single-item actions consult it here.
+
+    Args:
+        state: The Library workspace depth snapshot.
+        item_type: Canonical item type as rows carry it (``"conversation"``,
+            ``"media"``, ``"note"``).
+        item_id: Stable identifier of the selected item.
+
+    Returns:
+        ``(eligible, reason)`` — ``(True, "")`` for an eligible row;
+        ``(False, <that row's recovery copy>)`` for a blocked row (falling
+        back to the aggregate tooltip if the row carries none); and the
+        aggregate decision unchanged for an item absent from the row model
+        (no stable id, degraded registry), keeping the conservative policy
+        for the cases per-row evidence cannot cover.
+    """
+    for row in state.source_rows:
+        if row.item_type == item_type and row.item_id == item_id:
+            if row.active_context_eligible:
+                return True, ""
+            return False, row.recovery_copy or state.context_handoff_tooltip
+    return state.context_handoff_enabled, state.context_handoff_tooltip
+
+
 def _library_workspace_item_type(source_type: str) -> str:
     return {
         "notes": "note",

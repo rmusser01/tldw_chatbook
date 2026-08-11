@@ -648,3 +648,82 @@ def test_library_workspace_depth_state_recognizes_media_id_and_ignores_idless_ro
     assert state.handoff_label == "Console/RAG handoff: 2 eligible"
     assert [row.item_id for row in state.source_rows] == ["note-1", "media-1"]
     assert all(row.active_context_eligible for row in state.source_rows)
+
+
+def test_library_item_context_handoff_gates_on_the_selected_row_only(
+    tmp_path: Path,
+) -> None:
+    """TASK-15423: one blocked row must not veto every other row's handoff.
+
+    The single-item Library actions ("Open in Console" on one conversation,
+    "Use in Console" on the open media item) used the aggregate
+    `context_handoff_enabled`, which requires blocked_count == 0 across ALL
+    visible rows — so one foreign-workspace item anywhere in the Library
+    disabled the action for fully eligible items. Per-item eligibility
+    already exists on the row model; the decision must come from the
+    selected row.
+    """
+    service = _registry(tmp_path)
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    service.create_workspace(workspace_id="ws-b", name="Workspace B")
+    service.set_active_workspace("ws-a")
+    service.link_membership(
+        "ws-b", item_type="note", item_id="note-1", title="Research Note"
+    )
+    service.link_membership(
+        "ws-a", item_type="conversation", item_id="chat-1", title="Local Chat"
+    )
+
+    state = build_library_workspace_depth_state(
+        registry_service=service,
+        source_records={
+            "notes": ({"id": "note-1", "title": "Research Note"},),
+            "media": (),
+            "conversations": ({"id": "chat-1", "title": "Local Chat"},),
+        },
+    )
+    assert state.context_handoff_enabled is False  # the aggregate stays put
+
+    eligible, reason = display_state.library_item_context_handoff(
+        state, item_type="conversation", item_id="chat-1"
+    )
+    assert eligible is True
+    assert reason == ""
+
+    blocked, blocked_reason = display_state.library_item_context_handoff(
+        state, item_type="note", item_id="note-1"
+    )
+    assert blocked is False
+    assert blocked_reason == state.source_rows[0].recovery_copy
+    assert blocked_reason, "a blocked row must carry its own recovery copy"
+
+
+def test_library_item_context_handoff_falls_back_to_the_aggregate_for_unknown_ids(
+    tmp_path: Path,
+) -> None:
+    """An item outside the row model keeps the conservative aggregate policy.
+
+    Args:
+        tmp_path: Registry scratch directory.
+    """
+    service = _registry(tmp_path)
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    service.set_active_workspace("ws-a")
+    service.link_membership(
+        "ws-a", item_type="conversation", item_id="chat-1", title="Local Chat"
+    )
+
+    state = build_library_workspace_depth_state(
+        registry_service=service,
+        source_records={
+            "notes": (),
+            "media": (),
+            "conversations": ({"id": "chat-1", "title": "Local Chat"},),
+        },
+    )
+
+    eligible, reason = display_state.library_item_context_handoff(
+        state, item_type="conversation", item_id="chat-does-not-exist"
+    )
+    assert eligible is state.context_handoff_enabled
+    assert reason == state.context_handoff_tooltip

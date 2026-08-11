@@ -2,7 +2,7 @@
 id: TASK-15423
 title: >-
   Library "Open in Console" does not navigate or load the conversation
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-11 12:00'
 labels:
@@ -46,9 +46,19 @@ button (and the search asymmetry) misleads.
 ## Acceptance Criteria
 
 <!-- AC:BEGIN -->
-- [ ] Activating "Open in Console" on a conversation either opens it in Console or surfaces a visible, accurate reason it cannot
-- [ ] Console's conversation search finds DB conversations that Library finds, or the two surfaces' differing scopes are made explicit in the UI
+- [x] Single-item Library handoff actions (conversation "Open in Console"/"Use as source", media "Use in Console") gate on the SELECTED item's workspace eligibility, not the aggregate blocked-count across all visible rows
+- [x] When the selected item itself is blocked, the warning names that item's own recovery path (its per-row recovery copy), not the aggregate wording
+- [x] The aggregate gate and its existing pins (rail "Use in Console", "N eligible, M blocked" label, TASK-716 blocked-but-pressable behavior) are unchanged
+- [x] Console's conversation search scope difference vs Library is confirmed as designed (workspace-scoped, with "No matches in this workspace." empty copy) — documented, no code change
 <!-- AC:END -->
+
+**AC revision note (2026-08-11):** rewritten per the owner's go-ahead on the
+recommended revision from the investigation (per-item gating for single-item
+actions, aggregate kept for bulk). The original AC2 search-asymmetry arm is
+resolved as by-design: `_active_console_workspace_id_for_conversation_search`
++ `list_workspace_conversations` scope Console's search to the active
+workspace deliberately, and the empty state already says "No matches in this
+workspace." — the scopes ARE explicit in the UI.
 
 ## Investigation Notes (2026-08-11, follow-up session)
 
@@ -92,3 +102,45 @@ Recommended AC revision for the implementing task, pending owner ruling:
 gate the single-item action on the SELECTED row's eligibility, keep the
 aggregate gate for bulk staging, and name the blocking row in the toast.
 <!-- SECTION:NOTES:END -->
+
+## Implementation Notes (per-item gate, 2026-08-11)
+
+<!-- SECTION:NOTES2:BEGIN -->
+Implemented per the owner's go-ahead on the recommended revision.
+
+- **Pure decision** `library_item_context_handoff(state, item_type, item_id)`
+  in `Workspaces/display_state.py`: an eligible row hands off regardless of
+  other rows; a blocked row returns ITS OWN `recovery_copy`; an item absent
+  from the row model (no stable id, degraded registry) falls back to the
+  aggregate decision unchanged — the conservative policy stays wherever
+  per-row evidence cannot cover.
+- **Wiring**: `_open_selected_conversation_handoff` and
+  `_open_selected_media_handoff` consult it with the payload's
+  item_type/source_id (payloads already carry the row vocabulary:
+  "conversation"/"media"). The rail's aggregate "Use in Console" action,
+  the "N eligible, M blocked" label, and TASK-716's blocked-but-pressable
+  behavior are untouched (their pins in
+  `test_post_release_workspaces_library_depth.py` still pass).
+- **Tests** (red-first): two pure tests (eligible-despite-blocked-sibling +
+  unknown-id fallback) and a screen-level test seeding a blocked note plus
+  an eligible conversation, asserting the handoff proceeds where the
+  aggregate gate used to veto it. Test-harness note: all three Library
+  scope services must be seeded or the depth state's source rows never
+  load.
+- **Live-verified** on the exact original repro: with a foreign DB-seeded
+  conversation present, "Open in Console" on the eligible Console-created
+  conversation navigates and stages ("was blocked by the aggregate gate);
+  on the blocked conversation the toast now reads "Copy or link this
+  conversation into workspace workspace-default before using it in
+  Console." — naming the item and its fix, not the aggregate.
+- Observed once, unattributed: right after a completed handoff, bouncing
+  straight back to Library showed "Library source services unavailable;
+  retry Library later." until an app restart. My change only reorders the
+  pre-handoff gate check, so this is recorded as an observation, not
+  claimed fixed or caused.
+- **Console search asymmetry: resolved as by-design.** Console's rail
+  search scopes to the active workspace
+  (`_active_console_workspace_id_for_conversation_search` →
+  `list_workspace_conversations`) and its empty state already says
+  "No matches in this workspace." — the scope IS explicit in the UI.
+<!-- SECTION:NOTES2:END -->

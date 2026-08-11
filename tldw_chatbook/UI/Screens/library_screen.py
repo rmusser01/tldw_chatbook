@@ -290,6 +290,7 @@ from ...Utils.path_validation import validate_path_simple
 from ...Workspaces import (
     LibraryWorkspaceDepthState,
     build_library_workspace_depth_state,
+    library_item_context_handoff,
 )
 from ...Workspaces.registry_service import next_local_workspace_identity
 from ...Widgets.destination_rail import (
@@ -25780,9 +25781,18 @@ class LibraryScreen(BaseAppScreen):
                     severity="warning",
                 )
             return
-        if not workspace_state.context_handoff_enabled:
+        # Single-item action: gate on THIS conversation's own workspace
+        # eligibility, not the aggregate blocked-count — one foreign item
+        # elsewhere in the Library must not veto an eligible conversation
+        # (TASK-15423). Bulk staging keeps the aggregate gate.
+        item_eligible, item_reason = library_item_context_handoff(
+            workspace_state,
+            item_type=payload.item_type,
+            item_id=str(payload.source_id or ""),
+        )
+        if not item_eligible:
             if callable(notify):
-                notify(workspace_state.context_handoff_tooltip, severity="warning")
+                notify(item_reason, severity="warning")
             return
         open_chat_with_handoff = getattr(
             self.app_instance, "open_chat_with_handoff", None
@@ -25828,9 +25838,16 @@ class LibraryScreen(BaseAppScreen):
                     "Open a media item before using it in Console.", severity="warning"
                 )
             return
-        if not workspace_state.context_handoff_enabled:
+        # Single-item action: same per-item gate as the conversation
+        # handoff above (TASK-15423).
+        item_eligible, item_reason = library_item_context_handoff(
+            workspace_state,
+            item_type=payload.item_type,
+            item_id=str(payload.source_id or ""),
+        )
+        if not item_eligible:
             if callable(notify):
-                notify(workspace_state.context_handoff_tooltip, severity="warning")
+                notify(item_reason, severity="warning")
             return
         open_chat_with_handoff = getattr(
             self.app_instance, "open_chat_with_handoff", None
