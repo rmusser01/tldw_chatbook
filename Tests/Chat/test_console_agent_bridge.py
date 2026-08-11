@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import copy
 import json
 import threading
 import time
@@ -1902,40 +1903,194 @@ def test_step_truncation_cuts_on_newline_and_tab_boundaries():
     assert out.split("\u2026", 1)[0] == "### Heading"  # cut at the newline, not "so"
 
 
-def test_format_todo_marker_renders_statuses_and_active_form():
+@pytest.mark.parametrize(
+    ("tasks", "expected_lines"),
+    [
+        (
+            [
+                {
+                    "id": "10101",
+                    "version": 1,
+                    "content": "write tests",
+                    "status": "pending",
+                },
+                {
+                    "id": "20202",
+                    "version": 1,
+                    "content": "implement",
+                    "status": "pending",
+                },
+                {
+                    "id": "30303",
+                    "version": 1,
+                    "content": "commit",
+                    "status": "pending",
+                },
+            ],
+            ("[ ] write tests", "[ ] implement", "[ ] commit"),
+        ),
+        (
+            [
+                {
+                    "id": "10101",
+                    "version": 1,
+                    "content": "write tests",
+                    "status": "pending",
+                },
+                {
+                    "id": "20202",
+                    "version": 2,
+                    "content": "implement safely",
+                    "status": "completed",
+                },
+                {
+                    "id": "30303",
+                    "version": 1,
+                    "content": "commit",
+                    "status": "pending",
+                },
+            ],
+            ("[ ] write tests", "[x] implement safely", "[ ] commit"),
+        ),
+        (
+            [
+                {
+                    "id": "10101",
+                    "version": 1,
+                    "content": "write tests",
+                    "status": "pending",
+                },
+                {
+                    "id": "30303",
+                    "version": 1,
+                    "content": "commit",
+                    "status": "pending",
+                },
+            ],
+            ("[ ] write tests", "[ ] commit"),
+        ),
+    ],
+    ids=("create", "update", "delete"),
+)
+def test_format_todo_marker_renders_task_snapshots_in_creation_order(
+    tasks, expected_lines
+):
+    text = format_todo_marker(tasks)
+
+    assert text == "\n".join(
+        ["☰ Tasks (0 in progress):", *(f"  {line}" for line in expected_lines)]
+    )
+
+
+def test_format_todo_marker_uses_sanitized_active_form_for_in_progress_task():
     text = format_todo_marker(
         [
-            {"content": "write tests", "status": "completed"},
             {
+                "id": "10101",
+                "version": 8,
                 "content": "implement",
                 "status": "in_progress",
-                "activeForm": "implementing",
-            },
-            {"content": "commit", "status": "pending"},
+                "activeForm": "implementing\x1bright",
+            }
         ]
     )
-    assert text == (
-        "☰ Todos (1 in progress):\n  [x] write tests\n  [~] implementing\n  [ ] commit"
+
+    assert text == "☰ Tasks (1 in progress):\n  [~] implementing right"
+
+
+def test_format_todo_marker_does_not_render_protocol_ids_or_versions():
+    text = format_todo_marker(
+        [
+            {
+                "id": "867530912345",
+                "version": 741852963,
+                "content": "ship safely",
+                "status": "completed",
+            }
+        ]
     )
 
+    assert "867530912345" not in text
+    assert "741852963" not in text
+    assert "id" not in text.casefold()
+    assert "version" not in text.casefold()
 
-def test_format_todo_marker_empty_list_reads_as_cleared():
-    assert format_todo_marker([]) == "☰ Todos cleared"
+
+def test_format_todo_marker_empty_task_snapshot_reads_as_cleared():
+    assert format_todo_marker([]) == "☰ Tasks cleared"
 
 
 def test_format_todo_marker_truncates_long_item_text():
     # Same 200-char convention as step-marker summaries (_summarize).
     long_content = "y" * 300
     text = format_todo_marker([{"content": long_content, "status": "pending"}])
-    assert text == f"☰ Todos (0 in progress):\n  [ ] {'y' * 200}"
+    assert text == f"☰ Tasks (0 in progress):\n  [ ] {'y' * 200}"
 
 
-def test_format_todo_marker_flattens_newlines_in_item_text():
-    # Markers stay one line per item; embedded newlines become spaces.
+def test_format_todo_marker_sanitizes_before_truncating_display_text():
+    content = f"{'y' * 198}\r\nYZ"
+    text = format_todo_marker([{"content": content, "status": "pending"}])
+
+    assert text == f"☰ Tasks (0 in progress):\n  [ ] {'y' * 198} Y"
+
+
+@pytest.mark.parametrize("control", ["\x00", "\x1f", "\x7f", "\x80", "\x9f"])
+def test_format_todo_marker_replaces_terminal_controls_without_mutating_input(
+    control,
+):
+    tasks = [
+        {
+            "id": "10101",
+            "version": 1,
+            "content": f"left{control}right",
+            "status": "pending",
+        }
+    ]
+    before = copy.deepcopy(tasks)
+
+    text = format_todo_marker(tasks)
+
+    assert text == "☰ Tasks (0 in progress):\n  [ ] left right"
+    assert control not in text
+    assert tasks == before
+
+
+def test_format_todo_marker_flattens_line_breaks_and_replaces_tab():
+    # Markers stay one line per task; CRLF is one line break and tab is one control.
     text = format_todo_marker(
-        [{"content": "first\nsecond\r\nthird", "status": "pending"}]
+        [
+            {
+                "content": "first\nsecond\r\nthird\rfour\tfive",
+                "status": "pending",
+            }
+        ]
     )
-    assert text == "☰ Todos (0 in progress):\n  [ ] first second third"
+    assert text == ("☰ Tasks (0 in progress):\n  [ ] first second third four five")
+
+
+def test_format_todo_marker_preserves_input_equality_and_aliases():
+    first = {
+        "id": "10101",
+        "version": 3,
+        "content": "first\x00task",
+        "status": "pending",
+    }
+    second = {
+        "id": "20202",
+        "version": 4,
+        "content": "second task",
+        "status": "completed",
+    }
+    tasks = [first, second]
+    tasks_alias = tasks
+    first_alias = first
+    before = copy.deepcopy(tasks)
+
+    format_todo_marker(tasks)
+
+    assert tasks == before
+    assert tasks is tasks_alias
+    assert tasks[0] is first_alias
 
 
 def test_append_todo_marker_appends_tool_message_to_store(tmp_path):
@@ -1949,7 +2104,7 @@ def test_append_todo_marker_appends_tool_message_to_store(tmp_path):
         if m.role is ConsoleMessageRole.TOOL
     ]
     assert [m.content for m in tool_messages] == [
-        "☰ Todos (1 in progress):\n  [~] ship it"
+        "☰ Tasks (1 in progress):\n  [~] ship it"
     ]
 
 
