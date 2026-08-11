@@ -97,7 +97,9 @@ def run_generation(request: ImageGenRequest) -> ImageGenResult:
             f"Backend {request.backend!r} is not enabled/available. "
             f"Check [image_generation].enabled_backends."
         )
-    capability = resolve_backend_reference_image_capability(resolved)
+    capability = resolve_backend_reference_image_capability(
+        resolved, config=registry.config
+    )
     if capability.required and request.reference_image is None:
         raise ImageGenerationError(
             f"Invalid image generation request: reference_image: "
@@ -113,7 +115,8 @@ def run_generation(request: ImageGenRequest) -> ImageGenResult:
             "cfg_scale": request.cfg_scale,
             "extra_params": request.extra_params,
             "reference_image": request.reference_image,
-        }
+        },
+        config=registry.config,
     )
     if issues:
         detail = "; ".join(f"{issue.path}: {issue.message}" for issue in issues)

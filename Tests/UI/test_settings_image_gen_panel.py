@@ -83,9 +83,40 @@ async def _open_real_settings_destination(app, pilot, *, timeout: float = 5.0):
         if type(screen).__name__ == "SettingsScreen" and list(
             screen.query("#settings-category-image_generation")
         ):
+            break
+        await pilot.pause(0.02)
+    else:
+        raise AssertionError("Settings destination never mounted its Image Gen category")
+
+    button = screen.query_one("#settings-category-image_generation")
+    if not button.display:
+        groups = screen.query("#settings-category-group-domain-defaults")
+        if groups:
+            groups.first().press()
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            candidates = screen.query("#settings-category-image_generation")
+            if candidates and candidates.first().display:
+                button = candidates.first()
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Image Gen category never became visible")
+    category_list = screen.query_one("#settings-category-list")
+    category_list.scroll_to_widget(button, animate=False)
+    await pilot.pause()
+    screen.handle_category_button_pressed(Button.Pressed(button))
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        screen = app.screen
+        if (
+            type(screen).__name__ == "SettingsScreen"
+            and screen.active_category == SettingsCategoryId.IMAGE_GENERATION.value
+            and list(screen.query("#settings-imagegen-panel"))
+        ):
             return screen
         await pilot.pause(0.02)
-    raise AssertionError("Settings destination never mounted its Image Gen category")
+    raise AssertionError("Settings never activated and mounted the Image Gen panel")
 
 
 @pytest.mark.asyncio
@@ -1228,8 +1259,6 @@ enabled_backends = ["openrouter", "swarmui"]
     app = _build_test_app()
     async with app.run_test(size=size) as pilot:
         screen = await _open_real_settings_destination(app, pilot)
-        screen._select_category("image_generation")
-        await pilot.pause(0.2)
 
         for backend_id in BACKEND_IDS:
             row = screen.query_one(f"#settings-imagegen-backend-{backend_id}")

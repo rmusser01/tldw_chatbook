@@ -91,9 +91,15 @@ def test_listing_then_worker_share_refreshed_registry_and_config_snapshot(monkey
     monkeypatch.setattr(
         worker,
         "resolve_backend_reference_image_capability",
-        lambda _backend: ReferenceImageCapability(supported=True, required=False),
+        lambda _backend, *, config=None: ReferenceImageCapability(
+            supported=True, required=False
+        ),
     )
-    monkeypatch.setattr(worker, "validate_image_generation_request", lambda _request: [])
+    monkeypatch.setattr(
+        worker,
+        "validate_image_generation_request",
+        lambda _request, *, config=None: [],
+    )
 
     image_config.reset_image_generation_runtime()
     entries = listing.list_image_models_for_catalog()
@@ -139,7 +145,7 @@ def test_inflight_registry_constructs_adapter_with_its_captured_config(monkeypat
                 bytes_len=len(payload),
             )
 
-    def blocked_first_validation(_request):
+    def blocked_first_validation(_request, *, config=None):
         nonlocal validation_calls
         validation_calls += 1
         if validation_calls == 1:
@@ -162,7 +168,9 @@ def test_inflight_registry_constructs_adapter_with_its_captured_config(monkeypat
     monkeypatch.setattr(
         worker,
         "resolve_backend_reference_image_capability",
-        lambda _backend: ReferenceImageCapability(supported=True, required=False),
+        lambda _backend, *, config=None: ReferenceImageCapability(
+            supported=True, required=False
+        ),
     )
     monkeypatch.setattr(
         worker, "validate_image_generation_request", blocked_first_validation

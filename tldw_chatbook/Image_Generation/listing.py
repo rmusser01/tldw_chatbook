@@ -125,8 +125,7 @@ def _is_comfyui_configured(cfg, enabled: bool) -> bool:
     return True
 
 
-def _resolve_supported_formats(name: str) -> list[str] | None:
-    registry = get_registry()
+def _resolve_supported_formats(registry, name: str) -> list[str] | None:
     try:
         adapter_cls = registry.get_adapter_class(name)
     except _IMAGE_LISTING_NONCRITICAL_EXCEPTIONS:
@@ -221,7 +220,7 @@ def list_image_models_for_catalog() -> list[dict[str, Any]]:
             "is_configured": bool(is_configured),
         }
 
-        supported_formats = _resolve_supported_formats(name)
+        supported_formats = _resolve_supported_formats(registry, name)
         if supported_formats:
             entry["supported_formats"] = supported_formats
 

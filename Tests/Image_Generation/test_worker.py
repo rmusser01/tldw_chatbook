@@ -1,8 +1,12 @@
 import threading
 from io import BytesIO
+from types import SimpleNamespace
 
 import pytest
 from PIL import Image
+
+
+_FAKE_CONFIG = SimpleNamespace()
 
 
 @pytest.fixture(autouse=True)
@@ -48,6 +52,8 @@ def test_run_generation_dispatches_to_adapter(monkeypatch):
         def generate(self, req):
             return ImageGenResult(content=b"x", content_type="image/png", bytes_len=1)
     class FakeReg:
+        config = _FAKE_CONFIG
+
         def resolve_backend(self, name):
             return "swarmui" if name == "swarmui" else None
         def get_adapter(self, name):
@@ -97,6 +103,8 @@ def test_run_generation_reference_image_unsupported_backend_raises_before_adapte
     from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
 
     class FakeReg:
+        config = _FAKE_CONFIG
+
         def resolve_backend(self, name):
             return "swarmui" if name == "swarmui" else None
 
@@ -122,6 +130,8 @@ def test_run_generation_reference_image_supported_backend_dispatches(monkeypatch
             return ImageGenResult(content=b"x", content_type="image/png", bytes_len=1)
 
     class FakeReg:
+        config = _FAKE_CONFIG
+
         def resolve_backend(self, name):
             return "fal" if name == "fal" else None
 
@@ -139,6 +149,8 @@ def test_run_generation_comfyui_requires_reference_before_adapter_construction(m
     from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
 
     class FakeReg:
+        config = _FAKE_CONFIG
+
         def resolve_backend(self, name):
             return "comfyui" if name == "h3-alias" else None
 
@@ -156,6 +168,8 @@ def test_run_generation_disabled_alias_stays_unavailable(monkeypatch):
     from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
 
     class FakeReg:
+        config = _FAKE_CONFIG
+
         def resolve_backend(self, name):
             return None
 
@@ -173,6 +187,8 @@ def test_run_generation_comfyui_invalid_reference_precedes_adapter_construction(
     from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
 
     class FakeReg:
+        config = _FAKE_CONFIG
+
         def resolve_backend(self, name):
             return "comfyui"
 
@@ -194,6 +210,8 @@ def test_run_generation_non_bytes_reference_precedes_adapter_construction(monkey
     from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
 
     class FakeReg:
+        config = _FAKE_CONFIG
+
         def resolve_backend(self, name):
             return "comfyui"
 
@@ -219,6 +237,8 @@ def test_run_generation_optional_reference_backend_still_allows_text_to_image(mo
             return ImageGenResult(content=b"x", content_type="image/png", bytes_len=1)
 
     class FakeReg:
+        config = _FAKE_CONFIG
+
         def resolve_backend(self, name):
             return "fal"
 
@@ -239,6 +259,8 @@ def test_run_generation_adapter_load_failure_raises(monkeypatch):
     from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
 
     class FakeReg:
+        config = _FAKE_CONFIG
+
         def resolve_backend(self, name):
             return "swarmui" if name == "swarmui" else None
         def get_adapter(self, name):
@@ -248,3 +270,125 @@ def test_run_generation_adapter_load_failure_raises(monkeypatch):
     req = worker.build_request(backend="swarmui", prompt="cat")
     with pytest.raises(ImageGenerationError, match="failed to load"):
         worker.run_generation(req)
+
+
+def test_run_generation_uses_one_registry_config_snapshot_across_reset(monkeypatch):
+    from tldw_chatbook.Image_Generation import adapter_registry as registry
+    from tldw_chatbook.Image_Generation import config as image_config
+    from tldw_chatbook.Image_Generation import worker
+    from tldw_chatbook.Image_Generation.adapters.base import ImageGenResult
+
+    phase = ["A"]
+    capability_entered = threading.Event()
+    release_capability = threading.Event()
+    capability_configs = []
+    validation_configs = []
+    adapter_configs = []
+    results = []
+    errors = []
+    real_capability = worker.resolve_backend_reference_image_capability
+    real_validate = worker.validate_image_generation_request
+
+    raw_by_phase = {
+        "A": {
+            "default_backend": "stable_diffusion_cpp",
+            "enabled_backends": ["stable_diffusion_cpp"],
+            "max_width": 64,
+            "stable_diffusion_cpp": {"allowed_extra_params": ["cli_args"]},
+        },
+        "B": {
+            "default_backend": "stable_diffusion_cpp",
+            "enabled_backends": ["stable_diffusion_cpp"],
+            "max_width": 16,
+            "stable_diffusion_cpp": {"allowed_extra_params": []},
+        },
+    }
+
+    class SnapshotAdapter:
+        name = "stable_diffusion_cpp"
+        supported_formats = {"png"}
+
+        def __init__(self):
+            self.config = image_config.get_image_generation_config()
+
+        def generate(self, _request):
+            adapter_configs.append(self.config)
+            payload = str(self.config.max_width).encode()
+            return ImageGenResult(
+                content=payload,
+                content_type="image/png",
+                bytes_len=len(payload),
+            )
+
+    def blocked_capability(backend, *, config=None):
+        capability_configs.append(config)
+        if len(capability_configs) == 1:
+            capability_entered.set()
+            assert release_capability.wait(5)
+        return real_capability(backend, config=config)
+
+    def captured_validation(structured, *, config=None):
+        validation_configs.append(config)
+        return real_validate(structured, config=config)
+
+    monkeypatch.setattr(
+        image_config,
+        "_read_image_generation_toml",
+        lambda: raw_by_phase[phase[0]],
+    )
+    monkeypatch.setitem(
+        registry.ImageAdapterRegistry.DEFAULT_ADAPTERS,
+        "stable_diffusion_cpp",
+        SnapshotAdapter,
+    )
+    monkeypatch.setattr(
+        worker, "resolve_backend_reference_image_capability", blocked_capability
+    )
+    monkeypatch.setattr(
+        worker, "validate_image_generation_request", captured_validation
+    )
+    image_config.reset_image_generation_runtime()
+    registry_a = registry.get_registry()
+    config_a = registry_a.config
+
+    request_a = worker.build_request(
+        backend="stable_diffusion_cpp",
+        prompt="neutral image",
+        width=32,
+        extra_params={"cli_args": []},
+    )
+
+    def run_a():
+        try:
+            results.append(worker.run_generation(request_a))
+        except Exception as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    request_thread = threading.Thread(target=run_a, daemon=True)
+    request_thread.start()
+    assert capability_entered.wait(5)
+
+    phase[0] = "B"
+    image_config.reset_image_generation_runtime()
+    registry_b = registry.get_registry()
+    config_b = registry_b.config
+    release_capability.set()
+    request_thread.join(5)
+
+    assert not request_thread.is_alive()
+    assert errors == []
+    assert results[0].content == b"64"
+    assert capability_configs[0] is config_a
+    assert validation_configs[0] is config_a
+    assert adapter_configs[0] is config_a
+
+    result_b = worker.run_generation(
+        worker.build_request(
+            backend="stable_diffusion_cpp", prompt="next neutral image", width=8
+        )
+    )
+    assert result_b.content == b"16"
+    assert capability_configs[1] is config_b
+    assert validation_configs[1] is config_b
+    assert adapter_configs[1] is config_b
+    image_config.reset_image_generation_runtime()
