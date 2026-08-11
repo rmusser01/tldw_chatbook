@@ -12,7 +12,7 @@ import tempfile
 import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Generic, Literal, TypeVar, cast
@@ -26,9 +26,27 @@ from tldw_chatbook.DB.private_sqlite import (
     connect_private_sqlite,
     copy_private_sqlite,
 )
+import tldw_chatbook.TTS.profile_schema as _profile_schema
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+from tldw_chatbook.TTS.profile_reference_audio import validate_canonical_reference_wav
+from tldw_chatbook.TTS.profile_reference_storage import (
+    ASSIGNED_PROFILE_WITH_REFERENCE_JOIN_SELECT,
+    PROFILE_WITH_REFERENCE_SELECT,
+    REFERENCE_PAYLOAD_SELECT,
+    REFERENCE_TABLE,
+    decode_reference_payload,
+    decode_reference_summary,
+    read_reference_blob,
+    validate_reference_rows,
+    write_reference_blob,
+)
+from tldw_chatbook.TTS.profile_reference_types import (
+    MAX_REFERENCE_COUNT,
+    MAX_REFERENCE_TOTAL_BYTES,
+    CanonicalTTSCloneReference,
+    TTSCloneReference,
+)
 from tldw_chatbook.TTS.profile_schema import (
-    ASSIGNED_PROFILE_JOIN_SELECT,
     CURRENT_PROFILE_SCHEMA_VERSION,
     decode_assigned_snapshot,
     decode_assignment,
@@ -36,6 +54,7 @@ from tldw_chatbook.TTS.profile_schema import (
     decode_utc_datetime,
     encode_assignment,
     encode_profile,
+    encode_utc_datetime,
     encode_uuid,
     open_profile_store,
     peek_profile_store_schema_version,
@@ -66,6 +85,7 @@ from tldw_chatbook.Utils.path_validation import validate_path_simple
 _T = TypeVar("_T")
 _PATH_TYPE = type(Path())
 _CHARACTER_REF_TYPE = CharacterRef
+_CANONICAL_REFERENCE_TYPE = CanonicalTTSCloneReference
 _TTS_GENERATION_PROFILE_TYPE = TTSGenerationProfile
 _TTS_PROFILE_DRAFT_TYPE = TTSProfileDraft
 _MAX_SEARCH_CHARACTERS = 128
@@ -82,6 +102,7 @@ _SQLITE_CONSTRAINT_TRIGGER = 1_811
 _SQLITE_CONSTRAINT_UNIQUE = 2_067
 _STORE_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
 _INITIALIZATION_LOCK_TIMEOUT_SECONDS = 0.1
+_V2_MIGRATION_BACKUP_SUFFIX = ".pre-v3.sqlite3"
 _RESTORE_BACKUP_PAGE_BATCH = 64
 _RESTORE_PROGRESS_OPCODE_INTERVAL = 1_000
 _RESTORE_REBIND_TIMEOUT_SECONDS = 5.0
@@ -92,21 +113,14 @@ _TransactionOperation = Literal[
     "delete",
     "assignment_set",
     "assignment_remove",
+    "reference_set",
+    "reference_remove",
 ]
-_PROFILE_SELECT = """
+_PROFILE_SELECT = PROFILE_WITH_REFERENCE_SELECT
+_BASE_PROFILE_SELECT = """
 SELECT
-    profile_id,
-    display_name,
-    normalized_name,
-    provider_id,
-    model_id,
-    voice_id,
-    response_format,
-    speed,
-    options_json,
-    revision,
-    created_at,
-    updated_at
+    profile_id, display_name, normalized_name, provider_id, model_id, voice_id,
+    response_format, speed, options_json, revision, created_at, updated_at
 FROM tts_generation_profiles
 """
 _ASSIGNMENT_SELECT = """
@@ -167,6 +181,33 @@ def _repository_error(code: str) -> ProfileRepositoryError:
     return ProfileRepositoryError(code)
 
 
+def _decode_profile_with_reference_row(row: sqlite3.Row) -> TTSGenerationProfile:
+    """Preserve the repository codec seam and add metadata-only reference state."""
+
+    return replace(decode_profile(row), reference=decode_reference_summary(row))
+
+
+def _decode_assigned_with_reference_row(
+    row: sqlite3.Row,
+) -> AssignedTTSProfileSnapshot:
+    """Preserve the joined codec seam and add metadata-only reference state."""
+
+    snapshot = decode_assigned_snapshot(row)
+    return replace(
+        snapshot,
+        profile=replace(
+            snapshot.profile,
+            reference=decode_reference_summary(row),
+        ),
+    )
+
+
+def _v2_migration_backup_path(active_path: Path) -> Path:
+    """Return the fixed inert sibling used for one retained v2 snapshot."""
+
+    return active_path.with_name(f"{active_path.name}{_V2_MIGRATION_BACKUP_SUFFIX}")
+
+
 def _utc_now() -> datetime:
     return datetime.now(UTC)
 
@@ -223,6 +264,7 @@ def _validate_optional_profile(
             revision=profile.revision,
             created_at=profile.created_at,
             updated_at=profile.updated_at,
+            reference=profile.reference,
         )
         if validated != profile:
             raise ValueError
@@ -274,6 +316,46 @@ def _validate_expected_generation(value: object) -> int:
     if type(value) is not int or value < 0:
         raise _repository_error("operation_failed")
     return cast(int, value)
+
+
+def _validate_canonical_reference(value: object) -> CanonicalTTSCloneReference:
+    """Return one exact copied canonical reference or reject the boundary."""
+
+    if type(value) is not _CANONICAL_REFERENCE_TYPE:
+        raise _repository_error("operation_failed")
+    reference = cast(CanonicalTTSCloneReference, value)
+    validation_error: BaseException | None = None
+    validated: CanonicalTTSCloneReference | None = None
+    try:
+        validated = CanonicalTTSCloneReference(
+            wav_bytes=reference.wav_bytes,
+            reference_text=reference.reference_text,
+            sha256=reference.sha256,
+            byte_length=reference.byte_length,
+            duration_ms=reference.duration_ms,
+            sample_rate_hz=reference.sample_rate_hz,
+            channels=reference.channels,
+            sample_encoding=reference.sample_encoding,
+        )
+        metadata = validate_canonical_reference_wav(validated.wav_bytes)
+        if (
+            metadata.byte_length != validated.byte_length
+            or metadata.duration_ms != validated.duration_ms
+            or metadata.sample_rate_hz != validated.sample_rate_hz
+            or metadata.channels != validated.channels
+            or metadata.sample_encoding != validated.sample_encoding
+        ):
+            raise ValueError
+        if validated != reference:
+            raise ValueError
+    except BaseException as error:
+        validation_error = error
+    if validation_error is not None:
+        if not isinstance(validation_error, Exception):
+            raise validation_error
+        raise _repository_error("operation_failed")
+    assert validated is not None
+    return validated
 
 
 def _validate_character_ref(value: object) -> CharacterRef:
@@ -410,6 +492,7 @@ def _reserved_store_paths(database_path: Path) -> tuple[Path, ...]:
     return (
         database_path,
         database_path.with_name(f"{database_path.name}.lock"),
+        _v2_migration_backup_path(database_path),
         *(
             database_path.with_name(f"{database_path.name}{suffix}")
             for suffix in _STORE_SIDECAR_SUFFIXES
@@ -905,6 +988,8 @@ class TTSProfileRepository:
         self._connection: sqlite3.Connection | None = None
         self._lease: ProfileStoreLease | None = None
         self._active_database_path: Path | None = None
+        self._residual_cleanup_paths: tuple[Path, ...] = ()
+        self._damaged_reference_profile_ids: set[UUID] = set()
         self._store_established = False
         self._pending_futures: set[Future[object]] = set()
         self._open_completion: asyncio.Task[ProfileStoreResult[None]] | None = None
@@ -961,6 +1046,42 @@ class TTSProfileRepository:
             raise _repository_error("invalid_state")
         return active_path
 
+    def _clear_reference_damage_markers(self) -> None:
+        """Clear markers at one lifecycle generation boundary."""
+
+        with self._state_lock:
+            self._damaged_reference_profile_ids.clear()
+
+    def _discard_reference_damage_marker(self, profile_id: UUID) -> None:
+        """Clear one repaired or removed reference marker."""
+
+        with self._state_lock:
+            self._damaged_reference_profile_ids.discard(profile_id)
+
+    def _reference_damage_is_marked(
+        self,
+        profile_id: UUID,
+        generation: int,
+    ) -> bool:
+        """Return whether this exact generation isolated the reference."""
+
+        with self._state_lock:
+            return (
+                self._generation == generation
+                and profile_id in self._damaged_reference_profile_ids
+            )
+
+    def _mark_reference_damage(self, profile_id: UUID, generation: int) -> None:
+        """Mark row-local damage only while its admitted generation is live."""
+
+        with self._state_lock:
+            if (
+                self._generation == generation
+                and not self._terminal
+                and self._state is ProfileRepositoryState.OPEN
+            ):
+                self._damaged_reference_profile_ids.add(profile_id)
+
     async def open(self) -> ProfileStoreResult[None]:
         """Open the profile store or retry one unavailable open attempt.
 
@@ -993,6 +1114,7 @@ class TTSProfileRepository:
                 if state_error is not None:
                     raise _repository_error(state_error)
                 self._generation += 1
+                self._damaged_reference_profile_ids.clear()
                 generation = self._generation
                 executor = self._executor
 
@@ -1094,29 +1216,36 @@ class TTSProfileRepository:
         (:meth:`_worker_initialize_store`) -- a shared lease is documented
         and relied on elsewhere as read-only.
 
-        This peeks the on-disk version first (best effort;
-        :func:`~tldw_chatbook.TTS.profile_schema.peek_profile_store_schema_version`
-        returning ``None`` means no opinion) and, only when it is confirmed
-        to sit strictly between zero and current, runs the upgrade under the
-        same exclusive-guarded path used for first-time initialization
-        before any shared open is attempted. A concurrent racer already
-        upgrading under its own exclusive lease is handled exactly like the
-        existing missing/schema_partial fallback below: fall through and let
-        the shared open simply wait for it.
+        This peeks the on-disk version first. A confirmed old version, or an
+        uncertain result for a file that exists, enters the same
+        exclusive-guarded path used for first-time initialization before any
+        shared open is attempted. A genuinely absent path stays on the normal
+        create/missing-store path. A concurrent racer already upgrading under
+        its own exclusive lease is handled exactly like the existing
+        missing/schema_partial fallback below: fall through and let the shared
+        open simply wait for it.
         """
 
         version = peek_profile_store_schema_version(active_path)
-        if version is None or not (0 < version < CURRENT_PROFILE_SCHEMA_VERSION):
+        if version is None and not active_path.exists():
+            return
+        if version is not None and not (0 < version < CURRENT_PROFILE_SCHEMA_VERSION):
             return
         try:
             self._worker_initialize_store(active_path)
         except ProfileRepositoryError as error:
             if error.code != "lock_timeout":
                 raise
+            if (
+                peek_profile_store_schema_version(active_path)
+                != CURRENT_PROFILE_SCHEMA_VERSION
+            ):
+                raise
 
     def _worker_open(self) -> None:
         """Acquire shared ownership and open the long-lived connection."""
 
+        self._clear_reference_damage_markers()
         if self._connection is not None or self._lease is not None:
             self._worker_cleanup()
 
@@ -1243,6 +1372,8 @@ class TTSProfileRepository:
         lease_error: BaseException | None = None
         try:
             lease.acquire()
+            if self._worker_exact_schema_version(active_path) == 2:
+                self._worker_retain_v2_migration_backup(active_path)
             connection = open_profile_store(active_path)
             validate_profile_store_rows(connection)
             self._require_configured_path_matches(
@@ -1260,7 +1391,10 @@ class TTSProfileRepository:
                 self._connection = connection
                 self._lease = lease
                 self._active_database_path = active_path
-        if connection_error is None:
+        if self._connection is not None:
+            self._lease = lease
+            self._active_database_path = active_path
+        elif connection_error is None:
             try:
                 lease.release()
             except BaseException as error:
@@ -1272,6 +1406,276 @@ class TTSProfileRepository:
             connection_error,
             lease_error,
         )
+
+    def _worker_exact_schema_version(self, active_path: Path) -> int | None:
+        """Read the exact version without authorizing migration or creation."""
+
+        if not active_path.exists():
+            return None
+        connection: sqlite3.Connection | None = None
+        body_error: BaseException | None = None
+        close_error: BaseException | None = None
+        version: int | None = None
+        try:
+            connection = connect_private_sqlite(
+                "tts.profile_migration_backup",
+                active_path,
+                must_exist=True,
+                isolation_level=None,
+            )
+            value = connection.execute("PRAGMA user_version").fetchone()[0]
+            if type(value) is not int:
+                raise ValueError
+            version = value
+        except BaseException as error:
+            body_error = error
+        if connection is not None:
+            try:
+                connection.close()
+            except BaseException as error:
+                close_error = error
+                self._connection = connection
+                self._active_database_path = active_path
+        for pending_error in (body_error, close_error):
+            if pending_error is not None and not isinstance(pending_error, Exception):
+                raise pending_error
+        if body_error is not None or close_error is not None or version is None:
+            raise _repository_error("migration_failed")
+        return version
+
+    def _worker_validate_v2_connection(
+        self,
+        connection: sqlite3.Connection,
+    ) -> tuple[tuple[tuple[object, ...], ...], tuple[tuple[object, ...], ...]]:
+        """Require one exact, fully valid v2 store and return its domain."""
+
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute(f"PRAGMA busy_timeout = {_profile_schema.BUSY_TIMEOUT_MS}")
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        if version != 2:
+            raise _repository_error("migration_failed")
+        _profile_schema._validate_schema(connection, expected_version=2)
+        self._worker_require_full_integrity(connection)
+        validate_profile_store_rows(connection)
+        return _profile_schema._migration_domain_snapshot(connection)
+
+    def _worker_existing_v2_backup_matches(
+        self,
+        backup_path: Path,
+        source_domain: tuple[
+            tuple[tuple[object, ...], ...], tuple[tuple[object, ...], ...]
+        ],
+    ) -> bool:
+        """Return whether an inert retained backup exactly matches the source."""
+
+        if not backup_path.exists():
+            return False
+        connection: sqlite3.Connection | None = None
+        body_error: BaseException | None = None
+        close_error: BaseException | None = None
+        matched = False
+        try:
+            connection = connect_private_sqlite(
+                "tts.profile_migration_backup",
+                backup_path,
+                read_only=True,
+                immutable=True,
+                isolation_level=None,
+            )
+            matched = self._worker_validate_v2_connection(connection) == source_domain
+        except BaseException as error:
+            body_error = error
+        if connection is not None:
+            try:
+                connection.close()
+            except BaseException as error:
+                close_error = error
+                self._connection = connection
+        for pending_error in (body_error, close_error):
+            if pending_error is not None and not isinstance(pending_error, Exception):
+                raise pending_error
+        if close_error is not None:
+            raise _repository_error("migration_failed")
+        return matched if body_error is None else False
+
+    def _worker_publish_v2_migration_backup(
+        self,
+        source: sqlite3.Connection,
+        source_domain: tuple[
+            tuple[tuple[object, ...], ...], tuple[tuple[object, ...], ...]
+        ],
+        backup_path: Path,
+    ) -> None:
+        """Atomically publish one validated current-source online backup."""
+
+        temporary_path: Path | None = None
+        rollback_path: Path | None = None
+        destination: sqlite3.Connection | None = None
+        body_error: BaseException | None = None
+        cleanup_errors: list[BaseException] = []
+        published = False
+        replaced = False
+        try:
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix=f".{backup_path.name}.",
+                suffix=".backup",
+                dir=backup_path.parent,
+            )
+            temporary_path = Path(temporary_name)
+            os.close(descriptor)
+            destination = connect_private_sqlite(
+                "tts.profile_migration_backup",
+                temporary_path,
+                must_exist=True,
+                isolation_level=None,
+            )
+            backup_open_connections_to_private(
+                "tts.profile_migration_backup",
+                source,
+                destination,
+            )
+            if self._worker_validate_v2_connection(destination) != source_domain:
+                raise _repository_error("migration_failed")
+            destination.close()
+            destination = None
+            temporary_state = temporary_path.stat()
+            if not stat.S_ISREG(temporary_state.st_mode) or (
+                os.name == "posix" and stat.S_IMODE(temporary_state.st_mode) != 0o600
+            ):
+                raise _repository_error("migration_failed")
+            _fsync_file(temporary_path)
+            try:
+                prior_state = backup_path.lstat()
+            except FileNotFoundError:
+                prior_state = None
+            if prior_state is not None:
+                if not stat.S_ISREG(prior_state.st_mode) or (
+                    os.name == "posix"
+                    and (
+                        stat.S_IMODE(prior_state.st_mode) != 0o600
+                        or prior_state.st_nlink != 1
+                    )
+                ):
+                    raise _repository_error("migration_failed")
+                rollback_descriptor, rollback_name = tempfile.mkstemp(
+                    prefix=f".{backup_path.name}.",
+                    suffix=".rollback",
+                    dir=backup_path.parent,
+                )
+                rollback_path = Path(rollback_name)
+                os.close(rollback_descriptor)
+                rollback_path.unlink()
+                os.link(backup_path, rollback_path, follow_symlinks=False)
+                rollback_state = rollback_path.lstat()
+                if (
+                    not stat.S_ISREG(rollback_state.st_mode)
+                    or rollback_state.st_dev != prior_state.st_dev
+                    or rollback_state.st_ino != prior_state.st_ino
+                ):
+                    raise _repository_error("migration_failed")
+                _fsync_directory(backup_path.parent)
+            os.replace(temporary_path, backup_path)
+            replaced = True
+            _fsync_directory(backup_path.parent)
+            published = True
+            if rollback_path is not None:
+                rollback_path.unlink()
+                rollback_path = None
+                _fsync_directory(backup_path.parent)
+        except BaseException as error:
+            body_error = error
+            if replaced and not published:
+                try:
+                    if rollback_path is None:
+                        _unlink_path_if_present(backup_path)
+                    else:
+                        os.replace(rollback_path, backup_path)
+                        rollback_path = None
+                    _fsync_directory(backup_path.parent)
+                except BaseException as restore_error:
+                    cleanup_errors.append(restore_error)
+
+        if destination is not None:
+            try:
+                destination.close()
+            except BaseException as error:
+                cleanup_errors.append(error)
+                self._connection = destination
+                if temporary_path is not None:
+                    self._residual_cleanup_paths = (
+                        temporary_path,
+                        *tuple(
+                            temporary_path.with_name(f"{temporary_path.name}{suffix}")
+                            for suffix in _STORE_SIDECAR_SUFFIXES
+                        ),
+                    )
+        if temporary_path is not None:
+            if not published:
+                try:
+                    _unlink_path_if_present(temporary_path)
+                except BaseException as error:
+                    cleanup_errors.append(error)
+            for suffix in _STORE_SIDECAR_SUFFIXES:
+                try:
+                    _unlink_path_if_present(
+                        temporary_path.with_name(f"{temporary_path.name}{suffix}")
+                    )
+                except BaseException as error:
+                    cleanup_errors.append(error)
+        if rollback_path is not None:
+            try:
+                _unlink_path_if_present(rollback_path)
+                _fsync_directory(backup_path.parent)
+            except BaseException as error:
+                cleanup_errors.append(error)
+
+        for pending_error in (body_error, *cleanup_errors):
+            if pending_error is not None and not isinstance(pending_error, Exception):
+                raise pending_error
+        if body_error is not None or cleanup_errors:
+            raise _repository_error("migration_failed")
+
+    def _worker_retain_v2_migration_backup(self, active_path: Path) -> None:
+        """Validate v2 and retain an equivalent backup before allowing v3."""
+
+        source: sqlite3.Connection | None = None
+        body_error: BaseException | None = None
+        close_error: BaseException | None = None
+        try:
+            source = connect_private_sqlite(
+                "tts.profile_migration_backup",
+                active_path,
+                must_exist=True,
+                isolation_level=None,
+            )
+            source_domain = self._worker_validate_v2_connection(source)
+            backup_path = _v2_migration_backup_path(active_path)
+            if not self._worker_existing_v2_backup_matches(
+                backup_path,
+                source_domain,
+            ):
+                self._worker_publish_v2_migration_backup(
+                    source,
+                    source_domain,
+                    backup_path,
+                )
+        except BaseException as error:
+            body_error = error
+        if source is not None:
+            try:
+                source.close()
+            except BaseException as error:
+                close_error = error
+                self._connection = source
+                self._active_database_path = active_path
+        if self._connection is not None:
+            self._active_database_path = active_path
+        for pending_error in (body_error, close_error):
+            if pending_error is not None and not isinstance(pending_error, Exception):
+                raise pending_error
+        if body_error is not None or close_error is not None:
+            raise _repository_error("migration_failed")
 
     async def create_profile(
         self,
@@ -1505,6 +1909,89 @@ class TTSProfileRepository:
             expected_generation=validated_generation,
         )
 
+    async def set_reference(
+        self,
+        profile_id: UUID,
+        canonical: CanonicalTTSCloneReference,
+        *,
+        expected_revision: int,
+        expected_generation: int,
+    ) -> ProfileStoreResult[TTSGenerationProfile]:
+        """Atomically attach or replace one profile-owned clone reference.
+
+        Args:
+            profile_id: Exact profile UUID that owns the reference.
+            canonical: Fully validated canonical clone-reference payload.
+            expected_revision: Exact profile revision required for the update.
+            expected_generation: Exact active repository generation.
+
+        Returns:
+            The active generation and updated profile.
+
+        Raises:
+            ProfileRepositoryError: If input, state, generation, revision, or
+                SQLite access fails safely.
+            BaseException: A caller control-flow signal preserved by the
+                serialized operation lane.
+        """
+
+        validated_profile_id = _validate_exact_profile_id(profile_id)
+        validated_reference = _validate_canonical_reference(canonical)
+        validated_revision = _validate_expected_revision(expected_revision)
+        validated_generation = _validate_expected_generation(expected_generation)
+        return await self._submit_operation(
+            lambda connection: self._worker_set_reference(
+                connection,
+                validated_profile_id,
+                validated_reference,
+                validated_revision,
+            ),
+            expected_generation=validated_generation,
+        )
+
+    async def remove_reference(
+        self,
+        profile_id: UUID,
+        *,
+        expected_revision: int,
+        expected_generation: int,
+    ) -> ProfileStoreResult[TTSGenerationProfile]:
+        """Atomically remove one profile-owned clone reference."""
+
+        validated_profile_id = _validate_exact_profile_id(profile_id)
+        validated_revision = _validate_expected_revision(expected_revision)
+        validated_generation = _validate_expected_generation(expected_generation)
+        return await self._submit_operation(
+            lambda connection: self._worker_remove_reference(
+                connection,
+                validated_profile_id,
+                validated_revision,
+            ),
+            expected_generation=validated_generation,
+        )
+
+    async def get_reference(
+        self,
+        profile_id: UUID,
+        *,
+        expected_revision: int,
+        expected_generation: int,
+    ) -> ProfileStoreResult[TTSCloneReference]:
+        """Stream and fully revalidate one exact stored clone reference."""
+
+        validated_profile_id = _validate_exact_profile_id(profile_id)
+        validated_revision = _validate_expected_revision(expected_revision)
+        validated_generation = _validate_expected_generation(expected_generation)
+        return await self._submit_operation(
+            lambda connection: self._worker_get_reference(
+                connection,
+                validated_profile_id,
+                validated_revision,
+                validated_generation,
+            ),
+            expected_generation=validated_generation,
+        )
+
     async def assignment_count(
         self,
         profile_id: UUID,
@@ -1660,11 +2147,14 @@ class TTSProfileRepository:
     async def backup_to(
         self,
         destination: Path,
+        *,
+        timeout_seconds: int | float = 5.0,
     ) -> ProfileStoreResult[ProfileBackupReceipt]:
         """Publish one validated SQLite online-backup snapshot atomically.
 
         Args:
             destination: Exact non-store path for the completed snapshot.
+            timeout_seconds: Positive finite backup and qualification budget.
 
         Returns:
             The active generation and safe backup metadata.
@@ -1676,6 +2166,22 @@ class TTSProfileRepository:
                 serialized operation lane.
         """
 
+        timing_error: BaseException | None = None
+        timeout: float | None = None
+        deadline: float | None = None
+        try:
+            timeout = _validate_restore_timeout(timeout_seconds)
+            deadline = _read_monotonic() + timeout
+            if not math.isfinite(deadline):
+                raise ValueError
+        except BaseException as error:
+            timing_error = error
+        if timing_error is not None and not isinstance(timing_error, Exception):
+            raise timing_error
+        if timing_error is not None:
+            raise _repository_error("backup_failed")
+        assert timeout is not None
+        assert deadline is not None
         if type(destination) is not _PATH_TYPE:
             raise _repository_error("backup_failed")
         exact_destination = cast(Path, destination)
@@ -1685,6 +2191,7 @@ class TTSProfileRepository:
                 connection,
                 exact_destination,
                 active_path,
+                deadline,
             )
         )
 
@@ -1693,6 +2200,7 @@ class TTSProfileRepository:
         connection: sqlite3.Connection,
         destination_path: Path,
         active_path: Path,
+        deadline: float,
     ) -> ProfileBackupReceipt:
         """Create and atomically publish one worker-owned online backup."""
 
@@ -1704,6 +2212,7 @@ class TTSProfileRepository:
         published = False
         receipt: ProfileBackupReceipt | None = None
         try:
+            _require_restore_time(deadline)
             if self._worker_active_path() != active_path:
                 raise _repository_error("backup_failed")
             self._require_configured_path_matches(active_path, "backup_failed")
@@ -1723,10 +2232,17 @@ class TTSProfileRepository:
                 must_exist=True,
                 isolation_level=None,
             )
-            self._worker_online_backup(connection, destination_connection)
+            self._worker_online_backup(
+                connection,
+                destination_connection,
+                deadline=deadline,
+            )
             destination_connection.close()
             destination_connection = None
-            self._worker_validate_standalone_snapshot(temporary_path)
+            self._worker_validate_standalone_snapshot(
+                temporary_path,
+                deadline=deadline,
+            )
             temporary_state = temporary_path.stat()
             if not stat.S_ISREG(temporary_state.st_mode):
                 raise _repository_error("backup_failed")
@@ -1742,10 +2258,15 @@ class TTSProfileRepository:
             )
             if current_destination.parent_identity != destination.parent_identity:
                 raise _repository_error("backup_failed")
+            _require_restore_time(deadline)
             _fsync_file(temporary_path)
+            _require_restore_time(deadline)
             os.replace(temporary_path, destination.path)
             published = True
             _fsync_directory(destination.path.parent)
+            # Publication is already committed at this point. A single fsync
+            # syscall cannot be interrupted, so do not report a timeout after
+            # a durable destination has become visible.
         except BaseException as error:
             body_error = error
 
@@ -1887,15 +2408,21 @@ class TTSProfileRepository:
             connection = connect_private_sqlite(
                 "tts.profile_snapshot",
                 path,
+                must_exist=True,
                 read_only=True,
                 immutable=True,
                 isolation_level=None,
             )
+            connection.row_factory = sqlite3.Row
             if check_deadline is not None:
                 check_deadline()
             self._worker_require_full_integrity(
                 connection,
                 deadline=deadline,
+            )
+            validate_reference_rows(
+                connection,
+                check_deadline=check_deadline,
             )
         except BaseException as error:
             body_error = error
@@ -1915,6 +2442,7 @@ class TTSProfileRepository:
     ) -> ProfileRestoreReceipt:
         """Run one exclusive staged restore and race-free shared rebind."""
 
+        self._clear_reference_damage_markers()
         stage_path: Path | None = None
         recovery_path: Path | None = None
         exclusive_lease: ProfileStoreLease | None = None
@@ -2004,6 +2532,10 @@ class TTSProfileRepository:
                     scoped,
                     check_deadline=deadline_check,
                 )
+                validate_reference_rows(
+                    scoped,
+                    check_deadline=deadline_check,
+                )
                 self._worker_store_counts(scoped, deadline=deadline)
             except BaseException as error:
                 scoped_error = error
@@ -2043,6 +2575,10 @@ class TTSProfileRepository:
                 deadline=deadline,
             )
             validate_profile_store_rows(
+                rebound_connection,
+                check_deadline=deadline_check,
+            )
+            validate_reference_rows(
                 rebound_connection,
                 check_deadline=deadline_check,
             )
@@ -2514,6 +3050,7 @@ class TTSProfileRepository:
                     raise _repository_error(state_error)
                 self._state = ProfileRepositoryState.RESTORING
                 self._generation += 1
+                self._damaged_reference_profile_ids.clear()
                 generation = self._generation
                 pending = tuple(self._pending_futures)
                 executor = self._executor
@@ -2762,7 +3299,20 @@ class TTSProfileRepository:
         profile_id: UUID,
     ) -> TTSGenerationProfile:
         row = connection.execute(
-            f"{_PROFILE_SELECT} WHERE profile_id = ?",
+            f"{_PROFILE_SELECT} WHERE p.profile_id = ?",
+            (encode_uuid(profile_id),),
+        ).fetchone()
+        if row is None:
+            raise _repository_error("missing")
+        return _decode_profile_with_reference_row(row)
+
+    def _worker_get_base_profile(
+        self,
+        connection: sqlite3.Connection,
+        profile_id: UUID,
+    ) -> TTSGenerationProfile:
+        row = connection.execute(
+            f"{_BASE_PROFILE_SELECT} WHERE profile_id = ?",
             (encode_uuid(profile_id),),
         ).fetchone()
         if row is None:
@@ -2777,21 +3327,23 @@ class TTSProfileRepository:
     ) -> TTSProfileCollisionSnapshot:
         def read_collisions() -> TTSProfileCollisionSnapshot:
             profile_id_row = connection.execute(
-                f"{_PROFILE_SELECT} WHERE profile_id = ?",
+                f"{_PROFILE_SELECT} WHERE p.profile_id = ?",
                 (encode_uuid(profile_id),),
             ).fetchone()
             normalized_name_row = connection.execute(
-                f"{_PROFILE_SELECT} WHERE normalized_name = ?",
+                f"{_PROFILE_SELECT} WHERE p.normalized_name = ?",
                 (normalized_name,),
             ).fetchone()
             return TTSProfileCollisionSnapshot(
                 profile_id_match=(
-                    None if profile_id_row is None else decode_profile(profile_id_row)
+                    None
+                    if profile_id_row is None
+                    else _decode_profile_with_reference_row(profile_id_row)
                 ),
                 normalized_name_match=(
                     None
                     if normalized_name_row is None
-                    else decode_profile(normalized_name_row)
+                    else _decode_profile_with_reference_row(normalized_name_row)
                 ),
             )
 
@@ -2814,11 +3366,11 @@ class TTSProfileRepository:
                 where_clause = ""
                 filter_parameters: tuple[object, ...] = ()
             else:
-                where_clause = " WHERE normalized_name LIKE ? ESCAPE '!'"
+                where_clause = " WHERE p.normalized_name LIKE ? ESCAPE '!'"
                 filter_parameters = (f"%{_escape_like_literal(normalized_search)}%",)
 
             count_row = connection.execute(
-                f"SELECT COUNT(*) FROM tts_generation_profiles{where_clause}",
+                f"SELECT COUNT(*) FROM tts_generation_profiles AS p{where_clause}",
                 filter_parameters,
             ).fetchone()
             if (
@@ -2832,12 +3384,12 @@ class TTSProfileRepository:
             rows = connection.execute(
                 (
                     f"{_PROFILE_SELECT}{where_clause} "
-                    "ORDER BY normalized_name ASC, profile_id ASC "
+                    "ORDER BY p.normalized_name ASC, p.profile_id ASC "
                     "LIMIT ? OFFSET ?"
                 ),
                 (*filter_parameters, limit, offset),
             ).fetchall()
-            profiles = tuple(decode_profile(row) for row in rows)
+            profiles = tuple(_decode_profile_with_reference_row(row) for row in rows)
             return TTSProfilePage(profiles=profiles, total=total)
 
         return self._worker_transaction(
@@ -2876,6 +3428,7 @@ class TTSProfileRepository:
                 revision=stored.revision + 1,
                 created_at=stored.created_at,
                 updated_at=self._clock(),
+                reference=stored.reference,
             )
             parameters = encode_profile(updated)
             parameters["expected_revision"] = expected_revision
@@ -2948,6 +3501,289 @@ class TTSProfileRepository:
             immediate=True,
             integrity_evidence=evidence,
         )
+        self._discard_reference_damage_marker(profile_id)
+
+    def _worker_bump_reference_revision(
+        self,
+        connection: sqlite3.Connection,
+        profile_id: UUID,
+        expected_revision: int,
+        timestamp: datetime,
+    ) -> TTSGenerationProfile:
+        cursor = connection.execute(
+            """
+            UPDATE tts_generation_profiles
+            SET revision = revision + 1, updated_at = ?
+            WHERE profile_id = ? AND revision = ?
+            """,
+            (
+                encode_utc_datetime(timestamp),
+                encode_uuid(profile_id),
+                expected_revision,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise _repository_error("conflict")
+        profile = self._worker_get_profile(connection, profile_id)
+        if profile.revision != expected_revision + 1:
+            raise _repository_error("corrupt_data")
+        return profile
+
+    def _worker_set_reference(
+        self,
+        connection: sqlite3.Connection,
+        profile_id: UUID,
+        canonical: CanonicalTTSCloneReference,
+        expected_revision: int,
+    ) -> TTSGenerationProfile:
+        def set_exact() -> TTSGenerationProfile:
+            profile = self._worker_get_base_profile(connection, profile_id)
+            if profile.revision != expected_revision:
+                raise _repository_error("conflict")
+            encoded_profile_id = encode_uuid(profile_id)
+            existing_row = connection.execute(
+                f"SELECT byte_length FROM {REFERENCE_TABLE} WHERE profile_id = ?",
+                (encoded_profile_id,),
+            ).fetchone()
+            existing_bytes = 0
+            if existing_row is not None:
+                if (
+                    len(existing_row) != 1
+                    or type(existing_row[0]) is not int
+                    or existing_row[0] <= 0
+                ):
+                    raise _repository_error("corrupt_data")
+                existing_bytes = cast(int, existing_row[0])
+            quota_row = connection.execute(
+                f"SELECT COUNT(*), COALESCE(SUM(byte_length), 0) FROM {REFERENCE_TABLE}"
+            ).fetchone()
+            if (
+                quota_row is None
+                or len(quota_row) != 2
+                or type(quota_row[0]) is not int
+                or type(quota_row[1]) is not int
+                or quota_row[0] < 0
+                or quota_row[1] < 0
+            ):
+                raise _repository_error("corrupt_data")
+            prospective_count = cast(int, quota_row[0]) + (
+                0 if existing_row is not None else 1
+            )
+            prospective_bytes = (
+                cast(int, quota_row[1]) - existing_bytes + canonical.byte_length
+            )
+            if (
+                prospective_count > MAX_REFERENCE_COUNT
+                or prospective_bytes > MAX_REFERENCE_TOTAL_BYTES
+            ):
+                raise _repository_error("reference_quota")
+
+            reference_id = self._worker_new_uuid()
+            timestamp = self._clock()
+            cursor = connection.execute(
+                f"""
+                INSERT INTO {REFERENCE_TABLE} (
+                    profile_id,
+                    reference_id,
+                    wav_bytes,
+                    reference_text,
+                    sha256,
+                    byte_length,
+                    duration_ms,
+                    sample_rate_hz,
+                    channels,
+                    sample_encoding,
+                    created_at,
+                    updated_at
+                ) VALUES (?, ?, zeroblob(?), ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(profile_id) DO UPDATE SET
+                    reference_id = excluded.reference_id,
+                    wav_bytes = excluded.wav_bytes,
+                    reference_text = excluded.reference_text,
+                    sha256 = excluded.sha256,
+                    byte_length = excluded.byte_length,
+                    duration_ms = excluded.duration_ms,
+                    sample_rate_hz = excluded.sample_rate_hz,
+                    channels = excluded.channels,
+                    sample_encoding = excluded.sample_encoding,
+                    created_at = excluded.created_at,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    encoded_profile_id,
+                    encode_uuid(reference_id),
+                    canonical.byte_length,
+                    canonical.reference_text,
+                    canonical.sha256,
+                    canonical.byte_length,
+                    canonical.duration_ms,
+                    canonical.sample_rate_hz,
+                    canonical.channels,
+                    canonical.sample_encoding,
+                    encode_utc_datetime(timestamp),
+                    encode_utc_datetime(timestamp),
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise _repository_error("operation_failed")
+            rowid_row = connection.execute(
+                f"SELECT rowid FROM {REFERENCE_TABLE} WHERE profile_id = ?",
+                (encoded_profile_id,),
+            ).fetchone()
+            if (
+                rowid_row is None
+                or len(rowid_row) != 1
+                or type(rowid_row[0]) is not int
+                or rowid_row[0] <= 0
+            ):
+                raise _repository_error("corrupt_data")
+            write_reference_blob(
+                connection, cast(int, rowid_row[0]), canonical.wav_bytes
+            )
+            updated = self._worker_bump_reference_revision(
+                connection,
+                profile_id,
+                expected_revision,
+                timestamp,
+            )
+            if (
+                updated.reference is None
+                or updated.reference.reference_id != reference_id
+                or updated.reference.byte_length != canonical.byte_length
+            ):
+                raise _repository_error("corrupt_data")
+            self._discard_reference_damage_marker(profile_id)
+            return updated
+
+        return self._worker_transaction(
+            connection,
+            set_exact,
+            operation_kind="reference_set",
+            immediate=True,
+        )
+
+    def _worker_remove_reference(
+        self,
+        connection: sqlite3.Connection,
+        profile_id: UUID,
+        expected_revision: int,
+    ) -> TTSGenerationProfile:
+        def remove_exact() -> TTSGenerationProfile:
+            profile = self._worker_get_base_profile(connection, profile_id)
+            if profile.revision != expected_revision:
+                raise _repository_error("conflict")
+            cursor = connection.execute(
+                f"DELETE FROM {REFERENCE_TABLE} WHERE profile_id = ?",
+                (encode_uuid(profile_id),),
+            )
+            if cursor.rowcount == 0:
+                raise _repository_error("missing")
+            if cursor.rowcount != 1:
+                raise _repository_error("corrupt_data")
+            updated = self._worker_bump_reference_revision(
+                connection,
+                profile_id,
+                expected_revision,
+                self._clock(),
+            )
+            if updated.reference is not None:
+                raise _repository_error("corrupt_data")
+            self._discard_reference_damage_marker(profile_id)
+            return updated
+
+        return self._worker_transaction(
+            connection,
+            remove_exact,
+            operation_kind="reference_remove",
+            immediate=True,
+        )
+
+    def _worker_get_reference(
+        self,
+        connection: sqlite3.Connection,
+        profile_id: UUID,
+        expected_revision: int,
+        expected_generation: int,
+    ) -> TTSCloneReference:
+        def read_exact() -> TTSCloneReference:
+            if self._reference_damage_is_marked(profile_id, expected_generation):
+                raise _repository_error("reference_unavailable")
+            profile = self._worker_get_base_profile(connection, profile_id)
+            if profile.revision != expected_revision:
+                raise _repository_error("conflict")
+            structural_error = False
+            try:
+                row = connection.execute(
+                    f"{REFERENCE_PAYLOAD_SELECT} WHERE profile_id = ?",
+                    (encode_uuid(profile_id),),
+                ).fetchone()
+            except sqlite3.DatabaseError:
+                structural_error = True
+                row = None
+            if structural_error:
+                raise _repository_error("schema_corrupt") from None
+            if row is None:
+                raise _repository_error("missing")
+            rowid = row["reference_rowid"]
+            byte_length = row["reference_byte_length"]
+            if (
+                type(rowid) is not int
+                or rowid <= 0
+                or type(byte_length) is not int
+                or byte_length <= 0
+            ):
+                raise _repository_error("reference_unavailable")
+            try:
+                payload = read_reference_blob(connection, rowid, byte_length)
+            except sqlite3.DatabaseError:
+                raise _repository_error("schema_corrupt") from None
+            reference = decode_reference_payload(row, payload)
+            validation_error: BaseException | None = None
+            metadata = None
+            try:
+                metadata = validate_canonical_reference_wav(payload)
+            except BaseException as error:
+                validation_error = error
+            if validation_error is not None and not isinstance(
+                validation_error, Exception
+            ):
+                raise validation_error
+            if (
+                validation_error is not None
+                or metadata is None
+                or metadata.byte_length != reference.summary.byte_length
+                or metadata.duration_ms != reference.summary.duration_ms
+                or metadata.sample_rate_hz != reference.summary.sample_rate_hz
+                or metadata.channels != reference.summary.channels
+                or metadata.sample_encoding != reference.summary.sample_encoding
+            ):
+                raise _repository_error("reference_unavailable")
+            return reference
+
+        try:
+            return self._worker_transaction(
+                connection,
+                read_exact,
+                operation_kind="read",
+                immediate=False,
+            )
+        except ProfileRepositoryError as error:
+            if error.code == "schema_corrupt":
+                with self._state_lock:
+                    if (
+                        not self._terminal
+                        and self._state is ProfileRepositoryState.OPEN
+                    ):
+                        self._state = ProfileRepositoryState.UNAVAILABLE
+                cleanup_error: BaseException | None = None
+                try:
+                    self._worker_cleanup()
+                except BaseException as caught:
+                    cleanup_error = caught
+                _raise_with_cleanup_precedence(error, cleanup_error)
+            if error.code == "reference_unavailable":
+                self._mark_reference_damage(profile_id, expected_generation)
+            raise
 
     def _worker_assignment_count(
         self,
@@ -3163,7 +3999,7 @@ class TTSProfileRepository:
     ) -> AssignedTTSProfileSnapshot | None:
         row = connection.execute(
             (
-                f"{ASSIGNED_PROFILE_JOIN_SELECT} "
+                f"{ASSIGNED_PROFILE_WITH_REFERENCE_JOIN_SELECT} "
                 "WHERE a.source = ? "
                 "AND a.authority_id = ? "
                 "AND a.character_id = ?"
@@ -3176,7 +4012,7 @@ class TTSProfileRepository:
         ).fetchone()
         if row is None:
             return None
-        snapshot = decode_assigned_snapshot(row)
+        snapshot = _decode_assigned_with_reference_row(row)
         if snapshot.assignment.character_ref != character_ref:
             raise _repository_error("corrupt_data")
         return snapshot
@@ -3436,6 +4272,7 @@ class TTSProfileRepository:
                         value=None,
                     )
                 self._generation += 1
+                self._damaged_reference_profile_ids.clear()
                 generation = self._generation
                 self._terminal = True
                 self._state = ProfileRepositoryState.CLOSED
@@ -3500,9 +4337,11 @@ class TTSProfileRepository:
     def _worker_cleanup(self) -> None:
         """Close SQLite before releasing the shared lease on the worker."""
 
+        self._clear_reference_damage_markers()
         connection = self._connection
         lease = self._lease
         connection_error: BaseException | None = None
+        residual_error: BaseException | None = None
         lease_error: BaseException | None = None
 
         if connection is not None:
@@ -3513,7 +4352,17 @@ class TTSProfileRepository:
             if connection_error is None:
                 self._connection = None
 
-        if lease is not None and connection_error is None:
+        if connection_error is None and self._residual_cleanup_paths:
+            for path in self._residual_cleanup_paths:
+                try:
+                    _unlink_path_if_present(path)
+                except BaseException as error:
+                    if residual_error is None:
+                        residual_error = error
+            if residual_error is None:
+                self._residual_cleanup_paths = ()
+
+        if lease is not None and connection_error is None and residual_error is None:
             try:
                 lease.release()
             except BaseException as error:
@@ -3521,10 +4370,14 @@ class TTSProfileRepository:
             if lease_error is None:
                 self._lease = None
 
-        if self._connection is None and self._lease is None:
+        if (
+            self._connection is None
+            and self._lease is None
+            and not self._residual_cleanup_paths
+        ):
             self._active_database_path = None
 
-        _raise_cleanup_errors(connection_error, lease_error)
+        _raise_cleanup_errors(connection_error, residual_error, lease_error)
 
     async def _await_lifecycle_completion(
         self,

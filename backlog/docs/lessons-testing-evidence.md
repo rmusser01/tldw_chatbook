@@ -9,6 +9,22 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## A registry entry needs both inventory and behavioral-ratchet coverage
+
+**TASK-13203, 2026-08-10.** The new `tts.profile_migration_backup` SQLite owner
+was present in the central policy registry, the curated owner inventory, and focused
+migration lifecycle tests. Those suites all passed. The complete private-SQLite gate
+still failed because the owner was absent from the generic centralized-backup
+behavior matrix, so its declared `centralized_backup_allowed` capability had no
+owner-parameterized seam test.
+
+**What to do.** When adding a policy-registry owner, search for both inventory
+ratchets and capability-derived behavioral matrices. Passing the feature's own test
+does not prove that every capability bit has generic seam coverage; run the registry
+module's complete contract suite before closeout.
+
+---
+
 ## Deleting a duplicate guard requires tests for every bypass mode
 
 **TASK-859, 2026-08-02.** During specification review, deleting

@@ -52,6 +52,7 @@ from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.TTS import audio_cpp_managed_config as managed_config_module
 from tldw_chatbook.TTS.legacy_bridge import LEGACY_ROUTES
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+from tldw_chatbook.TTS.profile_reference_audio import canonicalize_reference_wav
 from tldw_chatbook.TTS.TTS_Generation import (
     TTSService,
     TTSSettingsPublicationTicket,
@@ -197,6 +198,7 @@ def test_tts_package_exports_only_stable_adapter_service_api() -> None:
         "AudioCppRuntimeObservation",
         "AudioCppTTSCapability",
         "CapabilitySnapshotState",
+        "CanonicalTTSCloneReference",
         "CharacterRef",
         "CharacterTTSRequestResolution",
         "CharacterTTSRequestResolver",
@@ -224,6 +226,8 @@ def test_tts_package_exports_only_stable_adapter_service_api() -> None:
         "STTSPlaygroundRequest",
         "TTSAudioResponse",
         "TTSConfigMutation",
+        "TTSCloneReference",
+        "TTSCloneReferenceSummary",
         "TTSGenerationProfile",
         "TTSModelInfo",
         "TTSNativeCapabilitySnapshot",
@@ -265,6 +269,33 @@ def test_tts_package_exports_only_stable_adapter_service_api() -> None:
     assert set(tts.__all__) == expected
     assert all(hasattr(tts, name) for name in expected)
     assert all(not hasattr(tts, name) for name in forbidden)
+
+
+def test_clone_reference_admission_error_and_log_hide_private_inputs(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "PRIVATE-speaker-reference.wav"
+    transcript = "PRIVATE exact reference transcript"
+    source_path.write_bytes(b"not a supported wav")
+    messages: list[str] = []
+    sink_id = logger.add(messages.append, level="WARNING", format="{message}")
+    caught: BaseException | None = None
+    try:
+        try:
+            canonicalize_reference_wav(source_path, transcript)
+        except BaseException as error:
+            caught = error
+            logger.warning("Clone reference admission failed: {}", error)
+    finally:
+        logger.remove(sink_id)
+
+    assert caught is not None
+    graph = _exception_graph(caught)
+    rendered = "\n".join(messages) + repr(graph)
+    assert graph == [caught]
+    assert str(source_path) not in rendered
+    assert transcript not in rendered
+    assert b"not a supported wav".hex() not in rendered
 
 
 def test_tts_guide_documents_exact_legacy_routes_and_working_example() -> None:

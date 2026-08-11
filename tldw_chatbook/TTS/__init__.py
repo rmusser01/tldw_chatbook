@@ -43,6 +43,11 @@ from tldw_chatbook.TTS.profile_errors import (
     ProfileValidationError,
 )
 from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
+from tldw_chatbook.TTS.profile_reference_types import (
+    CanonicalTTSCloneReference,
+    TTSCloneReference,
+    TTSCloneReferenceSummary,
+)
 from tldw_chatbook.TTS.profile_service import (
     LoadedCharacterTTSAssignment,
     LoadedTTSProfile,
@@ -89,6 +94,7 @@ __all__ = [
     "AudioCppRuntimeObservation",
     "AudioCppTTSCapability",
     "CapabilitySnapshotState",
+    "CanonicalTTSCloneReference",
     "CharacterRef",
     "CharacterTTSRequestResolution",
     "CharacterTTSRequestResolver",
@@ -117,6 +123,8 @@ __all__ = [
     "TTSAudioResponse",
     "TTSConfigMutation",
     "TTSGenerationProfile",
+    "TTSCloneReference",
+    "TTSCloneReferenceSummary",
     "TTSModelInfo",
     "TTSNativeCapabilitySnapshot",
     "TTSOperationCode",

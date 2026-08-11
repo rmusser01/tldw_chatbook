@@ -574,12 +574,13 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # C39 is the lease orchestration's read-only schema-version peek used
         # to route a needed upgrade to the exclusive-lease path first. C40 is
         # the RAG hybrid keyword leg's read-only read of the live ChaChaNotes
-        # database for its notes/conversation sub-legs (TASK-3996).
+        # database for its notes/conversation sub-legs (TASK-3996). C41 is
+        # the retained exact-v2 TTS migration source/backup boundary.
         f"C{number:02d}"
-        for number in range(1, 41)
+        for number in range(1, 42)
     ]
     assert [row["id"] for row in backup_rows] == [
-        f"B{number:02d}" for number in range(1, 17)
+        f"B{number:02d}" for number in range(1, 18)
     ]
 
 
@@ -972,7 +973,7 @@ def test_backup_and_restore_rows_explicitly_opt_into_centralized_backup() -> Non
     assert Counter(row["operation"] for row in backup_rows) == Counter(
         {
             "backup_connection_to_private": 4,
-            "backup_open_connections_to_private": 1,
+            "backup_open_connections_to_private": 2,
             "copy_private_sqlite": 9,
             "restore_private_sqlite": 2,
         }
@@ -1025,6 +1026,11 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
             (
                 "tldw_chatbook/TTS/profile_repository",
                 "TTSProfileRepository._worker_online_backup",
+                "backup_open_connections_to_private",
+            ): 1,
+            (
+                "tldw_chatbook/TTS/profile_repository",
+                "TTSProfileRepository._worker_publish_v2_migration_backup",
                 "backup_open_connections_to_private",
             ): 1,
             (
