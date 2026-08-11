@@ -4,7 +4,7 @@ title: Console conversation memory and auto-compaction
 status: Done
 assignee: []
 created_date: '2026-08-10 18:15'
-updated_date: '2026-08-11 01:02'
+updated_date: '2026-08-11 01:16'
 labels: []
 dependencies: []
 priority: high
@@ -46,6 +46,8 @@ Reason: The feature introduces durable per-conversation policy and summary prove
 
 <!-- SECTION:NOTES:BEGIN -->
 Delivered ADR-052 through six completed slices: schema-v33 per-conversation policy and memory persistence; exact provider request accounting and safety windowing; bounded branch-safe compaction with a content-free auxiliary ledger; current-conversation Console controls; canonical Settings defaults and model-capacity repair; and race, privacy, accounting, and live-provider hardening. PR #1478 review follow-up wrapped repository reads in transactions, bounded pagination, completed API documentation, added content-free degraded-mode diagnostics, and retained the ADR-defined unknown-capacity contract with regression coverage. After rebasing onto dev 8d764c03b, CI exposed a PR-owned concurrency-test sequencing defect: the test proved the second client-creation thread was blocked but did not release the first before waiting for completion. The test now signals release explicitly; its red state was reproduced before the fix, then the isolated test and all 143 gateway tests passed. Post-rebase focused evidence totals 268 passing tests: 68 context-policy and lifecycle, 143 gateway, 23 Console and Settings UI/config, and 34 schema migration tests. Targeted Ruff and py_compile, diff checks, and isolated OpenAI gpt-4o verification were also completed. ADR: backlog/decisions/052-console-conversation-memory-and-compaction-policy.md. Design and delivery plan are in Docs/superpowers/specs and Docs/superpowers/plans. The credential-probe isolation incident is documented in backlog/docs/lessons-testing-evidence.md.
+
+CI hardening follow-up TASK-14811.6 fixed an upstream-reproducible pytest-xdist crash in the OpenAI realtime fake-server harness: positive wire waits are load-tolerant, captured handler errors are traceback-free, and the full 36-test file passes both serially and with CI-equivalent xdist flags.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

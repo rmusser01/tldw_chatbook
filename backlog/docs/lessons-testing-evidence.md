@@ -2055,3 +2055,23 @@ validated scratch directory before Python imports the application, use an
 explicit in-memory or scratch database, hash the real config before and after,
 and remove the verified scratch path on exit. A helper that can make billable
 requests must also require an explicit confirmation flag.
+
+---
+
+## Captured async exceptions retain non-serializable transport locals
+
+**TASK-14811.6, 2026-08-11.** The full parallel CI suite intermittently exceeded
+a fake WebSocket server's five-second receive allowance. Its handler stored the
+original exception for a later test-side re-raise. That exception retained the
+handler traceback, including the live `websockets.asyncio.server.ServerConnection`
+local. pytest-xdist then failed while serializing the report with an execnet
+`DumpError`, hiding the ordinary timeout behind an internal runner error on both
+macOS and Ubuntu. The same signature reproduced on the latest `dev` baseline.
+
+**What to do.** When an async test helper captures an exception across a task,
+thread, process, or worker boundary, do not retain its traceback-bearing object.
+Store a content-only diagnostic exception (type name plus message), and test that
+its traceback is absent before re-raise. Keep positive wire waits long enough for
+full-suite scheduling contention while leaving negative "nothing arrived" grace
+windows deliberately short. Verify the helper with the same xdist distribution
+flags used by CI; an isolated serial pass does not exercise report transport.

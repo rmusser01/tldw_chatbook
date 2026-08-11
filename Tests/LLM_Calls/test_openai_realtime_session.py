@@ -40,6 +40,10 @@ from tldw_chatbook.LLM_Calls.realtime.protocol import (
 )
 
 
+_WIRE_STEP_TIMEOUT_SECONDS = 30
+_SCRIPT_COMPLETION_TIMEOUT_SECONDS = 30
+
+
 # ---------------------------------------------------------------------------
 # Scripted fake server
 # ---------------------------------------------------------------------------
@@ -82,7 +86,9 @@ class ScriptedServer:
         try:
             for kind, payload in self.script:
                 if kind == "expect":
-                    raw = await asyncio.wait_for(ws.recv(), timeout=5)
+                    raw = await asyncio.wait_for(
+                        ws.recv(), timeout=_WIRE_STEP_TIMEOUT_SECONDS
+                    )
                     event = json.loads(raw)
                     self.received.append(event)
                     predicate: Callable[[dict], bool] = payload  # type: ignore[assignment]
@@ -110,11 +116,17 @@ class ScriptedServer:
                 else:
                     raise ValueError(f"unknown script step kind: {kind!r}")
         except Exception as exc:  # noqa: BLE001 - captured for the test to re-raise
-            self.error = exc
+            # Retaining ``exc`` also retains its traceback frame and the live
+            # ``ServerConnection`` local. pytest-xdist cannot serialize that
+            # object when this suite runs in parallel, so preserve only the
+            # diagnostic type and message in a transport-safe exception.
+            self.error = AssertionError(f"{type(exc).__name__}: {exc}")
         finally:
             self._done.set()
 
-    async def wait_done(self, timeout: float = 5) -> None:
+    async def wait_done(
+        self, timeout: float = _SCRIPT_COMPLETION_TIMEOUT_SECONDS
+    ) -> None:
         """Wait for the script to finish and re-raise any error it hit.
 
         Args:
@@ -275,6 +287,23 @@ async def _connect_and_handshake(
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
+
+async def test_scripted_server_captures_transport_safe_errors(fake_server):
+    start, _track = fake_server
+    url, scripted = await start([("expect", lambda _event: False)])
+
+    async with websockets.connect(url) as client:
+        await client.send(json.dumps({"type": "unexpected"}))
+        await asyncio.wait_for(
+            scripted._done.wait(), timeout=_SCRIPT_COMPLETION_TIMEOUT_SECONDS
+        )
+
+    assert type(scripted.error) is AssertionError
+    assert scripted.error.__traceback__ is None
+    assert "scripted predicate rejected event" in str(scripted.error)
+    with pytest.raises(AssertionError, match="scripted predicate rejected event"):
+        await scripted.wait_done()
 
 
 async def test_connect_sends_session_update_and_fires_ready(fake_server):
