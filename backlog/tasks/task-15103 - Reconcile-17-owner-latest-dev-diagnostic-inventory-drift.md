@@ -1,10 +1,11 @@
 ---
 id: TASK-15103
 title: Reconcile 17-owner latest-dev diagnostic inventory drift
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-08-11 04:38'
-updated_date: '2026-08-11 05:08'
+updated_date: '2026-08-11 13:47'
 labels:
   - testing
   - baseline
