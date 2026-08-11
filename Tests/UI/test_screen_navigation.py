@@ -2384,7 +2384,12 @@ def test_action_show_workbench_help_includes_landing_footer_keys(monkeypatch):
     assert "n" in keys
     assert "F6" in keys
     # Minor #2 (same review): the title must not leak the raw class name.
-    assert panel.state.title == "Library Shortcuts"
+    # task-4023 (dev) then added a mode suffix for F1 honesty, so the title
+    # is "Library Shortcuts — Landing" here. The claim under test is the
+    # original one -- no raw class name -- so assert THAT rather than an
+    # exact string that a later honest change breaks again.
+    assert panel.state.title.startswith("Library Shortcuts")
+    assert "LibraryScreen" not in panel.state.title
 
 
 def test_action_library_media_viewer_back_returns_to_list_and_refocuses_it():
