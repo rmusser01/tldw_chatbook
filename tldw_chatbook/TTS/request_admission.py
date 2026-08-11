@@ -31,7 +31,10 @@ from tldw_chatbook.TTS.effective_settings import (
     TTSSelectionSource,
     TTSStudioDraftSelection,
 )
-from tldw_chatbook.TTS.legacy_bridge import resolve_legacy_route
+from tldw_chatbook.TTS.legacy_bridge import (
+    openai_internal_model_id,
+    resolve_legacy_route,
+)
 from tldw_chatbook.TTS.playground_types import TTSRequestedSelectionSnapshot
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.profile_reference_types import TTSCloneReference
@@ -639,7 +642,7 @@ def _legacy_request(
         ),
     )
     if provider_id == "openai":
-        internal_model_id = f"openai_official_{request.model}"
+        internal_model_id = openai_internal_model_id(request.model)
     elif provider_id == "elevenlabs":
         internal_model_id = f"elevenlabs_{request.model}"
     elif provider_id == "kokoro":

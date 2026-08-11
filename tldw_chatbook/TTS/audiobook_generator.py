@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 # Local imports
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS import get_tts_service
+from tldw_chatbook.TTS.legacy_bridge import openai_internal_model_id
 from tldw_chatbook.TTS.audio_service import get_audio_service
 
 # Text processing is handled by AdvancedTextProcessor
@@ -896,7 +897,7 @@ class AudioBookGenerator:
     def _get_internal_model_id(self, provider: str, model: str) -> str:
         """Map provider and model to internal model ID"""
         if provider == "openai":
-            return f"openai_official_{model}"
+            return openai_internal_model_id(model)
         elif provider == "elevenlabs":
             return f"elevenlabs_{model}"
         elif provider == "kokoro":
