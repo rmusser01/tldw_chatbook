@@ -61,6 +61,16 @@ class GuardedChunkStream(httpx.SyncByteStream):
         yield from self.chunks
 
 
+class FailingChunkStream(httpx.SyncByteStream):
+    def __init__(self, on_read, detail: str) -> None:
+        self.on_read = on_read
+        self.detail = detail
+
+    def __iter__(self):
+        self.on_read()
+        raise httpx.ReadTimeout(self.detail)
+
+
 class AdvancingClock:
     def __init__(self) -> None:
         self.value = 0.0
@@ -1580,6 +1590,136 @@ def test_history_read_timeout_after_deadline_deletes_once_and_stays_sanitized(
         ).generate(_request())
 
     _assert_phase(exc, "history_polling")
+    assert private_detail not in str(exc.value)
+    assert base.calls.count(("POST", "/queue")) == 1
+
+
+@pytest.mark.parametrize(
+    ("failing_path", "phase"),
+    [
+        ("/history/opaque-prompt-id", "history_polling"),
+        ("/view", "output_download"),
+    ],
+)
+def test_body_iterator_read_timeout_after_deadline_deletes_known_prompt_once(
+    monkeypatch,
+    failing_path: str,
+    phase: str,
+) -> None:
+    clock = AdvancingClock()
+    monkeypatch.setattr(adapter_module.time, "monotonic", clock.monotonic)
+    base = SuccessfulScript()
+    private_detail = "sentinel-private-iterator-timeout-detail"
+
+    def expire() -> None:
+        clock.value = 1.1
+
+    def script(request: httpx.Request) -> httpx.Response:
+        if request.url.path == failing_path:
+            base.calls.append((request.method, request.url.path))
+            base.requests.append(request)
+            headers = {"content-type": "image/png"} if failing_path == "/view" else {}
+            return httpx.Response(
+                200,
+                stream=FailingChunkStream(expire, private_detail),
+                headers=headers,
+            )
+        return base(request)
+
+    with pytest.raises(ComfyUIImageEditError) as exc:
+        _make_adapter(
+            script,
+            config=_config(comfyui_image_total_deadline_seconds=1.0),
+        ).generate(_request())
+
+    _assert_phase(exc, phase)
+    assert private_detail not in str(exc.value)
+    assert base.calls.count(("POST", "/queue")) == 1
+
+
+def test_body_iterator_read_timeout_after_deadline_before_prompt_has_no_delete(
+    monkeypatch,
+) -> None:
+    clock = AdvancingClock()
+    monkeypatch.setattr(adapter_module.time, "monotonic", clock.monotonic)
+    private_detail = "sentinel-private-pre-id-iterator-timeout-detail"
+    calls: list[str] = []
+
+    def expire() -> None:
+        clock.value = 1.1
+
+    def script(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        assert request.url.path == "/object_info"
+        return httpx.Response(
+            200,
+            stream=FailingChunkStream(expire, private_detail),
+        )
+
+    with pytest.raises(ComfyUIImageEditError) as exc:
+        _make_adapter(
+            script,
+            config=_config(comfyui_image_total_deadline_seconds=1.0),
+        ).generate(_request())
+
+    _assert_phase(exc, "remote_schema_preflight")
+    assert private_detail not in str(exc.value)
+    assert calls == ["/object_info"]
+
+
+def test_body_iterator_read_timeout_before_deadline_stays_phase_transport_error(
+    monkeypatch,
+) -> None:
+    clock = AdvancingClock()
+    monkeypatch.setattr(adapter_module.time, "monotonic", clock.monotonic)
+    base = SuccessfulScript()
+    private_detail = "sentinel-private-pre-deadline-iterator-detail"
+
+    def remain_before_deadline() -> None:
+        clock.value = 0.5
+
+    def script(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/history/opaque-prompt-id":
+            base.calls.append((request.method, request.url.path))
+            base.requests.append(request)
+            return httpx.Response(
+                200,
+                stream=FailingChunkStream(remain_before_deadline, private_detail),
+            )
+        return base(request)
+
+    with pytest.raises(ComfyUIImageEditError) as exc:
+        _make_adapter(
+            script,
+            config=_config(comfyui_image_total_deadline_seconds=1.0),
+        ).generate(_request())
+
+    _assert_phase(exc, "history_polling")
+    assert private_detail not in str(exc.value)
+    assert base.calls.count(("POST", "/queue")) == 0
+
+
+def test_body_iterator_transport_failure_rechecks_cancellation_before_deadline() -> None:
+    event = threading.Event()
+    base = SuccessfulScript()
+    private_detail = "sentinel-private-cancelled-iterator-detail"
+
+    def cancel() -> None:
+        event.set()
+
+    def script(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/history/opaque-prompt-id":
+            base.calls.append((request.method, request.url.path))
+            base.requests.append(request)
+            return httpx.Response(
+                200,
+                stream=FailingChunkStream(cancel, private_detail),
+            )
+        return base(request)
+
+    with pytest.raises(ImageGenerationCancelled) as exc:
+        _make_adapter(script).generate(_request(cancel_event=event))
+
     assert private_detail not in str(exc.value)
     assert base.calls.count(("POST", "/queue")) == 1
 

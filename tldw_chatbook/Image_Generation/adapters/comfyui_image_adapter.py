@@ -385,6 +385,11 @@ def _read_bounded_json(
             if recovered is not None:
                 return recovered
             break
+        except httpx.TransportError:
+            recovered = check_control()
+            if recovered is not None:
+                return recovered
+            raise ValueError("JSON response body transport failed") from None
         if not capture_prompt_id_on_control:
             _check_stream_control(cancel_event, deadline, phase)
         if len(chunk) > COMFYUI_MAX_JSON_BYTES - len(collected):
@@ -781,6 +786,9 @@ def _stream_png(
         except StopIteration:
             _check_stream_control(cancel_event, deadline, phase)
             break
+        except httpx.TransportError:
+            _check_stream_control(cancel_event, deadline, phase)
+            raise ValueError("PNG response body transport failed") from None
         _check_stream_control(cancel_event, deadline, phase)
         if len(chunk) > max_bytes - len(collected):
             raise ValueError("PNG response exceeds limit")
