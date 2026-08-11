@@ -150,6 +150,8 @@ def _is_mode_model_mismatch(response: requests.Response) -> bool:
     detail = ""
     try:
         payload = response.json()
+    except RequestException:
+        return False
     except (TypeError, ValueError):
         payload = None
     if isinstance(payload, Mapping):

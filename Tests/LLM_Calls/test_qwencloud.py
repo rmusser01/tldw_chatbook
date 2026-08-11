@@ -96,6 +96,7 @@ _SCRIPTED_SUCCESS_BODY = (
     b'{"choices":[{"message":{"role":"assistant","content":"ok"},'
     b'"finish_reason":"stop"}]}'
 )
+_STALLED_ERROR_CANARY = b"RAW-STALLED-400-CANARY"
 _ScriptedAction = str | tuple[int, dict[str, str]]
 
 
@@ -110,6 +111,17 @@ class _ScriptedQwenHandler(BaseHTTPRequestHandler):
         server = self.server
         assert isinstance(server, _ScriptedQwenServer)
         action = server.next_action()
+        if action == "stall_400":
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(_STALLED_ERROR_CANARY) + 100))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(_STALLED_ERROR_CANARY)
+            self.wfile.flush()
+            server.release_stalls.wait(timeout=1)
+            self.close_connection = True
+            return
         if action == "stall":
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -234,6 +246,20 @@ def _track_real_transport_resources(
     monkeypatch.setattr(requests.Session, "post", recording_post)
     monkeypatch.setattr(requests.Response, "close", recording_close)
     return post_urls, returned_responses, closed_response_ids
+
+
+def _track_real_session_closes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> set[int]:
+    closed_session_ids: set[int] = set()
+    real_close = requests.Session.close
+
+    def recording_close(session: requests.Session) -> None:
+        closed_session_ids.add(id(session))
+        real_close(session)
+
+    monkeypatch.setattr(requests.Session, "close", recording_close)
+    return closed_session_ids
 
 
 def _call_scripted_qwencloud(api_base_url: str) -> dict[str, Any]:
@@ -1976,6 +2002,36 @@ def test_nontransient_4xx_and_mode_model_mismatch_are_not_retried(
             assert "compatible model" in recovery
             assert "api_mode" in recovery
             assert "RAW-MISMATCH-CANARY" not in recovery
+
+
+@pytest.mark.allow_network
+def test_stalled_nonretryable_400_is_typed_redacted_and_not_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    post_urls, returned_responses, closed_response_ids = (
+        _track_real_transport_resources(monkeypatch)
+    )
+    closed_session_ids = _track_real_session_closes(monkeypatch)
+    _configure_qwencloud_transport(monkeypatch, retries=3)
+
+    with (
+        _captured_qwencloud_logs() as logs,
+        _scripted_qwen_server(["stall_400", "success"]) as (api_base_url, server),
+        pytest.raises(ChatBadRequestError) as exc_info,
+    ):
+        _call_scripted_qwencloud(api_base_url)
+
+    assert len(server.attempts) == 1
+    assert len(post_urls) == 1
+    assert len(returned_responses) == 1
+    assert id(returned_responses[0]) in closed_response_ids
+    assert len(closed_session_ids) == 1
+    assert exc_info.value.provider == "qwencloud"
+
+    rendered = "\n".join(logs) + "\n" + str(exc_info.value)
+    assert _STALLED_ERROR_CANARY.decode() not in rendered
+    assert "ConnectionError" not in rendered
+    assert "HTTPConnectionPool" not in rendered
 
 
 def test_qwencloud_errors_and_logs_redact_private_values(
