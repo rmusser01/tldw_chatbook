@@ -10,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import socket
 import threading
 from types import SimpleNamespace
-from typing import Any, Iterator
+from typing import Any, Iterator, Never
 
 import pytest
 import requests
@@ -97,6 +97,9 @@ _SCRIPTED_SUCCESS_BODY = (
     b'"finish_reason":"stop"}]}'
 )
 _STALLED_ERROR_CANARY = b"RAW-STALLED-400-CANARY"
+_TRUNCATED_BODY_CANARY = b'RAW-TRUNCATED-BODY-CANARY{"choices":['
+_INVALID_JSON_CANARY = b"RAW-INVALID-JSON-CANARY"
+_INVALID_GZIP_CANARY = b"RAW-CONTENT-DECODING-CANARY"
 _ScriptedAction = str | tuple[int, dict[str, str]]
 
 
@@ -111,6 +114,37 @@ class _ScriptedQwenHandler(BaseHTTPRequestHandler):
         server = self.server
         assert isinstance(server, _ScriptedQwenServer)
         action = server.next_action()
+        if action == "truncated":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(_TRUNCATED_BODY_CANARY) + 100))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(_TRUNCATED_BODY_CANARY)
+            self.wfile.flush()
+            self.close_connection = True
+            return
+        if action == "invalid_json":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(_INVALID_JSON_CANARY)))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(_INVALID_JSON_CANARY)
+            self.wfile.flush()
+            self.close_connection = True
+            return
+        if action == "invalid_gzip":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Content-Length", str(len(_INVALID_GZIP_CANARY)))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(_INVALID_GZIP_CANARY)
+            self.wfile.flush()
+            self.close_connection = True
+            return
         if action == "stall_400":
             self.send_response(400)
             self.send_header("Content-Type", "application/json")
@@ -424,6 +458,37 @@ def test_api_key_precedence_is_provider_isolated() -> None:
         )
     assert exc_info.value.provider == "qwencloud"
     assert "do-not-use" not in str(exc_info.value)
+
+
+def test_api_key_resolution_strips_and_skips_repository_placeholders() -> None:
+    assert resolve_qwencloud_api_key("  explicit-key  ", environ={}) == "explicit-key"
+    assert (
+        resolve_qwencloud_api_key(
+            " YOUR_KEY ",
+            provider_settings={"api_key": "  modern-key  "},
+            environ={"DASHSCOPE_API_KEY": "env-key"},
+        )
+        == "modern-key"
+    )
+    assert (
+        resolve_qwencloud_api_key(
+            "<API_KEY_HERE>",
+            provider_settings={
+                "api_key": " your-api-key ",
+                "api_key_env_var": "QWEN_KEY",
+            },
+            environ={"QWEN_KEY": "  env-key  "},
+        )
+        == "env-key"
+    )
+
+    with pytest.raises(ChatConfigurationError) as exc_info:
+        resolve_qwencloud_api_key(
+            "YOUR_KEY",
+            provider_settings={"api_key": " <API_KEY_HERE> "},
+            environ={"DASHSCOPE_API_KEY": " your_key "},
+        )
+    assert exc_info.value.provider == "qwencloud"
 
 
 def test_resolution_helpers_reject_invalid_mapping_shapes() -> None:
@@ -1600,6 +1665,123 @@ def test_nonstream_rejects_empty_success_and_malformed_shapes() -> None:
         assert "private" not in str(exc_info.value)
 
 
+@pytest.mark.parametrize(
+    ("content", "tool_calls", "raw_finish_reason", "expected_finish_reason"),
+    (
+        pytest.param("answer", None, "stop", "stop", id="text-stop"),
+        pytest.param("partial", None, "length", "length", id="text-length"),
+        pytest.param(
+            "I will check.",
+            [
+                {
+                    "id": "call_chat",
+                    "type": "function",
+                    "function": {"name": "lookup", "arguments": "{}"},
+                }
+            ],
+            "tool_calls",
+            "tool_calls",
+            id="mixed-tool-calls",
+        ),
+    ),
+)
+def test_chat_finish_reason_accepts_only_consistent_terminal_states(
+    content: str,
+    tool_calls: list[dict[str, Any]] | None,
+    raw_finish_reason: str,
+    expected_finish_reason: str,
+) -> None:
+    message: dict[str, Any] = {"role": "assistant", "content": content}
+    if tool_calls is not None:
+        message["tool_calls"] = tool_calls
+
+    normalized = qwencloud.normalize_qwencloud_response(
+        {"choices": [{"message": message, "finish_reason": raw_finish_reason}]},
+        api_mode="chat_completions",
+    )
+
+    assert normalized["choices"][0]["finish_reason"] == expected_finish_reason
+
+
+@pytest.mark.parametrize(
+    ("message", "choice_fields"),
+    (
+        pytest.param(
+            {"role": "assistant", "content": "private"},
+            {"finish_reason": "content_filter"},
+            id="content-filter",
+        ),
+        pytest.param(
+            {"role": "assistant", "content": "private"},
+            {"finish_reason": "future-value"},
+            id="unknown",
+        ),
+        pytest.param(
+            {"role": "assistant", "content": "private"},
+            {},
+            id="missing",
+        ),
+        pytest.param(
+            {"role": "assistant", "content": "private"},
+            {"finish_reason": ""},
+            id="empty",
+        ),
+        pytest.param(
+            {"role": "assistant", "content": "private"},
+            {"finish_reason": "   "},
+            id="blank",
+        ),
+        pytest.param(
+            {"role": "assistant", "content": "private"},
+            {"finish_reason": "tool_calls"},
+            id="tool-reason-without-calls",
+        ),
+        pytest.param(
+            {
+                "role": "assistant",
+                "content": "private",
+                "tool_calls": [
+                    {
+                        "id": "call_chat",
+                        "type": "function",
+                        "function": {"name": "lookup", "arguments": "{}"},
+                    }
+                ],
+            },
+            {"finish_reason": "stop"},
+            id="calls-with-stop",
+        ),
+        pytest.param(
+            {
+                "role": "assistant",
+                "content": "private",
+                "tool_calls": [
+                    {
+                        "id": "call_chat",
+                        "type": "function",
+                        "function": {"name": "lookup", "arguments": "{}"},
+                    }
+                ],
+            },
+            {"finish_reason": "length"},
+            id="calls-with-length",
+        ),
+    ),
+)
+def test_chat_finish_reason_rejects_unknown_or_contradictory_states(
+    message: dict[str, Any],
+    choice_fields: dict[str, Any],
+) -> None:
+    with pytest.raises(ChatProviderError) as exc_info:
+        qwencloud.normalize_qwencloud_response(
+            {"choices": [{"message": message, **choice_fields}]},
+            api_mode="chat_completions",
+        )
+
+    assert exc_info.value.provider == "qwencloud"
+    assert "private" not in str(exc_info.value)
+
+
 def test_responses_requires_call_id_not_transport_id() -> None:
     for call_id_fields in ({}, {"call_id": "  "}):
         with pytest.raises(ChatProviderError) as exc_info:
@@ -1785,6 +1967,136 @@ def test_direct_adapter_loads_only_qwencloud_config_when_arguments_are_none(
         assert canary not in serialized
 
 
+@pytest.mark.parametrize(
+    "api_settings",
+    (
+        {"qwencloud": []},
+        {
+            "qwencloud": {
+                "api_key": "key",
+                "api_base_url": 17,
+                "retries": 0,
+            }
+        },
+    ),
+    ids=("non-mapping-provider-table", "non-string-configured-base"),
+)
+def test_direct_adapter_rejects_malformed_provider_config_before_network(
+    monkeypatch: pytest.MonkeyPatch,
+    api_settings: dict[str, Any],
+) -> None:
+    def unexpected_session() -> Never:
+        raise AssertionError("network must not be initialized")
+
+    monkeypatch.setattr(qwencloud.requests, "Session", unexpected_session)
+    monkeypatch.setattr(
+        qwencloud,
+        "get_runtime_config_snapshot",
+        lambda: SimpleNamespace(values={"api_settings": api_settings}),
+    )
+
+    with pytest.raises(ChatConfigurationError) as exc_info:
+        chat_with_qwencloud(
+            input_data=[{"role": "user", "content": "hello"}],
+            model="qwen3.8-max",
+            api_key="key",
+            streaming=False,
+            api_base_url=None,
+            api_mode="chat_completions",
+        )
+    assert exc_info.value.provider == "qwencloud"
+
+
+def test_direct_adapter_uses_stripped_lower_key_and_explicit_base_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = _TransportResponse(
+        {
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "ok"},
+                    "finish_reason": "stop",
+                }
+            ]
+        }
+    )
+    session = _RecordingSession(response)
+    monkeypatch.setattr(
+        qwencloud,
+        "requests",
+        SimpleNamespace(Session=lambda: session),
+    )
+    monkeypatch.setenv("QWEN_KEY", "  env-fallback-key  ")
+    monkeypatch.setattr(
+        qwencloud,
+        "get_runtime_config_snapshot",
+        lambda: SimpleNamespace(
+            values={
+                "api_settings": {
+                    "qwencloud": {
+                        "api_key": " YOUR_KEY ",
+                        "api_key_env_var": "QWEN_KEY",
+                        "api_base_url": 17,
+                        "timeout": 3,
+                        "retries": 0,
+                        "retry_delay": 0,
+                    }
+                }
+            }
+        ),
+    )
+
+    chat_with_qwencloud(
+        input_data=[{"role": "user", "content": "hello"}],
+        model="qwen3.8-max",
+        api_key=" <API_KEY_HERE> ",
+        streaming=False,
+        api_base_url="https://explicit.example/v1",
+        api_mode="chat_completions",
+    )
+
+    assert len(session.posts) == 1
+    assert session.posts[0]["url"] == ("https://explicit.example/v1/chat/completions")
+    assert session.posts[0]["headers"]["Authorization"] == ("Bearer env-fallback-key")
+
+
+def test_direct_adapter_rejects_unresolved_placeholders_before_network(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unexpected_session() -> Never:
+        raise AssertionError("network must not be initialized")
+
+    monkeypatch.setattr(qwencloud.requests, "Session", unexpected_session)
+    monkeypatch.setenv("DASHSCOPE_API_KEY", " your_key ")
+    monkeypatch.setattr(
+        qwencloud,
+        "get_runtime_config_snapshot",
+        lambda: SimpleNamespace(
+            values={
+                "api_settings": {
+                    "qwencloud": {
+                        "api_key": " YOUR_KEY ",
+                        "timeout": 3,
+                        "retries": 0,
+                        "retry_delay": 0,
+                    }
+                }
+            }
+        ),
+    )
+
+    with pytest.raises(ChatConfigurationError) as exc_info:
+        chat_with_qwencloud(
+            input_data=[{"role": "user", "content": "hello"}],
+            model="qwen3.8-max",
+            api_key=" <API_KEY_HERE> ",
+            streaming=False,
+            api_base_url="https://explicit.example/v1",
+            api_mode="chat_completions",
+        )
+    assert exc_info.value.provider == "qwencloud"
+
+
 @pytest.mark.allow_network
 def test_retry_policy_counts_status_connection_and_timeout_attempts(
     monkeypatch: pytest.MonkeyPatch,
@@ -1917,6 +2229,45 @@ def test_retry_policy_honors_retry_after_and_exponential_delay(
 
 
 @pytest.mark.allow_network
+@pytest.mark.parametrize("status_code", (429, 503))
+def test_invalid_retry_after_uses_exponential_fallback_without_disclosure(
+    monkeypatch: pytest.MonkeyPatch,
+    status_code: int,
+) -> None:
+    sleeps: list[float] = []
+    monkeypatch.setattr("time.sleep", lambda delay: sleeps.append(delay))
+    post_urls, returned_responses, closed_response_ids = (
+        _track_real_transport_resources(monkeypatch)
+    )
+    closed_session_ids = _track_real_session_closes(monkeypatch)
+    _configure_qwencloud_transport(monkeypatch, retries=2, retry_delay=0.25)
+
+    retry_after_canary = "RAW-RETRY-AFTER-CANARY"
+    with (
+        _captured_qwencloud_logs() as logs,
+        _scripted_qwen_server(
+            [
+                (503, {}),
+                (status_code, {"Retry-After": retry_after_canary}),
+                "success",
+            ]
+        ) as (api_base_url, server),
+    ):
+        result = _call_scripted_qwencloud(api_base_url)
+
+    assert result["choices"][0]["message"]["content"] == "ok"
+    assert len(server.attempts) == 3
+    assert len(post_urls) == 3
+    assert len(returned_responses) == 3
+    assert all(id(response) in closed_response_ids for response in returned_responses)
+    assert len(closed_session_ids) == 1
+    assert sleeps == [pytest.approx(0.5)]
+    rendered = "\n".join(logs)
+    assert retry_after_canary not in rendered
+    assert "InvalidHeader" not in rendered
+
+
+@pytest.mark.allow_network
 def test_retry_policy_uses_one_global_budget_across_mixed_failures(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1936,6 +2287,69 @@ def test_retry_policy_uses_one_global_budget_across_mixed_failures(
     assert len(post_urls) == 3
     assert len(returned_responses) == 3
     assert all(id(response) in closed_response_ids for response in returned_responses)
+
+
+@pytest.mark.allow_network
+def test_truncated_body_retries_once_and_closes_each_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    post_urls, returned_responses, closed_response_ids = (
+        _track_real_transport_resources(monkeypatch)
+    )
+    closed_session_ids = _track_real_session_closes(monkeypatch)
+    _configure_qwencloud_transport(monkeypatch, retries=1)
+
+    with (
+        _captured_qwencloud_logs() as logs,
+        _scripted_qwen_server(["truncated", "success"]) as (api_base_url, server),
+    ):
+        result = _call_scripted_qwencloud(api_base_url)
+
+    assert result["choices"][0]["message"]["content"] == "ok"
+    assert len(server.attempts) == 2
+    assert len(post_urls) == 2
+    assert len(returned_responses) == 2
+    assert all(id(response) in closed_response_ids for response in returned_responses)
+    assert len(closed_session_ids) == 1
+    assert _TRUNCATED_BODY_CANARY.decode() not in "\n".join(logs)
+
+
+@pytest.mark.allow_network
+@pytest.mark.parametrize(
+    ("action", "canary"),
+    (
+        pytest.param("invalid_json", _INVALID_JSON_CANARY, id="invalid-json"),
+        pytest.param("invalid_gzip", _INVALID_GZIP_CANARY, id="invalid-content"),
+    ),
+)
+def test_malformed_success_body_is_typed_redacted_and_not_retried(
+    monkeypatch: pytest.MonkeyPatch,
+    action: str,
+    canary: bytes,
+) -> None:
+    post_urls, returned_responses, closed_response_ids = (
+        _track_real_transport_resources(monkeypatch)
+    )
+    closed_session_ids = _track_real_session_closes(monkeypatch)
+    _configure_qwencloud_transport(monkeypatch, retries=3)
+
+    with (
+        _captured_qwencloud_logs() as logs,
+        _scripted_qwen_server([action, "success"]) as (api_base_url, server),
+        pytest.raises(ChatProviderError) as exc_info,
+    ):
+        _call_scripted_qwencloud(api_base_url)
+
+    assert len(server.attempts) == 1
+    assert len(post_urls) == 1
+    assert len(returned_responses) == 1
+    assert id(returned_responses[0]) in closed_response_ids
+    assert len(closed_session_ids) == 1
+    assert exc_info.value.provider == "qwencloud"
+    rendered = "\n".join(logs) + "\n" + str(exc_info.value)
+    assert "malformed" in rendered.lower()
+    assert "network request failed" not in rendered.lower()
+    assert canary.decode() not in rendered
 
 
 def test_nontransient_4xx_and_mode_model_mismatch_are_not_retried(

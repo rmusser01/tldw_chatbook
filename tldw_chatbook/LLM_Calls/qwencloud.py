@@ -16,11 +16,16 @@ import requests
 from loguru import logger
 from requests.adapters import HTTPAdapter
 from requests.exceptions import (
+    ChunkedEncodingError,
     ConnectionError as RequestsConnectionError,
+    ContentDecodingError,
     HTTPError,
+    InvalidJSONError,
+    JSONDecodeError as RequestsJSONDecodeError,
     RequestException,
     Timeout as RequestsTimeout,
 )
+from urllib3.exceptions import InvalidHeader as Urllib3InvalidHeader
 from urllib3.util import Retry
 
 from tldw_chatbook.Chat.Chat_Deps import (
@@ -30,7 +35,10 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatProviderError,
     ChatRateLimitError,
 )
-from tldw_chatbook.config import get_runtime_config_snapshot
+from tldw_chatbook.config import (
+    get_runtime_config_snapshot,
+    resolve_provider_api_key,
+)
 from tldw_chatbook.Utils.sensitive_llm_logging import llm_retry_count
 
 logger = logger.bind(module="qwencloud")
@@ -116,7 +124,10 @@ def _advance_retry_policy(
     retry_after: float | None = None
     if response is not None:
         retry_response = _RetryStatusResponse(response)
-        retry_after = retry_policy.get_retry_after(cast(Any, retry_response))
+        try:
+            retry_after = retry_policy.get_retry_after(cast(Any, retry_response))
+        except Urllib3InvalidHeader:
+            retry_after = None
         next_policy = retry_policy.increment(
             method="POST",
             url=api_url,
@@ -412,14 +423,15 @@ def resolve_qwencloud_api_key(
     Raises:
         ChatConfigurationError: If no QwenCloud credential is configured.
     """
-    if isinstance(explicit_api_key, str) and explicit_api_key.strip():
-        return explicit_api_key
+    explicit = resolve_provider_api_key(explicit_api_key)
+    if explicit is not None:
+        return explicit
     if provider_settings is not None and not isinstance(provider_settings, Mapping):
         raise _configuration_error("QwenCloud provider settings must be an object.")
 
     settings = provider_settings or {}
-    configured = settings.get("api_key")
-    if isinstance(configured, str) and configured.strip():
+    configured = resolve_provider_api_key(settings.get("api_key"))
+    if configured is not None:
         return configured
 
     if environ is not None and not isinstance(environ, Mapping):
@@ -431,8 +443,8 @@ def resolve_qwencloud_api_key(
     if not isinstance(env_name, str) or not env_name.strip():
         env_name = _DEFAULT_KEY_ENV_VAR
     environment = os.environ if environ is None else environ
-    from_environment = environment.get(env_name.strip())
-    if isinstance(from_environment, str) and from_environment.strip():
+    from_environment = resolve_provider_api_key(environment.get(env_name.strip()))
+    if from_environment is not None:
         return from_environment
 
     raise _configuration_error("QwenCloud API key is required but not configured.")
@@ -1056,12 +1068,17 @@ def _normalize_chat_completions_payload(
     if not has_usable_text and not tool_calls:
         raise _provider_error("QwenCloud returned no usable response content.")
     raw_finish_reason = choice.get("finish_reason")
-    if tool_calls:
-        finish_reason = "tool_calls"
-    elif isinstance(raw_finish_reason, str) and raw_finish_reason:
-        finish_reason = raw_finish_reason
-    else:
-        raise _provider_error("QwenCloud returned no completion finish reason.")
+    if not isinstance(raw_finish_reason, str) or raw_finish_reason not in {
+        "stop",
+        "length",
+        "tool_calls",
+    }:
+        raise _provider_error("QwenCloud returned an invalid completion finish reason.")
+    if bool(tool_calls) != (raw_finish_reason == "tool_calls"):
+        raise _provider_error(
+            "QwenCloud returned an inconsistent completion finish reason."
+        )
+    finish_reason = raw_finish_reason
 
     message: dict[str, Any] = {
         "role": "assistant",
@@ -1129,22 +1146,19 @@ def chat_with_qwencloud(
     """
     config_values = get_runtime_config_snapshot().values
     api_settings = config_values.get("api_settings", {})
-    provider_settings: Mapping[str, Any] = {}
-    if isinstance(api_settings, Mapping):
-        configured_qwencloud = api_settings.get("qwencloud", {})
-        if isinstance(configured_qwencloud, Mapping):
-            provider_settings = configured_qwencloud
+    if not isinstance(api_settings, Mapping):
+        raise _configuration_error("QwenCloud API settings must be an object.")
+    configured_qwencloud = api_settings.get("qwencloud", {})
+    if not isinstance(configured_qwencloud, Mapping):
+        raise _configuration_error("QwenCloud provider settings must be an object.")
+    provider_settings: Mapping[str, Any] = configured_qwencloud
 
     final_mode = normalize_qwencloud_api_mode(
         api_mode, provider_settings=provider_settings
     )
     configured_base = provider_settings.get("api_base_url")
     final_base = normalize_qwencloud_base_url(
-        api_base_url
-        if api_base_url is not None
-        else configured_base
-        if isinstance(configured_base, str)
-        else None
+        api_base_url if api_base_url is not None else configured_base
     )
     final_api_key = resolve_qwencloud_api_key(
         api_key, provider_settings=provider_settings
@@ -1242,6 +1256,34 @@ def chat_with_qwencloud(
                         "QwenCloud returned an HTTP failure without a response."
                     ) from None
                 _raise_qwencloud_http_error(failed_response)
+            except (
+                RequestsJSONDecodeError,
+                InvalidJSONError,
+                ContentDecodingError,
+            ):
+                logger.error(
+                    "QwenCloud request failed; status={}; "
+                    "error_type=malformed_response",
+                    getattr(response, "status_code", "unknown"),
+                )
+                raise _provider_error(
+                    "QwenCloud returned malformed provider JSON or content."
+                ) from None
+            except ChunkedEncodingError as exc:
+                if attempt_index < retries:
+                    retry_policy, retry_sleep = _advance_retry_policy(
+                        retry_policy,
+                        api_url=api_url,
+                        error=exc,
+                    )
+                else:
+                    logger.error(
+                        "QwenCloud request failed; "
+                        "status=none; error_type=incomplete_body"
+                    )
+                    raise _provider_error(
+                        "QwenCloud network response was incomplete."
+                    ) from None
             except (RequestsConnectionError, RequestsTimeout) as exc:
                 if attempt_index < retries:
                     retry_policy, retry_sleep = _advance_retry_policy(
