@@ -2,9 +2,12 @@
 id: TASK-14811
 title: Console conversation memory and auto-compaction
 status: Done
-created_date: 2026-08-10 18:15
+assignee: []
+created_date: '2026-08-10 18:15'
+updated_date: '2026-08-11 01:02'
+labels: []
+dependencies: []
 priority: high
-updated_date: 2026-08-10 23:41
 ---
 
 ## Description
@@ -38,17 +41,15 @@ ADR required: yes
 ADR path: backlog/decisions/052-console-conversation-memory-and-compaction-policy.md
 Reason: The feature introduces durable per-conversation policy and summary provenance, a cost-bearing model-call service boundary, provider-specific prepared-request serialization, cross-module ownership between Console and Settings, and a long-lived context-injection contract.
 <!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
 
-<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Delivered the ADR-052 conversation-memory architecture through six completed slices: durable per-conversation policy and schema-v33 persistence; exact provider-prepared request accounting and safety windowing; bounded branch-safe compaction with local prefix-valid memory and a content-free auxiliary ledger; current-conversation Console controls; canonical Settings defaults, model-capacity repair, and Internal Prompts routing; and race/privacy/accounting hardening with isolated real-provider verification. The Console now distinguishes conversation budget from response tokens, supports Ask/Automatic/Off plus reset/review/manual compaction, preserves transcripts and whole tool units, fails visibly when limits are unknown or mandatory overhead is non-compactable, and discards stale asynchronous summaries across branch/model/policy/session changes. Final evidence: all child tasks are Done; the final relevant matrix passed 319 tests across policy, persistence, provider preparation, lifecycle/races, privacy logging, mounted UI, and narrow geometry; targeted Ruff and py_compile passed; whole-diff whitespace checking passed; isolated OpenAI gpt-4o verification exercised every policy/failure case, stored usage/pricing provenance without a transcript summary row, left the real config unchanged, and removed its scratch profile. ADR: backlog/decisions/052-console-conversation-memory-and-compaction-policy.md. Design and delivery plan are in Docs/superpowers/specs and Docs/superpowers/plans. The live-verification credential-probe/isolation incident is documented in backlog/docs/lessons-testing-evidence.md.
-PR #1478 review follow-up completed in TASK-14811.5: transaction-wrapped repository reads, bounded pagination, API documentation, and content-free degraded-mode diagnostics were added; the ADR-052 unknown-capacity contract was retained and regression-tested rather than replaced with a guessed provider limit.
-<!-- SECTION:IMPLEMENTATION_NOTES:END -->
+<!-- SECTION:NOTES:BEGIN -->
+Delivered ADR-052 through six completed slices: schema-v33 per-conversation policy and memory persistence; exact provider request accounting and safety windowing; bounded branch-safe compaction with a content-free auxiliary ledger; current-conversation Console controls; canonical Settings defaults and model-capacity repair; and race, privacy, accounting, and live-provider hardening. PR #1478 review follow-up wrapped repository reads in transactions, bounded pagination, completed API documentation, added content-free degraded-mode diagnostics, and retained the ADR-defined unknown-capacity contract with regression coverage. After rebasing onto dev 8d764c03b, CI exposed a PR-owned concurrency-test sequencing defect: the test proved the second client-creation thread was blocked but did not release the first before waiting for completion. The test now signals release explicitly; its red state was reproduced before the fix, then the isolated test and all 143 gateway tests passed. Post-rebase focused evidence totals 268 passing tests: 68 context-policy and lifecycle, 143 gateway, 23 Console and Settings UI/config, and 34 schema migration tests. Targeted Ruff and py_compile, diff checks, and isolated OpenAI gpt-4o verification were also completed. ADR: backlog/decisions/052-console-conversation-memory-and-compaction-policy.md. Design and delivery plan are in Docs/superpowers/specs and Docs/superpowers/plans. The credential-probe isolation incident is documented in backlog/docs/lessons-testing-evidence.md.
+<!-- SECTION:NOTES:END -->
+
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
 Console conversations now have explicit durable context budgets and Ask/Automatic/Off compaction, exact request accounting, branch-safe local memory, canonical Console/Settings controls, content-free auxiliary usage provenance, and verified failure/race/privacy behavior.
 <!-- SECTION:FINAL_SUMMARY:END -->
-## Definition of Done
-<!-- DOD:BEGIN -->
-<!-- DOD:END -->

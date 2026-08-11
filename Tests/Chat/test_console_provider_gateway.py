@@ -2146,6 +2146,7 @@ def test_active_http_client_creation_is_mutually_exclusive_across_threads():
             "thread's creation was still in flight -- the critical section "
             "is not atomic"
         )
+        release.set()
         assert second_done.wait(timeout=5)
     finally:
         # Always unblock thread A and drain both threads before touching
