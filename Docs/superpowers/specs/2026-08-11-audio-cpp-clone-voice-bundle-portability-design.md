@@ -92,9 +92,11 @@ runtime admission, and portability policy.
    plaintext voice audio and transcript and that a bundle declaration is not
    proof of permission or identity.
 3. The user selects a candidate. File-extension filtering is only a convenience.
-4. A retained worker copies and validates the unchanged source in an
-   owner-private operation directory. It performs no audio.cpp launch, HTTP
-   request, or Settings mutation.
+4. The app-owned bundle portability service creates one bounded, expiring,
+   single-use inspection session. A retained worker copies and validates the
+   unchanged source in an owner-private operation directory. It performs no
+   adapter acquisition, registry lease, supervisor preparation, audio.cpp
+   launch, health probe, HTTP request, or Settings mutation.
 5. The review modal displays only validated safe facts: profile name/UUID,
    provider/model, recipe ID/revision, dependency state, UUID/name conflicts,
    the proposed copy name/UUID, and whether an exact private duplicate exists.
@@ -106,11 +108,14 @@ runtime admission, and portability policy.
    - **Import as copy** with the displayed collision-free UUID/name; and
    - when the dependency is unavailable, a separate acknowledgement to create
      the selected new/copy destination inactive.
-7. Commit reopens and fully revalidates the source, compares the inspection
-   fingerprint, rechecks repository/configuration evidence, and requires fresh
-   confirmation if any visible fact changed.
-8. The repository atomically creates the profile, recipe requirement, and
-   reference. It creates no assignment and changes no default.
+7. Commit consumes the opaque session once, reopens and fully revalidates its
+   privately retained source authority, compares the inspection fingerprint,
+   and refreshes local-only dependency evidence. Any changed visible fact
+   returns a fresh session/review and requires confirmation again.
+8. One serialized repository-lane transaction rechecks exact UUID/name/profile
+   revision/reference identity and either confirms exact reuse or atomically
+   creates the profile, recipe requirement, and reference. It creates no
+   assignment and changes no default.
 
 ## Ordinary portability formats
 
@@ -122,19 +127,31 @@ or reorder output for v1.
 
 ### Wire v2
 
-A reference-bearing ordinary profile export contains exactly the v1 sanitized
-selection fields with `schema_version` set to `2` and one additional field:
+A reference-bearing ordinary profile export contains this exact object shape,
+using the existing v1 validators and serialization order:
 
 ```json
-"reference": {"status": "omitted"}
+{
+  "schema_version": 2,
+  "profile_id": "<canonical UUID>",
+  "name": "<validated display name>",
+  "provider_id": "<validated provider ID>",
+  "model_id": "<validated model ID>",
+  "voice_id": null,
+  "response_format": "<validated format>",
+  "speed": 1.0,
+  "options": {},
+  "reference": {"status": "omitted"}
+}
 ```
 
 It contains no WAV, transcript, reference UUID, digest, size, duration, recipe
 provenance, timestamps, path, assignment, endpoint, generated configuration,
 or runtime state. An older v1-only reader returns its existing bounded
-unsupported-version result. Import never silently constructs a broken
-reference-bearing profile from v2; the user must attach a local reference,
-import a separate bundle, or skip it.
+unsupported-version result. The new decoder recognizes the exact v2 omission
+shape only as a bounded `reference_omitted` skip/no-mutation outcome. This task
+does not add standalone sanitized-profile import or an attach-local-reference
+workflow; **Import voice bundle** is a separate explicit action.
 
 ## Bundle format
 
@@ -150,11 +167,14 @@ reference.wav
 reference.txt
 ```
 
-The application writer uses `ZIP_STORED`, fixed DOS timestamps, fixed creator
-and owner-private mode attributes, no archive/member comments, no extra fields,
-and no data descriptors. JSON is strict UTF-8 without a BOM, canonical key
-ordering, finite numbers only, and one trailing newline. `reference.txt` is the
-canonical bounded UTF-8 transcript without a BOM or an added newline.
+The application writer uses `ZIP_STORED`, extract/create version `20`, create
+system `3` (Unix), general-purpose flags `0`, fixed DOS timestamp
+`1980-01-01T00:00:00`, regular-file external attributes `0o100600 << 16`, zero
+internal attributes, and no archive/member comments, extra fields, encryption,
+or data descriptors. JSON is strict UTF-8 without a BOM, sorted keys,
+`ensure_ascii=False`, separators `(",", ":")`, finite numbers only, and one
+trailing LF. `reference.txt` is the canonical bounded UTF-8 transcript without
+a BOM or added newline.
 
 The writer's complete archive bytes are deterministic for the same canonical
 input. Import may accept bounded `ZIP_STORED` or `ZIP_DEFLATED` payload entries;
@@ -163,7 +183,24 @@ third-party re-packing.
 
 ### `profile.json`
 
-This is the exact sanitized portable profile selection:
+This is bundle profile schema v1, distinct from ordinary wire v1 only in its
+canonical compact encoding. Its exact object is:
+
+```json
+{
+  "model_id": "<1..256 UTF-8-safe characters>",
+  "name": "<validated profile display name>",
+  "options": {},
+  "profile_id": "<canonical lowercase-hyphenated UUID>",
+  "provider_id": "audio_cpp",
+  "response_format": "wav",
+  "schema_version": 1,
+  "speed": 1.0,
+  "voice_id": null
+}
+```
+
+The semantic fields are:
 
 - profile UUID hint;
 - display name;
@@ -180,7 +217,44 @@ configuration, or process evidence.
 
 ### `manifest.json`
 
-The strict manifest contains only:
+The exact manifest object is:
+
+```json
+{
+  "bundle_format": "tldw_chatbook.clone_voice_bundle",
+  "declaration": {
+    "plaintext_sensitive_data_acknowledged": true,
+    "version": 1
+  },
+  "dependency": {
+    "model_id": "<must equal profile.json model_id>",
+    "provider_id": "audio_cpp",
+    "recipe_id": "<audio.cpp recipe token>",
+    "recipe_revision": 1
+  },
+  "entries": {
+    "profile.json": {"sha256": "<64 lowercase hex>", "size": 1},
+    "reference.txt": {"sha256": "<64 lowercase hex>", "size": 1},
+    "reference.wav": {"sha256": "<64 lowercase hex>", "size": 44}
+  },
+  "reference": {
+    "byte_length": 44,
+    "channels": 1,
+    "duration_ms": 1,
+    "sample_encoding": "pcm_s16le",
+    "sample_rate_hz": 16000
+  },
+  "schema_version": 1
+}
+```
+
+Every key shown is required and every unshown key is rejected. The value
+placeholders are validated values, not literal defaults. `recipe_id` uses the
+ASCII grammar `[a-z0-9][a-z0-9._-]{0,127}` and recipe revision is an exact
+integer in `1..2147483647`. Model IDs retain the profile domain's 256-character
+UTF-8/control-safe bound.
+
+The strict manifest therefore contains only:
 
 - format ID and bundle schema version;
 - fixed declaration version and
@@ -197,6 +271,24 @@ Checksums prove byte integrity only. The UI never calls them a signature,
 authenticity proof, speaker identity, or consent proof. The fixed declaration
 records only that the export flow was acknowledged; import treats it as
 untrusted informational data and always displays its own warning.
+
+### Numeric limits
+
+| Limit | Value |
+| --- | ---: |
+| Member count | exactly 4 |
+| Source/archive bytes | 40 MiB |
+| `manifest.json` uncompressed | 64 KiB |
+| `profile.json` uncompressed | 16 KiB |
+| `reference.wav` uncompressed | existing 32 MiB canonical-reference cap |
+| `reference.txt` uncompressed | existing 16 KiB UTF-8 cap |
+| Aggregate uncompressed | 33 MiB |
+| Aggregate compressed | 40 MiB |
+| Per-member/aggregate expansion ratio | 100:1 |
+| JSON nesting | 4 container levels |
+
+Limits are checked from central metadata before decompression and again while
+streaming; declared metadata never relaxes a streaming counter.
 
 ## Schema v4 and recipe provenance
 
@@ -215,24 +307,47 @@ half-present or model-incoherent requirement.
 
 ### Migration
 
-Opening a v3 store performs this guarded sequence:
+Migration never upgrades the active file in place. Under exclusive repository
+ownership it creates an owner-private candidate from a consistent SQLite
+backup and advances that candidate through every required schema step.
 
-1. Validate the v3 schema/domain and establish exclusive migration ownership.
-2. Create and durably publish an owner-private sibling
-   `<profile-db>.pre-v4.sqlite3` backup without replacing a retained backup on
-   failed publication.
-3. In one immediate transaction, add nullable recipe ID/revision fields with a
-   both-null-or-both-valid invariant.
-4. Preserve every existing profile/reference value and leave both new fields
-   null. Never infer provenance from current Settings or a recipe catalog.
-5. Validate the v4 schema/domain, commit, fsync the database and containing
-   directory, then publish the repository as open.
+For each supported starting version:
 
-Insufficient space, backup failure, validation failure, cancellation, or
-publication failure leaves the v3 store authoritative and openable or the
-repository boundedly unavailable. The retained backup path is owner-private,
-reserved against normal backup destinations and hardlink aliases, and never
-logged in full. The existing retained pre-v3 backup remains independent.
+- v3: validate v3, durably publish the exact candidate as
+  `<profile-db>.pre-v4.sqlite3`, then migrate a separate candidate to v4;
+- v2: durably retain validated v2 as the existing pre-v3 backup, migrate the
+  candidate to validated v3, durably retain that exact intermediate as the
+  pre-v4 backup, then migrate the candidate to v4; and
+- any older supported version: advance the private candidate through the
+  existing ordered migrations, publishing the applicable validated v2 and v3
+  downgrade snapshots at those boundaries before reaching v4.
+
+Restore qualification uses the same rule. A v3 restore candidate produces a
+new retained pre-v4 snapshot before active v4 publication; an older candidate
+produces every applicable boundary snapshot. Fresh retained-backup publication
+is rollback-protected so a failure preserves the prior retained file.
+
+The v3→v4 candidate transaction adds nullable recipe ID/revision fields with a
+both-null-or-both-valid invariant, preserves every existing value, and leaves
+both fields null. It never infers provenance from Settings or a recipe catalog.
+The candidate is fully domain-validated, checkpointed, fsynced, closed, and
+reopened before publication.
+
+Before active-file replacement, cancellation may abort and leaves the original
+active database byte-for-byte authoritative. Entering atomic replacement is a
+documented non-cancellable point of no return. The repository retains the old
+active file under a private rollback identity, replaces with the validated v4
+candidate, fsyncs the directory, reopens/validates v4, and only then releases
+rollback ownership. A post-replace failure synchronously restores and fsyncs
+the old active file before returning failure. If storage failure prevents both
+completion and restoration, the repository remains boundedly unavailable with
+both recovery files retained; it does not claim that v3 is authoritative.
+
+The task acceptance contract therefore distinguishes pre-publication rollback
+from the non-cancellable publication protocol rather than promising an
+impossible rollback under total storage failure. Retained backup paths are
+owner-private, reserved against normal backup destinations and hardlink
+aliases, and never logged in full.
 
 Downgrade requires closing Chatbook, restoring the retained pre-v4 database,
 then opening it with a v3-capable build. This loses post-migration changes and
@@ -244,8 +359,10 @@ downgrade.
 Migrated references with absent provenance remain executable under the existing
 guided-Managed compatibility checks. Their library row additionally shows
 `Recipe provenance unavailable`, and bundle export is disabled with the
-recovery **Regenerate and save this voice profile**. They can never qualify as
-an exact bundle duplicate because recipe equality is unknown.
+recovery **Preview/generate this voice, save it as a new profile, then reassign
+or remove the legacy profile if desired**. Chatbook does not claim an in-place
+regenerate operation. Legacy references can never qualify as an exact bundle
+duplicate because recipe equality is unknown.
 
 This compatibility exception applies only to migrated null provenance. Every
 new or replaced v4 reference requires exact recipe evidence.
@@ -259,25 +376,52 @@ Relevant reasons include:
 - `none`;
 - `recipe_provenance_unavailable`;
 - `recipe_missing`; and
-- `recipe_mismatch`.
+- `recipe_mismatch`; and
+- `recipe_pending_apply`.
 
-`recipe_missing` and `recipe_mismatch` render **Needs compatible model** with a
-Settings/Model Library recovery. The reason is derived from the persisted
-requirement and passive saved/applied recipe/model evidence; it is not a
-mutable database status flag. Installing/configuring the exact dependency may
-change availability after explicit refresh, but never assigns the profile or
-changes a default.
+Add a separate immutable dependency-action projection so existing generic
+profile recovery actions are not overloaded:
+
+| Reason | Display | Action |
+| --- | --- | --- |
+| `recipe_provenance_unavailable` | Recipe provenance unavailable | `generate_new_profile` (open exact profile Preview in Speech Lab) |
+| `recipe_missing` | Needs compatible model | `open_audio_cpp_settings` |
+| `recipe_mismatch` | Needs compatible model | `open_audio_cpp_settings` |
+| `recipe_pending_apply` | Compatible model saved; apply settings | `open_speech_lab_apply` |
+
+The reason is derived from the persisted requirement and an immutable
+local-only saved/applied guided-configuration plus recipe-registry snapshot.
+That snapshot API is pure: it cannot acquire/materialize an adapter, take a
+registry lease, prepare a supervisor, probe health, launch, contact a provider,
+or write Settings. Unknown but valid recipes classify as missing. Installing or
+configuring the exact dependency may change availability after explicit
+refresh, but never assigns the profile or changes a default.
 
 For a reference carrying a recipe requirement, the service-owned clone
-execution snapshot includes the exact requirement. Before reference
-materialization or HTTP, admission compares it with the adapter-issued recipe
-ID/revision/model evidence for the applied provider/process generation. A
-mismatch fails with a bounded recovery and no fallback, launch, or request.
+execution snapshot includes the exact requirement. Before acquiring a provider
+lease or materializing an adapter, request admission compares it with the pure
+applied registry/configuration snapshot. After the exact lease is acquired, a
+side-effect-free adapter configuration preflight repeats the check before
+`ensure_ready`; mismatch still causes no launch/network/provider work. After
+deliberate readiness, admission compares the same requirement again with the
+adapter-issued recipe/model/process-generation capability before reference
+materialization or the synthesis HTTP request. Any mismatch is bounded and
+never falls back or retargets.
 
 An unknown but syntactically valid future recipe is a missing dependency, not a
 malformed bundle, and may be stored inactive after explicit confirmation.
 Invalid syntax, non-positive revisions, or cross-field disagreement is a
 malformed bundle and is rejected.
+
+### Profile edit semantics
+
+Reference-bearing profiles may always change display name through the existing
+optimistic-revision editor. Generation-field edits are read-only in that
+editor. Changing model, voice, format, speed, or options requires producing a
+new exact result and saving a new profile, or a future explicit atomic
+reference-replacement workflow. Every repository reference set/replacement API
+requires exact recipe evidence under v4. Migrated null-provenance profiles have
+the same display-name-only edit boundary until regenerated as a new profile.
 
 ## Hostile archive admission
 
@@ -285,9 +429,14 @@ malformed bundle and is rejected.
 
 - Refuse work before reading private content unless owner-private containment
   is verified for the platform.
-- POSIX containment verifies type, effective-user ownership, no-follow
-  identity, owner-only traversal, and retained descriptor identity under an
-  ownership lock.
+- POSIX application-owned staging, temporary output, backup, and final bundle
+  files verify type, effective-user ownership, no-follow identity, owner-only
+  traversal/modes, and retained descriptor identity under an ownership lock.
+- A user-selected source or destination parent (for example `Downloads`) is not
+  recursively chmodded and need not be owner-only. The source must be a bounded
+  no-follow regular file owned by the effective user and remain identity/content
+  stable. The destination parent must be descriptor-stable and writable; the
+  final sensitive bundle itself is published mode `0600` on POSIX.
 - Until Windows ACL parity is verified, the UI disables bundle import/export
   with a truthful unsupported-platform explanation.
 - Open the user-selected source without following symlinks, bound its size
@@ -325,9 +474,18 @@ retained identities, never paths supplied by the archive.
 
 ## Inspection, conflict, and commit authority
 
-The public UI inspection result contains only safe canonical facts and a
-service-owned opaque fingerprint. It never contains reference bytes,
-transcript, staging path, source digest, or entry digests.
+An application-scoped `TTSVoiceBundlePortabilityService` owns inspection
+sessions independently of Textual widgets. At most four sessions may exist;
+each expires after ten minutes, is single-use, has a redacted representation,
+and privately retains source path/descriptor identity, source/content
+fingerprint, safe review facts, repository/config evidence, and cleanup state.
+It retains no first-pass extracted staging directory while the modal is open.
+The UI receives only an opaque unforgeable handle plus safe canonical facts;
+the handle contains no public path/reference fields and cannot be copied.
+
+Cancel, modal replacement/unmount, commit, expiry, and service close invalidate
+the handle and join owned cleanup. Replay and foreign-service handles fail
+boundedly. The service closes and joins before the profile repository closes.
 
 Exact duplicate reuse requires equality of:
 
@@ -346,12 +504,14 @@ before confirmation. Dependency consent is orthogonal: Create or Copy may be
 confirmed inactive when the exact dependency is missing; Reuse cannot mutate
 the existing profile's state.
 
-Commit accepts only the exact fresh inspection, repeats source validation,
-rechecks repository generation/profile revisions and passive dependency facts,
-and recomputes conflicts. If a visible fact changed, it returns a fresh review
-instead of applying the old choice. The repository performs one atomic
-profile-plus-recipe-plus-reference write. No character or default owner is in
-the call graph.
+Commit consumes only an exact live session and repeats source validation plus
+local dependency inspection. It then submits one repository command. Inside
+the serialized repository lane and one `BEGIN IMMEDIATE` transaction, that
+command re-reads UUID/name matches, expected profile revisions and exact
+reference identity, validates the reviewed copy destination, and either
+confirms exact reuse or inserts profile+recipe+reference atomically. Any
+disagreement returns `stale_inspection` plus safe refreshed facts; no partial
+write occurs. No character or default owner is in the call graph.
 
 ## Export publication
 
@@ -361,9 +521,15 @@ After acknowledgement and destination selection, export:
 - reads the exact reference and recipe requirement under repository fences;
 - builds the complete ZIP in an owner-private temporary file in the validated
   destination directory;
+- records whether the destination was absent or, after an explicit overwrite
+  confirmation, the exact regular-file identity observed by the picker;
 - fsyncs the file, atomically replaces only the intended non-directory target
   without following a symlink, and fsyncs the directory where supported; and
 - preserves the previous destination if fresh publication fails.
+
+A destination or parent type/identity change after confirmation returns
+`destination_changed`; it is never silently overwritten. The final bundle is
+owner-private even when its user-selected parent is not.
 
 The acknowledgement is not persisted as a preference. Selection changes,
 navigation, modal replacement, or shutdown fence late publication and UI
@@ -377,25 +543,33 @@ Cancellation joins a shielded blocking worker before propagating and cleans any
 published staging/output it owns. UI unmount prevents stale presentation but
 does not abandon work.
 
-Service close seals new import/export admission, cancels or completes work as
-appropriate, initiates cleanup, and retains definitive joining. `wait_closed()`
+The bundle portability service closes before repository shutdown. Close seals
+new import/export/session admission, invalidates handles, cancels or completes
+work as appropriate, initiates cleanup, and retains definitive joining.
+`wait_closed()`
 cannot report ownership zero while a backup, copy, decompressor, output
 publication, repository commit, handle, or cleanup task remains owned.
 
 ## Error and privacy contract
 
-Bounded public categories include:
+Bounded public categories and recoveries are:
 
-- `bundle_invalid`;
-- `bundle_limit_exceeded`;
-- `source_changed`;
-- `unsupported_bundle`;
-- `unsupported_platform`;
-- `dependency_missing`;
-- `dependency_changed`;
-- `profile_conflict`;
-- `stale_inspection`; and
-- `operation_failed`.
+| Code | Recovery |
+| --- | --- |
+| `bundle_invalid` | Choose another bundle |
+| `bundle_limit_exceeded` | Choose a bundle within documented limits |
+| `source_changed` | Reselect the source and inspect again |
+| `unsupported_bundle` | Use a supported Chatbook bundle version |
+| `unsupported_platform` | Use a platform with verified private containment |
+| `dependency_missing` | Open audio.cpp Settings |
+| `dependency_changed` | Refresh the review; then open Settings or apply saved configuration |
+| `recipe_provenance_unavailable` | Preview/generate and save a new profile |
+| `profile_conflict` | Review the exact current collision choices |
+| `stale_inspection` | Inspect again |
+| `destination_changed` | Choose/confirm the destination again |
+| `migration_failed` | Keep/restore the prior store and retry after resolving storage health |
+| `cleanup_failed` | Wait for retained cleanup or restart Chatbook before retrying |
+| `operation_failed` | Retry without exposing collaborator detail |
 
 UI copy supplies one truthful next action. Logs, notifications, metrics,
 events, object representations, and exception graphs contain no full source or
@@ -413,6 +587,9 @@ may appear only in the explicit review UI, not general logs.
 - Modal focus order is heading, safe facts, destination choice, inactive
   acknowledgement when applicable, Confirm, Cancel.
 - Conflict and inactive status use text, not color alone.
+- Voice Profile library rows and every Roleplay/Personas assignment consumer
+  render the same immutable dependency reason/action; inactive profiles remain
+  visibly unavailable and cannot be assigned.
 - Narrow layouts keep the warning, proposed copy destination, and primary
   action reachable through a focusable scrolling region.
 - Busy actions expose their reason; cancellation/retry remain reachable.
@@ -430,24 +607,37 @@ may appear only in the explicit review UI, not general logs.
   size/flag generation.
 - Source mutation at every open/copy/review/commit boundary.
 - v3→v4 migration backup, domain equivalence, no guessed provenance, disk-full
-  rollback, retained-backup preservation, downgrade, aliases, and newer-schema
-  refusal.
+  rollback, non-cancellable publication, forced post-replace restoration,
+  retained-backup preservation, v1/v2/v3 multi-hop and restore candidates,
+  downgrade, aliases, and newer-schema refusal.
 - Conflict/dependency cross-product across Create, Reuse, Copy, and inactive
   consent.
 - Exact private duplicate comparison without digest exposure.
 - Passive inspection proving zero audio.cpp launches, HTTP requests, or
-  Settings writes.
+  Settings writes, adapter acquisitions, registry leases, supervisor work, or
+  health probes.
+- Inspection-session cap, expiry, single-use/replay/foreign-handle refusal,
+  unmount invalidation, and close-before-repository ordering.
+- Repository-lane races proving collision/reference changes cannot interleave
+  between recheck and exact reuse/create.
 - Runtime admission proving exact recipe/model match before materialization or
-  provider work and no fallback on mismatch.
+  provider lease/adapter/provider work, exact adapter preflight and post-ready
+  capability matching, and no fallback on mismatch.
+- Display-name-only reference-profile edits and blocked generation-field edits
+  across exact and migrated-null provenance.
 - Cleanup and ownership under success, refusal, malformed input, cancellation,
   unmount, migration failure, service close, and application shutdown.
 - Textual keyboard/focus/announcement/narrow-layout/late-result tests.
+- Cross-surface Voice Profile and Roleplay/Personas reason/action truth and
+  inactive-assignment refusal.
 - Log/event/notification/repr/exception-graph canaries for every private value.
 
 ### Manual UAT
 
 Use two separate Chatbook launches with independently isolated temporary
-config, data, and profile roots; never use the developer's live profile store.
+config, data, profile, Model Library/package, generated-config, and runtime
+roots plus isolated HOME/XDG/environment overrides; never use the developer's
+live stores. Verify launch B cannot observe launch A's installed dependency.
 
 1. On launch A, create a clone profile and audibly verify generation.
 2. Export ordinary v2 JSON and inspect its allowlisted structure to prove the

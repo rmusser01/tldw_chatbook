@@ -76,8 +76,8 @@ Ordinary profile and character-card portability remains sanitized:
   local reference was omitted;
 - it contains neither reference bytes nor transcript; and
 - import never silently creates, assigns, or repairs a reference-bearing
-  profile. The user must attach a local WAV, import an explicit bundle, or skip
-  the attachment.
+  profile. The v2 decoder returns a bounded reference-omitted skip/no-mutation
+  outcome; explicit bundle import remains a separate action.
 
 Reference transfer is a separate explicit voice bundle, not a character-card
 extension. The bundle is a strict versioned ZIP containing only a manifest,
@@ -130,12 +130,22 @@ usable under the prior guided-Managed compatibility contract, show a bounded
 `Recipe provenance unavailable` advisory, cannot qualify as an exact bundle
 duplicate, and cannot be exported as a bundle until regenerated and saved.
 
-The v3→v4 migration follows the same guarded ownership rule as v2→v3: validate
-v3 under exclusive ownership; durably publish a separate owner-private
-`<profile-db>.pre-v4.sqlite3` sibling; migrate and validate transactionally;
-then publish v4. It preserves any prior retained backup, reserves the pre-v4
-path and aliases from ordinary backup destinations, and leaves v3 authoritative
-on disk-space, backup, validation, cancellation, or publication failure.
+The v3→v4 migration uses a private candidate rather than upgrading the active
+file in place. It validates v3 under exclusive ownership, durably publishes a
+separate owner-private `<profile-db>.pre-v4.sqlite3` sibling, migrates and fully
+validates/fsyncs the candidate, then enters one non-cancellable atomic
+publication protocol with retained rollback ownership. Pre-publication failure
+leaves the active store unchanged. Post-replace failure restores and fsyncs the
+prior active file; a total storage failure that prevents both completion and
+restoration leaves the repository unavailable with recovery files retained
+rather than making an impossible authority claim.
+
+A v2-or-older jump advances the private candidate through each supported
+migration and durably publishes validated v2 and v3 downgrade snapshots at
+their respective boundaries. Restore qualification follows the same rule, so a
+v3 restore candidate yields a fresh retained pre-v4 snapshot before active v4
+publication. Retained publication preserves any prior backup on failure and
+reserves backup paths and aliases from ordinary backup destinations.
 Downgrade explicitly restores the pre-v4 backup while the repository is closed
 and accepts loss of all post-migration changes and recipe provenance.
 
@@ -148,22 +158,41 @@ plaintext-warning acknowledgement. The acknowledgement is not proof of
 consent, identity, signature, or authenticity; import always displays its own
 warning.
 
-Import never trusts archive paths or a prior inspection. It uses verified
-owner-private containment, validates and copies the unchanged source, shows
-only bounded safe facts, then repeats full validation and conflict/dependency
+Import never trusts archive paths or a prior inspection. An application-scoped
+bounded service owns expiring, single-use inspection sessions and private
+source authority while the UI receives only an opaque handle and safe facts.
+It uses verified owner-private application staging, validates and copies the
+unchanged source, then repeats full validation and local-only dependency
 inspection at commit. Exact reuse requires equality of sanitized selection,
 recipe requirement, transcript, and canonical WAV, but exposes only the
 boolean result rather than a digest oracle. Missing but syntactically valid
 future recipes may be imported only through an explicit inactive choice.
 
+Exact reuse or creation is decided inside one serialized repository command
+and immediate transaction that rechecks UUID/name/profile revision/reference
+identity and the reviewed copy destination before returning no-op or inserting
+profile, recipe, and reference atomically.
+
 The availability state vocabulary remains unchanged. A bounded reason records
 recipe provenance unavailable, missing dependency, or mismatch. For references
-with exact provenance, service-owned runtime admission compares the persisted
-recipe/model requirement with adapter-issued evidence before materialization or
-provider work and never silently falls back or retargets. Dependency recovery
+with exact provenance, a pure local guided-config/recipe snapshot classifies
+dependency state without acquiring an adapter or performing network/runtime
+work. Runtime performs a side-effect-free applied-config preflight before
+readiness and compares adapter-issued evidence again after readiness but before
+materialization or synthesis HTTP. It never silently falls back or retargets.
+Dependency recovery
 changes availability only; it never assigns a character or changes a default.
 
-Until a platform has verified ADR-029 owner-private containment, bundle controls
+Reference-bearing profile editing is display-name-only. Model, voice, format,
+speed, or option changes require a newly admitted result/new profile or a
+future explicit atomic reference replacement; every v4 reference set/replacement
+requires exact recipe evidence.
+
+Owner-private traversal applies to application staging, backups, temporary
+outputs, and final bundle files, not recursively to ordinary user-selected
+source/destination parents. Sources still require no-follow regular-file
+ownership/stability checks, and final POSIX bundles are mode `0600`. Until a
+platform has verified ADR-029 application-owned containment, bundle controls
 fail closed with a truthful unsupported-platform explanation. Archive workers,
 migration backup, atomic output publication, cleanup, and repository commit are
 retained and joined across cancellation and shutdown.
