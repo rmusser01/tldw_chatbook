@@ -203,4 +203,12 @@ section added; labels cross-checked against
 and `stts_profile_library.py` / `personas_character_tts_widget.py` /
 `personas_screen.py` for the "No catalog check" / "no catalog check"
 copy — this page's own default-profile precedence bullet above was not
-re-verified live in this pass).*
+re-verified live in this pass). Re-verified live 2026-08-11 with the
+TASK-15420 fix: a Console 🔊 speak with an exact custom model AND custom
+voice name reached a mock OpenAI-compatible server at a custom Base URL
+with both passed through unmodified (between roughly 2026-07-26 and this
+fix, an internal model-route allowlist rejected any non-official model
+name on the Console path before the request was sent, so this page's
+Model-value instruction did not work there; the Speech Lab playground's
+quick Model/Voice dropdowns still cannot express custom names —
+TASK-15421).*

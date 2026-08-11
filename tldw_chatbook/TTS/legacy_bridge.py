@@ -251,8 +251,18 @@ def legacy_provider_config(
     return {"app_config": projected}
 
 
+_OPENAI_INTERNAL_ID_PREFIX = "openai_official_"
+
+
 def resolve_legacy_route(internal_model_id: str) -> LegacyRoute:
     provider_id = LEGACY_ROUTES.get(internal_model_id)
+    if provider_id is None and internal_model_id.removeprefix(
+        _OPENAI_INTERNAL_ID_PREFIX
+    ) not in ("", internal_model_id):
+        # Custom OpenAI-compatible endpoints (TASK-2260) define their own
+        # model names; the provider is already known from the prefix, so an
+        # exact-catalog check here would wrongly reject them (TASK-15420).
+        provider_id = "openai"
     if provider_id is None:
         raise UnknownLegacyModelError("The selected TTS model is not available")
     return LegacyRoute(provider_id, internal_model_id)

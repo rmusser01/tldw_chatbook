@@ -737,6 +737,59 @@ async def test_explicit_provider_without_global_uses_provider_fallback_axes() ->
 
 
 @pytest.mark.asyncio
+async def test_openai_exact_custom_model_default_is_admitted_with_passthrough() -> (
+    None
+):
+    """A custom OpenAI model id must survive admission untouched.
+
+    OpenAI-compatible servers (TASK-2260) define their own model and voice
+    names; the Console default path resolves them as exact global values, so
+    admission must route on the provider and pass both through rather than
+    re-imposing the official-catalog model list (TASK-15420).
+    """
+    adapter = _CapturingAdapter("openai")
+    registry = _RecordingRegistry(
+        specs=(
+            TTSProviderSpec(
+                descriptor=TTSProviderDescriptor(
+                    provider_id="openai",
+                    display_name="OpenAI",
+                    native=False,
+                ),
+                factory=lambda _config: adapter,
+                initial_config={},
+            ),
+        ),
+        aliases={},
+    )
+    service = _test_service(
+        registry,
+        preferences_snapshot=_snapshot(
+            provider_id="openai",
+            model_id="pocket-tts-model",
+            voice_mode="exact",
+            voice_id="pocket-voice",
+        ),
+    )
+    response: TTSAudioResponse | None = None
+
+    try:
+        response = await service.synthesize_default(
+            text="Speak through the custom endpoint.",
+        )
+
+        assert response.provider_id == "openai"
+        assert response.model_id == "pocket-tts-model"
+        assert adapter.requests[0].model_id == "pocket-tts-model"
+        assert adapter.requests[0].voice == "pocket-voice"
+    finally:
+        if response is not None:
+            await response.aclose()
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
 async def test_audio_cpp_exact_default_is_admitted_without_rewriting_values() -> None:
     adapter = _CapturingAdapter("audio_cpp")
     snapshot = _snapshot(
