@@ -51,6 +51,7 @@ from tldw_chatbook.Agents.run_log_search import load_records
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
+from Tests.Agents.conftest import join_fleet_children
 from Tests.Agents.test_agent_service import FleetChat, verbatim
 from tldw_chatbook.Tools.file_operation_tools import GlobFiles, GrepFiles
 
@@ -282,6 +283,7 @@ def test_spawned_subagent_cannot_read_parents_log_via_grep_files_in_bound_worksp
         ),
         api_endpoint="llama_cpp",
     )
+    join_fleet_children(service)  # PR3a-1 Task 2: the child outlives the turn
     assert outcome.status == RUN_DONE
 
     child_runs = [r for r in db.list_runs("c1") if r["agent_kind"] == "subagent"]

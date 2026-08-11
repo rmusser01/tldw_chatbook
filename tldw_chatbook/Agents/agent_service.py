@@ -110,6 +110,25 @@ TRUNCATION_NOTICE = "\n[truncated]"
 #: `max_live=1` / config-of-one tests in `Tests/Agents/test_fleet_runtime`.
 MAX_LIVE_SUBAGENTS_KEY = "max_live_subagents"
 DEFAULT_MAX_LIVE_SUBAGENTS = 3
+#: ``[agents]`` key deciding whether a sub-agent still running when its
+#: turn returns KEEPS RUNNING (PR3a-1 Task 2). Default **true**: a child
+#: the supervisor deliberately left working is background work, and
+#: background work the user has to babysit -- by staying in the
+#: conversation until it finishes -- is not background work at all (spec
+#: Sec 3 invariant 5, corrected 2026-08-11: a finished child WAKES its
+#: supervisor rather than waiting to be collected; spec Sec 7's fleet
+#: panel is a thing the user watches ACROSS turns).
+#:
+#: `false` restores the phase-2 rule in full -- wait for stragglers within
+#: the parent's remaining wall-clock, cooperative-cancel, then abandon --
+#: and is the supported kill switch, guarded by the turn-scoped tests in
+#: `Tests/Agents/test_fleet_runtime`. Two cases settle regardless of this
+#: key, both in `_surviving_handles`: a turn nobody left a child running
+#: in (nothing to decide), and a turn the USER cancelled (Stop must stay a
+#: kill switch for the whole run tree; spec Sec 10 puts any change to Stop
+#: semantics in PR 3b).
+SUBAGENTS_OUTLIVE_TURN_KEY = "subagents_outlive_turn"
+DEFAULT_SUBAGENTS_OUTLIVE_TURN = True
 #: How long a poll loop sleeps between coordinator checks. Small enough
 #: that a cancelled run is not held up perceptibly, large enough not to
 #: spin a core while several children work.
@@ -157,6 +176,37 @@ def _coerce_max_live_subagents(value) -> int:
             )
             return DEFAULT_MAX_LIVE_SUBAGENTS
     return max(parsed, 1)
+
+
+def _coerce_subagents_outlive_turn(value) -> bool:
+    """Read the cross-turn switch from config, tolerating any junk.
+
+    ``_setting`` already boolean-parses an ENV override (its ``default``
+    here is a ``bool``); this covers the other two sources -- a TOML value
+    of any type and a hand-edited string.
+
+    Args:
+        value: Whatever ``_setting`` returned.
+
+    Returns:
+        The configured switch. An unrecognised value falls back to the
+        default rather than raising -- same rule as
+        ``_coerce_max_live_subagents``: a malformed config key must never
+        stop an agent run, and must never silently mean its opposite.
+    """
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    logger.warning(
+        f"[agents] {SUBAGENTS_OUTLIVE_TURN_KEY}={value!r} is not a boolean; "
+        f"using {DEFAULT_SUBAGENTS_OUTLIVE_TURN}"
+    )
+    return DEFAULT_SUBAGENTS_OUTLIVE_TURN
+
 
 # Task 7: appended to config.system_prompt only when THIS run wired the
 # search_run_log tool (see the `log_active` gate in _run_one, reused
@@ -535,7 +585,12 @@ class AgentService:
         # so no lock is needed on these three. Reset at the top of every
         # `run_turn`.
         self._fleet: FleetCoordinator | None = None
-        self._fleet_threads: list[threading.Thread] = []
+        # Keyed by handle id since PR3a-1 Task 2, not a bare list: the
+        # end-of-turn join has to skip the threads of children that are
+        # outliving the turn, which means it has to know which thread is
+        # whose. Insertion-ordered, so the join order is start order as
+        # before.
+        self._fleet_threads: dict[str, threading.Thread] = {}
         self._fleet_cancels: dict[str, threading.Event] = {}
 
     # -- internals -------------------------------------------------------
@@ -894,21 +949,76 @@ class AgentService:
             rendered += hint
         return rendered + note
 
+    def _surviving_handles(
+        self,
+        fleet: FleetCoordinator,
+        handle_ids: list[str],
+        should_cancel: Callable[[], bool],
+    ) -> set[str]:
+        """Which of this turn's children are allowed to outlive it.
+
+        PR3a-1 Task 2. Survival is the DEFAULT (see
+        ``SUBAGENTS_OUTLIVE_TURN_KEY``): a child still running when the
+        supervisor answers is background work the user asked for, and the
+        alternative -- killing it at the end of the turn -- is what made
+        delegation pointless for anything slower than one reply.
+
+        Ordered so the common case costs nothing: a turn that left no
+        child running reads no config and does not probe cancellation,
+        which is what keeps the turn-scoped path byte-identical.
+
+        Args:
+            fleet: This turn's coordinator.
+            handle_ids: This turn's handles (``mine`` in ``_settle_fleet``).
+            should_cancel: The run-wide cancellation probe.
+
+        Returns:
+            The handles to leave running. Empty -- i.e. settle everything,
+            exactly as phase 2 did -- when nothing is still running, when
+            the kill switch is off, or when the USER cancelled this turn.
+        """
+        pending = self._pending_handles(fleet, handle_ids)
+        if not pending:
+            return set()
+        if not _coerce_subagents_outlive_turn(
+            _setting(SUBAGENTS_OUTLIVE_TURN_KEY, DEFAULT_SUBAGENTS_OUTLIVE_TURN)
+        ):
+            return set()
+        if should_cancel():
+            # Stop means stop, for the whole run tree. A cancelled turn is
+            # not a turn that ENDED -- it is one the user killed, and
+            # leaving its children running would take away the only kill
+            # switch they have (spec Sec 10 keeps Stop-semantics changes
+            # in PR 3b).
+            return set()
+        return set(pending)
+
     def _settle_fleet(
         self,
         config: AgentConfig,
         should_cancel: Callable[[], bool],
         turn_started: float,
     ) -> None:
-        """End-of-turn safety net: no child outlives the turn (phase 2).
+        """End of turn: settle the children that must not outlive it.
 
-        Waits for stragglers within the parent's remaining wall-clock,
-        then cooperative-cancels them, then ABANDONS whatever is still
-        wedged after ``FLEET_JOIN_TIMEOUT_SECONDS`` -- marking those
-        handles and their run rows ``cancelled`` so nothing is left
-        ``running``. ``AgentRunsDB.set_status`` is first-writer-wins
-        (PR2a Task 2), so an abandoned thread that later persists its own
-        status is a no-op rather than a resurrection.
+        For everything being settled -- which, under the kill switch
+        ``[agents] subagents_outlive_turn = false``, is still every child
+        this turn started -- this waits for stragglers within the parent's
+        remaining wall-clock, then cooperative-cancels them, then ABANDONS
+        whatever is still wedged after ``FLEET_JOIN_TIMEOUT_SECONDS``,
+        marking those handles and their run rows ``cancelled`` so nothing
+        is left ``running``. ``AgentRunsDB.set_status`` is
+        first-writer-wins (PR2a Task 2), so an abandoned thread that later
+        persists its own status is a no-op rather than a resurrection.
+
+        A SURVIVOR (PR3a-1 Task 2, the default for a child still running
+        when the turn ends) is not touched by any of that: not waited for,
+        not cancelled, not joined, not revoked, and not forced terminal in
+        the DB. Its own thread finishes it -- ``run_child``'s ``finally``
+        already calls ``fleet.finish`` and ``db.set_status`` from the
+        child's own thread -- so "still running" stays TRUE in the run row
+        until the work actually ends. See ``_surviving_handles`` for what
+        opts a child in.
 
         Args:
             config: The primary run's config (its wall-clock budget).
@@ -920,15 +1030,30 @@ class AgentService:
             return
         # This turn's handles only -- an injected coordinator may be
         # long-lived (PR 3a), and settling a turn must never reach into
-        # another turn's children.
+        # another turn's children. Load-bearing since Task 2 rather than
+        # merely defensive: an earlier turn's survivor is visible in a
+        # long-lived coordinator, and settling THIS turn must not kill it.
         mine = list(self._fleet_cancels)
+        survivors = self._surviving_handles(fleet, mine, should_cancel)
+        if survivors:
+            logger.info(
+                f"{len(survivors)} sub-agent(s) outliving their turn: "
+                f"{', '.join(sorted(survivors))}"
+            )
+        # Everything else settles exactly as it always has. With no
+        # survivors this holds `mine` itself, in the same order, and every
+        # line below runs unchanged -- the turn-scoped path is not a
+        # special case of the new one, it IS the old one.
+        settling = [
+            handle_id for handle_id in mine if handle_id not in survivors
+        ]
         deadline = turn_started + config.budget.max_wall_seconds
         # `self.clock` is injectable and some callers freeze it, which
         # would make the budget deadline above unreachable. A real-time
         # bound of the same length runs alongside it so this loop always
         # terminates whatever the injected clock does.
         wall_deadline = time.monotonic() + config.budget.max_wall_seconds
-        while self._pending_handles(fleet, mine):
+        while self._pending_handles(fleet, settling):
             if (
                 should_cancel()
                 or self.clock() >= deadline
@@ -938,14 +1063,22 @@ class AgentService:
             time.sleep(_FLEET_POLL_SECONDS)
         # Cancel unconditionally: for an already-finished fleet every
         # Event set here is inert, and for a straggler it is the only
-        # cooperative stop signal there is.
-        self._cancel_fleet_handles(mine)
+        # cooperative stop signal there is. A survivor is excluded because
+        # this ALSO revokes approval cards (see `_cancel_fleet_handles`),
+        # and a live child's pending card belongs to a live tool call --
+        # revoking it would fail a legitimate call closed the moment the
+        # supervisor happened to answer.
+        self._cancel_fleet_handles(settling)
         # ONE join budget shared across every thread, not 5s each: N
-        # wedged children must not hold the turn open for 5N seconds.
+        # wedged children must not hold the turn open for 5N seconds. A
+        # survivor's thread is skipped rather than joined -- joining it is
+        # precisely the wait this task removed.
         join_deadline = time.monotonic() + FLEET_JOIN_TIMEOUT_SECONDS
-        for thread in self._fleet_threads:
+        for handle_id, thread in self._fleet_threads.items():
+            if handle_id in survivors:
+                continue
             thread.join(max(join_deadline - time.monotonic(), 0.0))
-        for handle_id in self._pending_handles(fleet, mine):
+        for handle_id in self._pending_handles(fleet, settling):
             handle = fleet.get(handle_id)
             if handle is None:  # pragma: no cover — never forgotten
                 continue
@@ -1554,7 +1687,7 @@ class AgentService:
                     ok=False,
                     error=f"could not start sub-agent: {exc}",
                 )
-            self._fleet_threads.append(thread)
+            self._fleet_threads[handle.handle_id] = thread
             snippet = spawn_task[:_SPAWN_ECHO_CHARS]
             return ToolResult(
                 ok=True,
@@ -2455,7 +2588,11 @@ class AgentService:
         # helper the run-log knobs use, and a size of 1 -- the opt-out,
         # since Task 6.5 made the default 3 -- means NO fleet: spawn keeps
         # running children inline.
-        self._fleet_threads = []
+        # Reset per turn, and deliberately: a child of an EARLIER turn that
+        # is still running (PR3a-1 Task 2) drops out of both maps here, so
+        # this turn's settle cannot reach it. Its own thread holds every
+        # reference it needs to finish and persist itself.
+        self._fleet_threads = {}
         self._fleet_cancels = {}
         if self._injected_fleet_coordinator is not None:
             self._fleet = self._injected_fleet_coordinator
@@ -2480,11 +2617,16 @@ class AgentService:
             parent_run_id=None,
             assistant_message_id=assistant_message_id,
         )
-        # Phase 2 keeps children TURN-SCOPED: the turn does not return
-        # while one is still running. Must happen BEFORE the manifest is
-        # written and the writer closed below -- a child still running
-        # would otherwise be appending records to a closed writer, and its
-        # own run row would still read `running` after this call returns.
+        # Settle the children that must not outlive this turn. Must happen
+        # BEFORE the manifest is written and the writer closed below: a
+        # child being settled would otherwise be appending records to a
+        # closed writer, and its own run row would still read `running`
+        # after this call returns.
+        #
+        # PR3a-1 Task 2: a SURVIVOR is by definition still appending after
+        # the two calls below, which is the run-log writer's lifetime
+        # question -- owned by Task 3, not answered here. Nothing in this
+        # ordering changes for it: whatever still settles, settles first.
         try:
             self._settle_fleet(config, should_cancel, turn_started)
         except Exception:  # noqa: BLE001 — the answer is already produced

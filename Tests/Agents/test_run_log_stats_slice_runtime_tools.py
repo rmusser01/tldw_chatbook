@@ -38,6 +38,7 @@ from tldw_chatbook.Agents.tool_catalog import (
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from Tests.Agents.test_agent_runtime import make_deps
+from Tests.Agents.conftest import join_fleet_children
 from Tests.Agents.test_agent_service import FleetChat, verbatim
 
 
@@ -213,6 +214,7 @@ def test_subagent_cannot_call_run_log_stats_or_run_log_slice(tmp_path, monkeypat
         ),
         api_endpoint="llama_cpp",  # fence protocol: schemas render into the system prompt
     )
+    join_fleet_children(service)  # PR3a-1 Task 2: the child outlives the turn
     assert outcome.status == RUN_DONE
 
     # (a) schema gate: the child's own system prompt must never mention

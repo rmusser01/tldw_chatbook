@@ -366,6 +366,20 @@ def _all_runs(db):
         return [dict(r) for r in conn.execute("SELECT * FROM agent_runs").fetchall()]
 
 
+def _join_fleet_threads(timeout=5.0):
+    """Block until every live fleet child thread has fully finished.
+
+    `AgentService` names them ``fleet-<handle>``. Needed since PR3a-1
+    Task 2: a child outlives the turn that spawned it by default, so a
+    test asserting on the CHILD's persisted run must say when it expects
+    that row to exist. Twin of the identical helper in
+    ``Tests/Chat/test_console_agent_bridge.py``.
+    """
+    for thread in list(threading.enumerate()):
+        if thread.name.startswith("fleet-"):
+            thread.join(timeout)
+
+
 @pytest.mark.asyncio
 async def test_agent_send_no_tools_streams_like_today(tmp_path):
     controller, store, _db = _controller(tmp_path, [["Tok", "yo."]])
@@ -1730,6 +1744,12 @@ async def test_mcp_tool_call_gates_subagent_call_same_as_primary(tmp_path):
     result = await controller.submit_draft("please delegate it")
 
     assert result.accepted is True
+
+    # PR3a-1 Task 2: the child outlives the turn by default, so its run
+    # row (and its gated tool call) may still be in flight when the turn
+    # returns. The subject here is that the child is gated like the
+    # primary, not when it finishes -- so wait for it explicitly.
+    _join_fleet_threads()
     assert service.execute_calls == []  # never invoked -- refused before dispatch
 
     subagent_runs = [r for r in _all_runs(db) if r["agent_kind"] == "subagent"]

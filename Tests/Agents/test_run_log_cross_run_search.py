@@ -38,6 +38,7 @@ from tldw_chatbook.Agents.tool_catalog import (
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 from Tests.Agents.test_agent_service import FleetChat, verbatim
+from Tests.Agents.conftest import join_fleet_children
 
 
 def _fence(name, args):
@@ -384,6 +385,7 @@ def test_subagent_cannot_call_search_run_log_with_conversation_scope(
         ),
         api_endpoint="llama_cpp",
     )
+    join_fleet_children(service)  # PR3a-1 Task 2: the child outlives the turn
     assert outcome.status == RUN_DONE
 
     # (a) schema gate: the child never sees search_run_log at all (scope is

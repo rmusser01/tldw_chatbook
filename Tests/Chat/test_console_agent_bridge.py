@@ -933,6 +933,11 @@ def test_provider_stream_signal_survives_subagent_turns(tmp_path):
         provider_stream_signals=signals,
     )
 
+    # PR3a-1 Task 2: the sub-agent outlives the turn by default, so its
+    # provider call -- the third one this test is counting -- may still be
+    # in flight when `run_reply` returns. The subject here is that the
+    # SAME signals object reaches a child's call, not when it does.
+    _join_fleet_threads()
     assert outcome.status == "done"
     assert gateway.signals_seen == [signals, signals, signals]
     assert all(item is signals for item in gateway.signals_seen)
@@ -976,6 +981,10 @@ def test_spawn_renders_marker_and_persists_linked_subagent(tmp_path):
     ]
     bridge, db, store, session, aid = _bridge(tmp_path, scripts)
     outcome = _run(bridge, store, session, aid)
+    # PR3a-1 Task 2: the child outlives the turn, so its run ROW may not
+    # exist yet when `run_reply` returns. This test is about the marker
+    # and the lineage, not about when the row lands.
+    _join_fleet_threads()
     assert outcome.status == "done"
     assert db.count_subagent_runs("conv-1") == 1
     spawn_markers = [

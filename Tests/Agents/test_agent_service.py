@@ -37,6 +37,8 @@ from tldw_chatbook.Agents.tool_catalog import (
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
+from Tests.Agents.conftest import join_fleet_children
+
 
 def fence(name, args):
     return f"```tool_call\n{json.dumps({'name': name, 'arguments': args})}\n```"
@@ -386,6 +388,7 @@ def test_native_subagent_turns_also_carry_tools(db):
         api_endpoint="groq",
         should_cancel=lambda: False,
     )
+    join_fleet_children(service)  # PR3a-1 Task 2: the child outlives the turn
     assert outcome.status == RUN_DONE
     child_call = chat.child_calls["say hi"][0]
     assert child_call["messages_payload"][0]["content"].startswith(
@@ -513,6 +516,7 @@ def test_spawn_creates_linked_child_with_clean_context(db):
         config=CFG,
         api_endpoint="llama_cpp",
     )
+    join_fleet_children(service)  # PR3a-1 Task 2: the child outlives the turn
     assert outcome.status == RUN_DONE and outcome.subagents_spawned == 1
     runs = db.list_runs("c")
     child = next(r for r in runs if r["agent_kind"] == "subagent")
@@ -548,6 +552,7 @@ def test_run_turn_records_assistant_message_id_on_primary_only(db):
         api_endpoint="llama_cpp",
         assistant_message_id="a1",
     )
+    join_fleet_children(service)  # PR3a-1 Task 2: the child outlives the turn
     assert outcome.status == RUN_DONE and outcome.subagents_spawned == 1
     assert db.get_run(run_id)["assistant_message_id"] == "a1"
     child = next(r for r in db.list_runs("c") if r["agent_kind"] == "subagent")
@@ -661,6 +666,7 @@ def test_child_cannot_spawn(db):
         config=CFG,
         api_endpoint="llama_cpp",
     )
+    join_fleet_children(service)  # PR3a-1 Task 2: the child outlives the turn
     assert outcome.status == RUN_DONE
     assert db.count_subagent_runs("c") == 1  # no grandchildren
 
@@ -1635,6 +1641,7 @@ def test_named_spawn_appends_instructions_and_keeps_identity_prefix(db):
         config=CFG,
         api_endpoint="llama_cpp",
     )
+    join_fleet_children(service)  # PR3a-1 Task 2: the child outlives the turn
     assert outcome.status == RUN_DONE
     child_system = chat.child_calls["compute 6*7"][0]["messages_payload"][0]
     assert child_system["role"] == "system"
@@ -1671,6 +1678,7 @@ def test_named_spawn_intersects_allowlist_never_grants(db):
         config=CFG,
         api_endpoint="llama_cpp",
     )
+    join_fleet_children(service)  # PR3a-1 Task 2: the child outlives the turn
     # Channel-agnostic: disclosed schemas may ride the system prompt
     # (fence protocol) OR the tools= kwarg (native) — inspect the whole
     # provider call.
@@ -1699,6 +1707,7 @@ def test_named_spawn_model_override_same_endpoint(db):
         config=CFG,
         api_endpoint="llama_cpp",
     )
+    join_fleet_children(service)  # PR3a-1 Task 2: the child outlives the turn
     child_call = chat.child_calls["t"][0]
     assert child_call["model"] == "tiny-model"
     assert chat.parent_calls[0]["model"] == "test-model"
@@ -1733,6 +1742,7 @@ def test_unknown_agent_refused_without_burning_budget(db):
         config=cfg,
         api_endpoint="llama_cpp",
     )
+    join_fleet_children(service)  # PR3a-1 Task 2: the child outlives the turn
     # max_subagents=2: the unknown-agent refusal must not have consumed a
     # slot, so BOTH later spawns succeed.
     assert outcome.status == RUN_DONE
@@ -1762,6 +1772,7 @@ def test_named_spawn_records_audit_fields(db):
         config=CFG,
         api_endpoint="llama_cpp",
     )
+    join_fleet_children(service)  # PR3a-1 Task 2: the child outlives the turn
     child = next(
         r for r in db.list_runs("c") if r["agent_kind"] == "subagent"
     )

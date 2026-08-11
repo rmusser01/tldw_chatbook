@@ -46,6 +46,7 @@ from tldw_chatbook.Agents.tool_catalog import (
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
+from Tests.Agents.conftest import join_fleet_children
 from Tests.Agents.test_agent_service import FleetChat, verbatim
 
 # --- Step 1 unit tests (name + schema shape) --------------------------------
@@ -387,6 +388,7 @@ def test_subagent_can_also_dispatch_and_be_pinned_run_skill_script(tmp_path):
         ),
         api_endpoint="llama_cpp",
     )
+    join_fleet_children(service)  # PR3a-1 Task 2: the child outlives the turn
     assert outcome.status == RUN_DONE
 
     # Dispatch reached the CHILD.
