@@ -197,12 +197,58 @@ retained v2 backup, and only then start the older build. This necessarily
 accepts loss of post-migration profile changes, including all clone references
 and later profile or assignment edits.
 
-TASK-13203 provides storage and repository lifecycle only. It does not yet
-enable clone generation, reference setup in Speech Lab, typed adapter request
-materialization, or voice-bundle portability. Ordinary portable profile wire
-version 1 remains unchanged and contains no reference summary, bytes,
-transcript, digest, or source path. Explicit sensitive voice bundles are a
-separate later workstream.
+TASK-13204 adds execution for an exact reference already stored on a profile;
+it does not add reference setup controls in Speech Lab or voice-bundle
+portability. Ordinary portable profile wire version 1 remains unchanged and
+contains no reference summary, bytes, transcript, digest, or source path.
+Explicit sensitive voice bundles are a separate later workstream.
+
+#### Guided clone execution and materialization
+
+Character and default-profile resolution read the exact reference under the
+same repository generation and profile revision fences as the profile. A
+reference is eligible only when that one profile owns both the effective
+audio.cpp provider and exact model. Admission then freezes the registry's
+configuration revision and applied generation separately from the adapter's
+accepted recipe revision and managed process generation. A later saved or
+staged configuration cannot contaminate the admitted operation.
+
+Local reference paths are authorized only for a reviewed Guided Managed recipe
+running in the application-owned audio.cpp child. The source-authority
+preflight runs before readiness, catalog HTTP, or launch work, so External mode
+and Managed user-provided `server.json` fail closed without receiving or
+materializing the reference. After readiness, the adapter admits the exact
+model, optional native voice, reference policy, recipe, and process generation.
+There is no model, voice, provider, or non-clone fallback.
+
+Only after that admission does the service create an opaque owner-private
+operation directory below the Chatbook user-data
+`tts_clone_materializations` child. The internal adapter request carries a
+typed `voice_ref` path and `reference_text`; those fields never enter public
+`TTSRequest`, selection provenance, profile options, catalog state, or
+`server.json`. The response owns the materialization until underlying
+stream/adapter cleanup completes, after which the exact directory is removed
+before the provider lease and operation capacity are released.
+
+The materializer is lazy and POSIX-only. It retains a no-follow descriptor and
+nonblocking ownership lock, serializes publication and startup sweep with a
+root-scoped cross-instance lock, verifies effective-user ownership and
+owner-only modes, and removes only exact recognized unlocked directories.
+Unknown entries, links, substituted objects, and live owners are preserved.
+Service shutdown seals new materializations and
+`wait_closed()` retains all creation and cleanup work to a terminal result.
+The adapter repeats those retained-versus-lexical identity checks immediately
+before sending the path. Because audio.cpp opens a pathname rather than a file
+descriptor, this boundary does not claim to defend against a malicious process
+running as the same OS user racing the child after that check; owner-only
+runtime-root access is the operating-system isolation boundary.
+
+Reference audio, transcript, and the short-lived operation file are local
+plaintext, not encrypted. Once a clone request is admitted, child-output
+content is suppressed for that exact managed process generation so chunked or
+delayed echoes cannot retain the path or transcript in diagnostics. Public
+errors and response metadata remain value-independent. The next process
+generation starts with normal bounded sanitized diagnostics.
 
 Profiles persist generation selections, not connection or process
 configuration. Provider origins, credentials, API keys, custom headers, binary

@@ -93,6 +93,15 @@ class AudioCppReferenceRequirement(StrEnum):
     REQUIRED = "required"
 
 
+class AudioCppVoiceReferencePolicy(StrEnum):
+    """Exact native-voice/reference combinations admitted by one recipe."""
+
+    NATIVE_ONLY = "native_only"
+    REFERENCE_ONLY = "reference_only"
+    EITHER = "either"
+    BOTH_REQUIRED_COMBINED = "both_required_combined"
+
+
 def _unsafe_text(value: str) -> bool:
     return any(
         character in {"\x00", "\r", "\n"}
@@ -224,6 +233,7 @@ class AudioCppPackageRecipe:
     projection: AudioCppSafeModelProjection
     default_public_model_id: str
     reference_requirement: AudioCppReferenceRequirement
+    voice_reference_policy: AudioCppVoiceReferencePolicy
     backend_evidence: tuple[AudioCppBackendEvidence, ...]
     support_state: AudioCppRecipeSupportState
     evidence_reference: str
@@ -241,8 +251,16 @@ class AudioCppPackageRecipe:
         )
         if any(type(value) is not tuple for value in tuple_fields):
             raise ValueError("audio.cpp recipe collections must be immutable tuples")
-        if not isinstance(self.package_format, AudioCppFileKind) or not isinstance(
-            self.reference_requirement, AudioCppReferenceRequirement
+        if (
+            not isinstance(self.package_format, AudioCppFileKind)
+            or not isinstance(
+                self.reference_requirement,
+                AudioCppReferenceRequirement,
+            )
+            or not isinstance(
+                self.voice_reference_policy,
+                AudioCppVoiceReferencePolicy,
+            )
         ):
             raise ValueError("audio.cpp recipe classification is invalid")
         if not all(
@@ -301,6 +319,32 @@ class AudioCppPackageRecipe:
             raise ValueError("audio.cpp recipe capabilities are invalid")
         if len(self.capabilities) != len(set(self.capabilities)):
             raise ValueError("audio.cpp recipe capabilities must be unique")
+        expected_reference_contracts = {
+            AudioCppVoiceReferencePolicy.NATIVE_ONLY: (
+                AudioCppReferenceRequirement.NONE,
+                False,
+            ),
+            AudioCppVoiceReferencePolicy.REFERENCE_ONLY: (
+                AudioCppReferenceRequirement.REQUIRED,
+                True,
+            ),
+            AudioCppVoiceReferencePolicy.EITHER: (
+                AudioCppReferenceRequirement.OPTIONAL,
+                True,
+            ),
+            AudioCppVoiceReferencePolicy.BOTH_REQUIRED_COMBINED: (
+                AudioCppReferenceRequirement.REQUIRED,
+                True,
+            ),
+        }
+        expected_requirement, requires_clone = expected_reference_contracts[
+            self.voice_reference_policy
+        ]
+        if (
+            self.reference_requirement is not expected_requirement
+            or ("clone" in self.capabilities) is not requires_clone
+        ):
+            raise ValueError("audio.cpp recipe voice reference policy is invalid")
         if not self.backend_evidence:
             raise ValueError("audio.cpp recipe requires backend posture")
         if (
@@ -319,6 +363,27 @@ class AudioCppPackageRecipe:
             raise ValueError("audio.cpp recipe source links must be pinned HTTPS links")
         for artifact_id in self.model_library_artifact_ids:
             _require_token(artifact_id, "model library artifact id")
+
+    def admits_voice_reference(
+        self,
+        *,
+        has_voice: bool,
+        has_reference: bool,
+    ) -> bool:
+        """Return whether this recipe admits the exact request combination."""
+
+        if type(has_voice) is not bool or type(has_reference) is not bool:
+            raise TypeError("audio.cpp voice/reference markers must be boolean")
+        if self.voice_reference_policy is AudioCppVoiceReferencePolicy.NATIVE_ONLY:
+            return not has_reference
+        if (
+            self.voice_reference_policy
+            is AudioCppVoiceReferencePolicy.REFERENCE_ONLY
+        ):
+            return has_reference and not has_voice
+        if self.voice_reference_policy is AudioCppVoiceReferencePolicy.EITHER:
+            return not (has_voice and has_reference)
+        return has_voice and has_reference
 
 
 @dataclass(frozen=True, slots=True)
@@ -714,6 +779,7 @@ def _recipe(
     language: str | None = None,
     recipe_revision: int = 1,
     reference_requirement: AudioCppReferenceRequirement | None = None,
+    voice_reference_policy: AudioCppVoiceReferencePolicy | None = None,
 ) -> AudioCppPackageRecipe:
     options = (
         ()
@@ -750,6 +816,15 @@ def _recipe(
             else AudioCppReferenceRequirement.OPTIONAL
             if "clone" in capabilities
             else AudioCppReferenceRequirement.NONE
+        ),
+        voice_reference_policy=(
+            voice_reference_policy
+            if voice_reference_policy is not None
+            else AudioCppVoiceReferencePolicy.REFERENCE_ONLY
+            if reference_requirement is AudioCppReferenceRequirement.REQUIRED
+            else AudioCppVoiceReferencePolicy.EITHER
+            if "clone" in capabilities
+            else AudioCppVoiceReferencePolicy.NATIVE_ONLY
         ),
         backend_evidence=_EXPECTED_CPU_BACKENDS,
         support_state=AudioCppRecipeSupportState.APPROVED,
@@ -1023,5 +1098,6 @@ __all__ = (
     "AudioCppReferenceRequirement",
     "AudioCppReleaseAccountingEntry",
     "AudioCppVerifiedSupportClaim",
+    "AudioCppVoiceReferencePolicy",
     "audio_cpp_guided_default_is_text_ready",
 )

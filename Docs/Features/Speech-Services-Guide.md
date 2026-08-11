@@ -120,10 +120,37 @@ Removal is best-effort deletion, not forensic erasure: copies may remain in
 backups, filesystem snapshots, SQLite recovery data, or storage media. The
 Windows privacy posture remains unverified until TASK-13208.
 
-This storage slice does not yet enable clone generation, a clone-reference
-setup control, or voice-bundle portability. Ordinary profile/card portability
+Profiles that already contain a reference can now use it for compatible Guided
+Managed audio.cpp generation. Chatbook does not yet provide a clone-reference
+setup control or voice-bundle portability. Ordinary profile/card portability
 remains wire version 1 and omits reference metadata, audio, transcript, digest,
 and source paths. Do not treat an ordinary profile export as a reference backup.
+
+For clone generation, Chatbook freezes the exact profile/reference revision,
+then verifies a reviewed clone-capable Guided recipe and the exact
+application-owned managed process generation. Only after acceptance does it
+create an opaque owner-private temporary WAV below Chatbook's user-data area.
+The local request sends typed `voice_ref` and `reference_text` fields to that
+owned child. The file remains available through audio-response cleanup and is
+then removed before Chatbook releases the provider operation.
+
+External audio.cpp servers and Managed setups using your own `server.json`
+never receive a client-local reference path. A reference-bearing profile used
+with either setup fails safely without switching provider, model, or voice. Use
+a reviewed Guided Managed package that declares clone support, or edit/select a
+profile that does not require a reference.
+
+The temporary reference is local plaintext, not encrypted. On supported POSIX
+hosts Chatbook uses owner-only directories, no-follow descriptor checks, and a
+live ownership lock. Startup cleanup removes only recognized unlocked
+Chatbook-owned operation directories; unknown paths and live owners are left
+alone. Chatbook rechecks the path identity immediately before the request, but
+audio.cpp must still open that pathname, so other processes running as your
+same OS user are outside this isolation boundary. Child-output content is
+suppressed for a process generation after its first clone admission so delayed
+path or transcript echoes do not enter the diagnostics view. Windows managed
+materialization remains deferred; use an External server there, which
+intentionally cannot receive local references.
 
 When Chatbook first opens a version 2 profile store, it creates and validates a
 retained v2 pre-migration backup before migrating to version 3. Older Chatbook

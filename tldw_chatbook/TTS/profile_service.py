@@ -28,6 +28,10 @@ from tldw_chatbook.TTS.profile_errors import (
     ProfileServiceError,
     ProfileValidationError,
 )
+from tldw_chatbook.TTS.profile_reference_types import (
+    TTSCloneReference,
+    TTSCloneReferenceSummary,
+)
 from tldw_chatbook.TTS.profile_types import (
     AUDIO_CPP_PROFILE_SPEED,
     PROFILE_PROVIDER_FORMATS,
@@ -61,6 +65,10 @@ _TTS_PROFILE_COLLISION_SNAPSHOT_TYPE: type[TTSProfileCollisionSnapshot] = (
 )
 _TTS_GENERATION_PROFILE_TYPE: type[TTSGenerationProfile] = TTSGenerationProfile
 _TTS_PROFILE_DRAFT_TYPE: type[TTSProfileDraft] = TTSProfileDraft
+_TTS_CLONE_REFERENCE_TYPE: type[TTSCloneReference] = TTSCloneReference
+_TTS_CLONE_REFERENCE_SUMMARY_TYPE: type[TTSCloneReferenceSummary] = (
+    TTSCloneReferenceSummary
+)
 _PORTABLE_TTS_PROFILE_TYPE: type[PortableTTSProfile] = PortableTTSProfile
 _TTS_NATIVE_CAPABILITY_SNAPSHOT_TYPE: type[TTSNativeCapabilitySnapshot] = (
     TTSNativeCapabilitySnapshot
@@ -165,6 +173,14 @@ class _ProfileRepositoryProtocol(Protocol):
         self,
         profile_id: UUID,
     ) -> ProfileStoreResult[TTSGenerationProfile]: ...
+
+    async def get_reference(
+        self,
+        profile_id: UUID,
+        *,
+        expected_revision: int,
+        expected_generation: int,
+    ) -> ProfileStoreResult[TTSCloneReference]: ...
 
 
 @runtime_checkable
@@ -394,6 +410,52 @@ def _canonicalize_exact_profile_id(value: object) -> UUID:
     return canonical
 
 
+def _canonicalize_exact_reference_summary(
+    value: object,
+) -> TTSCloneReferenceSummary:
+    """Return a fresh exact private-reference summary or fail closed."""
+
+    if type(value) is not _TTS_CLONE_REFERENCE_SUMMARY_TYPE:
+        raise ProfileValidationError("reference_invalid")
+    summary = cast(TTSCloneReferenceSummary, value)
+    try:
+        canonical = TTSCloneReferenceSummary(
+            reference_id=_canonicalize_exact_profile_id(summary.reference_id),
+            byte_length=summary.byte_length,
+            duration_ms=summary.duration_ms,
+            sample_rate_hz=summary.sample_rate_hz,
+            channels=summary.channels,
+            sample_encoding=summary.sample_encoding,
+            created_at=summary.created_at,
+            updated_at=summary.updated_at,
+        )
+    except Exception:
+        raise ProfileValidationError("reference_invalid") from None
+    if canonical != summary:
+        raise ProfileValidationError("reference_invalid")
+    return canonical
+
+
+def _canonicalize_exact_reference(value: object) -> TTSCloneReference:
+    """Return a fresh exact private reference without exposing its values."""
+
+    if type(value) is not _TTS_CLONE_REFERENCE_TYPE:
+        raise ProfileValidationError("reference_invalid")
+    reference = cast(TTSCloneReference, value)
+    try:
+        canonical = TTSCloneReference(
+            summary=_canonicalize_exact_reference_summary(reference.summary),
+            reference_text=reference.reference_text,
+            sha256=reference.sha256,
+            wav_bytes=reference.wav_bytes,
+        )
+    except Exception:
+        raise ProfileValidationError("reference_invalid") from None
+    if canonical != reference:
+        raise ProfileValidationError("reference_invalid")
+    return canonical
+
+
 def _canonicalize_exact_profile(value: object) -> TTSGenerationProfile:
     """Return a fresh profile only when every source field is already canonical."""
 
@@ -417,6 +479,11 @@ def _canonicalize_exact_profile(value: object) -> TTSGenerationProfile:
             revision=profile.revision,
             created_at=profile.created_at,
             updated_at=profile.updated_at,
+            reference=(
+                None
+                if profile.reference is None
+                else _canonicalize_exact_reference_summary(profile.reference)
+            ),
         )
         valid = all(
             _matches_exact_canonical_value(source, expected)
@@ -433,6 +500,7 @@ def _canonicalize_exact_profile(value: object) -> TTSGenerationProfile:
                 (profile.revision, canonical.revision),
                 (profile.created_at, canonical.created_at),
                 (profile.updated_at, canonical.updated_at),
+                (profile.reference, canonical.reference),
             )
         )
     except Exception:  # noqa: BLE001 - hostile profile values fail closed
@@ -1219,6 +1287,49 @@ class TTSProfileService:
             repository_generation=generation,
             profile=profile,
         )
+
+    async def get_reference(
+        self,
+        profile_id: UUID,
+        *,
+        expected_revision: int,
+        expected_generation: int,
+    ) -> TTSCloneReference:
+        """Read and revalidate one exact private reference under store fences."""
+
+        canonical_id = _canonicalize_exact_profile_id(profile_id)
+        if type(expected_revision) is not int or expected_revision < 1:
+            raise ProfileValidationError("revision")
+        generation = _validate_nonnegative_integer(
+            expected_generation,
+            "generation",
+        )
+        failed = False
+        result = None
+        try:
+            result = await self._repository.get_reference(
+                canonical_id,
+                expected_revision=expected_revision,
+                expected_generation=generation,
+            )
+        except (ProfileRepositoryError, ProfileValidationError):
+            raise
+        except Exception:  # noqa: BLE001 - hide private collaborator detail
+            failed = True
+        if failed or result is None:
+            raise ProfileServiceError("operation_failed")
+
+        value = self._require_admitted_store_result(result, generation)
+        reference: TTSCloneReference | None = None
+        validation_failed = False
+        try:
+            reference = _canonicalize_exact_reference(value)
+        except Exception:  # noqa: BLE001 - hostile private values fail closed
+            validation_failed = True
+        if validation_failed or reference is None:
+            raise ProfileServiceError("operation_failed")
+        self._require_repository_generation(generation)
+        return reference
 
     async def observe_availability(
         self,

@@ -1182,6 +1182,8 @@ class TTSEventHandler:
                                     resolution.repository_generation
                                 ),
                                 profile_revision=resolution.profile_revision,
+                                profile_id=resolution.profile_id,
+                                reference=resolution.reference,
                             ),
                             progress_sink=progress_sink,
                         )
@@ -1198,6 +1200,8 @@ class TTSEventHandler:
                                     resolution.repository_generation
                                 ),
                                 profile_revision=resolution.profile_revision,
+                                profile_id=resolution.profile_id,
+                                reference=resolution.reference,
                             ),
                             progress_sink=progress_sink,
                         )

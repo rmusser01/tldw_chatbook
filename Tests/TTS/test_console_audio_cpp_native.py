@@ -793,6 +793,10 @@ async def test_assigned_console_snapshot_uses_exact_profile_and_complete_wav(
         assert character_profile.selection.voice_id == "assigned-voice"
         assert character_profile.repository_generation == 3
         assert character_profile.profile_revision == 5
+        assert character_profile.profile_id == UUID(
+            "11111111-1111-4111-8111-111111111111"
+        )
+        assert character_profile.reference is None
         assert callable(progress_sink)
         assert profile_service.calls == [snapshot.character_ref]
         assert artifact is not None

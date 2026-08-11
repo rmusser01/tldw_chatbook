@@ -56,6 +56,7 @@ _ASSIGNMENT_SECRET_RE = re.compile(
 )
 _BEARER_SECRET_RE = re.compile(r"(?i)(\bbearer\s+)[^\s,;]+")
 _REDACTION = "<redacted>"
+_AUDIO_CPP_SUPERVISOR_OWNER_TOKEN = object()
 _ASYNCIO_SPAWN_LOG_SUPPRESSION_ACTIVE: ContextVar[bool] = ContextVar(
     "audio_cpp_asyncio_spawn_log_suppression_active",
     default=False,
@@ -124,6 +125,7 @@ class _AudioCppDiagnosticRing:
         self._retained_bytes = 0
         self._dropped_lines = 0
         self._streams = self._new_streams()
+        self._content_suppressed = False
 
     @staticmethod
     def _new_streams() -> dict[_DiagnosticStream, _DiagnosticStreamState]:
@@ -136,12 +138,16 @@ class _AudioCppDiagnosticRing:
             stream: Child pipe that produced the chunk.
             chunk: Raw bytes read from that pipe.
         """
+        if self._content_suppressed:
+            return
         state = self._streams[stream]
         decoded = state.decoder.decode(chunk, final=False)
         self._consume_decoded(stream, state, decoded)
 
     def finish(self, stream: _DiagnosticStream) -> None:
         """Flush a child pipe's decoder and its final unterminated line."""
+        if self._content_suppressed:
+            return
         state = self._streams[stream]
         decoded = state.decoder.decode(b"", final=True)
         self._consume_decoded(stream, state, decoded)
@@ -161,6 +167,15 @@ class _AudioCppDiagnosticRing:
         self._retained_bytes = 0
         self._dropped_lines = 0
         self._streams = self._new_streams()
+        self._content_suppressed = False
+
+    def suppress_content(self) -> None:
+        """Discard all child content for the remainder of this generation."""
+        self._entries.clear()
+        self._retained_bytes = 0
+        self._dropped_lines = 0
+        self._streams = self._new_streams()
+        self._content_suppressed = True
 
     def _consume_decoded(
         self,
@@ -510,6 +525,7 @@ class AudioCppSupervisor:
         monotonic: Callable[[], float] = time.monotonic,
         sleep: _Sleep = asyncio.sleep,
     ) -> None:
+        self._application_owner_token = _AUDIO_CPP_SUPERVISOR_OWNER_TOKEN
         credentials = collect_provider_credential_environment_names({})
         if provider_credential_names is not None:
             credentials = credentials.union(provider_credential_names)
@@ -591,6 +607,20 @@ class AudioCppSupervisor:
             state=self._state,
             stage_application_eligible=eligible,
         )
+
+    def suppress_clone_diagnostics(self, process_generation: int) -> bool:
+        """Suppress child content for one exact live clone-capable generation."""
+        record = self._generation
+        if (
+            type(process_generation) is not int
+            or record is None
+            or record.generation != process_generation
+            or record.owned.process.returncode is not None
+            or self._state not in {"running", "draining"}
+        ):
+            return False
+        self._diagnostics.suppress_content()
+        return True
 
     async def ensure_running(
         self,

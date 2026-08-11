@@ -6,6 +6,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import UUID
 import tomllib
 
 from loguru import logger
@@ -192,6 +193,7 @@ async def test_studio_save_reset_and_preview_preserve_other_owners(
         ),
         repository_generation=11,
         profile_revision=3,
+        profile_id=UUID("11111111-1111-4111-8111-111111111111"),
     )
     roleplay_effective = await TTSEffectiveSettingsResolver().resolve_non_studio(
         character_profile=character,

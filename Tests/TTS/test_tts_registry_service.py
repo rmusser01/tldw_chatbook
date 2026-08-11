@@ -335,6 +335,10 @@ async def test_admit_owns_revision_matched_lease_before_execution_and_response_c
         expected_configuration_revision=1,
     )
 
+    lease = operation._resources._lease
+    assert lease.configuration_revision == 1
+    assert lease.applied_generation == 0
+
     assert service._operation_limit._value == 0
     assert registry._total_leases() == 1
     assert adapter.ensure_ready_calls == 0

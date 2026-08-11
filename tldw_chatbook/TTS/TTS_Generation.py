@@ -32,6 +32,7 @@ from tldw_chatbook.TTS.adapter_registry import (
     TTSReconfigurationTicket,
 )
 from tldw_chatbook.TTS.adapter_types import (
+    AudioCppCloneCapabilityAdmission,
     CapabilitySnapshotState,
     CleanupCallback,
     ProgressSink,
@@ -39,6 +40,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSAudioResponse,
     TTSNativeCapabilityObservation,
     TTSNativeCapabilitySnapshot,
+    TTSNativeCloneAdapter,
     TTSOperationError,
     TTSProgress,
     TTSProviderCatalog,
@@ -47,6 +49,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSRequest,
     TTSStructuredVoiceAdapter,
     TTSVoiceDiscoveryResult,
+    _new_admitted_audio_cpp_clone_request,
 )
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
@@ -72,7 +75,15 @@ from tldw_chatbook.TTS.effective_settings import (
     TTSSelectionOverrides,
     TTSStudioDraftSelection,
 )
-from tldw_chatbook.TTS.request_admission import TTSRequestAdmissionCoordinator
+from tldw_chatbook.TTS.profile_reference_materialization import (
+    TTSCloneMaterializationError,
+    TTSCloneReferenceMaterialization,
+    TTSCloneReferenceMaterializer,
+)
+from tldw_chatbook.TTS.request_admission import (
+    TTSRequestAdmissionCoordinator,
+    _ResolvedTTSCloneExecution,
+)
 from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferencesSnapshot
 
 logger = logging.getLogger(__name__)
@@ -330,6 +341,8 @@ class _ManagedAudioResponse(TTSAudioResponse):
         response: TTSAudioResponse,
         resources: _OperationResources,
         on_closed: Callable[["_ManagedAudioResponse"], None],
+        *,
+        protected_close_chain: bool = False,
     ) -> None:
         super().__init__(
             provider_id=response.provider_id,
@@ -343,6 +356,7 @@ class _ManagedAudioResponse(TTSAudioResponse):
         self._response = response
         self._resources = resources
         self._on_closed = on_closed
+        self._protected_close_chain = protected_close_chain
         self._response_close_task: asyncio.Task[None] | None = None
 
     def add_cleanup(self, callback: CleanupCallback) -> None:
@@ -354,6 +368,8 @@ class _ManagedAudioResponse(TTSAudioResponse):
         return self._response_close_task
 
     def start_resource_release(self) -> asyncio.Task[None]:
+        if self._protected_close_chain:
+            return self.start_close()
         return self._resources.start_close()
 
     async def aclose(self) -> None:
@@ -383,11 +399,13 @@ class _AdmittedTTSOperation:
         close_signal: asyncio.Event,
         on_finished: Callable[["_AdmittedTTSOperation"], None],
         manage_response: Callable[
-            [TTSAudioResponse, _OperationResources],
+            [TTSAudioResponse, _OperationResources, bool],
             _ManagedAudioResponse,
         ],
         observe_cleanup: Callable[[asyncio.Task[None]], None],
         audio_cpp_preparation: _AudioCppPreparation | None,
+        clone_execution: _ResolvedTTSCloneExecution | None,
+        clone_materializer: TTSCloneReferenceMaterializer | None,
     ) -> None:
         self._request = request
         self._resources = resources
@@ -396,10 +414,14 @@ class _AdmittedTTSOperation:
         self._manage_response = manage_response
         self._observe_cleanup = observe_cleanup
         self._audio_cpp_preparation = audio_cpp_preparation
+        self._clone_execution = clone_execution
+        self._clone_materializer = clone_materializer
         self._claimed = False
         self._used = False
         self._executing = False
         self._close_task: asyncio.Task[None] | None = None
+        self._shutdown_wait_task: asyncio.Task[None] | None = None
+        self._finished = asyncio.Event()
 
     def claim(self) -> None:
         """Transfer a pending operation to its immediate execution owner."""
@@ -429,16 +451,77 @@ class _AdmittedTTSOperation:
         lease = self._resources._lease
         safe_sink = _isolate_progress_sink(progress_sink)
         generation_changed = False
+        materialization: TTSCloneReferenceMaterialization | None = None
+        capability: AudioCppCloneCapabilityAdmission | None = None
         try:
             with _adapter_admission_scope(
                 lease.adapter,
                 self._audio_cpp_preparation,
             ):
                 await lease.adapter.ensure_ready()
-                response = await lease.adapter.synthesize(self._request, safe_sink)
+                if self._clone_execution is None:
+                    response = await lease.adapter.synthesize(self._request, safe_sink)
+                else:
+                    adapter = lease.adapter
+                    materializer = self._clone_materializer
+                    if not isinstance(adapter, TTSNativeCloneAdapter) or materializer is None:
+                        raise TTSOperationError(
+                            code="request_invalid",
+                            message="The selected TTS request is unavailable",
+                            retryable=False,
+                            operation_id=uuid4().hex,
+                            recovery_action="check_profile",
+                        ) from None
+                    capability = adapter.admit_clone_capability(self._request)
+                    materialization_failure: str | None = None
+                    try:
+                        materialization = await materializer.materialize(
+                            self._clone_execution.reference
+                        )
+                    except TTSCloneMaterializationError as error:
+                        materialization_failure = error.code
+                    if materialization_failure is not None:
+                        if materialization_failure == "closed":
+                            raise TTSOperationError(
+                                code="connection_unavailable",
+                                message="Clone reference materialization is unavailable",
+                                retryable=True,
+                                operation_id=uuid4().hex,
+                                recovery_action="retry",
+                            ) from None
+                        raise TTSOperationError(
+                            code=(
+                                "request_invalid"
+                                if materialization_failure == "unsupported"
+                                else "generation_failed"
+                            ),
+                            message="Clone reference materialization is unavailable",
+                            retryable=False,
+                            operation_id=uuid4().hex,
+                            recovery_action="check_profile",
+                        ) from None
+                    assert materialization is not None
+                    admitted_request = _new_admitted_audio_cpp_clone_request(
+                        request=self._request,
+                        materialization=materialization,
+                        capability=capability,
+                        provider_revision=lease.configuration_revision,
+                        applied_provider_generation=lease.applied_generation,
+                    )
+                    response = await adapter.synthesize_clone(
+                        admitted_request,
+                        safe_sink,
+                    )
+                    response.add_cleanup(materialization.aclose)
+                    materialization = None
+                    capability = None
         except _AudioCppGenerationChanged:
             generation_changed = True
         except BaseException as error:
+            if capability is not None and isinstance(lease.adapter, TTSNativeCloneAdapter):
+                lease.adapter.release_clone_capability(capability)
+            if materialization is not None:
+                await _cleanup_preserving_primary(materialization.aclose, error)
             try:
                 await _cleanup_preserving_primary(self._resources.close, error)
             finally:
@@ -472,7 +555,11 @@ class _AdmittedTTSOperation:
                     operation_id=uuid4().hex,
                     recovery_action="check_provider",
                 )
-            managed_response = self._manage_response(response, self._resources)
+            managed_response = self._manage_response(
+                response,
+                self._resources,
+                self._clone_execution is not None,
+            )
         except BaseException as error:
 
             async def close_unmanaged_response() -> None:
@@ -522,10 +609,19 @@ class _AdmittedTTSOperation:
         """Release resources for an operation still tracked after the drain."""
         if self._claimed and not self._used:
             return None
+        if self._clone_execution is not None and self._executing:
+            if self._shutdown_wait_task is None:
+                self._shutdown_wait_task = asyncio.create_task(
+                    self._wait_until_finished()
+                )
+            return self._shutdown_wait_task
         if self._close_task is None:
             self._used = True
             self._close_task = asyncio.create_task(self._close())
         return self._close_task
+
+    async def _wait_until_finished(self) -> None:
+        await self._finished.wait()
 
     async def _close(self) -> None:
         try:
@@ -535,6 +631,7 @@ class _AdmittedTTSOperation:
 
     def _finish_tracking(self) -> None:
         self._executing = False
+        self._finished.set()
         self._on_finished(self)
 
 
@@ -551,11 +648,13 @@ class TTSService:
         | None = None,
         native_capability_reader: NativeCapabilityReader | None = None,
         audio_cpp_supervisor: AudioCppSupervisor | None = None,
+        clone_materializer: TTSCloneReferenceMaterializer | None = None,
     ) -> None:
         if max_concurrent_operations < 1:
             raise ValueError("max_concurrent_operations must be positive")
         self.registry = registry
         self._audio_cpp_supervisor = audio_cpp_supervisor
+        self._clone_materializer = clone_materializer
         self._audio_cpp_preparation: ContextVar[_AudioCppPreparation | None] = (
             ContextVar(
                 f"tts_audio_cpp_preparation_{id(self)}",
@@ -717,6 +816,8 @@ class TTSService:
         Returns:
             A single-use operation that owns its admitted resources.
         """
+        if type(request) is not TTSRequest:
+            raise TypeError("TTS request is invalid")
         reservation: _OperationCapacityReservation | None = None
         try:
             reservation = await self._reserve_operation_capacity()
@@ -747,12 +848,34 @@ class TTSService:
         await self._acquire_operation_slot()
         return _OperationCapacityReservation(self._operation_limit)
 
+    async def _preflight_audio_cpp_clone_source(self) -> None:
+        """Reject unauthorized clone sources before readiness or catalog I/O."""
+        revision = self.configuration_revision("audio_cpp")
+        lease = await self.registry.acquire("audio_cpp", expected_revision=revision)
+        try:
+            adapter = lease.adapter
+            if not isinstance(adapter, TTSNativeCloneAdapter):
+                raise TTSOperationError(
+                    code="request_invalid",
+                    message="The selected TTS request is unavailable",
+                    retryable=False,
+                    operation_id=uuid4().hex,
+                    recovery_action="check_profile",
+                ) from None
+            adapter.preflight_clone_source()
+        except BaseException as error:
+            await _cleanup_preserving_primary(lease.release, error)
+            raise
+        else:
+            await lease.release()
+
     async def _admit_reserved(
         self,
         request: TTSRequest,
         reservation: _OperationCapacityReservation,
         *,
         expected_configuration_revision: int | None = None,
+        clone_execution: _ResolvedTTSCloneExecution | None = None,
     ) -> _AdmittedTTSOperation:
         """Acquire a provider lease using capacity reserved by this service."""
         try:
@@ -765,6 +888,24 @@ class TTSService:
             raise
 
         preparation = self._audio_cpp_preparation.get()
+        if clone_execution is not None:
+            adapter = lease.adapter
+            try:
+                if lease.provider_id != "audio_cpp" or not isinstance(
+                    adapter, TTSNativeCloneAdapter
+                ):
+                    raise TTSOperationError(
+                        code="request_invalid",
+                        message="The selected TTS request is unavailable",
+                        retryable=False,
+                        operation_id=uuid4().hex,
+                        recovery_action="check_profile",
+                    ) from None
+                adapter.preflight_clone_source()
+            except BaseException as error:
+                await _cleanup_preserving_primary(lease.release, error)
+                reservation.release_if_untransferred()
+                raise
         if preparation is not None and lease.provider_id == "audio_cpp":
             try:
                 configuration_revision = self.configuration_revision("audio_cpp")
@@ -802,6 +943,8 @@ class TTSService:
             manage_response=self._manage_response,
             observe_cleanup=self._observe_shutdown_result,
             audio_cpp_preparation=preparation,
+            clone_execution=clone_execution,
+            clone_materializer=self._clone_materializer,
         )
         self._admitted_operations.add(operation)
         if self._close_signal.is_set():
@@ -832,6 +975,8 @@ class TTSService:
         Returns:
             A response that releases its registry lease when closed.
         """
+        if type(request) is not TTSRequest:
+            raise TypeError("TTS request is invalid")
         operation = await self.admit(request)
         return await operation.synthesize(progress_sink)
 
@@ -841,6 +986,8 @@ class TTSService:
         progress_sink: ProgressSink | None = None,
     ) -> tuple[TTSAudioResponse, TTSRequestedSelectionSnapshot]:
         """Synthesize one exact native request with admitted provenance."""
+        if type(request) is not TTSRequest:
+            raise TypeError("TTS request is invalid")
         if type(request.provider_id) is not str or request.provider_id != "audio_cpp":
             raise ValueError("Exact provenance requires exact audio_cpp provider")
         return await self._request_admission.synthesize_exact(
@@ -2570,6 +2717,8 @@ class TTSService:
     def _start_close(self) -> tuple[asyncio.Task[None], asyncio.Task[None]]:
         if self._registry_close_task is None:
             self._close_signal.set()
+            if self._clone_materializer is not None:
+                self._clone_materializer.seal()
             publication_tasks = tuple(self._settings_publication_tasks)
             lifecycle_tasks = tuple(self._audio_cpp_lifecycle_tasks)
             operation_tasks = tuple(
@@ -2663,6 +2812,11 @@ class TTSService:
                     response_task.result()
                 except BaseException as error:
                     failures.append(error)
+            if self._clone_materializer is not None:
+                try:
+                    await self._clone_materializer.close()
+                except BaseException as error:
+                    failures.append(error)
         except BaseException as error:
             failures.append(error)
         finally:
@@ -2682,11 +2836,13 @@ class TTSService:
         self,
         response: TTSAudioResponse,
         resources: _OperationResources,
+        protected_close_chain: bool = False,
     ) -> _ManagedAudioResponse:
         managed_response = _ManagedAudioResponse(
             response,
             resources,
             self._responses.discard,
+            protected_close_chain=protected_close_chain,
         )
         self._responses.add(managed_response)
         return managed_response

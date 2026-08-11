@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import fields
+from uuid import UUID
+
 import pytest
 
 from tldw_chatbook.TTS.adapter_types import (
@@ -26,6 +28,9 @@ from tldw_chatbook.TTS.studio_preferences import (
     StudioTTSPreferencesSnapshot,
     StudioTTSSelectionOverrides,
 )
+
+_CHARACTER_PROFILE_ID = UUID("11111111-1111-4111-8111-111111111111")
+_DEFAULT_PROFILE_ID = UUID("22222222-2222-4222-8222-222222222222")
 
 
 @pytest.mark.asyncio
@@ -246,6 +251,7 @@ async def test_normal_resolution_applies_explicit_then_character_then_global() -
         ),
         repository_generation=9,
         profile_revision=6,
+        profile_id=_CHARACTER_PROFILE_ID,
     )
 
     resolved = await TTSEffectiveSettingsResolver().resolve_non_studio(
@@ -740,6 +746,7 @@ async def test_incomplete_character_profile_blocks_instead_of_using_global_value
         ),
         repository_generation=2,
         profile_revision=3,
+        profile_id=_CHARACTER_PROFILE_ID,
     )
 
     with pytest.raises(TTSEffectiveResolutionError) as caught:
@@ -1115,6 +1122,7 @@ async def test_default_profile_wins_over_global_and_loses_to_character() -> None
         ),
         repository_generation=4,
         profile_revision=2,
+        profile_id=_DEFAULT_PROFILE_ID,
     )
     resolved = await TTSEffectiveSettingsResolver().resolve_non_studio(
         default_profile=default_profile,
@@ -1150,6 +1158,7 @@ async def test_character_profile_outranks_default_profile() -> None:
         ),
         repository_generation=9,
         profile_revision=6,
+        profile_id=_CHARACTER_PROFILE_ID,
     )
     default_profile = TTSDefaultProfileSelection(
         selection=TTSSelectionOverrides(
@@ -1164,6 +1173,7 @@ async def test_character_profile_outranks_default_profile() -> None:
         ),
         repository_generation=4,
         profile_revision=2,
+        profile_id=_DEFAULT_PROFILE_ID,
     )
     resolved = await TTSEffectiveSettingsResolver().resolve_non_studio(
         character_profile=character,
@@ -1214,6 +1224,7 @@ async def test_incomplete_default_profile_blocks_instead_of_using_global_values(
         ),
         repository_generation=2,
         profile_revision=3,
+        profile_id=_DEFAULT_PROFILE_ID,
     )
 
     with pytest.raises(TTSEffectiveResolutionError) as caught:

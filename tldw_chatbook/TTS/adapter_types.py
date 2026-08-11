@@ -8,6 +8,10 @@ from datetime import datetime
 from types import MappingProxyType
 from typing import Any, Literal, Protocol, runtime_checkable
 
+from tldw_chatbook.TTS.profile_reference_materialization import (
+    TTSCloneReferenceMaterialization,
+)
+
 ProgressSink = Callable[["TTSProgress"], Awaitable[None]]
 CleanupCallback = Callable[[], Awaitable[None]]
 ProviderFactory = Callable[[Mapping[str, Any]], "TTSAdapter"]
@@ -165,6 +169,226 @@ class TTSRequest:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "options", MappingProxyType(dict(self.options)))
+
+
+_AUDIO_CPP_CLONE_CAPABILITY_TOKEN = object()
+
+
+class AudioCppCloneCapabilityAdmission:
+    """Opaque, adapter-issued authority for one exact native clone request."""
+
+    _adapter_identity: object
+    _capability_token: object
+    _model_id: str
+    _materialization: TTSCloneReferenceMaterialization | None
+    _provider_revision: int | None
+    _applied_provider_generation: int | None
+    _process_generation: int
+    _recipe_id: str
+    _recipe_revision: int
+    _request: TTSRequest
+
+    __slots__ = (
+        "_adapter_identity",
+        "_capability_token",
+        "_model_id",
+        "_materialization",
+        "_provider_revision",
+        "_applied_provider_generation",
+        "_process_generation",
+        "_recipe_id",
+        "_recipe_revision",
+        "_request",
+    )
+
+    def __init__(
+        self,
+        constructor_token: object,
+        *,
+        adapter_identity: object,
+        capability_token: object,
+        model_id: str,
+        recipe_id: str,
+        recipe_revision: int,
+        process_generation: int,
+        request: TTSRequest,
+    ) -> None:
+        if constructor_token is not _AUDIO_CPP_CLONE_CAPABILITY_TOKEN:
+            raise TypeError("Clone capabilities cannot be constructed directly")
+        object.__setattr__(self, "_adapter_identity", adapter_identity)
+        object.__setattr__(self, "_capability_token", capability_token)
+        object.__setattr__(self, "_model_id", model_id)
+        object.__setattr__(self, "_materialization", None)
+        object.__setattr__(self, "_provider_revision", None)
+        object.__setattr__(self, "_applied_provider_generation", None)
+        object.__setattr__(self, "_recipe_id", recipe_id)
+        object.__setattr__(self, "_recipe_revision", recipe_revision)
+        object.__setattr__(self, "_process_generation", process_generation)
+        object.__setattr__(self, "_request", request)
+
+    def __setattr__(self, _name: str, _value: object) -> None:
+        raise AttributeError("Audio.cpp clone capabilities are immutable")
+
+    @property
+    def model_id(self) -> str:
+        return self._model_id
+
+    @property
+    def recipe_id(self) -> str:
+        return self._recipe_id
+
+    @property
+    def recipe_revision(self) -> int:
+        return self._recipe_revision
+
+    @property
+    def process_generation(self) -> int:
+        return self._process_generation
+
+    def __repr__(self) -> str:
+        return "AudioCppCloneCapabilityAdmission(<private>)"
+
+    def __copy__(self) -> AudioCppCloneCapabilityAdmission:
+        duplicate = object.__new__(AudioCppCloneCapabilityAdmission)
+        for name in self.__slots__:
+            object.__setattr__(duplicate, name, getattr(self, name))
+        return duplicate
+
+    def _seal_request(
+        self,
+        constructor_token: object,
+        *,
+        request: TTSRequest,
+        materialization: TTSCloneReferenceMaterialization,
+        provider_revision: int,
+        applied_provider_generation: int,
+    ) -> None:
+        if constructor_token is not _AUDIO_CPP_CLONE_REQUEST_TOKEN:
+            raise TypeError("Clone requests cannot be sealed directly")
+        if (
+            request is not self._request
+            or type(materialization) is not TTSCloneReferenceMaterialization
+            or type(provider_revision) is not int
+            or provider_revision < 0
+            or type(applied_provider_generation) is not int
+            or applied_provider_generation < 0
+            or self._materialization is not None
+        ):
+            raise ValueError("Audio.cpp clone request admission is invalid")
+        object.__setattr__(self, "_materialization", materialization)
+        object.__setattr__(self, "_provider_revision", provider_revision)
+        object.__setattr__(
+            self,
+            "_applied_provider_generation",
+            applied_provider_generation,
+        )
+
+
+def _new_audio_cpp_clone_capability(
+    *,
+    adapter_identity: object,
+    capability_token: object,
+    model_id: str,
+    recipe_id: str,
+    recipe_revision: int,
+    process_generation: int,
+    request: TTSRequest,
+) -> AudioCppCloneCapabilityAdmission:
+    return AudioCppCloneCapabilityAdmission(
+        _AUDIO_CPP_CLONE_CAPABILITY_TOKEN,
+        adapter_identity=adapter_identity,
+        capability_token=capability_token,
+        model_id=model_id,
+        recipe_id=recipe_id,
+        recipe_revision=recipe_revision,
+        process_generation=process_generation,
+        request=request,
+    )
+
+
+_AUDIO_CPP_CLONE_REQUEST_TOKEN = object()
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _AdmittedAudioCppCloneRequest:
+    """Internal registry-fenced request for one exact live clone owner."""
+
+    _admission_token: object = field(repr=False, compare=False)
+    request: TTSRequest
+    materialization: TTSCloneReferenceMaterialization
+    capability: AudioCppCloneCapabilityAdmission
+    provider_revision: int
+    applied_provider_generation: int
+    recipe_id: str
+    recipe_revision: int
+    process_generation: int
+
+    def __post_init__(self) -> None:
+        if (
+            self._admission_token is not _AUDIO_CPP_CLONE_REQUEST_TOKEN
+            or type(self.request) is not TTSRequest
+            or type(self.materialization) is not TTSCloneReferenceMaterialization
+            or type(self.capability) is not AudioCppCloneCapabilityAdmission
+            or type(self.provider_revision) is not int
+            or self.provider_revision < 0
+            or type(self.applied_provider_generation) is not int
+            or self.applied_provider_generation < 0
+            or type(self.recipe_id) is not str
+            or not self.recipe_id
+            or type(self.recipe_revision) is not int
+            or self.recipe_revision < 1
+            or type(self.process_generation) is not int
+            or self.process_generation < 1
+        ):
+            raise ValueError("Audio.cpp clone request admission is invalid")
+        if (
+            self.request.model_id != self.capability.model_id
+            or self.recipe_id != self.capability.recipe_id
+            or self.recipe_revision != self.capability.recipe_revision
+            or self.process_generation != self.capability.process_generation
+        ):
+            raise ValueError("Audio.cpp clone request admission does not match")
+
+    def __repr__(self) -> str:
+        return "_AdmittedAudioCppCloneRequest(<private>)"
+
+    def __copy__(self) -> _AdmittedAudioCppCloneRequest:
+        raise TypeError("Audio.cpp clone admissions cannot be copied")
+
+    def __deepcopy__(self, _memo: dict[int, object]) -> _AdmittedAudioCppCloneRequest:
+        raise TypeError("Audio.cpp clone admissions cannot be copied")
+
+    def _is_service_sealed(self) -> bool:
+        return self._admission_token is _AUDIO_CPP_CLONE_REQUEST_TOKEN
+
+
+def _new_admitted_audio_cpp_clone_request(
+    *,
+    request: TTSRequest,
+    materialization: TTSCloneReferenceMaterialization,
+    capability: AudioCppCloneCapabilityAdmission,
+    provider_revision: int,
+    applied_provider_generation: int,
+) -> _AdmittedAudioCppCloneRequest:
+    """Seal one service-owned clone request from exact admitted evidence."""
+    capability._seal_request(
+        _AUDIO_CPP_CLONE_REQUEST_TOKEN,
+        request=request,
+        materialization=materialization,
+        provider_revision=provider_revision,
+        applied_provider_generation=applied_provider_generation,
+    )
+    return _AdmittedAudioCppCloneRequest(
+        _admission_token=_AUDIO_CPP_CLONE_REQUEST_TOKEN,
+        request=request,
+        materialization=materialization,
+        capability=capability,
+        provider_revision=provider_revision,
+        applied_provider_generation=applied_provider_generation,
+        recipe_id=capability.recipe_id,
+        recipe_revision=capability.recipe_revision,
+        process_generation=capability.process_generation,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -462,6 +686,33 @@ class TTSAdapter(Protocol):
         raise NotImplementedError
 
     async def close(self) -> None:
+        raise NotImplementedError
+
+
+@runtime_checkable
+class TTSNativeCloneAdapter(Protocol):
+    """Optional native contract for generation-fenced clone operations."""
+
+    def preflight_clone_source(self) -> None:
+        raise NotImplementedError
+
+    def admit_clone_capability(
+        self,
+        request: TTSRequest,
+    ) -> AudioCppCloneCapabilityAdmission:
+        raise NotImplementedError
+
+    def release_clone_capability(
+        self,
+        capability: AudioCppCloneCapabilityAdmission,
+    ) -> None:
+        raise NotImplementedError
+
+    async def synthesize_clone(
+        self,
+        request: _AdmittedAudioCppCloneRequest,
+        progress_sink: ProgressSink | None = None,
+    ) -> TTSAudioResponse:
         raise NotImplementedError
 
 

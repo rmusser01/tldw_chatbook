@@ -13,6 +13,7 @@ from numbers import Real
 from types import MappingProxyType
 from typing import Any, Literal, TypeAlias, cast
 from urllib.parse import urlsplit
+from uuid import UUID
 
 from tldw_chatbook.TTS.adapter_types import (
     ProviderHealth,
@@ -27,6 +28,7 @@ from tldw_chatbook.TTS.legacy_catalogs import (
     LEGACY_REQUEST_OPTION_KEYS,
 )
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+from tldw_chatbook.TTS.profile_reference_types import TTSCloneReference
 from tldw_chatbook.TTS.provider_ids import BUILT_IN_TTS_PROVIDER_IDS
 from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferencesSnapshot
 
@@ -182,6 +184,8 @@ class TTSCharacterProfileSelection:
     selection: TTSSelectionOverrides
     repository_generation: int
     profile_revision: int
+    profile_id: UUID
+    reference: TTSCloneReference | None = None
 
     def __post_init__(self) -> None:
         if type(self.selection) is not TTSSelectionOverrides:
@@ -194,6 +198,10 @@ class TTSCharacterProfileSelection:
             raise TypeError("Character TTS profile revision must be an integer")
         if self.profile_revision < 1:
             raise ValueError("Character TTS profile revision must be positive")
+        if type(self.profile_id) is not UUID:
+            raise TypeError("Character TTS profile ID must be a UUID")
+        if self.reference is not None and type(self.reference) is not TTSCloneReference:
+            raise TypeError("Character TTS clone reference is invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,6 +211,8 @@ class TTSDefaultProfileSelection:
     selection: TTSSelectionOverrides
     repository_generation: int
     profile_revision: int
+    profile_id: UUID
+    reference: TTSCloneReference | None = None
 
     def __post_init__(self) -> None:
         if type(self.selection) is not TTSSelectionOverrides:
@@ -215,6 +225,10 @@ class TTSDefaultProfileSelection:
             raise TypeError("Default-profile TTS profile revision must be an integer")
         if self.profile_revision < 1:
             raise ValueError("Default-profile TTS profile revision must be positive")
+        if type(self.profile_id) is not UUID:
+            raise TypeError("Default-profile TTS profile ID must be a UUID")
+        if self.reference is not None and type(self.reference) is not TTSCloneReference:
+            raise TypeError("Default-profile TTS clone reference is invalid")
 
 
 @dataclass(frozen=True, slots=True)
