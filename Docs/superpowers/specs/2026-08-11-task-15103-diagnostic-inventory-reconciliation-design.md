@@ -12,24 +12,45 @@ behavior changes, and the six-file persistent-sink topology remains unchanged.
 
 ## Current verified state
 
-The approved design was revalidated on exact `origin/dev`
-`97a75fb8bf45a0fc53fc98cf18af12f5018cf458` before any branch change.
+The approved design was revalidated at the pre-implementation stop gate on
+exact `origin/dev` `484d25b5e9ec1c63aeaa0d79f8b41f7f795569a4`.
 
-- `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports 13
-  passing tests and one failure: the canonical generated-versus-stored
-  inventory comparison.
-- Canonical regeneration changes only
-  `Docs/security/production-diagnostic-inventory.json`, with 44 additions and
-  30 deletions.
-- The generated inventory contains 487 owner files, 1,177 TASK-492 calls,
-  6,986 TASK-494 calls, and six persistent-sink files.
 - The stored inventory contains 485 owner files, 1,144 TASK-492 calls, 6,962
-  TASK-494 calls, and the same six persistent-sink files.
-- The 23-call TASK-492 offset from TASK-15103's recorded incident totals is the
-  already-reviewed TASK-3796 summarization repair. It changed both the stored
-  and generated sides equally and does not alter this task's 17-owner delta.
-- None of the 17 production owner paths changed between the task's recorded
-  incident base and this exact `dev` revision.
+  TASK-494 calls, and six persistent-sink files.
+- The generated inventory contains 487 owner files, 1,180 TASK-492 calls,
+  6,987 TASK-494 calls, and the same six persistent-sink files.
+- Detached canonical `--write` regeneration changes only
+  `Docs/security/production-diagnostic-inventory.json`, with 46 additions and
+  32 deletions. Its Git-patch SHA-256 is
+  `286f4acecbe504571b2cfed82078bd7763b40db2fac8609af8a76e72ef5e99fb`.
+- Historical comparison: TASK-3796 reduced TASK-492 by 23 calls on both the
+  stored and generated sides before this stop gate. Latest dev then adds three
+  controller calls to the generated side only, producing the current 1,180
+  generated total while the stored total remains 1,144.
+- The current generated owner rows for
+  `tldw_chatbook/Chat/console_chat_controller.py`,
+  `tldw_chatbook/Chat/console_provider_gateway.py`, and
+  `tldw_chatbook/UI/Screens/chat_screen.py` are respectively 35 calls with
+  digest `5361a9926d2d6bede509`, two calls with digest prefix
+  `747b...`, and 158 calls with digest prefix `eef7...`. The controller
+  supersedes the planning evidence of 32 calls with digest prefix `491f...`;
+  the other two rows are unchanged.
+- `tldw_chatbook/UI/Screens/settings_screen.py` is the newly observed owner.
+  Its stored row has 30 calls and digest `2044ee00fa6768794e14`; its generated
+  row has 31 calls and digest `62ea61e3ba363d516a6e`, owner `TASK-494`, and
+  reason `remaining Chatbook production diagnostic owner`.
+- The three new controller diagnostics are one
+  `console_visual_compaction_prepared` call and two
+  `console_visual_compaction_fell_back_to_text` calls. Each binds private
+  `conversation_id` plus code-bounded requested/effective representation and
+  page-count/renderer-version or fallback-reason metadata. They require the
+  normal ADR-029 ledger review, direct sentinels, and any ledger-proven metadata
+  repair; this design does not declare them safe from shape alone.
+- The new settings diagnostic is `Console appearance refresh failed after
+  settings save (screen_type=%s, generation=%s, error_type=%s).` with
+  expressions `type(screen).__name__`, `generation`, and
+  `type(exc).__name__`. It appears metadata-only, but must still be proven and
+  ledger-reviewed rather than auto-blessed.
 
 The drift is limited to these owners:
 
@@ -50,6 +71,7 @@ The drift is limited to these owners:
 15. `tldw_chatbook/UI/Screens/chat_screen.py`
 16. `tldw_chatbook/UI/Screens/library_screen.py`
 17. `tldw_chatbook/app.py`
+18. `tldw_chatbook/UI/Screens/settings_screen.py`
 
 ## Governing boundary
 
@@ -102,7 +124,7 @@ ledger. The implementation therefore reconstructs the incident from Git
 history and the current AST inventory:
 
 1. generate the current candidate inventory without accepting it;
-2. prove its owner-path delta is exactly the recorded 17 paths and that sink
+2. prove its owner-path delta is exactly the recorded 18 paths and that sink
    topology is unchanged;
 3. use content-sensitive Git history and source inspection to enumerate every
    added, removed, reworded, re-levelled, or structurally changed diagnostic;
@@ -143,7 +165,7 @@ so relocation is ignored while deleting or adding a duplicate remains visible.
 
 After every repair matches the frozen semantic contracts, acceptance appends
 the exact final base revision plus the reviewed-final complete
-call-count/digest pair for each of the 17 owners and changes the ledger state
+call-count/digest pair for each of the 18 owners and changes the ledger state
 from `planned` to `reviewed`. The schema requires final evidence only in the
 reviewed state and forbids it in the planned state, so the canonical artifact
 never contains nulls, TODOs, placeholder digests, or speculative raw-source
@@ -159,7 +181,7 @@ count/digest. Unknown checkpoint keys or an invalid pre/post lifecycle fail.
 The final task Implementation Notes retain the exact ledger hash, reconcile
 change-group totals by disposition, and separately reconcile atom multiplicity
 by owner and before/after side. A mismatch, ambiguous call, missing ledger row,
-or eighteenth owner stops reconciliation; it is not guessed or silently
+or nineteenth owner stops reconciliation; it is not guessed or silently
 absorbed.
 
 ### Permanent review boundary
@@ -246,7 +268,7 @@ or provider seam.
 The inventory is regenerated only after every source repair and focused guard
 is green. The resulting manifest may change only:
 
-- the 17 reviewed owner entries, including additions or removals already
+- the 18 reviewed owner entries, including additions or removals already
   identified by the incident;
 - the independently derived owner-file, TASK-492, and TASK-494 totals,
   including the known 485-to-487 owner-file transition; and
@@ -257,7 +279,7 @@ source. Unknown top-level data, an unreviewed owner, a changed classification,
 or sink-topology movement fails closed.
 
 The comparison uses deep copies of the complete checked and generated
-documents. It removes only the exact 17 reviewed owner rows from the general
+documents. It removes only the exact 18 reviewed owner rows from the general
 owner-list equality check, then validates those rows separately for exact path,
 owner, reason, reviewed call count, and reviewed digest. Every other field,
 section, list order, exclusion, classification rule, owner row, and sink row
@@ -267,8 +289,8 @@ summary equality produced by the generator is not trusted as independent
 evidence.
 
 Mutation tests must make this boundary red for an unknown top-level field, a
-forged derived summary, an eighteenth owner, an owner/reason classification
-change on one of the 17 paths, and a persistent-sink change. Each mutant is
+forged derived summary, a nineteenth owner, an owner/reason classification
+change on one of the 18 paths, and a persistent-sink change. Each mutant is
 restored before the next. A non-equal mutant hash proves the mutation occurred;
 restored byte hashes and equality to the recorded legitimate pre-mutation diff
 prove restoration without falsely requiring a clean worktree before the
@@ -282,7 +304,7 @@ incidental assertion.
 
 Immediately before the final rebase, commit to the canonical ledger the
 complete canonical-semantic-atom multiset hash and per-owner count/hash for all
-17 owners, not only each inventory entry. Scope/line/occurrence remain external
+18 owners, not only each inventory entry. Scope/line/occurrence remain external
 navigation evidence and do not affect equality. The committed checkpoint keeps
 the rebase worktree clean and makes the comparison reproducible. After rebasing
 onto the final `origin/dev`, append the post-rebase per-owner evidence and
@@ -321,12 +343,12 @@ Verification remains limited to touched files and affected functionality:
    historical private-value and traceback shapes, each failing its owning
    assertion for the intended reason;
 5. independent manifest-boundary mutations for unknown data, forged derived
-   totals, an eighteenth owner, classification change, and sink change;
+   totals, a nineteenth owner, classification change, and sink change;
 6. ledger reconciliation proving every historical delta has exactly one
    disposition and every reviewed-final owner digest matches generated source;
 7. Ruff lint and focused formatting for edited Python, `py_compile`, JSON
    parsing, and `git diff --check`; and
-8. a final current-`dev` rebase followed by the complete 17-owner call-population
+8. a final current-`dev` rebase followed by the complete 18-owner call-population
    comparison, the same touched-scope gates, and an exact branch-scope audit.
 
 Repository-wide pytest is not run. Application tests, test applications,
@@ -342,12 +364,12 @@ reduced applications, and simplified application substitutes are prohibited.
   application harness.
 - **AC4:** the durable per-call disposition ledger, provenance evidence,
   complete owner-population reconciliation, and permanent guard cover every
-  generated-versus-stored delta for all 17 owners under ADR-029.
+  generated-versus-stored delta for all 18 owners under ADR-029.
 
 ## Out of scope
 
 - redesigning the persistent-diagnostic inventory format or sink filter;
 - changing ADR-029's admitted metadata or six operational events;
-- general logging cleanup outside the 17-owner incident;
+- general logging cleanup outside the 18-owner incident;
 - refactoring Agents, Chat, MCP, RAG, UI, or application state ownership; and
 - accepting unrelated inventory drift that appears after the final rebase.

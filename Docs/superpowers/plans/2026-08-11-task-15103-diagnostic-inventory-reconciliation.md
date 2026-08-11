@@ -5,7 +5,7 @@
 > `superpowers:executing-plans` to execute this plan task by task with the
 > review checkpoints below.
 
-**Goal:** Review the exact 17-owner persistent-diagnostic drift under ADR-029,
+**Goal:** Review the exact 18-owner persistent-diagnostic drift under ADR-029,
 repair every unsafe diagnostic without unrelated behavior changes, and accept
 only the reviewed manifest delta while preserving the six-file sink topology.
 
@@ -39,7 +39,7 @@ metadata policy.
   narrow state record and signature-checked collaborator seams.
 - Do not regenerate the checked manifest until every source call and ledger row
   is reviewed and the privacy guards are green.
-- Do not accept an eighteenth owner, a new call in an already-authorized owner,
+- Do not accept a nineteenth owner, a new call in an already-authorized owner,
   unknown JSON data, a derived-summary mismatch, a classification change, or
   any sink-topology movement.
 - Preserve call order, returns, raised/returned operational errors, retry and
@@ -51,7 +51,8 @@ metadata policy.
 
 ## Verified planning baseline
 
-- Planning base: `97a75fb8bf45a0fc53fc98cf18af12f5018cf458`.
+- Planning base: exact `origin/dev`
+  `484d25b5e9ec1c63aeaa0d79f8b41f7f795569a4`.
 - Focused architecture baseline:
 
   ```bash
@@ -59,15 +60,38 @@ metadata policy.
     Tests/Architecture/test_persistent_diagnostic_inventory.py
   ```
 
-  Expected at the planning base: `13 passed, 1 failed`; the sole failure is
-  `test_production_diagnostic_inventory_and_sink_topology_are_unchanged`.
+  Expected at the planning base: the sole known failure is
+  `test_production_diagnostic_inventory_and_sink_topology_are_unchanged`; any
+  other failure stops implementation.
 - Stored/generated totals at that base are respectively:
   - owner files: `485 / 487`
-  - TASK-492 calls: `1,144 / 1,177`
-  - TASK-494 calls: `6,962 / 6,986`
+  - TASK-492 calls: `1,144 / 1,180`
+  - TASK-494 calls: `6,962 / 6,987`
   - persistent sink files: `6 / 6`
-- The equal 23-call TASK-492 offset from the task's incident description is the
-  already-reviewed TASK-3796 change and is not part of this review.
+- Detached canonical `--write` regeneration is 46 additions/32 deletions with
+  Git-patch SHA-256
+  `286f4acecbe504571b2cfed82078bd7763b40db2fac8609af8a76e72ef5e99fb`.
+- Historical comparison: TASK-3796 reduced TASK-492 by 23 calls on both the
+  stored and generated sides before this stop gate. Latest dev then adds three
+  `console_chat_controller.py` calls to the generated side only, producing the
+  current 1,180 total; those calls are part of this review.
+- Current generated owner evidence is: controller 35 calls/digest
+  `5361a9926d2d6bede509` (superseding planning 32/digest prefix `491f...`),
+  provider gateway two/digest prefix `747b...`, and chat screen 158/digest
+  prefix `eef7...`.
+- `settings_screen.py` is the newly observed owner: stored 30 calls/digest
+  `2044ee00fa6768794e14`; generated 31 calls/digest
+  `62ea61e3ba363d516a6e`; owner `TASK-494`; reason
+  `remaining Chatbook production diagnostic owner`.
+
+### Current-base plan deviation
+
+Before implementation began, the latest-dev stop gate advanced the exact base
+and expanded the owner boundary by `settings_screen.py`; it also added three
+controller calls. The task, design, ledger schema, review batches, manifest
+boundary, and checkpoints therefore use the authoritative 18-owner evidence
+above. No production, ledger, manifest, or architecture-test correction may
+start from the superseded boundary.
 
 ## Task 1: Freeze the incident and add the ledger schema
 
@@ -93,7 +117,7 @@ metadata policy.
   Expected: conflict-free or fully reconciled rebase; clean worktree; exact
   execution base recorded; ancestry exit `0`; the focused test has the sole
   known inventory failure and no other failure. If latest `dev` changes any of
-  the 17 owner populations, owner set, manifest summary, or sink topology,
+  the 18 owner populations, owner set, manifest summary, or sink topology,
   update the design/plan evidence and re-review it before continuing.
 
 - [ ] **Step 2: Add schema tests before the ledger exists**
@@ -114,7 +138,7 @@ metadata policy.
   exact `starting` call-count/digest pair; `reviewed_final` and `final_base` are
   forbidden. In `reviewed` state, `final_base` and every owner's exact
   `reviewed_final` pair are required. Each change group must contain an ID, one
-  of the 17 owner paths, exact commit or narrow verified range provenance, one
+  of the 18 owner paths, exact commit or narrow verified range provenance, one
   disposition (`reviewed-safe`,
   `metadata-repair`, `justified-deletion`), rationale, permitted-field
   provenance, and removed/added multiset atoms. Each atom must contain method,
@@ -140,7 +164,7 @@ metadata policy.
   - removed and added atom multiplicities by owner;
   - every owner starting count/digest in planned state, and both starting/final
     pairs in reviewed state; and
-  - exactly the recorded 17 owner paths, no fewer and no more.
+  - exactly the recorded 18 owner paths, no fewer and no more.
 
 - [ ] **Step 3: Run the schema tests and confirm RED for the missing artifact**
 
@@ -155,7 +179,7 @@ metadata policy.
 
 - [ ] **Step 4: Reconstruct and write the complete incident ledger**
 
-  Use canonical current AST extraction plus Git history for all 17 owners. Do
+  Use canonical current AST extraction plus Git history for all 18 owners. Do
   not infer a unique before/after pair for duplicate calls. Represent rewrites
   as groups of removed and added atoms, and record an exact introducing commit
   only when Git proves one; otherwise use the narrowest verified range.
@@ -180,6 +204,7 @@ metadata policy.
   tldw_chatbook/UI/Screens/chat_screen.py
   tldw_chatbook/UI/Screens/library_screen.py
   tldw_chatbook/app.py
+  tldw_chatbook/UI/Screens/settings_screen.py
   ```
 
   Record exact proposed surviving-call semantic contracts for unsafe current
@@ -192,8 +217,10 @@ metadata policy.
   appended only in Task 7 after production matches it.
 
   Preliminary inspection suggests the bridge, MCP local-server tools, MCP
-  prompts, MCP server, and simplified search service may be review-only; the
-  ledger audit, not this preliminary classification, is authoritative.
+  prompts, MCP server, simplified search service, and the new settings call may
+  be review-only; the ledger audit, not this preliminary classification, is
+  authoritative. Do not hard-code predicted post-review group counts: Task 1's
+  reconstruction and schema-validated arithmetic are authoritative.
 
 - [ ] **Step 5: Make schema/arithmetic tests GREEN without accepting source**
 
@@ -223,7 +250,7 @@ metadata policy.
   git commit -m "test(security): inventory TASK-15103 diagnostic drift"
   ```
 
-  Review checkpoint: independently verify exact 17-owner coverage, provenance,
+  Review checkpoint: independently verify exact 18-owner coverage, provenance,
   disposition arithmetic, duplicate multiplicity, and absence of guessed
   one-to-one pairing before Task 2.
 
@@ -246,7 +273,7 @@ metadata policy.
   never determine equality. A missing, extra, or duplicate match fails.
 
   Exercise that adapter with temporary source plus temporary ledger contracts;
-  do not add the aggregate real-17-owner node yet. Keep the existing
+  do not add the aggregate real-18-owner node yet. Keep the existing
   pre-TASK-15103 map for its existing owners. Do not copy any TASK-15103 labels
   or expressions into a second Python constant.
 
@@ -340,6 +367,8 @@ metadata policy.
   Add `test_task_15103_agents_chat_source_contracts`, invoking the reusable
   adapter with only the six Agents/Chat owner paths. It must begin RED against
   current source and enforce the already-frozen semantic ledger contracts.
+  At the verified planning base the controller has 35 generated calls with
+  digest `5361a9926d2d6bede509`.
 
   Cover the actual affected functions and feed distinctive canaries through
   real state/config/collaborator boundaries. The tests must first assert the
@@ -354,6 +383,15 @@ metadata policy.
   Assert the intended fixed operational event and permitted bounded metadata
   remain. The bridge timeout value may be accepted only after proving it is a
   shipped numeric constant.
+
+  The controller coverage must include one
+  `console_visual_compaction_prepared` call and both
+  `console_visual_compaction_fell_back_to_text` calls. Each currently binds a
+  private `conversation_id` plus code-bounded requested/effective
+  representation and page-count/renderer-version or fallback-reason fields.
+  Drive a private conversation-ID sentinel through the exact production
+  functions, prove the bounded values, and require ledger-proven metadata
+  repair. Do not classify these calls as safe before that evidence exists.
 
 - [ ] **Step 2: Run only the new Agents/Chat nodes and capture genuine RED**
 
@@ -621,6 +659,8 @@ metadata policy.
   - `tldw_chatbook/UI/Screens/chat_screen.py`
   - `tldw_chatbook/UI/Screens/library_screen.py`
   - `tldw_chatbook/app.py`
+- Review and modify only if the ledger proves a repair is required:
+  - `tldw_chatbook/UI/Screens/settings_screen.py`
 - Modify: `Tests/Architecture/test_task_15103_diagnostic_privacy.py`
 - Modify: `Tests/Architecture/test_persistent_diagnostic_inventory.py`
 - Read/freeze: `Docs/security/task-15103-diagnostic-review.json`
@@ -632,7 +672,7 @@ metadata policy.
 - [ ] **Step 1: Add the UI/app source contract, function-only sentinels, and RED**
 
   Add `test_task_15103_ui_app_source_contracts`, invoking the reusable adapter
-  with only the four UI/app owner paths. It must begin RED on current unsafe
+  with only the five UI/app owner paths. It must begin RED on current unsafe
   calls and enforce the already-frozen UI/app semantic contracts.
 
   Invoke exact production methods directly. For `TldwCli`, call the unbound
@@ -642,13 +682,19 @@ metadata policy.
   return/raise behavior, and collaborator calls before privacy assertions.
 
   Cover session IDs and all exception/traceback capture in Console session,
-  realtime audio, Library DB-size refresh, and quit lifecycle paths.
+  realtime audio, Library DB-size refresh, settings appearance refresh, and
+  quit lifecycle paths. For `settings_screen.py`, directly exercise the
+  production boundary for `Console appearance refresh failed after settings
+  save (screen_type=%s, generation=%s, error_type=%s).` and prove the exact
+  expressions `type(screen).__name__`, `generation`, and
+  `type(exc).__name__` do not expose a private sentinel. Its apparent
+  metadata-only shape is not acceptance evidence.
 
   ```bash
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B -m pytest -q \
     Tests/Architecture/test_task_15103_diagnostic_privacy.py \
     Tests/Architecture/test_persistent_diagnostic_inventory.py \
-    -k 'console_session or chat_screen or library_screen or app_quit or task_15103_ui_app_source_contracts' \
+    -k 'console_session or chat_screen or library_screen or settings_screen or app_quit or task_15103_ui_app_source_contracts' \
     -vv
   ```
 
@@ -660,13 +706,15 @@ metadata policy.
   Preserve timeout and lifecycle state wording, but remove IDs and traceback
   capture. Ensure fixed wording is truthful on start failure, confirmation
   failure, guard failure, audio failure, persistence failure, and cancellation.
+  Modify `settings_screen.py` only if the frozen ledger and sentinel prove a
+  repair is required; otherwise preserve it as an explicitly reviewed call.
 
 - [ ] **Step 3: Prove UI/app source matches the frozen ledger and run GREEN**
 
   ```bash
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B -m pytest -q \
     Tests/Architecture/test_task_15103_diagnostic_privacy.py \
-    -k 'console_session or chat_screen or library_screen or app_quit' -vv
+    -k 'console_session or chat_screen or library_screen or settings_screen or app_quit' -vv
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B -m pytest -q \
     Tests/Architecture/test_persistent_diagnostic_inventory.py \
     -k 'task_15103_ui_app_source_contracts or task_15103_review_ledger' -vv
@@ -674,10 +722,10 @@ metadata policy.
 
   Expected: all selected nodes pass and no app object was constructed.
 
-- [ ] **Step 4: Add and run the aggregate 17-owner source contract**
+- [ ] **Step 4: Add and run the aggregate 18-owner source contract**
 
   Add `test_task_15103_all_reviewed_owner_source_contracts`, which invokes the
-  same adapter over the ledger's exact 17-owner path set. This node is added
+  same adapter over the ledger's exact 18-owner path set. This node is added
   only after all four batch nodes are green.
 
   ```bash
@@ -710,9 +758,13 @@ metadata policy.
     tldw_chatbook/app.py \
     Tests/Architecture/test_task_15103_diagnostic_privacy.py \
     Tests/Architecture/test_persistent_diagnostic_inventory.py
+  # Run this only when ledger/sentinel evidence proves a settings repair.
+  git add tldw_chatbook/UI/Screens/settings_screen.py
   git commit -m "fix(security): remove UI lifecycle traceback diagnostics"
   ```
 
+  Stage `tldw_chatbook/UI/Screens/settings_screen.py` only when the ledger and
+  focused sentinel prove an actual production repair is required.
   Review checkpoint: independently inspect that test code never constructs an
   application and that production diffs contain logging-only behavior changes.
 
@@ -734,7 +786,7 @@ metadata policy.
     -vv
   ```
 
-  Expected: exact 17-owner source contracts, all schema/arithmetic checks, and
+  Expected: exact 18-owner source contracts, all schema/arithmetic checks, and
   all syntax mutation nodes pass. Stop if any source call is pending,
   ambiguous, missing, extra, or captures exceptions.
 
@@ -748,7 +800,7 @@ metadata policy.
 - [ ] **Step 2: Write deep manifest-boundary tests and capture missing-boundary RED**
 
   Compare deep copies of the complete checked and generated documents. Remove
-  only the exact 17 owner rows from the general owner equality comparison, then
+  only the exact 18 owner rows from the general owner equality comparison, then
   validate those rows separately for exact path, owner, reason, reviewed count,
   and reviewed digest. Independently recompute owner-file, TASK-492, TASK-494,
   and sink-file totals for each document before normalization.
@@ -762,7 +814,7 @@ metadata policy.
 
   1. unknown top-level data;
   2. forged derived summary;
-  3. an eighteenth owner;
+  3. a nineteenth owner;
   4. an owner/reason classification change on one reviewed path;
   5. a persistent-sink change.
 
@@ -783,7 +835,7 @@ metadata policy.
 - [ ] **Step 3: Implement the boundary and make synthetic tests GREEN**
 
   Implement only the deep-copy normalization, independent summary
-  recomputation, exact 17-row validation, unknown-field rejection, and sink
+  recomputation, exact 18-row validation, unknown-field rejection, and sink
   topology comparison described above.
 
   ```bash
@@ -805,7 +857,7 @@ metadata policy.
 
   Expected: every synthetic boundary node and
   `test_task_15103_manifest_delta_is_exact_and_fail_closed` pass because the
-  candidate-aware boundary accepts exactly the authorized reviewed 17-owner
+  candidate-aware boundary accepts exactly the authorized reviewed 18-owner
   stale-to-generated delta. The sole failure is the canonical
   `test_production_diagnostic_inventory_and_sink_topology_are_unchanged`, which
   requires byte equality and remains red until regeneration. Record the exact
@@ -818,7 +870,7 @@ metadata policy.
   git diff -- Docs/security/production-diagnostic-inventory.json
   ```
 
-  Expected: only the 17 reviewed owner rows and independently derived summary
+  Expected: only the 18 reviewed owner rows and independently derived summary
   totals change; all six sink rows/topology and every unreviewed owner remain
   byte-equivalent after normalization. Stop rather than edit around any extra
   delta.
@@ -847,7 +899,7 @@ metadata policy.
      ```
 
   3. require that node to fail with the mutation's exact unknown-field,
-     forged-summary, eighteenth-owner, classification, or sink-topology text;
+     forged-summary, nineteenth-owner, classification, or sink-topology text;
   4. inverse-restore with `apply_patch`;
   5. require restored SHA-256 equals the baseline; and
   6. rerun the exact positive node GREEN.
@@ -888,7 +940,7 @@ metadata policy.
 - Modify: `Docs/security/task-15103-diagnostic-review.json`
 - Modify if final rebase changes reviewed source:
   `Docs/security/production-diagnostic-inventory.json`
-- Modify: `backlog/tasks/task-15103 - Reconcile-17-owner-latest-dev-diagnostic-inventory-drift.md`
+- Modify: `backlog/tasks/task-15103 - Reconcile-18-owner-latest-dev-diagnostic-inventory-drift.md`
 - Modify: this plan's step markers and any exact-base evidence
 - Modify: the design status line
 - Modify lessons only if this task produced genuinely new incident-based,
@@ -896,7 +948,7 @@ metadata policy.
 
 - [ ] **Step 1: Record pre-rebase complete owner populations**
 
-  Serialize every diagnostic call from all 17 owners using the canonical
+  Serialize every diagnostic call from all 18 owners using the canonical
   semantic atom (`method`, `event`, `message_shape`, `expressions`, capture
   state, and `level_expression`) plus multiplicity. Exclude scope, line, and
   occurrence from equality; retain them only in an external navigation report.
@@ -924,7 +976,7 @@ metadata policy.
   ```
 
   Expected: conflict-free or fully reconciled rebase; ancestry exit `0`; `0`
-  behind. If upstream changes any of the 17 owners or complete populations,
+  behind. If upstream changes any of the 18 owners or complete populations,
   reopen its per-call audit, provenance, ledger, sentinel, and manifest row.
 
 - [ ] **Step 3: Compare the complete post-rebase populations**
@@ -1003,7 +1055,7 @@ metadata policy.
   - false fixed-event wording;
   - new eager evaluation or behavior changes;
   - ledger/source/manifest mismatch;
-  - an eighteenth owner or sink movement;
+  - a nineteenth owner or sink movement;
   - duplicate policy data outside the ledger;
   - app/test-app/reduced-app construction; and
   - stale base/count/hash evidence.
@@ -1029,7 +1081,7 @@ metadata policy.
 - [ ] **Step 8: Commit closeout documentation**
 
   ```bash
-  git add backlog/tasks/task-15103\ -\ Reconcile-17-owner-latest-dev-diagnostic-inventory-drift.md \
+  git add backlog/tasks/task-15103\ -\ Reconcile-18-owner-latest-dev-diagnostic-inventory-drift.md \
     Docs/superpowers/specs/2026-08-11-task-15103-diagnostic-inventory-reconciliation-design.md \
     Docs/superpowers/plans/2026-08-11-task-15103-diagnostic-inventory-reconciliation.md
   git commit -m "docs(security): close TASK-15103 inventory reconciliation"
@@ -1045,7 +1097,7 @@ The handoff must report:
 
 - exact final base and HEAD;
 - clean ancestry and ahead/behind relation;
-- exact 17-owner path set and full-population comparison;
+- exact 18-owner path set and full-population comparison;
 - ledger hash plus group/atom/disposition arithmetic;
 - stored/generated manifest totals and six-sink topology;
 - every focused test command and result;
