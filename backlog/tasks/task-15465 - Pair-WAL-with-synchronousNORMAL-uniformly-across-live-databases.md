@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-11 12:05'
-updated_date: '2026-08-11 20:15'
+updated_date: '2026-08-11 20:27'
 labels:
   - perf
   - db
@@ -45,34 +45,20 @@ Stability notes: WAL+NORMAL is the SQLite-documented safe pairing (app-crash-saf
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-FIX ROUND 1 (review): AC#1's "every live application database" was not yet
-true -- 8 live SQLite stores outside the original audit's DB/ enumeration
-were unconverted. Converted all 8 to WAL+NORMAL at every connection-open
-site, same is_memory-guarded convention, rationale comment each:
-Kanban_Interop/local_kanban_db.py, TTS/profile_schema.py (3 sites in
-open_profile_store), Writing_Interop/local_writing_service.py,
-Research_Interop/local_research_service.py,
-Notifications/event_state_repository.py, Sync_Interop/sync_state_repository.py,
-Notes/file_notes_replica.py, Widgets/Tamagotchi/tamagotchi_storage.py
-(no import site found outside its own module -- converted anyway per
-review instruction, dormancy noted in its docstring).
-
-Minors fixed same round: Subscriptions_DB.py's ensure_site_configs_schema
-now pairs WAL+NORMAL (previously opened with no pragmas at all); added
-Library_Ingest_Jobs_DB (the template) to the pragma regression test;
-RAG_Indexing_DB.py's comment now documents the WAL lingering-reader/
-unbounded -wal-growth failure mode and points at task-15466; Utils/
-sensitive_paths.py's _DB_PATH_ACCESSOR_NAMES gained the missing
-get_evals_db_path/get_rag_indexing_db_path entries (both honor [database]
-overrides like every other listed accessor; no get_agent_runs_db_path
-accessor exists since that DB's path always derives from ChaChaNotes').
-
-Tests/DB/test_pragma_settings.py now covers 19 classes/functions (39
-parametrized cases: 20 file-backed + 19 memory -- tts.profile_store has no
-:memory: target per its private-file-only owner policy). All 39 pass.
-Targeted suites for every newly touched store + the Subscriptions suite:
-1593 passed, 9 skipped, 0 failed. 3 pre-existing, confirmed-unrelated
-failures in Tests/TTS/test_tts_profile_capabilities.py (a Protocol
-isinstance rejection unrelated to SQLite) left untouched per review
-instruction. Commit a2c1298a2.
+FIX ROUND 2 (scoped re-review): Sync_Interop/notes_mirror.py's NotesMirror
+had production references and its own test suite but opened its held
+connection with no journal pragmas at all -- same profile as Tamagotchi
+(round 1). Paired WAL+NORMAL, added to the pragma test (41 cases now, was
+39). Swept every connect_private_sqlite/sqlite3.connect production call
+site by grep (not sampling) to make the pragma test's "every live
+application database" docstring claim exhaustive; found no further
+gaps. Documented the two legitimate exclusion categories (read-only-by-
+construction connections; backup/restore/migration/candidate connections
+that only ever touch a disposable temp-file copy or reopen the live store
+read-only-in-practice during a rare migration) directly in the docstring
+with owner ids, plus re-confirmed via grep the five dead-code DB modules
+this task's own description already names as an explicit skip have no
+import site anywhere. Tests/DB/test_pragma_settings.py: 41 passed.
+Tests/Sync_Interop/test_notes_mirror.py: 4 passed. Tests/Sync_Interop/
+(full): 215 passed. Commit e36d9adcd.
 <!-- SECTION:NOTES:END -->
