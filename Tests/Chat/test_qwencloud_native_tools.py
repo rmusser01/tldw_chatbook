@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import threading
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 import pytest
+import requests
 
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
@@ -23,14 +26,12 @@ from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 _FINAL_SENTINEL = "QWENCLOUD-NATIVE-FINAL-SENTINEL"
 
 
-def _sse(events: list[dict[str, Any]]) -> bytes:
-    return (
-        b"".join(
-            b"data: " + json.dumps(event, separators=(",", ":")).encode() + b"\n\n"
-            for event in events
-        )
-        + b"data: [DONE]\n\n"
+def _sse(events: list[dict[str, Any]], *, done: bool = True) -> bytes:
+    wire = b"".join(
+        b"data: " + json.dumps(event, separators=(",", ":")).encode() + b"\n\n"
+        for event in events
     )
+    return wire + (b"data: [DONE]\n\n" if done else b"")
 
 
 def _responses_tool_turn(
@@ -237,27 +238,59 @@ def _chat_final_turn(text: str = _FINAL_SENTINEL) -> bytes:
     )
 
 
+@dataclass(frozen=True)
+class _StalledSSE:
+    """One non-terminal chunk that remains live until the client closes."""
+
+    prefix: bytes
+    client_close_started: threading.Event
+
+
+@dataclass(frozen=True)
+class _ValidationFailure:
+    message: str
+
+
+_RequestValidator = Callable[[str, dict[str, Any]], None]
+_ScriptedBody = bytes | _StalledSSE
+
+
 class _JoinedQwenServer(ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(
         self,
-        bodies: list[bytes],
+        bodies: Sequence[_ScriptedBody],
         *,
-        on_request: Any = None,
+        validators: list[_RequestValidator] | None = None,
+        on_request: Callable[[int], None] | None = None,
     ) -> None:
         super().__init__(("127.0.0.1", 0), _JoinedQwenHandler)
         self.bodies = list(bodies)
+        self.validators = list(validators or [])
         self.requests: list[dict[str, Any]] = []
+        self.validation_errors: list[str] = []
         self.on_request = on_request
+        self.stall_started = threading.Event()
+        self.stall_timed_out = threading.Event()
         self._lock = threading.Lock()
 
-    def handle_request_payload(self, path: str, payload: dict[str, Any]) -> bytes:
+    def handle_request_payload(
+        self, path: str, payload: dict[str, Any]
+    ) -> _ScriptedBody | _ValidationFailure:
         with self._lock:
             self.requests.append({"path": path, "payload": payload})
             if self.on_request is not None:
                 self.on_request(len(self.requests))
             assert self.bodies, "provider script exhausted"
+            if self.validators:
+                try:
+                    self.validators[0](path, payload)
+                except AssertionError as exc:
+                    message = str(exc) or "scripted request validation failed"
+                    self.validation_errors.append(message)
+                    return _ValidationFailure(message)
+                self.validators.pop(0)
             return self.bodies.pop(0)
 
 
@@ -269,7 +302,40 @@ class _JoinedQwenHandler(BaseHTTPRequestHandler):
         payload = json.loads(self.rfile.read(length))
         server = self.server
         assert isinstance(server, _JoinedQwenServer)
-        body = server.handle_request_payload(self.path, payload)
+        action = server.handle_request_payload(self.path, payload)
+        if isinstance(action, _ValidationFailure):
+            body = json.dumps({"error": {"message": action.message}}).encode()
+            self.send_response(422)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(body)
+            self.wfile.flush()
+            self.close_connection = True
+            return
+        if isinstance(action, _StalledSSE):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Transfer-Encoding", "chunked")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            chunk = action.prefix
+            self.wfile.write(f"{len(chunk):X}\r\n".encode())
+            self.wfile.write(chunk)
+            self.wfile.write(b"\r\n")
+            self.wfile.flush()
+            server.stall_started.set()
+            if not action.client_close_started.wait(timeout=2):
+                server.stall_timed_out.set()
+            try:
+                self.wfile.write(b"0\r\n\r\n")
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            self.close_connection = True
+            return
+        body = action
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Content-Length", str(len(body)))
@@ -285,11 +351,16 @@ class _JoinedQwenHandler(BaseHTTPRequestHandler):
 
 @contextmanager
 def _joined_qwen_server(
-    bodies: list[bytes],
+    bodies: Sequence[_ScriptedBody],
     *,
-    on_request: Any = None,
+    validators: list[_RequestValidator] | None = None,
+    on_request: Callable[[int], None] | None = None,
 ) -> Iterator[_JoinedQwenServer]:
-    server = _JoinedQwenServer(bodies, on_request=on_request)
+    server = _JoinedQwenServer(
+        bodies,
+        validators=validators,
+        on_request=on_request,
+    )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -325,6 +396,7 @@ def _run_joined_reply(
     api_mode: str,
     *,
     should_cancel: Any = lambda: False,
+    agent_messages: list[dict[str, Any]] | None = None,
 ) -> tuple[Any, ConsoleChatStore]:
     db = AgentRunsDB(tmp_path / f"{api_mode}.db", client_id="qwen-native")
     store = ConsoleChatStore()
@@ -351,10 +423,125 @@ def _run_joined_reply(
         assistant_message_id=assistant.id,
         model="qwen3.8-max",
         session_system_prompt="",
-        agent_messages=[{"role": "user", "content": "Calculate two expressions."}],
+        agent_messages=(
+            agent_messages
+            if agent_messages is not None
+            else [{"role": "user", "content": "Calculate two expressions."}]
+        ),
         should_cancel=should_cancel,
     )
     return outcome, store
+
+
+def _canonical_tool_calls() -> list[dict[str, Any]]:
+    return [
+        {
+            "id": "call_A",
+            "type": "function",
+            "function": {
+                "name": "calculator",
+                "arguments": '{"expression":"6*7"}',
+            },
+        },
+        {
+            "id": "call_B",
+            "type": "function",
+            "function": {
+                "name": "calculator",
+                "arguments": '{"expression":"8*8"}',
+            },
+        },
+    ]
+
+
+def _assert_common_request(api_mode: str, path: str, payload: dict[str, Any]) -> None:
+    expected_path = (
+        "/compatible-mode/v1/responses"
+        if api_mode == "responses"
+        else "/compatible-mode/v1/chat/completions"
+    )
+    assert path == expected_path
+    assert payload["stream"] is True
+    assert any(
+        tool.get("name") == "calculator"
+        or tool.get("function", {}).get("name") == "calculator"
+        for tool in payload["tools"]
+    )
+
+
+def _initial_request_validator(api_mode: str) -> _RequestValidator:
+    def validate(path: str, payload: dict[str, Any]) -> None:
+        _assert_common_request(api_mode, path, payload)
+        if api_mode == "responses":
+            assert payload["input"] == [
+                {"role": "user", "content": "Calculate two expressions."}
+            ]
+            assert payload["store"] is False
+        else:
+            assert payload["messages"][0]["role"] == "system"
+            assert payload["messages"][1:] == [
+                {"role": "user", "content": "Calculate two expressions."}
+            ]
+            assert payload["preserve_thinking"] is False
+
+    return validate
+
+
+def _continuation_request_validator(
+    api_mode: str,
+    *,
+    result_a: str,
+    result_b: str,
+) -> _RequestValidator:
+    calls = _canonical_tool_calls()
+
+    def validate(path: str, payload: dict[str, Any]) -> None:
+        _assert_common_request(api_mode, path, payload)
+        if api_mode == "responses":
+            assert payload["input"] == [
+                {"role": "user", "content": "Calculate two expressions."},
+                {
+                    "type": "function_call",
+                    "call_id": "call_A",
+                    "name": "calculator",
+                    "arguments": '{"expression":"6*7"}',
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_A",
+                    "output": result_a,
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_B",
+                    "name": "calculator",
+                    "arguments": '{"expression":"8*8"}',
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_B",
+                    "output": result_b,
+                },
+            ]
+            return
+        assert payload["messages"][0]["role"] == "system"
+        assert payload["messages"][1:] == [
+            {"role": "user", "content": "Calculate two expressions."},
+            {"role": "assistant", "content": "", "tool_calls": calls},
+            {
+                "role": "tool",
+                "tool_call_id": "call_A",
+                "content": result_a,
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_B",
+                "content": result_b,
+            },
+        ]
+        assert payload["preserve_thinking"] is False
+
+    return validate
 
 
 @pytest.mark.parametrize("api_mode", ["responses", "chat_completions"])
@@ -363,12 +550,24 @@ def test_console_agent_bridge_runs_qwencloud_two_call_continuation(
     tmp_path: Any,
     api_mode: str,
 ) -> None:
+    result_a = '{"expression": "6*7", "result": 42, "result_type": "int"}'
+    result_b = '{"expression": "8*8", "result": 64, "result_type": "int"}'
     bodies = (
         [_responses_tool_turn(), _responses_final_turn()]
         if api_mode == "responses"
         else [_chat_tool_turn(), _chat_final_turn()]
     )
-    with _joined_qwen_server(bodies) as server:
+    with _joined_qwen_server(
+        bodies,
+        validators=[
+            _initial_request_validator(api_mode),
+            _continuation_request_validator(
+                api_mode,
+                result_a=result_a,
+                result_b=result_b,
+            ),
+        ],
+    ) as server:
         outcome, store = _run_joined_reply(tmp_path, server, api_mode)
 
     assert outcome.status == "done"
@@ -381,6 +580,8 @@ def test_console_agent_bridge_runs_qwencloud_two_call_continuation(
     ]
     assert assistant_rows[-1].content == _FINAL_SENTINEL
     assert len(server.requests) == 2
+    assert server.validation_errors == []
+    assert server.validators == []
 
     first = server.requests[0]
     second = server.requests[1]
@@ -403,7 +604,7 @@ def test_console_agent_bridge_runs_qwencloud_two_call_continuation(
             {
                 "type": "function_call_output",
                 "call_id": "call_A",
-                "output": '{"expression": "6*7", "result": 42, "result_type": "int"}',
+                "output": result_a,
             },
             {
                 "type": "function_call",
@@ -414,7 +615,7 @@ def test_console_agent_bridge_runs_qwencloud_two_call_continuation(
             {
                 "type": "function_call_output",
                 "call_id": "call_B",
-                "output": '{"expression": "8*8", "result": 64, "result_type": "int"}',
+                "output": result_b,
             },
         ]
         assert [item for item in continuation if item.get("role") == "user"] == [
@@ -423,17 +624,59 @@ def test_console_agent_bridge_runs_qwencloud_two_call_continuation(
         assert second["payload"]["store"] is False
     else:
         continuation = second["payload"]["messages"]
-        assistant = next(row for row in continuation if row.get("role") == "assistant")
-        assert [call["id"] for call in assistant["tool_calls"]] == [
-            "call_A",
-            "call_B",
-        ]
-        tool_rows = [row for row in continuation if row.get("role") == "tool"]
-        assert [row["tool_call_id"] for row in tool_rows] == ["call_A", "call_B"]
-        assert [row for row in continuation if row.get("role") == "user"] == [
-            {"role": "user", "content": "Calculate two expressions."}
+        assert continuation[0]["role"] == "system"
+        assert continuation[1:] == [
+            {"role": "user", "content": "Calculate two expressions."},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": _canonical_tool_calls(),
+            },
+            {"role": "tool", "tool_call_id": "call_A", "content": result_a},
+            {"role": "tool", "tool_call_id": "call_B", "content": result_b},
         ]
         assert second["payload"]["preserve_thinking"] is False
+
+
+@pytest.mark.allow_network
+def test_qwencloud_responses_joined_runtime_history_pairs_out_of_order_results(
+    tmp_path: Any,
+) -> None:
+    """Runtime-shaped B/A result rows become adjacent A/A then B/B on wire."""
+    result_a = "runtime result A"
+    result_b = "runtime result B"
+    runtime_history: list[dict[str, Any]] = [
+        {"role": "user", "content": "Calculate two expressions."},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": _canonical_tool_calls(),
+        },
+        {"role": "tool", "tool_call_id": "call_B", "content": result_b},
+        {"role": "tool", "tool_call_id": "call_A", "content": result_a},
+    ]
+    with _joined_qwen_server(
+        [_responses_final_turn("REORDERED-HISTORY-ACCEPTED")],
+        validators=[
+            _continuation_request_validator(
+                "responses",
+                result_a=result_a,
+                result_b=result_b,
+            )
+        ],
+    ) as server:
+        outcome, _store = _run_joined_reply(
+            tmp_path,
+            server,
+            "responses",
+            agent_messages=runtime_history,
+        )
+
+    assert outcome.status == "done"
+    assert outcome.final_text == "REORDERED-HISTORY-ACCEPTED"
+    assert len(server.requests) == 1
+    assert server.validation_errors == []
+    assert server.validators == []
 
 
 @pytest.mark.parametrize("api_mode", ["responses", "chat_completions"])
@@ -529,7 +772,8 @@ def _responses_partial_call_then_text() -> bytes:
                 "delta": "cancel-checkpoint",
                 "logprobs": [],
             },
-        ]
+        ],
+        done=False,
     )
 
 
@@ -560,7 +804,8 @@ def _chat_partial_call_then_text() -> bytes:
                     }
                 ],
             }
-        ]
+        ],
+        done=False,
     )
 
 
@@ -587,11 +832,28 @@ def test_qwencloud_partial_call_cancellation_never_executes(
         if api_mode == "responses"
         else _chat_partial_call_then_text()
     )
+    close_calls: list[int] = []
+    client_close_started = threading.Event()
+    real_response_close = requests.Response.close
 
     with _joined_qwen_server(
-        [body],
-        on_request=lambda request_count: cancelled.set(),
+        [_StalledSSE(body, client_close_started)],
+        on_request=lambda _request_count: cancelled.set(),
     ) as server:
+        address = server.server_address
+        assert isinstance(address, tuple)
+        host, port = address[0], address[1]
+        assert isinstance(host, str)
+        assert isinstance(port, int)
+        request_prefix = f"http://{host}:{port}/compatible-mode/v1/"
+
+        def recording_response_close(response: requests.Response) -> None:
+            if str(response.url).startswith(request_prefix):
+                close_calls.append(id(response))
+                client_close_started.set()
+            real_response_close(response)
+
+        monkeypatch.setattr(requests.Response, "close", recording_response_close)
         outcome, _store = _run_joined_reply(
             tmp_path,
             server,
@@ -601,8 +863,21 @@ def test_qwencloud_partial_call_cancellation_never_executes(
 
     assert outcome.status == "cancelled"
     assert len(server.requests) == 1
+    assert server.stall_started.is_set()
+    assert not server.stall_timed_out.is_set()
+    assert len(close_calls) == 1
     assert executions == []
-    assert not any(step.kind == "tool_result" for step in outcome.steps)
+    assert not any(step.kind in {"tool_call", "tool_result"} for step in outcome.steps)
+    request_payload = server.requests[0]["payload"]
+    if api_mode == "responses":
+        assert not any(
+            item.get("type") == "function_call_output"
+            for item in request_payload["input"]
+        )
+    else:
+        assert not any(
+            item.get("role") == "tool" for item in request_payload["messages"]
+        )
 
 
 @pytest.mark.allow_network
