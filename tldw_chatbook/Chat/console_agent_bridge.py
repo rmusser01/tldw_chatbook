@@ -1990,6 +1990,19 @@ class ConsoleAgentBridge:
         # service per turn that left a child running, and live children
         # are themselves capped by the coordinator above.
         self._fleet_survivor_services: dict[str, list[AgentService]] = {}
+        # The ONE lock in this class's fleet state, and only because this
+        # entry is the only read-modify-write among them. Every other
+        # dict here is single-operation (a `.get`, a `[k] = v`, a `.pop`)
+        # and rides the GIL, as their own docstrings above argue. Pruning
+        # a retained list is not: it reads the list, filters it, and
+        # writes the result back, so a `run_reply` finally appending its
+        # own survivor in that window would be silently dropped -- and a
+        # dropped owner is an unstoppable child, the precise failure this
+        # retention exists to prevent. Held only across list rebuilds and
+        # never while calling into a coordinator's own lock in a way that
+        # could nest (a snapshot copy is taken, then the lock is
+        # released).
+        self._fleet_survivor_lock = threading.Lock()
 
     def native_tool_schemas(self) -> list[dict[str, Any]]:
         """Return the native tool schemas available to this bridge.
@@ -2922,11 +2935,29 @@ class ConsoleAgentBridge:
         # path too (a stale teardown from an overtaken run still owns its
         # own children) -- `service` is this call's own object either way.
         if service.live_subagent_handles():
-            retained = self._fleet_survivor_services.setdefault(
-                conversation_id, []
-            )
-            if service not in retained:
-                retained.append(service)
+            with self._fleet_survivor_lock:
+                retained = self._fleet_survivor_services.setdefault(
+                    conversation_id, []
+                )
+                if service not in retained:
+                    retained.append(service)
+
+    def _retained_fleet_owners(self, conversation_id: str) -> list[AgentService]:
+        """A stable copy of this conversation's retained survivor owners.
+
+        A copy, taken under the lock, so a caller iterating it cannot
+        trip over a concurrent prune or retention (both rebuild the
+        list). Cheap: at most one entry per turn that left a child
+        running, itself capped by the conversation's live-children cap.
+
+        Args:
+            conversation_id: The conversation to read.
+
+        Returns:
+            The retained services, oldest first.
+        """
+        with self._fleet_survivor_lock:
+            return list(self._fleet_survivor_services.get(conversation_id, ()))
 
     def _prune_settled_fleet_survivors(self, conversation_id: str) -> None:
         """Forget retained services whose last child has settled.
@@ -2943,18 +2974,19 @@ class ConsoleAgentBridge:
         Args:
             conversation_id: The conversation to prune.
         """
-        retained = self._fleet_survivor_services.get(conversation_id)
-        if not retained:
-            return
-        still_live = [
-            service
-            for service in retained
-            if service.live_subagent_handles()
-        ]
-        if still_live:
-            self._fleet_survivor_services[conversation_id] = still_live
-        else:
-            self._fleet_survivor_services.pop(conversation_id, None)
+        with self._fleet_survivor_lock:
+            retained = self._fleet_survivor_services.get(conversation_id)
+            if not retained:
+                return
+            still_live = [
+                service
+                for service in retained
+                if service.live_subagent_handles()
+            ]
+            if still_live:
+                self._fleet_survivor_services[conversation_id] = still_live
+            else:
+                self._fleet_survivor_services.pop(conversation_id, None)
 
     def _conversation_fleet_coordinator(
         self, conversation_id: str
@@ -3122,7 +3154,7 @@ class ConsoleAgentBridge:
         # running".
         handles: list[FleetHandle] = []
         seen: set[str] = set()
-        for survivor in self._fleet_survivor_services.get(conversation_id, ()):
+        for survivor in self._retained_fleet_owners(conversation_id):
             for handle in survivor.live_subagent_handles():
                 if handle.handle_id in seen:
                     continue
@@ -3168,7 +3200,7 @@ class ConsoleAgentBridge:
         # it". Ordered current-run-first: the common case is one press on
         # a child of the run in flight, and that answers without touching
         # this list.
-        for survivor in self._fleet_survivor_services.get(conversation_id, ()):
+        for survivor in self._retained_fleet_owners(conversation_id):
             if survivor.cancel_subagent(handle_id):
                 return True
         return False
