@@ -7019,6 +7019,16 @@ async def test_console_browser_selecting_default_persisted_row_switches_to_defau
         )
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "task-15120: opening a global-scoped conversation leaves the workspace "
+        "SERVICE on ws-a while the store's workspace_context flips to 'global'. "
+        "This test could never reach that assertion while the click failed with "
+        "OutOfBounds; repairing the click exposed it. strict=True so a fix flips "
+        "this loudly instead of passing unnoticed."
+    ),
+)
 @pytest.mark.asyncio
 async def test_console_browser_selecting_global_persisted_row_preserves_active_workspace():
     app = _build_test_app()

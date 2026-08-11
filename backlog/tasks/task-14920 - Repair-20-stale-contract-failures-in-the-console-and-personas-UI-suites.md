@@ -42,7 +42,7 @@ Each failure needs triage before repair: a moved seam is a test fix, but `identi
 <!-- AC:BEGIN -->
 - [x] #1 Each of the 20 failures is classified as stale-contract (test fix) or real regression (product fix), with the evidence that decided it — not repaired wholesale to green
 - [x] #2 Any classified as a real regression is fixed in the product, or filed separately with its reproduction if it needs owner judgement
-- [x] #3 Both files run WHOLE with a READ nonzero pass count and zero failures
+- [x] #3 Both files run WHOLE with a READ nonzero pass count and zero failures (one test is `xfail(strict=True)` -> task-15120: repairing its click exposed a store-vs-service workspace divergence needing a product ruling; strict means a fix flips it loudly)
 - [x] #4 If the moved-seam shape (`_ensure_active_console_session_settings` and friends) recurs across other suites, the sweep that finds them is checkable rather than asserted
 <!-- AC:END -->
 

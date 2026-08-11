@@ -105,9 +105,36 @@ def moved_console_seams() -> dict[str, str]:
     return moved
 
 
+def _seams_bound_from_a_controller(tree: ast.AST) -> set[str]:
+    """Seam names this module binds straight off a controller class.
+
+    A double that declares ``_confirm_fleet_loss =
+    ConsoleSessionController._confirm_fleet_loss`` is running the
+    controller's OWN implementation, so calling it on that double is the
+    correct route by definition -- reporting it would be a false positive.
+    Detected structurally rather than by adding the double's variable name
+    to an allow-list: a name list cannot tell a borrowed implementation
+    from a `ChatScreen` subclass that happens to be called ``harness``.
+    """
+    bound: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        value = node.value
+        if not isinstance(value, ast.Attribute) or not isinstance(value.value, ast.Name):
+            continue
+        if value.value.id not in CONTROLLER_CLASS_NAMES:
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name) and target.id == value.attr:
+                bound.add(value.attr)
+    return bound
+
+
 def scan_tree(tree: ast.AST, path: str, moved: dict[str, str]) -> list[Violation]:
     """Report every `<name>.<moved seam>(...)` call in one parsed test module."""
     violations: list[Violation] = []
+    borrowed = _seams_bound_from_a_controller(tree)
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
@@ -116,6 +143,8 @@ def scan_tree(tree: ast.AST, path: str, moved: dict[str, str]) -> list[Violation
             continue
         base = func.value.id
         if base in CONTROLLER_CLASS_NAMES or base in CONTROLLER_VARIABLE_NAMES:
+            continue
+        if func.attr in borrowed:
             continue
         owner = moved.get(func.attr)
         if owner is None:
