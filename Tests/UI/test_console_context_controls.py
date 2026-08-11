@@ -124,9 +124,18 @@ async def test_quick_popover_separates_request_conversation_and_policy() -> None
         assert "~42,000 / 94,000 safe input" in str(
             app.screen.query_one("#console-popover-request-usage", Static).renderable
         )
-        assert "~32,000 / 84,000 budget" in str(
+        assert "~32,000 / 84,000 max tokens" in str(
             app.screen.query_one(
                 "#console-popover-conversation-usage", Static
+            ).renderable
+        )
+        assert "4,000 tokens for the next reply" in str(
+            app.screen.query_one("#console-popover-response-max", Static).renderable
+        )
+        assert "Automatic may add one extra model call" in str(
+            app.screen.query_one(
+                "#console-popover-compaction-help",
+                Static,
             ).renderable
         )
         assert not app.screen.query("#console-popover-custom-budget")
@@ -165,10 +174,29 @@ async def test_full_modal_has_stable_views_and_saves_conversation_policy() -> No
         assert "local-first deployment" in str(
             app.screen.query_one("#console-settings-memory-review", Static).renderable
         )
-        assert (
-            str(app.screen.query_one("#console-settings-save-default", Button).label)
-            == "Save provider defaults"
+        save_defaults = app.screen.query_one(
+            "#console-settings-save-default",
+            Button,
         )
+        assert str(save_defaults.label) == "Save model defaults"
+        assert save_defaults.display is False
+        scope = str(
+            app.screen.query_one("#console-settings-scope", Static).renderable
+        )
+        assert "this conversation" in scope
+        assert "F9 Settings > Console behavior" in scope
+        context_labels = {
+            "#console-context-custom-budget": "Conversation max tokens",
+            "#console-context-trigger-percent": "Summarize at (%)",
+            "#console-context-target-percent": "Reduce conversation to (%)",
+            "#console-context-summary-max": "Summary response max",
+            "#console-context-failure-behavior": "If summary fails",
+            "#console-context-carry-forward": "Keep after summary",
+        }
+        for selector, expected in context_labels.items():
+            control = app.screen.query_one(selector)
+            label = control.parent.query_one(".console-settings-modal-label", Static)
+            assert str(label.renderable) == expected
 
         app.screen.query_one(
             "#console-context-budget-mode", Select
@@ -219,6 +247,8 @@ async def test_provider_defaults_write_excludes_memory_and_prompt_ownership(
         app.screen.query_one(
             "#console-context-compaction-mode", Select
         ).value = ContextCompactionMode.AUTOMATIC.value
+        await pilot.click("#console-settings-view-model")
+        await pilot.pause()
         await pilot.click("#console-settings-save-default")
         await pilot.pause()
 
@@ -333,6 +363,95 @@ async def test_context_view_fits_narrow_terminal_and_keeps_focusable_controls() 
         assert modal.region.y >= 0
         assert modal.region.bottom <= 24
         budget = app.screen.query_one("#console-context-budget-mode", Select)
-        budget.focus()
         await pilot.pause()
         assert app.focused is budget
+        body = app.screen.query_one("#console-settings-body")
+        hint = app.screen.query_one("#console-settings-fold-hint", Static)
+        assert hint.display, (
+            body.virtual_size,
+            body.container_size,
+            body.max_scroll_y,
+        )
+        actions = app.screen.query_one("#console-settings-actions")
+        assert actions.region.bottom <= 24
+
+
+@pytest.mark.asyncio
+async def test_quick_popover_keeps_actions_visible_and_marks_the_narrow_fold() -> None:
+    """Keep the context route discoverable before a new user starts scrolling."""
+    app = _ContextHarness()
+    async with app.run_test(size=(72, 24)) as pilot:
+        await app.push_screen(
+            ConsoleModelPopover(
+                settings=_settings(),
+                providers_models={"llama_cpp": ["model-a"]},
+                context_state=_state(),
+            )
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        hint = app.screen.query_one("#console-popover-fold-hint", Static)
+        actions = app.screen.query_one("#console-popover-actions")
+        context_button = app.screen.query_one(
+            "#console-popover-full-settings",
+            Button,
+        )
+        assert hint.display
+        assert actions.region.bottom <= 24
+        assert context_button.region.bottom <= 24
+        focus_order: list[str] = []
+        for _ in range(14):
+            focused = app.focused
+            focus_order.append(getattr(focused, "id", "") or "")
+            if focus_order[-1] == "console-popover-full-settings":
+                break
+            await pilot.press("tab")
+            await pilot.pause()
+        assert focus_order.index("console-popover-temperature") < focus_order.index(
+            "console-popover-streaming"
+        )
+        assert focus_order.index("console-popover-streaming") < focus_order.index(
+            "console-popover-compaction-mode"
+        )
+        assert focus_order[-1] == "console-popover-full-settings"
+
+
+@pytest.mark.asyncio
+async def test_unverified_model_capacity_is_labeled_as_estimated() -> None:
+    """Never present the 8,001-token fallback as model-verified capacity."""
+    estimate = ConsoleSettingsContextEstimate(
+        10,
+        8001,
+        "10 / 8,001 tokens (estimated; model unverified)",
+        token_limit_verified=False,
+        token_limit_source="provider fallback",
+    )
+    state = build_console_context_control_state(
+        settings=_settings(),
+        estimate=estimate,
+    )
+    app = _ContextHarness()
+    async with app.run_test(size=(100, 34)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=_settings(),
+                app_config={"api_settings": {"llama_cpp": {}}},
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=estimate,
+                context_state=state,
+                can_save=True,
+                focus_context=True,
+            )
+        )
+        await pilot.pause()
+
+        window = str(
+            app.screen.query_one("#console-context-model-window", Static).renderable
+        )
+        status = str(
+            app.screen.query_one("#console-context-capacity-status", Static).renderable
+        )
+        assert "Model window (est.)" in window
+        assert "model capacity is unverified" in status
+        assert "Providers & Models" in status

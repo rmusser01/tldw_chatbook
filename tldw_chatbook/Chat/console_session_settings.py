@@ -89,12 +89,12 @@ CONSOLE_MODEL_TOKEN_LIMITS = {
     "mistral-medium": 32000,
     "mistral-small": 32000,
     "mixtral-8x7b": 32000,
-    "default": 4096,
+    "default": 8001,
 }
 CONSOLE_PROVIDER_TOKEN_LIMIT_DEFAULTS = {
     "anthropic": 100000,
     "google": 30720,
-    "openai": 4096,
+    "openai": 8001,
     "mistral": 32000,
 }
 _REASONING_EFFORT_VALUES = frozenset(
@@ -201,6 +201,8 @@ class ConsoleSettingsContextEstimate:
     label: str
     staged_source_count: int = 0
     staged_context_summary: str = ""
+    token_limit_verified: bool | None = None
+    token_limit_source: str = ""
 
 
 @dataclass(frozen=True)
@@ -473,7 +475,7 @@ def validate_console_session_settings(
     if not _is_blank_value(settings.max_tokens) and not _optional_int_at_least(
         settings.max_tokens, 1
     ):
-        errors.append("Max tokens must be 1 or greater.")
+        errors.append("Response max tokens must be 1 or greater.")
     if not _is_blank_value(settings.seed) and not _optional_int_at_least(
         settings.seed, 0
     ):
@@ -772,7 +774,17 @@ def build_console_context_estimate(
         counter = token_counter or _estimate_tokens_locally
         limit_resolver = token_limit_resolver or _resolve_token_limit_locally
         used_tokens = counter(list(estimate_messages), model_name, provider_key)
-        token_limit = limit_resolver(model_name, provider_key)
+        if token_limit_resolver is None:
+            token_limit, token_limit_verified, token_limit_source = (
+                _resolve_token_limit_locally_with_provenance(
+                    model_name,
+                    provider_key,
+                )
+            )
+        else:
+            token_limit = limit_resolver(model_name, provider_key)
+            token_limit_verified = True
+            token_limit_source = "provided resolver"
     except Exception:
         return ConsoleSettingsContextEstimate(
             used_tokens=None,
@@ -783,6 +795,8 @@ def build_console_context_estimate(
         )
 
     label = f"{used_tokens:,} / {token_limit:,} tokens"
+    if not token_limit_verified:
+        label = f"{label} (estimated; model unverified)"
     if max_tokens_response is not None:
         label = f"{label}; {max_tokens_response:,} response tokens reserved"
     if staged_source_count:
@@ -795,6 +809,8 @@ def build_console_context_estimate(
         label=label,
         staged_source_count=staged_source_count,
         staged_context_summary=staged_context_summary,
+        token_limit_verified=token_limit_verified,
+        token_limit_source=token_limit_source,
     )
 
 
@@ -1121,8 +1137,21 @@ def _estimate_tokens_locally(
 
 
 def _resolve_token_limit_locally(model: str, provider: str) -> int:
+    """Resolve a local model-window estimate without exposing provenance."""
+    limit, _verified, _source = _resolve_token_limit_locally_with_provenance(
+        model,
+        provider,
+    )
+    return limit
+
+
+def _resolve_token_limit_locally_with_provenance(
+    model: str,
+    provider: str,
+) -> tuple[int, bool, str]:
+    """Resolve the model window and report whether it is model-specific."""
     if model in CONSOLE_MODEL_TOKEN_LIMITS:
-        return CONSOLE_MODEL_TOKEN_LIMITS[model]
+        return CONSOLE_MODEL_TOKEN_LIMITS[model], True, "model catalog"
 
     model_limits = (
         (prefix, limit)
@@ -1133,11 +1162,15 @@ def _resolve_token_limit_locally(model: str, provider: str) -> int:
         model_limits, key=lambda item: len(item[0]), reverse=True
     ):
         if model.startswith(model_prefix):
-            return limit
+            return limit, True, "model family"
 
-    return CONSOLE_PROVIDER_TOKEN_LIMIT_DEFAULTS.get(
-        provider, CONSOLE_MODEL_TOKEN_LIMITS["default"]
-    )
+    if provider in CONSOLE_PROVIDER_TOKEN_LIMIT_DEFAULTS:
+        return (
+            CONSOLE_PROVIDER_TOKEN_LIMIT_DEFAULTS[provider],
+            False,
+            "provider fallback",
+        )
+    return CONSOLE_MODEL_TOKEN_LIMITS["default"], False, "application fallback"
 
 
 def _bool_setting(

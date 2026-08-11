@@ -140,8 +140,48 @@ async def test_console_memory_controls_mount_stage_and_fit_narrow_settings() -> 
         screen._select_category(SettingsCategoryId.CONSOLE_BEHAVIOR.value)
         await pilot.pause()
 
+        jump = screen.query_one("#settings-console-context-memory-jump", Button)
+        assert "Conversation context and memory" in str(jump.label)
+        jump.press()
+        await pilot.pause()
+        budget_mode = screen.query_one("#settings-console-context-budget-mode", Select)
+        assert screen.focused is budget_mode
+
+        conversation_max = screen.query_one(
+            "#settings-console-context-budget-tokens",
+            Input,
+        )
+        conversation_label = conversation_max.parent.query_one(
+            ".settings-input-label",
+            Static,
+        )
+        response_max = screen.query_one("#settings-console-default-max-tokens", Input)
+        response_label = response_max.parent.query_one(
+            ".settings-input-label",
+            Static,
+        )
+        assert _static_text(conversation_label) == "Conversation max tokens"
+        assert _static_text(response_label) == "Response max tokens"
+
         trigger = screen.query_one("#settings-console-context-trigger-percent", Input)
         mode = screen.query_one("#settings-console-context-compaction-mode", Select)
+        assert _static_text(
+            trigger.parent.query_one(".settings-input-label", Static)
+        ) == "Summarize at (%)"
+        assert _static_text(
+            mode.parent.query_one(".settings-input-label", Static)
+        ) == "When limit nears"
+        advanced_labels = {
+            "#settings-console-context-target-percent": "Reduce conversation to (%)",
+            "#settings-console-context-summary-max-tokens": "Summary response max",
+            "#settings-console-context-failure-behavior": "If summary fails",
+            "#settings-console-context-carry-forward-mode": "Keep after summary",
+        }
+        for selector, expected in advanced_labels.items():
+            control = screen.query_one(selector)
+            assert _static_text(
+                control.parent.query_one(".settings-input-label", Static)
+            ) == expected
         trigger.value = "85"
         mode.value = "automatic"
         await pilot.pause()

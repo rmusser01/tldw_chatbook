@@ -62,7 +62,7 @@ from tldw_chatbook.Widgets.Console.console_model_popover import (  # noqa: E402
 from tldw_chatbook.Widgets.Console.console_settings_modal import (  # noqa: E402
     ConsoleSettingsModal,
 )
-from textual.widgets import Input, Select, Static  # noqa: E402
+from textual.widgets import Button, Input, Select, Static  # noqa: E402
 
 
 class FakeGateway:
@@ -173,6 +173,10 @@ async def wide_journey() -> dict[str, object]:
             await wait_for(lambda: isinstance(app.screen, ConsoleModelPopover))
             capture(app, "02-quick-model-settings-default-120x42")
             evidence["quick_default"] = {
+                "response_max": static_text(
+                    app.screen,
+                    "#console-popover-response-max",
+                ),
                 "request": static_text(app.screen, "#console-popover-request-usage"),
                 "conversation": static_text(
                     app.screen, "#console-popover-conversation-usage"
@@ -180,7 +184,14 @@ async def wide_journey() -> dict[str, object]:
                 "threshold": static_text(
                     app.screen, "#console-popover-compaction-threshold"
                 ),
+                "compaction_help": static_text(
+                    app.screen,
+                    "#console-popover-compaction-help",
+                ),
             }
+            assert "next reply" in evidence["quick_default"]["response_max"]
+            assert "8,001 max tokens" in evidence["quick_default"]["conversation"]
+            assert "extra model call" in evidence["quick_default"]["compaction_help"]
 
             await pilot.click("#console-popover-full-settings")
             await wait_for(lambda: isinstance(app.screen, ConsoleSettingsModal))
@@ -189,6 +200,16 @@ async def wide_journey() -> dict[str, object]:
             evidence["default_capacity_status"] = static_text(
                 app.screen, "#console-context-capacity-status"
             )
+            evidence["context_scope"] = static_text(
+                app.screen,
+                "#console-settings-scope",
+            )
+            assert "model capacity is unverified" in evidence["default_capacity_status"]
+            assert "this conversation" in evidence["context_scope"]
+            assert not app.screen.query_one(
+                "#console-settings-save-default",
+                Button,
+            ).display
 
             app.screen.query_one(
                 "#console-context-budget-mode", Select
@@ -280,6 +301,13 @@ async def narrow_and_keyboard_journey() -> dict[str, object]:
             evidence["quick_focus_order"] = quick_focus_order
             assert app.focused is not None
             assert app.focused.id == "console-popover-full-settings"
+            assert "console-popover-temperature" in quick_focus_order
+            assert "console-popover-streaming" in quick_focus_order
+            assert "console-popover-compaction-mode" in quick_focus_order
+            assert app.screen.query_one(
+                "#console-popover-fold-hint",
+                Static,
+            ).display
             capture(app, "08b-quick-full-settings-keyboard-focus-72x24")
             await pilot.press("enter")
             await wait_for(lambda: isinstance(app.screen, ConsoleSettingsModal))
@@ -292,6 +320,12 @@ async def narrow_and_keyboard_journey() -> dict[str, object]:
                 "width": modal.region.width,
                 "height": modal.region.height,
             }
+            assert app.focused is not None
+            assert app.focused.id == "console-context-budget-mode"
+            assert app.screen.query_one(
+                "#console-settings-fold-hint",
+                Static,
+            ).display
             focus_order: list[str] = []
             for _ in range(18):
                 await pilot.press("tab")
@@ -321,6 +355,13 @@ async def global_settings_journey() -> dict[str, object]:
             screen._select_category(SettingsCategoryId.CONSOLE_BEHAVIOR.value)
             await settle(pilot)
             capture(app, "10-global-console-behavior-120x42")
+            jump = screen.query_one("#settings-console-context-memory-jump", Button)
+            assert "Conversation context and memory" in str(jump.label)
+            jump.press()
+            await settle(pilot)
+            capture(app, "11-global-context-memory-focused-120x42")
+            assert screen.focused is not None
+            assert screen.focused.id == "settings-console-context-budget-mode"
             evidence["safety_copy"] = static_text(
                 screen, "#settings-console-context-safety-copy"
             )
@@ -332,6 +373,16 @@ async def global_settings_journey() -> dict[str, object]:
                     "#settings-console-context-compaction-mode", Select
                 ).value
             )
+            evidence["conversation_max_label"] = static_text(
+                screen.query_one("#settings-console-context-budget-tokens").parent,
+                ".settings-input-label",
+            )
+            evidence["response_max_label"] = static_text(
+                screen.query_one("#settings-console-default-max-tokens").parent,
+                ".settings-input-label",
+            )
+            assert evidence["conversation_max_label"] == "Conversation max tokens"
+            assert evidence["response_max_label"] == "Response max tokens"
     finally:
         drain_active_service_patches()
         drain_created_dirs()

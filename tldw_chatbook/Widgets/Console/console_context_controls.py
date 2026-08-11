@@ -38,6 +38,8 @@ class ConsoleContextControlState:
     conversation_tokens: int | None
     request_overhead_tokens: int | None
     model_window_tokens: int | None
+    model_window_verified: bool
+    model_window_source: str
     safe_input_ceiling_tokens: int | None
     response_max_tokens: int
     safety_margin_tokens: int | None
@@ -70,11 +72,12 @@ class ConsoleContextControlState:
     def request_row(self) -> str:
         used = format_context_tokens(self.request_tokens)
         ceiling = format_context_tokens(self.safe_input_ceiling_tokens)
-        suffix = (
-            "safe input"
-            if self.safe_input_ceiling_tokens is not None
-            else "limit unknown"
-        )
+        if self.safe_input_ceiling_tokens is None:
+            suffix = "limit unknown"
+        elif self.model_window_verified:
+            suffix = "safe input"
+        else:
+            suffix = "estimated input; model unverified"
         estimate_prefix = "~" if self.request_tokens is not None else ""
         return f"{estimate_prefix}{used} / {ceiling} {suffix}"
 
@@ -83,7 +86,7 @@ class ConsoleContextControlState:
         used = format_context_tokens(self.conversation_tokens)
         budget = format_context_tokens(self.conversation_budget_tokens)
         estimate_prefix = "~" if self.conversation_tokens is not None else ""
-        return f"{estimate_prefix}{used} / {budget} budget"
+        return f"{estimate_prefix}{used} / {budget} max tokens"
 
 
 def build_console_context_control_state(
@@ -125,11 +128,18 @@ def build_console_context_control_state(
     )
     used = estimate.used_tokens
     conversation_used = used if conversation_tokens is None else conversation_tokens
+    model_window_verified = (
+        estimate.token_limit is not None
+        if estimate.token_limit_verified is None
+        else estimate.token_limit_verified
+    )
     return ConsoleContextControlState(
         request_tokens=used,
         conversation_tokens=conversation_used,
         request_overhead_tokens=request_overhead_tokens,
         model_window_tokens=estimate.token_limit,
+        model_window_verified=model_window_verified,
+        model_window_source=estimate.token_limit_source,
         safe_input_ceiling_tokens=resolved.safe_input_ceiling_tokens,
         response_max_tokens=response_max,
         safety_margin_tokens=safety_margin_tokens,

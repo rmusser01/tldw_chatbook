@@ -8,17 +8,17 @@ tldw chatbook
 ││ Model and generation  Context and memory ││
 ││││
 ││llama_cpp is ready. No API key is required.││
-││Save applies to this session only. Save provider defaults also││
-││writes provider + streaming defaults to config.││
+││Save applies to this conversation. Global context defaults are││
+││in F9 Settings > Console behavior.││
 ││█││
 ││││
-││││
-││Model capacity││
-└─│Model window        4,096 tokens│─┘
-│Response max        0 tokens│r
-│Safety margin       unknown tokens│
+││▄││
+││Conversation budget▄││
+└─│Budget modeAutomatic▼│─┘
+││r
+│▼ more — scroll for the rest│
 ┌─││─┐
-││ Cancel  Save provider defaults  Save ││
+││ Cancel  Save ││
 ││││
 │╰──────────────────────────────────────────────────────────────────╯│
 └──────────────────────────────────────────────────────────────────────┘

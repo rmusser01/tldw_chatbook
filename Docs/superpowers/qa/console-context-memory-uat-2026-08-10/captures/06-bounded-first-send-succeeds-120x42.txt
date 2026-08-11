@@ -37,7 +37,7 @@ Provider: Llama_cppModel: uat-unknown-window-mod…System Prompt: offAssista
 
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 ││
-│Composer ▾MenuAsk, command, or paste task...Send disabled: type a message Se  Dictate │
+│Composer ▾Menu▌Ask, command, or paste task...Send disabled: type a message Se  Dictate │
 ││
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 … F1 help · F6 panes · Ctrl+P palette · Ctrl+Q quit

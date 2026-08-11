@@ -13,30 +13,30 @@ Mode: Console Behavior
 │Core│││┌──────────────────────────────────────────────────┐│││Behavior│
 │   Overview (view) ││││┌──────────────────────────────────────────────┐││││No unsaved│
 │   Providers & Models ││││││││││changes│
-│   Speech & TTS │││││Rail presentation││▁│││Guided edits:│
-│Interface│││││▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎│││││change a field│
-│   Appearance │││││▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎│││││first.│
-│   Theme │││││Saved style: Horizontal│││││ Save (s) — no ch│
-│   Splash Screen │││││Uses narrower 3-column handles by stacking│││││ Revert (r) — no │
-│ > Console Behavior │││││upright letters. Direction glyphs are│││││Local-only: saves│
-│Data & Privacy│││││omitted.│││││write your config│
-│   Storage ││││││││││file.│
-│   Workspaces │││││Composer paste handling│││││Control guide│
-│   Privacy & Security │││││Collapse large pasted chunks only when they│││││Default chat│
-│Troubleshooting│││││exceed the threshold.│││││display name:▆│
-│   Diagnostics (view) │││││▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎│││││Speaker label│
-│   About (view) │││││▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎│││││and trusted│
-│   Agents │││││Threshold (chars)│50│││││character-temp│
-│Expert│││││Normal typing stays literal. The canonical│││││late human│
-│   Internal Prompts │││││message payload is preserved.│││││name│
-│   Advanced Config │││││││││││
-│ Domain Defaults ▸ (11) │││││Chat images│││││Streaming:│
-││││││Render images linked in assistant replies│││││Global│
-││││││(remote fetch).│││││fallback for│
-││││││ Disabled │││││streaming│
-││││││Off by default: fetching a model-suggested│││││responses when│
-││││││link reveals your IP address to that host.│││││no Console│
-│││││││││││▼ more — scroll│
+│   Speech & TTS │││││Start here││▃│││Guided edits:│
+│Interface│││││ Conversation context and memory ↓ │││││change a field│
+│   Appearance │││││Also in this category: rail presentation,│││││first.│
+│   Theme │││││paste handling, images, agent limits, and│││││ Save (s) — no ch│
+│   Splash Screen │││││generation defaults.│││││ Revert (r) — no │
+│ > Console Behavior ││││││││││Local-only: saves│
+│Data & Privacy│││││Rail presentation│││││write your config│
+│   Storage │││││▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎│││││file.│
+│   Workspaces │││││▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎│││││Control guide│
+│   Privacy & Security │││││Saved style: Horizontal│││││Default chat│
+│Troubleshooting│││││Uses narrower 3-column handles by stacking│││││display name:▆│
+│   Diagnostics (view) │││││upright letters. Direction glyphs are│││││Speaker label│
+│   About (view) │││││omitted.│││││and trusted│
+│   Agents ││││││││││character-temp│
+│Expert│││││Composer paste handling│││││late human│
+│   Internal Prompts │││││Collapse large pasted chunks only when they│││││name│
+│   Advanced Config │││││exceed the threshold.││││││
+│ Domain Defaults ▸ (11) │││││▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎│││││Streaming:│
+││││││▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎│││││Global│
+││││││Threshold (chars)│50│││││fallback for│
+││││││Normal typing stays literal. The canonical│││││streaming│
+││││││message payload is preserved.│││││responses when│
+│││││││││││no Console│
+││││││Chat images│││││▼ more — scroll│
 ││││││││
 └──────────────────────────────┘│└───────────────────────────────────────────────────────┘│└───────────────────┘
 

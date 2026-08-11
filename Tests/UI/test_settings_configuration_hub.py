@@ -678,7 +678,7 @@ def test_adapter_save_sections_batches_sections(monkeypatch):
 def test_settings_console_default_max_tokens_rejects_raw_zero():
     screen = SettingsScreen(_build_test_app())
 
-    with pytest.raises(ValueError, match="Max tokens"):
+    with pytest.raises(ValueError, match="Response max tokens"):
         screen._normalise_console_default_max_tokens(0)
 
 
@@ -2820,7 +2820,10 @@ async def test_settings_console_behavior_inspector_explains_visible_controls():
             "Top P: Probability cutoff fallback; lower values narrow token choices"
             in text
         )
-        assert "Max tokens: Optional response cap for new/default Console sends" in text
+        assert (
+            "Response max tokens: Optional response cap for new/default Console sends"
+            in text
+        )
         assert (
             "Paste collapse: Only pasted chunks over the threshold become compact placeholders; "
             "typed text stays literal"
@@ -4829,7 +4832,7 @@ async def test_settings_console_behavior_uses_batched_save_adapter(monkeypatch):
             "#settings-console-default-max-tokens",
             "handle_console_default_max_tokens_changed",
             "0",
-            "Max tokens must be a whole number of at least 1.",
+            "Response max tokens must be a whole number of at least 1.",
         ),
         (
             "#settings-console-default-min-p",
