@@ -19,6 +19,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.events import Resize
+from textual.message import Message
 from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.worker import Worker
@@ -145,6 +146,19 @@ class _PushBindingKey:
     binding: SessionBinding
     generation: int
     candidate: PushCandidateProjection
+
+
+@dataclass(frozen=True, slots=True)
+class _ReloadConfirmation:
+    """Exact editor and disk identities captured before destructive reload."""
+
+    service: FileNotesService
+    binding: SessionBinding
+    root_generation: int
+    session_key: str
+    opened: OpenedFileNote
+    save_state: Literal["conflict", "error"]
+    disk_content_hash: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -364,6 +378,13 @@ class FileNotesRootDetailsDialog(ModalScreen[None]):
 class LibraryFileNotesWorkspace(Vertical):
     """Browse and edit one disk-authoritative Markdown/text root."""
 
+    class ReloadConfirmationChanged(Message):
+        """Announce whether the destructive reload confirmation is active."""
+
+        def __init__(self, active: bool) -> None:
+            super().__init__()
+            self.active = active
+
     DEFAULT_CSS = """
     LibraryFileNotesWorkspace {
         height: 1fr;
@@ -481,6 +502,29 @@ class LibraryFileNotesWorkspace(Vertical):
     #file-notes-save-status,
     #file-notes-action-status {
         color: $text-muted;
+    }
+
+    #file-notes-reload-confirm-copy {
+        width: 100%;
+        height: auto;
+        min-height: 1;
+        color: $warning;
+        text-style: bold;
+        text-wrap: wrap;
+    }
+
+    #file-notes-reload-confirm-copy,
+    #file-notes-reload-confirm-actions {
+        display: none;
+    }
+
+    LibraryFileNotesWorkspace.-reload-confirming #file-notes-path {
+        display: none;
+    }
+
+    #file-notes-reload-confirm {
+        color: $error;
+        text-style: bold;
     }
 
     #file-notes-editor {
@@ -628,6 +672,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self._session_key = ""
         self._save_state: SaveState = "idle"
         self._save_detail = ""
+        self._reload_confirmation: _ReloadConfirmation | None = None
         self._delete_confirmation_path = ""
         self._search_generation = 0
         self._search_query = ""
@@ -748,6 +793,11 @@ class LibraryFileNotesWorkspace(Vertical):
     def save_state(self) -> SaveState:
         """Return the current editor save state."""
         return self._save_state
+
+    @property
+    def reload_confirmation_active(self) -> bool:
+        """Return whether destructive conflict reload awaits a decision."""
+        return self._reload_confirmation is not None
 
     @property
     def leave_allowed(self) -> bool:
@@ -892,6 +942,29 @@ class LibraryFileNotesWorkspace(Vertical):
                     yield Button("Protect", id="file-notes-protect", compact=True)
                     yield Button("Reload", id="file-notes-reload", compact=True)
                     yield Button("Refresh", id="file-notes-refresh", compact=True)
+                yield Static(
+                    (
+                        self._reload_confirmation_copy()
+                        if self.reload_confirmation_active
+                        else ""
+                    ),
+                    id="file-notes-reload-confirm-copy",
+                    markup=False,
+                )
+                with Horizontal(
+                    id="file-notes-reload-confirm-actions",
+                    classes="file-notes-toolbar",
+                ):
+                    yield Button(
+                        "Cancel",
+                        id="file-notes-reload-cancel",
+                        compact=True,
+                    )
+                    yield Button(
+                        "Discard draft and load disk",
+                        id="file-notes-reload-confirm",
+                        compact=True,
+                    )
                 yield Static("", id="file-notes-action-status", markup=False)
 
     def on_mount(self) -> None:
@@ -1449,6 +1522,67 @@ class LibraryFileNotesWorkspace(Vertical):
             toolbar.set_class(confirmed, "-confirm-delete")
             toolbar.refresh(layout=True)
         self._schedule_editor_action_layout()
+
+    @staticmethod
+    def _reload_confirmation_copy() -> str:
+        """Return complete destructive reload copy."""
+        return (
+            "Discard the draft in the editor and load the current disk version? "
+            "This cannot be undone."
+        )
+
+    def _reload_confirmation_is_current(
+        self,
+        confirmation: _ReloadConfirmation,
+    ) -> bool:
+        """Validate every retained identity before destructive replacement."""
+        return (
+            self._active
+            and self.is_mounted
+            and self._service is confirmation.service
+            and self._root_generation == confirmation.root_generation
+            and self._session_binding == confirmation.binding
+            and self._session_owner.current_binding() == confirmation.binding
+            and self._opened is confirmation.opened
+            and self._current_path == confirmation.opened.relative_path
+            and self._session_key == confirmation.session_key
+            and self._save_state == confirmation.save_state
+        )
+
+    def _set_reload_confirmation(
+        self,
+        confirmation: _ReloadConfirmation,
+    ) -> None:
+        """Show the retained inline decision and focus the safe default."""
+        was_active = self.reload_confirmation_active
+        self._reload_confirmation = confirmation
+        if self._active and self.is_mounted:
+            self.query_one("#file-notes-reload-confirm-copy", Static).update(
+                self._reload_confirmation_copy()
+            )
+            self._update_controls()
+            cancel = self.query_one("#file-notes-reload-cancel", Button)
+            self.call_after_refresh(cancel.focus)
+        if not was_active:
+            self.post_message(self.ReloadConfirmationChanged(True))
+
+    def _dismiss_reload_confirmation(self, *, focus_opener: bool) -> bool:
+        """Close a pending reload decision without changing editor content."""
+        if self._reload_confirmation is None:
+            return False
+        self._reload_confirmation = None
+        if self._active and self.is_mounted:
+            self.query_one("#file-notes-reload-confirm-copy", Static).update("")
+            self._update_controls()
+            if focus_opener:
+                reload_button = self.query_one("#file-notes-reload", Button)
+                self.call_after_refresh(reload_button.focus)
+        self.post_message(self.ReloadConfirmationChanged(False))
+        return True
+
+    def cancel_reload_confirmation(self) -> bool:
+        """Cancel destructive reload and restore focus to its opener."""
+        return self._dismiss_reload_confirmation(focus_opener=True)
 
     def _sync_editor_action_layout(self) -> None:
         """Stack current editor actions only when their labels need the space."""
@@ -3255,6 +3389,7 @@ class LibraryFileNotesWorkspace(Vertical):
             or self._path_transitioning
             or self._opened is None
             or not self._opened.editable
+            or self.reload_confirmation_active
             or leased
         )
 
@@ -3467,7 +3602,24 @@ class LibraryFileNotesWorkspace(Vertical):
             protect.refresh(layout=True)
             if protect.parent is not None:
                 protect.parent.refresh(layout=True)
+        reload_button = self.query_one("#file-notes-reload", Button)
+        reload_label = (
+            "Discard draft and reload"
+            if self._save_state in {"conflict", "error"}
+            else "Reload"
+        )
+        if str(reload_button.label) != reload_label:
+            reload_button.label = reload_label
+            reload_button.refresh(layout=True)
+            if reload_button.parent is not None:
+                reload_button.parent.refresh(layout=True)
         self._sync_editor_action_visibility()
+        self.query_one("#file-notes-reload-cancel", Button).disabled = (
+            not self.reload_confirmation_active
+        )
+        self.query_one("#file-notes-reload-confirm", Button).disabled = (
+            not self.reload_confirmation_active or not structurally_available
+        )
         busy_reason = ""
         if transitioning:
             busy_reason = (
@@ -3498,6 +3650,8 @@ class LibraryFileNotesWorkspace(Vertical):
 
     def _sync_editor_action_visibility(self) -> None:
         """Disclose only editor actions relevant to the retained state."""
+        confirming_reload = self.reload_confirmation_active
+        self.set_class(confirming_reload, "-reload-confirming")
         has_service = self._service is not None
         has_document = self._opened is not None
         has_deleted = has_service and bool(self._selected_deleted_path)
@@ -3528,6 +3682,7 @@ class LibraryFileNotesWorkspace(Vertical):
         for action_id, displayed in visibility.items():
             if action_id in maintenance_ids:
                 displayed = displayed and self._maintenance_expanded
+            displayed = displayed and not confirming_reload
             button = self.query_one(f"#{action_id}", Button)
             if button is focused and not displayed:
                 self._editor_action_focus_target = action_id
@@ -3540,7 +3695,23 @@ class LibraryFileNotesWorkspace(Vertical):
             "Hide actions" if self._maintenance_expanded else "Maintenance"
         )
         maintenance = self.query_one("#file-notes-maintenance-actions")
-        maintenance.display = maintenance_available and self._maintenance_expanded
+        maintenance.display = (
+            maintenance_available
+            and self._maintenance_expanded
+            and not confirming_reload
+        )
+        confirmation_copy = self.query_one(
+            "#file-notes-reload-confirm-copy",
+            Static,
+        )
+        confirmation_actions = self.query_one(
+            "#file-notes-reload-confirm-actions"
+        )
+        confirmation_copy.display = confirming_reload
+        confirmation_actions.display = confirming_reload
+        for button in confirmation_actions.query(Button):
+            button.display = confirming_reload
+            button.disabled = not confirming_reload
 
         for toolbar in self.query(".file-notes-toolbar"):
             toolbar.set_class(
@@ -3741,6 +3912,7 @@ class LibraryFileNotesWorkspace(Vertical):
     def _apply_opened_document(self, opened: OpenedFileNote) -> None:
         if not self._active:
             return
+        self._dismiss_reload_confirmation(focus_opener=False)
         self._opened = opened
         self._current_path = opened.relative_path
         self._selected_deleted_path = ""
@@ -3766,6 +3938,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self._update_controls()
 
     def _clear_open_document(self, *, keep_restore_path: bool = False) -> None:
+        self._dismiss_reload_confirmation(focus_opener=False)
         self._opened = None
         self._current_path = ""
         self._session_key = ""
@@ -5596,8 +5769,63 @@ class LibraryFileNotesWorkspace(Vertical):
         event.stop()
         opened = self._opened
         service = self._service
-        generation = self._root_generation
         if service is None or opened is None:
+            return
+        if self._save_state in {"conflict", "error"}:
+            binding = self._session_binding
+            session_key = self._session_key
+            state = self._save_state
+            if (
+                binding is None
+                or binding != self._session_owner.current_binding()
+                or state not in {"conflict", "error"}
+            ):
+                self._set_action_status(
+                    "Reload stopped: the active File Notes root changed. "
+                    "Draft preserved; review the current file before trying again."
+                )
+                return
+            confirmation: _ReloadConfirmation | None = None
+            with self._hold_path_transition() as transition:
+                if transition is None:
+                    return
+                service, generation = transition
+                try:
+                    disk_snapshot = await asyncio.to_thread(
+                        service.open_file,
+                        opened.relative_path,
+                    )
+                except FileNotFoundError:
+                    self._set_action_status(
+                        f"Reload stopped: {opened.relative_path} is no longer "
+                        "available on disk. Draft preserved; restore the file or "
+                        "save the draft as a copy."
+                    )
+                    return
+                except (OSError, ValueError) as error:
+                    self._set_action_status(
+                        f"Reload stopped: {opened.relative_path} could not be read "
+                        f"from disk ({error}). Draft preserved; check the folder "
+                        "and try again."
+                    )
+                    return
+                confirmation = _ReloadConfirmation(
+                    service=service,
+                    binding=binding,
+                    root_generation=generation,
+                    session_key=session_key,
+                    opened=opened,
+                    save_state=state,
+                    disk_content_hash=disk_snapshot.content_hash,
+                )
+                if not self._reload_confirmation_is_current(confirmation):
+                    self._set_action_status(
+                        "Reload stopped: the active root, file, or editing session "
+                        "changed. Draft preserved; review the current file before "
+                        "trying again."
+                    )
+                    return
+            self._set_reload_confirmation(confirmation)
             return
         if self._save_state == "dirty" and not await self.flush_pending_work():
             return
@@ -5621,6 +5849,91 @@ class LibraryFileNotesWorkspace(Vertical):
                 or self._opened is not opened
             ):
                 return
+            self._apply_opened_document(reloaded)
+
+    @on(Button.Pressed, "#file-notes-reload-cancel")
+    def _cancel_reload(self, event: Button.Pressed) -> None:
+        """Preserve the draft and return focus to the destructive opener."""
+        event.stop()
+        self.cancel_reload_confirmation()
+
+    @on(Button.Pressed, "#file-notes-reload-confirm")
+    async def _confirm_reload(self, event: Button.Pressed) -> None:
+        """Revalidate every identity before intentionally loading disk bytes."""
+        event.stop()
+        confirmation = self._reload_confirmation
+        if confirmation is None:
+            return
+        if not self._reload_confirmation_is_current(confirmation):
+            self._dismiss_reload_confirmation(focus_opener=True)
+            self._set_action_status(
+                "Reload stopped: the active root, file, or editing session changed. "
+                "Draft preserved; review the current file before trying again."
+            )
+            return
+        with self._hold_path_transition() as transition:
+            if transition is None:
+                self._set_action_status(
+                    "Reload is temporarily unavailable. Draft preserved; cancel or "
+                    "try again after the active file operation finishes."
+                )
+                return
+            service, generation = transition
+            if (
+                service is not confirmation.service
+                or generation != confirmation.root_generation
+            ):
+                self._dismiss_reload_confirmation(focus_opener=True)
+                self._set_action_status(
+                    "Reload stopped: the active File Notes root changed. Draft "
+                    "preserved; review the current file before trying again."
+                )
+                return
+            try:
+                reloaded = await asyncio.to_thread(
+                    service.open_file,
+                    confirmation.opened.relative_path,
+                )
+            except FileNotFoundError:
+                if self._reload_confirmation is confirmation:
+                    self._dismiss_reload_confirmation(focus_opener=True)
+                    self._set_action_status(
+                        f"Reload stopped: {confirmation.opened.relative_path} is no "
+                        "longer available on disk. Draft preserved; restore the file "
+                        "or save the draft as a copy."
+                    )
+                return
+            except (OSError, ValueError) as error:
+                if self._reload_confirmation is confirmation:
+                    self._dismiss_reload_confirmation(focus_opener=True)
+                    self._set_action_status(
+                        f"Reload stopped: {confirmation.opened.relative_path} could "
+                        f"not be read from disk ({error}). Draft preserved; check "
+                        "the folder and try again."
+                    )
+                return
+            if self._reload_confirmation is not confirmation:
+                return
+            if (
+                self._path_result_is_stale(service, generation)
+                or not self._reload_confirmation_is_current(confirmation)
+            ):
+                self._dismiss_reload_confirmation(focus_opener=True)
+                self._set_action_status(
+                    "Reload stopped: the active root, file, or editing session "
+                    "changed. Draft preserved; review the current file before "
+                    "trying again."
+                )
+                return
+            if reloaded.content_hash != confirmation.disk_content_hash:
+                self._dismiss_reload_confirmation(focus_opener=True)
+                self._set_action_status(
+                    f"Reload stopped: {confirmation.opened.relative_path} changed "
+                    "again on disk. Draft preserved; activate Discard draft and "
+                    "reload again to review the latest disk version."
+                )
+                return
+            self._dismiss_reload_confirmation(focus_opener=False)
             self._apply_opened_document(reloaded)
 
     @on(Button.Pressed, "#file-notes-save-copy")

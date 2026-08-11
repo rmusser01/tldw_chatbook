@@ -74,13 +74,17 @@ The path input ("relative/path.md") is the target for **New**, **Move**, and
 | **Delete** | Two-press: first press shows "Click Delete again to confirm.", second deletes ("Deleted. Restore remains available.") |
 | **Restore** | Brings back the most recently deleted file |
 | **Protect** / **Unprotect** | Toggles protection on the open file ("Protected." / "Unprotected."); every save to a protected file first stores a checkpoint of its previous contents in the local recovery database |
-| **Reload** | Re-reads the open file from disk, replacing the editor contents |
+| **Reload** / **Discard draft and reload** | Re-reads the open file from disk. In Conflict or Error, the destructive label is shown and the first activation opens a confirmation with **Cancel** focused; only **Discard draft and load disk** replaces the editor contents |
 | **Save Copy** | Writes the editor text as-is to the typed path; only enabled while the save status is Dirty, Conflict, or Error |
 | **Refresh** | Re-scans the folder and rebuilds the **Files** tree |
 
-Saving is automatic — edit and the status walks Dirty → Saving → Saved. If
-the file changed on disk underneath you the status shows Conflict; **Reload**
-takes the disk version.
+Saving is automatic: edit and the status walks Dirty → Saving → Saved. If the
+file changes on disk underneath you, the status shows Conflict and keeps the
+draft in the editor. **Discard draft and reload** first reads the current disk
+version and asks for confirmation. **Cancel** or **Escape** preserves the exact
+draft and conflict; confirming rechecks the root, file, editing session, and
+disk version before it replaces the draft. If any of those changed, reload
+stops with recovery guidance and leaves the draft untouched.
 
 ### Session Git — stage and commit session edits, then push the exact commit
 
@@ -235,6 +239,7 @@ not available.
 | Up / Down (Session Git panel) | Select a row |
 | Tab (Session Git panel) | Move into the selected row's actions |
 | Enter (Session Git panel) | Run the highlighted action |
+| Esc (reload confirmation) | Cancel reload, preserve the draft and conflict, and return focus to **Discard draft and reload** |
 | Esc (Session Git panel) | Step back safely: row list → Files; commit form → cancel; commit review → edit message; candidate/remote check → cancel; push review → Back; active push/uncertain recovery check → Files while it continues; push result → session |
 | Esc (dialogs) | Close "File Notes folder details" or **Endpoint Details**; cancel the repository-trust or destination-authorization dialog |
 

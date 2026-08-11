@@ -1566,6 +1566,12 @@ class LibraryScreen(BaseAppScreen):
         ("esc", "back to Database"),
     )
 
+    LIBRARY_NOTES_FILES_RELOAD_CONFIRM_SHORTCUTS = (
+        ("/", "focus search"),
+        ("F6", "next pane"),
+        ("esc", "cancel reload"),
+    )
+
     #: task-2856 AC2: a detail/viewer surface (media viewer, note editor,
     #: prompt editor) -- Escape goes back to that surface's list.
     LIBRARY_DETAIL_BACK_SHORTCUTS = (
@@ -3273,6 +3279,12 @@ class LibraryScreen(BaseAppScreen):
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
             return self.LIBRARY_LIST_SHORTCUTS
         if self._file_notes_active():
+            workspace = self._library_file_notes_workspace
+            if (
+                workspace is not None
+                and workspace.reload_confirmation_active
+            ):
+                return self.LIBRARY_NOTES_FILES_RELOAD_CONFIRM_SHORTCUTS
             return self.LIBRARY_NOTES_FILES_SHORTCUTS
         if self._library_media_viewer_substate_active():
             return self.LIBRARY_MEDIA_SUBSTATE_BACK_SHORTCUTS
@@ -11879,6 +11891,16 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         await self._return_to_library_database_notes()
 
+    @on(LibraryFileNotesWorkspace.ReloadConfirmationChanged)
+    def _handle_file_notes_reload_confirmation_changed(
+        self,
+        event: LibraryFileNotesWorkspace.ReloadConfirmationChanged,
+    ) -> None:
+        """Keep footer and F1 help truthful for the inline decision state."""
+        event.stop()
+        if event.control is self._library_file_notes_workspace:
+            self._register_footer_shortcuts()
+
     async def _return_to_library_database_notes(self) -> None:
         """Leave File Notes and return to the Database Notes view.
 
@@ -11912,6 +11934,10 @@ class LibraryScreen(BaseAppScreen):
         ``check_action`` gates this to ``_file_notes_active()``, so it only
         ever runs while Files mode genuinely owns the Notes canvas.
         """
+        workspace = self._library_file_notes_workspace
+        if workspace is not None and workspace.cancel_reload_confirmation():
+            self._register_footer_shortcuts()
+            return
         await self._return_to_library_database_notes()
 
     @on(Button.Pressed, ".library-rail-row")

@@ -7,6 +7,7 @@ import sqlite3
 import threading
 from collections.abc import Callable
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -2147,6 +2148,13 @@ async def test_conflict_reload_save_copy_and_leave_guards_preserve_draft(
         workspace.query_one("#file-notes-reload", Button).press()
         await _wait_until(
             pilot,
+            lambda: workspace.reload_confirmation_active,
+            "reload confirmation did not open",
+        )
+        assert editor.text == "another draft"
+        workspace.query_one("#file-notes-reload-confirm", Button).press()
+        await _wait_until(
+            pilot,
             lambda: (
                 workspace.save_state == "saved"
                 and workspace.query_one("#file-notes-editor", TextArea).text
@@ -2177,6 +2185,278 @@ async def test_conflict_reload_save_copy_and_leave_guards_preserve_draft(
         assert not await workspace.flush_pending_work()
         assert workspace.save_state == "error"
         assert editor.text == "surviving error draft"
+        assert str(workspace.query_one("#file-notes-reload", Button).label) == (
+            "Discard draft and reload"
+        )
+        workspace.query_one("#file-notes-reload", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.reload_confirmation_active,
+            "error-state reload confirmation did not open",
+        )
+        assert workspace.save_state == "error"
+        assert editor.text == "surviving error draft"
+        workspace.query_one("#file-notes-reload-cancel", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: not workspace.reload_confirmation_active,
+            "error-state reload confirmation did not cancel",
+        )
+        assert workspace.save_state == "error"
+        assert editor.text == "surviving error draft"
+    replica.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+@pytest.mark.parametrize("size", [(40, 20), (120, 40)])
+async def test_conflict_reload_requires_keyboard_confirmation_in_library_shell(
+    tmp_path: Path,
+    size: tuple[int, int],
+) -> None:
+    """Reload keeps the draft until a distinct, keyboard-safe confirmation.
+
+    The Windows Proactor loop used by the full production ``TldwCli`` harness
+    owns a local loopback socket pair; the test does not contact an external
+    service.
+    """
+    root = tmp_path / "notes"
+    root.mkdir()
+    source = root / "source.md"
+    source.write_text("disk before", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        autosave_delay=10,
+        poll_interval=10,
+    )
+
+    async with _production_workspace_context(workspace, size=size) as pilot:
+        screen = pilot.app.screen
+        assert isinstance(screen, LibraryScreen)
+        assert await workspace.open_path("source.md")
+        editor = workspace.query_one("#file-notes-editor", TextArea)
+        _replace_editor_text(editor, "draft to preserve")
+        await _wait_until(
+            pilot,
+            lambda: workspace.save_state == "dirty",
+            "draft did not become dirty",
+        )
+        source.write_text("disk after", encoding="utf-8")
+        await workspace.refresh_files()
+        assert workspace.save_state == "conflict"
+
+        await _show_maintenance_actions(workspace, pilot)
+        reload_button = workspace.query_one("#file-notes-reload", Button)
+        assert str(reload_button.label) == "Discard draft and reload"
+        assert reload_button.display
+        assert not reload_button.disabled
+        for _ in range(120):
+            if reload_button.has_focus:
+                break
+            await pilot.press("tab")
+        assert reload_button.has_focus
+        await pilot.press("enter")
+        await _wait_until(
+            pilot,
+            lambda: workspace.reload_confirmation_active,
+            "destructive reload confirmation did not open",
+        )
+
+        cancel = workspace.query_one("#file-notes-reload-cancel", Button)
+        confirm = workspace.query_one("#file-notes-reload-confirm", Button)
+        copy = workspace.query_one("#file-notes-reload-confirm-copy")
+        assert editor.text == "draft to preserve"
+        assert workspace.save_state == "conflict"
+        assert _static_text(
+            workspace,
+            "#file-notes-reload-confirm-copy",
+        ) == (
+            "Discard the draft in the editor and load the current disk version? "
+            "This cannot be undone."
+        )
+        assert cancel.has_focus
+        assert str(cancel.label) == "Cancel"
+        assert str(confirm.label) == "Discard draft and load disk"
+        assert copy.region.right <= screen.size.width
+        assert copy.region.bottom <= screen.size.height
+        assert ("esc", "cancel reload") in (
+            screen._library_footer_shortcuts_for_current_state()
+        )
+
+        await pilot.press("enter")
+        await _wait_until(
+            pilot,
+            lambda: not workspace.reload_confirmation_active,
+            "safe-default Cancel did not close destructive reload",
+        )
+        assert editor.text == "draft to preserve"
+        assert workspace.save_state == "conflict"
+        assert reload_button.has_focus
+
+        await pilot.press("enter")
+        await _wait_until(
+            pilot,
+            lambda: workspace.reload_confirmation_active,
+            "second destructive reload confirmation did not open",
+        )
+        await pilot.press("escape")
+        await _wait_until(
+            pilot,
+            lambda: not workspace.reload_confirmation_active,
+            "Escape did not cancel destructive reload",
+        )
+        assert editor.text == "draft to preserve"
+        assert workspace.save_state == "conflict"
+        assert reload_button.has_focus
+
+        await pilot.press("enter")
+        await _wait_until(
+            pilot,
+            lambda: workspace.reload_confirmation_active,
+            "third destructive reload confirmation did not open",
+        )
+        await pilot.press("tab")
+        assert confirm.has_focus
+        await pilot.press("enter")
+        await _wait_until(
+            pilot,
+            lambda: (
+                not workspace.reload_confirmation_active
+                and workspace.save_state == "saved"
+                and editor.text == "disk after"
+            ),
+            "confirmed reload did not intentionally replace the draft",
+        )
+
+    replica.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stale_axis", ["root", "file", "session"])
+async def test_reload_confirmation_rejects_stale_editor_identity(
+    tmp_path: Path,
+    stale_axis: str,
+) -> None:
+    """Confirm fails closed if root, path identity, or session changes."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    source = root / "source.md"
+    source.write_text("disk before", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        autosave_delay=10,
+        poll_interval=10,
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        assert await workspace.open_path("source.md")
+        editor = workspace.query_one("#file-notes-editor", TextArea)
+        _replace_editor_text(editor, "retained draft")
+        await _wait_until(
+            pilot,
+            lambda: workspace.save_state == "dirty",
+            "draft did not become dirty",
+        )
+        source.write_text("disk after", encoding="utf-8")
+        await workspace.refresh_files()
+        await _show_maintenance_actions(workspace, pilot)
+        workspace.query_one("#file-notes-reload", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.reload_confirmation_active,
+            "reload confirmation did not open",
+        )
+
+        if stale_axis == "root":
+            workspace._session_owner.select_root(tmp_path / "other-root")
+        elif stale_axis == "file":
+            assert workspace._opened is not None
+            workspace._opened = replace(workspace._opened)
+        else:
+            workspace._session_key = "replacement-session"
+
+        workspace.query_one("#file-notes-reload-confirm", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: not workspace.reload_confirmation_active,
+            f"{stale_axis} identity change did not close confirmation",
+        )
+        assert editor.text == "retained draft"
+        assert workspace.save_state == "conflict"
+        status = _static_text(workspace, "#file-notes-action-status")
+        assert "active root, file, or editing session changed" in status
+        assert "Draft preserved" in status
+
+    await workspace.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("disk_change", ["changed", "missing"])
+async def test_reload_confirmation_revalidates_current_disk_state(
+    tmp_path: Path,
+    disk_change: str,
+) -> None:
+    """Confirm never applies disk bytes that changed after the warning."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    source = root / "source.md"
+    source.write_text("disk before", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        autosave_delay=10,
+        poll_interval=10,
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        assert await workspace.open_path("source.md")
+        editor = workspace.query_one("#file-notes-editor", TextArea)
+        _replace_editor_text(editor, "retained draft")
+        await _wait_until(
+            pilot,
+            lambda: workspace.save_state == "dirty",
+            "draft did not become dirty",
+        )
+        source.write_text("disk at prompt", encoding="utf-8")
+        await workspace.refresh_files()
+        await _show_maintenance_actions(workspace, pilot)
+        workspace.query_one("#file-notes-reload", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.reload_confirmation_active,
+            "reload confirmation did not open",
+        )
+
+        if disk_change == "changed":
+            source.write_text("disk after prompt", encoding="utf-8")
+        else:
+            source.unlink()
+        workspace.query_one("#file-notes-reload-confirm", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: not workspace.reload_confirmation_active,
+            f"{disk_change} disk target did not fail closed",
+        )
+        assert editor.text == "retained draft"
+        assert workspace.save_state == "conflict"
+        status = _static_text(workspace, "#file-notes-action-status")
+        expected = (
+            "changed again on disk"
+            if disk_change == "changed"
+            else "no longer available on disk"
+        )
+        assert expected in status
+        assert "Draft preserved" in status
+
+    await workspace.shutdown()
     replica.close()
 
 
