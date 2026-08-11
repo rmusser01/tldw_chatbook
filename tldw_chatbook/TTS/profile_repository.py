@@ -1451,7 +1451,7 @@ class TTSProfileRepository:
 
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 5000")
+        connection.execute(f"PRAGMA busy_timeout = {_profile_schema.BUSY_TIMEOUT_MS}")
         version = connection.execute("PRAGMA user_version").fetchone()[0]
         if version != 2:
             raise _repository_error("migration_failed")
@@ -1917,7 +1917,23 @@ class TTSProfileRepository:
         expected_revision: int,
         expected_generation: int,
     ) -> ProfileStoreResult[TTSGenerationProfile]:
-        """Atomically attach or replace one profile-owned clone reference."""
+        """Atomically attach or replace one profile-owned clone reference.
+
+        Args:
+            profile_id: Exact profile UUID that owns the reference.
+            canonical: Fully validated canonical clone-reference payload.
+            expected_revision: Exact profile revision required for the update.
+            expected_generation: Exact active repository generation.
+
+        Returns:
+            The active generation and updated profile.
+
+        Raises:
+            ProfileRepositoryError: If input, state, generation, revision, or
+                SQLite access fails safely.
+            BaseException: A caller control-flow signal preserved by the
+                serialized operation lane.
+        """
 
         validated_profile_id = _validate_exact_profile_id(profile_id)
         validated_reference = _validate_canonical_reference(canonical)
@@ -2393,6 +2409,8 @@ class TTSProfileRepository:
                 "tts.profile_snapshot",
                 path,
                 must_exist=True,
+                read_only=True,
+                immutable=True,
                 isolation_level=None,
             )
             connection.row_factory = sqlite3.Row

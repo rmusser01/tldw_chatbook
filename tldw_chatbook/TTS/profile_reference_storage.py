@@ -199,7 +199,18 @@ def write_reference_blob(
     rowid: int,
     payload: bytes,
 ) -> None:
-    """Write an allocated reference BLOB in bounded chunks and close it."""
+    """Write an allocated reference BLOB in bounded chunks and close it.
+
+    Args:
+        connection: Caller-owned SQLite connection containing the allocated row.
+        rowid: Exact positive row identifier of the allocated reference BLOB.
+        payload: Canonical bounded WAV bytes to write.
+
+    Raises:
+        ProfileRepositoryError: If allocation size differs, BLOB access fails,
+            a write is incomplete, or close fails.
+        BaseException: A caller control-flow signal raised by SQLite or cleanup.
+    """
 
     blob: sqlite3.Blob | None = None
     body_error: BaseException | None = None

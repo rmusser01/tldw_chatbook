@@ -701,6 +701,10 @@ def _validate_schema_body(
             raise ValueError
 
         if schema_version == 3:
+            quoted_reference_table = _validated_quoted_identifier(
+                _REFERENCE_TABLE,
+                "table name",
+            )
             if _table_xinfo_manifest(connection, _REFERENCE_TABLE) != [
                 (0, "profile_id", "TEXT", 0, None, 1, 0),
                 (1, "reference_id", "TEXT", 1, None, 0, 0),
@@ -721,7 +725,7 @@ def _validate_schema_body(
             ):
                 raise ValueError
             reference_index_rows = list(
-                connection.execute(f"PRAGMA index_list({_REFERENCE_TABLE})")
+                connection.execute(f"PRAGMA index_list({quoted_reference_table})")
             )
             reference_indexes = {row["name"]: row for row in reference_index_rows}
             reference_id_index = reference_indexes.get(_REFERENCE_ID_INDEX)
@@ -737,7 +741,7 @@ def _validate_schema_body(
             ):
                 raise ValueError
             reference_foreign_keys = list(
-                connection.execute(f"PRAGMA foreign_key_list({_REFERENCE_TABLE})")
+                connection.execute(f"PRAGMA foreign_key_list({quoted_reference_table})")
             )
             if len(reference_foreign_keys) != 1:
                 raise ValueError

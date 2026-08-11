@@ -2796,6 +2796,45 @@ async def test_online_backup_serializes_with_write_and_publishes_valid_snapshot(
         await repository.close()
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX snapshot mode contract")
+def test_standalone_snapshot_validation_is_read_only_and_side_effect_free(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _repository_module()
+    snapshot = tmp_path / "snapshot.sqlite3"
+    connection = open_profile_store(snapshot)
+    connection.close()
+    repository = module.TTSProfileRepository(tmp_path / "active.sqlite3")
+    real_connect = module.connect_private_sqlite
+    observed_options: list[dict[str, object]] = []
+
+    def observe_connect(
+        owner_id: str,
+        database: str | os.PathLike[str],
+        **options: object,
+    ) -> sqlite3.Connection:
+        if owner_id == "tts.profile_snapshot":
+            observed_options.append(dict(options))
+        return real_connect(owner_id, database, **options)
+
+    monkeypatch.setattr(module, "connect_private_sqlite", observe_connect)
+
+    repository._worker_validate_standalone_snapshot(snapshot)
+
+    assert observed_options == [
+        {
+            "must_exist": True,
+            "read_only": True,
+            "immutable": True,
+            "isolation_level": None,
+        }
+    ]
+    assert not Path(f"{snapshot}-journal").exists()
+    assert not Path(f"{snapshot}-wal").exists()
+    assert not Path(f"{snapshot}-shm").exists()
+
+
 @pytest.mark.asyncio
 async def test_backup_and_restore_path_filesystem_checks_run_only_on_worker(
     tmp_path: Path,

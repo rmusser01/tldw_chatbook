@@ -344,8 +344,8 @@ _SQLITE_OWNER_POLICIES = {
     ),
     "tts.profile_snapshot": SQLiteOwnerPolicy(
         "tldw_chatbook/TTS/profile_repository",
-        _PRIVATE_AND_READ_ONLY,
-        "TTS standalone snapshots use private-file access for incremental BLOB validation.",
+        _READ_ONLY_URI,
+        "TTS standalone snapshots use immutable read-only access for incremental BLOB validation.",
     ),
     "tamagotchi.sqlite": SQLiteOwnerPolicy(
         "tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage",
