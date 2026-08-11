@@ -26,6 +26,7 @@ from tldw_chatbook.DB.private_sqlite import (
     connect_private_sqlite,
     copy_private_sqlite,
 )
+import tldw_chatbook.TTS.profile_schema as _profile_schema
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_schema import (
     ASSIGNED_PROFILE_JOIN_SELECT,
@@ -82,6 +83,7 @@ _SQLITE_CONSTRAINT_TRIGGER = 1_811
 _SQLITE_CONSTRAINT_UNIQUE = 2_067
 _STORE_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
 _INITIALIZATION_LOCK_TIMEOUT_SECONDS = 0.1
+_V2_MIGRATION_BACKUP_SUFFIX = ".pre-v3.sqlite3"
 _RESTORE_BACKUP_PAGE_BATCH = 64
 _RESTORE_PROGRESS_OPCODE_INTERVAL = 1_000
 _RESTORE_REBIND_TIMEOUT_SECONDS = 5.0
@@ -165,6 +167,12 @@ class _CandidateSnapshot:
 
 def _repository_error(code: str) -> ProfileRepositoryError:
     return ProfileRepositoryError(code)
+
+
+def _v2_migration_backup_path(active_path: Path) -> Path:
+    """Return the fixed inert sibling used for one retained v2 snapshot."""
+
+    return active_path.with_name(f"{active_path.name}{_V2_MIGRATION_BACKUP_SUFFIX}")
 
 
 def _utc_now() -> datetime:
@@ -905,6 +913,7 @@ class TTSProfileRepository:
         self._connection: sqlite3.Connection | None = None
         self._lease: ProfileStoreLease | None = None
         self._active_database_path: Path | None = None
+        self._residual_cleanup_paths: tuple[Path, ...] = ()
         self._store_established = False
         self._pending_futures: set[Future[object]] = set()
         self._open_completion: asyncio.Task[ProfileStoreResult[None]] | None = None
@@ -1243,6 +1252,8 @@ class TTSProfileRepository:
         lease_error: BaseException | None = None
         try:
             lease.acquire()
+            if peek_profile_store_schema_version(active_path) == 2:
+                self._worker_retain_v2_migration_backup(active_path)
             connection = open_profile_store(active_path)
             validate_profile_store_rows(connection)
             self._require_configured_path_matches(
@@ -1260,7 +1271,10 @@ class TTSProfileRepository:
                 self._connection = connection
                 self._lease = lease
                 self._active_database_path = active_path
-        if connection_error is None:
+        if self._connection is not None:
+            self._lease = lease
+            self._active_database_path = active_path
+        elif connection_error is None:
             try:
                 lease.release()
             except BaseException as error:
@@ -1272,6 +1286,187 @@ class TTSProfileRepository:
             connection_error,
             lease_error,
         )
+
+    def _worker_validate_v2_connection(
+        self,
+        connection: sqlite3.Connection,
+    ) -> tuple[tuple[tuple[object, ...], ...], tuple[tuple[object, ...], ...]]:
+        """Require one exact, fully valid v2 store and return its domain."""
+
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA busy_timeout = 5000")
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        if version != 2:
+            raise _repository_error("migration_failed")
+        _profile_schema._validate_schema(connection, expected_version=2)
+        self._worker_require_full_integrity(connection)
+        validate_profile_store_rows(connection)
+        return _profile_schema._migration_domain_snapshot(connection)
+
+    def _worker_existing_v2_backup_matches(
+        self,
+        backup_path: Path,
+        source_domain: tuple[
+            tuple[tuple[object, ...], ...], tuple[tuple[object, ...], ...]
+        ],
+    ) -> bool:
+        """Return whether an inert retained backup exactly matches the source."""
+
+        if not backup_path.exists():
+            return False
+        connection: sqlite3.Connection | None = None
+        body_error: BaseException | None = None
+        close_error: BaseException | None = None
+        matched = False
+        try:
+            connection = connect_private_sqlite(
+                "tts.profile_migration_backup",
+                backup_path,
+                read_only=True,
+                immutable=True,
+                isolation_level=None,
+            )
+            matched = self._worker_validate_v2_connection(connection) == source_domain
+        except BaseException as error:
+            body_error = error
+        if connection is not None:
+            try:
+                connection.close()
+            except BaseException as error:
+                close_error = error
+                self._connection = connection
+        for pending_error in (body_error, close_error):
+            if pending_error is not None and not isinstance(pending_error, Exception):
+                raise pending_error
+        if close_error is not None:
+            raise _repository_error("migration_failed")
+        return matched if body_error is None else False
+
+    def _worker_publish_v2_migration_backup(
+        self,
+        source: sqlite3.Connection,
+        source_domain: tuple[
+            tuple[tuple[object, ...], ...], tuple[tuple[object, ...], ...]
+        ],
+        backup_path: Path,
+    ) -> None:
+        """Atomically publish one validated current-source online backup."""
+
+        temporary_path: Path | None = None
+        destination: sqlite3.Connection | None = None
+        body_error: BaseException | None = None
+        cleanup_errors: list[BaseException] = []
+        published = False
+        try:
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix=f".{backup_path.name}.",
+                suffix=".backup",
+                dir=backup_path.parent,
+            )
+            temporary_path = Path(temporary_name)
+            os.close(descriptor)
+            destination = connect_private_sqlite(
+                "tts.profile_migration_backup",
+                temporary_path,
+                must_exist=True,
+                isolation_level=None,
+            )
+            backup_open_connections_to_private(
+                "tts.profile_migration_backup",
+                source,
+                destination,
+            )
+            if self._worker_validate_v2_connection(destination) != source_domain:
+                raise _repository_error("migration_failed")
+            destination.close()
+            destination = None
+            temporary_state = temporary_path.stat()
+            if not stat.S_ISREG(temporary_state.st_mode) or (
+                os.name == "posix" and stat.S_IMODE(temporary_state.st_mode) != 0o600
+            ):
+                raise _repository_error("migration_failed")
+            _fsync_file(temporary_path)
+            os.replace(temporary_path, backup_path)
+            published = True
+            _fsync_directory(backup_path.parent)
+        except BaseException as error:
+            body_error = error
+
+        if destination is not None:
+            try:
+                destination.close()
+            except BaseException as error:
+                cleanup_errors.append(error)
+                self._connection = destination
+                if temporary_path is not None:
+                    self._residual_cleanup_paths = (
+                        temporary_path,
+                        *tuple(
+                            temporary_path.with_name(f"{temporary_path.name}{suffix}")
+                            for suffix in _STORE_SIDECAR_SUFFIXES
+                        ),
+                    )
+        if temporary_path is not None:
+            if not published:
+                try:
+                    _unlink_path_if_present(temporary_path)
+                except BaseException as error:
+                    cleanup_errors.append(error)
+            for suffix in _STORE_SIDECAR_SUFFIXES:
+                try:
+                    _unlink_path_if_present(
+                        temporary_path.with_name(f"{temporary_path.name}{suffix}")
+                    )
+                except BaseException as error:
+                    cleanup_errors.append(error)
+
+        for pending_error in (body_error, *cleanup_errors):
+            if pending_error is not None and not isinstance(pending_error, Exception):
+                raise pending_error
+        if body_error is not None or cleanup_errors:
+            raise _repository_error("migration_failed")
+
+    def _worker_retain_v2_migration_backup(self, active_path: Path) -> None:
+        """Validate v2 and retain an equivalent backup before allowing v3."""
+
+        source: sqlite3.Connection | None = None
+        body_error: BaseException | None = None
+        close_error: BaseException | None = None
+        try:
+            source = connect_private_sqlite(
+                "tts.profile_migration_backup",
+                active_path,
+                must_exist=True,
+                isolation_level=None,
+            )
+            source_domain = self._worker_validate_v2_connection(source)
+            backup_path = _v2_migration_backup_path(active_path)
+            if not self._worker_existing_v2_backup_matches(
+                backup_path,
+                source_domain,
+            ):
+                self._worker_publish_v2_migration_backup(
+                    source,
+                    source_domain,
+                    backup_path,
+                )
+        except BaseException as error:
+            body_error = error
+        if source is not None:
+            try:
+                source.close()
+            except BaseException as error:
+                close_error = error
+                self._connection = source
+                self._active_database_path = active_path
+        if self._connection is not None:
+            self._active_database_path = active_path
+        for pending_error in (body_error, close_error):
+            if pending_error is not None and not isinstance(pending_error, Exception):
+                raise pending_error
+        if body_error is not None or close_error is not None:
+            raise _repository_error("migration_failed")
 
     async def create_profile(
         self,
@@ -3503,6 +3698,7 @@ class TTSProfileRepository:
         connection = self._connection
         lease = self._lease
         connection_error: BaseException | None = None
+        residual_error: BaseException | None = None
         lease_error: BaseException | None = None
 
         if connection is not None:
@@ -3513,7 +3709,17 @@ class TTSProfileRepository:
             if connection_error is None:
                 self._connection = None
 
-        if lease is not None and connection_error is None:
+        if connection_error is None and self._residual_cleanup_paths:
+            for path in self._residual_cleanup_paths:
+                try:
+                    _unlink_path_if_present(path)
+                except BaseException as error:
+                    if residual_error is None:
+                        residual_error = error
+            if residual_error is None:
+                self._residual_cleanup_paths = ()
+
+        if lease is not None and connection_error is None and residual_error is None:
             try:
                 lease.release()
             except BaseException as error:
@@ -3521,10 +3727,14 @@ class TTSProfileRepository:
             if lease_error is None:
                 self._lease = None
 
-        if self._connection is None and self._lease is None:
+        if (
+            self._connection is None
+            and self._lease is None
+            and not self._residual_cleanup_paths
+        ):
             self._active_database_path = None
 
-        _raise_cleanup_errors(connection_error, lease_error)
+        _raise_cleanup_errors(connection_error, residual_error, lease_error)
 
     async def _await_lifecycle_completion(
         self,

@@ -322,6 +322,13 @@ _SQLITE_OWNER_POLICIES = {
         "TTS profile backups use the centralized caller-connection seam.",
         centralized_backup_allowed=True,
     ),
+    "tts.profile_migration_backup": SQLiteOwnerPolicy(
+        "tldw_chatbook/TTS/profile_repository",
+        _PRIVATE_AND_READ_ONLY,
+        "TTS profile v2 migration sources and retained backups require "
+        "private exact-version validation and centralized online backup.",
+        centralized_backup_allowed=True,
+    ),
     "tts.profile_restore_stage": SQLiteOwnerPolicy(
         "tldw_chatbook/TTS/profile_repository",
         _PRIVATE_AND_READ_ONLY,

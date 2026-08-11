@@ -7,6 +7,7 @@ import gc
 import importlib
 import os
 import sqlite3
+import stat
 import sys
 import threading
 import traceback
@@ -22,6 +23,7 @@ from uuid import UUID
 import pytest
 
 from tldw_chatbook.TTS.migrations.v0_to_v1 import migrate as _raw_migrate_v0_to_v1
+from tldw_chatbook.TTS.migrations.v1_to_v2 import migrate as _raw_migrate_v1_to_v2
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_schema import (
     CURRENT_PROFILE_SCHEMA_VERSION,
@@ -305,6 +307,375 @@ def _build_populated_v1_store_at(path: Path) -> None:
         connection.commit()
     finally:
         connection.close()
+
+
+def _build_populated_v2_store_at(path: Path, *, display_name: str = "Legacy") -> None:
+    _build_populated_v1_store_at(path)
+    connection = sqlite3.connect(path)
+    try:
+        _raw_migrate_v1_to_v2(connection)
+        connection.execute(
+            "UPDATE tts_generation_profiles SET display_name = ?, normalized_name = ?",
+            (display_name, display_name.casefold()),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def _test_online_backup(source_path: Path, destination_path: Path) -> None:
+    source = sqlite3.connect(source_path)
+    destination = sqlite3.connect(destination_path)
+    try:
+        source.backup(destination)
+    finally:
+        destination.close()
+        source.close()
+    os.chmod(destination_path, 0o600)
+
+
+def _stored_profile_name(path: Path) -> str:
+    connection = sqlite3.connect(path)
+    try:
+        return cast(
+            str,
+            connection.execute(
+                "SELECT display_name FROM tts_generation_profiles"
+            ).fetchone()[0],
+        )
+    finally:
+        connection.close()
+
+
+@pytest.mark.asyncio
+async def test_v2_migration_retains_private_online_backup_before_migration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _repository_module()
+    database_path = tmp_path / "profiles.sqlite3"
+    _build_populated_v2_store_at(database_path)
+    backup_path = module._v2_migration_backup_path(database_path)
+    events: list[str] = []
+    modes: list[ProfileStoreLockMode] = []
+    real_backup = module.backup_open_connections_to_private
+    real_open = module.open_profile_store
+    real_lease = module.ProfileStoreLease
+
+    def tracked_backup(*args: object, **kwargs: object) -> None:
+        events.append("backup")
+        real_backup(*args, **kwargs)
+
+    def tracked_open(*args: object, **kwargs: object) -> sqlite3.Connection:
+        if backup_path.exists():
+            events.append("migrate")
+        return real_open(*args, **kwargs)
+
+    def tracked_lease(
+        path: Path, mode: ProfileStoreLockMode, **kwargs: object
+    ) -> ProfileStoreLease:
+        modes.append(mode)
+        return real_lease(path, mode, **kwargs)
+
+    monkeypatch.setattr(module, "backup_open_connections_to_private", tracked_backup)
+    monkeypatch.setattr(module, "open_profile_store", tracked_open)
+    monkeypatch.setattr(module, "ProfileStoreLease", tracked_lease)
+
+    repository = module.TTSProfileRepository(database_path)
+    await repository.open()
+    await repository.close()
+
+    assert events[:2] == ["backup", "migrate"]
+    assert modes[:2] == [ProfileStoreLockMode.EXCLUSIVE, ProfileStoreLockMode.SHARED]
+    assert backup_path.is_file()
+    if os.name == "posix":
+        assert stat.S_IMODE(backup_path.stat().st_mode) == 0o600
+    backup = sqlite3.connect(backup_path)
+    try:
+        assert backup.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert (
+            backup.execute("SELECT count(*) FROM tts_generation_profiles").fetchone()[0]
+            == 1
+        )
+    finally:
+        backup.close()
+    migrated = sqlite3.connect(database_path)
+    try:
+        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 3
+    finally:
+        migrated.close()
+
+
+@pytest.mark.asyncio
+async def test_v2_migration_reuses_equivalent_retained_backup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _repository_module()
+    database_path = tmp_path / "profiles.sqlite3"
+    _build_populated_v2_store_at(database_path)
+    backup_path = module._v2_migration_backup_path(database_path)
+    _test_online_backup(database_path, backup_path)
+
+    def unexpected_backup(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("equivalent retained backup must be reused")
+
+    monkeypatch.setattr(module, "backup_open_connections_to_private", unexpected_backup)
+
+    repository = module.TTSProfileRepository(database_path)
+    await repository.open()
+    await repository.close()
+
+    assert _stored_profile_name(backup_path) == "Legacy"
+
+
+@pytest.mark.asyncio
+async def test_v2_migration_atomically_replaces_stale_retained_backup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _repository_module()
+    database_path = tmp_path / "profiles.sqlite3"
+    _build_populated_v2_store_at(database_path)
+    backup_path = module._v2_migration_backup_path(database_path)
+    _test_online_backup(database_path, backup_path)
+    connection = sqlite3.connect(database_path)
+    connection.execute(
+        "UPDATE tts_generation_profiles SET display_name = 'Updated', normalized_name = 'updated'"
+    )
+    connection.commit()
+    connection.close()
+    backup_calls = 0
+    real_backup = module.backup_open_connections_to_private
+
+    def tracked_backup(*args: object, **kwargs: object) -> None:
+        nonlocal backup_calls
+        backup_calls += 1
+        real_backup(*args, **kwargs)
+
+    monkeypatch.setattr(module, "backup_open_connections_to_private", tracked_backup)
+
+    repository = module.TTSProfileRepository(database_path)
+    await repository.open()
+    await repository.close()
+
+    assert backup_calls == 1
+    assert _stored_profile_name(backup_path) == "Updated"
+
+
+@pytest.mark.asyncio
+async def test_v2_migration_backup_failure_preserves_source_and_prior_backup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _repository_module()
+    database_path = tmp_path / "PRIVATE profiles.sqlite3"
+    _build_populated_v2_store_at(database_path)
+    backup_path = module._v2_migration_backup_path(database_path)
+    _test_online_backup(database_path, backup_path)
+    prior_backup = backup_path.read_bytes()
+    connection = sqlite3.connect(database_path)
+    connection.execute(
+        "UPDATE tts_generation_profiles SET display_name = 'Updated', normalized_name = 'updated'"
+    )
+    connection.commit()
+    connection.close()
+
+    def fail_backup(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("PRIVATE raw backup detail")
+
+    monkeypatch.setattr(module, "backup_open_connections_to_private", fail_backup)
+    repository = module.TTSProfileRepository(database_path)
+
+    with pytest.raises(ProfileRepositoryError, match="migration_failed") as caught:
+        await repository.open()
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert "PRIVATE" not in repr(caught.value)
+    assert backup_path.read_bytes() == prior_backup
+    source = sqlite3.connect(database_path)
+    try:
+        assert source.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert (
+            source.execute(
+                "SELECT display_name FROM tts_generation_profiles"
+            ).fetchone()[0]
+            == "Updated"
+        )
+    finally:
+        source.close()
+
+
+@pytest.mark.asyncio
+async def test_v2_migration_failure_retains_completed_backup_and_v2_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _repository_module()
+    database_path = tmp_path / "profiles.sqlite3"
+    _build_populated_v2_store_at(database_path)
+    backup_path = module._v2_migration_backup_path(database_path)
+    real_open = module.open_profile_store
+
+    def fail_migration(path: Path, **kwargs: object) -> sqlite3.Connection:
+        if path == database_path and not kwargs.get("must_exist"):
+            raise ProfileRepositoryError("migration_failed")
+        return real_open(path, **kwargs)
+
+    monkeypatch.setattr(module, "open_profile_store", fail_migration)
+    repository = module.TTSProfileRepository(database_path)
+
+    with pytest.raises(ProfileRepositoryError, match="migration_failed"):
+        await repository.open()
+    await repository.close()
+
+    assert backup_path.is_file()
+    backup = sqlite3.connect(backup_path)
+    source = sqlite3.connect(database_path)
+    try:
+        assert backup.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert source.execute("PRAGMA user_version").fetchone()[0] == 2
+    finally:
+        source.close()
+        backup.close()
+
+
+@pytest.mark.asyncio
+async def test_v2_migration_destination_validation_failure_leaves_no_partial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _repository_module()
+    database_path = tmp_path / "profiles.sqlite3"
+    _build_populated_v2_store_at(database_path)
+    backup_path = module._v2_migration_backup_path(database_path)
+    real_validate = module.TTSProfileRepository._worker_validate_v2_connection
+    validation_calls = 0
+
+    def fail_destination_validation(
+        self: object, connection: sqlite3.Connection
+    ) -> tuple[tuple[tuple[object, ...], ...], tuple[tuple[object, ...], ...]]:
+        nonlocal validation_calls
+        validation_calls += 1
+        if validation_calls == 2:
+            raise RuntimeError("PRIVATE destination detail")
+        return real_validate(self, connection)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        module.TTSProfileRepository,
+        "_worker_validate_v2_connection",
+        fail_destination_validation,
+    )
+    repository = module.TTSProfileRepository(database_path)
+
+    with pytest.raises(ProfileRepositoryError, match="migration_failed") as caught:
+        await repository.open()
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert backup_path.exists() is False
+    assert list(tmp_path.glob(f".{backup_path.name}.*.backup")) == []
+    source = sqlite3.connect(database_path)
+    try:
+        assert source.execute("PRAGMA user_version").fetchone()[0] == 2
+    finally:
+        source.close()
+
+
+@pytest.mark.asyncio
+async def test_v2_migration_source_close_failure_blocks_migration_context_free(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _repository_module()
+    database_path = tmp_path / "profiles.sqlite3"
+    _build_populated_v2_store_at(database_path)
+    real_connect = module.connect_private_sqlite
+    source_proxy: _CloseFailingSQLiteProxy | None = None
+
+    def close_failing_connect(
+        owner_id: str, database: object, **kwargs: object
+    ) -> sqlite3.Connection:
+        nonlocal source_proxy
+        connection = real_connect(owner_id, database, **kwargs)
+        if (
+            owner_id == "tts.profile_migration_backup"
+            and Path(cast(str | os.PathLike[str], database)) == database_path
+            and not kwargs.get("read_only")
+        ):
+            source_proxy = _CloseFailingSQLiteProxy(
+                connection,
+                "PRIVATE source close detail",
+            )
+            return cast(sqlite3.Connection, source_proxy)
+        return connection
+
+    monkeypatch.setattr(module, "connect_private_sqlite", close_failing_connect)
+    repository = module.TTSProfileRepository(database_path)
+
+    with pytest.raises(ProfileRepositoryError, match="migration_failed") as caught:
+        await repository.open()
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert "PRIVATE" not in repr(caught.value)
+    source = sqlite3.connect(database_path)
+    try:
+        assert source.execute("PRAGMA user_version").fetchone()[0] == 2
+    finally:
+        source.close()
+    assert source_proxy is not None
+    assert repository._connection is source_proxy
+    assert repository._lease is not None
+    assert repository._lease.mode is ProfileStoreLockMode.EXCLUSIVE
+    source_proxy.fail_close = False
+    await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_v2_migration_destination_close_failure_retains_cleanup_ownership(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _repository_module()
+    database_path = tmp_path / "profiles.sqlite3"
+    _build_populated_v2_store_at(database_path)
+    real_connect = module.connect_private_sqlite
+    destination_proxy: _CloseFailingSQLiteProxy | None = None
+
+    def close_failing_connect(
+        owner_id: str, database: object, **kwargs: object
+    ) -> sqlite3.Connection:
+        nonlocal destination_proxy
+        connection = real_connect(owner_id, database, **kwargs)
+        selected = Path(cast(str | os.PathLike[str], database))
+        if (
+            owner_id == "tts.profile_migration_backup"
+            and selected != database_path
+            and not kwargs.get("read_only")
+        ):
+            destination_proxy = _CloseFailingSQLiteProxy(
+                connection,
+                "PRIVATE destination close detail",
+            )
+            return cast(sqlite3.Connection, destination_proxy)
+        return connection
+
+    monkeypatch.setattr(module, "connect_private_sqlite", close_failing_connect)
+    repository = module.TTSProfileRepository(database_path)
+
+    with pytest.raises(ProfileRepositoryError, match="migration_failed") as caught:
+        await repository.open()
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert "PRIVATE" not in repr(caught.value)
+    assert destination_proxy is not None
+    assert repository._connection is destination_proxy
+    assert repository._lease is not None
+    assert repository._lease.mode is ProfileStoreLockMode.EXCLUSIVE
+    assert repository._residual_cleanup_paths
+    residual_paths = repository._residual_cleanup_paths
+    destination_proxy.fail_close = False
+
+    await repository.close()
+
+    assert repository._residual_cleanup_paths == ()
+    assert all(not path.exists() for path in residual_paths)
 
 
 @pytest.mark.asyncio
