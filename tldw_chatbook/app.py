@@ -7121,36 +7121,16 @@ class TldwCli(
             logging.getLogger().addHandler(self._persistent_log_handler)
             logger.info("Persistent logging handler set up for screen navigation")
 
-        # The app logs via loguru; the persistent handler is stdlib-only.
-        # Bridge loguru records into the stdlib root logger so the Logs
-        # screen's buffer sees the application's own logging (without this,
-        # only stdlib-logging modules ever appear there).
-        if not hasattr(self, "_loguru_bridge_installed"):
-            self._loguru_bridge_installed = True
-
-            def _loguru_to_stdlib(message) -> None:
-                record = message.record
-                logging.getLogger(record["name"]).handle(
-                    logging.LogRecord(
-                        name=record["name"],
-                        level=record["level"].no,
-                        pathname=getattr(record["file"], "path", ""),
-                        lineno=record["line"],
-                        msg=str(message).rstrip("\n"),
-                        args=(),
-                        exc_info=record["exception"],
-                        created=record["time"].timestamp(),
-                    )
-                )
-
-            try:
-                from loguru import logger as _loguru
-
-                _loguru.add(_loguru_to_stdlib, level=0, format="{message}")
-            except Exception:  # noqa: BLE001
-                logger.warning(
-                    "Failed to install loguru->stdlib bridge for Logs screen"
-                )
+        # The app logs via loguru and the persistent handler is stdlib-only,
+        # but NO bridge is installed here: `Logging_Config._setup_logging`
+        # already forwards every loguru record into stdlib logging
+        # (`_forward_loguru_to_standard`, level TRACE, diagnose=False per
+        # task-2119), and it runs before this method on every boot path —
+        # either early at process start or via `configure_application_
+        # logging` in `_setup_logging`. A second sink here made every loguru
+        # record reach the root logger twice, so the Logs screen showed each
+        # application log line — and counted each error — twice
+        # (TASK-15422).
 
         # Initialize current log widget reference
         self._current_log_widget = None
@@ -8109,6 +8089,26 @@ class TldwCli(
                             break
             except Exception as e:
                 self.loguru_logger.error(f"Error updating message UI: {e}")
+            # The Console transcript's action row renders from the screen's
+            # `_console_speaking_message_id`, not from a legacy widget — on
+            # failure it must be cleared too, or the row keeps "⏹ Stop
+            # speech" with no speech to stop (TASK-15422).
+            for screen in reversed(tuple(getattr(self, "screen_stack", ()))):
+                if (
+                    getattr(screen, "_console_speaking_message_id", None)
+                    == event.message_id
+                ):
+                    screen._console_speaking_message_id = None
+                    sync = getattr(screen, "_sync_native_console_chat_ui", None)
+                    if callable(sync):
+                        try:
+                            await sync()
+                        except Exception:
+                            self.loguru_logger.error(
+                                "Console speak-state resync failed after a "
+                                "TTS error"
+                            )
+                    break
             if event.global_override_token is not None:
                 self.run_worker(
                     self._offer_tts_global_override(event.global_override_token),
