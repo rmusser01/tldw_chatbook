@@ -367,16 +367,21 @@ Two columns need context before you read the P/R/MRR/NDCG numbers as
   anything it was almost always right," not "it ranked ten results well."
   Compare `docs` before comparing precision across modes.
 - **The keyword (FTS) leg is silent for most of this golden set, and the
-  `prompt` category is where that shows.** `_escape_fts5_query` builds the
-  engine leg's MATCH as an implicit AND over EVERY query token, function
-  words included (TASK-3995 chose that over phrase-quoting), with no
-  plural/singular widening — so a natural-language query almost never
+  `prompt` category is where that shows — TASK-15400.**
+  `_escape_fts5_query` builds the engine leg's MATCH as an implicit AND
+  over EVERY query token (TASK-3995 chose that over phrase-quoting), with
+  no plural/singular widening — so a natural-language query almost never
   matches. Measured over this golden set at TASK-15020/B2 (2026-08-11): the
   keyword leg returns **zero rows for 40 of the 60 queries**, firing only
   where the queries are keyword-shaped (`keyword` 13/16 targets found by
   the FTS leg alone, `scoped` 7/7; `paraphrase` 0/13,
-  `vocabulary_mismatch` 0/9, `negation` 0/3, `prompt` 0/5). For media,
-  notes and conversations the semantic leg covers that completely. Prompts
+  `vocabulary_mismatch` 0/9, `negation` 0/3, `prompt` 0/5). The dominant
+  cause is AND-strictness over **content** words, which is what TASK-15400
+  has to fix: a stopword-trimmed AND rescues 1 of those 40, reusing the
+  four-seam path's `build_fts_match_query` also rescues 1, and OR-of-tokens
+  rescues 34 — at the cost of `kw-plant-maintenance-record`, the one
+  fixture whose design rests on AND-of-terms uniqueness. For media, notes
+  and conversations the semantic leg covers all of this completely. Prompts
   have no semantic leg — B2 gave them an FTS sub-leg and deliberately no
   vector index — so the `prompt` category reads 0.000 in all three modes
   even though the sub-leg works: the same runtime answers the

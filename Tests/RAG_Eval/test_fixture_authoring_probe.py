@@ -121,18 +121,20 @@ def test_prompt_fixtures_are_reachable_but_their_golden_queries_are_not(
       fans out over the Library's own four seams — so its prompt column is a
       HARNESS gap, not a pipeline one; the shipped app's plain mode does
       find prompts.
-    * **hybrid** misses for the finding this task actually produced: the
-      engine's keyword leg builds its MATCH as an implicit AND over EVERY
-      query token, function words included (`_escape_fts5_query`, TASK-3995)
-      and with no plural/singular widening. The five prompt queries are
+    * **hybrid** misses for the finding this task actually produced, filed
+      as **TASK-15400**: the engine's keyword leg builds its MATCH as an
+      implicit AND over EVERY query token (`_escape_fts5_query`, TASK-3995)
+      with no plural/singular widening. The five prompt queries are
       natural-language sentences, so each is one to five absent tokens away
-      from matching (`about`, `into`, `turns`, `terms` vs `term`, ...) and
-      the leg returns NOTHING for them. Measured across the whole golden
-      set at authoring time: the keyword leg returns zero rows for 40 of 60
-      queries, firing only for the two categories whose queries are
-      keyword-shaped (`keyword` 13/16, `scoped` 7/7). For media, notes and
-      conversations the semantic leg hides that completely. Prompts have no
-      semantic leg, so they are where it becomes visible.
+      from matching and the leg returns NOTHING for them. Measured across
+      the whole golden set at authoring time: the keyword leg returns zero
+      rows for 40 of 60 queries, firing only for the two categories whose
+      queries are keyword-shaped (`keyword` 13/16, `scoped` 7/7). The
+      dominant cause is AND-strictness over CONTENT words (`template`,
+      `building`, `rough`, `turns`, `pulls`, `builds`), not function words:
+      a stopword-trimmed AND rescues exactly 1 of those 40. For media,
+      notes and conversations the semantic leg hides all of it. Prompts
+      have no semantic leg, so they are where it becomes visible.
 
     **The reachability half is what keeps this from being indistinguishable
     from "B2 never shipped".** A keyword-shaped query for the same fixture,
@@ -142,10 +144,11 @@ def test_prompt_fixtures_are_reachable_but_their_golden_queries_are_not(
 
     The queries are deliberately NOT re-authored to make the number move:
     fixtures rewritten after seeing the result measure the rewrite. Which
-    side should change (the engine's MATCH construction, which the
-    Library's own four-seam path already solves with
-    `build_fts_match_query`, or the prompt fixtures) is a decision with its
-    own measurement, filed rather than smuggled in here.
+    side should change — the engine's MATCH construction or the prompt
+    fixtures — is a decision with its own measurement, filed as TASK-15400
+    rather than smuggled in here. (The Library's four-seam
+    `build_fts_match_query` is NOT the ready-made answer: measured, it
+    rescues 1 of the 40 zero-row queries, and it is AND-joined too.)
     """
     from tldw_chatbook.Library.library_local_rag_search_service import (
         LibraryLocalRagSearchService,

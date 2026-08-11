@@ -830,16 +830,20 @@ relevant_slugs = ["note-tarn-foot-mast"]
 #   * plain — a HARNESS gap, not a product one: plain mode fans out over the
 #     Library's own four seams and the eval harness wires no
 #     `prompt_scope_service`. The shipped app's plain mode does find prompts.
-#   * hybrid — THE FINDING. The engine's keyword leg ANDs every token of the
-#     query, function words included (`_escape_fts5_query`, TASK-3995), with
+#   * hybrid — THE FINDING, filed as TASK-15400. The engine's keyword leg
+#     ANDs every token of the query (`_escape_fts5_query`, TASK-3995), with
 #     no plural/singular widening. These five are natural-language sentences,
-#     so each misses by one to five absent tokens ("about", "into", "turns",
-#     "terms" vs the document's "term"...) and the leg returns NOTHING.
-#     Measured over this whole golden set: the keyword leg returns zero rows
-#     for 40 of 60 queries, firing only where the queries are keyword-shaped
-#     (keyword 13/16, scoped 7/7). The semantic leg hides that for every
-#     other source type. Prompts have no semantic leg, so this is where it
-#     shows.
+#     so each misses by one to five absent tokens and the leg returns
+#     NOTHING. Measured over this whole golden set: the keyword leg returns
+#     zero rows for 40 of 60 queries, firing only where the queries are
+#     keyword-shaped (keyword 13/16, scoped 7/7). The dominant cause is
+#     AND-strictness over CONTENT words ("template", "building", "rough",
+#     "turns", "pulls", "builds"), not function words: a stopword-trimmed
+#     AND rescues 1 of the 40, and so does the Library four-seam path's
+#     `build_fts_match_query`; OR-of-tokens rescues 34 but loses
+#     kw-plant-maintenance-record below. The semantic leg hides all of this
+#     for every other source type. Prompts have no semantic leg, so this is
+#     where it shows.
 #
 # The sub-leg itself works, measured through the production seam on the same
 # runtime: the keyword-shaped "shift log summary supervisor" returns
@@ -851,7 +855,8 @@ relevant_slugs = ["note-tarn-foot-mast"]
 #
 # These queries are deliberately NOT re-worded to make the number move: a
 # fixture rewritten after seeing the result measures the rewrite. Which side
-# should change is a decision with its own measurement.
+# should change is a decision with its own measurement — TASK-15400, whose
+# AC #7 is exactly "re-read these cells afterwards".
 # `test_fixture_authoring_probe.test_prompt_fixtures_are_reachable_but_
 # their_golden_queries_are_not` holds both halves down.
 

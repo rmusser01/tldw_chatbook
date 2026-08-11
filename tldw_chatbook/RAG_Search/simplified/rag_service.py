@@ -3113,6 +3113,23 @@ class RAGService:
         rather than run a MATCH expression that can only ever match
         nothing.
 
+        **This construction is under review -- TASK-15400.** The implicit
+        AND means a document must contain literally every token the user
+        typed. Measured on the RAG_Eval golden set (TASK-15020/B2,
+        2026-08-11): this leg returns ZERO rows for 40 of 60 golden
+        queries, firing only where the query is keyword-shaped. The
+        dominant cause is AND-strictness over CONTENT words -- trimming
+        function words rescues 1 of those 40, and reusing the Library
+        four-seam path's ``build_fts_match_query`` also rescues 1;
+        OR-of-tokens rescues 34 (but loses the golden set's one
+        vector-blind fixture, whose design rests on AND uniqueness). For
+        media/notes/conversations the semantic leg hides this entirely;
+        prompts have no semantic leg, which is where it surfaced. Do not
+        change the join here without TASK-15400's before/after matrix --
+        and whatever changes, keep each token individually quoted (the
+        injection property above, pinned by
+        ``Tests/RAG_Search/test_fts5_query_escaping.py``).
+
         Args:
             query: Raw search query
 
