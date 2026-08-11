@@ -20,6 +20,7 @@ from textual.widgets import Button, Static
 
 from tldw_chatbook.Library.library_media_state import (
     LIBRARY_MEDIA_TRASH_RESTORE_DISABLED_EMPTY_TOOLTIP,
+    LIBRARY_MEDIA_TRASH_RESTORE_DISABLED_ERROR_TOOLTIP,
     LIBRARY_MEDIA_TRASH_RESTORE_DISABLED_LOADING_TOOLTIP,
     LIBRARY_MEDIA_TRASH_RESTORE_TOOLTIP,
     LibraryMediaTrashState,
@@ -116,7 +117,18 @@ class LibraryMediaTrashCanvas(RecomposeCaptureGuard, Vertical):
         yield status
 
         trash_list = Vertical(id="library-media-trash-list")
-        trash_list.styles.height = "auto"
+        # PR-1505 review (the L3a clipping lesson -- a plain auto-height
+        # Vertical clips content past the fold, and a 200-item trash page
+        # pushed the Restore toolbar ~100 rows off a 24-row terminal): the
+        # list owns the remaining height between the heading/status above
+        # and the Restore toolbar below, and scrolls its own overflow --
+        # the same geometry `#library-media-list` gets from the stylesheet
+        # in the wide split. Inline like the rest of this widget's
+        # geometry; min_height 0 so the 1fr can actually shrink.
+        trash_list.styles.height = "1fr"
+        trash_list.styles.min_height = 0
+        trash_list.styles.overflow_y = "auto"
+        trash_list.styles.overflow_x = "hidden"
         with trash_list:
             for index, row in enumerate(self.canvas.rows):
                 # Selected-row grammar: leading "▸ " (task-4023 AC#5).
@@ -155,10 +167,17 @@ class LibraryMediaTrashCanvas(RecomposeCaptureGuard, Vertical):
             )
             restore._library_disabled_marker_base = "Restore"
             restore.disabled = restore_disabled
-            if self.canvas.loading:
-                restore.tooltip = LIBRARY_MEDIA_TRASH_RESTORE_DISABLED_LOADING_TOOLTIP
-            elif restore_disabled:
-                restore.tooltip = LIBRARY_MEDIA_TRASH_RESTORE_DISABLED_EMPTY_TOOLTIP
-            else:
+            # Disabled reasons in the status line's own honesty order
+            # (error > loading > empty): a failed fetch also leaves zero
+            # rows, so without the error branch the tooltip claimed
+            # "Nothing in Trash" for a Trash that merely could not be
+            # read (PR-1505 review; F-018 demands the TRUE reason).
+            if not restore_disabled:
                 restore.tooltip = LIBRARY_MEDIA_TRASH_RESTORE_TOOLTIP
+            elif self.canvas.error:
+                restore.tooltip = LIBRARY_MEDIA_TRASH_RESTORE_DISABLED_ERROR_TOOLTIP
+            elif self.canvas.loading:
+                restore.tooltip = LIBRARY_MEDIA_TRASH_RESTORE_DISABLED_LOADING_TOOLTIP
+            else:
+                restore.tooltip = LIBRARY_MEDIA_TRASH_RESTORE_DISABLED_EMPTY_TOOLTIP
             yield restore

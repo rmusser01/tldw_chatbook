@@ -21,6 +21,7 @@ from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Library.library_media_state import (
     LIBRARY_MEDIA_TRASH_EMPTY_COPY,
     LIBRARY_MEDIA_TRASH_RESTORE_DISABLED_EMPTY_TOOLTIP,
+    LIBRARY_MEDIA_TRASH_RESTORE_DISABLED_ERROR_TOOLTIP,
     LIBRARY_MEDIA_TRASH_RESTORE_DISABLED_LOADING_TOOLTIP,
     LIBRARY_MEDIA_TRASH_RESTORE_TOOLTIP,
     build_library_media_trash_state,
@@ -141,6 +142,173 @@ async def test_trash_canvas_error_state_shows_error_not_empty_copy():
         rendered = str(status.render())
         assert "Could not load Trash." in rendered
         assert LIBRARY_MEDIA_TRASH_EMPTY_COPY not in rendered
+
+
+@pytest.mark.asyncio
+async def test_trash_canvas_error_state_restore_tooltip_names_the_failure():
+    """PR-1505 review: with a failed fetch (``canvas.error`` set) the
+    disabled Restore's tooltip must state the TRUE blocker -- the load
+    failure -- never the empty-trash copy (F-018 accuracy: an unreadable
+    Trash is not an empty Trash)."""
+    app = _TrashCanvasApp(
+        _trash_state(records=[], total=0, error="Could not load Trash.")
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        restore = app.query_one("#library-media-trash-restore", Button)
+        assert restore.disabled is True
+        assert str(restore.label) == "○ Restore"
+        assert restore.tooltip != LIBRARY_MEDIA_TRASH_RESTORE_DISABLED_EMPTY_TOOLTIP
+        assert restore.tooltip == LIBRARY_MEDIA_TRASH_RESTORE_DISABLED_ERROR_TOOLTIP
+
+
+# ---------------------------------------------------------------------------
+# Fold reachability (PR-1505 review): with a full page of trashed items the
+# list must scroll -- the repo's L3a clipping lesson (LibraryExportCanvas's
+# docstring: a plain Vertical canvas clips content past the fold) applies
+# here too, and the whole-branch live smoke only ever had ONE trash row, so
+# this was never exercised. Measured in the REAL LibraryHarness (real app
+# stylesheet, real #library-canvas host) -- a canvas mounted alone in a bare
+# App is not measured against the tier that wins live (task-14900's lesson).
+# ---------------------------------------------------------------------------
+
+
+def _forty_trash_items():
+    return [
+        {
+            "id": f"trash-{index}",
+            "title": f"Trashed item {index:02d}",
+            "type": "document",
+            "trash_date": "2026-08-10T12:00:00+00:00",
+        }
+        for index in range(1, 41)
+    ]
+
+
+def _compositor_text(svg: str) -> str:
+    """Rejoin an exported-screenshot SVG's `<text>` nodes into plain text.
+
+    The established compositor-honest idiom (see
+    ``test_console_fleet_discoverability._compositor_text``): scroll-clipped
+    or off-screen content never becomes a `<text>` node at all, unlike a
+    widget's ``.renderable``/``region``, which exist regardless of paint.
+    """
+    import re
+    from html import unescape
+
+    joined = "".join(re.findall(r"<text[^>]*>([^<]*)</text>", svg))
+    return unescape(joined).replace("\xa0", " ")
+
+
+async def _open_media_trash_with_items(host, pilot, trash_items):
+    """Drive the real screen into the Trash view over a seeded trash page."""
+    from Tests.UI.test_library_shell import (
+        _active_library_screen,
+        _wait_for_library_shell,
+        _wait_for_selector,
+    )
+
+    screen = _active_library_screen(host)
+    await _wait_for_library_shell(screen, pilot)
+
+    async def _list_media_trash(**kwargs):
+        return {
+            "items": [dict(item) for item in trash_items],
+            "pagination": {"total_items": len(trash_items)},
+        }
+
+    # The shared StaticLibraryMediaScopeService fake predates the trash
+    # seam; give this instance the same async surface the real scope
+    # service exposes.
+    host.app_instance.media_reading_scope_service.list_media_trash = (
+        _list_media_trash
+    )
+
+    screen.query_one("#library-row-browse-media").press()
+    await _wait_for_selector(screen, pilot, "#library-media-trash-open")
+    screen.query_one("#library-media-trash-open").press()
+    await _wait_for_selector(
+        screen, pilot, f"#library-media-trash-row-{len(trash_items) - 1}"
+    )
+    await pilot.pause()
+    return screen
+
+
+async def _assert_trash_rows_and_restore_reachable(host, pilot):
+    screen = await _open_media_trash_with_items(
+        host, pilot, _forty_trash_items()
+    )
+    trash_list = screen.query_one("#library-media-trash-list")
+    restore = screen.query_one("#library-media-trash-restore", Button)
+    last_row = screen.query_one("#library-media-trash-row-39", Button)
+    screen_height = host.size.height
+
+    # The Restore toolbar stays inside the terminal: 40 auto-height rows
+    # must not push it below the fold.
+    assert restore.region.height > 0
+    assert restore.region.y + restore.region.height <= screen_height
+
+    # The list owns the vertical scroll -- its content overflows the pane
+    # and the overflow is reachable rather than clipped.
+    assert trash_list.max_scroll_y > 0
+
+    # Scroll reachability: after scroll_end the LAST row is actually
+    # painted (compositor-honest -- clipped content never paints).
+    trash_list.scroll_end(animate=False)
+    await pilot.pause()
+    await pilot.pause()
+    painted = _compositor_text(host.export_screenshot(simplify=True))
+    assert "Trashed item 40" in painted
+
+    # Keyboard reachability: from the top, focusing the last row
+    # auto-scrolls it into view (Screen.set_focus -> scroll_visible).
+    trash_list.scroll_home(animate=False)
+    await pilot.pause()
+    painted_top = _compositor_text(host.export_screenshot(simplify=True))
+    assert "Trashed item 40" not in painted_top
+    last_row.focus()
+    await pilot.pause()
+    await pilot.pause()
+    painted = _compositor_text(host.export_screenshot(simplify=True))
+    assert "Trashed item 40" in painted
+
+
+@pytest.mark.asyncio
+async def test_trash_page_past_fold_reachable_wide_split_layout():
+    """Wide (>= the compact breakpoint) on a 24-row terminal: the 40-row
+    trash page scrolls; the last row and Restore both stay reachable."""
+    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_library_shell import (
+        LibraryHarness,
+        _seed_conversations,
+        _two_conversations,
+        _two_media_items,
+    )
+
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+    async with host.run_test(size=(170, 24)) as pilot:
+        await _assert_trash_rows_and_restore_reachable(host, pilot)
+
+
+@pytest.mark.asyncio
+async def test_trash_page_past_fold_reachable_stacked_layout():
+    """Below the breakpoint (the ``library-notes-compact`` stacked regime),
+    same 24-row terminal: identical reachability contract."""
+    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_library_shell import (
+        LibraryHarness,
+        _seed_conversations,
+        _two_conversations,
+        _two_media_items,
+    )
+
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+    async with host.run_test(size=(100, 24)) as pilot:
+        await _assert_trash_rows_and_restore_reachable(host, pilot)
 
 
 # ---------------------------------------------------------------------------

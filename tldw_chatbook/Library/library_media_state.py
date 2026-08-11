@@ -22,12 +22,16 @@ LIBRARY_MEDIA_TRASH_EMPTY_COPY = (
 )
 
 # task-4025 (F-018): every disabled Library action says why -- the Trash
-# view's "Restore" action has two honest disabled reasons (still loading
-# vs. genuinely nothing there) plus its enabled description, mirroring the
-# Export/Delete-selected tooltip pairs in library_shell_state.py.
+# view's "Restore" action has three honest disabled reasons (still
+# loading vs. the fetch failed vs. genuinely nothing there) plus its
+# enabled description, mirroring the Export/Delete-selected tooltip pairs
+# in library_shell_state.py. The error reason exists because a failed
+# fetch also leaves zero rows -- without it the tooltip claimed "Nothing
+# in Trash" for a Trash that merely could not be read (PR-1505 review).
 LIBRARY_MEDIA_TRASH_RESTORE_TOOLTIP = "Restore the selected item to your Library."
 LIBRARY_MEDIA_TRASH_RESTORE_DISABLED_EMPTY_TOOLTIP = "Nothing in Trash to restore."
 LIBRARY_MEDIA_TRASH_RESTORE_DISABLED_LOADING_TOOLTIP = "Trash is still loading."
+LIBRARY_MEDIA_TRASH_RESTORE_DISABLED_ERROR_TOOLTIP = "Trash could not be loaded."
 
 _ID_KEYS = ("id", "media_id", "uuid")
 _TYPE_KEYS = ("type", "media_type")
