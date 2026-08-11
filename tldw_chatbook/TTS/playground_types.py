@@ -309,3 +309,70 @@ class STTSGeneratedAudio:
     def profile_save_eligible(self) -> bool:
         """Return whether exact native request provenance can seed a profile."""
         return type(self.requested_selection) is TTSRequestedSelectionSnapshot
+
+
+@dataclass(frozen=True, slots=True)
+class STTSPlaygroundResultProjection:
+    """Sanitized playback facts that carry no clone-reference authority."""
+
+    path: Path = field(repr=False)
+    provider_id: str
+    model_id: str
+    voice_id: str | None
+    operation_id: str
+    audio_format: str
+    metadata: Mapping[str, AudioMetadataValue] = field(default_factory=dict)
+    requested_selection: TTSRequestedSelectionSnapshot | None = None
+    profile_save_block_code: ProfileSaveBlockCode | None = None
+    clone_profile_save_eligible: bool = False
+
+    def __post_init__(self) -> None:
+        for name in ("operation_id", "provider_id", "model_id", "audio_format"):
+            _require_identifier(name, getattr(self, name))
+        object.__setattr__(self, "path", Path(self.path))
+        object.__setattr__(
+            self,
+            "metadata",
+            MappingProxyType(deepcopy(dict(self.metadata))),
+        )
+        if self.requested_selection is not None and (
+            type(self.requested_selection) is not TTSRequestedSelectionSnapshot
+        ):
+            raise TypeError("requested_selection must be an exact snapshot")
+        if self.profile_save_block_code is not None:
+            if self.profile_save_block_code not in PROFILE_SAVE_BLOCK_CODES:
+                raise ValueError("profile_save_block_code is not a known code")
+            if self.requested_selection is not None:
+                raise ValueError(
+                    "profile_save_block_code cannot accompany attached provenance"
+                )
+        if type(self.clone_profile_save_eligible) is not bool:
+            raise TypeError("clone_profile_save_eligible must be a boolean")
+
+    @property
+    def profile_save_eligible(self) -> bool:
+        """Return whether the handler retained exact save provenance."""
+
+        return type(self.requested_selection) is TTSRequestedSelectionSnapshot
+
+    @classmethod
+    def from_artifact(
+        cls,
+        artifact: STTSGeneratedAudio,
+    ) -> STTSPlaygroundResultProjection:
+        """Copy only playback-safe facts from one handler-owned artifact."""
+
+        if type(artifact) is not STTSGeneratedAudio:
+            raise TypeError("generated audio artifact must be exact")
+        return cls(
+            path=artifact.path,
+            provider_id=artifact.provider_id,
+            model_id=artifact.model_id,
+            voice_id=artifact.voice_id,
+            operation_id=artifact.operation_id,
+            audio_format=artifact.audio_format,
+            metadata=artifact.metadata,
+            requested_selection=artifact.requested_selection,
+            profile_save_block_code=artifact.profile_save_block_code,
+            clone_profile_save_eligible=artifact.clone_evidence is not None,
+        )

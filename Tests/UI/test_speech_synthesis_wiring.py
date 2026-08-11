@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from uuid import UUID
+from hashlib import sha256
 
 import pytest
 from textual.app import App, ComposeResult
@@ -21,6 +22,7 @@ from tldw_chatbook.TTS.effective_settings import (
 )
 from tldw_chatbook.TTS.profile_service import TTSPlaygroundSelectionPreset
 from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferencesSnapshot
+from tldw_chatbook.TTS import CanonicalTTSCloneReference, STTSPlaygroundCloneSnapshot
 
 
 class _Harness(App[None]):
@@ -174,3 +176,56 @@ def test_playground_request_builder_attaches_only_profile_preview_identity() -> 
     assert request.profile_preview.profile_id == preset.profile_id
     assert not hasattr(request.profile_preview, "reference")
     assert request.clone_audition is None
+
+
+def test_playground_request_builder_attaches_exact_private_clone_snapshot() -> None:
+    payload = b"RIFF"
+    canonical = CanonicalTTSCloneReference(
+        wav_bytes=payload,
+        reference_text="Exact local transcript",
+        sha256=sha256(payload).hexdigest(),
+        byte_length=len(payload),
+        duration_ms=1,
+        sample_rate_hz=16_000,
+        channels=1,
+        sample_encoding="pcm_s16le",
+    )
+    snapshot = STTSPlaygroundCloneSnapshot(
+        draft_revision=8,
+        canonical_reference=canonical,
+    )
+    host = object.__new__(SpeechSynthesisMixin)
+    host._profile_preset = None
+    host._clone_audition_for_request = lambda provider, model: (
+        snapshot if (provider, model) == ("audio_cpp", "clone-model") else None
+    )
+    preferences = StudioTTSPreferencesSnapshot(revision=4)
+    draft = TTSStudioDraftSelection(
+        selection=TTSSelectionOverrides(
+            provider_id="audio_cpp",
+            model_mode="exact",
+            model_id="clone-model",
+            voice_mode="server_default",
+            response_format="wav",
+            speed=1.0,
+            provider_options={},
+        ),
+        base_revision=4,
+    )
+
+    request = host._build_playground_request(
+        operation_id="clone-op",
+        provider="audio_cpp",
+        model="clone-model",
+        text="hello",
+        voice_id=None,
+        response_format="wav",
+        speed=1.0,
+        options={},
+        studio_draft=draft,
+        studio_preferences=preferences,
+    )
+
+    assert request.clone_audition is snapshot
+    assert request.profile_preview is None
+    assert "Exact local transcript" not in repr(request)

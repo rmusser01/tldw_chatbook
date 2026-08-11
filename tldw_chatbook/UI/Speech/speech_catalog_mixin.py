@@ -36,7 +36,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Input, Select, Static, Switch, TextArea
 
 from tldw_chatbook.config import get_cli_setting
-from tldw_chatbook.TTS import STTSGeneratedAudio, get_tts_service
+from tldw_chatbook.TTS import STTSPlaygroundResultProjection, get_tts_service
 from tldw_chatbook.TTS.adapter_types import (
     TTSOperationError,
     TTSProviderCatalog,
@@ -1553,7 +1553,10 @@ class SpeechCatalogMixin:
             )
             return
         artifact = getattr(state, "artifact", None)
-        if isinstance(artifact, STTSGeneratedAudio) and artifact.path.exists():
+        if (
+            type(artifact) is STTSPlaygroundResultProjection
+            and artifact.path.exists()
+        ):
             self._store_delivered_artifact(artifact, announce=False)
         active_operation_id = getattr(state, "active_operation_id", None)
         if getattr(state, "generation_active", False) and isinstance(

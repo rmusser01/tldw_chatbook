@@ -3,12 +3,12 @@
 #
 # Imports
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 from uuid import uuid4
 from textual.app import ComposeResult
-from textual.containers import Horizontal, ScrollableContainer, Container
+from textual.containers import Horizontal, ScrollableContainer, Container, Vertical
 from textual.widgets import (
     Label,
     Button,
@@ -21,6 +21,7 @@ from textual.widgets import (
     Rule,
 )
 from textual.css.query import QueryError
+from textual.screen import ModalScreen
 from textual.widget import Widget
 from textual.reactive import reactive
 from textual import on
@@ -47,6 +48,7 @@ from tldw_chatbook.TTS.voice_blend_paths import kokoro_ui_blend_file
 from tldw_chatbook.UI.Speech.speech_effects_pane import SpeechEffectsPane
 from tldw_chatbook.UI.Speech.speech_playground_pane import (
     OpenStudioPreferencesRequested,
+    OpenVoiceProfilesRequested,
     SpeechPlaygroundPane,
 )
 from tldw_chatbook.UI.Speech.speech_profile_mixin import (
@@ -104,6 +106,74 @@ STTS_VIEW_KEYS = frozenset(
         "dictation",
     }
 )
+
+
+class VoiceProfilePickerModal(ModalScreen[TTSPlaygroundSelectionPreset | None]):
+    """Reuse the Voice Profiles library without unmounting clone setup."""
+
+    DEFAULT_CSS = """
+    VoiceProfilePickerModal {
+        align: center middle;
+        background: $background 70%;
+    }
+
+    #speech-voice-profile-picker {
+        width: 92%;
+        height: 90%;
+        max-width: 140;
+        background: $surface;
+        border: round $accent;
+        padding: 1;
+    }
+
+    #speech-voice-profile-picker-actions {
+        height: 3;
+        align-horizontal: right;
+    }
+
+    #speech-voice-profile-picker-cancel {
+        width: auto;
+        min-width: 12;
+    }
+    """
+
+    def __init__(
+        self,
+        service_loader: Callable[[], Awaitable[TTSProfileService | None]],
+        *,
+        default_profile_id_reader: Callable[[], object | None] | None = None,
+    ) -> None:
+        super().__init__()
+        if not callable(service_loader):
+            raise TypeError("Voice Profile service loader must be callable")
+        if default_profile_id_reader is not None and not callable(
+            default_profile_id_reader
+        ):
+            raise TypeError("default profile reader must be callable")
+        self._service_loader = service_loader
+        self._default_profile_id_reader = default_profile_id_reader
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="speech-voice-profile-picker"):
+            yield STTSProfileLibrary(
+                self._service_loader,
+                default_profile_id_reader=self._default_profile_id_reader,
+            )
+            with Horizontal(id="speech-voice-profile-picker-actions"):
+                yield Button("Back to setup", id="speech-voice-profile-picker-cancel")
+
+    @on(ProfilePreviewRequested)
+    def _preview_profile(self, message: ProfilePreviewRequested) -> None:
+        """Return the exact existing-library preview preset to the Playground."""
+
+        message.stop()
+        if type(message.preset) is TTSPlaygroundSelectionPreset:
+            self.dismiss(message.preset)
+
+    @on(Button.Pressed, "#speech-voice-profile-picker-cancel")
+    def _cancel(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss(None)
 
 
 class AudioBookGenerationWidget(Widget):
@@ -1580,6 +1650,40 @@ class STTSWindow(Container):
 
         message.stop()
         self.select_view("settings")
+
+    @on(OpenVoiceProfilesRequested)
+    def on_open_voice_profiles_requested(
+        self,
+        message: OpenVoiceProfilesRequested,
+    ) -> None:
+        """Open the existing Voice Profiles library without dropping setup."""
+
+        message.stop()
+        self.app.push_screen(
+            VoiceProfilePickerModal(
+                self._load_profile_service,
+                default_profile_id_reader=(
+                    lambda: get_cli_setting("app_tts", "default_profile_id", None)
+                ),
+            ),
+            self._apply_voice_profile_picker_result,
+        )
+
+    def _apply_voice_profile_picker_result(
+        self,
+        preset: TTSPlaygroundSelectionPreset | None,
+    ) -> None:
+        """Apply one exact Preview result to the still-mounted Playground."""
+
+        if type(preset) is not TTSPlaygroundSelectionPreset:
+            return
+        if self.current_view != "playground":
+            return
+        try:
+            playground = self.query_one(SpeechPlaygroundPane)
+        except QueryError:
+            return
+        playground.apply_profile_preset(preset)
 
     @on(StudioPreferencesSaved)
     def on_studio_preferences_saved(self, message: StudioPreferencesSaved) -> None:

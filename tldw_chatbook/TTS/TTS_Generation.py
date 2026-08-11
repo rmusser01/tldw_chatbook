@@ -57,6 +57,7 @@ from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.TTS.audio_cpp_guided_config import AudioCppSettingsConfig
 from tldw_chatbook.TTS.audio_cpp_recipes import (
+    AUDIO_CPP_RECIPE_REGISTRY,
     audio_cpp_guided_default_is_text_ready,
 )
 from tldw_chatbook.TTS.audio_cpp_supervisor import (
@@ -142,6 +143,61 @@ def _native_capability_deadline() -> float:
     return asyncio.get_running_loop().time() + _NATIVE_CAPABILITY_TIMEOUT_SECONDS
 
 
+def _audio_cpp_clone_setup_projection(
+    settings: AudioCppSettingsConfig,
+    selected_model_id: str | None,
+) -> AudioCppCloneSetupProjection | None:
+    """Project exact Guided clone setup metadata without exposing package paths."""
+
+    if selected_model_id is None:
+        return None
+    if (
+        type(selected_model_id) is not str
+        or not selected_model_id
+        or selected_model_id != selected_model_id.strip()
+        or len(selected_model_id) > 256
+        or any(ord(character) < 32 for character in selected_model_id)
+    ):
+        raise ValueError("audio.cpp selected model ID is invalid")
+    if settings.mode != "managed" or settings.managed_setup_source != "guided":
+        return None
+    accepted = next(
+        (
+            package
+            for package in settings.guided_packages
+            if package.public_model_id == selected_model_id
+        ),
+        None,
+    )
+    if accepted is None:
+        return None
+    try:
+        recipe = AUDIO_CPP_RECIPE_REGISTRY.validate_accepted(accepted)
+    except ValueError:
+        return None
+    if (
+        "clone" not in recipe.capabilities
+        or recipe.reference_requirement.value != "required"
+    ):
+        return None
+    family_labels = {
+        "pocket_tts": "Pocket TTS",
+        "supertonic": "Supertonic",
+    }
+    return AudioCppCloneSetupProjection(
+        model_id=selected_model_id,
+        recipe_id=recipe.recipe_id,
+        recipe_revision=recipe.recipe_revision,
+        family_label=family_labels.get(
+            recipe.family,
+            recipe.family.replace("_", " ").title(),
+        ),
+        recipe_label=recipe.display_name,
+        reference_requirement=recipe.reference_requirement.value,
+        voice_reference_policy=recipe.voice_reference_policy.value,
+    )
+
+
 TTSSettingsProviderStatus = Literal[
     "applied",
     "pending",
@@ -149,6 +205,51 @@ TTSSettingsProviderStatus = Literal[
     "superseded",
     "unavailable",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class AudioCppCloneSetupProjection:
+    """Path-free setup guidance for one exact selected Guided clone model."""
+
+    model_id: str
+    recipe_id: str
+    recipe_revision: int
+    family_label: str
+    recipe_label: str
+    reference_requirement: Literal["none", "optional", "required"]
+    voice_reference_policy: Literal[
+        "native_only",
+        "reference_only",
+        "either",
+        "both_required_combined",
+    ]
+
+    def __post_init__(self) -> None:
+        for value, label, limit in (
+            (self.model_id, "model ID", 256),
+            (self.recipe_id, "recipe ID", 256),
+            (self.family_label, "family label", 128),
+            (self.recipe_label, "recipe label", 256),
+        ):
+            if (
+                type(value) is not str
+                or not value
+                or value != value.strip()
+                or len(value) > limit
+                or any(ord(character) < 32 for character in value)
+            ):
+                raise ValueError(f"audio.cpp clone setup {label} is invalid")
+        if type(self.recipe_revision) is not int or self.recipe_revision < 1:
+            raise ValueError("audio.cpp clone setup recipe revision is invalid")
+        if self.reference_requirement not in {"none", "optional", "required"}:
+            raise ValueError("audio.cpp clone setup reference requirement is invalid")
+        if self.voice_reference_policy not in {
+            "native_only",
+            "reference_only",
+            "either",
+            "both_required_combined",
+        }:
+            raise ValueError("audio.cpp clone setup voice policy is invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,6 +281,7 @@ class AudioCppRuntimeObservation:
     applied_guided_default_model_id: str | None = None
     saved_guided_text_ready: bool = False
     applied_guided_text_ready: bool = False
+    clone_setup: AudioCppCloneSetupProjection | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -2109,8 +2211,12 @@ class TTSService:
             raise RuntimeError("Managed audio.cpp lifecycle is unavailable")
         return supervisor.snapshot()
 
-    async def audio_cpp_runtime_observation(self) -> AudioCppRuntimeObservation:
-        """Return saved, applied, process, and catalog state without provider work."""
+    async def audio_cpp_runtime_observation(
+        self,
+        *,
+        selected_model_id: str | None = None,
+    ) -> AudioCppRuntimeObservation:
+        """Return passive runtime state and selected Guided-model setup metadata."""
         supervisor = self._audio_cpp_supervisor
         if supervisor is None:
             raise RuntimeError("Managed audio.cpp lifecycle is unavailable")
@@ -2178,6 +2284,17 @@ class TTSService:
                             tts_capability = "available"
                         elif catalog.health.state == "not_configured":
                             tts_capability = "not_configured"
+                clone_settings = applied_settings
+                if (
+                    saved_generation != configuration.applied_generation
+                    and saved.mode == "managed"
+                    and process.state in {"stopped", "unavailable"}
+                ):
+                    clone_settings = saved_settings
+                clone_setup = _audio_cpp_clone_setup_projection(
+                    clone_settings,
+                    selected_model_id,
+                )
 
                 return AudioCppRuntimeObservation(
                     saved_mode=saved.mode,
@@ -2265,6 +2382,7 @@ class TTSService:
                         and applied_settings.managed_setup_source == "guided"
                         and audio_cpp_guided_default_is_text_ready(applied_settings)
                     ),
+                    clone_setup=clone_setup,
                 )
 
     async def start_and_test_audio_cpp(self) -> TTSProviderCatalog:

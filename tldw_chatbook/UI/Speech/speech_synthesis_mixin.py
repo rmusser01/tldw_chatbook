@@ -107,6 +107,11 @@ class SpeechSynthesisMixin:
     ) -> STTSPlaygroundRequest:
         """Build one immutable request without exposing profile reference data."""
 
+        clone_snapshot = None
+        clone_snapshot_factory = getattr(self, "_clone_audition_for_request", None)
+        if callable(clone_snapshot_factory):
+            clone_snapshot = clone_snapshot_factory(provider, model)
+
         return STTSPlaygroundRequest(
             operation_id=operation_id,
             provider_id=provider,
@@ -120,6 +125,7 @@ class SpeechSynthesisMixin:
             studio_preferences=(
                 studio_preferences if studio_draft is not None else None
             ),
+            clone_audition=clone_snapshot,
             profile_preview=self._profile_preview_for_request(),
         )
 
@@ -194,6 +200,8 @@ class SpeechSynthesisMixin:
         self,
         provider_id: object,
         model_id: object,
+        *,
+        clone_action: bool = False,
     ) -> str | None:
         """Return fixed UI copy when a generation snapshot is not authoritative.
 
@@ -293,6 +301,15 @@ class SpeechSynthesisMixin:
             return "The selected provider catalog is stale; refresh models"
         if not any(model.model_id == model_id for model in catalog.models):
             return "The selected model is no longer available; refresh models"
+        clone_readiness = getattr(self, "_clone_setup_generation_error", None)
+        if callable(clone_readiness):
+            clone_error = clone_readiness(
+                provider_id,
+                model_id,
+                clone_action=clone_action,
+            )
+            if clone_error is not None:
+                return clone_error
         return None
 
     def _get_select_key(self, select_widget: Select) -> SelectValue | None:
@@ -314,7 +331,7 @@ class SpeechSynthesisMixin:
         """Check if a voice value is valid (not a separator)."""
         return bool(voice) and not str(voice).startswith("_separator")
 
-    def _generate_tts(self) -> None:
+    def _generate_tts(self, *, clone_action: bool = False) -> None:
         """Generate TTS audio"""
         if self._generation_operation_id is not None:
             self.app.notify(
@@ -349,7 +366,11 @@ class SpeechSynthesisMixin:
                 SERVER_DEFAULT_VOICE_ID if preset.voice_id is None else preset.voice_id
             )
 
-        readiness_error = self._generation_readiness_error(provider, model)
+        readiness_error = self._generation_readiness_error(
+            provider,
+            model,
+            clone_action=clone_action,
+        )
         if readiness_error is not None:
             self._sync_generate_enabled()
             self.app.notify(readiness_error, severity="warning")

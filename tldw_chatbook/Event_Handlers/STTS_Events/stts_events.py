@@ -26,6 +26,7 @@ from tldw_chatbook.TTS import (
     OpenAISpeechRequest,
     STTSGeneratedAudio,
     STTSPlaygroundRequest,
+    STTSPlaygroundResultProjection,
     TTSCloneReference,
     TTSPreferencesSnapshot,
     TTSRequest,
@@ -504,7 +505,7 @@ class _STTSPlaygroundState:
     """Read-only handler-owned Playground lifecycle snapshot."""
 
     active_operation_id: str | None
-    artifact: STTSGeneratedAudio | None
+    artifact: STTSPlaygroundResultProjection | None
     generation_active: bool
 
 
@@ -562,9 +563,14 @@ class STTSEventHandler:
 
     def playground_state(self) -> _STTSPlaygroundState:
         """Return immutable handler-owned generation and artifact state."""
+        artifact = self._current_playground_artifact
         return _STTSPlaygroundState(
             active_operation_id=self._active_playground_operation_id,
-            artifact=self._current_playground_artifact,
+            artifact=(
+                STTSPlaygroundResultProjection.from_artifact(artifact)
+                if artifact is not None
+                else None
+            ),
             generation_active=self._is_generating,
         )
 
@@ -707,6 +713,58 @@ class STTSEventHandler:
         ):
             if path in operation_files:
                 self._delete_operation_files(operation_id)
+
+    def lease_playground_result(self, operation_id: str, path: Path) -> bool:
+        """Lease the exact current handler artifact by sanitized identity."""
+
+        artifact = self._current_playground_artifact
+        if (
+            artifact is None
+            or artifact.operation_id != operation_id
+            or artifact.path != Path(path)
+        ):
+            return False
+        return self.lease_playground_artifact(artifact)
+
+    def release_playground_result(self, operation_id: str, path: Path) -> None:
+        """Release a result lease without publishing the private artifact."""
+
+        artifact = self._current_playground_artifact
+        if (
+            artifact is not None
+            and artifact.operation_id == operation_id
+            and artifact.path == Path(path)
+        ):
+            self.release_playground_artifact(artifact)
+            return
+        count = self._playground_file_leases.get(Path(path), 0)
+        if count <= 0:
+            return
+        if count == 1:
+            self._playground_file_leases.pop(Path(path), None)
+        else:
+            self._playground_file_leases[Path(path)] = count - 1
+            return
+        self._delete_operation_files(operation_id)
+
+    async def save_current_playground_profile(
+        self,
+        operation_id: str,
+        display_name: str,
+        profile_service: object,
+    ) -> object:
+        """Save the exact handler-owned result without exposing its artifact."""
+
+        artifact = self._current_playground_artifact
+        if artifact is None or artifact.operation_id != operation_id:
+            raise RuntimeError("The current speech result changed")
+        if artifact.clone_evidence is not None:
+            create = getattr(profile_service, "create_clone_from_artifact", None)
+        else:
+            create = getattr(profile_service, "create_from_artifact", None)
+        if not callable(create):
+            raise RuntimeError("The voice profile store is unavailable")
+        return await create(display_name, artifact)
 
     def _accept_playground_artifact(self, artifact: STTSGeneratedAudio) -> None:
         """Store the new artifact before securely retiring older files."""
@@ -1205,6 +1263,11 @@ class STTSEventHandler:
             self._deliver_generation_success(
                 snapshot.operation_id,
                 artifact,
+                accepted_clone_draft_revision=(
+                    snapshot.clone_audition.draft_revision
+                    if snapshot.clone_audition is not None
+                    else None
+                ),
             )
             self.app.notify("TTS generation complete!", severity="information")
         except asyncio.CancelledError:
@@ -1290,6 +1353,8 @@ class STTSEventHandler:
         self,
         operation_id: str,
         artifact: STTSGeneratedAudio,
+        *,
+        accepted_clone_draft_revision: int | None = None,
     ) -> None:
         playground = self._mounted_playground(operation_id)
         if playground is None:
@@ -1300,8 +1365,16 @@ class STTSEventHandler:
                 "[bold green]Generation complete[/bold green]"
             )
             callback = getattr(playground, "_generation_complete", None)
+            if accepted_clone_draft_revision is not None:
+                accept_clone = getattr(
+                    playground,
+                    "_accept_clone_generation_result",
+                    None,
+                )
+                if callable(accept_clone):
+                    accept_clone(operation_id, accepted_clone_draft_revision)
             if callable(callback):
-                callback(artifact)
+                callback(STTSPlaygroundResultProjection.from_artifact(artifact))
                 return
             playground.query_one("#audio-play-btn", Button).disabled = False
             playground.query_one("#audio-export-btn", Button).disabled = False

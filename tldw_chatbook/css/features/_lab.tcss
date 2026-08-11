@@ -903,6 +903,72 @@ Input.speech-axis-control {
     color: $text-muted;
 }
 
+.speech-clone-setup-host,
+#speech-clone-setup {
+    height: auto;
+    min-height: 0;
+}
+
+#speech-clone-setup {
+    margin-top: 1;
+    padding: 0 1;
+    border-top: solid $ds-grid-line;
+    background: $ds-surface-panel;
+}
+
+.speech-clone-guidance,
+.speech-clone-privacy,
+.speech-clone-error {
+    height: auto;
+    min-height: 1;
+    color: $ds-text-muted;
+}
+
+.speech-clone-privacy {
+    color: $ds-status-warning;
+}
+
+.speech-clone-error {
+    color: $ds-status-info;
+}
+
+.speech-clone-reference-row,
+.speech-clone-actions {
+    height: 1;
+    min-height: 1;
+    margin-top: 1;
+}
+
+.speech-clone-reference-row Button,
+.speech-clone-actions Button {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    padding: 0 1;
+    margin: 0 1 0 0;
+    border: none;
+}
+
+.speech-clone-transcript {
+    height: 4;
+    min-height: 3;
+    margin-top: 1;
+}
+
+.speech-split-stacked .speech-clone-reference-row,
+.speech-split-stacked .speech-clone-actions {
+    layout: vertical;
+    height: auto;
+}
+
+.speech-split-stacked .speech-clone-reference-row Button,
+.speech-split-stacked .speech-clone-actions Button {
+    width: 100%;
+    margin: 0;
+    text-align: left;
+    content-align: left middle;
+}
+
 /* --- Speech: TTS Settings --------------------------------------------- */
 
 /* One row per setting. The legacy form spent FOUR on each -- a blank row,

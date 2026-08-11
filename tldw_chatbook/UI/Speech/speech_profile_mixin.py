@@ -344,7 +344,11 @@ class SpeechProfileMixin:
                     PROFILE_STORE_UNAVAILABLE_COPY
                 )
                 return
-            await service.create_from_artifact(display_name, artifact)
+            handler = getattr(self.app, "_stts_handler", None)
+            save_current = getattr(handler, "save_current_playground_profile", None)
+            if not callable(save_current):
+                raise RuntimeError("The current speech result is unavailable")
+            await save_current(artifact.operation_id, display_name, service)
         except asyncio.CancelledError:
             raise
         except Exception as error:  # noqa: BLE001 - map to bounded UI copy

@@ -28,6 +28,7 @@ from tldw_chatbook.TTS.adapter_types import (
 from tldw_chatbook.TTS.audio_player import PlaybackState
 from tldw_chatbook.TTS.playground_types import (
     STTSGeneratedAudio,
+    STTSPlaygroundResultProjection,
     TTSRequestedSelectionSnapshot,
 )
 from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferencesSnapshot
@@ -701,7 +702,9 @@ async def test_new_result_stops_active_playback_before_replacing_controls(
         await _wait_until(
             pilot,
             lambda: (
-                pane.current_audio_artifact is new_artifact
+                pane.current_audio_artifact is not None
+                and pane.current_audio_artifact.operation_id
+                == new_artifact.operation_id
                 and player.state is PlaybackState.IDLE
             ),
         )
@@ -798,7 +801,8 @@ async def test_auto_play_new_result_cancels_prior_start_worker_before_takeover(
         pane._generation_complete(new_artifact)
         await _wait_until(pilot, lambda: player.played == [new_path])
 
-        assert pane.current_audio_artifact is new_artifact
+        assert type(pane.current_audio_artifact) is STTSPlaygroundResultProjection
+        assert pane.current_audio_artifact.operation_id == new_artifact.operation_id
 
 
 @pytest.mark.asyncio
@@ -882,7 +886,8 @@ async def test_profile_navigation_fences_result_waiting_for_playback_stop(
         player.release_replacement_stop.set()
         await app.workers.wait_for_complete()
 
-        assert pane.current_audio_artifact is old_artifact
+        assert type(pane.current_audio_artifact) is STTSPlaygroundResultProjection
+        assert pane.current_audio_artifact.operation_id == old_artifact.operation_id
         assert pane.current_audio_file == old_artifact.path
 
 
@@ -978,7 +983,8 @@ async def test_play_is_blocked_while_new_result_waits_for_playback_stop(
             player.release_replacement_stop.set()
         await app.workers.wait_for_complete()
 
-        assert pane.current_audio_artifact is new_artifact
+        assert type(pane.current_audio_artifact) is STTSPlaygroundResultProjection
+        assert pane.current_audio_artifact.operation_id == new_artifact.operation_id
 
 
 @pytest.mark.asyncio
