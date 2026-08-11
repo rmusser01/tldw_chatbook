@@ -173,9 +173,10 @@ finish just beyond the requested timeout before cleanup releases ownership.
 Schema v3 can store one canonical clone reference per generation profile: a
 bounded PCM16 WAV BLOB, bounded reference transcript, digest, validated audio
 metadata, immutable reference UUID, and timestamps. The source path is never
-persisted. Ordinary profile reads project only the reference metadata summary;
-the WAV, transcript, and digest are streamed and revalidated only for an exact
-reference read, mutation, backup qualification, or restore qualification.
+persisted. Ordinary profile reads project only the reference metadata summary.
+The WAV BLOB is chunk-streamed, while the bounded transcript and digest are
+selected as scalar fields; all three are revalidated for an exact reference
+read, mutation, backup qualification, or restore qualification.
 
 Reference audio and transcript are local plaintext. Owner-only filesystem
 controls protect the profile database, retained migration backup, recovery
@@ -187,11 +188,14 @@ media. The Windows privacy posture remains unverified until TASK-13208; do not
 infer a Windows ACL guarantee from the POSIX owner-private implementation.
 
 Opening a v2 store eagerly creates and validates a retained v2 pre-migration
-backup before the transactional v3 migration. Older builds refuse schema v3.
-To downgrade, close Chatbook completely, restore that retained v2
-pre-migration backup as the profile database, and only then start the older
-build. This necessarily accepts loss of post-migration profile changes,
-including all clone references and later profile or assignment edits.
+backup before the transactional v3 migration. It is the owner-private sibling
+`<profile-db>.pre-v3.sqlite3` beside the configured `[database]
+tts_profiles_db_path` (or beside the default
+`tldw_chatbook_tts_profiles.db`). Older builds refuse schema v3. To downgrade,
+close Chatbook completely, replace the configured profile database with that
+retained v2 backup, and only then start the older build. This necessarily
+accepts loss of post-migration profile changes, including all clone references
+and later profile or assignment edits.
 
 TASK-13203 provides storage and repository lifecycle only. It does not yet
 enable clone generation, reference setup in Speech Lab, typed adapter request

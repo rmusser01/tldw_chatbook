@@ -3483,6 +3483,7 @@ class TTSProfileRepository:
             immediate=True,
             integrity_evidence=evidence,
         )
+        self._discard_reference_damage_marker(profile_id)
 
     def _worker_bump_reference_revision(
         self,

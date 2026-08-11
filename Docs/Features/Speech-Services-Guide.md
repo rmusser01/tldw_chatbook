@@ -127,10 +127,13 @@ and source paths. Do not treat an ordinary profile export as a reference backup.
 
 When Chatbook first opens a version 2 profile store, it creates and validates a
 retained v2 pre-migration backup before migrating to version 3. Older Chatbook
-builds refuse the version 3 database. To downgrade, fully close Chatbook,
-restore the retained v2 pre-migration backup, and then start the older build.
-Downgrade requires accepting loss of post-migration profile changes, including
-newer profile edits, assignments, and all stored references.
+builds refuse the version 3 database. The retained file is the sibling
+`<profile-db>.pre-v3.sqlite3`, where `<profile-db>` is the configured
+`[database] tts_profiles_db_path` or the default
+`tldw_chatbook_tts_profiles.db`. To downgrade, fully close Chatbook, replace
+the configured profile database with that retained backup, and then start the
+older build. Downgrade requires accepting loss of post-migration profile
+changes, including newer profile edits, assignments, and all stored references.
 
 **Database Tools → Backup All Databases** includes the profile store when its
 repository is available. Chatbook creates that entry with SQLite's online

@@ -354,6 +354,52 @@ async def test_profile_delete_cascades_reference_row(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_delete_clears_damage_marker_before_same_uuid_is_reused(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    async with _opened_repository(path) as repository:
+        generation, revision = await _create(repository, PROFILE_A, "Narrator")
+        attached = await repository.set_reference(
+            PROFILE_A,
+            _canonical(),
+            expected_revision=revision,
+            expected_generation=generation,
+        )
+        connection = sqlite3.connect(path)
+        try:
+            connection.execute(
+                "UPDATE tts_profile_clone_references SET sha256 = ?",
+                ("0" * 64,),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+        with pytest.raises(ProfileRepositoryError) as caught:
+            await repository.get_reference(
+                PROFILE_A,
+                expected_revision=attached.value.revision,
+                expected_generation=generation,
+            )
+        _assert_error(caught.value, "reference_unavailable")
+
+        await repository.delete_profile(PROFILE_A, expected_generation=generation)
+        recreated = await repository.create_profile(
+            _draft("Narrator"),
+            PROFILE_A,
+            expected_generation=generation,
+        )
+        with pytest.raises(ProfileRepositoryError) as caught:
+            await repository.get_reference(
+                PROFILE_A,
+                expected_revision=recreated.value.revision,
+                expected_generation=generation,
+            )
+
+        _assert_error(caught.value, "missing")
+
+
+@pytest.mark.asyncio
 async def test_count_and_byte_quotas_include_replacement_delta(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
