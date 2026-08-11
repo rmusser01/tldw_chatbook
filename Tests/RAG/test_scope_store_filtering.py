@@ -464,22 +464,37 @@ class TestCacheKeyIsolatesAllowlists:
         assert [r.id for r in results_a_again] == ["a"]
 
 
-# === metadata_allowlist rejected for non-semantic search types ===
+# === metadata_allowlist rejected for keyword-only search ===
 
 
-class TestAllowlistRejectedForNonSemantic:
-    def test_hybrid_raises_value_error(self):
+class TestAllowlistRejectedForKeywordMode:
+    """TASK-15020/B1 narrowed this guard: hybrid is now a scoped search.
+
+    The hybrid case used to raise too, which is what made every scoped query
+    in the app fall back to a semantic-only search -- the keyword leg was
+    structurally unreachable under a scope. It now threads the allowlist to
+    BOTH legs (``Tests/RAG_Search/test_hybrid_allowlist_pushdown.py`` owns
+    that behavior end to end, over real databases). Keyword mode keeps
+    raising: a declared spec non-goal, since it has no semantic leg to scope
+    and the app's scoped plain-profile search runs through the Library's own
+    per-database path.
+    """
+
+    def test_hybrid_does_not_raise(self):
         service = _make_service()
 
-        with pytest.raises(ValueError, match="metadata_allowlist"):
-            asyncio.run(
-                service.search(
-                    "query text",
-                    top_k=3,
-                    search_type="hybrid",
-                    metadata_allowlist={"source_id": {"1"}},
-                )
+        # Should not raise. The rows are the keyword leg's (this service has
+        # no media/chacha DB configured, so it degrades to the semantic leg);
+        # what is pinned here is only that the request is legal.
+        asyncio.run(
+            service.search(
+                "query text",
+                top_k=3,
+                search_type="hybrid",
+                include_citations=False,
+                metadata_allowlist={"source_id": {"1"}},
             )
+        )
 
     def test_keyword_raises_value_error(self):
         service = _make_service()

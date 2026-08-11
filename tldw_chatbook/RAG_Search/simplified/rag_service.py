@@ -6,10 +6,12 @@ embeddings, vector stores, chunking, and search operations.
 """
 
 import asyncio
+import json
 import re
 import sqlite3
 import time
 import uuid
+from collections import abc
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from pathlib import Path
@@ -23,6 +25,7 @@ from typing import (
     Literal,
     Mapping,
     Optional,
+    Sequence,
     Tuple,
     Union,
 )
@@ -180,6 +183,157 @@ async def _no_keyword_rows() -> List[Any]:
     while an unselected sub-leg never touches a database.
     """
     return []
+
+
+#: The two metadata dimensions the FTS sub-legs can actually enforce. They
+#: are exactly the keys `rag_scope.build_semantic_allowlists` produces, and
+#: an entry carrying anything else is a scoping request no sub-leg can honor
+#: (see `_keyword_allowlist_ids`).
+ALLOWLIST_SOURCE_TYPE_KEY = "source_type"
+ALLOWLIST_SOURCE_ID_KEY = "source_id"
+ENFORCEABLE_ALLOWLIST_KEYS = frozenset(
+    {ALLOWLIST_SOURCE_TYPE_KEY, ALLOWLIST_SOURCE_ID_KEY}
+)
+
+#: One allowlist entry (its keys AND-ed together), or a union of them.
+MetadataAllowlist = Union[
+    Mapping[str, Collection[str]], Sequence[Mapping[str, Collection[str]]]
+]
+
+
+def _allowlist_entries(
+    metadata_allowlist: Optional[MetadataAllowlist],
+) -> Tuple[Mapping[str, Collection[str]], ...]:
+    """Normalize either allowlist shape into a tuple of AND-group entries.
+
+    ``RAGService.search`` accepts ONE mapping (every key AND-ed -- the shape
+    every pre-TASK-15020 caller passes, one per store query) or a SEQUENCE of
+    them (a union of AND-groups -- what
+    ``rag_scope.build_semantic_allowlists`` returns, deliberately one entry
+    per source type because a flat dict cannot express "media in A OR note in
+    B"). Both reduce to the same thing here.
+
+    Args:
+        metadata_allowlist: The caller's allowlist, in either shape.
+
+    Returns:
+        One entry per AND-group; empty for ``None``, an empty mapping, an
+        empty sequence, or a sequence of empty mappings (all of which mean
+        "no scoping request", not "match nothing").
+    """
+    if not metadata_allowlist:
+        return ()
+    if isinstance(metadata_allowlist, abc.Mapping):
+        return (metadata_allowlist,)
+    return tuple(entry for entry in metadata_allowlist if entry)
+
+
+def _keyword_allowlist_ids(
+    metadata_allowlist: Optional[MetadataAllowlist],
+) -> Optional[Dict[str, Optional[List[str]]]]:
+    """Translate an allowlist into per-sub-leg id filters for the FTS leg.
+
+    The translation is the whole of B1: each entry names one or more source
+    types and the ids allowed for them, and each FTS sub-leg is the keyword
+    half of exactly one of those types. A type the allowlist never names has
+    no entry to run under, so its sub-leg is SKIPPED -- fail-closed, matching
+    the semantic side, where a store query AND-scoped on ``source_type``
+    simply cannot return rows of a type it does not name. "Skip" and "run
+    unfiltered" produce identical row sets on a single-type corpus and wildly
+    different ones on a real corpus, which is why the direction is pinned by
+    spies rather than by row counts alone.
+
+    Args:
+        metadata_allowlist: The caller's allowlist, in either shape.
+
+    Returns:
+        ``None`` when there is no allowlist -- the leg runs exactly as it did
+        before this parameter existed. Otherwise a mapping from source type
+        to that sub-leg's allowed ids (stringified and sorted, ready for
+        ``json_each``), or to ``None`` when the entry restricts the type but
+        not the ids. **A source type ABSENT from the mapping must not be
+        queried at all**; an empty mapping therefore means "no sub-leg may
+        run", which is the caller's own degrade path.
+    """
+    entries = _allowlist_entries(metadata_allowlist)
+    if not entries:
+        return None
+
+    ids_by_type: Dict[str, Optional[set]] = {}
+    for entry in entries:
+        unenforceable = set(entry) - ENFORCEABLE_ALLOWLIST_KEYS
+        if unenforceable:
+            # Honoring the enforceable half of a scoping request would run an
+            # UNDER-restricted query and return rows the caller asked to
+            # exclude. The keyword leg contributes nothing for this entry
+            # instead; the semantic leg still applies the whole entry.
+            logger.warning(
+                "Keyword leg cannot enforce allowlist key(s) {}; this scope "
+                "entry contributes no keyword sub-leg (the semantic leg "
+                "still applies it in full).",
+                sorted(str(key) for key in unenforceable),
+            )
+            continue
+
+        raw_types = entry.get(ALLOWLIST_SOURCE_TYPE_KEY)
+        if raw_types is None:
+            # No type restriction: the entry's ids apply to every sub-leg.
+            source_types: Collection[str] = KEYWORD_LEG_SOURCE_TYPES
+        else:
+            source_types = {str(value) for value in raw_types}
+
+        raw_ids = entry.get(ALLOWLIST_SOURCE_ID_KEY)
+        entry_ids = (
+            None if raw_ids is None else {str(value) for value in raw_ids}
+        )
+
+        for source_type in source_types:
+            if source_type not in KEYWORD_LEG_SOURCE_TYPES:
+                continue  # No sub-leg serves this type (e.g. a vector-only type).
+            if source_type not in ids_by_type:
+                ids_by_type[source_type] = (
+                    None if entry_ids is None else set(entry_ids)
+                )
+            elif ids_by_type[source_type] is not None and entry_ids is not None:
+                # Two entries naming one type are a union, not an
+                # intersection: each is an independent AND-group.
+                ids_by_type[source_type].update(entry_ids)
+            else:
+                # One of them restricts nothing, so their union restricts
+                # nothing.
+                ids_by_type[source_type] = None
+
+    return {
+        # An entry that names a type with ZERO ids can only match nothing --
+        # the same answer the semantic leg gives (`str(id) in set()` is False
+        # for every candidate), reached without a query. Dropping it here is
+        # what makes that skip, rather than an empty `json_each` round trip.
+        source_type: (None if ids is None else sorted(ids))
+        for source_type, ids in ids_by_type.items()
+        if ids is None or ids
+    }
+
+
+def _json_id_param(allowed_ids: Collection[str]) -> str:
+    """Bind an id allowlist as ONE parameter, the way the ORM already does.
+
+    ``ChaChaNotes_DB.search_notes``' ``id_allowlist`` and
+    ``Client_Media_DB_v2``'s large-``media_ids_filter`` branch both encode
+    the ids as a single JSON array consumed by ``json_each``, so a ~1k-item
+    scope (an ordinary collection) cannot hit SQLite's bound-parameter cap.
+    The ids are stringified to match the scope's own type
+    (``EffectiveScope`` carries ``str`` ids) and the vector store's
+    comparison (``str(metadata[key]) in values``); SQLite applies the left
+    operand's NUMERIC affinity for an INTEGER id column (``Media.id``), the
+    same reliance both precedents already have.
+
+    Args:
+        allowed_ids: The ids this sub-leg may return.
+
+    Returns:
+        A JSON array literal, sorted for a deterministic query.
+    """
+    return json.dumps(sorted(str(value) for value in allowed_ids))
 
 
 # Sanity ceiling for _resolve_hybrid_pool_multiplier (TASK-4110 review,
@@ -758,7 +912,7 @@ class RAGService:
         include_citations: Optional[bool] = None,
         score_threshold: Optional[float] = None,
         *,
-        metadata_allowlist: Optional[Mapping[str, Collection[str]]] = None,
+        metadata_allowlist: Optional[MetadataAllowlist] = None,
         keyword_source_types: Optional[Collection[str]] = None,
     ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
         """
@@ -774,12 +928,32 @@ class RAGService:
             include_citations: Whether to include citations (default from config)
             score_threshold: Minimum score threshold (default from config)
             metadata_allowlist: Metadata key -> allowed values, pushed down
-                into the vector store's own candidate selection instead of
-                filtered afterward. Only supported for
-                ``search_type="semantic"``; see ``_semantic_search``. Passing
-                a non-empty allowlist with ``search_type="hybrid"`` or
-                ``search_type="keyword"`` raises ``ValueError`` rather than
-                silently ignoring the scoping request.
+                into each leg's own candidate selection instead of filtered
+                afterward. Accepts ONE mapping (its keys AND-ed) or a
+                SEQUENCE of them (a union of AND-groups -- what
+                ``rag_scope.build_semantic_allowlists`` returns, one entry
+                per source type, because a flat dict cannot express "media
+                in A OR note in B").
+
+                Supported for ``search_type="semantic"`` (the vector store
+                filters candidates before ranking; a multi-entry allowlist
+                runs one store query per entry and merges by score, the
+                convention its callers already follow) and, since
+                TASK-15020/B1, for ``search_type="hybrid"``, where it reaches
+                BOTH legs: the semantic leg exactly as above, and the FTS leg
+                as a per-sub-leg ``id IN (SELECT value FROM json_each(?))``
+                restriction (see ``_keyword_allowlist_ids``). A sub-leg whose
+                source type the allowlist never names is SKIPPED rather than
+                run unfiltered, and an allowlist that leaves no sub-leg
+                runnable degrades the keyword leg to ``[]`` -- hybrid then
+                falls back to its semantic leg through the same path an empty
+                FTS result already takes.
+
+                ``search_type="keyword"`` still raises ``ValueError`` rather
+                than silently ignoring the scoping request: it has no
+                semantic leg to scope, and the app's scoped plain-profile
+                search runs through the Library's own four-seam path, which
+                is scope-aware at each database.
             keyword_source_types: Source types the keyword (FTS5) leg should
                 budget for, in the engine's vocabulary
                 (``media``/``note``/``conversation``). ``None`` -- the
@@ -795,14 +969,15 @@ class RAGService:
             List of search results (with or without citations)
 
         Raises:
-            ValueError: If ``metadata_allowlist`` is provided with a
-                ``search_type`` other than ``"semantic"``, or if
-                ``keyword_source_types`` is provided with
-                ``search_type="semantic"``.
+            ValueError: If ``metadata_allowlist`` is provided with
+                ``search_type="keyword"``, or if ``keyword_source_types`` is
+                provided with ``search_type="semantic"``.
         """
-        if metadata_allowlist and search_type != "semantic":
+        if metadata_allowlist and search_type == "keyword":
             raise ValueError(
-                "metadata_allowlist is only supported for search_type='semantic'"
+                "metadata_allowlist is not supported for search_type='keyword' "
+                "(use search_type='hybrid' for a scoped search that keeps the "
+                "keyword leg, or the scope-aware per-database search path)"
             )
         if keyword_source_types is not None and search_type == "semantic":
             raise ValueError(
@@ -880,7 +1055,7 @@ class RAGService:
             )
 
             if search_type == "semantic":
-                results = await self._semantic_search(
+                results = await self._semantic_search_scoped(
                     query,
                     top_k,
                     filter_metadata,
@@ -895,6 +1070,7 @@ class RAGService:
                     filter_metadata,
                     include_citations,
                     score_threshold,
+                    metadata_allowlist=metadata_allowlist,
                     keyword_source_types=keyword_source_types,
                 )
             elif search_type == "keyword":
@@ -974,6 +1150,70 @@ class RAGService:
         """Synchronous version of search."""
         return asyncio.run(self.search(query, **kwargs))
 
+    async def _semantic_search_scoped(
+        self,
+        query: str,
+        top_k: int,
+        filter_metadata: Optional[Dict[str, Any]] = None,
+        include_citations: bool = True,
+        score_threshold: float = 0.0,
+        *,
+        metadata_allowlist: Optional[MetadataAllowlist] = None,
+    ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
+        """The semantic leg under an allowlist of either shape.
+
+        A union allowlist cannot be one store query -- every key inside one
+        ``metadata_allowlist`` is AND-ed, and a media id and a note id are
+        not guaranteed distinct -- so each entry is its own query and the
+        results merge by score, which is exactly what
+        ``library_local_rag_search_service`` and
+        ``pipeline_functions_simple`` already do for scoped semantic search.
+        Moving that convention in here is what lets HYBRID scope its semantic
+        leg the same way, with one fusion over the union rather than one
+        fusion per source type.
+
+        Zero or one entry takes the single-call path unchanged, so every
+        pre-TASK-15020 caller (all of which pass one mapping) behaves exactly
+        as before -- same store call, same arguments, same trimming.
+
+        Args:
+            query: Search query text.
+            top_k: Number of results to return.
+            filter_metadata: Metadata equality filters applied after the
+                store call.
+            include_citations: Whether to fetch citations from the store.
+            score_threshold: Minimum similarity score to keep.
+            metadata_allowlist: One AND-group, or a union of them.
+
+        Returns:
+            Up to ``top_k`` results, most similar first.
+        """
+        entries = _allowlist_entries(metadata_allowlist)
+        if len(entries) <= 1:
+            return await self._semantic_search(
+                query,
+                top_k,
+                filter_metadata,
+                include_citations,
+                score_threshold,
+                metadata_allowlist=entries[0] if entries else None,
+            )
+
+        merged: List[Any] = []
+        for entry in entries:
+            merged.extend(
+                await self._semantic_search(
+                    query,
+                    top_k,
+                    filter_metadata,
+                    include_citations,
+                    score_threshold,
+                    metadata_allowlist=entry,
+                )
+            )
+        merged.sort(key=lambda result: result.score, reverse=True)
+        return merged[:top_k]
+
     async def _semantic_search(
         self,
         query: str,
@@ -1046,6 +1286,7 @@ class RAGService:
         include_citations: bool = True,
         *,
         keyword_source_types: Optional[Collection[str]] = None,
+        metadata_allowlist: Optional[MetadataAllowlist] = None,
     ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
         """
         Perform keyword (FTS5) search across media, notes and conversations.
@@ -1092,19 +1333,35 @@ class RAGService:
                 serves all three; an empty collection serves none and
                 returns ``[]`` without a database lookup; unrecognized
                 values are dropped (see ``_resolve_keyword_source_types``).
+            metadata_allowlist: A retrieval scope (TASK-15020/B1). Each
+                sub-leg the allowlist names runs with its entry's ids bound
+                as ``id IN (SELECT value FROM json_each(?))``; a sub-leg the
+                allowlist does NOT name is skipped rather than run
+                unfiltered, so the scope fails closed exactly as the semantic
+                leg's does. It composes with ``keyword_source_types`` by
+                intersection -- both narrow, neither widens. ``None`` (every
+                caller that predates it) leaves the leg untouched.
 
         Returns:
             The merged leg, best first, capped at ``top_k``.
         """
+        allowlist_ids = _keyword_allowlist_ids(metadata_allowlist)
         selected = _resolve_keyword_source_types(keyword_source_types)
+        if allowlist_ids is not None:
+            selected = selected & frozenset(allowlist_ids)
         if not selected:
             # An explicitly empty selection is "no keyword leg" -- an
-            # answer, not a failure. Hybrid degrades to its semantic leg
-            # through the same disclosed path an empty FTS result already
-            # takes.
+            # answer, not a failure. So is a scope that leaves no selected
+            # sub-leg runnable. Hybrid degrades to its semantic leg through
+            # the same disclosed path an empty FTS result already takes.
             logger.debug(
-                "Keyword search asked for no source types; returning no "
-                "results without a database lookup."
+                "Keyword search has no runnable sub-legs (selection={}, "
+                "scoped types={}); returning no results without a database "
+                "lookup.",
+                "all" if keyword_source_types is None else sorted(
+                    str(value) for value in keyword_source_types
+                ),
+                None if allowlist_ids is None else sorted(allowlist_ids),
             )
             return []
 
@@ -1122,7 +1379,14 @@ class RAGService:
         chacha_types = selected & CHACHA_KEYWORD_SOURCE_TYPES
         media_ranking, chacha_rankings = await asyncio.gather(
             self._media_keyword_subleg(
-                query, top_k, filter_metadata, include_citations
+                query,
+                top_k,
+                filter_metadata,
+                include_citations,
+                allowed_ids=(
+                    None if allowlist_ids is None
+                    else allowlist_ids.get(SOURCE_TYPE_MEDIA)
+                ),
             )
             if SOURCE_TYPE_MEDIA in selected
             else _no_keyword_rows(),
@@ -1132,6 +1396,13 @@ class RAGService:
                 filter_metadata,
                 include_citations,
                 source_types=chacha_types,
+                allowed_ids=(
+                    None if allowlist_ids is None
+                    else {
+                        source_type: allowlist_ids.get(source_type)
+                        for source_type in chacha_types
+                    }
+                ),
             )
             if chacha_types
             else _no_keyword_rows(),
@@ -1159,6 +1430,8 @@ class RAGService:
         top_k: int,
         filter_metadata: Optional[Dict[str, Any]] = None,
         include_citations: bool = True,
+        *,
+        allowed_ids: Optional[Collection[str]] = None,
     ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
         """The media sub-leg of the keyword search: FTS5 over the media DB.
 
@@ -1167,6 +1440,10 @@ class RAGService:
             top_k: Maximum rows this sub-leg contributes.
             filter_metadata: Optional metadata equality filters.
             include_citations: Whether to build citation-carrying rows.
+            allowed_ids: Media ids this sub-leg may return (TASK-15020/B1).
+                ``None`` is unrestricted -- today's behavior for every caller
+                without a scope. The caller decides whether this sub-leg runs
+                at all; reaching here means the scope named the media type.
 
         Returns:
             Media rows, best first; ``[]`` on any failure (this sub-leg
@@ -1238,6 +1515,7 @@ class RAGService:
                         pool,
                         query,
                         top_k * SEARCH_RESULT_MULTIPLIER,  # Get extra for filtering
+                        allowed_ids,
                     )
                     break  # Success, exit retry loop
                 except Exception as e:
@@ -1286,6 +1564,7 @@ class RAGService:
         include_citations: bool = True,
         *,
         source_types: Optional[Collection[str]] = None,
+        allowed_ids: Optional[Mapping[str, Optional[Collection[str]]]] = None,
     ) -> List[Union[List[SearchResult], List[SearchResultWithCitations]]]:
         """The notes and conversation sub-legs, over a read-only chacha DB.
 
@@ -1298,6 +1577,11 @@ class RAGService:
                 (TASK-14751). ``None`` runs both. An unselected sub-query is
                 never issued, and when neither is selected the database is
                 not even opened.
+            allowed_ids: Per-source-type id restrictions (TASK-15020/B1),
+                e.g. ``{"note": [...]}``. ``None`` -- or a type mapped to
+                ``None`` -- leaves that sub-query unrestricted. Which
+                sub-legs run at all is ``source_types``' decision; the
+                caller has already intersected it with the scope.
 
         Returns:
             One ranking per non-empty sub-leg (notes, then conversations),
@@ -1329,6 +1613,7 @@ class RAGService:
                 query,
                 top_k * SEARCH_RESULT_MULTIPLIER,  # Get extra for filtering
                 selected,
+                allowed_ids,
             )
 
             rankings: List[Any] = []
@@ -1475,6 +1760,7 @@ class RAGService:
         query: str,
         limit: int,
         source_types: Optional[Collection[str]] = None,
+        allowed_ids: Optional[Mapping[str, Optional[Collection[str]]]] = None,
     ) -> Dict[str, List[Dict[str, Any]]]:
         """Run the selected ChaChaNotes FTS sub-queries on one connection.
 
@@ -1485,6 +1771,8 @@ class RAGService:
             source_types: Which of ``note``/``conversation`` to query
                 (TASK-14751); ``None`` queries both. An unselected sub-query
                 is never issued and its key stays empty.
+            allowed_ids: Per-source-type id restrictions (TASK-15020/B1);
+                ``None``, or a type mapped to ``None``, is unrestricted.
 
         Returns:
             ``{"note": [...], "conversation": [...]}`` -- an unopenable
@@ -1528,17 +1816,28 @@ class RAGService:
         with closing(conn):
             if SOURCE_TYPE_NOTE in selected:
                 rows[SOURCE_TYPE_NOTE] = self._chacha_notes_fts(
-                    conn, escaped_query, limit
+                    conn,
+                    escaped_query,
+                    limit,
+                    None if allowed_ids is None else allowed_ids.get(SOURCE_TYPE_NOTE),
                 )
             if SOURCE_TYPE_CONVERSATION in selected:
                 rows[SOURCE_TYPE_CONVERSATION] = self._chacha_conversations_fts(
-                    conn, escaped_query, limit
+                    conn,
+                    escaped_query,
+                    limit,
+                    None
+                    if allowed_ids is None
+                    else allowed_ids.get(SOURCE_TYPE_CONVERSATION),
                 )
         return rows
 
     @staticmethod
     def _chacha_notes_fts(
-        conn: sqlite3.Connection, escaped_query: str, limit: int
+        conn: sqlite3.Connection,
+        escaped_query: str,
+        limit: int,
+        allowed_ids: Optional[Collection[str]] = None,
     ) -> List[Dict[str, Any]]:
         """Notes sub-query: mirrors ``CharactersRAGDB.search_notes``.
 
@@ -1553,15 +1852,28 @@ class RAGService:
         both indexes; without the rebuild, dropping this line changed
         nothing).
 
+        The id filter mirrors ``search_notes``' own ``id_allowlist`` clause,
+        json_each and all -- the ORM's scoped notes search and this leg must
+        restrict the same table the same way.
+
         Args:
             conn: Read-only ChaChaNotes connection.
             escaped_query: A per-token-quoted FTS5 MATCH expression.
             limit: Maximum rows.
+            allowed_ids: Optional note ids this sub-leg may return
+                (TASK-15020/B1); ``None`` is unrestricted.
 
         Returns:
             Row dicts (``id``/``title``/``content``), best match first.
         """
-        sql = """
+        params: List[Any] = [escaped_query]
+        id_filter_sql = ""
+        if allowed_ids is not None:
+            id_filter_sql = "AND main.id IN (SELECT value FROM json_each(?))"
+            params.append(_json_id_param(allowed_ids))
+        params.append(limit)
+
+        sql = f"""
         SELECT
             main.id AS id,
             main.title AS title,
@@ -1570,11 +1882,12 @@ class RAGService:
         JOIN notes main ON fts.rowid = main.rowid
         WHERE fts.notes_fts MATCH ?
           AND main.deleted = 0
+          {id_filter_sql}
         ORDER BY rank
         LIMIT ?
         """
         try:
-            with closing(conn.execute(sql, (escaped_query, limit))) as cursor:
+            with closing(conn.execute(sql, tuple(params))) as cursor:
                 return [
                     {
                         "id": row["id"],
@@ -1592,7 +1905,10 @@ class RAGService:
 
     @staticmethod
     def _chacha_conversations_fts(
-        conn: sqlite3.Connection, escaped_query: str, limit: int
+        conn: sqlite3.Connection,
+        escaped_query: str,
+        limit: int,
+        allowed_ids: Optional[Collection[str]] = None,
     ) -> List[Dict[str, Any]]:
         """Conversations sub-query: mirrors
         ``CharactersRAGDB.search_conversations_by_content``.
@@ -1632,11 +1948,23 @@ class RAGService:
             conn: Read-only ChaChaNotes connection.
             escaped_query: A per-token-quoted FTS5 MATCH expression.
             limit: Maximum conversations.
+            allowed_ids: Optional conversation ids this sub-leg may return
+                (TASK-15020/B1); ``None`` is unrestricted. It restricts the
+                CONVERSATION, which is this sub-leg's unit of retrieval and
+                the id the vector leg carries -- the second statement below
+                is already restricted to whatever conversations survive here.
 
         Returns:
             Row dicts (``id``/``title``/``content``), best match first.
         """
-        conversations_sql = """
+        params: List[Any] = [escaped_query]
+        id_filter_sql = ""
+        if allowed_ids is not None:
+            id_filter_sql = "AND c.id IN (SELECT value FROM json_each(?))"
+            params.append(_json_id_param(allowed_ids))
+        params.append(limit)
+
+        conversations_sql = f"""
         SELECT
             c.id AS id,
             c.title AS title,
@@ -1647,13 +1975,14 @@ class RAGService:
         WHERE fts.messages_fts MATCH ?
           AND m.deleted = 0
           AND c.deleted = 0
+          {id_filter_sql}
         GROUP BY c.id
         ORDER BY best_rank
         LIMIT ?
         """
         try:
             with closing(
-                conn.execute(conversations_sql, (escaped_query, limit))
+                conn.execute(conversations_sql, tuple(params))
             ) as cursor:
                 conversations = [
                     {
@@ -1709,6 +2038,7 @@ class RAGService:
         include_citations: bool = True,
         score_threshold: float = 0.0,
         *,
+        metadata_allowlist: Optional[MetadataAllowlist] = None,
         keyword_source_types: Optional[Collection[str]] = None,
     ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
         """
@@ -1728,8 +2058,17 @@ class RAGService:
         ``keyword_source_types`` (TASK-14751) narrows the FTS leg to the
         types the caller will keep, so its budget is not spent on rows a
         downstream source-type filter would discard; ``None`` leaves the leg
-        exactly as it was. It does not scope the semantic leg -- that is
-        ``metadata_allowlist``'s job, and it is semantic-only.
+        exactly as it was. It does not scope the semantic leg.
+
+        ``metadata_allowlist`` (TASK-15020/B1) is the retrieval SCOPE, and it
+        reaches BOTH legs: the vector store filters its candidates by it (one
+        store query per entry, merged by score) and each FTS sub-leg the
+        allowlist names restricts its ids to that entry's. A sub-leg the
+        allowlist does not name is skipped, so a scoped hybrid can never
+        return an out-of-scope keyword row -- before B1 this whole
+        combination raised, which is why every scoped query in the app was
+        diverted to a semantic-only search and the keyword leg was
+        structurally unreachable under a scope.
         """
         # Get results from both search types. The pool multiplier widens
         # ONLY these two leg fetches -- `_semantic_search`'s own internal
@@ -1739,12 +2078,13 @@ class RAGService:
         pool_multiplier = _resolve_hybrid_pool_multiplier(
             self.config.search.hybrid_pool_multiplier
         )
-        semantic_task = self._semantic_search(
+        semantic_task = self._semantic_search_scoped(
             query,
             top_k * pool_multiplier,
             filter_metadata,
             include_citations,
             score_threshold,
+            metadata_allowlist=metadata_allowlist,
         )
         keyword_task = self._keyword_search(
             query,
@@ -1752,6 +2092,7 @@ class RAGService:
             filter_metadata,
             include_citations,
             keyword_source_types=keyword_source_types,
+            metadata_allowlist=metadata_allowlist,
         )
 
         # Run both searches in parallel
@@ -2392,7 +2733,11 @@ class RAGService:
         return [(start, end, frozenset(covered)) for start, end, covered in merged]
 
     def _perform_fts5_search(
-        self, pool, query: str, limit: int
+        self,
+        pool,
+        query: str,
+        limit: int,
+        allowed_ids: Optional[Collection[str]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Perform FTS5 search using connection pool with proper SQL injection prevention.
@@ -2401,6 +2746,11 @@ class RAGService:
             pool: Connection pool instance
             query: Search query
             limit: Maximum number of results
+            allowed_ids: Optional media ids this query may return
+                (TASK-15020/B1). Bound as ONE json_each parameter, never a
+                placeholder per id -- see ``_json_id_param``. ``None`` leaves
+                the query shape byte-identical to what it was before scopes
+                reached this leg.
 
         Returns:
             List of search results
@@ -2428,7 +2778,16 @@ class RAGService:
         # read from the result rows anywhere downstream (keyword results use
         # a fixed KEYWORD_SEARCH_SCORE, not a rank-derived score), so it does
         # not need to be selected at all, only ordered on.
-        sql = """
+        # Only "?" placeholders are interpolated into the SQL; every value,
+        # including the whole id allowlist, is bound.
+        params: List[Any] = [escaped_query]
+        id_filter_sql = ""
+        if allowed_ids is not None:
+            id_filter_sql = "AND m.id IN (SELECT value FROM json_each(?))"
+            params.append(_json_id_param(allowed_ids))
+        params.append(limit)
+
+        sql = f"""
         SELECT
             m.id,
             m.title,
@@ -2441,6 +2800,7 @@ class RAGService:
         JOIN media_fts ON m.id = media_fts.rowid
         WHERE media_fts MATCH ?
         AND m.is_trash = 0
+        {id_filter_sql}
         ORDER BY media_fts.rank
         LIMIT ?
         """
@@ -2451,7 +2811,7 @@ class RAGService:
             with pool.transaction() as conn:
                 cursor = conn.cursor()
                 # Use parameterized query - the escaped_query is already safe
-                cursor.execute(sql, (escaped_query, limit))
+                cursor.execute(sql, tuple(params))
 
                 for row in cursor:
                     results.append(
