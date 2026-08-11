@@ -592,7 +592,15 @@ def test_promotion_restores_ephemeral_flag_if_persist_returns_none_unexpectedly(
         session = store.create_session(title="Temporary chat", ephemeral=True)
         _run_a_chat(store, session.id)
 
-        monkeypatch.setattr(store, "persist_session_if_needed", lambda session_id: None)
+        # Explicit signature, not **kwargs: production gained the keyword-only
+        # `strict_roleplay_context` in 86f74db93 and this stub silently raised
+        # TypeError one frame early, so the test stopped reaching the
+        # None-return branch it exists to cover. An explicit signature keeps
+        # failing loudly on the next change rather than absorbing it.
+        def _returns_none(session_id, *, strict_roleplay_context=False):
+            return None
+
+        monkeypatch.setattr(store, "persist_session_if_needed", _returns_none)
 
         with pytest.raises(RuntimeError):
             store.promote_ephemeral_session(session.id)
