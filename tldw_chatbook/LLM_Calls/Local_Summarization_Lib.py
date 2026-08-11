@@ -1589,15 +1589,11 @@ def summarize_with_custom_openai(
             logging.error("Custom OpenAI API: API key not found or is empty")
             return "Custom OpenAI API: API Key Not Provided/Found in Config file or is empty"
 
-        logging.debug(
-            f"Custom OpenAI API: Using API Key: {custom_openai_api_key[:5]}...{custom_openai_api_key[-5:]}"
-        )
+        logging.debug("Custom OpenAI API: Credential configured")
 
         # Input data handling
         logging.debug(f"Custom OpenAI API: Raw input data type: {type(input_data)}")
-        logging.debug(
-            f"Custom OpenAI API: Raw input data (first 500 chars): {str(input_data)[:500]}..."
-        )
+        logging.debug("Custom OpenAI API: Input received")
 
         if isinstance(input_data, str):
             if input_data.strip().startswith("{"):
@@ -1609,7 +1605,8 @@ def summarize_with_custom_openai(
                     data = json.loads(input_data)
                 except json.JSONDecodeError as e:
                     logging.error(
-                        f"Custom OpenAI API: Error parsing JSON string: {str(e)}"
+                        "Custom OpenAI API: Input JSON parse failed; exception_type=%s",
+                        safe_metadata_token(type(e).__name__),
                     )
                     data = input_data
                     pass
@@ -1622,9 +1619,7 @@ def summarize_with_custom_openai(
             data = input_data
 
         logging.debug(f"Custom OpenAI API: Processed data type: {type(data)}")
-        logging.debug(
-            f"Custom OpenAI API: Processed data (first 500 chars): {str(data)[:500]}..."
-        )
+        logging.debug("Custom OpenAI API: Input processing completed")
 
         # Text extraction
         if isinstance(data, dict):
@@ -1646,10 +1641,11 @@ def summarize_with_custom_openai(
                 f"Custom OpenAI API: Invalid input data format: {type(data)}"
             )
 
+        logging.debug("Custom OpenAI API: Text extraction completed")
         logging.debug(
-            f"Custom OpenAI API: Extracted text (first 500 chars): {text[:500]}..."
+            "Custom OpenAI API: Prompt prepared; character_count=%s",
+            len(f"{custom_prompt_arg}"),
         )
-        logging.debug(f"Custom OpenAI API: Custom prompt: {custom_prompt_arg}")
 
         if input_data is None:
             input_data = f"{get_internal_prompt('summarization.local_summarizer_template')}\n\n\n\n{text}"
@@ -1682,7 +1678,7 @@ def summarize_with_custom_openai(
 
         # Set API URL
         custom_openai_api_url = loaded_config_data["custom_openai_api"]["api_ip"]
-        logging.debug(f"Custom OpenAI API: Using API URL: {custom_openai_api_url}")
+        logging.debug("Custom OpenAI API: API endpoint configured")
 
         logging.debug("Custom OpenAI API: Preparing data + prompt for submittal")
         openai_prompt = f"{text} \n\n\n\n{custom_prompt_arg}"
@@ -1750,7 +1746,9 @@ def summarize_with_custom_openai(
                             yield chunk
                         except json.JSONDecodeError:
                             logging.error(
-                                f"OpenAI: Error decoding JSON from line: {line}"
+                                "Custom OpenAI API: Failed to decode streamed JSON; "
+                                "line_length=%s",
+                                len(data_str),
                             )
                             continue
                 yield collected_messages
@@ -1779,16 +1777,21 @@ def summarize_with_custom_openai(
             session.mount("https://", adapter)
             logging.debug("Custom OpenAI API: Posting request")
             response = session.post(custom_openai_api_url, headers=headers, json=data)
-            logging.debug(f"Custom OpenAI API full API response data: {response}")
+            logging.debug(
+                "Custom OpenAI API: Response received; status_code=%s",
+                response.status_code,
+            )
             if response.status_code == 200:
                 response_data = response.json()
-                logging.debug(response_data)
                 if "choices" in response_data and len(response_data["choices"]) > 0:
                     chat_response = response_data["choices"][0]["message"][
                         "content"
                     ].strip()
                     logging.debug("Custom OpenAI API: Chat Sent successfully")
-                    logging.debug(f"Custom OpenAI API: Chat response: {chat_response}")
+                    logging.debug(
+                        "Custom OpenAI API: Chat response received; character_count=%s",
+                        len(chat_response),
+                    )
                     return chat_response
                 else:
                     logging.warning(
@@ -1799,20 +1802,24 @@ def summarize_with_custom_openai(
                 logging.error(
                     f"Custom OpenAI API: Chat request failed with status code {response.status_code}"
                 )
-                logging.error(f"Custom OpenAI API: Error response: {response.text}")
                 return f"OpenAI: Failed to process chat response. Status code: {response.status_code}"
     except json.JSONDecodeError as e:
         logging.error(
-            f"Custom OpenAI API: Error decoding JSON: {str(e)}", exc_info=True
+            "Custom OpenAI API: Response JSON decode failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
         )
         return f"Custom OpenAI API: Error decoding JSON input: {str(e)}"
     except requests.RequestException as e:
         logging.error(
-            f"Custom OpenAI API: Error making API request: {str(e)}", exc_info=True
+            "Custom OpenAI API: API request failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
         )
         return f"Custom OpenAI API: Error making API request: {str(e)}"
     except Exception as e:
-        logging.error(f"Custom OpenAI API: Unexpected error: {str(e)}", exc_info=True)
+        logging.error(
+            "Custom OpenAI API: Unexpected failure; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Custom OpenAI API: Unexpected error occurred: {str(e)}"
 
 
@@ -1839,15 +1846,11 @@ def summarize_with_custom_openai_2(
             logging.error("Custom OpenAI API-2: API key not found or is empty")
             return "Custom OpenAI API-2: API Key Not Provided/Found in Config file or is empty"
 
-        logging.debug(
-            f"Custom OpenAI API: Using API Key: {custom_openai_api_key[:5]}...{custom_openai_api_key[-5:]}"
-        )
+        logging.debug("Custom OpenAI API-2: Credential configured")
 
         # Input data handling
         logging.debug(f"Custom OpenAI API-2: Raw input data type: {type(input_data)}")
-        logging.debug(
-            f"Custom OpenAI API-2: Raw input data (first 500 chars): {str(input_data)[:500]}..."
-        )
+        logging.debug("Custom OpenAI API-2: Input received")
 
         if isinstance(input_data, str):
             if input_data.strip().startswith("{"):
@@ -1859,7 +1862,9 @@ def summarize_with_custom_openai_2(
                     data = json.loads(input_data)
                 except json.JSONDecodeError as e:
                     logging.error(
-                        f"Custom OpenAI API-2: Error parsing JSON string: {str(e)}"
+                        "Custom OpenAI API-2: Input JSON parse failed; "
+                        "exception_type=%s",
+                        safe_metadata_token(type(e).__name__),
                     )
                     data = input_data
                     pass
@@ -1872,9 +1877,7 @@ def summarize_with_custom_openai_2(
             data = input_data
 
         logging.debug(f"Custom OpenAI API-2: Processed data type: {type(data)}")
-        logging.debug(
-            f"Custom OpenAI API-2: Processed data (first 500 chars): {str(data)[:500]}..."
-        )
+        logging.debug("Custom OpenAI API-2: Input processing completed")
 
         # Text extraction
         if isinstance(data, dict):
@@ -1896,10 +1899,11 @@ def summarize_with_custom_openai_2(
                 f"Custom OpenAI API-2: Invalid input data format: {type(data)}"
             )
 
+        logging.debug("Custom OpenAI API-2: Text extraction completed")
         logging.debug(
-            f"Custom OpenAI API-2: Extracted text (first 500 chars): {text[:500]}..."
+            "Custom OpenAI API-2: Prompt prepared; character_count=%s",
+            len(f"{custom_prompt_arg}"),
         )
-        logging.debug(f"Custom OpenAI API-2: Custom prompt: {custom_prompt_arg}")
 
         if input_data is None:
             input_data = f"{get_internal_prompt('summarization.local_summarizer_template')}\n\n\n\n{text}"
@@ -1932,7 +1936,7 @@ def summarize_with_custom_openai_2(
 
         # Set API URL
         custom_openai_api_url = loaded_config_data["custom_openai_api_2"]["api_ip"]
-        logging.debug(f"Custom OpenAI API-2: Using API URL: {custom_openai_api_url}")
+        logging.debug("Custom OpenAI API-2: API endpoint configured")
 
         logging.debug("Custom OpenAI API-2: Preparing data + prompt for submittal")
         openai_prompt = f"{text} \n\n\n\n{custom_prompt_arg}"
@@ -2000,7 +2004,9 @@ def summarize_with_custom_openai_2(
                             yield chunk
                         except json.JSONDecodeError:
                             logging.error(
-                                f"Custom OpenAI API-2: Error decoding JSON from line: {line}"
+                                "Custom OpenAI API-2: Failed to decode streamed JSON; "
+                                "line_length=%s",
+                                len(data_str),
                             )
                             continue
                 yield collected_messages
@@ -2029,17 +2035,21 @@ def summarize_with_custom_openai_2(
             session.mount("https://", adapter)
             logging.debug("Custom OpenAI API-2: Posting request")
             response = session.post(custom_openai_api_url, headers=headers, json=data)
-            logging.debug(f"Custom OpenAI API-2 full API response data: {response}")
+            logging.debug(
+                "Custom OpenAI API-2: Response received; status_code=%s",
+                response.status_code,
+            )
             if response.status_code == 200:
                 response_data = response.json()
-                logging.debug(response_data)
                 if "choices" in response_data and len(response_data["choices"]) > 0:
                     chat_response = response_data["choices"][0]["message"][
                         "content"
                     ].strip()
                     logging.debug("Custom OpenAI API-2: Chat Sent successfully")
                     logging.debug(
-                        f"Custom OpenAI API-2: Chat response: {chat_response}"
+                        "Custom OpenAI API-2: Chat response received; "
+                        "character_count=%s",
+                        len(chat_response),
                     )
                     return chat_response
                 else:
@@ -2051,20 +2061,24 @@ def summarize_with_custom_openai_2(
                 logging.error(
                     f"Custom OpenAI API-2: Chat request failed with status code {response.status_code}"
                 )
-                logging.error(f"Custom OpenAI API-2: Error response: {response.text}")
                 return f"OpenAI: Failed to process chat response. Status code: {response.status_code}"
     except json.JSONDecodeError as e:
         logging.error(
-            f"Custom OpenAI API-2: Error decoding JSON: {str(e)}", exc_info=True
+            "Custom OpenAI API-2: Response JSON decode failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
         )
         return f"Custom OpenAI API-2: Error decoding JSON input: {str(e)}"
     except requests.RequestException as e:
         logging.error(
-            f"Custom OpenAI API-2: Error making API request: {str(e)}", exc_info=True
+            "Custom OpenAI API-2: API request failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
         )
         return f"Custom OpenAI API-2: Error making API request: {str(e)}"
     except Exception as e:
-        logging.error(f"Custom OpenAI API-2: Unexpected error: {str(e)}", exc_info=True)
+        logging.error(
+            "Custom OpenAI API-2: Unexpected failure; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Custom OpenAI API-2: Unexpected error occurred: {str(e)}"
 
 
@@ -2078,7 +2092,7 @@ def save_summary_to_file(summary, file_path):
     logging.debug("Opening summary file for writing, *segments.json with *_summary.txt")
     with open(summary_file_path, "w") as file:
         file.write(summary)
-    logging.info(f"Summary saved to file: {summary_file_path}")
+    logging.info("Summary saved to file")
 
 
 #
