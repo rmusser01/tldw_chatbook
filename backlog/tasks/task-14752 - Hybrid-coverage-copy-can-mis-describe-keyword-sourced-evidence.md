@@ -1,9 +1,10 @@
 ---
 id: TASK-14752
 title: Hybrid coverage copy can mis-describe keyword-sourced evidence
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-09 21:21'
+updated_date: '2026-08-11 04:38'
 labels:
   - rag
   - library
@@ -29,3 +30,9 @@ This was noticed while implementing TASK-3996, deliberately left unbundled from 
 - [ ] #3 The semantic-only and plain profiles' existing copy is unchanged (the pure-semantic case still reads exactly as it does today).
 - [ ] #4 The in-code follow-up note at the coverage seam is replaced by a reference to this task's resolution rather than left dangling.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Rides inside TASK-15020's B1 (scope-aware hybrid): this task's coverage-copy fix touches the same disclosure seams B1 rewrites (Library's _semantic_scope_coverage / library_rag_state.py wording, and the ROUTE_NOTE_HYBRID_SCOPED family) -- landing it separately would collide with B1's edits to those seams. See Docs/superpowers/specs/2026-08-11-rag-p2ab-instrument-and-deferred-constraints-design.md (B1) and Docs/superpowers/plans/2026-08-11-rag-p2ab-instrument-and-deferred-constraints.md.
+<!-- SECTION:PLAN:END -->
