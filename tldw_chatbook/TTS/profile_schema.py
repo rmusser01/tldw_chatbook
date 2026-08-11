@@ -1019,6 +1019,12 @@ def open_profile_store(
             journal_mode = connection.execute("PRAGMA journal_mode = WAL").fetchone()[0]
             if journal_mode != "wal":
                 raise _repository_error("schema_corrupt")
+            # NORMAL is safe under WAL (app-crash-safe; only an OS/power
+            # crash can lose the last commit, acceptable for this local TTS
+            # profile store) and avoids an fsync per commit. This owner is
+            # private-file only (no :memory: target), so no memory guard is
+            # needed here (task-15465).
+            connection.execute("PRAGMA synchronous = NORMAL")
             _migrate_empty_store(connection)
         elif version < CURRENT_PROFILE_SCHEMA_VERSION:
             _validate_schema(
@@ -1029,6 +1035,9 @@ def open_profile_store(
             journal_mode = connection.execute("PRAGMA journal_mode = WAL").fetchone()[0]
             if journal_mode != "wal":
                 raise _repository_error("schema_corrupt")
+            # NORMAL is safe under WAL -- see the version==0 branch above for
+            # the full rationale (task-15465).
+            connection.execute("PRAGMA synchronous = NORMAL")
             _run_migrations(connection, version)
         else:
             _validate_schema(
@@ -1038,6 +1047,9 @@ def open_profile_store(
             journal_mode = connection.execute("PRAGMA journal_mode = WAL").fetchone()[0]
             if journal_mode != "wal":
                 raise _repository_error("schema_corrupt")
+            # NORMAL is safe under WAL -- see the version==0 branch above for
+            # the full rationale (task-15465).
+            connection.execute("PRAGMA synchronous = NORMAL")
         _validate_schema(
             connection,
             check_deadline=check_deadline,

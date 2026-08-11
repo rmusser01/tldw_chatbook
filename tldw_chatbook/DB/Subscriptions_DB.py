@@ -145,6 +145,16 @@ def ensure_site_configs_schema(db_path) -> None:
     # `Tests/DB/test_private_sqlite_inventory.py` audits exactly that and
     # caught this when the helper was first written.
     with closing(connect_private_sqlite("db.subscriptions.site_configs", db_path)) as conn:
+        if str(db_path) != ":memory:":
+            conn.execute("PRAGMA journal_mode = WAL")
+        # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
+        # lose the last commit, acceptable for this local watchlist/feed
+        # cache) and avoids an fsync per commit -- this connection is
+        # short-lived (one DDL script, one commit, close), but it can be the
+        # first connection this file ever sees, so it must not leave the
+        # file on DELETE+FULL for whichever connection opens it next
+        # (task-15465).
+        conn.execute("PRAGMA synchronous = NORMAL")
         conn.executescript(SITE_CONFIGS_DDL)
         conn.commit()
 

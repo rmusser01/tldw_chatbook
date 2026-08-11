@@ -73,7 +73,13 @@ class RAGIndexingDB:
         # and avoids an fsync per commit. This DB opens a fresh connection
         # per operation and is never explicitly closed (GC only, per the
         # input-latency audit), so synchronous must be re-applied on every
-        # open, not just the first (task-15465).
+        # open, not just the first (task-15465). Caution: under WAL, a
+        # never-closed lingering reader (this class's own connections, since
+        # nothing here calls .close()) pins the WAL file and blocks
+        # checkpoint truncation -- unbounded -wal growth is a new failure
+        # mode DELETE mode did not have. task-15466 (porting this class to a
+        # held connection) is the structural fix; this task only pairs the
+        # pragma, it doesn't change the connection lifecycle.
         conn.execute("PRAGMA synchronous = NORMAL")
         return conn
 
