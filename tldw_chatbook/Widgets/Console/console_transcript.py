@@ -22,18 +22,6 @@ from textual.message_pump import NoActiveAppError
 from textual.style import Style
 from textual.widget import Widget
 from textual.widgets import Button, Markdown, Static
-from textual.widgets._markdown import (
-    MarkdownBlock,
-    MarkdownH1,
-    MarkdownH2,
-    MarkdownH3,
-    MarkdownH4,
-    MarkdownH5,
-    MarkdownH6,
-    MarkdownParagraph,
-    MarkdownTD,
-    MarkdownTH,
-)
 
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
@@ -492,90 +480,116 @@ def _roleplay_flavor_content(content: Content) -> Content:
     return content.add_spans(flavor_spans)
 
 
-class _ConsoleRoleplayFlavorBlockMixin:
+class ConsoleRoleplayFlavorBlockMixin:
     """Add roleplay component spans to an inline-capable Markdown block."""
 
-    COMPONENT_CLASSES = MarkdownBlock.COMPONENT_CLASSES | _CONSOLE_RP_COMPONENTS
-
     def _token_to_content(self, token) -> Content:
-        # Textual's TCSS type selectors match the concrete widget type. These
-        # blocks intentionally subclass its private Markdown block classes, so
-        # give every flavored block a stable public CSS hook as well.
+        # The compatibility resolver below proves this hook exists before any
+        # flavored block type is built. Textual type selectors match concrete
+        # widget types, so every block also receives a stable public CSS hook.
         self.add_class("console-roleplay-markdown-block")
         return _roleplay_flavor_content(super()._token_to_content(token))
 
 
-class _ConsoleRoleplayMarkdownParagraph(
-    _ConsoleRoleplayFlavorBlockMixin, MarkdownParagraph
-):
-    """Paragraph with Console roleplay inline components."""
-
-    COMPONENT_CLASSES = MarkdownBlock.COMPONENT_CLASSES | _CONSOLE_RP_COMPONENTS
-
-
-class _ConsoleRoleplayMarkdownH1(_ConsoleRoleplayFlavorBlockMixin, MarkdownH1):
-    """Level-one heading with Console roleplay inline components."""
-
-    COMPONENT_CLASSES = MarkdownBlock.COMPONENT_CLASSES | _CONSOLE_RP_COMPONENTS
-
-
-class _ConsoleRoleplayMarkdownH2(_ConsoleRoleplayFlavorBlockMixin, MarkdownH2):
-    """Level-two heading with Console roleplay inline components."""
-
-    COMPONENT_CLASSES = MarkdownBlock.COMPONENT_CLASSES | _CONSOLE_RP_COMPONENTS
+_ROLEPLAY_BLOCK_KEYS = (
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "paragraph_open",
+    "th_open",
+    "td_open",
+)
 
 
-class _ConsoleRoleplayMarkdownH3(_ConsoleRoleplayFlavorBlockMixin, MarkdownH3):
-    """Level-three heading with Console roleplay inline components."""
+def _resolve_textual_roleplay_blocks() -> dict[str, type[Widget]] | None:
+    """Resolve the Textual block API required for roleplay annotations.
 
-    COMPONENT_CLASSES = MarkdownBlock.COMPONENT_CLASSES | _CONSOLE_RP_COMPONENTS
-
-
-class _ConsoleRoleplayMarkdownH4(_ConsoleRoleplayFlavorBlockMixin, MarkdownH4):
-    """Level-four heading with Console roleplay inline components."""
-
-    COMPONENT_CLASSES = MarkdownBlock.COMPONENT_CLASSES | _CONSOLE_RP_COMPONENTS
-
-
-class _ConsoleRoleplayMarkdownH5(_ConsoleRoleplayFlavorBlockMixin, MarkdownH5):
-    """Level-five heading with Console roleplay inline components."""
-
-    COMPONENT_CLASSES = MarkdownBlock.COMPONENT_CLASSES | _CONSOLE_RP_COMPONENTS
-
-
-class _ConsoleRoleplayMarkdownH6(_ConsoleRoleplayFlavorBlockMixin, MarkdownH6):
-    """Level-six heading with Console roleplay inline components."""
-
-    COMPONENT_CLASSES = MarkdownBlock.COMPONENT_CLASSES | _CONSOLE_RP_COMPONENTS
-
-
-class _ConsoleRoleplayMarkdownTH(_ConsoleRoleplayFlavorBlockMixin, MarkdownTH):
-    """Table heading with Console roleplay inline components."""
-
-    COMPONENT_CLASSES = MarkdownBlock.COMPONENT_CLASSES | _CONSOLE_RP_COMPONENTS
+    Returns:
+        The required block classes when their component registry and inline
+        conversion hook are compatible, otherwise ``None``. Returning
+        ``None`` keeps app startup safe across future Textual upgrades.
+    """
+    try:
+        blocks = {key: Markdown.BLOCKS[key] for key in _ROLEPLAY_BLOCK_KEYS}
+    except (AttributeError, KeyError, TypeError):
+        return None
+    for block_type in blocks.values():
+        component_classes = getattr(block_type, "COMPONENT_CLASSES", None)
+        token_converter = getattr(block_type, "_token_to_content", None)
+        if not isinstance(block_type, type) or not issubclass(block_type, Widget):
+            return None
+        if not isinstance(component_classes, (set, frozenset)):
+            return None
+        if not callable(token_converter):
+            return None
+    return blocks
 
 
-class _ConsoleRoleplayMarkdownTD(_ConsoleRoleplayFlavorBlockMixin, MarkdownTD):
-    """Table cell with Console roleplay inline components."""
+def _make_roleplay_block_type(
+    class_name: str, block_type: type[Widget]
+) -> type[Widget]:
+    """Build one PascalCase Textual block subtype with RP components."""
+    return type(
+        class_name,
+        (ConsoleRoleplayFlavorBlockMixin, block_type),
+        {
+            "__doc__": "Markdown block with Console roleplay inline components.",
+            "__module__": __name__,
+            "COMPONENT_CLASSES": (
+                frozenset(block_type.COMPONENT_CLASSES) | _CONSOLE_RP_COMPONENTS
+            ),
+        },
+    )
 
-    COMPONENT_CLASSES = MarkdownBlock.COMPONENT_CLASSES | _CONSOLE_RP_COMPONENTS
+
+_resolved_roleplay_blocks = _resolve_textual_roleplay_blocks()
+if _resolved_roleplay_blocks is None:
+    logger.warning(
+        "Console roleplay Markdown flavor is unavailable for this Textual "
+        "version; using the standard Markdown renderer"
+    )
+else:
+    _console_roleplay_blocks = dict(Markdown.BLOCKS)
+    _block_class_names = {
+        "h1": "ConsoleRoleplayMarkdownH1",
+        "h2": "ConsoleRoleplayMarkdownH2",
+        "h3": "ConsoleRoleplayMarkdownH3",
+        "h4": "ConsoleRoleplayMarkdownH4",
+        "h5": "ConsoleRoleplayMarkdownH5",
+        "h6": "ConsoleRoleplayMarkdownH6",
+        "paragraph_open": "ConsoleRoleplayMarkdownParagraph",
+        "th_open": "ConsoleRoleplayMarkdownTH",
+        "td_open": "ConsoleRoleplayMarkdownTD",
+    }
+    _console_roleplay_blocks.update(
+        {
+            key: _make_roleplay_block_type(_block_class_names[key], block_type)
+            for key, block_type in _resolved_roleplay_blocks.items()
+        }
+    )
 
 
 class ConsoleRoleplayMarkdown(Markdown):
-    """Full Markdown renderer with semantic, source-preserving RP flavor spans."""
+    """Render full Markdown with source-preserving roleplay flavor spans.
 
-    BLOCKS = {
-        **Markdown.BLOCKS,
-        "h1": _ConsoleRoleplayMarkdownH1,
-        "h2": _ConsoleRoleplayMarkdownH2,
-        "h3": _ConsoleRoleplayMarkdownH3,
-        "h4": _ConsoleRoleplayMarkdownH4,
-        "h5": _ConsoleRoleplayMarkdownH5,
-        "h6": _ConsoleRoleplayMarkdownH6,
-        "paragraph_open": _ConsoleRoleplayMarkdownParagraph,
-        "th_open": _ConsoleRoleplayMarkdownTH,
-        "td_open": _ConsoleRoleplayMarkdownTD,
-    }
+    Compatible Textual block APIs receive semantic speech, action, and strong
+    component spans. Incompatible future APIs retain standard Markdown
+    rendering instead of preventing application startup.
+
+    Args:
+        markdown: Initial Markdown source, or ``None`` for an empty widget.
+        name: Optional DOM name inherited from ``Markdown``.
+        id: Optional DOM identifier inherited from ``Markdown``.
+        classes: Optional initial CSS classes.
+        parser_factory: Optional Markdown parser factory.
+        open_links: Whether Textual should open clicked links automatically.
+    """
+
+    if _resolved_roleplay_blocks is not None:
+        BLOCKS = _console_roleplay_blocks
 
 
 def _speaker_label(

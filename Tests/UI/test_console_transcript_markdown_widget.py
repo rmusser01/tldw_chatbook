@@ -29,6 +29,7 @@ from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleRoleplayMarkdown,
     ConsoleTranscript,
     ConsoleTranscriptMessage,
+    _resolve_textual_roleplay_blocks,
     get_console_assistant_markdown,
 )
 
@@ -156,6 +157,12 @@ def test_roleplay_markdown_leaves_unclosed_flavor_literal():
         isinstance(span.style, str) and span.style.startswith(".console-rp-")
         for span in content.spans
     )
+
+
+def test_textual_block_compatibility_guard_falls_back(monkeypatch):
+    monkeypatch.setattr(Markdown, "BLOCKS", {})
+
+    assert _resolve_textual_roleplay_blocks() is None
 
 
 @pytest.mark.asyncio
@@ -309,7 +316,7 @@ print("literal")
 
         assert markdown.source == source
         assert {
-            "_ConsoleRoleplayMarkdownH1",
+            "ConsoleRoleplayMarkdownH1",
             "MarkdownBulletList",
             "MarkdownBlockQuote",
             "MarkdownTable",
