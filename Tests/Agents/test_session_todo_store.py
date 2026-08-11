@@ -3,11 +3,12 @@ from __future__ import annotations
 import logging
 import multiprocessing
 from queue import Queue
-from threading import Barrier, Event, Thread, current_thread
+from threading import Event, Thread, current_thread
 from typing import Any, Callable
 
 import pytest
 
+from tldw_chatbook.Agents import session_todo_store as todo_store_module
 from tldw_chatbook.Agents.session_todo_store import (
     MAX_TODO_CONTENT_CHARS,
     MAX_TODO_ITEMS,
@@ -55,33 +56,143 @@ class _ObservedLock:
     def __exit__(self, *args: object) -> object:
         return self._lock.__exit__(*args)
 
+    def locked(self) -> bool:
+        return bool(self._lock.locked())
 
-def _run_concurrently(
-    *actions: Callable[[], object],
+
+class _ParkingTaskMap(dict[str, dict[str, object]]):
+    """Park one named contender during a selected mapping operation."""
+
+    def __init__(
+        self,
+        initial: dict[str, dict[str, object]],
+        *,
+        operation: str,
+        thread_name: str,
+    ) -> None:
+        super().__init__(initial)
+        self.operation = operation
+        self.thread_name = thread_name
+        self.entered = Event()
+        self.release = Event()
+        self._parked = False
+
+    def _park(self, operation: str) -> None:
+        if (
+            operation == self.operation
+            and current_thread().name == self.thread_name
+            and not self._parked
+        ):
+            self._parked = True
+            self.entered.set()
+            self.release.wait(5)
+
+    def __len__(self) -> int:
+        self._park("len")
+        return super().__len__()
+
+    def get(
+        self,
+        key: str,
+        default: dict[str, object] | None = None,
+    ) -> dict[str, object] | None:
+        self._park("get")
+        return super().get(key, default)
+
+    def __setitem__(self, key: str, value: dict[str, object]) -> None:
+        self._park("setitem")
+        super().__setitem__(key, value)
+
+
+def _run_forced_mutation_pair(
+    store: SessionTodoStore,
+    first_action: Callable[[], object],
+    second_action: Callable[[], object],
+    *,
+    operation: str,
 ) -> tuple[list[object | None], list[BaseException | None]]:
-    """Release named worker actions together and return their outcomes."""
-    barrier = Barrier(len(actions) + 1)
-    results: list[object | None] = [None] * len(actions)
-    errors: list[BaseException | None] = [None] * len(actions)
+    """Park the first mutation inside state work as the second attempts entry."""
+    first_name = "first-contender"
+    second_name = "second-contender"
+    second_attempted_mutation_lock = Event()
+    second_done = Event()
+    tasks = _ParkingTaskMap(
+        dict(store._tasks),  # type: ignore[attr-defined]
+        operation=operation,
+        thread_name=first_name,
+    )
+    store._tasks = tasks  # type: ignore[assignment]
+    store._mutation_lock = _ObservedLock(  # type: ignore[attr-defined]
+        store._mutation_lock,  # type: ignore[attr-defined]
+        thread_name=second_name,
+        before_acquire=second_attempted_mutation_lock.set,
+    )
+    results: list[object | None] = [None, None]
+    errors: list[BaseException | None] = [None, None]
 
     def run(index: int, action: Callable[[], object]) -> None:
-        barrier.wait()
         try:
             results[index] = action()
         except BaseException as exc:
             errors[index] = exc
+        finally:
+            if index == 1:
+                second_done.set()
 
-    threads = [
-        Thread(target=run, args=(index, action), name=f"concurrent-{index}")
-        for index, action in enumerate(actions)
-    ]
-    for thread in threads:
-        thread.start()
-    barrier.wait()
-    for thread in threads:
-        thread.join(5)
-    assert not [thread.name for thread in threads if thread.is_alive()]
+    first = Thread(target=run, args=(0, first_action), name=first_name)
+    second = Thread(target=run, args=(1, second_action), name=second_name)
+    first.start()
+    try:
+        assert tasks.entered.wait(2)
+        assert store._mutation_lock.locked()  # type: ignore[attr-defined]
+        assert store._state_lock.locked()  # type: ignore[attr-defined]
+        second.start()
+        assert second_attempted_mutation_lock.wait(2)
+        assert not second_done.is_set()
+    finally:
+        tasks.release.set()
+        first.join(5)
+        if second.ident is not None:
+            second.join(5)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
     return results, errors
+
+
+class _SpawnProcessTimeout(AssertionError):
+    """Report a child that required forced cleanup."""
+
+    def __init__(self, pid: int | None) -> None:
+        super().__init__("spawned task-store regression process timed out")
+        self.pid = pid
+
+
+def _run_spawned_target(
+    target: Callable[..., None],
+    *args: object,
+    timeout: float = 5,
+) -> object:
+    """Run a spawn-safe target and always reclaim its process and queue."""
+    context = multiprocessing.get_context("spawn")
+    result_queue = context.Queue()
+    process = context.Process(target=target, args=(result_queue, *args))
+    process.start()
+    try:
+        process.join(timeout)
+        if process.is_alive():
+            raise _SpawnProcessTimeout(process.pid)
+        assert process.exitcode == 0
+        return result_queue.get(timeout=2)
+    finally:
+        if process.is_alive():
+            process.terminate()
+            process.join(2)
+        if process.is_alive():
+            process.kill()
+            process.join(2)
+        result_queue.close()
+        result_queue.join_thread()
 
 
 def _callback_read_process(result_queue: Any) -> None:
@@ -109,6 +220,51 @@ def _callback_read_process(result_queue: Any) -> None:
         )
 
     store.create(content="Readable", on_change=read_from_callback)
+
+
+def _callback_mutation_process(result_queue: Any, mutation: str) -> None:
+    """Attempt a forbidden same-thread mutation from a callback."""
+    store = SessionTodoStore()
+    inner_error: tuple[str, str] | None = None
+
+    def mutate_from_callback(snapshot: list[dict[str, object]]) -> None:
+        nonlocal inner_error
+        try:
+            if mutation == "create":
+                store.create(content="PRIVATE-INNER-CONTENT")
+            elif mutation == "update":
+                store.update(
+                    task_id="1",
+                    expected_version=1,
+                    content="PRIVATE-INNER-CONTENT",
+                )
+            else:
+                store.update(
+                    task_id="1",
+                    expected_version=1,
+                    status="deleted",
+                )
+        except BaseException as exc:
+            inner_error = (type(exc).__name__, str(exc))
+
+    outer = store.create(content="Outer", on_change=mutate_from_callback)
+    result_queue.put((outer, inner_error, store.export_snapshot()))
+
+
+def _callback_base_exception_process(result_queue: Any) -> None:
+    """Raise a non-Exception callback failure after a successful commit."""
+    store = SessionTodoStore()
+
+    def fail_callback(snapshot: list[dict[str, object]]) -> None:
+        raise KeyboardInterrupt("PRIVATE-BASE-EXCEPTION")
+
+    outer = store.create(content="Outer", on_change=fail_callback)
+    result_queue.put((outer, store.export_snapshot()))
+
+
+def _stuck_process(result_queue: Any) -> None:
+    """Stay alive until the spawn-cleanup regression terminates this process."""
+    Event().wait()
 
 
 def _valid_snapshot() -> dict[str, object]:
@@ -745,6 +901,131 @@ def test_snapshot_errors_do_not_reflect_payload_values() -> None:
     assert secret not in str(error.value)
 
 
+def test_numeric_bound_is_the_largest_exact_json_integer() -> None:
+    assert todo_store_module.MAX_TODO_NUMBER == (1 << 53) - 1
+
+
+def test_snapshot_accepts_maximum_task_numbers_and_exhausted_next_id() -> None:
+    maximum = todo_store_module.MAX_TODO_NUMBER
+    payload = {
+        "next_id": maximum + 1,
+        "tasks": [
+            {
+                "id": str(maximum),
+                "version": maximum,
+                "content": "Boundary",
+                "status": "pending",
+            }
+        ],
+    }
+
+    restored = SessionTodoStore.from_snapshot(payload)
+
+    assert restored.export_snapshot() == payload
+
+
+@pytest.mark.parametrize(
+    "next_id",
+    [lambda: todo_store_module.MAX_TODO_NUMBER + 2, lambda: 10**5000],
+)
+def test_snapshot_rejects_unusable_next_id_without_decimal_conversion(
+    next_id: Callable[[], int],
+) -> None:
+    with pytest.raises(TodoStoreError, match="^invalid snapshot next id$"):
+        SessionTodoStore.from_snapshot({"next_id": next_id(), "tasks": []})
+
+
+@pytest.mark.parametrize(
+    "version",
+    [lambda: todo_store_module.MAX_TODO_NUMBER + 1, lambda: 10**5000],
+)
+def test_snapshot_rejects_unusable_version_without_decimal_conversion(
+    version: Callable[[], int],
+) -> None:
+    with pytest.raises(TodoStoreError, match="^invalid task version$"):
+        SessionTodoStore.from_snapshot(
+            {
+                "next_id": 2,
+                "tasks": [
+                    {
+                        "id": "1",
+                        "version": version(),
+                        "content": "Boundary",
+                        "status": "pending",
+                    }
+                ],
+            }
+        )
+
+
+def test_create_uses_last_id_once_then_fails_without_reuse_or_callback() -> None:
+    maximum = todo_store_module.MAX_TODO_NUMBER
+    callbacks: list[list[dict[str, object]]] = []
+    store = SessionTodoStore.from_snapshot({"next_id": maximum, "tasks": []})
+
+    created = store.create(content="Last ID")
+    store.update(
+        task_id=str(maximum),
+        expected_version=1,
+        status="deleted",
+    )
+    before = store.export_snapshot()
+
+    with pytest.raises(TodoStoreError, match="^task id space exhausted$"):
+        store.create(content="Must not reuse", on_change=callbacks.append)
+
+    assert created["id"] == str(maximum)
+    assert before == {"next_id": maximum + 1, "tasks": []}
+    assert store.export_snapshot() == before
+    assert callbacks == []
+
+
+@pytest.mark.parametrize("status", ["completed", "deleted"])
+def test_update_rejects_version_exhaustion_atomically(status: str) -> None:
+    maximum = todo_store_module.MAX_TODO_NUMBER
+    callbacks: list[list[dict[str, object]]] = []
+    payload = {
+        "next_id": 2,
+        "tasks": [
+            {
+                "id": "1",
+                "version": maximum,
+                "content": "Version boundary",
+                "status": "pending",
+            }
+        ],
+    }
+    store = SessionTodoStore.from_snapshot(payload)
+
+    with pytest.raises(TodoStoreError, match="^task version exhausted$"):
+        store.update(
+            task_id="1",
+            expected_version=maximum,
+            status=status,
+            on_change=callbacks.append,
+        )
+
+    assert store.export_snapshot() == payload
+    assert callbacks == []
+
+
+def test_update_rejects_expected_version_above_numeric_bound() -> None:
+    callbacks: list[list[dict[str, object]]] = []
+    store = SessionTodoStore()
+    original = store.create(content="Original")
+
+    with pytest.raises(TodoStoreError, match="^invalid expected_version$"):
+        store.update(
+            task_id="1",
+            expected_version=todo_store_module.MAX_TODO_NUMBER + 1,
+            content="Replacement",
+            on_change=callbacks.append,
+        )
+
+    assert store.get("1") == original
+    assert callbacks == []
+
+
 def test_update_applies_only_supplied_fields_and_increments_version() -> None:
     store = SessionTodoStore()
     store.create(content="Original", active_form="Working")
@@ -1093,12 +1374,54 @@ def test_callback_failure_commits_returns_and_logs_one_fixed_safe_warning(
         assert fragment not in exposed
 
 
+@pytest.mark.parametrize("mutation", ["create", "update", "delete"])
+def test_callback_reentrant_mutation_fails_without_deadlock_or_payload_leak(
+    mutation: str,
+) -> None:
+    outer, inner_error, snapshot = _run_spawned_target(
+        _callback_mutation_process,
+        mutation,
+        timeout=2,
+    )
+
+    assert outer == {
+        "id": "1",
+        "version": 1,
+        "content": "Outer",
+        "status": "pending",
+    }
+    assert inner_error == (
+        "TodoStoreError",
+        "task mutation is not allowed from an on_change callback",
+    )
+    assert "PRIVATE-INNER-CONTENT" not in inner_error[1]
+    assert snapshot == {"next_id": 2, "tasks": [outer]}
+
+
+def test_callback_base_exception_is_contained_after_commit() -> None:
+    outer, snapshot = _run_spawned_target(_callback_base_exception_process)
+
+    assert snapshot == {"next_id": 2, "tasks": [outer]}
+
+
+def test_spawn_regression_cleanup_reaps_a_stuck_child() -> None:
+    with pytest.raises(_SpawnProcessTimeout) as error:
+        _run_spawned_target(_stuck_process, timeout=0.2)
+
+    assert error.value.pid is not None
+    assert error.value.pid not in {
+        child.pid for child in multiprocessing.active_children()
+    }
+
+
 def test_concurrent_creates_allocate_distinct_present_tasks() -> None:
     store = SessionTodoStore()
 
-    results, errors = _run_concurrently(
+    results, errors = _run_forced_mutation_pair(
+        store,
         lambda: store.create(content="First"),
         lambda: store.create(content="Second"),
+        operation="setitem",
     )
 
     assert errors == [None, None]
@@ -1114,9 +1437,11 @@ def test_concurrent_jointly_valid_updates_to_different_tasks_both_commit() -> No
     store.create(content="First")
     store.create(content="Second")
 
-    _, errors = _run_concurrently(
+    _, errors = _run_forced_mutation_pair(
+        store,
         lambda: store.update(task_id="1", expected_version=1, content="First done"),
         lambda: store.update(task_id="2", expected_version=1, content="Second done"),
+        operation="get",
     )
 
     assert errors == [None, None]
@@ -1128,9 +1453,11 @@ def test_concurrent_same_task_cas_has_one_winner_and_one_fixed_conflict() -> Non
     store = SessionTodoStore()
     store.create(content="Original")
 
-    results, errors = _run_concurrently(
+    results, errors = _run_forced_mutation_pair(
+        store,
         lambda: store.update(task_id="1", expected_version=1, content="First"),
         lambda: store.update(task_id="1", expected_version=1, content="Second"),
+        operation="get",
     )
 
     assert len([result for result in results if result is not None]) == 1
@@ -1148,9 +1475,11 @@ def test_concurrent_in_progress_transitions_allow_only_one_winner() -> None:
     store.create(content="First")
     store.create(content="Second")
 
-    results, errors = _run_concurrently(
+    results, errors = _run_forced_mutation_pair(
+        store,
         lambda: store.update(task_id="1", expected_version=1, status="in_progress"),
         lambda: store.update(task_id="2", expected_version=1, status="in_progress"),
+        operation="get",
     )
 
     assert len([result for result in results if result is not None]) == 1
@@ -1165,9 +1494,11 @@ def test_concurrent_creates_at_capacity_have_exactly_one_winner() -> None:
     for index in range(MAX_TODO_ITEMS - 1):
         store.create(content=f"Existing {index}")
 
-    results, errors = _run_concurrently(
+    results, errors = _run_forced_mutation_pair(
+        store,
         lambda: store.create(content="First contender"),
         lambda: store.create(content="Second contender"),
+        operation="setitem",
     )
 
     assert len([result for result in results if result is not None]) == 1
@@ -1248,19 +1579,9 @@ def test_reads_and_mutations_enter_the_real_state_lock() -> None:
 
 
 def test_callback_can_read_directly_and_from_another_thread_without_deadlock() -> None:
-    context = multiprocessing.get_context("spawn")
-    result_queue = context.Queue()
-    process = context.Process(target=_callback_read_process, args=(result_queue,))
-
-    process.start()
-    process.join(5)
-    if process.is_alive():
-        process.terminate()
-        process.join(5)
-        pytest.fail("task callback deadlocked while reading the store")
-
-    assert process.exitcode == 0
-    direct_record, threaded_records, callback_snapshot = result_queue.get(timeout=2)
+    direct_record, threaded_records, callback_snapshot = _run_spawned_target(
+        _callback_read_process
+    )
     expected = {
         "id": "1",
         "version": 1,

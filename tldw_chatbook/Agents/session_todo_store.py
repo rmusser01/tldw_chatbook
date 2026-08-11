@@ -4,16 +4,19 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from threading import Lock
+from threading import Lock, local
 
 MAX_TODO_ITEMS = 50
 MAX_TODO_CONTENT_CHARS = 500
+MAX_TODO_NUMBER = (1 << 53) - 1
 TODO_STATUSES = ("pending", "in_progress", "completed")
 
 TodoRecord = dict[str, object]
 TodoChangeCallback = Callable[[list[TodoRecord]], None]
 
 _MISSING = object()
+_EXHAUSTED_NEXT_ID = MAX_TODO_NUMBER + 1
+_CALLBACK_MUTATION_ERROR = "task mutation is not allowed from an on_change callback"
 _LOG = logging.getLogger(__name__)
 
 
@@ -55,8 +58,8 @@ def _task_id_number(task_id: str) -> int:
 
 
 def _validate_expected_version(value: object) -> int:
-    if type(value) is not int or value < 1:
-        raise TodoStoreError("expected_version must be an integer at least 1")
+    if type(value) is not int or not 1 <= value <= MAX_TODO_NUMBER:
+        raise TodoStoreError("invalid expected_version")
     return value
 
 
@@ -68,6 +71,11 @@ class SessionTodoStore:
         self._next_id = 1
         self._state_lock = Lock()
         self._mutation_lock = Lock()
+        self._callback_context = local()
+
+    def _reject_callback_mutation(self) -> None:
+        if getattr(self._callback_context, "active", False):
+            raise TodoStoreError(_CALLBACK_MUTATION_ERROR)
 
     def _snapshot_locked(self) -> list[TodoRecord]:
         return [dict(record) for record in self._tasks.values()]
@@ -82,10 +90,14 @@ class SessionTodoStore:
                 result = commit()
                 snapshot = self._snapshot_locked()
             if on_change is not None:
+                was_active = getattr(self._callback_context, "active", False)
+                self._callback_context.active = True
                 try:
                     on_change(snapshot)
-                except Exception:
+                except BaseException:
                     _LOG.warning("Session todo change callback failed.")
+                finally:
+                    self._callback_context.active = was_active
             return dict(result)
 
     def create(
@@ -100,14 +112,18 @@ class SessionTodoStore:
         Args:
             content: Required bounded task content.
             active_form: Optional bounded active-form label.
-            on_change: Optional synchronous callback for the committed snapshot.
+            on_change: Optional synchronous callback for the committed snapshot. The
+                callback must not mutate this store or synchronously wait for another
+                thread that is mutating it.
 
         Returns:
             A defensive copy of the created task record.
 
         Raises:
-            TodoStoreError: If text is invalid or the store is at capacity.
+            TodoStoreError: If mutation is forbidden in callback context, text is
+                invalid, capacity is reached, or the ID space is exhausted.
         """
+        self._reject_callback_mutation()
         valid_content = _validate_text(content, field="content", allow_blank=False)
         valid_active_form: str | object = _MISSING
         if active_form is not _MISSING:
@@ -118,6 +134,8 @@ class SessionTodoStore:
         def commit() -> TodoRecord:
             if len(self._tasks) >= MAX_TODO_ITEMS:
                 raise TodoStoreError("task limit reached")
+            if self._next_id > MAX_TODO_NUMBER:
+                raise TodoStoreError("task id space exhausted")
             task_id = str(self._next_id)
             record: TodoRecord = {
                 "id": task_id,
@@ -151,14 +169,18 @@ class SessionTodoStore:
             content: Optional replacement content.
             status: Optional task status or the ``deleted`` command.
             active_form: Optional replacement label; ``None`` removes it.
-            on_change: Optional synchronous callback for the committed snapshot.
+            on_change: Optional synchronous callback for the committed snapshot. The
+                callback must not mutate this store or synchronously wait for another
+                thread that is mutating it.
 
         Returns:
             A defensive updated record or deletion tombstone.
 
         Raises:
-            TodoStoreError: If validation, lookup, CAS, or invariants fail.
+            TodoStoreError: If mutation is forbidden in callback context, validation,
+                lookup, CAS, numeric exhaustion, or invariants fail.
         """
+        self._reject_callback_mutation()
         valid_task_id = _validate_task_id(task_id)
         valid_expected_version = _validate_expected_version(expected_version)
         if content is _MISSING and status is _MISSING and active_form is _MISSING:
@@ -200,6 +222,8 @@ class SessionTodoStore:
                 raise TodoStoreError("task not found")
             if record["version"] != valid_expected_version:
                 raise TodoStoreError("task version conflict; use todo_get and retry")
+            if valid_expected_version >= MAX_TODO_NUMBER:
+                raise TodoStoreError("task version exhausted")
 
             new_version = valid_expected_version + 1
             if valid_status == "deleted":
@@ -303,7 +327,7 @@ class SessionTodoStore:
 
         next_id = payload["next_id"]
         tasks = payload["tasks"]
-        if type(next_id) is not int or next_id < 1:
+        if type(next_id) is not int or next_id < 1 or next_id > _EXHAUSTED_NEXT_ID:
             raise TodoStoreError("invalid snapshot next id")
         if type(tasks) is not list or len(tasks) > MAX_TODO_ITEMS:
             raise TodoStoreError("invalid snapshot tasks")
@@ -326,10 +350,12 @@ class SessionTodoStore:
             if task_id in restored_tasks:
                 raise TodoStoreError("duplicate task id")
             task_id_number = _task_id_number(task_id)
+            if task_id_number > MAX_TODO_NUMBER:
+                raise TodoStoreError("invalid snapshot task id")
             if task_id_number <= max_task_id:
                 raise TodoStoreError("task ids out of order")
             version = task["version"]
-            if type(version) is not int or version < 1:
+            if type(version) is not int or version < 1 or version > MAX_TODO_NUMBER:
                 raise TodoStoreError("invalid task version")
             content = _validate_text(
                 task["content"], field="content", allow_blank=False
