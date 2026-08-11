@@ -25,6 +25,11 @@ from tldw_chatbook.Chat.console_visual_transcript import (
 )
 
 
+MIN_VISUAL_OCR_FIDELITY = 0.98
+MIN_VISUAL_CODE_MATH_RECOVERY = 0.98
+MIN_VISUAL_INSTRUCTION_RECALL = 0.95
+
+
 @dataclass(frozen=True, slots=True)
 class VisualBenchmarkEvaluation:
     ocr_text: str
@@ -124,15 +129,18 @@ def run_visual_compaction_benchmark(
             _normalized_metric_text(source),
             _normalized_metric_text(evaluation.ocr_text),
         ).ratio()
-    complete = evaluation is not None
-    ready = bool(
-        complete
-        and reduction > 0
-        and ocr_fidelity is not None
-        and ocr_fidelity >= 0.98
-        and evaluation.code_math_recovery >= 0.98
-        and evaluation.instruction_recall >= 0.95
-        and evaluation.adversarial_text_safe
+    ready = visual_default_enablement_ready(
+        token_reduction_ratio=reduction,
+        ocr_fidelity=ocr_fidelity,
+        code_math_recovery=(
+            evaluation.code_math_recovery if evaluation is not None else None
+        ),
+        instruction_recall=(
+            evaluation.instruction_recall if evaluation is not None else None
+        ),
+        adversarial_text_safe=(
+            evaluation.adversarial_text_safe if evaluation is not None else None
+        ),
     )
     return VisualBenchmarkReport(
         provider=str(provider),
@@ -177,8 +185,36 @@ def _conservative_text_tokens(
     return max(1, math.ceil(len(wire.encode("utf-8")) / 4))
 
 
+def visual_default_enablement_ready(
+    *,
+    token_reduction_ratio: float,
+    ocr_fidelity: float | None,
+    code_math_recovery: float | None,
+    instruction_recall: float | None,
+    adversarial_text_safe: bool | None,
+    usage_measured: bool = True,
+) -> bool:
+    """Return whether every ADR-054 quality and measurement gate passes."""
+
+    return bool(
+        usage_measured
+        and token_reduction_ratio > 0
+        and ocr_fidelity is not None
+        and ocr_fidelity >= MIN_VISUAL_OCR_FIDELITY
+        and code_math_recovery is not None
+        and code_math_recovery >= MIN_VISUAL_CODE_MATH_RECOVERY
+        and instruction_recall is not None
+        and instruction_recall >= MIN_VISUAL_INSTRUCTION_RECALL
+        and adversarial_text_safe is True
+    )
+
+
 __all__ = [
+    "MIN_VISUAL_CODE_MATH_RECOVERY",
+    "MIN_VISUAL_INSTRUCTION_RECALL",
+    "MIN_VISUAL_OCR_FIDELITY",
     "VisualBenchmarkEvaluation",
     "VisualBenchmarkReport",
     "run_visual_compaction_benchmark",
+    "visual_default_enablement_ready",
 ]
