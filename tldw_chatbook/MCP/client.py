@@ -808,6 +808,7 @@ class MCPClient:
         self.sessions: Dict[str, _StdioJSONRPCConnection] = {}
         self.servers: Dict[str, Dict[str, Any]] = {}
         self._pending_connections: Dict[str, _PendingConnection] = {}
+        self._connect_reservations: Dict[str, object] = {}
 
         logger.info("MCP Client '{}' initialized", name)
 
@@ -829,17 +830,22 @@ class MCPClient:
         Returns:
             True if connection successful
         """
-        if server_id in self.sessions or server_id in self._pending_connections:
-            try:
-                await self._bounded_teardown_connection(server_id)
-            except MCPClientError:
-                logger.warning("MCP connection cleanup incomplete before reconnect")
-                return False
-
+        if server_id in self._connect_reservations:
+            logger.warning("MCP connection attempt already in progress")
+            return False
+        reservation = object()
+        self._connect_reservations[server_id] = reservation
         session = None
         pending = None
         deadline = _monotonic() + CONNECT_TIMEOUT_SECONDS
         try:
+            if server_id in self.sessions or server_id in self._pending_connections:
+                try:
+                    await self._bounded_teardown_connection(server_id)
+                except MCPClientError:
+                    logger.warning("MCP connection cleanup incomplete before reconnect")
+                    return False
+
             spawn_timeout = _remaining(deadline, "MCP connection deadline exceeded")
             process = await asyncio.wait_for(
                 asyncio.create_subprocess_exec(
@@ -854,6 +860,18 @@ class MCPClient:
                 timeout=spawn_timeout,
             )
             pending = _PendingConnection(process)
+            if (
+                self._connect_reservations.get(server_id) is not reservation
+                or server_id in self.sessions
+                or server_id in self._pending_connections
+            ):
+                try:
+                    await self._bounded_teardown_connection(server_id, pending=pending)
+                except MCPClientError:
+                    logger.warning(
+                        "MCP connection cleanup incomplete after ownership change"
+                    )
+                return False
             self._pending_connections[server_id] = pending
 
             async def cleanup_failed_transport() -> None:
@@ -899,7 +917,11 @@ class MCPClient:
                 self._discover_server_capabilities(server_id),
                 timeout=discovery_timeout,
             )
-            if self._pending_connections.get(server_id) is not pending:
+            if (
+                self._connect_reservations.get(server_id) is not reservation
+                or self._pending_connections.get(server_id) is not pending
+                or server_id in self.sessions
+            ):
                 raise MCPClientError("MCP connection ownership changed")
             self.sessions[server_id] = session
             self.servers[server_id] = pending.server
@@ -916,7 +938,7 @@ class MCPClient:
             except MCPClientError:
                 logger.warning("MCP connection cleanup incomplete after cancellation")
             raise
-        except Exception as e:
+        except Exception:
             try:
                 await self._bounded_teardown_connection(
                     server_id, session=session, pending=pending
@@ -925,8 +947,11 @@ class MCPClient:
                 logger.warning(
                     "MCP connection cleanup incomplete after connection failure"
                 )
-            logger.error("Failed to connect to MCP server {}: {}", server_id, e)
+            logger.error("Failed to connect to MCP server")
             return False
+        finally:
+            if self._connect_reservations.get(server_id) is reservation:
+                self._connect_reservations.pop(server_id, None)
 
     async def disconnect_from_server(self, server_id: str) -> bool:
         """Disconnect from an MCP server.
@@ -1237,12 +1262,19 @@ class MCPClient:
             dict.fromkeys((*self.sessions.keys(), *self._pending_connections.keys()))
         )
         cancelled = False
+        incomplete = False
         for server_id in server_ids:
             try:
-                await self.disconnect_from_server(server_id)
+                if not await self.disconnect_from_server(server_id):
+                    incomplete = True
             except asyncio.CancelledError:
                 cancelled = True
-        logger.info("Disconnected from all MCP servers")
+                if server_id in self.sessions or server_id in self._pending_connections:
+                    incomplete = True
+        if incomplete:
+            logger.warning("MCP disconnect_all cleanup incomplete")
+        elif not cancelled:
+            logger.info("Disconnected from all MCP servers")
         if cancelled:
             raise asyncio.CancelledError
 
