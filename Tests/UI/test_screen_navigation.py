@@ -1640,6 +1640,10 @@ async def test_file_notes_collections_source_transition_blocks_mutation_through_
         LIBRARY_ROW_BROWSE_COLLECTIONS,
         LIBRARY_ROW_BROWSE_NOTES,
     )
+    from tldw_chatbook.Library.library_notes_session import (
+        NoteFlushOutcome,
+        NoteFlushOutcomeKind,
+    )
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
     app = _build_test_app()
