@@ -468,9 +468,99 @@ class SuccessfulScript:
         raise AssertionError(f"unexpected scripted path {path}")
 
 
+class TrackingResponseStream(httpx.SyncByteStream):
+    def __init__(self, body: bytes) -> None:
+        self.body = body
+        self.closed = threading.Event()
+
+    def __iter__(self):
+        yield self.body
+
+    def close(self) -> None:
+        self.closed.set()
+
+
+class BlockingResponseTransport(httpx.BaseTransport):
+    def __init__(
+        self,
+        base: SuccessfulScript,
+        path: str,
+        *,
+        on_block=None,
+    ) -> None:
+        self.base = base
+        self.path = path
+        self.on_block = on_block
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.closed = threading.Event()
+        self.late_response_created = threading.Event()
+        self.late_stream = TrackingResponseStream(b"{}")
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        if request.url.path != self.path:
+            return self.base(request)
+        self.base.calls.append((request.method, request.url.path))
+        self.base.requests.append(request)
+        self.started.set()
+        if self.on_block is not None:
+            self.on_block()
+        self.release.wait(0.3)
+        self.late_response_created.set()
+        headers = {"content-type": "image/png"} if self.path == "/view" else {}
+        return httpx.Response(200, stream=self.late_stream, headers=headers)
+
+    def close(self) -> None:
+        self.closed.set()
+        self.release.set()
+
+
+class BlockingRequestStream(httpx.SyncByteStream):
+    def __init__(self, inner, *, on_block=None) -> None:
+        self.inner = inner
+        self.on_block = on_block
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.closed = threading.Event()
+        self.finished = threading.Event()
+
+    def __iter__(self):
+        iterator = iter(self.inner)
+        try:
+            yield next(iterator)
+            self.started.set()
+            if self.on_block is not None:
+                self.on_block()
+            self.release.wait(0.3)
+            if not self.closed.is_set():
+                yield from iterator
+        finally:
+            self.finished.set()
+
+    def close(self) -> None:
+        self.closed.set()
+        self.release.set()
+        self.inner.close()
+
+
+class ScriptTransport(httpx.BaseTransport):
+    def __init__(self, script) -> None:
+        self.script = script
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        return self.script(request)
+
+
 def _make_adapter(script, *, config=None):
     transport = httpx.MockTransport(script)
     return adapter_module.ComfyUIImageAdapter(config=config or _config(), transport=transport)
+
+
+def _make_adapter_with_transport(transport, *, config=None):
+    return adapter_module.ComfyUIImageAdapter(
+        config=config or _config(),
+        transport=transport,
+    )
 
 
 def _assert_phase(exc: pytest.ExceptionInfo[ComfyUIImageEditError], phase: str) -> None:
@@ -654,6 +744,46 @@ def test_object_info_accepts_legacy_resize_schema_for_supported_servers() -> Non
         prepared,
         _object_info(prepared.graph, resize_v3=False),
     )
+
+
+@pytest.mark.parametrize("required_kind", ["top-level", "selected-dynamic"])
+def test_object_info_rejects_unprovided_server_required_input_before_upload(
+    required_kind: str,
+) -> None:
+    schema = _object_info()
+    if required_kind == "top-level":
+        schema["BasicScheduler"]["input"]["required"]["future_required"] = ["INT"]
+    else:
+        schema["ResizeImageMaskNode"]["input"]["required"]["resize_type"][1][
+            "options"
+        ][0]["inputs"]["required"]["future_required"] = ["INT"]
+    calls: list[str] = []
+
+    def script(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        return _json_response(schema)
+
+    with pytest.raises(ComfyUIImageEditError) as exc:
+        _make_adapter(script).generate(_request())
+
+    _assert_phase(exc, "remote_schema_preflight")
+    assert calls == ["/object_info"]
+
+
+def test_object_info_ignores_optional_hidden_and_unselected_dynamic_inputs() -> None:
+    prepared = adapter_module._prepare_workflow(_request(), config=_config())
+    schema = _object_info(prepared.graph)
+    schema["BasicScheduler"]["input"].setdefault("optional", {})[
+        "future_optional"
+    ] = ["INT"]
+    schema["BasicScheduler"]["input"]["hidden"] = {
+        "internal_value": "UNSUPPORTED_HIDDEN"
+    }
+    schema["ResizeImageMaskNode"]["input"]["required"]["resize_type"][1][
+        "options"
+    ][1]["inputs"]["required"]["unselected_required"] = ["UNSUPPORTED"]
+
+    adapter_module._validate_object_info(prepared, schema)
 
 
 @pytest.mark.parametrize(
@@ -1114,6 +1244,116 @@ def test_multipart_request_stream_is_closed_after_send(monkeypatch) -> None:
 
     assert len(wrapped_streams) == 1
     assert wrapped_streams[0].closed is True
+
+
+@pytest.mark.parametrize(
+    ("blocked_path", "phase", "queue_deletes"),
+    [
+        ("/object_info", "remote_schema_preflight", 0),
+        ("/history/opaque-prompt-id", "history_polling", 1),
+    ],
+)
+def test_blocked_response_headers_obey_hard_deadline_and_close_late_response(
+    blocked_path: str,
+    phase: str,
+    queue_deletes: int,
+) -> None:
+    base = SuccessfulScript()
+    transport = BlockingResponseTransport(base, blocked_path)
+
+    started = time.perf_counter()
+    with pytest.raises(ComfyUIImageEditError) as exc:
+        _make_adapter_with_transport(
+            transport,
+            config=_config(
+                comfyui_image_request_timeout_seconds=5.0,
+                comfyui_image_total_deadline_seconds=0.08,
+            ),
+        ).generate(_request())
+    elapsed = time.perf_counter() - started
+
+    _assert_phase(exc, phase)
+    assert elapsed < 0.25
+    assert transport.started.is_set()
+    assert transport.closed.is_set()
+    assert transport.late_response_created.wait(0.1)
+    assert transport.late_stream.closed.wait(0.1)
+    assert base.calls.count(("POST", "/queue")) == queue_deletes
+
+
+def test_blocked_response_headers_recheck_cancellation_and_delete_known_prompt() -> None:
+    event = threading.Event()
+    base = SuccessfulScript()
+    transport = BlockingResponseTransport(
+        base,
+        "/history/opaque-prompt-id",
+        on_block=event.set,
+    )
+
+    started = time.perf_counter()
+    with pytest.raises(ImageGenerationCancelled):
+        _make_adapter_with_transport(transport).generate(
+            _request(cancel_event=event)
+        )
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 0.25
+    assert transport.closed.is_set()
+    assert transport.late_response_created.wait(0.1)
+    assert transport.late_stream.closed.wait(0.1)
+    assert base.calls.count(("POST", "/queue")) == 1
+
+
+@pytest.mark.parametrize("control", ["deadline", "cancel"])
+def test_blocked_multipart_upload_obeys_control_and_closes_request_stream(
+    monkeypatch,
+    control: str,
+) -> None:
+    real_client = httpx.Client
+    event = threading.Event()
+    wrapped_streams: list[BlockingRequestStream] = []
+
+    class TrackingClient(real_client):
+        def build_request(self, *args, **kwargs) -> httpx.Request:
+            request = super().build_request(*args, **kwargs)
+            if request.url.path == "/upload/image":
+                wrapped = BlockingRequestStream(
+                    request.stream,
+                    on_block=event.set if control == "cancel" else None,
+                )
+                request.stream = wrapped
+                wrapped_streams.append(wrapped)
+            return request
+
+    monkeypatch.setattr(adapter_module.httpx, "Client", TrackingClient)
+    base = SuccessfulScript()
+    deadline = 0.08 if control == "deadline" else 5.0
+
+    started = time.perf_counter()
+    if control == "cancel":
+        with pytest.raises(ImageGenerationCancelled):
+            _make_adapter_with_transport(ScriptTransport(base)).generate(
+                _request(cancel_event=event)
+            )
+    else:
+        with pytest.raises(ComfyUIImageEditError) as exc:
+            _make_adapter_with_transport(
+                ScriptTransport(base),
+                config=_config(
+                    comfyui_image_request_timeout_seconds=5.0,
+                    comfyui_image_total_deadline_seconds=deadline,
+                ),
+            ).generate(_request(cancel_event=event))
+        _assert_phase(exc, "source_upload")
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 0.25
+    assert len(wrapped_streams) == 1
+    assert wrapped_streams[0].started.is_set()
+    assert wrapped_streams[0].closed.is_set()
+    assert wrapped_streams[0].finished.wait(0.1)
+    assert base.calls.count(("POST", "/queue")) == 0
+    assert not any(path == "/prompt" for _, path in base.calls)
 
 
 @pytest.mark.parametrize(

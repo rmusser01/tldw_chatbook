@@ -449,6 +449,110 @@ class _BodyChunkSupervisor:
                 return
 
 
+class _SendSupervisor:
+    """Keep request transmission and response headers behind a hard control wait."""
+
+    def __init__(
+        self,
+        client: httpx.Client,
+        request: httpx.Request,
+        *,
+        cancel_event: Any,
+        deadline: float,
+        phase: ComfyUIImageEditPhase,
+    ) -> None:
+        self._client = client
+        self._request = request
+        self._request_stream = request.stream
+        self._cancel_event = cancel_event
+        self._deadline = deadline
+        self._phase = phase
+        self._stop = threading.Event()
+        self._items: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=1)
+        self._thread = threading.Thread(
+            target=self._send,
+            name="comfyui-request-send",
+            daemon=True,
+        )
+
+    def wait(self) -> httpx.Response:
+        self._thread.start()
+        while True:
+            _check_stream_control(self._cancel_event, self._deadline, self._phase)
+            remaining = self._deadline - time.monotonic()
+            if remaining <= 0:
+                raise _DeadlineExpired(self._phase)
+            try:
+                kind, value = self._items.get(
+                    timeout=min(_BODY_CONTROL_POLL_SECONDS, remaining)
+                )
+            except queue.Empty:
+                continue
+            try:
+                _check_stream_control(
+                    self._cancel_event,
+                    self._deadline,
+                    self._phase,
+                )
+            except (ImageGenerationCancelled, _DeadlineExpired):
+                if kind == "response":
+                    self._close_response(value)
+                raise
+            if kind == "response":
+                return value
+            raise value
+
+    def close(self) -> None:
+        self._stop.set()
+        close_stream = getattr(self._request_stream, "close", None)
+        if close_stream is not None:
+            try:
+                close_stream()
+            except Exception:
+                pass
+        self._drain()
+        self._thread.join(_BODY_READER_JOIN_SECONDS)
+        self._drain()
+
+    def _offer(self, item: tuple[str, Any]) -> bool:
+        while not self._stop.is_set():
+            try:
+                self._items.put(item, timeout=_BODY_CONTROL_POLL_SECONDS)
+            except queue.Full:
+                continue
+            return True
+        return False
+
+    def _send(self) -> None:
+        try:
+            response = self._client.send(
+                self._request,
+                stream=True,
+                follow_redirects=False,
+            )
+        except BaseException as exc:
+            self._offer(("error", exc))
+            return
+        if self._stop.is_set() or not self._offer(("response", response)):
+            self._close_response(response)
+
+    def _drain(self) -> None:
+        while True:
+            try:
+                kind, value = self._items.get_nowait()
+            except queue.Empty:
+                return
+            if kind == "response":
+                self._close_response(value)
+
+    @staticmethod
+    def _close_response(response: httpx.Response) -> None:
+        try:
+            response.close()
+        except Exception:
+            pass
+
+
 def _read_bounded_json(
     response: httpx.Response,
     *,
@@ -537,7 +641,9 @@ def _complete_prompt_payload(body: bytearray) -> dict[str, Any] | None:
     return payload
 
 
-def _schema_inputs(class_schema: dict[str, Any]) -> dict[str, Any]:
+def _schema_input_groups(
+    class_schema: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
     input_schema = class_schema.get("input")
     if not isinstance(input_schema, dict):
         raise ValueError
@@ -545,6 +651,11 @@ def _schema_inputs(class_schema: dict[str, Any]) -> dict[str, Any]:
     optional = input_schema.get("optional", {})
     if not isinstance(required, dict) or not isinstance(optional, dict):
         raise ValueError
+    return required, optional
+
+
+def _schema_inputs(class_schema: dict[str, Any]) -> dict[str, Any]:
+    required, optional = _schema_input_groups(class_schema)
     return {**optional, **required}
 
 
@@ -646,7 +757,10 @@ def _accepted_link_types(input_schema: Any) -> frozenset[str]:
     return frozenset({input_type})
 
 
-def _selected_dynamic_inputs(input_schema: Any, selected: Any) -> dict[str, Any]:
+def _selected_dynamic_inputs(
+    input_schema: Any,
+    selected: Any,
+) -> tuple[dict[str, Any], frozenset[str]]:
     if (
         not isinstance(selected, str)
         or not isinstance(input_schema, list)
@@ -659,6 +773,7 @@ def _selected_dynamic_inputs(input_schema: Any, selected: Any) -> dict[str, Any]
     if not isinstance(options, list) or not options:
         raise ValueError
     selected_inputs: dict[str, Any] | None = None
+    selected_required: frozenset[str] | None = None
     seen_keys: set[str] = set()
     for option in options:
         if not isinstance(option, dict):
@@ -682,17 +797,20 @@ def _selected_dynamic_inputs(input_schema: Any, selected: Any) -> dict[str, Any]
             raise ValueError
         if key == selected:
             selected_inputs = combined
-    if selected_inputs is None:
+            selected_required = frozenset(required)
+    if selected_inputs is None or selected_required is None:
         raise ValueError
-    return selected_inputs
+    return selected_inputs, selected_required
 
 
 def _expanded_schema_inputs(
     class_schema: dict[str, Any],
     node_inputs: dict[str, Any],
-) -> dict[str, Any]:
-    accepted = _schema_inputs(class_schema)
+) -> tuple[dict[str, Any], frozenset[str]]:
+    required, optional = _schema_input_groups(class_schema)
+    accepted = {**optional, **required}
     expanded = dict(accepted)
+    required_names = set(required)
     for input_name, input_schema in accepted.items():
         if (
             isinstance(input_schema, list)
@@ -700,13 +818,15 @@ def _expanded_schema_inputs(
             and input_schema[0] == "COMFY_DYNAMICCOMBO_V3"
         ):
             selected = node_inputs.get(input_name)
-            nested = _selected_dynamic_inputs(input_schema, selected)
+            nested, nested_required = _selected_dynamic_inputs(input_schema, selected)
             for nested_name, nested_schema in nested.items():
                 dotted_name = f"{input_name}.{nested_name}"
                 if dotted_name in expanded:
                     raise ValueError
                 expanded[dotted_name] = nested_schema
-    return expanded
+                if nested_name in nested_required:
+                    required_names.add(dotted_name)
+    return expanded, frozenset(required_names)
 
 
 def _resolved_output_type(
@@ -784,7 +904,12 @@ def _validate_object_info(prepared: _PreparedWorkflow, schema: Any) -> None:
             class_schema = schema.get(class_type)
             if not isinstance(class_schema, dict):
                 raise ValueError
-            accepted_inputs = _expanded_schema_inputs(class_schema, node["inputs"])
+            accepted_inputs, required_inputs = _expanded_schema_inputs(
+                class_schema,
+                node["inputs"],
+            )
+            if not required_inputs.issubset(node["inputs"]):
+                raise ValueError
             for input_name, value in node["inputs"].items():
                 if input_name not in accepted_inputs:
                     raise ValueError
@@ -1001,17 +1126,21 @@ class ComfyUIImageAdapter:
             params=params,
             timeout=self._timeout(remaining),
         )
-        request_stream = request.stream
+        supervisor = _SendSupervisor(
+            client,
+            request,
+            cancel_event=None if ignore_cancel else cancel_event,
+            deadline=deadline,
+            phase=phase,
+        )
         try:
-            response = client.send(request, stream=True, follow_redirects=False)
+            response = supervisor.wait()
         except httpx.TransportError:
             if time.monotonic() >= deadline:
                 raise _DeadlineExpired(phase) from None
             raise
         finally:
-            close_stream = getattr(request_stream, "close", None)
-            if close_stream is not None:
-                close_stream()
+            supervisor.close()
         if response.status_code < 200 or response.status_code >= 300:
             response.close()
             raise ValueError("ComfyUI request failed")
