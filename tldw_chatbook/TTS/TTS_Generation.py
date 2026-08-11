@@ -76,6 +76,7 @@ from tldw_chatbook.TTS.effective_settings import (
     TTSStudioDraftSelection,
 )
 from tldw_chatbook.TTS.profile_reference_materialization import (
+    TTSCloneMaterializationError,
     TTSCloneReferenceMaterialization,
     TTSCloneReferenceMaterializer,
 )
@@ -470,9 +471,34 @@ class _AdmittedTTSOperation:
                             recovery_action="check_profile",
                         ) from None
                     capability = adapter.admit_clone_capability(self._request)
-                    materialization = await materializer.materialize(
-                        self._clone_execution.reference
-                    )
+                    materialization_failure: str | None = None
+                    try:
+                        materialization = await materializer.materialize(
+                            self._clone_execution.reference
+                        )
+                    except TTSCloneMaterializationError as error:
+                        materialization_failure = error.code
+                    if materialization_failure is not None:
+                        if materialization_failure == "closed":
+                            raise TTSOperationError(
+                                code="connection_unavailable",
+                                message="Clone reference materialization is unavailable",
+                                retryable=True,
+                                operation_id=uuid4().hex,
+                                recovery_action="retry",
+                            ) from None
+                        raise TTSOperationError(
+                            code=(
+                                "request_invalid"
+                                if materialization_failure == "unsupported"
+                                else "generation_failed"
+                            ),
+                            message="Clone reference materialization is unavailable",
+                            retryable=False,
+                            operation_id=uuid4().hex,
+                            recovery_action="check_profile",
+                        ) from None
+                    assert materialization is not None
                     admitted_request = _AdmittedAudioCppCloneRequest(
                         request=self._request,
                         materialization=materialization,

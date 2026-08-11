@@ -49,6 +49,10 @@ from tldw_chatbook.TTS.adapter_types import (
 from tldw_chatbook.TTS.adapters import audio_cpp as audio_cpp_module
 from tldw_chatbook.TTS.adapters.audio_cpp import AudioCppAdapter
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
+from tldw_chatbook.TTS.audio_cpp_supervisor import (
+    AudioCppSupervisor,
+    _AudioCppDiagnosticRing,
+)
 from tldw_chatbook.TTS import audio_cpp_managed_config as managed_config_module
 from tldw_chatbook.TTS.legacy_bridge import LEGACY_ROUTES
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
@@ -60,6 +64,57 @@ from tldw_chatbook.TTS.TTS_Generation import (
 
 GUIDE_PATH = Path(__file__).parents[2] / "Docs/Development/TTS/TTS_MODULE_GUIDE.md"
 _TEST_WAIT_SECONDS = 2.0
+
+
+def test_clone_generation_diagnostics_discard_chunked_and_delayed_canaries(
+    tmp_path: Path,
+) -> None:
+    private_path = str(tmp_path / "PRIVATE_REFERENCE_PATH.wav")
+    private_text = "PRIVATE REFERENCE TRANSCRIPT"
+    ring = _AudioCppDiagnosticRing(home_directory=tmp_path)
+    ring.feed("stdout", b"ordinary startup line\n")
+
+    ring.suppress_content()
+    ring.feed("stdout", private_path[:11].encode())
+    ring.feed("stdout", private_path[11:].encode() + b"\n")
+    ring.feed("stderr", private_text[:9].encode())
+    ring.feed("stderr", private_text[9:].encode())
+    ring.finish("stdout")
+    ring.finish("stderr")
+
+    diagnostics, dropped = ring.snapshot()
+    assert diagnostics == ()
+    assert dropped == 0
+    rendered = repr(diagnostics)
+    assert private_path not in rendered
+    assert private_text not in rendered
+
+    ring.clear()
+    ring.feed("stdout", b"next generation safe line\n")
+    diagnostics, _dropped = ring.snapshot()
+    assert tuple(line.text for line in diagnostics) == (
+        "next generation safe line",
+    )
+
+
+def test_supervisor_suppresses_only_the_exact_live_clone_generation() -> None:
+    supervisor = AudioCppSupervisor(source_environment={})
+    process = SimpleNamespace(returncode=None)
+    supervisor._generation = SimpleNamespace(  # type: ignore[assignment]
+        generation=7,
+        owned=SimpleNamespace(process=process),
+    )
+    supervisor._state = "running"
+    supervisor._diagnostics.feed("stdout", b"safe startup\n")
+
+    assert supervisor.suppress_clone_diagnostics(6) is False
+    assert supervisor.snapshot().diagnostics
+    assert supervisor.suppress_clone_diagnostics(7) is True
+    supervisor._diagnostics.feed("stderr", b"PRIVATE delayed clone output\n")
+    assert supervisor.snapshot().diagnostics == ()
+
+    process.returncode = 1
+    assert supervisor.suppress_clone_diagnostics(7) is False
 
 
 def test_audio_cpp_child_environment_values_and_omissions_never_log(

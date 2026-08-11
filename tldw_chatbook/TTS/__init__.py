@@ -25,7 +25,6 @@ from tldw_chatbook.TTS.audio_cpp_supervisor import (
     AudioCppReadyEndpoint,
     AudioCppTTSCapability,
 )
-from tldw_chatbook.TTS.audio_cpp_recipes import AudioCppVoiceReferencePolicy
 from tldw_chatbook.TTS.character_request_resolver import (
     CharacterTTSRequestResolution,
     CharacterTTSRequestResolver,
@@ -48,11 +47,6 @@ from tldw_chatbook.TTS.profile_reference_types import (
     CanonicalTTSCloneReference,
     TTSCloneReference,
     TTSCloneReferenceSummary,
-)
-from tldw_chatbook.TTS.profile_reference_materialization import (
-    TTSCloneMaterializationError,
-    TTSCloneReferenceMaterialization,
-    TTSCloneReferenceMaterializer,
 )
 from tldw_chatbook.TTS.profile_service import (
     LoadedCharacterTTSAssignment,
@@ -99,7 +93,6 @@ __all__ = [
     "AudioCppReadyEndpoint",
     "AudioCppRuntimeObservation",
     "AudioCppTTSCapability",
-    "AudioCppVoiceReferencePolicy",
     "CapabilitySnapshotState",
     "CanonicalTTSCloneReference",
     "CharacterRef",
@@ -131,9 +124,6 @@ __all__ = [
     "TTSConfigMutation",
     "TTSGenerationProfile",
     "TTSCloneReference",
-    "TTSCloneMaterializationError",
-    "TTSCloneReferenceMaterialization",
-    "TTSCloneReferenceMaterializer",
     "TTSCloneReferenceSummary",
     "TTSModelInfo",
     "TTSNativeCapabilitySnapshot",

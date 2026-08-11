@@ -505,13 +505,14 @@ class AudioCppAdapter:
         capability: AudioCppCloneCapabilityAdmission,
     ) -> None:
         """Discard one exact unused capability without affecting other work."""
+        if not isinstance(capability, AudioCppCloneCapabilityAdmission):
+            return
+        token = capability._capability_token
         if (
-            type(capability) is AudioCppCloneCapabilityAdmission
-            and capability._adapter_identity is self._clone_adapter_identity
-            and self._clone_capabilities.get(capability._capability_token)
-            is capability
+            capability._adapter_identity is self._clone_adapter_identity
+            and self._clone_capabilities.get(token) is capability
         ):
-            self._clone_capabilities.pop(capability._capability_token, None)
+            self._clone_capabilities.pop(token, None)
 
     async def get_catalog(self, refresh: bool = False) -> TTSProviderCatalog:
         """Return the immutable catalog, optionally forcing one refresh."""
@@ -746,6 +747,17 @@ class AudioCppAdapter:
                         clone_request,
                         consume=True,
                     )
+                    supervisor = self._supervisor
+                    suppress_diagnostics = (
+                        None
+                        if supervisor is None
+                        else getattr(supervisor, "suppress_clone_diagnostics", None)
+                    )
+                    if failure is None and (
+                        not callable(suppress_diagnostics)
+                        or not suppress_diagnostics(clone_request.process_generation)
+                    ):
+                        failure = _CONNECTION_UNAVAILABLE
                 if failure is not None:
                     payload = None
                 else:
@@ -985,6 +997,8 @@ class AudioCppAdapter:
             or not self._clone_source_authorized()
         ):
             return _REQUEST_INVALID
+        assert isinstance(capability, AudioCppCloneCapabilityAdmission)
+        capability_token = capability._capability_token
         if self._current_clone_process_generation() != process_generation:
             return _CONNECTION_UNAVAILABLE
         try:
@@ -992,7 +1006,7 @@ class AudioCppAdapter:
         except Exception:
             live_owner = False
         if (
-            self._clone_capabilities.get(capability._capability_token)
+            self._clone_capabilities.get(capability_token)
             is not capability
             or not live_owner
         ):
@@ -1010,7 +1024,7 @@ class AudioCppAdapter:
         ):
             return _REQUEST_INVALID
         if consume:
-            self._clone_capabilities.pop(capability._capability_token, None)
+            self._clone_capabilities.pop(capability_token, None)
         return None
 
     def _readiness_failure(self) -> _OperationFailure | None:

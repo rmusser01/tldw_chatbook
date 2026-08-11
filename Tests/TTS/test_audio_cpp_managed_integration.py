@@ -173,6 +173,7 @@ class _PreparationSupervisor:
         self.deadline_observations: list[float | None] = []
         self.wait_closed_calls = 0
         self.tts_capability = "unknown"
+        self.suppressed_clone_generations: list[int] = []
 
     def admission_snapshot(self) -> AudioCppProcessAdmissionSnapshot:
         self.admission_calls += 1
@@ -205,6 +206,15 @@ class _PreparationSupervisor:
             diagnostics=(),
             dropped_diagnostic_lines=0,
         )
+
+    def suppress_clone_diagnostics(self, process_generation: int) -> bool:
+        if process_generation != self.process_generation or self.state not in {
+            "running",
+            "draining",
+        }:
+            return False
+        self.suppressed_clone_generations.append(process_generation)
+        return True
 
     async def ensure_running(
         self,
@@ -1588,6 +1598,9 @@ async def test_guided_clone_admission_sends_only_typed_live_reference_fields(
 
         response = await adapter.synthesize_clone(admitted)
         await response.aclose()
+        assert supervisor.suppressed_clone_generations == [
+            admitted.process_generation
+        ]
         assert "voice_ref" not in response.metadata
         assert "reference_text" not in response.metadata
 
