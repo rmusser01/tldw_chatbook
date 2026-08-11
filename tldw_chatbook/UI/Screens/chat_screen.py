@@ -16985,16 +16985,56 @@ class ChatScreen(BaseAppScreen):
             return False
         return True
 
-    def _schedule_current_h3_completion_reconciliation(self) -> None:
-        """Ask the currently mounted Console, if any, to reconcile outcomes."""
+    async def _settle_current_h3_outcome(
+        self, session_id: str, generation: str
+    ) -> None:
+        """Settle one terminal H3 outcome on its current adopted screen."""
+        if (
+            getattr(self.app_instance, "_console_h3_image_edit_screen", None)
+            is not self
+            or generation
+            in getattr(self, "_console_h3_terminal_generations", set())
+        ):
+            return
+        store = self._console_chat_store
+        if store is None or store.active_session_id != session_id:
+            return
+        ui_generation = getattr(self, "_console_h3_ui_generations", {}).get(
+            session_id
+        )
+        if ui_generation is not None and ui_generation != generation:
+            return
+        if self._h3_image_edit_registry().active(session_id) is not None:
+            return
+        if not any(session.id == session_id for session in store.sessions()):
+            return
+
+        self._reconcile_h3_image_edit_completions(store)
+        try:
+            await self._sync_native_console_chat_ui()
+        finally:
+            self._request_console_control_bar_sync()
+
+    def _schedule_current_h3_settlement(
+        self, session_id: str, generation: str
+    ) -> None:
+        """Schedule terminal settlement only on the currently mounted Console."""
+        from functools import partial
+
         current = getattr(
             self.app_instance, "_console_h3_image_edit_screen", None
         )
-        if current is None or current is self:
+        if current is None or not getattr(current, "_is_mounted", False):
             return
         schedule = getattr(current, "call_after_refresh", None)
         if callable(schedule):
-            schedule(current._reconcile_h3_image_edit_completions)
+            schedule(
+                partial(
+                    current._settle_current_h3_outcome,
+                    session_id,
+                    generation,
+                )
+            )
 
     async def _append_h3_image_edit_error(
         self,
@@ -17056,8 +17096,6 @@ class ChatScreen(BaseAppScreen):
             if self._h3_image_edit_registry().publish_failure_notice(notice):
                 if self._h3_origin_screen_is_live(generation):
                     self._reconcile_h3_image_edit_completions(store)
-                else:
-                    self._schedule_current_h3_completion_reconciliation()
         ui_generations = getattr(self, "_console_h3_ui_generations", {})
         if (
             ui_generations.get(session_id) == generation
@@ -17221,7 +17259,6 @@ class ChatScreen(BaseAppScreen):
             )
             if cleaned and self._h3_origin_screen_is_live(generation):
                 registry.ack_completion(session.id, generation)
-            self._schedule_current_h3_completion_reconciliation()
 
         operation = registry.start(
             session_id=session.id,
@@ -17252,12 +17289,10 @@ class ChatScreen(BaseAppScreen):
             except BaseException:  # cancellation outcome never masks caller cancel
                 pass
             raise
-
-        if (
-            ui_generations.get(session.id) == operation.generation
-            and self._h3_origin_screen_is_live(operation.generation)
-        ):
-            await self._sync_native_console_chat_ui()
+        finally:
+            self._schedule_current_h3_settlement(
+                session.id, operation.generation
+            )
 
     async def _console_command_generate_image(self, parse: CommandParse) -> None:
         """Resolve and run one `/generate-image` batch.

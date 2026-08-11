@@ -14,6 +14,7 @@ import asyncio
 from io import BytesIO
 from types import SimpleNamespace
 import threading
+import time
 
 import pytest
 from PIL import Image as PILImage
@@ -25,6 +26,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 from Tests.UI.test_console_native_chat_flow import (
     RestoredConsoleHarness,
+    _message_row_plain_text,
     _select_llamacpp_console,
 )
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
@@ -104,6 +106,16 @@ def _patch_h3_enabled(monkeypatch) -> None:
         "list_image_models_for_catalog",
         lambda: [{"name": "comfyui", "is_configured": True}],
     )
+
+
+async def _wait_for_h3_state(pilot, predicate, *, detail: str) -> None:
+    """Bounded event-loop polling for asynchronous Textual settlement."""
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        await pilot.pause()
+    raise AssertionError(f"Timed out waiting for {detail}")
 
 
 def _assert_no_bytes(node, crumb="state"):
@@ -456,6 +468,236 @@ async def test_actual_unmount_is_nonblocking_and_fresh_screen_shows_stopping(
 
         release.set()
         await caller
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_kind", ("success", "failure", "cancel"))
+async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
+    monkeypatch,
+    tmp_path,
+    terminal_kind,
+):
+    """Every terminal H3 outcome settles the adopted screen, never the old one."""
+    _patch_h3_enabled(monkeypatch)
+    db = CharactersRAGDB(
+        tmp_path / f"h3-live-settlement-{terminal_kind}.sqlite", "test_client"
+    )
+    try:
+        app = _build_test_app()
+        app.chachanotes_db = db
+        host = ConsoleHarness(app)
+        started = threading.Event()
+        release = threading.Event()
+
+        def _terminal_batch(**kwargs):
+            started.set()
+            assert release.wait(2)
+            if terminal_kind == "failure":
+                raise RuntimeError("private late failure /private/source.png")
+            if terminal_kind == "cancel":
+                raise ImageGenerationCancelled()
+            return BatchResult(
+                successes=[
+                    (
+                        _png_bytes((19, 11)),
+                        "image/png",
+                        GenerationVariantMeta(
+                            prompt=kwargs["prompt"],
+                            negative_prompt="",
+                            backend="comfyui",
+                            model=None,
+                            seed=73,
+                            style=None,
+                            params={"operation": "edit"},
+                        ),
+                    )
+                ],
+                errors=[],
+            )
+
+        monkeypatch.setattr(
+            chat_screen_module, "run_generation_batch", _terminal_batch
+        )
+        async with host.run_test(size=(160, 48)) as pilot:
+            old = host.screen_stack[-1]
+            await _wait_for_selector(old, pilot, "#console-native-composer")
+            old_store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            old._console_chat_store = old_store
+            session = old_store.create_session(title="Live H3 settlement")
+            source = _real_image_pending(
+                "source.png", attachment_id="live-settlement-source"
+            )
+            old_store.add_pending_attachment(session.id, source)
+            old_store.set_session_draft(session.id, "settlement draft")
+            old.query_one("#console-native-composer").load_draft(
+                "settlement draft"
+            )
+            caller = asyncio.create_task(
+                old._console_command_generate_image(
+                    CommandParse(
+                        kind="command",
+                        name="generate-image",
+                        args=":comfyui settle terminal",
+                    )
+                )
+            )
+            assert await asyncio.to_thread(started.wait, 2)
+            operation = app.console_image_edit_operations.active(session.id)
+            assert operation is not None
+            old_generation = operation.generation
+            saved_state = old.save_state()
+
+            await asyncio.wait_for(host.pop_screen(), timeout=0.5)
+
+            async def _stale_sync_tripwire():
+                raise AssertionError("unmounted screen UI sync")
+
+            old._sync_native_console_chat_ui = _stale_sync_tripwire
+            old._message._sync_native_console_chat_ui_fn = _stale_sync_tripwire
+
+            fresh = ChatScreen(app)
+            fresh.restore_state(saved_state)
+            await host.push_screen(fresh)
+            await _wait_for_selector(fresh, pilot, "#console-native-composer")
+            await fresh._sync_native_console_chat_ui()
+            assert fresh._native_run_status_copy() == "Stopping image edit…"
+            stop = fresh.query_one("#console-stop-generation", Button)
+            assert stop.styles.display != "none"
+            assert not stop.disabled
+
+            settlement_events: list[str] = []
+            original_reconcile = fresh._reconcile_h3_image_edit_completions
+            original_transcript_sync = fresh._sync_native_console_chat_ui
+            original_control_sync = fresh._request_console_control_bar_sync
+
+            def _record_reconcile(store=None):
+                settlement_events.append("reconcile")
+                original_reconcile(store)
+
+            async def _record_transcript_sync():
+                settlement_events.append("transcript")
+                await original_transcript_sync()
+
+            def _record_control_sync():
+                settlement_events.append("controls")
+                original_control_sync()
+
+            fresh._reconcile_h3_image_edit_completions = _record_reconcile
+            fresh._sync_native_console_chat_ui = _record_transcript_sync
+            fresh._request_console_control_bar_sync = _record_control_sync
+
+            release.set()
+            await caller
+            expected_content = {
+                "success": "[image] settle terminal",
+                "failure": (
+                    "The image-edit operation did not complete. Please try again."
+                ),
+            }.get(terminal_kind)
+
+            def _settled() -> bool:
+                if stop.styles.display != "none":
+                    return False
+                if expected_content is None:
+                    return True
+                fresh_store = fresh._ensure_console_chat_store()
+                messages = fresh_store.messages_for_session(session.id)
+                matching = [
+                    message for message in messages if message.content == expected_content
+                ]
+                if len(matching) != 1:
+                    return False
+                return bool(fresh.query(f"#console-message-{matching[0].id}"))
+
+            await _wait_for_h3_state(
+                pilot,
+                _settled,
+                detail=f"late H3 {terminal_kind} transcript/control settlement",
+            )
+            assert fresh._native_run_status_copy() == ""
+            assert stop.styles.display == "none"
+            assert settlement_events.index("reconcile") < settlement_events.index(
+                "transcript"
+            )
+            assert settlement_events.index("transcript") < settlement_events.index(
+                "controls"
+            )
+            if expected_content is None:
+                assert fresh._ensure_console_chat_store().messages_for_session(
+                    session.id
+                ) == []
+            else:
+                matching = [
+                    message
+                    for message in fresh._ensure_console_chat_store().messages_for_session(
+                        session.id
+                    )
+                    if message.content == expected_content
+                ]
+                assert len(matching) == 1
+                assert expected_content in _message_row_plain_text(
+                    fresh, matching[0].id
+                )
+
+            if terminal_kind == "cancel":
+                fresh._reconcile_h3_image_edit_completions = original_reconcile
+                fresh._sync_native_console_chat_ui = original_transcript_sync
+                fresh._request_console_control_bar_sync = original_control_sync
+                newer_release = asyncio.Event()
+
+                async def _newer_runner(_generation: str) -> None:
+                    await newer_release.wait()
+
+                newer = app.console_image_edit_operations.start(
+                    session_id=session.id,
+                    attachment_id=source.attachment_id,
+                    captured_draft="settlement draft",
+                    cancel_event=threading.Event(),
+                    runner=_newer_runner,
+                )
+                assert newer is not None
+                fresh._request_console_control_bar_sync()
+                await _wait_for_h3_state(
+                    pilot,
+                    lambda: stop.styles.display != "none",
+                    detail="newer H3 controls",
+                )
+                transcript_syncs = 0
+                control_syncs = 0
+                newer_transcript_sync = fresh._sync_native_console_chat_ui
+                newer_control_sync = fresh._request_console_control_bar_sync
+
+                async def _count_transcript_sync():
+                    nonlocal transcript_syncs
+                    transcript_syncs += 1
+                    await newer_transcript_sync()
+
+                def _count_control_sync():
+                    nonlocal control_syncs
+                    control_syncs += 1
+                    newer_control_sync()
+
+                fresh._sync_native_console_chat_ui = _count_transcript_sync
+                fresh._request_console_control_bar_sync = _count_control_sync
+                await fresh._settle_current_h3_outcome(
+                    session.id, old_generation
+                )
+                assert transcript_syncs == 0
+                assert control_syncs == 0
+                assert stop.styles.display != "none"
+                newer_release.set()
+                await newer.task
+                fresh._console_h3_ui_generations = {
+                    session.id: newer.generation
+                }
+                await fresh._settle_current_h3_outcome(
+                    session.id, old_generation
+                )
+                assert transcript_syncs == 0
+                assert control_syncs == 0
+                assert stop.styles.display != "none"
+    finally:
+        db.close_connection()
 
 
 @pytest.mark.asyncio
