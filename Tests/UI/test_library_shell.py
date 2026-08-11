@@ -12399,9 +12399,7 @@ async def test_library_note_failed_discard_clears_shortcut_lock_status() -> None
 # TASK-1333 Task 8: exact compact Notes geometry and dynamic-state budgets.
 
 
-def _assert_task8_compact_chrome(
-    screen: LibraryScreen, *, source_strip: bool = True
-) -> None:
+def _assert_task8_compact_chrome(screen: LibraryScreen) -> None:
     """Pin the terminal-level row allocation at 60x20.
 
     task-3315 re-pin -- dev-baseline drift, NOT the media-ingest arc: the
@@ -12414,20 +12412,9 @@ def _assert_task8_compact_chrome(
     screen recompose runs while ``shell.canvas_kind`` is "notes", so the
     settled allocation on those routes is 3 + 1 + 1 + 14 + 1.
 
-    task-3315 re-pin round 2 (rebase onto dev ``f6911b37b``) -- again
-    dev-side, verified by running THIS file against a ``git archive``
-    extraction of dev ``f6911b37b``'s product tree, where both re-pinned
-    cases fail identically. Dev ``d1df7d0a7`` ("restore file notes source
-    access", TASK-13213) closed the per-route chrome asymmetry this
-    docstring used to record as task-3317: ``_replace_library_browse_
-    canvas`` now refuses its targeted swap whenever the mounted contextual
-    chrome disagrees with the destination
-    (``notes_source_strip_mounted != (shell.canvas_kind == "notes")``), so
-    the plain rail-press into the notes LIST also lands via the full
-    recompose and carries the strip. Every Database-notes route therefore
-    settles at 3 + 1 + 1 + 14 + 1 and ``source_strip=False`` now survives
-    only for the create-note canvas (canvas_kind "notes-create", which
-    never composes the strip), which keeps 3 + 1 + 15 + 1.
+    TASK-3317 resolves the remaining route fork: every Database Notes route,
+    including Create, owns the one-row source-authority strip. Compact Notes
+    therefore has one terminal-level allocation: 3 + 1 + 1 + 14 + 1.
     """
     navigation = screen.query_one("MainNavigationBar")
     header = screen.query_one("#library-header-line")
@@ -12440,16 +12427,10 @@ def _assert_task8_compact_chrome(
     )
     footer = screen.query_one("#screen-footer-status")
 
-    if source_strip:
-        strip = screen.query_one("#library-notes-source-strip")
-        strip_height = strip.region.height
-        assert strip_height == 1
-    else:
-        assert not screen.query("#library-notes-source-strip"), (
-            "source strip unexpectedly mounted on a fast-path route"
-        )
-        strip_height = 0
-    shell_height = 15 - strip_height
+    strip = screen.query_one("#library-notes-source-strip")
+    strip_height = strip.region.height
+    assert strip_height == 1
+    shell_height = 14
 
     assert screen.region.height == 20
     assert navigation.region.height == 3
@@ -12479,10 +12460,9 @@ async def _assert_task8_rows(
     expected: dict[str, int],
     *,
     focused_selector: str,
-    source_strip: bool = True,
 ) -> None:
     """Assert exact visible row heights, bounds, and focus visibility."""
-    _assert_task8_compact_chrome(screen, source_strip=source_strip)
+    _assert_task8_compact_chrome(screen)
     for selector, height in expected.items():
         widget = screen.query_one(selector)
         assert widget.display is True, selector
@@ -12550,81 +12530,62 @@ async def _enter_task8_navigator_state(screen, pilot, state: str) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("state", "expected", "focused_selector", "source_strip"),
-    # task-3315 re-pin, causes named (both pre-date the media-ingest arc --
-    # identical failures reproduce at 6b4ccf475, the PR #1439 merge that
-    # brought these tests to dev, and at dev base ebeae1440):
-    # - every list state now carries #library-notes-database-purpose, the
-    #   LIB-19 placement sentence (task-2858, a3591b503, merged 2026-08-07
-    #   in PR #1420 -- AFTER these pins were authored on the PR #1439
-    #   branch): 3 wrapped rows at width 60 plus its 1-row bottom margin,
-    #   so the list loses 4 rows;
-    # - every state settles with the 1-row source strip (see
-    #   _assert_task8_compact_chrome), costing 1 more row. Round 2, after
-    #   the rebase onto dev f6911b37b: "normal" joined them -- dev
-    #   d1df7d0a7 routes the plain rail press through the full recompose
-    #   too, so its list drops 6 -> 5. Reproduced against an extracted dev
-    #   f6911b37b product tree, so this is dev's change, not the arc's.
+    ("state", "expected", "focused_selector"),
+    # TASK-3317: supporting Database-purpose prose is hidden at compact,
+    # restoring its four-row cost to the primary list while the one-row
+    # Database | Files source-authority strip remains visible.
     (
         (
             "normal",
             {
                 "#library-notes-header": 1,
-                "#library-notes-database-purpose": 3,
                 "#library-notes-filter-row": 1,
                 "#library-notes-browse-actions": 1,
                 "#library-notes-transfer-actions": 1,
                 "#library-notes-status-row": 1,
-                "#library-notes-list": 5,
+                "#library-notes-list": 9,
             },
             "#library-notes-filter",
-            True,  # dev d1df7d0a7: rail entry now recomposes with the strip
         ),
         (
             "filtered-empty",
             {
                 "#library-notes-header": 1,
-                "#library-notes-database-purpose": 3,
                 "#library-notes-filter-row": 1,
                 "#library-notes-browse-actions": 1,
                 "#library-notes-transfer-actions": 1,
                 "#library-notes-status-row": 1,
-                "#library-notes-empty": 5,
+                "#library-notes-empty": 9,
             },
             "#library-notes-filter-clear",
-            True,
         ),
         (
             "sort-choice",
             {
                 "#library-notes-header": 1,
-                "#library-notes-database-purpose": 3,
                 "#library-notes-filter-row": 1,
                 "#library-notes-sort-choices": 1,
                 "#library-notes-transfer-actions": 1,
                 "#library-notes-status-row": 1,
-                "#library-notes-list": 5,
+                "#library-notes-list": 9,
             },
             "#library-notes-sort-newest",
-            True,
         ),
         (
             "selection",
             {
                 "#library-notes-header": 1,
-                "#library-notes-database-purpose": 3,
                 "#library-notes-filter-row": 1,
                 "#library-notes-selection-actions": 1,
                 "#library-notes-selection-status": 1,
-                "#library-notes-list": 6,
+                "#library-notes-list": 10,
             },
             "#library-notes-select-toggle",
-            True,
         ),
     ),
 )
 async def test_library_note_60x20_navigator_state_allocation(
-    state: str, expected: dict[str, int], focused_selector: str, source_strip: bool
+    state: str, expected: dict[str, int], focused_selector: str
 ) -> None:
     app = _build_test_app()
     notes = _two_notes() + [
@@ -12652,8 +12613,10 @@ async def test_library_note_60x20_navigator_state_allocation(
             pilot,
             expected,
             focused_selector=focused_selector,
-            source_strip=source_strip,
         )
+        purpose = screen.query_one("#library-notes-database-purpose")
+        assert purpose.display is False
+        assert purpose.region.height == 0
         if state == "selection":
             assert screen.query_one("#library-notes-status").display is False
         if state == "sort-choice":
@@ -12686,14 +12649,10 @@ async def test_library_note_60x20_temporary_region_allocation(state: str) -> Non
             viewport = "#library-notes-sync-viewport"
             focus = "#library-notes-sync-folder"
 
-        # task-3315: entering Sync forces a full recompose (view != "list"),
-        # which mounts the 1-row source strip -- the sync canvas settles at
-        # 14 rows. The create-note canvas (canvas_kind "notes-create") never
-        # composes the strip and keeps the full 15. See
-        # _assert_task8_compact_chrome for the cause chain.
-        source_strip = state == "sync"
-        canvas_height = 14 if source_strip else 15
-        _assert_task8_compact_chrome(screen, source_strip=source_strip)
+        # TASK-3317: Create and Sync share the same Notes source-authority
+        # chrome and therefore the same 14-row canvas allocation.
+        canvas_height = 14
+        _assert_task8_compact_chrome(screen)
         owner = screen.query_one("#library-notes-canvas")
         header = screen.query_one(heading)
         assert header.region.height == 1
@@ -12706,7 +12665,6 @@ async def test_library_note_60x20_temporary_region_allocation(state: str) -> Non
                 "#library-notes-canvas": canvas_height,
             },
             focused_selector=focus,
-            source_strip=source_strip,
         )
         scroll_owner = screen.query_one(viewport)
         assert str(owner.styles.overflow_y) == "hidden"
@@ -12767,6 +12725,42 @@ async def test_library_note_compact_labels_round_trip_without_recompose(
         await _wait_for_library_notes_compact(screen, pilot, True)
         assert screen.query_one("#library-notes-canvas") is canvas
         assert str(control.label) == compact_label
+
+
+@pytest.mark.asyncio
+async def test_library_note_database_purpose_round_trips_at_breakpoint_without_recompose() -> (
+    None
+):
+    """TASK-3317: supporting purpose copy yields only in compact Notes."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(60, 20)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_library_notes_compact(screen, pilot, True)
+        await _enter_task8_navigator_state(screen, pilot, "normal")
+
+        canvas = screen.query_one("#library-notes-canvas")
+        purpose = screen.query_one("#library-notes-database-purpose", Static)
+        assert purpose.display is False
+        assert purpose.region.height == 0
+
+        await pilot.resize_terminal(170, 48)
+        await _wait_for_library_notes_compact(screen, pilot, False)
+        assert screen.query_one("#library-notes-canvas") is canvas
+        assert screen.query_one("#library-notes-database-purpose") is purpose
+        assert purpose.display is True
+        assert purpose.region.height > 0
+        assert "Library's own database" in str(purpose.renderable)
+
+        await pilot.resize_terminal(60, 20)
+        await _wait_for_library_notes_compact(screen, pilot, True)
+        assert screen.query_one("#library-notes-canvas") is canvas
+        assert screen.query_one("#library-notes-database-purpose") is purpose
+        assert purpose.display is False
+        assert purpose.region.height == 0
 
 
 @pytest.mark.asyncio
@@ -20198,19 +20192,11 @@ async def test_library_note_same_side_resize_does_no_presentation_work(
         "owner_height_at_100x30",
     ),
     (
-        # task-3315 re-pin (pre-arc dev drift, same causes as the 60x20
-        # family -- see _assert_task8_compact_chrome): the navigator list
-        # loses 3 rows to the LIB-19 database-purpose sentence (2 wrapped
-        # rows + 1 margin at widths 80/100); the editor/context routes lose
-        # 1 row to the source strip mounted by their full recompose.
-        # Round 2 (rebase onto dev f6911b37b): the navigator loses that
-        # source-strip row too -- dev d1df7d0a7 gated the targeted canvas
-        # swap on matching contextual chrome, so the rail press into the
-        # notes list now recomposes with the Database|Files strip (11 -> 10
-        # at 80x24, 17 -> 16 at 100x30). Reproduced against an extracted
-        # dev f6911b37b product tree, so this is dev's change, not the
-        # arc's. The invariant under test -- surplus goes ONLY to the named
-        # owner, growth exactly +6 for +6 terminal rows -- is unchanged.
+        # TASK-3317: compact mode hides the supporting Database-purpose
+        # sentence, so the three rows it previously consumed at 80/100
+        # columns return to the navigator list. The invariant under test --
+        # surplus goes ONLY to the named owner, growth exactly +6 for +6
+        # terminal rows -- remains unchanged.
         (
             "navigator",
             "#library-notes-list",
@@ -20221,8 +20207,8 @@ async def test_library_note_same_side_resize_does_no_presentation_work(
                 "#library-notes-transfer-actions",
                 "#library-notes-status-row",
             ),
-            10,
-            16,
+            13,
+            19,
         ),
         (
             "editor",
