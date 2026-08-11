@@ -670,6 +670,12 @@ class LibraryFileNotesGitPanel(Vertical):
         display: none;
     }
 
+    #file-notes-git-status.-complete-copy,
+    #file-notes-git-action-status.-complete-copy {
+        max-height: 100%;
+        text-wrap: wrap;
+    }
+
     #file-notes-git-empty {
         display: none;
     }
@@ -1103,7 +1109,9 @@ class LibraryFileNotesGitPanel(Vertical):
         self._replacing_rows = False
         self._repository_text = "Repository: not checked"
         self._current_status_text = "Status: NOT CHECKED"
+        self._current_status_complete = False
         self._last_action_text = ""
+        self._last_action_complete = False
         self._selected_note_text = ""
         self._commit_phase: CommitPanelPhase = "list"
         self._commit_availability: CommitDraftProjection | None = None
@@ -1161,7 +1169,7 @@ class LibraryFileNotesGitPanel(Vertical):
                     compact=True,
                 )
             yield Static(
-                "Prepare session for commit",
+                "Review session changes",
                 id="file-notes-git-title",
                 markup=False,
             )
@@ -1171,12 +1179,12 @@ class LibraryFileNotesGitPanel(Vertical):
                 markup=False,
             )
             yield Static(
-                "Session paths only · stages complete file state",
+                "Review and commit only notes changed during this Chatbook session.",
                 id="file-notes-git-scope",
                 markup=False,
             )
             yield Static(
-                "Up/Down Select | Tab Actions | Enter Run | Esc Back",
+                "Up/Down select · Tab actions · Enter run · Esc back",
                 id="file-notes-git-guide",
                 markup=False,
             )
@@ -1670,15 +1678,28 @@ class LibraryFileNotesGitPanel(Vertical):
         return row.content_region.width or fallback
 
     def _fit_fixed_regions(self) -> None:
-        for selector, text in (
-            ("#file-notes-git-repository", self._repository_text),
-            ("#file-notes-git-status", self._current_status_text),
-            ("#file-notes-git-action-status", self._last_action_text),
-            ("#file-notes-git-selected-note", self._selected_note_text),
+        for selector, text, complete in (
+            ("#file-notes-git-repository", self._repository_text, False),
+            (
+                "#file-notes-git-status",
+                self._current_status_text,
+                self._current_status_complete,
+            ),
+            (
+                "#file-notes-git-action-status",
+                self._last_action_text,
+                self._last_action_complete,
+            ),
+            ("#file-notes-git-selected-note", self._selected_note_text, False),
         ):
             widget = self.query_one(selector, Static)
+            widget.set_class(complete, "-complete-copy")
             width = widget.content_region.width or self.content_region.width
-            fitted = text if width <= 0 else _fit_two_line_copy(text, width)
+            fitted = (
+                text
+                if complete or width <= 0
+                else _fit_two_line_copy(text, width)
+            )
             widget.update(fitted)
 
     def _set_repository_text(self, text: str) -> None:
@@ -2550,22 +2571,34 @@ class LibraryFileNotesGitPanel(Vertical):
                 if status.state == "stale"
                 else "Git status failed. Retry Refresh."
             )
-            self.set_current_status(f"Status: {token} — {detail}")
+            self.set_current_status(
+                f"Status: {token} — {detail}",
+                complete=True,
+            )
         else:
             self.clear_commit_availability()
             self._clear_rows()
             if not authority_available or status.state == "unavailable":
                 detail = status.message or "Restore Git, then Refresh."
-                self.set_current_status(f"Status: UNAVAILABLE — {detail}")
+                self.set_current_status(
+                    f"Status: UNAVAILABLE — {detail}",
+                    complete=True,
+                )
                 self.clear_last_action()
             elif status.state == "stale":
                 detail = (
                     status.message or "Session notes changed; Refresh before staging."
                 )
-                self.set_current_status(f"Status: STALE — {detail}")
+                self.set_current_status(
+                    f"Status: STALE — {detail}",
+                    complete=True,
+                )
             elif status.state == "error":
                 detail = status.message or "Git status failed. Retry Refresh."
-                self.set_current_status(f"Status: STALE · ERROR — {detail}")
+                self.set_current_status(
+                    f"Status: STALE · ERROR — {detail}",
+                    complete=True,
+                )
 
         self._sync_empty_state()
         self._update_actions()
@@ -2584,7 +2617,8 @@ class LibraryFileNotesGitPanel(Vertical):
         )
         self.set_current_status(
             "Status: TRUST REQUIRED — Trust this repository to check "
-            "current session notes."
+            "current session notes.",
+            complete=True,
         )
         self._sync_empty_state()
         self._update_actions()
@@ -2629,15 +2663,17 @@ class LibraryFileNotesGitPanel(Vertical):
         self._sync_push_availability()
         self._update_actions()
 
-    def set_current_status(self, detail: str) -> None:
+    def set_current_status(self, detail: str, *, complete: bool = False) -> None:
         """Set repository freshness/recovery without changing last action."""
         self._current_status_text = detail
+        self._current_status_complete = complete
         self._fit_fixed_regions()
 
-    def set_last_action(self, detail: str) -> None:
+    def set_last_action(self, detail: str, *, complete: bool = False) -> None:
         """Set the latest action result independently of current freshness."""
         widget = self.query_one("#file-notes-git-action-status", Static)
         self._last_action_text = detail
+        self._last_action_complete = complete
         self._fit_fixed_regions()
         widget.display = bool(detail)
 
@@ -2645,6 +2681,7 @@ class LibraryFileNotesGitPanel(Vertical):
         """Clear an obsolete latest-action presentation."""
         widget = self.query_one("#file-notes-git-action-status", Static)
         self._last_action_text = ""
+        self._last_action_complete = False
         self._fit_fixed_regions()
         widget.display = False
 
@@ -2662,7 +2699,10 @@ class LibraryFileNotesGitPanel(Vertical):
         self._clear_rows()
         self.clear_last_action()
         self._set_repository_text("Repository: unavailable")
-        self.set_current_status(f"Status: UNAVAILABLE — {detail}")
+        self.set_current_status(
+            f"Status: UNAVAILABLE — {detail}",
+            complete=True,
+        )
         self._sync_empty_state()
         self._update_actions()
 
@@ -2680,7 +2720,10 @@ class LibraryFileNotesGitPanel(Vertical):
         if not retain_rows:
             self._clear_rows()
         token = "STALE · ERROR" if error else "STALE"
-        self.set_current_status(f"Status: {token} — {detail}")
+        self.set_current_status(
+            f"Status: {token} — {detail}",
+            complete=True,
+        )
         self._sync_empty_state()
         self._update_actions()
 
