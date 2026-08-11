@@ -54,6 +54,30 @@ def _message_row_text(transcript: ConsoleTranscript, message_id: str) -> str:
     return str(row.renderable)
 
 
+def _spy_move_child(transcript: ConsoleTranscript) -> list[tuple[tuple, dict]]:
+    """Wrap ``transcript.move_child`` with a call-recording spy (task-15453).
+
+    Returns the list the spy appends ``(args, kwargs)`` to; still delegates
+    to the real ``Widget.move_child`` so reconciliation behaves normally.
+    """
+    calls: list[tuple[tuple, dict]] = []
+    original = transcript.move_child
+
+    def _spy(*args, **kwargs):
+        calls.append((args, kwargs))
+        return original(*args, **kwargs)
+
+    transcript.move_child = _spy  # type: ignore[method-assign]
+    return calls
+
+
+def _rendered_message_ids(transcript: ConsoleTranscript) -> list[str]:
+    """Message ids in actual mounted DOM order (not store order)."""
+    return [
+        widget.message_id for widget in transcript.query(".console-transcript-message")
+    ]
+
+
 _BUNDLE = (
     Path(__file__).resolve().parents[2]
     / "tldw_chatbook"
@@ -2256,6 +2280,117 @@ async def test_transcript_signature_cache_survives_reorder():
     assert rendered_ids == ["m2", "m0", "m3", "m1"]
 
 
+# ---------------------------------------------------------------------------
+# TASK-15453: `_reconcile_rows` must not `move_child` a row that is already
+# in the right position. A steady-state pass (no order change) must issue
+# zero `move_child` calls; a genuine reorder must still issue >0 calls and
+# still land the correct final child order. See
+# Docs/Design/2026-08-11-input-latency-audit.md (Console section).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reconcile_rows_steady_state_issues_zero_move_child_calls():
+    """A no-op refresh (same messages re-set, like the 0.2s stream tick) moves nothing."""
+    app = MutableTranscriptHarness()
+    messages = _cache_test_messages(8)
+
+    async with app.run_test(size=(100, 32)):
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.set_messages(messages)
+        await transcript.refresh_messages()  # first mount: nothing to move yet
+        baseline_order = _rendered_message_ids(transcript)
+
+        calls = _spy_move_child(transcript)
+        # Same objects, unchanged content/order -- exactly what the 0.2s
+        # streaming tick and a transcript click (full reconcile) do when
+        # nothing actually changed.
+        transcript.set_messages(list(messages))
+        await transcript.refresh_messages()
+
+        assert calls == [], (
+            f"steady-state reconcile issued {len(calls)} move_child call(s); "
+            "rows already in position must not be moved"
+        )
+        assert _rendered_message_ids(transcript) == baseline_order
+
+
+@pytest.mark.asyncio
+async def test_reconcile_rows_reorder_moves_widgets_and_lands_correct_order():
+    """A genuine reorder still issues move_child calls and produces correct order."""
+    app = MutableTranscriptHarness()
+    messages = _cache_test_messages(4)
+
+    async with app.run_test(size=(100, 32)):
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.set_messages(messages)
+        await transcript.refresh_messages()
+
+        calls = _spy_move_child(transcript)
+        reordered = [messages[2], messages[0], messages[3], messages[1]]
+        transcript.set_messages(reordered)
+        await transcript.refresh_messages()
+
+        assert len(calls) > 0, "a real reorder must still move at least one row"
+        assert _rendered_message_ids(transcript) == ["m2", "m0", "m3", "m1"]
+
+
+@pytest.mark.asyncio
+async def test_reconcile_rows_session_switch_lands_correct_order():
+    """Switching to an entirely different message set (session switch) orders correctly."""
+    app = MutableTranscriptHarness()
+    first_session = _cache_test_messages(3)
+    second_session = [
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.USER
+            if index % 2 == 0
+            else ConsoleMessageRole.ASSISTANT,
+            content=f"other session body {index}",
+            id=f"s{index}",
+        )
+        for index in range(3)
+    ]
+
+    async with app.run_test(size=(100, 32)):
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.set_messages(first_session)
+        await transcript.refresh_messages()
+        assert _rendered_message_ids(transcript) == ["m0", "m1", "m2"]
+
+        transcript.set_messages(second_session)
+        await transcript.refresh_messages()
+
+        assert _rendered_message_ids(transcript) == ["s0", "s1", "s2"]
+
+
+@pytest.mark.asyncio
+async def test_reconcile_rows_branch_navigation_replaces_suffix_in_order():
+    """Branch navigation (shared prefix, swapped-in sibling suffix) orders correctly."""
+    app = MutableTranscriptHarness()
+    shared_prefix = _cache_test_messages(2)  # m0, m1
+    original_tail = [
+        ConsoleChatMessage(role=ConsoleMessageRole.USER, content="q2", id="m2"),
+        ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="a2", id="m3"),
+    ]
+    sibling_tail = [
+        ConsoleChatMessage(role=ConsoleMessageRole.USER, content="q2 (sibling)", id="m2b"),
+        ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="a2 (sibling)", id="m3b"),
+    ]
+
+    async with app.run_test(size=(100, 32)):
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.set_messages(shared_prefix + original_tail)
+        await transcript.refresh_messages()
+        assert _rendered_message_ids(transcript) == ["m0", "m1", "m2", "m3"]
+
+        # `set_active_leaf` swipe to a sibling branch: shared prefix stays,
+        # the tail past the branch point is replaced by the sibling's nodes.
+        transcript.set_messages(shared_prefix + sibling_tail)
+        await transcript.refresh_messages()
+
+        assert _rendered_message_ids(transcript) == ["m0", "m1", "m2b", "m3b"]
+
+
 @pytest.mark.asyncio
 async def test_transcript_signature_cache_survives_variant_switch():
     """Switching variants re-derives only that message and shows the variant."""
@@ -2286,6 +2421,8 @@ async def test_transcript_signature_cache_survives_variant_switch():
         assert "second answer" in _message_row_text(transcript, "m-varied")
         assert after["m-varied"] == baseline["m-varied"] + 1
         assert after["m-plain"] == baseline["m-plain"]
+        # TASK-15453: a variant switch must not disturb row position.
+        assert _rendered_message_ids(transcript) == ["m-plain", "m-varied"]
 
 
 @pytest.mark.asyncio

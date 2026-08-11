@@ -134,6 +134,13 @@ async def test_pruning_drops_oldest_rows_over_high_watermark():
         assert mounted, "pruning must keep the newest rows"
         assert mounted[-1] == "m11"
         assert len(mounted) == 12 - len(transcript._pruned_message_ids)
+        # TASK-15453: explicit order, not just first/last presence -- the
+        # surviving rows must render in the same relative order as the
+        # (unpruned) message store.
+        expected_order = [
+            f"m{i}" for i in range(12) if f"m{i}" not in transcript._pruned_message_ids
+        ]
+        assert mounted == expected_order
         # Pruned down to (at most) the high watermark, erring on keeping rows.
         assert transcript.virtual_size.height <= 40
         # The store snapshot the widget was handed is untouched.
