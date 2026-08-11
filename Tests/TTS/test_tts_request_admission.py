@@ -418,6 +418,7 @@ class _CloneCapturingAdapter(_CapturingAdapter):
             recipe_id="pocket_tts",
             recipe_revision=1,
             process_generation=7,
+            request=request,
         )
         self._capability = capability
         return capability
@@ -1168,6 +1169,71 @@ async def test_clone_source_rejection_precedes_readiness_and_catalog_evidence(
         assert registry._total_leases() == 0
     finally:
         await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_does_not_release_executing_clone_lease_before_materialization(
+    tmp_path: Any,
+) -> None:
+    adapter = _BlockingCloneCapturingAdapter()
+    registry = _RecordingRegistry(
+        specs=(
+            TTSProviderSpec(
+                descriptor=TTSProviderDescriptor("audio_cpp", "audio.cpp", True),
+                factory=lambda _config: adapter,
+                initial_config={},
+                exclusive_reconfigure=True,
+            ),
+        ),
+        aliases={},
+        shutdown_timeout_seconds=0.01,
+    )
+    service = TTSService(
+        registry,
+        preferences_snapshot=_snapshot(model_id="clone-model"),
+        native_capability_reader=_accepted_native_capability_reader(registry),
+        clone_materializer=TTSCloneReferenceMaterializer(tmp_path / "runtime"),
+    )
+    character = TTSCharacterProfileSelection(
+        selection=TTSSelectionOverrides(
+            provider_id="audio_cpp",
+            model_mode="exact",
+            model_id="clone-model",
+            voice_mode="server_default",
+            response_format="wav",
+            speed=1.0,
+            provider_options={},
+        ),
+        repository_generation=1,
+        profile_revision=1,
+        profile_id=UUID("55555555-5555-4555-8555-555555555555"),
+        reference=_clone_reference(),
+    )
+    generation = asyncio.create_task(
+        service.synthesize_effective(text="hello", character_profile=character)
+    )
+    try:
+        await _wait_bounded(adapter.ensure_started.wait())
+        await service.close()
+        await asyncio.sleep(0.02)
+
+        assert sum(record.leases for record in registry._closing_records) == 1
+        assert service._operation_limit._value == 3
+        assert not (tmp_path / "runtime").exists()
+
+        adapter.allow_ensure.set()
+        result = await asyncio.gather(generation, return_exceptions=True)
+        assert isinstance(result[0], BaseException)
+        await service.wait_closed()
+        assert sum(record.leases for record in registry._closing_records) == 0
+        assert service._operation_limit._value == 4
+    finally:
+        adapter.allow_ensure.set()
+        adapter.allow_cleanup.set()
+        if not generation.done():
+            generation.cancel()
+            await asyncio.gather(generation, return_exceptions=True)
         await service.wait_closed()
 
 

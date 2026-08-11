@@ -195,7 +195,33 @@ async def test_default_profile_reference_delete_race_fails_closed() -> None:
         )
 
     assert caught.value.code == "default_profile_store_unavailable"
+    assert caught.value.__context__ is None
+    assert caught.value.__cause__ is None
     assert service.reference_calls == [(_PROFILE_ID, 5, 7)]
+
+
+@pytest.mark.asyncio
+async def test_default_profile_reference_failure_severs_raw_exception() -> None:
+    reference = _reference()
+    service = _FakeDefaultProfileService(
+        result=LoadedTTSProfile(
+            repository_generation=7,
+            profile=_profile(reference=reference.summary),
+        )
+    )
+    service.reference_error = RuntimeError("PRIVATE_REFERENCE_CANARY")
+
+    with pytest.raises(CharacterTTSResolutionError) as caught:
+        await resolve_default_profile(
+            text="Do not expose a reference failure.",
+            default_profile_id=str(_PROFILE_ID),
+            profile_service=service,
+        )
+
+    assert caught.value.code == "default_profile_store_unavailable"
+    assert caught.value.__context__ is None
+    assert caught.value.__cause__ is None
+    assert "PRIVATE_REFERENCE_CANARY" not in repr(caught.value)
 
 
 @pytest.mark.asyncio

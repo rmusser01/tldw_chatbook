@@ -49,7 +49,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSRequest,
     TTSStructuredVoiceAdapter,
     TTSVoiceDiscoveryResult,
-    _AdmittedAudioCppCloneRequest,
+    _new_admitted_audio_cpp_clone_request,
 )
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
@@ -420,6 +420,8 @@ class _AdmittedTTSOperation:
         self._used = False
         self._executing = False
         self._close_task: asyncio.Task[None] | None = None
+        self._shutdown_wait_task: asyncio.Task[None] | None = None
+        self._finished = asyncio.Event()
 
     def claim(self) -> None:
         """Transfer a pending operation to its immediate execution owner."""
@@ -499,15 +501,12 @@ class _AdmittedTTSOperation:
                             recovery_action="check_profile",
                         ) from None
                     assert materialization is not None
-                    admitted_request = _AdmittedAudioCppCloneRequest(
+                    admitted_request = _new_admitted_audio_cpp_clone_request(
                         request=self._request,
                         materialization=materialization,
                         capability=capability,
                         provider_revision=lease.configuration_revision,
                         applied_provider_generation=lease.applied_generation,
-                        recipe_id=capability.recipe_id,
-                        recipe_revision=capability.recipe_revision,
-                        process_generation=capability.process_generation,
                     )
                     response = await adapter.synthesize_clone(
                         admitted_request,
@@ -610,10 +609,19 @@ class _AdmittedTTSOperation:
         """Release resources for an operation still tracked after the drain."""
         if self._claimed and not self._used:
             return None
+        if self._clone_execution is not None and self._executing:
+            if self._shutdown_wait_task is None:
+                self._shutdown_wait_task = asyncio.create_task(
+                    self._wait_until_finished()
+                )
+            return self._shutdown_wait_task
         if self._close_task is None:
             self._used = True
             self._close_task = asyncio.create_task(self._close())
         return self._close_task
+
+    async def _wait_until_finished(self) -> None:
+        await self._finished.wait()
 
     async def _close(self) -> None:
         try:
@@ -623,6 +631,7 @@ class _AdmittedTTSOperation:
 
     def _finish_tracking(self) -> None:
         self._executing = False
+        self._finished.set()
         self._on_finished(self)
 
 

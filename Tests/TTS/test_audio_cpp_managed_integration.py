@@ -24,6 +24,7 @@ from tldw_chatbook.TTS.adapter_registry import TTSAdapterRegistry
 from tldw_chatbook.TTS._async_lifecycle import current_shutdown_deadline
 from tldw_chatbook.TTS.adapter_types import (
     _AdmittedAudioCppCloneRequest,
+    _new_admitted_audio_cpp_clone_request,
     TTSOperationError,
     TTSProviderCatalog,
     TTSProviderDescriptor,
@@ -1527,22 +1528,44 @@ async def test_guided_clone_admission_sends_only_typed_live_reference_fields(
         with pytest.raises(AttributeError):
             capability._model_id = "forged-model"
         owner = await materializer.materialize(_clone_reference())
+        altered_request = TTSRequest(
+            provider_id=request.provider_id,
+            model_id=request.model_id,
+            text="altered after capability admission",
+            voice=request.voice,
+            response_format=request.response_format,
+        )
+        with pytest.raises(ValueError):
+            _new_admitted_audio_cpp_clone_request(
+                request=altered_request,
+                materialization=owner,
+                capability=capability,
+                provider_revision=0,
+                applied_provider_generation=0,
+            )
         copied_capability = copy.copy(capability)
-        copied_admission = _AdmittedAudioCppCloneRequest(
+        copied_admission = _new_admitted_audio_cpp_clone_request(
             request=request,
             materialization=owner,
             capability=copied_capability,
             provider_revision=0,
             applied_provider_generation=0,
-            recipe_id=copied_capability.recipe_id,
-            recipe_revision=copied_capability.recipe_revision,
-            process_generation=copied_capability.process_generation,
         )
         with pytest.raises(TTSOperationError) as copied:
             await adapter.synthesize_clone(copied_admission)
         assert copied.value.code == "request_invalid"
-
+        swapped_owner = await materializer.materialize(_clone_reference())
         with pytest.raises(ValueError):
+            _new_admitted_audio_cpp_clone_request(
+                request=request,
+                materialization=swapped_owner,
+                capability=copied_capability,
+                provider_revision=999,
+                applied_provider_generation=999,
+            )
+        await swapped_owner.aclose()
+
+        with pytest.raises(TypeError):
             _AdmittedAudioCppCloneRequest(
                 request=request,
                 materialization=owner,
@@ -1553,7 +1576,7 @@ async def test_guided_clone_admission_sends_only_typed_live_reference_fields(
                 recipe_revision=capability.recipe_revision,
                 process_generation=capability.process_generation,
             )
-        with pytest.raises(ValueError):
+        with pytest.raises(TypeError):
             _AdmittedAudioCppCloneRequest(
                 request=request,
                 materialization=Path("/private/forged-reference.wav"),  # type: ignore[arg-type]
@@ -1565,29 +1588,23 @@ async def test_guided_clone_admission_sends_only_typed_live_reference_fields(
                 process_generation=capability.process_generation,
             )
         copied_owner = copy.copy(owner)
-        copied_owner_admission = _AdmittedAudioCppCloneRequest(
+        copied_owner_admission = _new_admitted_audio_cpp_clone_request(
             request=request,
             materialization=copied_owner,
             capability=capability,
             provider_revision=0,
             applied_provider_generation=0,
-            recipe_id=capability.recipe_id,
-            recipe_revision=capability.recipe_revision,
-            process_generation=capability.process_generation,
         )
         with pytest.raises(TTSOperationError) as copied_owner_error:
             await adapter.synthesize_clone(copied_owner_admission)
         assert copied_owner_error.value.code == "request_invalid"
         capability = adapter.admit_clone_capability(request)
-        admitted = _AdmittedAudioCppCloneRequest(
+        admitted = _new_admitted_audio_cpp_clone_request(
             request=request,
             materialization=owner,
             capability=capability,
             provider_revision=0,
             applied_provider_generation=0,
-            recipe_id=capability.recipe_id,
-            recipe_revision=capability.recipe_revision,
-            process_generation=capability.process_generation,
         )
         with pytest.raises(TypeError):
             copy.copy(admitted)
@@ -1624,15 +1641,12 @@ async def test_guided_clone_admission_sends_only_typed_live_reference_fields(
 
         closed_owner = await materializer.materialize(_clone_reference())
         closed_capability = adapter.admit_clone_capability(request)
-        closed_admission = _AdmittedAudioCppCloneRequest(
+        closed_admission = _new_admitted_audio_cpp_clone_request(
             request=request,
             materialization=closed_owner,
             capability=closed_capability,
             provider_revision=0,
             applied_provider_generation=0,
-            recipe_id=closed_capability.recipe_id,
-            recipe_revision=closed_capability.recipe_revision,
-            process_generation=closed_capability.process_generation,
         )
         await closed_owner.aclose()
         with pytest.raises(TTSOperationError) as stale_owner:
@@ -1706,15 +1720,12 @@ async def test_guided_clone_capability_is_process_generation_fenced(
         await adapter.ensure_ready()
         capability = adapter.admit_clone_capability(request)
         owner = await materializer.materialize(_clone_reference())
-        admitted = _AdmittedAudioCppCloneRequest(
+        admitted = _new_admitted_audio_cpp_clone_request(
             request=request,
             materialization=owner,
             capability=capability,
             provider_revision=0,
             applied_provider_generation=0,
-            recipe_id=capability.recipe_id,
-            recipe_revision=capability.recipe_revision,
-            process_generation=capability.process_generation,
         )
 
         async def replace_during_progress(_progress: object) -> None:
@@ -3300,15 +3311,12 @@ async def test_real_child_uses_generated_multi_model_config_and_cleans_artifact(
         second_capability = adapter.admit_clone_capability(second_request)
         second_owner = await clone_materializer.materialize(_clone_reference())
         second_response = await adapter.synthesize_clone(
-            _AdmittedAudioCppCloneRequest(
+            _new_admitted_audio_cpp_clone_request(
                 request=second_request,
                 materialization=second_owner,
                 capability=second_capability,
                 provider_revision=0,
                 applied_provider_generation=0,
-                recipe_id=second_capability.recipe_id,
-                recipe_revision=second_capability.recipe_revision,
-                process_generation=second_capability.process_generation,
             )
         )
         second_audio = [chunk async for chunk in second_response.byte_stream]

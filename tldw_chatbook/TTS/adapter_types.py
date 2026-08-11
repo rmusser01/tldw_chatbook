@@ -180,17 +180,25 @@ class AudioCppCloneCapabilityAdmission:
     _adapter_identity: object
     _capability_token: object
     _model_id: str
+    _materialization: TTSCloneReferenceMaterialization | None
+    _provider_revision: int | None
+    _applied_provider_generation: int | None
     _process_generation: int
     _recipe_id: str
     _recipe_revision: int
+    _request: TTSRequest
 
     __slots__ = (
         "_adapter_identity",
         "_capability_token",
         "_model_id",
+        "_materialization",
+        "_provider_revision",
+        "_applied_provider_generation",
         "_process_generation",
         "_recipe_id",
         "_recipe_revision",
+        "_request",
     )
 
     def __init__(
@@ -203,15 +211,20 @@ class AudioCppCloneCapabilityAdmission:
         recipe_id: str,
         recipe_revision: int,
         process_generation: int,
+        request: TTSRequest,
     ) -> None:
         if constructor_token is not _AUDIO_CPP_CLONE_CAPABILITY_TOKEN:
             raise TypeError("Clone capabilities cannot be constructed directly")
         object.__setattr__(self, "_adapter_identity", adapter_identity)
         object.__setattr__(self, "_capability_token", capability_token)
         object.__setattr__(self, "_model_id", model_id)
+        object.__setattr__(self, "_materialization", None)
+        object.__setattr__(self, "_provider_revision", None)
+        object.__setattr__(self, "_applied_provider_generation", None)
         object.__setattr__(self, "_recipe_id", recipe_id)
         object.__setattr__(self, "_recipe_revision", recipe_revision)
         object.__setattr__(self, "_process_generation", process_generation)
+        object.__setattr__(self, "_request", request)
 
     def __setattr__(self, _name: str, _value: object) -> None:
         raise AttributeError("Audio.cpp clone capabilities are immutable")
@@ -241,6 +254,35 @@ class AudioCppCloneCapabilityAdmission:
             object.__setattr__(duplicate, name, getattr(self, name))
         return duplicate
 
+    def _seal_request(
+        self,
+        constructor_token: object,
+        *,
+        request: TTSRequest,
+        materialization: TTSCloneReferenceMaterialization,
+        provider_revision: int,
+        applied_provider_generation: int,
+    ) -> None:
+        if constructor_token is not _AUDIO_CPP_CLONE_REQUEST_TOKEN:
+            raise TypeError("Clone requests cannot be sealed directly")
+        if (
+            request is not self._request
+            or type(materialization) is not TTSCloneReferenceMaterialization
+            or type(provider_revision) is not int
+            or provider_revision < 0
+            or type(applied_provider_generation) is not int
+            or applied_provider_generation < 0
+            or self._materialization is not None
+        ):
+            raise ValueError("Audio.cpp clone request admission is invalid")
+        object.__setattr__(self, "_materialization", materialization)
+        object.__setattr__(self, "_provider_revision", provider_revision)
+        object.__setattr__(
+            self,
+            "_applied_provider_generation",
+            applied_provider_generation,
+        )
+
 
 def _new_audio_cpp_clone_capability(
     *,
@@ -250,6 +292,7 @@ def _new_audio_cpp_clone_capability(
     recipe_id: str,
     recipe_revision: int,
     process_generation: int,
+    request: TTSRequest,
 ) -> AudioCppCloneCapabilityAdmission:
     return AudioCppCloneCapabilityAdmission(
         _AUDIO_CPP_CLONE_CAPABILITY_TOKEN,
@@ -259,13 +302,18 @@ def _new_audio_cpp_clone_capability(
         recipe_id=recipe_id,
         recipe_revision=recipe_revision,
         process_generation=process_generation,
+        request=request,
     )
+
+
+_AUDIO_CPP_CLONE_REQUEST_TOKEN = object()
 
 
 @dataclass(frozen=True, slots=True, repr=False)
 class _AdmittedAudioCppCloneRequest:
     """Internal registry-fenced request for one exact live clone owner."""
 
+    _admission_token: object = field(repr=False, compare=False)
     request: TTSRequest
     materialization: TTSCloneReferenceMaterialization
     capability: AudioCppCloneCapabilityAdmission
@@ -277,7 +325,8 @@ class _AdmittedAudioCppCloneRequest:
 
     def __post_init__(self) -> None:
         if (
-            type(self.request) is not TTSRequest
+            self._admission_token is not _AUDIO_CPP_CLONE_REQUEST_TOKEN
+            or type(self.request) is not TTSRequest
             or type(self.materialization) is not TTSCloneReferenceMaterialization
             or type(self.capability) is not AudioCppCloneCapabilityAdmission
             or type(self.provider_revision) is not int
@@ -308,6 +357,38 @@ class _AdmittedAudioCppCloneRequest:
 
     def __deepcopy__(self, _memo: dict[int, object]) -> _AdmittedAudioCppCloneRequest:
         raise TypeError("Audio.cpp clone admissions cannot be copied")
+
+    def _is_service_sealed(self) -> bool:
+        return self._admission_token is _AUDIO_CPP_CLONE_REQUEST_TOKEN
+
+
+def _new_admitted_audio_cpp_clone_request(
+    *,
+    request: TTSRequest,
+    materialization: TTSCloneReferenceMaterialization,
+    capability: AudioCppCloneCapabilityAdmission,
+    provider_revision: int,
+    applied_provider_generation: int,
+) -> _AdmittedAudioCppCloneRequest:
+    """Seal one service-owned clone request from exact admitted evidence."""
+    capability._seal_request(
+        _AUDIO_CPP_CLONE_REQUEST_TOKEN,
+        request=request,
+        materialization=materialization,
+        provider_revision=provider_revision,
+        applied_provider_generation=applied_provider_generation,
+    )
+    return _AdmittedAudioCppCloneRequest(
+        _admission_token=_AUDIO_CPP_CLONE_REQUEST_TOKEN,
+        request=request,
+        materialization=materialization,
+        capability=capability,
+        provider_revision=provider_revision,
+        applied_provider_generation=applied_provider_generation,
+        recipe_id=capability.recipe_id,
+        recipe_revision=capability.recipe_revision,
+        process_generation=capability.process_generation,
+    )
 
 
 @dataclass(frozen=True, slots=True)

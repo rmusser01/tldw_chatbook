@@ -15,6 +15,7 @@ import pytest
 from tldw_chatbook.TTS import profile_reference_materialization as module
 from tldw_chatbook.TTS.profile_reference_materialization import (
     TTSCloneMaterializationError,
+    TTSCloneReferenceMaterialization,
     TTSCloneReferenceMaterializer,
 )
 from tldw_chatbook.TTS.profile_reference_types import (
@@ -148,6 +149,26 @@ async def test_first_use_removes_only_recognized_unlocked_orphan(
 
 
 @pytest.mark.asyncio
+async def test_first_use_removes_only_exact_empty_interrupted_publication(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "runtime"
+    root.mkdir(mode=0o700)
+    interrupted = root / ("clone-v1-" + "8" * 32)
+    interrupted.mkdir(mode=0o700)
+    unknown = root / (".clone-staging-" + "9" * 32)
+    unknown.mkdir(mode=0o700)
+
+    materializer = TTSCloneReferenceMaterializer(root)
+    handle = await materializer.materialize(_reference())
+
+    assert not interrupted.exists()
+    assert unknown.exists()
+    await handle.aclose()
+    await materializer.close()
+
+
+@pytest.mark.asyncio
 async def test_first_use_preserves_live_locked_recognized_directory(
     tmp_path: Path,
 ) -> None:
@@ -227,7 +248,7 @@ async def test_first_use_preserves_recognized_owner_with_hardlinked_asset(
 
 
 @pytest.mark.asyncio
-async def test_first_use_preserves_fifo_and_incomplete_recognized_owners(
+async def test_first_use_preserves_fifo_and_removes_empty_interrupted_owner(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "runtime"
@@ -247,7 +268,7 @@ async def test_first_use_preserves_fifo_and_incomplete_recognized_owners(
 
     assert fifo_owner.exists()
     assert stat.S_ISFIFO(fifo_asset.lstat().st_mode)
-    assert incomplete.exists()
+    assert not incomplete.exists()
     await handle.aclose()
     await materializer.close()
 
@@ -435,6 +456,92 @@ async def test_cancellation_joins_worker_and_removes_late_publication(
 
     root = tmp_path / "runtime"
     assert not root.exists() or tuple(root.iterdir()) == ()
+    await materializer.close()
+
+
+@pytest.mark.asyncio
+async def test_two_materializers_cannot_sweep_a_concurrently_publishing_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "runtime"
+    first_lock_entered = threading.Event()
+    release_first_lock = threading.Event()
+    real_lock = module._lock_exclusive_nonblocking
+    first_call = True
+
+    def block_first_lock(descriptor: int) -> None:
+        nonlocal first_call
+        if first_call:
+            first_call = False
+            first_lock_entered.set()
+            assert release_first_lock.wait(timeout=2.0)
+        real_lock(descriptor)
+
+    monkeypatch.setattr(module, "_lock_exclusive_nonblocking", block_first_lock)
+    first = TTSCloneReferenceMaterializer(root)
+    second = TTSCloneReferenceMaterializer(root)
+    first_task = asyncio.create_task(first.materialize(_reference()))
+    second_task: asyncio.Task[TTSCloneReferenceMaterialization] | None = None
+    first_handle = None
+    second_handle = None
+    try:
+        assert await asyncio.to_thread(first_lock_entered.wait, 2.0)
+        second_task = asyncio.create_task(second.materialize(_reference()))
+        await asyncio.sleep(0.01)
+        assert not second_task.done()
+        release_first_lock.set()
+        first_handle = await first_task
+        second_handle = await second_task
+
+        assert (await first_handle.validated_voice_ref()).read_bytes() == (
+            _reference().wav_bytes
+        )
+        assert (await second_handle.validated_voice_ref()).read_bytes() == (
+            _reference().wav_bytes
+        )
+    finally:
+        release_first_lock.set()
+        if not first_task.done():
+            first_task.cancel()
+            await asyncio.gather(first_task, return_exceptions=True)
+        if second_task is not None and not second_task.done():
+            second_task.cancel()
+            await asyncio.gather(second_task, return_exceptions=True)
+        if first_handle is not None:
+            await first_handle.aclose()
+        if second_handle is not None:
+            await second_handle.aclose()
+        await first.close()
+        await second.close()
+
+
+@pytest.mark.asyncio
+async def test_validated_voice_ref_rejects_lexical_root_substitution(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "runtime"
+    moved = tmp_path / "moved-runtime"
+    materializer = TTSCloneReferenceMaterializer(root)
+    handle = await materializer.materialize(_reference())
+    original_path = handle.voice_ref
+
+    root.rename(moved)
+    replacement_owner = root / original_path.parent.name
+    replacement_owner.mkdir(parents=True, mode=0o700)
+    (replacement_owner / "owner.lock").write_bytes(b"")
+    os.chmod(replacement_owner / "owner.lock", 0o600)
+    replacement_asset = replacement_owner / original_path.name
+    replacement_asset.write_bytes(b"attacker replacement")
+    os.chmod(replacement_asset, 0o600)
+
+    with pytest.raises(TTSCloneMaterializationError) as caught:
+        await handle.validated_voice_ref()
+    assert caught.value.code == "unavailable"
+    assert replacement_asset.read_bytes() == b"attacker replacement"
+
+    await handle.aclose()
+    assert replacement_asset.exists()
     await materializer.close()
 
 

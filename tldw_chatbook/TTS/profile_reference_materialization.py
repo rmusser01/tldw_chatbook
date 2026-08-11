@@ -106,6 +106,10 @@ class TTSCloneReferenceMaterialization:
         """Remove the exact owned materialization, preserving substitutions."""
         await self._materializer._close_handle(self)
 
+    async def validated_voice_ref(self) -> Path:
+        """Return the path only while every retained filesystem identity matches."""
+        return await self._materializer._validated_path(self)
+
     def _is_live_owner(self) -> bool:
         return self._materializer.owns(self)
 
@@ -288,6 +292,34 @@ class TTSCloneReferenceMaterializer:
             if call is not None:
                 self._handle_calls.discard(call)
 
+    async def _validated_path(
+        self,
+        handle: TTSCloneReferenceMaterialization,
+    ) -> Path:
+        call = cast(asyncio.Task[object] | None, asyncio.current_task())
+        if call is not None:
+            self._handle_calls.add(call)
+        try:
+            async with self._cleanup_lock:
+                if not self.owns(handle):
+                    raise TTSCloneMaterializationError("unavailable")
+                worker = self._start_worker(
+                    _validate_materialization_sync,
+                    handle._record,
+                )
+                cancelled, result, failure = await _await_retained_result(worker)
+                self._worker_tasks.discard(worker)
+                if cancelled is not None:
+                    raise cancelled
+                if failure is not None:
+                    if _is_control_flow(failure):
+                        raise failure
+                    raise TTSCloneMaterializationError("unavailable") from None
+                return cast(Path, result)
+        finally:
+            if call is not None:
+                self._handle_calls.discard(call)
+
     def _start_worker(
         self,
         function: Callable[..., object],
@@ -375,6 +407,20 @@ def _lock_exclusive_nonblocking(descriptor: int) -> None:
     lock_module.flock(descriptor, lock_module.LOCK_EX | lock_module.LOCK_NB)
 
 
+def _lock_root_exclusive(descriptor: int) -> None:
+    lock_module = fcntl
+    if lock_module is None:
+        raise OSError("POSIX file locking is unavailable")
+    lock_module.flock(descriptor, lock_module.LOCK_EX)
+
+
+def _unlock(descriptor: int) -> None:
+    lock_module = fcntl
+    if lock_module is None:
+        raise OSError("POSIX file locking is unavailable")
+    lock_module.flock(descriptor, lock_module.LOCK_UN)
+
+
 def _create_materialization_sync(
     root: Path,
     expected_root_identity: tuple[int, int] | None,
@@ -384,6 +430,7 @@ def _create_materialization_sync(
     owner_fd = -1
     lock_fd = -1
     owner_name = ""
+    root_locked = False
     asset_name = ""
     try:
         root_info = os.fstat(root_fd)
@@ -393,6 +440,8 @@ def _create_materialization_sync(
             or not _private_directory(root_info)
         ):
             raise OSError("unsafe runtime root")
+        _lock_root_exclusive(root_fd)
+        root_locked = True
         for _ in range(16):
             owner_name = f"clone-v1-{token_hex(16)}"
             try:
@@ -406,7 +455,11 @@ def _create_materialization_sync(
         owner_fd = os.open(owner_name, _DIRECTORY_FLAGS, dir_fd=root_fd)
         os.fchmod(owner_fd, _OWNER_DIRECTORY_MODE)
         owner_info = os.fstat(owner_fd)
-        named_owner_info = os.stat(owner_name, dir_fd=root_fd, follow_symlinks=False)
+        named_owner_info = os.stat(
+            owner_name,
+            dir_fd=root_fd,
+            follow_symlinks=False,
+        )
         if (
             not _private_directory(owner_info)
             or _identity(owner_info) != _identity(named_owner_info)
@@ -456,6 +509,8 @@ def _create_materialization_sync(
             os.close(asset_fd)
         os.fsync(owner_fd)
         os.fsync(root_fd)
+        _unlock(root_fd)
+        root_locked = False
 
         return _MaterializationRecord(
             owner_name=owner_name,
@@ -488,8 +543,75 @@ def _create_materialization_sync(
                 os.rmdir(owner_name, dir_fd=root_fd)
             except OSError:
                 pass
+        if root_locked:
+            try:
+                _unlock(root_fd)
+            except OSError:
+                pass
         os.close(root_fd)
         raise
+
+
+def _validate_materialization_sync(record: _MaterializationRecord) -> Path:
+    root_info = os.fstat(record.root_fd)
+    named_root_info = os.stat(
+        record.asset_path.parent.parent,
+        follow_symlinks=False,
+    )
+    if (
+        _identity(root_info) != record.root_identity
+        or _identity(named_root_info) != record.root_identity
+        or not _private_directory(root_info)
+        or not _private_directory(named_root_info)
+    ):
+        raise OSError("owned materialization changed")
+
+    owner_info = os.fstat(record.owner_fd)
+    named_owner_info = os.stat(
+        record.owner_name,
+        dir_fd=record.root_fd,
+        follow_symlinks=False,
+    )
+    if (
+        _identity(owner_info) != record.owner_identity
+        or _identity(named_owner_info) != record.owner_identity
+        or not _private_directory(owner_info)
+        or not _private_directory(named_owner_info)
+    ):
+        raise OSError("owned materialization changed")
+
+    lock_info = os.fstat(record.lock_fd)
+    named_lock_info = os.stat(
+        "owner.lock",
+        dir_fd=record.owner_fd,
+        follow_symlinks=False,
+    )
+    if (
+        _identity(lock_info) != record.lock_identity
+        or _identity(named_lock_info) != record.lock_identity
+        or not _private_open_lock(lock_info)
+        or not _private_regular_file(named_lock_info)
+    ):
+        raise OSError("owned materialization changed")
+
+    asset_fd = os.open(record.asset_name, _FILE_FLAGS, dir_fd=record.owner_fd)
+    try:
+        asset_info = os.fstat(asset_fd)
+        named_asset_info = os.stat(
+            record.asset_name,
+            dir_fd=record.owner_fd,
+            follow_symlinks=False,
+        )
+        if (
+            _identity(asset_info) != record.asset_identity
+            or _identity(named_asset_info) != record.asset_identity
+            or not _private_regular_file(asset_info)
+            or not _private_regular_file(named_asset_info)
+        ):
+            raise OSError("owned materialization changed")
+    finally:
+        os.close(asset_fd)
+    return record.asset_path
 
 
 def _prepare_runtime_root_sync(root: Path) -> tuple[Path, tuple[int, int]]:
@@ -504,7 +626,11 @@ def _prepare_runtime_root_sync(root: Path) -> tuple[Path, tuple[int, int]]:
             or _identity(root_info) != _identity(named_info)
         ):
             raise OSError("unsafe runtime root")
-        _sweep_orphans(root_fd)
+        _lock_root_exclusive(root_fd)
+        try:
+            _sweep_orphans(root_fd)
+        finally:
+            _unlock(root_fd)
         return selected, _identity(root_info)
     finally:
         os.close(root_fd)
@@ -533,6 +659,10 @@ def _sweep_orphans(root_fd: int) -> None:
                     continue
 
             entries = os.listdir(owner_fd)
+            if not entries:
+                os.rmdir(owner_name, dir_fd=root_fd)
+                os.fsync(root_fd)
+                continue
             assets = [name for name in entries if _ASSET_PATTERN.fullmatch(name)]
             if (
                 "owner.lock" not in entries

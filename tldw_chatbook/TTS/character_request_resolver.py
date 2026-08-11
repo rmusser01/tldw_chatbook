@@ -270,6 +270,7 @@ class CharacterTTSRequestResolver:
         if service is None:
             raise CharacterTTSResolutionError("profile_store_unavailable")
 
+        load_failure: CharacterTTSResolutionCode | None = None
         try:
             loaded = await service.get_assigned_profile(character_ref)
         except asyncio.CancelledError:
@@ -280,10 +281,12 @@ class CharacterTTSRequestResolver:
             ProfileValidationError,
         ) as error:
             _log_resolution_failure("profile_store_unavailable", error)
-            raise CharacterTTSResolutionError("profile_store_unavailable") from None
+            load_failure = "profile_store_unavailable"
         except Exception as error:
             _log_resolution_failure("profile_store_unavailable", error)
-            raise CharacterTTSResolutionError("profile_store_unavailable") from None
+            load_failure = "profile_store_unavailable"
+        if load_failure is not None:
+            raise CharacterTTSResolutionError(load_failure) from None
 
         try:
             if type(loaded) is not LoadedCharacterTTSAssignment:
@@ -296,6 +299,7 @@ class CharacterTTSRequestResolver:
             profile = snapshot.profile
             reference: TTSCloneReference | None = None
             if profile.reference is not None:
+                reference_failure: CharacterTTSResolutionCode | None = None
                 try:
                     reference = await service.get_reference(
                         profile.profile_id,
@@ -310,16 +314,16 @@ class CharacterTTSRequestResolver:
                     ProfileValidationError,
                 ) as error:
                     _log_resolution_failure("assignment_invalid", error)
-                    raise CharacterTTSResolutionError("assignment_invalid") from None
+                    reference_failure = "assignment_invalid"
                 except Exception as error:
                     _log_resolution_failure("profile_store_unavailable", error)
-                    raise CharacterTTSResolutionError(
-                        "profile_store_unavailable"
-                    ) from None
-                if (
-                    type(reference) is not TTSCloneReference
-                    or reference.summary != profile.reference
-                ):
+                    reference_failure = "profile_store_unavailable"
+                if reference_failure is not None:
+                    raise CharacterTTSResolutionError(reference_failure) from None
+                if type(reference) is not TTSCloneReference:
+                    raise ValueError
+                assert reference is not None
+                if reference.summary != profile.reference:
                     raise ValueError
             request = TTSRequest(
                 provider_id=profile.provider_id,

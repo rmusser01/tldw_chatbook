@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from numbers import Real
+from pathlib import Path
 from typing import Literal
 from unicodedata import category
 from uuid import uuid4
@@ -72,6 +73,7 @@ from tldw_chatbook.TTS.audio_cpp_supervisor import (
     AudioCppTTSCapability,
 )
 from tldw_chatbook.TTS.profile_reference_materialization import (
+    TTSCloneMaterializationError,
     TTSCloneReferenceMaterialization,
 )
 
@@ -496,6 +498,7 @@ class AudioCppAdapter:
             recipe_id=recipe.recipe_id,
             recipe_revision=recipe.recipe_revision,
             process_generation=process_generation,
+            request=request,
         )
         self._clone_capabilities[capability_token] = capability
         return capability
@@ -698,6 +701,7 @@ class AudioCppAdapter:
         failure: _OperationFailure | None = None
         outcome: _SpeechOutcome | None = None
         payload: dict[str, str] | None = None
+        validated_voice_ref: Path | None = None
         process_generation: int | None = None
 
         if type(request) is not TTSRequest or not self._valid_speech_request(request):
@@ -747,6 +751,13 @@ class AudioCppAdapter:
                         clone_request,
                         consume=True,
                     )
+                    if failure is None:
+                        try:
+                            validated_voice_ref = await (
+                                clone_request.materialization.validated_voice_ref()
+                            )
+                        except TTSCloneMaterializationError:
+                            failure = _REQUEST_INVALID
                     supervisor = self._supervisor
                     suppress_diagnostics = (
                         None
@@ -769,9 +780,8 @@ class AudioCppAdapter:
                     if request.voice is not None:
                         payload["voice"] = request.voice
                     if clone_request is not None:
-                        payload["voice_ref"] = str(
-                            clone_request.materialization.voice_ref
-                        )
+                        assert validated_voice_ref is not None
+                        payload["voice_ref"] = str(validated_voice_ref)
                         payload["reference_text"] = (
                             clone_request.materialization.reference_text
                         )
@@ -970,6 +980,7 @@ class AudioCppAdapter:
         if type(request) is not _AdmittedAudioCppCloneRequest:
             return _REQUEST_INVALID
         try:
+            service_sealed = request._is_service_sealed()
             capability = request.capability
             base_request = request.request
             materialization = request.materialization
@@ -981,7 +992,8 @@ class AudioCppAdapter:
         except Exception:
             return _REQUEST_INVALID
         if (
-            type(base_request) is not TTSRequest
+            not service_sealed
+            or type(base_request) is not TTSRequest
             or not self._valid_speech_request(base_request)
             or type(materialization) is not TTSCloneReferenceMaterialization
             or type(provider_revision) is not int
@@ -990,6 +1002,10 @@ class AudioCppAdapter:
             or applied_generation < 0
             or type(capability) is not AudioCppCloneCapabilityAdmission
             or capability._adapter_identity is not self._clone_adapter_identity
+            or base_request is not capability._request
+            or materialization is not capability._materialization
+            or provider_revision != capability._provider_revision
+            or applied_generation != capability._applied_provider_generation
             or base_request.model_id != capability.model_id
             or recipe_id != capability.recipe_id
             or recipe_revision != capability.recipe_revision

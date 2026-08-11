@@ -9,6 +9,27 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## A shutdown lease counter can stop seeing work before ownership ends
+
+**TASK-13204, 2026-08-10.** A clone-shutdown regression initially asserted
+`TTSAdapterRegistry._total_leases()` while the provider was past its bounded
+shutdown deadline. The registry had already moved the active adapter record
+into its retained closing-record collection, so `_total_leases()` returned zero
+even though the exact record still held a lease. That false measurement first
+made the race look fixed. Inspecting the retained record proved the real bug:
+generic late-operation cleanup could release an executing clone lease before
+its protected materialization boundary finished. The corrected regression
+asserts the closing record's lease count and mutation-fails when the protected
+execution waiter is removed.
+
+**What to do.** When testing ownership after a bounded shutdown transitions to
+retained cleanup, measure the owner in its terminal collection or assert the
+actual release/close barrier. A convenience counter scoped to active/retired
+records may truthfully return zero after records are transferred, while
+definitive cleanup is still outstanding.
+
+---
+
 ## A registry entry needs both inventory and behavioral-ratchet coverage
 
 **TASK-13203, 2026-08-10.** The new `tts.profile_migration_backup` SQLite owner

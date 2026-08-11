@@ -150,6 +150,7 @@ async def resolve_default_profile(
     except (ValueError, AttributeError, TypeError):
         raise CharacterTTSResolutionError("default_profile_missing") from None
 
+    load_failure: CharacterTTSResolutionCode | None = None
     try:
         loaded = await profile_service.get_profile(profile_uuid)
     except asyncio.CancelledError:
@@ -161,17 +162,19 @@ async def resolve_default_profile(
             else "default_profile_store_unavailable"
         )
         _log_default_profile_resolution_failure(code, error)
-        raise CharacterTTSResolutionError(code) from None
+        load_failure = code
     except (ProfileServiceError, ProfileValidationError) as error:
         _log_default_profile_resolution_failure(
             "default_profile_store_unavailable", error
         )
-        raise CharacterTTSResolutionError("default_profile_store_unavailable") from None
+        load_failure = "default_profile_store_unavailable"
     except Exception as error:
         _log_default_profile_resolution_failure(
             "default_profile_store_unavailable", error
         )
-        raise CharacterTTSResolutionError("default_profile_store_unavailable") from None
+        load_failure = "default_profile_store_unavailable"
+    if load_failure is not None:
+        raise CharacterTTSResolutionError(load_failure) from None
 
     try:
         if type(loaded) is not LoadedTTSProfile:
@@ -179,6 +182,7 @@ async def resolve_default_profile(
         profile = loaded.profile
         reference: TTSCloneReference | None = None
         if profile.reference is not None:
+            reference_failure: CharacterTTSResolutionCode | None = None
             try:
                 reference = await profile_service.get_reference(
                     profile.profile_id,
@@ -196,21 +200,19 @@ async def resolve_default_profile(
                     "default_profile_store_unavailable",
                     error,
                 )
-                raise CharacterTTSResolutionError(
-                    "default_profile_store_unavailable"
-                ) from None
+                reference_failure = "default_profile_store_unavailable"
             except Exception as error:
                 _log_default_profile_resolution_failure(
                     "default_profile_store_unavailable",
                     error,
                 )
-                raise CharacterTTSResolutionError(
-                    "default_profile_store_unavailable"
-                ) from None
-            if (
-                type(reference) is not TTSCloneReference
-                or reference.summary != profile.reference
-            ):
+                reference_failure = "default_profile_store_unavailable"
+            if reference_failure is not None:
+                raise CharacterTTSResolutionError(reference_failure) from None
+            if type(reference) is not TTSCloneReference:
+                raise ValueError
+            assert reference is not None
+            if reference.summary != profile.reference:
                 raise ValueError
         request = TTSRequest(
             provider_id=profile.provider_id,

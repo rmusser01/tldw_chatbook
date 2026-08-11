@@ -318,7 +318,32 @@ async def test_assigned_character_reference_edit_race_fails_closed() -> None:
         )
 
     assert caught.value.code == "assignment_invalid"
+    assert caught.value.__context__ is None
+    assert caught.value.__cause__ is None
     assert service.reference_calls == [(_PROFILE_ID, 6, 9)]
+
+
+@pytest.mark.asyncio
+async def test_assigned_character_reference_failure_severs_raw_exception() -> None:
+    character_ref = _character_ref()
+    reference = _reference()
+    service = _FakeProfileService(
+        _loaded_assignment(character_ref, reference=reference.summary)
+    )
+    service.reference_error = RuntimeError("PRIVATE_REFERENCE_CANARY")
+    resolver = CharacterTTSRequestResolver(service)
+
+    with pytest.raises(CharacterTTSResolutionError) as caught:
+        await resolver.resolve(
+            text="Do not expose a reference failure.",
+            assistant_kind="character",
+            character_ref=character_ref,
+        )
+
+    assert caught.value.code == "profile_store_unavailable"
+    assert caught.value.__context__ is None
+    assert caught.value.__cause__ is None
+    assert "PRIVATE_REFERENCE_CANARY" not in repr(caught.value)
 
 
 @pytest.mark.asyncio
