@@ -30,9 +30,16 @@ def test_image_result_effective_params_is_an_optional_mapping():
         effective_params=params,
     )
     annotation = get_type_hints(ImageGenResult)["effective_params"]
+    outer_args = get_args(annotation)
+    mapping_member = next(member for member in outer_args if get_origin(member) is Mapping)
+    key_type, value_type = get_args(mapping_member)
 
     assert result.effective_params is params
-    assert any(get_origin(member) is Mapping for member in get_args(annotation))
+    assert len(outer_args) == 2
+    assert type(None) in outer_args
+    assert key_type is str
+    assert len(get_args(value_type)) == 5
+    assert set(get_args(value_type)) == {str, int, float, bool, type(None)}
 
 
 def test_image_generation_cancellation_and_comfyui_errors_are_typed_and_sanitized():

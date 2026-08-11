@@ -1,3 +1,6 @@
+import threading
+import warnings
+import zlib
 from io import BytesIO
 
 import pytest
@@ -21,6 +24,27 @@ def _image_bytes(*, image_format="PNG", mode="RGB", size=(2, 2)):
     buffer = BytesIO()
     Image.new(mode, size).save(buffer, format=image_format)
     return buffer.getvalue()
+
+
+def _png_with_dimensions(width, height):
+    encoded = bytearray(_image_bytes())
+    encoded[16:20] = width.to_bytes(4, "big")
+    encoded[20:24] = height.to_bytes(4, "big")
+    encoded[29:33] = (zlib.crc32(encoded[12:29]) & 0xFFFFFFFF).to_bytes(4, "big")
+    return bytes(encoded)
+
+
+class _ExplosiveBytes(bytes):
+    def __bool__(self):
+        raise AssertionError("bytes subclass truthiness must not be evaluated")
+
+    def __len__(self):
+        raise AssertionError("bytes subclass length must not be evaluated")
+
+
+class _LyingBytes(bytes):
+    def __len__(self):
+        return 1
 
 
 def _ref(**overrides):
@@ -201,6 +225,62 @@ def test_reference_image_non_bytes_content_is_refused(rv, content):
     ]
 
 
+def test_reference_image_plain_builtin_bytes_remain_valid(rv):
+    content = _image_bytes()
+    ok = {
+        "backend": "fal",
+        "prompt": "cat",
+        "extra_params": {},
+        "reference_image": _ref(content=content, bytes_len=len(content)),
+    }
+
+    assert type(content) is bytes
+    assert rv.validate_image_generation_request(ok) == []
+
+
+@pytest.mark.parametrize("content_factory", [memoryview, lambda value: _ExplosiveBytes(value)])
+def test_reference_image_requires_exact_builtin_bytes(rv, content_factory):
+    content = content_factory(_image_bytes())
+    bad = {
+        "backend": "fal",
+        "prompt": "cat",
+        "extra_params": {},
+        "reference_image": _ref(content=content, bytes_len=1),
+    }
+
+    issues = rv.validate_image_generation_request(bad)
+
+    assert issues == [
+        rv.ImageGenerationValidationIssue(
+            code="image_params_invalid",
+            message="reference image content must be bytes",
+            path="reference_image",
+        )
+    ]
+
+
+def test_lying_bytes_subclass_cannot_bypass_byte_cap(rv, monkeypatch):
+    builtin_content = _image_bytes()
+    monkeypatch.setattr(rv, "IMAGE_GEN_REFERENCE_MAX_BYTES", len(builtin_content))
+    content = _LyingBytes(builtin_content + b"padding")
+    bad = {
+        "backend": "fal",
+        "prompt": "cat",
+        "extra_params": {},
+        "reference_image": _ref(content=content, bytes_len=1),
+    }
+
+    issues = rv.validate_image_generation_request(bad)
+
+    assert issues == [
+        rv.ImageGenerationValidationIssue(
+            code="image_params_invalid",
+            message="reference image content must be bytes",
+            path="reference_image",
+        )
+    ]
+
+
 def test_reference_image_multiple_problems_all_reported_no_content_variant(rv):
     # Unsupported backend + bad mime + no content, all at once -- the checks
     # must not short-circuit each other. (Oversize and no-content are now
@@ -277,9 +357,11 @@ def test_reference_image_truncated_decode_is_refused(rv):
     )
 
 
-def test_reference_image_decompression_bomb_warning_is_refused(rv, monkeypatch):
-    content = _image_bytes(size=(2, 2))
-    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 2)
+def test_reference_image_decompression_bomb_error_is_sanitized(rv):
+    assert Image.MAX_IMAGE_PIXELS is not None
+    width = 100_000
+    height = (int(Image.MAX_IMAGE_PIXELS) * 3 // width) + 1
+    content = _png_with_dimensions(width, height)
     bad = {
         "backend": "fal",
         "prompt": "cat",
@@ -290,6 +372,67 @@ def test_reference_image_decompression_bomb_warning_is_refused(rv, monkeypatch):
     assert "reference image exceeds safe decode limits" in _messages(
         rv.validate_image_generation_request(bad)
     )
+
+
+def test_reference_validation_does_not_mutate_warning_filters_during_concurrent_warning(
+    rv,
+    monkeypatch,
+):
+    content = _image_bytes()
+    entered_load = threading.Event()
+    release_load = threading.Event()
+    original_load = PngImagePlugin.PngImageFile.load
+    worker_errors = []
+    worker_issues = []
+
+    def blocking_load(image, *args, **kwargs):
+        entered_load.set()
+        if not release_load.wait(2):
+            raise AssertionError("validation load did not resume")
+        return original_load(image, *args, **kwargs)
+
+    def validate_reference():
+        try:
+            worker_issues.extend(
+                rv.validate_image_generation_request(
+                    {
+                        "backend": "fal",
+                        "prompt": "cat",
+                        "extra_params": {},
+                        "reference_image": _ref(content=content, bytes_len=len(content)),
+                    }
+                )
+            )
+        except BaseException as exc:
+            worker_errors.append(exc)
+
+    monkeypatch.setattr(PngImagePlugin.PngImageFile, "load", blocking_load)
+    original_filters = list(warnings.filters)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", Image.DecompressionBombWarning)
+        expected_filters = list(warnings.filters)
+        thread = threading.Thread(target=validate_reference)
+        thread.start()
+        assert entered_load.wait(2)
+        filters_changed = warnings.filters != expected_filters
+        unrelated_error = None
+        try:
+            warnings.warn("unrelated Pillow warning", Image.DecompressionBombWarning)
+        except BaseException as exc:
+            unrelated_error = exc
+        finally:
+            release_load.set()
+            thread.join(2)
+
+        assert not thread.is_alive()
+        assert filters_changed is False
+        assert unrelated_error is None
+        assert worker_errors == []
+        assert worker_issues == []
+        assert len(caught) == 1
+        assert warnings.filters == expected_filters
+
+    assert warnings.filters == original_filters
 
 
 def test_reference_image_unsupported_mode_is_refused(rv):

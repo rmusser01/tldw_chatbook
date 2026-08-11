@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-import warnings
 from dataclasses import dataclass
 from io import BytesIO
 from typing import Any
@@ -243,7 +242,7 @@ def _validate_reference_image(
             )
         else:
             issues.append(_issue("reference image has no content bytes", "reference_image"))
-    elif not isinstance(content, bytes):
+    elif type(content) is not bytes:
         issues.append(_issue("reference image content must be bytes", "reference_image"))
     elif not content:
         issues.append(_issue("reference image has no content bytes", "reference_image"))
@@ -265,67 +264,65 @@ def _validate_reference_image_content(
     max_height = _positive_int_attr(config, "max_height", DEFAULT_MAX_HEIGHT)
     max_pixels = _positive_int_attr(config, "max_pixels", DEFAULT_MAX_PIXELS)
     try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", Image.DecompressionBombWarning)
-            with Image.open(BytesIO(content)) as image:
-                detected_format = image.format
-                mode = image.mode
-                decoded_width, decoded_height = image.size
-                header_valid = True
+        with Image.open(BytesIO(content)) as image:
+            detected_format = image.format
+            mode = image.mode
+            decoded_width, decoded_height = image.size
+            header_valid = True
 
-                declared_mime = getattr(reference_image, "mime_type", None)
-                if _REFERENCE_MIME_BY_FORMAT.get(
-                    str(detected_format or "").upper()
-                ) != declared_mime:
-                    issues.append(
-                        _issue(
-                            "reference image mime does not match image content",
-                            "reference_image",
-                        )
+            declared_mime = getattr(reference_image, "mime_type", None)
+            if _REFERENCE_MIME_BY_FORMAT.get(
+                str(detected_format or "").upper()
+            ) != declared_mime:
+                issues.append(
+                    _issue(
+                        "reference image mime does not match image content",
+                        "reference_image",
                     )
-                    header_valid = False
-
-                if mode not in REFERENCE_IMAGE_SUPPORTED_MODES:
-                    issues.append(
-                        _issue("reference image mode is not supported", "reference_image")
-                    )
-                    header_valid = False
-
-                header_valid &= _validate_reference_dimension(
-                    issues,
-                    getattr(reference_image, "width", None),
-                    path="width",
-                    max_value=max_width,
                 )
-                header_valid &= _validate_reference_dimension(
-                    issues,
-                    getattr(reference_image, "height", None),
-                    path="height",
-                    max_value=max_height,
-                )
-                if decoded_width <= 0 or decoded_width > max_width:
-                    issues.append(
-                        _issue("reference image width out of range", "reference_image")
-                    )
-                    header_valid = False
-                if decoded_height <= 0 or decoded_height > max_height:
-                    issues.append(
-                        _issue("reference image height out of range", "reference_image")
-                    )
-                    header_valid = False
-                if decoded_width * decoded_height > max_pixels:
-                    issues.append(
-                        _issue(
-                            "reference image dimensions exceed max pixels",
-                            "reference_image",
-                        )
-                    )
-                    header_valid = False
+                header_valid = False
 
-                if not header_valid:
-                    return
-                image.load()
-    except (Image.DecompressionBombError, Image.DecompressionBombWarning):
+            if mode not in REFERENCE_IMAGE_SUPPORTED_MODES:
+                issues.append(
+                    _issue("reference image mode is not supported", "reference_image")
+                )
+                header_valid = False
+
+            header_valid &= _validate_reference_dimension(
+                issues,
+                getattr(reference_image, "width", None),
+                path="width",
+                max_value=max_width,
+            )
+            header_valid &= _validate_reference_dimension(
+                issues,
+                getattr(reference_image, "height", None),
+                path="height",
+                max_value=max_height,
+            )
+            if decoded_width <= 0 or decoded_width > max_width:
+                issues.append(
+                    _issue("reference image width out of range", "reference_image")
+                )
+                header_valid = False
+            if decoded_height <= 0 or decoded_height > max_height:
+                issues.append(
+                    _issue("reference image height out of range", "reference_image")
+                )
+                header_valid = False
+            if decoded_width * decoded_height > max_pixels:
+                issues.append(
+                    _issue(
+                        "reference image dimensions exceed max pixels",
+                        "reference_image",
+                    )
+                )
+                header_valid = False
+
+            if not header_valid:
+                return
+            image.load()
+    except Image.DecompressionBombError:
         issues.append(_issue("reference image exceeds safe decode limits", "reference_image"))
         return
     except (OSError, UnidentifiedImageError, ValueError):
