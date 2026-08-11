@@ -23,6 +23,7 @@ from __future__ import annotations
 import pytest
 
 from Tests.UI.app_factory import _build_test_app
+from tldw_chatbook.Constants import TAB_CHAT, TAB_SETTINGS
 from tldw_chatbook.UI.Navigation.main_navigation import (
     MainNavigationBar,
     NavigateToScreen,
@@ -80,11 +81,11 @@ async def test_settings_nav_bar_scrolls_active_destination_into_view():
     that replaces the nav bar shortly after the screen mounts.
     """
     app = _build_test_app()
-    app._initial_tab_value = "chat"
+    app._initial_tab_value = TAB_CHAT
     async with app.run_test(size=(80, 24)) as pilot:
-        await _wait_for_screen(app, pilot, ChatScreen, "chat")
-        await app.handle_screen_navigation(NavigateToScreen("settings"))
-        screen = await _wait_for_screen(app, pilot, SettingsScreen, "settings")
+        await _wait_for_screen(app, pilot, ChatScreen, TAB_CHAT)
+        await app.handle_screen_navigation(NavigateToScreen(TAB_SETTINGS))
+        screen = await _wait_for_screen(app, pilot, SettingsScreen, TAB_SETTINGS)
 
         first_bar = _current_nav_bar(screen)
         assert first_bar is not None

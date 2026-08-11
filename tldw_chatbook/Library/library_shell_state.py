@@ -29,6 +29,12 @@ LIBRARY_ROW_BROWSE_SKILLS = "browse-skills"
 LIBRARY_ROW_BROWSE_SEARCH = "browse-search"
 LIBRARY_ROW_BROWSE_COLLECTIONS = "browse-collections"
 LIBRARY_ROW_CREATE_NOTE = "create-note"
+# The three Study staging (handoff) rows -- consumers that need "is this a
+# study handoff row" import these rather than repeating the literals
+# (Qodo PR-1488 #2; the study_rows definitions below are the canonical use).
+LIBRARY_ROW_CREATE_STUDY = "create-study"
+LIBRARY_ROW_CREATE_FLASHCARDS = "create-flashcards"
+LIBRARY_ROW_CREATE_QUIZZES = "create-quizzes"
 # Task 8b D1: "New prompt" -- unlike LIBRARY_ROW_CREATE_NOTE (its own
 # "notes-create" canvas kind, a landing chooser of Blank/template rows),
 # this row's target_id is "prompts" itself: it reuses the SAME canvas kind
@@ -421,7 +427,7 @@ def build_library_shell_state(
     # press them); the section_id carries the regrouping.
     study_rows = (
         LibraryRailRow(
-            row_id="create-study",
+            row_id=LIBRARY_ROW_CREATE_STUDY,
             section_id="study",
             title="Study decks",
             target_kind="handoff",
@@ -431,7 +437,7 @@ def build_library_shell_state(
             count_loading=state.counts_loading,
         ),
         LibraryRailRow(
-            row_id="create-flashcards",
+            row_id=LIBRARY_ROW_CREATE_FLASHCARDS,
             section_id="study",
             title="Flashcards",
             target_kind="handoff",
@@ -457,7 +463,7 @@ def build_library_shell_state(
             short_title="Cards",
         ),
         LibraryRailRow(
-            row_id="create-quizzes",
+            row_id=LIBRARY_ROW_CREATE_QUIZZES,
             section_id="study",
             title="Quizzes",
             target_kind="handoff",

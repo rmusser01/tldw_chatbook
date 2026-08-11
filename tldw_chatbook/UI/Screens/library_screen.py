@@ -246,9 +246,12 @@ from ...Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_PROMPTS,
     LIBRARY_ROW_BROWSE_SEARCH,
     LIBRARY_ROW_BROWSE_SKILLS,
+    LIBRARY_ROW_CREATE_FLASHCARDS,
     LIBRARY_ROW_CREATE_NOTE,
     LIBRARY_ROW_CREATE_PROMPT,
+    LIBRARY_ROW_CREATE_QUIZZES,
     LIBRARY_ROW_CREATE_SKILL,
+    LIBRARY_ROW_CREATE_STUDY,
     LIBRARY_ROW_INGEST_EXPORT,
     LIBRARY_ROW_INGEST_MEDIA,
     LibraryShellInput,
@@ -960,16 +963,16 @@ LIBRARY_NAV_MODE_TO_ROW_ID = {
     "prompts": LIBRARY_ROW_BROWSE_PROMPTS,
     "skills": LIBRARY_ROW_BROWSE_SKILLS,
     "media": LIBRARY_ROW_BROWSE_MEDIA,
-    "study": "create-study",
+    "study": LIBRARY_ROW_CREATE_STUDY,
 }
 
 #: task-4023 AC#7: the three Study staging (handoff) rows -- the surfaces
 #: whose Escape returns to the hub landing (they had no back path at all).
 #: Row ids match ``library_shell_state.py``'s study_rows.
 LIBRARY_STUDY_HANDOFF_ROW_IDS = (
-    "create-study",
-    "create-flashcards",
-    "create-quizzes",
+    LIBRARY_ROW_CREATE_STUDY,
+    LIBRARY_ROW_CREATE_FLASHCARDS,
+    LIBRARY_ROW_CREATE_QUIZZES,
 )
 
 
