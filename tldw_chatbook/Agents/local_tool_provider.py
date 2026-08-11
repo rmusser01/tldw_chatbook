@@ -9,6 +9,7 @@ methods are sync and worker-thread safe; no Textual/event-loop imports.
 
 from __future__ import annotations
 
+import json
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -25,6 +26,18 @@ from ..config import coerce_bool_setting, get_cli_setting
 from .agent_models import ToolCatalogEntry, ToolResult, ToolSchema
 from .mcp_tool_provider import MCPPendingCall
 from .run_context import current_run_id
+from .session_todo_store import (
+    MAX_TODO_CONTENT_CHARS,
+    MAX_TODO_ITEMS,
+    MAX_TODO_NUMBER,
+    SessionTodoStore,
+    TodoChangeCallback,
+    TodoRecord,
+    TodoStoreError,
+    _task_id_number,
+    _validate_expected_version,
+    _validate_task_id,
+)
 
 # Module-level (not the function-local imports the other `_default_specs`
 # tool modules use) SPECIFICALLY so tests can patch this one name via
@@ -72,7 +85,9 @@ LOCAL_KILL_SWITCH_REFUSAL = "blocked — local tools are switched off"
 # and no "permanently unavailable" implication (unlike `LOCAL_TIMEOUT_
 # REFUSAL`'s "do not retry" -- a resolver crash is plausibly transient,
 # where a genuine unapproved timeout is not).
-LOCAL_GATE_ERROR_REFUSAL = f"blocked — {PERMISSION_STATE_UNRESOLVED_CLAUSE}; retrying may succeed"
+LOCAL_GATE_ERROR_REFUSAL = (
+    f"blocked — {PERMISSION_STATE_UNRESOLVED_CLAUSE}; retrying may succeed"
+)
 
 _MAX_RESULT_BYTES = 32 * 1024
 _MAX_ERROR_CHARS = 300
@@ -148,14 +163,14 @@ class LocalToolProvider:
             (MCP parity: "denied" / "denied-timeout" only -- MCP records
             successful executions service-side via execute_hub_tool, which
             has no local analogue); None means no recording.
-        todo_store: Optional live list the ``todo_write`` tool replaces in
-            place (the Console session's own ``todos`` list). When None, the
-            ``todo_write`` spec is NOT registered: the provider is per-run
-            and context-free per call, so todo state only exists when the
-            composition hands one in -- no store, no todo capability.
-        on_todo_change: (list) -> None hook fired after each successful
-            ``todo_write`` (e.g. transcript rendering); guarded never-raise
-            like the provider's other seams.
+        todo_store: Optional stable-ID task store for this Console session.
+            When None, no ``todo_*`` task operation is registered: the
+            provider is context-free per call, so task state only exists
+            when the composition hands one in.
+        on_todo_change: Callback fired by the store after each successful
+            ``todo_create`` or ``todo_update`` mutation (e.g. transcript
+            rendering). The store contains callback failures and logs one
+            fixed payload-free diagnostic.
         no_callback_refusal: Refusal copy returned when an "ask"-state call
             reaches the "no_callback" verdict (approval_callback is None).
             None keeps the pinned LOCAL_TIMEOUT_REFUSAL -- the override
@@ -172,12 +187,13 @@ class LocalToolProvider:
         specs: list[LocalToolSpec] | None = None,
         resolve_state: Callable[[HubTool], EffectiveToolState] | None = None,
         kill_switch: Callable[[], bool] = lambda: False,
-        approval_callback: Callable[[list[MCPPendingCall]], dict[str, str]] | None = None,
+        approval_callback: Callable[[list[MCPPendingCall]], dict[str, str]]
+        | None = None,
         is_session_approved: Callable[[HubTool], bool] | None = None,
         persist_approval: Callable[[HubTool, str], None] | None = None,
         record_decision: Callable[[HubTool, str], None] | None = None,
-        todo_store: list | None = None,
-        on_todo_change: Callable[[list], None] | None = None,
+        todo_store: SessionTodoStore | None = None,
+        on_todo_change: TodoChangeCallback | None = None,
         no_callback_refusal: str | None = None,
     ) -> None:
         self._root = workspace_root
@@ -193,7 +209,9 @@ class LocalToolProvider:
                 )
             )
         }
-        self._resolve_state = resolve_state or (lambda hub: EffectiveToolState(state="ask", origin="global_default"))
+        self._resolve_state = resolve_state or (
+            lambda hub: EffectiveToolState(state="ask", origin="global_default")
+        )
         self._kill_switch = kill_switch
         self._approval_callback = approval_callback
         self._is_session_approved = is_session_approved
@@ -251,8 +269,10 @@ class LocalToolProvider:
         name = tool_id.split(":", 1)[1] if ":" in tool_id else tool_id
         spec = self._specs[name]
         return ToolSchema(
-            id=tool_id, name=spec.name,
-            description=spec.description, parameters=spec.parameters,
+            id=tool_id,
+            name=spec.name,
+            description=spec.description,
+            parameters=spec.parameters,
         )
 
     def hub_tool_for(self, name: str) -> HubTool:
@@ -327,8 +347,8 @@ class LocalToolProvider:
 
         Returns:
             One ``HubTool`` per registered spec. When no ``todo_store``
-            was injected, ``todo_write`` is not registered and therefore
-            not listed.
+            was injected, none of the four stable task operations is
+            registered or listed.
         """
         return [self.hub_tool_for(name) for name in self._specs]
 
@@ -347,9 +367,7 @@ class LocalToolProvider:
         """
         with self._stamps_lock:
             self._stamps = {
-                key: value
-                for key, value in self._stamps.items()
-                if key[0] != run_id
+                key: value for key, value in self._stamps.items() if key[0] != run_id
             }
             for name, verdict in (decisions or {}).items():
                 self._stamps[(run_id, name)] = verdict
@@ -380,14 +398,10 @@ class LocalToolProvider:
         """
         with self._stamps_lock:
             saved = {
-                key: value
-                for key, value in self._stamps.items()
-                if key[0] == run_id
+                key: value for key, value in self._stamps.items() if key[0] == run_id
             }
             self._stamps = {
-                key: value
-                for key, value in self._stamps.items()
-                if key[0] != run_id
+                key: value for key, value in self._stamps.items() if key[0] != run_id
             }
         try:
             yield
@@ -421,7 +435,9 @@ class LocalToolProvider:
         spec = self._specs.get(name)
         if spec is None:
             return None
-        gate, _resolve_failed = self._resolve_pending_gate(name, args, self.hub_tool_for(name))
+        gate, _resolve_failed = self._resolve_pending_gate(
+            name, args, self.hub_tool_for(name)
+        )
         return gate
 
     def _resolve_pending_gate(
@@ -462,9 +478,7 @@ class LocalToolProvider:
         try:
             state = self._resolve_state(hub)
         except Exception as exc:  # noqa: BLE001 — fail closed to "let invoke handle it"
-            logger.warning(
-                f"LocalToolProvider: resolve_state failed for {name}: {exc}"
-            )
+            logger.warning(f"LocalToolProvider: resolve_state failed for {name}: {exc}")
             return None, True
         if state.state != "ask":
             return None, False
@@ -473,8 +487,10 @@ class LocalToolProvider:
         if self._is_session_approved_safe(hub):
             return None, False
         reason = (
-            "config_changed" if state.config_changed
-            else "risk_floored" if state.risk_floored
+            "config_changed"
+            if state.config_changed
+            else "risk_floored"
+            if state.risk_floored
             else "ask"
         )
         gate = MCPPendingCall(
@@ -527,7 +543,9 @@ class LocalToolProvider:
             try:
                 return ToolResult(ok=True, content=_fit_result(spec.handler(args)))
             except Exception as exc:  # noqa: BLE001 — never raises across the boundary
-                return ToolResult(ok=False, error=(str(exc) or repr(exc))[:_MAX_ERROR_CHARS])
+                return ToolResult(
+                    ok=False, error=(str(exc) or repr(exc))[:_MAX_ERROR_CHARS]
+                )
         if verdict == "timeout":
             self._record_decision_safe(self.hub_tool_for(name), "denied-timeout")
             return ToolResult(ok=False, error=LOCAL_TIMEOUT_REFUSAL)
@@ -640,12 +658,18 @@ class LocalToolProvider:
             try:
                 decisions = self._approval_callback([gate])
             except Exception as exc:  # noqa: BLE001 — fail closed on a callback failure
-                logger.warning(f"LocalToolProvider: approval_callback failed for {name}: {exc}")
+                logger.warning(
+                    f"LocalToolProvider: approval_callback failed for {name}: {exc}"
+                )
                 return "timeout"
             decision = (decisions or {}).get(name, "timeout")
             if decision in ("approve_session", "always_allow"):
                 self._persist_approval_safe(hub, decision)
-            return "allow" if decision in ("approve_once", "approve_session", "always_allow") else decision
+            return (
+                "allow"
+                if decision in ("approve_once", "approve_session", "always_allow")
+                else decision
+            )
         return "no_callback"
 
     def _is_session_approved_safe(self, hub: HubTool) -> bool:
@@ -683,95 +707,158 @@ class LocalToolProvider:
             )
 
 
-_TODO_STATUSES = ("pending", "in_progress", "completed")
-#: Caps on the model-controlled todo payload: every state change re-renders
-#: the full list into the in-memory transcript, and model-controlled text is
-#: bounded everywhere else in this pipeline (step markers truncate at 200
-#: chars, tool results byte-fit) -- the todo list is no exception.
-MAX_TODO_ITEMS = 50
-MAX_TODO_CONTENT_CHARS = 500
-#: Keys copied into session state; anything else the model sends is dropped.
-_TODO_KEYS = ("content", "status", "activeForm")
+_TODO_STATUSES = ("pending", "in_progress", "completed", "deleted")
+_TODO_ID_PATTERN = (
+    r"^(?:"
+    r"[1-9][0-9]{0,14}|"
+    r"[1-8][0-9]{15}|"
+    r"900[0-6][0-9]{12}|"
+    r"90070[0-9]{11}|"
+    r"90071[0-8][0-9]{10}|"
+    r"900719[0-8][0-9]{9}|"
+    r"9007199[0-1][0-9]{8}|"
+    r"90071992[0-4][0-9]{7}|"
+    r"900719925[0-3][0-9]{6}|"
+    r"9007199254[0-6][0-9]{5}|"
+    r"90071992547[0-3][0-9]{4}|"
+    r"9007199254740[0-8][0-9]{2}|"
+    r"90071992547409[0-8][0-9]|"
+    r"900719925474099[0-1]"
+    r")(?![\s\S])"
+)
 
 
-def _validate_todos(raw: object) -> list[dict]:
-    """Validate the todo_write payload; returns whitelisted copies of the items.
-
-    Raises LocalToolError (a ValueError) with a model-actionable message on
-    any shape violation (bad types, missing/blank/overlong content, invalid
-    status, more than one in_progress, over MAX_TODO_ITEMS items);
-    ``invoke()`` converts it into a ToolResult error, so nothing raises
-    across the provider boundary. Validation happens BEFORE the store is
-    touched, so a rejected write leaves the todos unchanged. Returned items
-    carry only the known keys -- no arbitrary model junk in session state.
-    """
-    from tldw_chatbook.Tools.local_tool_impls import LocalToolError
-
-    if not isinstance(raw, list):
-        raise LocalToolError(
-            "todos must be a list of {content, status, activeForm} items "
-            f"(got {type(raw).__name__})"
-        )
-    if len(raw) > MAX_TODO_ITEMS:
-        raise LocalToolError(
-            f"todos has {len(raw)} items; at most {MAX_TODO_ITEMS} are "
-            "allowed -- drop completed items or split the work"
-        )
-    items: list[dict] = []
-    in_progress = 0
-    for index, item in enumerate(raw):
-        if not isinstance(item, dict):
-            raise LocalToolError(
-                f"todos[{index}] must be an object with content/status/activeForm"
-            )
-        content = item.get("content")
-        if not isinstance(content, str) or not content.strip():
-            raise LocalToolError(
-                f"todos[{index}].content must be a non-empty string"
-            )
-        if len(content) > MAX_TODO_CONTENT_CHARS:
-            raise LocalToolError(
-                f"todos[{index}].content is {len(content)} chars; at most "
-                f"{MAX_TODO_CONTENT_CHARS} are allowed -- shorten it"
-            )
-        status = item.get("status")
-        if status not in _TODO_STATUSES:
-            raise LocalToolError(
-                f"todos[{index}].status must be one of "
-                f"{'|'.join(_TODO_STATUSES)} (got {status!r})"
-            )
-        active_form = item.get("activeForm")
-        if active_form is not None and not isinstance(active_form, str):
-            raise LocalToolError(
-                f"todos[{index}].activeForm must be a string "
-                f"(got {type(active_form).__name__})"
-            )
-        if status == "in_progress":
-            in_progress += 1
-        items.append({key: item[key] for key in _TODO_KEYS if key in item})
-    if in_progress > 1:
-        raise LocalToolError(
-            "at most one todo may be in_progress; mark the others pending "
-            "or completed"
-        )
-    return items
+def _todo_id_schema() -> dict[str, object]:
+    """Return the shared exact canonical task-ID JSON Schema."""
+    return {"type": "string", "pattern": _TODO_ID_PATTERN}
 
 
-def _make_todo_write_handler(
-    store: list, on_todo_change: Callable[[list], None] | None
+def _exact_task_args(
+    args: object,
+    *,
+    allowed: set[str],
+    required: set[str],
+) -> dict:
+    """Validate a task call's raw object keys without reflecting its payload."""
+    if type(args) is not dict:
+        raise TodoStoreError("arguments must be an object")
+    supplied = set(args)
+    if supplied - allowed:
+        raise TodoStoreError("arguments contain unknown properties")
+    if required - supplied:
+        raise TodoStoreError("required task arguments are missing")
+    return args
+
+
+def _todo_json(payload: object) -> str:
+    """Serialize one complete compact task result within the provider cap."""
+    text = json.dumps(
+        payload,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    )
+    if len(text.encode("utf-8")) > _MAX_RESULT_BYTES:
+        raise TodoStoreError("task result exceeds the result limit")
+    return text
+
+
+def _make_todo_create_handler(
+    store: SessionTodoStore,
+    on_todo_change: TodoChangeCallback | None,
 ) -> Callable[[dict], str]:
-    """Build the todo_write handler bound to one live session todo list."""
+    """Build ``todo_create`` for one session store."""
 
     def _handler(args: dict) -> str:
-        items = _validate_todos(args.get("todos"))
-        store[:] = items  # replace in place: the session keeps its own list
-        if on_todo_change is not None:
+        values = _exact_task_args(
+            args,
+            allowed={"content", "activeForm"},
+            required={"content"},
+        )
+        kwargs: dict[str, object] = {
+            "content": values["content"],
+            "on_change": on_todo_change,
+        }
+        if "activeForm" in values:
+            kwargs["active_form"] = values["activeForm"]
+        return _todo_json(store.create(**kwargs))
+
+    return _handler
+
+
+def _make_todo_update_handler(
+    store: SessionTodoStore,
+    on_todo_change: TodoChangeCallback | None,
+) -> Callable[[dict], str]:
+    """Build the compare-and-swap ``todo_update`` operation."""
+
+    def _handler(args: dict) -> str:
+        values = _exact_task_args(
+            args,
+            allowed={"id", "expected_version", "content", "status", "activeForm"},
+            required={"id", "expected_version"},
+        )
+        task_id = _validate_task_id(values["id"])
+        expected_version = _validate_expected_version(values["expected_version"])
+        kwargs: dict[str, object] = {
+            "task_id": task_id,
+            "expected_version": expected_version,
+            "on_change": on_todo_change,
+        }
+        for argument, store_argument in (
+            ("content", "content"),
+            ("status", "status"),
+            ("activeForm", "active_form"),
+        ):
+            if argument in values:
+                kwargs[store_argument] = values[argument]
+        return _todo_json(store.update(**kwargs))
+
+    return _handler
+
+
+def _make_todo_get_handler(store: SessionTodoStore) -> Callable[[dict], str]:
+    """Build ``todo_get`` for one session store."""
+
+    def _handler(args: dict) -> str:
+        values = _exact_task_args(args, allowed={"id"}, required={"id"})
+        task_id = _validate_task_id(values["id"])
+        return _todo_json(store.get(task_id))
+
+    return _handler
+
+
+def _make_todo_list_handler(store: SessionTodoStore) -> Callable[[dict], str]:
+    """Build a byte-aware, stable-cursor ``todo_list`` operation."""
+
+    def _handler(args: dict) -> str:
+        values = _exact_task_args(args, allowed={"cursor"}, required=set())
+        cursor_number: int | None = None
+        if "cursor" in values:
+            cursor = _validate_task_id(values["cursor"])
+            cursor_number = _task_id_number(cursor)
+
+        remaining = store.list_after(cursor_number)
+        if not remaining:
+            return _todo_json({"tasks": [], "next_cursor": None})
+
+        page: list[TodoRecord] = []
+        serialized = ""
+        for index, record in enumerate(remaining):
+            candidate = [*page, record]
+            has_more = index + 1 < len(remaining)
+            next_cursor = record["id"] if has_more else None
             try:
-                on_todo_change(store)
-            except Exception as exc:  # noqa: BLE001 — never-raise seam, like the provider's others
-                logger.warning(f"LocalToolProvider: on_todo_change failed: {exc}")
-        in_progress = sum(1 for item in items if item["status"] == "in_progress")
-        return f"{len(items)} todos ({in_progress} in progress)"
+                candidate_json = _todo_json(
+                    {"tasks": candidate, "next_cursor": next_cursor}
+                )
+            except TodoStoreError:
+                if not page:
+                    raise
+                return _todo_json({"tasks": page, "next_cursor": page[-1]["id"]})
+            page = candidate
+            serialized = candidate_json
+        return serialized
 
     return _handler
 
@@ -779,8 +866,8 @@ def _make_todo_write_handler(
 def _default_specs(
     workspace_root: Path,
     *,
-    todo_store: list | None = None,
-    on_todo_change: Callable[[list], None] | None = None,
+    todo_store: SessionTodoStore | None = None,
+    on_todo_change: TodoChangeCallback | None = None,
 ) -> list[LocalToolSpec]:
     from tldw_chatbook.Tools.git_tool_impls import (
         GIT_LOG_DEFAULT_COUNT,
@@ -825,11 +912,16 @@ def _default_specs(
             parameters={
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Directory path, relative to the workspace root (use \".\" for the root)."},
+                    "path": {
+                        "type": "string",
+                        "description": 'Directory path, relative to the workspace root (use "." for the root).',
+                    },
                 },
                 "required": ["path"],
             },
-            handler=lambda args: list_directory(args["path"], workspace_root=workspace_root),
+            handler=lambda args: list_directory(
+                args["path"], workspace_root=workspace_root
+            ),
             tags=(),
         ),
         LocalToolSpec(
@@ -838,9 +930,19 @@ def _default_specs(
             parameters={
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "File path, relative to the workspace root."},
-                    "offset": {"type": "integer", "default": 1, "description": "1-based first line to return."},
-                    "limit": {"type": "integer", "description": "Maximum number of lines to return (default: all)."},
+                    "path": {
+                        "type": "string",
+                        "description": "File path, relative to the workspace root.",
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "1-based first line to return.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of lines to return (default: all).",
+                    },
                 },
                 "required": ["path"],
             },
@@ -858,12 +960,20 @@ def _default_specs(
             parameters={
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "File path, relative to the workspace root. Parent directory must already exist."},
-                    "content": {"type": "string", "description": "Full file content to write."},
+                    "path": {
+                        "type": "string",
+                        "description": "File path, relative to the workspace root. Parent directory must already exist.",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Full file content to write.",
+                    },
                 },
                 "required": ["path", "content"],
             },
-            handler=lambda args: write_file(args["path"], args["content"], workspace_root=workspace_root),
+            handler=lambda args: write_file(
+                args["path"], args["content"], workspace_root=workspace_root
+            ),
             tags=("mutates",),
         ),
         LocalToolSpec(
@@ -872,10 +982,23 @@ def _default_specs(
             parameters={
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "File path, relative to the workspace root."},
-                    "old_string": {"type": "string", "description": "Exact string to replace; must occur exactly once unless replace_all is true."},
-                    "new_string": {"type": "string", "description": "Replacement string."},
-                    "replace_all": {"type": "boolean", "default": False, "description": "Replace every occurrence of old_string."},
+                    "path": {
+                        "type": "string",
+                        "description": "File path, relative to the workspace root.",
+                    },
+                    "old_string": {
+                        "type": "string",
+                        "description": "Exact string to replace; must occur exactly once unless replace_all is true.",
+                    },
+                    "new_string": {
+                        "type": "string",
+                        "description": "Replacement string.",
+                    },
+                    "replace_all": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Replace every occurrence of old_string.",
+                    },
                 },
                 "required": ["path", "old_string", "new_string"],
             },
@@ -905,8 +1028,15 @@ def _default_specs(
             parameters={
                 "type": "object",
                 "properties": {
-                    "diff": {"type": "string", "description": "Unified diff text (---/+++ headers, @@ hunks); a/ and b/ prefixes optional. No deletes or renames."},
-                    "dry_run": {"type": "boolean", "default": False, "description": "Validate and report what would be patched without writing anything."},
+                    "diff": {
+                        "type": "string",
+                        "description": "Unified diff text (---/+++ headers, @@ hunks); a/ and b/ prefixes optional. No deletes or renames.",
+                    },
+                    "dry_run": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Validate and report what would be patched without writing anything.",
+                    },
                 },
                 "required": ["diff"],
             },
@@ -923,8 +1053,15 @@ def _default_specs(
             parameters={
                 "type": "object",
                 "properties": {
-                    "pattern": {"type": "string", "description": "Glob pattern relative to the workspace root (e.g. \"**/*.py\"). Hidden dirs under the root are searched. \"**\" alone matches no files (directories only) — use \"**/*\" to match everything."},
-                    "max_results": {"type": "integer", "minimum": 1, "description": "Maximum number of paths to return (default 100)."},
+                    "pattern": {
+                        "type": "string",
+                        "description": 'Glob pattern relative to the workspace root (e.g. "**/*.py"). Hidden dirs under the root are searched. "**" alone matches no files (directories only) — use "**/*" to match everything.',
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Maximum number of paths to return (default 100).",
+                    },
                 },
                 "required": ["pattern"],
             },
@@ -941,9 +1078,21 @@ def _default_specs(
             parameters={
                 "type": "object",
                 "properties": {
-                    "pattern": {"type": "string", "description": "Regular expression to search for."},
-                    "mode": {"type": "string", "enum": ["content", "files", "count"], "default": "content", "description": "\"content\": relpath:lineno:line; \"files\": matching paths only; \"count\": relpath:match_count."},
-                    "max_results": {"type": "integer", "minimum": 1, "description": "Maximum number of result lines to return (default 100)."},
+                    "pattern": {
+                        "type": "string",
+                        "description": "Regular expression to search for.",
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["content", "files", "count"],
+                        "default": "content",
+                        "description": '"content": relpath:lineno:line; "files": matching paths only; "count": relpath:match_count.',
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Maximum number of result lines to return (default 100).",
+                    },
                 },
                 "required": ["pattern"],
             },
@@ -969,12 +1118,13 @@ def _default_specs(
             parameters={
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Path inside the repository, relative to the workspace root (default: the workspace root)."},
+                    "path": {
+                        "type": "string",
+                        "description": "Path inside the repository, relative to the workspace root (default: the workspace root).",
+                    },
                 },
             },
-            handler=lambda args: git_status(
-                workspace_root, path=args.get("path", ".")
-            ),
+            handler=lambda args: git_status(workspace_root, path=args.get("path", ".")),
             tags=(),
         ),
         LocalToolSpec(
@@ -983,7 +1133,7 @@ def _default_specs(
                 "Show changes in the workspace repository as a unified diff. "
                 "Modes: default is the unstaged worktree diff; staged=true "
                 "diffs the index against HEAD; commit_range (e.g. "
-                "\"HEAD~1..HEAD\") diffs against or between commits "
+                '"HEAD~1..HEAD") diffs against or between commits '
                 "(combines with staged); stat=true returns a compact "
                 "--stat summary instead of the patch. Read-only; "
                 "cannot modify the repository."
@@ -991,10 +1141,24 @@ def _default_specs(
             parameters={
                 "type": "object",
                 "properties": {
-                    "staged": {"type": "boolean", "default": False, "description": "Diff the staged index against HEAD instead of the unstaged worktree."},
-                    "commit_range": {"type": "string", "description": "Commit range to diff (e.g. \"HEAD~1..HEAD\"); combines with staged."},
-                    "path": {"type": "string", "description": "Limit the diff to one path, relative to the workspace root."},
-                    "stat": {"type": "boolean", "default": False, "description": "Return a --stat summary (files changed, insertions, deletions) instead of the full patch."},
+                    "staged": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Diff the staged index against HEAD instead of the unstaged worktree.",
+                    },
+                    "commit_range": {
+                        "type": "string",
+                        "description": 'Commit range to diff (e.g. "HEAD~1..HEAD"); combines with staged.',
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Limit the diff to one path, relative to the workspace root.",
+                    },
+                    "stat": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Return a --stat summary (files changed, insertions, deletions) instead of the full patch.",
+                    },
                 },
             },
             handler=lambda args: git_diff(
@@ -1016,8 +1180,15 @@ def _default_specs(
             parameters={
                 "type": "object",
                 "properties": {
-                    "count": {"type": "integer", "default": GIT_LOG_DEFAULT_COUNT, "description": "Maximum number of commits to return (default 20, capped at 100)."},
-                    "path": {"type": "string", "description": "Limit history to commits touching this path, relative to the workspace root."},
+                    "count": {
+                        "type": "integer",
+                        "default": GIT_LOG_DEFAULT_COUNT,
+                        "description": "Maximum number of commits to return (default 20, capped at 100).",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Limit history to commits touching this path, relative to the workspace root.",
+                    },
                 },
             },
             handler=lambda args: git_log(
@@ -1038,9 +1209,18 @@ def _default_specs(
             parameters={
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "File path, relative to the workspace root."},
-                    "start_line": {"type": "integer", "description": "First line to blame (1-based; default: file start)."},
-                    "end_line": {"type": "integer", "description": "Last line to blame (1-based, inclusive; range capped at 500 lines)."},
+                    "path": {
+                        "type": "string",
+                        "description": "File path, relative to the workspace root.",
+                    },
+                    "start_line": {
+                        "type": "integer",
+                        "description": "First line to blame (1-based; default: file start).",
+                    },
+                    "end_line": {
+                        "type": "integer",
+                        "description": "Last line to blame (1-based, inclusive; range capped at 500 lines).",
+                    },
                 },
                 "required": ["path"],
             },
@@ -1081,12 +1261,20 @@ def _default_specs(
             parameters={
                 "type": "object",
                 "properties": {
-                    "url": {"type": "string", "description": "Public http(s) URL to fetch."},
-                    "max_bytes": {"type": "integer", "description": "Maximum response bytes to read for text/HTML (default 1 MiB; hard cap 5 MiB). Declared or sniffed binaries read against their own ceilings instead (20 MB PDF, 10 MB image/ZIP/audio) and are refused, not truncated, when over."},
+                    "url": {
+                        "type": "string",
+                        "description": "Public http(s) URL to fetch.",
+                    },
+                    "max_bytes": {
+                        "type": "integer",
+                        "description": "Maximum response bytes to read for text/HTML (default 1 MiB; hard cap 5 MiB). Declared or sniffed binaries read against their own ceilings instead (20 MB PDF, 10 MB image/ZIP/audio) and are refused, not truncated, when over.",
+                    },
                 },
                 "required": ["url"],
             },
-            handler=lambda args: web_fetch(args["url"], max_bytes=args.get("max_bytes", FETCH_MAX_BYTES)),
+            handler=lambda args: web_fetch(
+                args["url"], max_bytes=args.get("max_bytes", FETCH_MAX_BYTES)
+            ),
             # network-classed: default ask comes from the permission store's
             # global default; read-only, so no risk tags.
             tags=(),
@@ -1098,8 +1286,19 @@ def _default_specs(
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "The search query."},
-                    "search_engine": {"type": "string", "enum": list(SEARCH_ENGINES), "default": SEARCH_DEFAULT_ENGINE, "description": "Search engine to use."},
-                    "result_count": {"type": "integer", "default": SEARCH_DEFAULT_RESULT_COUNT, "minimum": 1, "maximum": SEARCH_MAX_RESULT_COUNT, "description": "Number of results to return."},
+                    "search_engine": {
+                        "type": "string",
+                        "enum": list(SEARCH_ENGINES),
+                        "default": SEARCH_DEFAULT_ENGINE,
+                        "description": "Search engine to use.",
+                    },
+                    "result_count": {
+                        "type": "integer",
+                        "default": SEARCH_DEFAULT_RESULT_COUNT,
+                        "minimum": 1,
+                        "maximum": SEARCH_MAX_RESULT_COUNT,
+                        "description": "Number of results to return.",
+                    },
                 },
                 "required": ["query"],
             },
@@ -1124,10 +1323,28 @@ def _default_specs(
             parameters={
                 "type": "object",
                 "properties": {
-                    "url": {"type": "string", "description": "Start URL; its host defines the crawl scope."},
-                    "max_pages": {"type": "integer", "default": CRAWL_DEFAULT_MAX_PAGES, "minimum": 1, "maximum": CRAWL_MAX_PAGES_CEILING, "description": "Fetch-attempt budget."},
-                    "max_depth": {"type": "integer", "default": CRAWL_DEFAULT_MAX_DEPTH, "minimum": 1, "maximum": CRAWL_MAX_DEPTH_CEILING, "description": "Link depth from the start URL (start = 0)."},
-                    "sitemap_url": {"type": "string", "description": "Optional sitemap.xml URL to seed pages from instead of link discovery."},
+                    "url": {
+                        "type": "string",
+                        "description": "Start URL; its host defines the crawl scope.",
+                    },
+                    "max_pages": {
+                        "type": "integer",
+                        "default": CRAWL_DEFAULT_MAX_PAGES,
+                        "minimum": 1,
+                        "maximum": CRAWL_MAX_PAGES_CEILING,
+                        "description": "Fetch-attempt budget.",
+                    },
+                    "max_depth": {
+                        "type": "integer",
+                        "default": CRAWL_DEFAULT_MAX_DEPTH,
+                        "minimum": 1,
+                        "maximum": CRAWL_MAX_DEPTH_CEILING,
+                        "description": "Link depth from the start URL (start = 0).",
+                    },
+                    "sitemap_url": {
+                        "type": "string",
+                        "description": "Optional sitemap.xml URL to seed pages from instead of link discovery.",
+                    },
                 },
                 "required": ["url"],
             },
@@ -1143,36 +1360,98 @@ def _default_specs(
         ),
     ]
     if todo_store is not None:
-        # Session-scoped todo list (claude-code TodoWrite shape). Only
-        # registered when the composition handed in a live store -- the
-        # provider is context-free per call, so without a store there is
-        # no todo capability at all.
-        specs.append(
-            LocalToolSpec(
-                name="todo_write",
-                description="Replace the session's todo list. Each item needs a non-empty content and a status (pending|in_progress|completed); at most one item may be in_progress.",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "todos": {
-                            "type": "array",
-                            "description": "The full replacement todo list.",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "content": {"type": "string", "description": "The task description."},
-                                    "status": {"type": "string", "enum": list(_TODO_STATUSES)},
-                                    "activeForm": {"type": "string", "description": "Present-tense label shown while in_progress."},
-                                },
-                                "required": ["content", "status"],
-                            },
+        content_schema = {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": MAX_TODO_CONTENT_CHARS,
+            "pattern": r"\S",
+        }
+        create_active_form_schema = {
+            "type": "string",
+            "maxLength": MAX_TODO_CONTENT_CHARS,
+        }
+        update_active_form_schema = {
+            "type": ["string", "null"],
+            "maxLength": MAX_TODO_CONTENT_CHARS,
+        }
+        specs.extend(
+            [
+                LocalToolSpec(
+                    name="todo_create",
+                    description=(
+                        "Create one pending session task with a stable ID. "
+                        f"At most {MAX_TODO_ITEMS} live tasks are allowed."
+                    ),
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "content": dict(content_schema),
+                            "activeForm": create_active_form_schema,
                         },
+                        "required": ["content"],
+                        "additionalProperties": False,
                     },
-                    "required": ["todos"],
-                },
-                handler=_make_todo_write_handler(todo_store, on_todo_change),
-                tags=("mutates",),
-            )
+                    handler=_make_todo_create_handler(todo_store, on_todo_change),
+                    tags=("mutates",),
+                ),
+                LocalToolSpec(
+                    name="todo_update",
+                    description=(
+                        "Update or delete one session task using its stable ID "
+                        "and expected version."
+                    ),
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "id": _todo_id_schema(),
+                            "expected_version": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": MAX_TODO_NUMBER,
+                            },
+                            "content": dict(content_schema),
+                            "status": {"type": "string", "enum": list(_TODO_STATUSES)},
+                            "activeForm": update_active_form_schema,
+                        },
+                        "required": ["id", "expected_version"],
+                        "anyOf": [
+                            {"required": ["content"]},
+                            {"required": ["status"]},
+                            {"required": ["activeForm"]},
+                        ],
+                        "additionalProperties": False,
+                    },
+                    handler=_make_todo_update_handler(todo_store, on_todo_change),
+                    tags=("mutates",),
+                ),
+                LocalToolSpec(
+                    name="todo_get",
+                    description="Get one complete session task record by stable ID.",
+                    parameters={
+                        "type": "object",
+                        "properties": {"id": _todo_id_schema()},
+                        "required": ["id"],
+                        "additionalProperties": False,
+                    },
+                    handler=_make_todo_get_handler(todo_store),
+                    tags=(),
+                ),
+                LocalToolSpec(
+                    name="todo_list",
+                    description=(
+                        "List session task records in creation order with an "
+                        "optional exclusive stable-ID cursor."
+                    ),
+                    parameters={
+                        "type": "object",
+                        "properties": {"cursor": _todo_id_schema()},
+                        "required": [],
+                        "additionalProperties": False,
+                    },
+                    handler=_make_todo_list_handler(todo_store),
+                    tags=(),
+                ),
+            ]
         )
     # Fail-closed coercion (Qodo, PR #1422): get_cli_setting returns the RAW
     # TOML value, and a mis-typed string like "false" is truthy -- raw
@@ -1220,7 +1499,10 @@ def _default_specs(
                 parameters={
                     "type": "object",
                     "properties": {
-                        "question": {"type": "string", "description": "The research question."},
+                        "question": {
+                            "type": "string",
+                            "description": "The research question.",
+                        },
                         "engine": {
                             "type": "string",
                             "enum": list(SEARCH_ENGINES),

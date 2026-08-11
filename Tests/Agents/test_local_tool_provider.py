@@ -1,8 +1,11 @@
+import json
 import shutil
 import subprocess
+from collections import UserDict
 from pathlib import Path
 
 import pytest
+from jsonschema import Draft202012Validator
 
 from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_DENY_REFUSAL,
@@ -12,6 +15,12 @@ from tldw_chatbook.Agents.local_tool_provider import (
     LocalToolProvider,
 )
 from tldw_chatbook.Agents.run_context import use_run_id
+from tldw_chatbook.Agents.session_todo_store import (
+    MAX_TODO_CONTENT_CHARS,
+    MAX_TODO_ITEMS,
+    MAX_TODO_NUMBER,
+    SessionTodoStore,
+)
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Tools import web_tool_impls
 
@@ -54,7 +63,9 @@ def make_provider(state=ALLOW, kill=False, **kwargs):
     kwargs.setdefault("resolve_state", lambda hub: state)
     kwargs.setdefault("kill_switch", lambda: kill)
     return LocalToolProvider(
-        workspace_root=Path(kwargs.pop("root", ".")).resolve() if "root" in kwargs else Path("."),
+        workspace_root=Path(kwargs.pop("root", ".")).resolve()
+        if "root" in kwargs
+        else Path("."),
         **kwargs,
     )
 
@@ -63,11 +74,21 @@ def test_catalog_lists_default_specs_with_local_ids(tmp_path):
     p = make_provider(root=tmp_path)
     entries = p.list_catalog()
     assert [e.id for e in entries] == [
-        "local:fs_list", "local:fs_read", "local:fs_write", "local:fs_edit",
-        "local:fs_patch", "local:fs_glob", "local:fs_grep",
-        "local:git_status", "local:git_diff", "local:git_log",
-        "local:git_blame", "local:git_branches",
-        "local:web_fetch", "local:web_search", "local:web_crawl",
+        "local:fs_list",
+        "local:fs_read",
+        "local:fs_write",
+        "local:fs_edit",
+        "local:fs_patch",
+        "local:fs_glob",
+        "local:fs_grep",
+        "local:git_status",
+        "local:git_diff",
+        "local:git_log",
+        "local:git_blame",
+        "local:git_branches",
+        "local:web_fetch",
+        "local:web_search",
+        "local:web_crawl",
     ]
     assert entries[0].name == "fs_list" and entries[0].source == "local"
     schema = p.load_schema("local:fs_list")
@@ -91,11 +112,21 @@ def test_hub_tools_lists_every_spec_under_the_local_server_key(tmp_path):
     p = make_provider(root=tmp_path)
     hubs = p.hub_tools()
     assert [h.name for h in hubs] == [
-        "fs_list", "fs_read", "fs_write", "fs_edit",
-        "fs_patch", "fs_glob", "fs_grep",
-        "git_status", "git_diff", "git_log",
-        "git_blame", "git_branches",
-        "web_fetch", "web_search", "web_crawl",
+        "fs_list",
+        "fs_read",
+        "fs_write",
+        "fs_edit",
+        "fs_patch",
+        "fs_glob",
+        "fs_grep",
+        "git_status",
+        "git_diff",
+        "git_log",
+        "git_blame",
+        "git_branches",
+        "web_fetch",
+        "web_search",
+        "web_crawl",
     ]
     for hub in hubs:
         assert hub.server_key == "local:__local__"
@@ -108,14 +139,26 @@ def test_hub_tools_lists_every_spec_under_the_local_server_key(tmp_path):
     assert {h.name: h.tags for h in hubs}["fs_write"] == ("mutates",)
 
 
-def test_hub_tools_omits_todo_write_without_a_todo_store(tmp_path):
+def test_hub_tools_omits_all_task_tools_without_a_todo_store(tmp_path):
     p = make_provider(root=tmp_path)  # no todo_store injected
+    assert not {
+        "todo_write",
+        "todo_create",
+        "todo_update",
+        "todo_get",
+        "todo_list",
+    } & {h.name for h in p.hub_tools()}
+
+
+def test_hub_tools_include_exact_stable_task_operations_in_order(tmp_path):
+    p = make_provider(root=tmp_path, todo_store=SessionTodoStore())
+    assert [h.name for h in p.hub_tools() if h.name.startswith("todo_")] == [
+        "todo_create",
+        "todo_update",
+        "todo_get",
+        "todo_list",
+    ]
     assert "todo_write" not in [h.name for h in p.hub_tools()]
-
-
-def test_hub_tools_includes_todo_write_when_a_todo_store_exists(tmp_path):
-    p = make_provider(root=tmp_path, todo_store=[])
-    assert "todo_write" in [h.name for h in p.hub_tools()]
 
 
 def test_fs_write_spec_carries_mutates_tag(tmp_path):
@@ -181,7 +224,6 @@ def test_fs_patch_handler_dry_run_writes_nothing(tmp_path):
     assert r.ok
     assert "would patch notes/new.txt" in r.content
     assert not (tmp_path / "notes" / "new.txt").exists()
-
 
 
 def test_fs_glob_spec_read_only(tmp_path):
@@ -428,9 +470,7 @@ def test_execution_error_becomes_result_string(tmp_path):
 
 def test_session_approval_skips_gate_and_executes(tmp_path):
     (tmp_path / "a.txt").write_text("a")
-    p = make_provider(
-        state=ASK, root=tmp_path, is_session_approved=lambda hub: True
-    )
+    p = make_provider(state=ASK, root=tmp_path, is_session_approved=lambda hub: True)
     assert p.pending_gate_for("fs_list", {"path": "."}) is None
     assert p.invoke("local:fs_list", {"path": "."}).ok  # no stamp, no callback
 
@@ -524,9 +564,7 @@ def test_unrecognized_callback_decision_fails_closed(tmp_path):
 
 
 def test_callback_returning_none_fails_closed(tmp_path):
-    p = make_provider(
-        state=ASK, root=tmp_path, approval_callback=lambda pending: None
-    )
+    p = make_provider(state=ASK, root=tmp_path, approval_callback=lambda pending: None)
     r = p.invoke("local:fs_list", {"path": "."})
     assert not r.ok and r.error == LOCAL_TIMEOUT_REFUSAL
 
@@ -551,6 +589,7 @@ def test_resolve_state_raise_fails_closed_everywhere(tmp_path):
     renders it as `LOCAL_GATE_ERROR_REFUSAL` instead -- still fails closed
     (the tool does not run), but says the true thing: the permission
     RESOLVER failed, not that the tool is configured Off."""
+
     def boom(hub):
         raise RuntimeError("store gone")
 
@@ -563,7 +602,9 @@ def test_resolve_state_raise_fails_closed_everywhere(tmp_path):
     assert r.error != LOCAL_DENY_REFUSAL
 
 
-def test_second_resolve_state_raise_in_ask_branch_reports_gate_error_not_timeout(tmp_path):
+def test_second_resolve_state_raise_in_ask_branch_reports_gate_error_not_timeout(
+    tmp_path,
+):
     """Fix Round I, Item 5 (PRE-AUTHORIZED, same class of contract change as
     Fix Round H, Item 1 just above): `_verdict_for()`'s "ask" branch calls
     `pending_gate_for()` a SECOND time (now `_resolve_pending_gate()`
@@ -632,7 +673,11 @@ def _big_provider(text, tmp_path):
 
     return LocalToolProvider(
         workspace_root=tmp_path,
-        specs=[LocalToolSpec(name="big", description="big", parameters={}, handler=lambda args: text)],
+        specs=[
+            LocalToolSpec(
+                name="big", description="big", parameters={}, handler=lambda args: text
+            )
+        ],
         resolve_state=lambda hub: ALLOW,
     )
 
@@ -642,7 +687,9 @@ def test_fit_result_truncates_oversize(tmp_path):
     r = p.invoke("local:big", {})
     assert r.ok
     assert r.content.endswith("\n… [truncated]")
-    assert len(r.content.encode("utf-8")) <= 32 * 1024 + len("\n… [truncated]".encode("utf-8"))
+    assert len(r.content.encode("utf-8")) <= 32 * 1024 + len(
+        "\n… [truncated]".encode("utf-8")
+    )
     assert r.content.startswith("x" * 100)
 
 
@@ -668,7 +715,9 @@ def test_empty_exception_message_becomes_nonempty_error(tmp_path):
 
     p = LocalToolProvider(
         workspace_root=tmp_path,
-        specs=[LocalToolSpec(name="boom", description="b", parameters={}, handler=boom)],
+        specs=[
+            LocalToolSpec(name="boom", description="b", parameters={}, handler=boom)
+        ],
         resolve_state=lambda hub: ALLOW,
     )
     r = p.invoke("local:boom", {})
@@ -820,9 +869,9 @@ def test_web_crawl_spec_schema(tmp_path):
 def test_web_crawl_description_states_contract(tmp_path):
     p = make_provider(root=tmp_path)
     desc = p.hub_tool_for("web_crawl").description
-    assert "web_fetch" in desc          # points the model at the follow-up tool
+    assert "web_fetch" in desc  # points the model at the follow-up tool
     assert "sitemap_url" in desc
-    assert "max_depth" in desc          # documents the sitemap-mode exception
+    assert "max_depth" in desc  # documents the sitemap-mode exception
 
 
 def test_web_fetch_description_mentions_pdf(tmp_path):
@@ -861,7 +910,9 @@ def test_web_search_handler_renders_real_result_shape(tmp_path, monkeypatch):
     assert "No description available" not in r.content
 
 
-def test_web_search_handler_wires_legacy_defaults_and_bounds_results(tmp_path, monkeypatch):
+def test_web_search_handler_wires_legacy_defaults_and_bounds_results(
+    tmp_path, monkeypatch
+):
     seen = {}
 
     def fake_perform_websearch(**kwargs):
@@ -887,7 +938,9 @@ def test_web_search_handler_wires_legacy_defaults_and_bounds_results(tmp_path, m
     blocks = [b for b in r.content.split("\n\n") if b.strip()]
     assert len(blocks) == 3
     for block in blocks:
-        assert len(block.encode("utf-8")) <= 4 * 1024 + len("… [truncated]".encode("utf-8"))
+        assert len(block.encode("utf-8")) <= 4 * 1024 + len(
+            "… [truncated]".encode("utf-8")
+        )
     assert "… [truncated]" in r.content
 
 
@@ -896,7 +949,9 @@ def test_web_search_handler_bounds_multibyte_results_by_bytes(tmp_path, monkeypa
     byte budget; the per-result bound must hold on encoded bytes."""
     monkeypatch.setattr(
         "tldw_chatbook.Web_Scraping.WebSearch_APIs.perform_websearch",
-        lambda **kwargs: _fake_search_payload(count=2, snippet_len=3000, snippet_char="漢"),
+        lambda **kwargs: _fake_search_payload(
+            count=2, snippet_len=3000, snippet_char="漢"
+        ),
     )
     p = make_provider(root=tmp_path)
     r = p.invoke("local:web_search", {"query": "python"})
@@ -904,7 +959,9 @@ def test_web_search_handler_bounds_multibyte_results_by_bytes(tmp_path, monkeypa
     blocks = [b for b in r.content.split("\n\n") if b.strip()]
     assert len(blocks) == 2
     for block in blocks:
-        assert len(block.encode("utf-8")) <= 4 * 1024 + len("… [truncated]".encode("utf-8"))
+        assert len(block.encode("utf-8")) <= 4 * 1024 + len(
+            "… [truncated]".encode("utf-8")
+        )
     assert "… [truncated]" in r.content
 
 
@@ -925,7 +982,9 @@ def test_web_search_handler_enforces_total_cap(tmp_path, monkeypatch):
 def test_web_search_handler_enforces_total_cap_with_multibyte(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "tldw_chatbook.Web_Scraping.WebSearch_APIs.perform_websearch",
-        lambda **kwargs: _fake_search_payload(count=10, snippet_len=10_000, snippet_char="漢"),
+        lambda **kwargs: _fake_search_payload(
+            count=10, snippet_len=10_000, snippet_char="漢"
+        ),
     )
     p = make_provider(root=tmp_path)
     r = p.invoke("local:web_search", {"query": "python", "result_count": 10})
@@ -952,8 +1011,11 @@ def test_web_search_response_error_keys_surface_as_failure(tmp_path, monkeypatch
     reason, not the generic 'unexpected response format'."""
     monkeypatch.setattr(
         "tldw_chatbook.Web_Scraping.WebSearch_APIs.perform_websearch",
-        lambda **kwargs: {"results": [], "error": "engine quota exhausted",
-                          "processing_error": None},
+        lambda **kwargs: {
+            "results": [],
+            "error": "engine quota exhausted",
+            "processing_error": None,
+        },
     )
     p = make_provider(root=tmp_path)
     r = p.invoke("local:web_search", {"query": "python"})
@@ -962,8 +1024,11 @@ def test_web_search_response_error_keys_surface_as_failure(tmp_path, monkeypatch
 
     monkeypatch.setattr(
         "tldw_chatbook.Web_Scraping.WebSearch_APIs.perform_websearch",
-        lambda **kwargs: {"results": [], "error": None,
-                          "processing_error": "Error processing search results: boom"},
+        lambda **kwargs: {
+            "results": [],
+            "error": None,
+            "processing_error": "Error processing search results: boom",
+        },
     )
     r = p.invoke("local:web_search", {"query": "python"})
     assert r.ok
@@ -987,239 +1052,703 @@ def test_web_search_non_string_engine_falls_back_to_default(tmp_path, monkeypatc
     assert seen["search_engine"] == "duckduckgo"
 
 
-# -- todo_write (phase-3a Task 4: session-scoped todos) -----------------------
-#
-# The provider is per-run and context-free per call, so todo state flows in at
-# composition: a live list (the ConsoleChatSession's own ``todos``) plus an
-# optional change callback. No store -> no todo_write spec at all.
+# -- stable session task operations (TASK-13216 Task 4) ----------------------
+
+TODO_TOOL_NAMES = ("todo_create", "todo_update", "todo_get", "todo_list")
+_TASK_RESULT_LIMIT = 32 * 1024
 
 
-def test_todo_write_spec_absent_without_todo_store(tmp_path):
-    p = make_provider(root=tmp_path)  # todo_store defaults to None
-    assert "local:todo_write" not in [e.id for e in p.list_catalog()]
-    r = p.invoke("local:todo_write", {"todos": []})
-    assert not r.ok
-    assert r.error == "Unknown local tool: todo_write"
+class _IntSubclass(int):
+    pass
 
 
-def test_todo_write_spec_carries_mutates_tag(tmp_path):
-    p = make_provider(root=tmp_path, todo_store=[])
-    entry = next(e for e in p.list_catalog() if e.id == "local:todo_write")
-    assert entry.name == "todo_write" and entry.source == "local"
-    schema = p.load_schema("local:todo_write")
-    assert schema.parameters["required"] == ["todos"]
-    item_props = schema.parameters["properties"]["todos"]["items"]["properties"]
-    assert item_props["status"]["enum"] == ["pending", "in_progress", "completed"]
-    assert p.hub_tool_for("todo_write").tags == ("mutates",)
+class _DictSubclass(dict):
+    pass
 
 
-def test_todo_write_replaces_store_contents_in_place(tmp_path):
-    store = [{"content": "old", "status": "pending"}]
-    p = make_provider(root=tmp_path, todo_store=store)
-    r = p.invoke(
-        "local:todo_write",
-        {"todos": [
-            {"content": "write tests", "status": "completed"},
-            {"content": "implement", "status": "in_progress", "activeForm": "implementing"},
-            {"content": "commit", "status": "pending"},
-        ]},
+def _task_schemas(provider):
+    return {
+        name: provider.load_schema(f"local:{name}").parameters
+        for name in TODO_TOOL_NAMES
+    }
+
+
+def _assert_compact_json(result, expected):
+    assert result.ok
+    assert result.content == json.dumps(
+        expected,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
     )
-    assert r.ok
-    assert r.content == "3 todos (1 in progress)"
-    assert store == [
-        {"content": "write tests", "status": "completed"},
-        {"content": "implement", "status": "in_progress", "activeForm": "implementing"},
-        {"content": "commit", "status": "pending"},
+    assert json.loads(result.content) == expected
+    assert len(result.content.encode("utf-8")) <= _TASK_RESULT_LIMIT
+
+
+def test_todo_tools_are_conditional_ordered_and_todo_write_is_removed(tmp_path):
+    without = make_provider(root=tmp_path)
+    without_names = [entry.name for entry in without.list_catalog()]
+    assert not ({*TODO_TOOL_NAMES, "todo_write"} & set(without_names))
+
+    with_store = make_provider(root=tmp_path, todo_store=SessionTodoStore())
+    task_entries = [
+        entry.name
+        for entry in with_store.list_catalog()
+        if entry.name.startswith("todo_")
+    ]
+    assert task_entries == list(TODO_TOOL_NAMES)
+    assert "todo_write" not in [entry.name for entry in with_store.list_catalog()]
+    assert [with_store.hub_tool_for(name).tags for name in TODO_TOOL_NAMES] == [
+        ("mutates",),
+        ("mutates",),
+        (),
+        (),
     ]
 
 
-def test_todo_write_accepts_empty_list(tmp_path):
-    store = [{"content": "a", "status": "pending"}]
-    p = make_provider(root=tmp_path, todo_store=store)
-    r = p.invoke("local:todo_write", {"todos": []})
-    assert r.ok
-    assert r.content == "0 todos (0 in progress)"
-    assert store == []
+def test_todo_tool_schemas_pin_exact_keys_bounds_and_mutation_shape(tmp_path):
+    schemas = _task_schemas(make_provider(root=tmp_path, todo_store=SessionTodoStore()))
+    for schema in schemas.values():
+        Draft202012Validator.check_schema(schema)
+        assert schema["type"] == "object"
+        assert schema["additionalProperties"] is False
 
+    assert {name: schema["required"] for name, schema in schemas.items()} == {
+        "todo_create": ["content"],
+        "todo_update": ["id", "expected_version"],
+        "todo_get": ["id"],
+        "todo_list": [],
+    }
+    assert set(schemas["todo_create"]["properties"]) == {
+        "content",
+        "activeForm",
+    }
+    assert set(schemas["todo_update"]["properties"]) == {
+        "id",
+        "expected_version",
+        "content",
+        "status",
+        "activeForm",
+    }
+    assert set(schemas["todo_get"]["properties"]) == {"id"}
+    assert set(schemas["todo_list"]["properties"]) == {"cursor"}
 
-def test_todo_write_calls_on_todo_change_with_the_live_store(tmp_path):
-    store = []
-    seen = []
-    p = make_provider(
-        root=tmp_path, todo_store=store, on_todo_change=lambda todos: seen.append(todos)
+    create_props = schemas["todo_create"]["properties"]
+    assert create_props["content"]["type"] == "string"
+    assert create_props["content"]["maxLength"] == MAX_TODO_CONTENT_CHARS
+    assert create_props["activeForm"]["type"] == "string"
+    assert create_props["activeForm"]["maxLength"] == MAX_TODO_CONTENT_CHARS
+
+    update = schemas["todo_update"]
+    update_props = update["properties"]
+    assert update_props["content"]["maxLength"] == MAX_TODO_CONTENT_CHARS
+    assert update_props["activeForm"]["type"] == ["string", "null"]
+    assert update_props["activeForm"]["maxLength"] == MAX_TODO_CONTENT_CHARS
+    assert update_props["status"]["enum"] == [
+        "pending",
+        "in_progress",
+        "completed",
+        "deleted",
+    ]
+    assert update["anyOf"] == [
+        {"required": ["content"]},
+        {"required": ["status"]},
+        {"required": ["activeForm"]},
+    ]
+
+    version_schema = update_props["expected_version"]
+    assert version_schema == {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": MAX_TODO_NUMBER,
+    }
+    id_schemas = [
+        update_props["id"],
+        schemas["todo_get"]["properties"]["id"],
+        schemas["todo_list"]["properties"]["cursor"],
+    ]
+    assert all(item == id_schemas[0] for item in id_schemas)
+    assert id_schemas[0]["type"] == "string"
+    assert "pattern" in id_schemas[0]
+
+    valid_calls = {
+        "todo_create": {"content": "x"},
+        "todo_update": {
+            "id": str(MAX_TODO_NUMBER),
+            "expected_version": MAX_TODO_NUMBER,
+            "content": "x",
+        },
+        "todo_get": {"id": str(MAX_TODO_NUMBER)},
+        "todo_list": {"cursor": str(MAX_TODO_NUMBER)},
+    }
+    for name, args in valid_calls.items():
+        validator = Draft202012Validator(schemas[name])
+        assert validator.is_valid(args), name
+        assert not validator.is_valid({**args, "private": "do-not-reflect"}), name
+
+    one_over_text = str(MAX_TODO_NUMBER + 1)
+    assert not Draft202012Validator(schemas["todo_get"]).is_valid({"id": one_over_text})
+    assert not Draft202012Validator(schemas["todo_list"]).is_valid(
+        {"cursor": one_over_text}
     )
-    r = p.invoke("local:todo_write", {"todos": [{"content": "a", "status": "pending"}]})
-    assert r.ok
-    assert len(seen) == 1
-    assert seen[0] is store  # the live list itself, not a copy
-
-
-def test_todo_write_on_todo_change_failure_does_not_break_invoke(tmp_path):
-    store = []
-
-    def boom(todos):
-        raise RuntimeError("ui down")
-
-    p = make_provider(root=tmp_path, todo_store=store, on_todo_change=boom)
-    r = p.invoke("local:todo_write", {"todos": [{"content": "a", "status": "pending"}]})
-    assert r.ok  # callback raise is swallowed (never-raise seam)
-    assert store == [{"content": "a", "status": "pending"}]
-
-
-def test_todo_write_rejects_non_list_payload(tmp_path):
-    store = [{"content": "keep", "status": "pending"}]
-    p = make_provider(root=tmp_path, todo_store=store)
-    r = p.invoke("local:todo_write", {"todos": "nope"})
-    assert not r.ok
-    assert "list" in r.error
-    assert store == [{"content": "keep", "status": "pending"}]  # untouched
-
-
-def test_todo_write_rejects_missing_content(tmp_path):
-    store = [{"content": "keep", "status": "pending"}]
-    p = make_provider(root=tmp_path, todo_store=store)
-    r = p.invoke("local:todo_write", {"todos": [{"status": "pending"}]})
-    assert not r.ok
-    assert "content" in r.error
-    assert store == [{"content": "keep", "status": "pending"}]
-
-
-def test_todo_write_rejects_blank_content(tmp_path):
-    p = make_provider(root=tmp_path, todo_store=[])
-    r = p.invoke("local:todo_write", {"todos": [{"content": "  ", "status": "pending"}]})
-    assert not r.ok
-    assert "content" in r.error
-
-
-def test_todo_write_rejects_invalid_status(tmp_path):
-    p = make_provider(root=tmp_path, todo_store=[])
-    r = p.invoke(
-        "local:todo_write", {"todos": [{"content": "a", "status": "doing"}]}
+    assert not Draft202012Validator(schemas["todo_update"]).is_valid(
+        {"id": "1", "expected_version": MAX_TODO_NUMBER + 1, "content": "x"}
     )
-    assert not r.ok
-    assert "status" in r.error
-    assert "in_progress" in r.error  # names the valid values
-
-
-def test_todo_write_rejects_multiple_in_progress(tmp_path):
-    store = []
-    p = make_provider(root=tmp_path, todo_store=store)
-    r = p.invoke(
-        "local:todo_write",
-        {"todos": [
-            {"content": "a", "status": "in_progress"},
-            {"content": "b", "status": "in_progress"},
-        ]},
+    assert not Draft202012Validator(schemas["todo_update"]).is_valid(
+        {"id": "1", "expected_version": 1}
     )
-    assert not r.ok
-    assert "in_progress" in r.error
-    assert store == []  # untouched
 
 
-# -- todo_write bounds + strictness (quality review follow-ups) ----------------
-#
-# Model-controlled text is bounded everywhere else in this pipeline (step
-# markers truncate at 200 chars, tool results byte-fit); the todo list is no
-# exception. Caps: MAX_TODO_ITEMS items, MAX_TODO_CONTENT_CHARS per content.
-
-
-def test_todo_write_rejects_more_than_max_items(tmp_path):
-    from tldw_chatbook.Agents.local_tool_provider import MAX_TODO_ITEMS
-
-    store = [{"content": "keep", "status": "pending"}]
-    p = make_provider(root=tmp_path, todo_store=store)
-    r = p.invoke(
-        "local:todo_write",
-        {"todos": [
-            {"content": f"task {i}", "status": "pending"}
-            for i in range(MAX_TODO_ITEMS + 1)
-        ]},
+@pytest.mark.parametrize(
+    ("tool_name", "args", "expected_error"),
+    [
+        pytest.param(
+            "todo_create",
+            _DictSubclass(content="x"),
+            "arguments must be an object",
+            id="dict-subclass",
+        ),
+        pytest.param(
+            "todo_create",
+            UserDict({"content": "x"}),
+            "arguments must be an object",
+            id="exact-built-in-dict",
+        ),
+        pytest.param(
+            "todo_create",
+            {},
+            "required task arguments are missing",
+            id="create-missing-content",
+        ),
+        pytest.param(
+            "todo_create",
+            {"content": "x", "private": "credential=/private/secret"},
+            "arguments contain unknown properties",
+            id="create-unknown",
+        ),
+        pytest.param(
+            "todo_create",
+            {"content": "x", "id": "9"},
+            "arguments contain unknown properties",
+            id="create-caller-id",
+        ),
+        pytest.param(
+            "todo_create",
+            {"content": "x", "version": 9},
+            "arguments contain unknown properties",
+            id="create-caller-version",
+        ),
+        pytest.param(
+            "todo_create",
+            {"content": "x", "status": "completed"},
+            "arguments contain unknown properties",
+            id="create-caller-status",
+        ),
+        pytest.param(
+            "todo_create",
+            {"content": "x", "activeForm": None},
+            "activeForm must be a string",
+            id="create-null-active-form",
+        ),
+        pytest.param(
+            "todo_create",
+            {"content": "bad\ud800"},
+            "content must be valid UTF-8",
+            id="create-lone-surrogate-content",
+        ),
+        pytest.param(
+            "todo_create",
+            {"content": "x", "activeForm": "bad\udfff"},
+            "activeForm must be valid UTF-8",
+            id="create-lone-surrogate-active-form",
+        ),
+        pytest.param(
+            "todo_update",
+            {"expected_version": 1, "content": "x"},
+            "required task arguments are missing",
+            id="update-missing-id",
+        ),
+        pytest.param(
+            "todo_update",
+            {"id": "1", "content": "x"},
+            "required task arguments are missing",
+            id="update-missing-version",
+        ),
+        pytest.param(
+            "todo_update",
+            {"id": "1", "expected_version": 1, "version": 2, "content": "x"},
+            "arguments contain unknown properties",
+            id="update-unknown-version",
+        ),
+        pytest.param(
+            "todo_update",
+            {"id": "1", "expected_version": True, "content": "x"},
+            "invalid expected_version",
+            id="update-bool-version",
+        ),
+        pytest.param(
+            "todo_update",
+            {"id": "1", "expected_version": _IntSubclass(1), "content": "x"},
+            "invalid expected_version",
+            id="update-int-subclass-version",
+        ),
+        pytest.param(
+            "todo_update",
+            {"id": "1", "expected_version": MAX_TODO_NUMBER + 1, "content": "x"},
+            "invalid expected_version",
+            id="update-version-one-over",
+        ),
+        pytest.param(
+            "todo_update",
+            {"id": "1", "expected_version": 1 << 400_000, "content": "x"},
+            "invalid expected_version",
+            id="update-huge-version",
+        ),
+        pytest.param(
+            "todo_update",
+            {"id": 1, "expected_version": 1, "content": "x"},
+            "invalid task id",
+            id="update-integer-id",
+        ),
+        *[
+            pytest.param(
+                "todo_update",
+                {"id": bad_id, "expected_version": 1, "content": "x"},
+                "invalid task id",
+                id=f"update-bad-id-{label}",
+            )
+            for label, bad_id in (
+                ("zero", "0"),
+                ("leading-zero", "01"),
+                ("signed", "+1"),
+                ("one-over", str(MAX_TODO_NUMBER + 1)),
+                ("huge", "9" * 100_000),
+            )
+        ],
+        pytest.param(
+            "todo_update",
+            {"id": "1", "expected_version": 1},
+            "at least one mutation field is required",
+            id="update-empty",
+        ),
+        pytest.param(
+            "todo_update",
+            {"id": "1", "expected_version": 1, "status": "deleted", "content": "x"},
+            "delete must be the only mutation field",
+            id="update-delete-plus-content",
+        ),
+        pytest.param(
+            "todo_update",
+            {"id": "1", "expected_version": 1, "content": "bad\ud800"},
+            "content must be valid UTF-8",
+            id="update-lone-surrogate",
+        ),
+        pytest.param(
+            "todo_get",
+            {},
+            "required task arguments are missing",
+            id="get-missing-id",
+        ),
+        pytest.param(
+            "todo_get",
+            {"id": "1", "private": "secret"},
+            "arguments contain unknown properties",
+            id="get-unknown",
+        ),
+        pytest.param(
+            "todo_list",
+            {"private": "secret"},
+            "arguments contain unknown properties",
+            id="list-unknown",
+        ),
+        pytest.param(
+            "todo_list",
+            {"cursor": 1},
+            "invalid task id",
+            id="list-integer-cursor",
+        ),
+        *[
+            pytest.param(
+                "todo_list",
+                {"cursor": bad_cursor},
+                "invalid task id",
+                id=f"list-bad-cursor-{label}",
+            )
+            for label, bad_cursor in (
+                ("zero", "0"),
+                ("leading-zero", "01"),
+                ("signed", "-1"),
+                ("one-over", str(MAX_TODO_NUMBER + 1)),
+                ("huge", "8" * 100_000),
+            )
+        ],
+    ],
+)
+def test_todo_raw_boundary_failures_are_fixed_private_and_atomic(
+    tmp_path, tool_name, args, expected_error
+):
+    store = SessionTodoStore()
+    store.create(content="keep")
+    callbacks = []
+    provider = make_provider(
+        root=tmp_path,
+        todo_store=store,
+        on_todo_change=lambda tasks: callbacks.append(tasks),
     )
-    assert not r.ok
-    assert str(MAX_TODO_ITEMS) in r.error
-    assert store == [{"content": "keep", "status": "pending"}]  # untouched
+    before = store.export_snapshot()
+
+    result = provider.invoke(f"local:{tool_name}", args)
+
+    assert not result.ok
+    assert result.error == expected_error
+    assert len(result.error) <= 300
+    assert "credential" not in result.error
+    assert "private" not in result.error
+    assert "secret" not in result.error
+    assert store.export_snapshot() == before
+    assert callbacks == []
 
 
-def test_todo_write_accepts_exactly_max_items(tmp_path):
-    from tldw_chatbook.Agents.local_tool_provider import MAX_TODO_ITEMS
-
-    p = make_provider(root=tmp_path, todo_store=[])
-    r = p.invoke(
-        "local:todo_write",
-        {"todos": [
-            {"content": f"task {i}", "status": "pending"}
-            for i in range(MAX_TODO_ITEMS)
-        ]},
+def test_todo_create_get_list_update_and_delete_return_exact_compact_json(tmp_path):
+    callbacks = []
+    store = SessionTodoStore()
+    provider = make_provider(
+        root=tmp_path,
+        todo_store=store,
+        on_todo_change=lambda tasks: callbacks.append(tasks),
     )
-    assert r.ok
-    assert r.content == f"{MAX_TODO_ITEMS} todos (0 in progress)"
 
-
-def test_todo_write_rejects_overlong_content(tmp_path):
-    from tldw_chatbook.Agents.local_tool_provider import MAX_TODO_CONTENT_CHARS
-
-    store = [{"content": "keep", "status": "pending"}]
-    p = make_provider(root=tmp_path, todo_store=store)
-    r = p.invoke(
-        "local:todo_write",
-        {"todos": [
-            {"content": "x" * (MAX_TODO_CONTENT_CHARS + 1), "status": "pending"}
-        ]},
+    created = {
+        "id": "1",
+        "version": 1,
+        "content": "café",
+        "status": "pending",
+        "activeForm": "working",
+    }
+    _assert_compact_json(
+        provider.invoke(
+            "local:todo_create",
+            {"content": "café", "activeForm": "working"},
+        ),
+        created,
     )
-    assert not r.ok
-    assert "content" in r.error
-    assert str(MAX_TODO_CONTENT_CHARS) in r.error
-    assert store == [{"content": "keep", "status": "pending"}]  # untouched
-
-
-def test_todo_write_accepts_max_length_content(tmp_path):
-    from tldw_chatbook.Agents.local_tool_provider import MAX_TODO_CONTENT_CHARS
-
-    p = make_provider(root=tmp_path, todo_store=[])
-    r = p.invoke(
-        "local:todo_write",
-        {"todos": [{"content": "x" * MAX_TODO_CONTENT_CHARS, "status": "pending"}]},
+    assert "é" in provider.invoke("local:todo_get", {"id": "1"}).content
+    _assert_compact_json(provider.invoke("local:todo_get", {"id": "1"}), created)
+    _assert_compact_json(
+        provider.invoke("local:todo_list", {}),
+        {"tasks": [created], "next_cursor": None},
     )
-    assert r.ok
+    assert len(callbacks) == 1  # get/list are read-only
 
-
-def test_todo_write_rejects_non_string_active_form(tmp_path):
-    p = make_provider(root=tmp_path, todo_store=[])
-    r = p.invoke(
-        "local:todo_write",
-        {"todos": [{"content": "a", "status": "in_progress", "activeForm": 123}]},
+    same_value = dict(created, version=2)
+    _assert_compact_json(
+        provider.invoke(
+            "local:todo_update",
+            {"id": "1", "expected_version": 1, "content": "café"},
+        ),
+        same_value,
     )
-    assert not r.ok
-    assert "activeForm" in r.error
-
-
-def test_todo_write_whitelists_stored_keys(tmp_path):
-    store = []
-    p = make_provider(root=tmp_path, todo_store=store)
-    r = p.invoke(
-        "local:todo_write",
-        {"todos": [
-            {
-                "content": "a",
-                "status": "pending",
-                "activeForm": "doing a",
-                "model_junk": "x" * 100_000,  # must not reach session state
-            }
-        ]},
+    without_active_form = {
+        "id": "1",
+        "version": 3,
+        "content": "café",
+        "status": "pending",
+    }
+    _assert_compact_json(
+        provider.invoke(
+            "local:todo_update",
+            {"id": "1", "expected_version": 2, "activeForm": None},
+        ),
+        without_active_form,
     )
-    assert r.ok
-    assert store == [{"content": "a", "status": "pending", "activeForm": "doing a"}]
-
-
-def test_todo_write_validation_failure_does_not_fire_on_todo_change(tmp_path):
-    store = [{"content": "keep", "status": "pending"}]
-    seen = []
-    p = make_provider(
-        root=tmp_path, todo_store=store, on_todo_change=lambda todos: seen.append(todos)
+    completed = dict(without_active_form, version=4, status="completed")
+    _assert_compact_json(
+        provider.invoke(
+            "local:todo_update",
+            {"id": "1", "expected_version": 3, "status": "completed"},
+        ),
+        completed,
     )
-    r = p.invoke("local:todo_write", {"todos": [{"status": "pending"}]})
-    assert not r.ok
-    assert seen == []  # no state change -> no transcript marker
+    _assert_compact_json(
+        provider.invoke(
+            "local:todo_update",
+            {"id": "1", "expected_version": 4, "status": "deleted"},
+        ),
+        {"id": "1", "deleted": True, "version": 5},
+    )
+    assert len(callbacks) == 5
+    missing = provider.invoke("local:todo_get", {"id": "1"})
+    assert not missing.ok and missing.error == "task not found"
+    _assert_compact_json(
+        provider.invoke("local:todo_list", {}),
+        {"tasks": [], "next_cursor": None},
+    )
+
+
+def test_todo_conflicts_invariants_capacity_and_exhaustion_propagate(tmp_path):
+    store = SessionTodoStore()
+    callbacks = []
+    provider = make_provider(
+        root=tmp_path,
+        todo_store=store,
+        on_todo_change=lambda tasks: callbacks.append(tasks),
+    )
+    provider.invoke("todo_create", {"content": "a"})
+    provider.invoke("todo_create", {"content": "b"})
+    winner = provider.invoke(
+        "todo_update", {"id": "1", "expected_version": 1, "status": "in_progress"}
+    )
+    assert winner.ok
+
+    before_callbacks = len(callbacks)
+    stale = provider.invoke(
+        "todo_update", {"id": "1", "expected_version": 1, "status": "completed"}
+    )
+    assert not stale.ok
+    assert stale.error == "task version conflict; use todo_get and retry"
+    second_active = provider.invoke(
+        "todo_update", {"id": "2", "expected_version": 1, "status": "in_progress"}
+    )
+    assert not second_active.ok
+    assert second_active.error == "another task is already in_progress"
+    assert len(callbacks) == before_callbacks
+    assert store.get("1")["status"] == "in_progress"
+    assert store.get("2")["status"] == "pending"
+
+    full_store = SessionTodoStore()
+    for number in range(MAX_TODO_ITEMS):
+        full_store.create(content=f"task {number}")
+    full_callbacks = []
+    full_provider = make_provider(
+        root=tmp_path,
+        todo_store=full_store,
+        on_todo_change=lambda tasks: full_callbacks.append(tasks),
+    )
+    full = full_provider.invoke("todo_create", {"content": "one too many"})
+    assert not full.ok and full.error == "task limit reached"
+    assert full_callbacks == []
+
+    terminal_store = SessionTodoStore.from_snapshot(
+        {"next_id": MAX_TODO_NUMBER, "tasks": []}
+    )
+    terminal_callbacks = []
+    terminal_provider = make_provider(
+        root=tmp_path,
+        todo_store=terminal_store,
+        on_todo_change=lambda tasks: terminal_callbacks.append(tasks),
+    )
+    final = terminal_provider.invoke("todo_create", {"content": "last id"})
+    assert final.ok and json.loads(final.content)["id"] == str(MAX_TODO_NUMBER)
+    exhausted = terminal_provider.invoke("todo_create", {"content": "never"})
+    assert not exhausted.ok and exhausted.error == "task id space exhausted"
+    assert len(terminal_callbacks) == 1
+
+    version_store = SessionTodoStore.from_snapshot(
+        {
+            "next_id": 2,
+            "tasks": [
+                {
+                    "id": "1",
+                    "version": MAX_TODO_NUMBER,
+                    "content": "max version",
+                    "status": "pending",
+                }
+            ],
+        }
+    )
+    version_callbacks = []
+    version_provider = make_provider(
+        root=tmp_path,
+        todo_store=version_store,
+        on_todo_change=lambda tasks: version_callbacks.append(tasks),
+    )
+    exhausted_version = version_provider.invoke(
+        "todo_update",
+        {"id": "1", "expected_version": MAX_TODO_NUMBER, "content": "x"},
+    )
+    assert not exhausted_version.ok
+    assert exhausted_version.error == "task version exhausted"
+    assert version_callbacks == []
+
+
+def test_todo_callback_failure_is_committed_success_with_fixed_private_log(
+    tmp_path, caplog
+):
+    sentinel = "TOKEN=abc123 /private/credential/task-secret"
+
+    def fail_callback(tasks):
+        raise RuntimeError(sentinel)
+
+    store = SessionTodoStore()
+    provider = make_provider(
+        root=tmp_path,
+        todo_store=store,
+        on_todo_change=fail_callback,
+    )
+    caplog.set_level("WARNING", logger="tldw_chatbook.Agents.session_todo_store")
+
+    result = provider.invoke("todo_create", {"content": "committed"})
+
+    expected = {
+        "id": "1",
+        "version": 1,
+        "content": "committed",
+        "status": "pending",
+    }
+    _assert_compact_json(result, expected)
+    assert store.get("1") == expected
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "tldw_chatbook.Agents.session_todo_store"
+    ]
+    assert messages == ["Session todo change callback failed."]
+    assert all(fragment not in messages[0] for fragment in sentinel.split())
+
+
+@pytest.mark.parametrize("character", ["x", "é"], ids=["ascii", "multibyte"])
+def test_todo_list_pages_are_complete_byte_bounded_and_cursor_stable(
+    tmp_path, character
+):
+    store = SessionTodoStore()
+    provider = make_provider(root=tmp_path, todo_store=store)
+    text = character * MAX_TODO_CONTENT_CHARS
+    for _ in range(MAX_TODO_ITEMS):
+        result = provider.invoke("todo_create", {"content": text, "activeForm": text})
+        assert result.ok
+
+    first_result = provider.invoke("todo_list", {})
+    first_page = json.loads(first_result.content)
+    assert first_page["next_cursor"] is not None
+    assert len(first_result.content.encode("utf-8")) <= _TASK_RESULT_LIMIT
+    assert "\\u00e9" not in first_result.content
+    seen_ids = [task["id"] for task in first_page["tasks"]]
+
+    page_end = first_page["tasks"][-1]
+    deleted = provider.invoke(
+        "todo_update",
+        {
+            "id": page_end["id"],
+            "expected_version": page_end["version"],
+            "status": "deleted",
+        },
+    )
+    assert deleted.ok
+    added = provider.invoke("todo_create", {"content": text, "activeForm": text})
+    assert added.ok and json.loads(added.content)["id"] == "51"
+
+    cursor = first_page["next_cursor"]
+    while cursor is not None:
+        result = provider.invoke("todo_list", {"cursor": cursor})
+        assert result.ok
+        assert len(result.content.encode("utf-8")) <= _TASK_RESULT_LIMIT
+        assert "… [truncated]" not in result.content
+        page = json.loads(result.content)
+        if page["next_cursor"] is not None:
+            assert page["tasks"]
+            assert page["next_cursor"] == page["tasks"][-1]["id"]
+        seen_ids.extend(task["id"] for task in page["tasks"])
+        cursor = page["next_cursor"]
+
+    assert seen_ids == [str(number) for number in range(1, 52)]
+    assert len(seen_ids) == len(set(seen_ids))
+    _assert_compact_json(
+        provider.invoke("todo_list", {"cursor": str(MAX_TODO_NUMBER)}),
+        {"tasks": [], "next_cursor": None},
+    )
+
+
+def test_oversized_todo_result_fails_before_generic_result_fitting(
+    tmp_path, monkeypatch
+):
+    import tldw_chatbook.Agents.local_tool_provider as provider_module
+
+    store = SessionTodoStore()
+    store.create(content="small")
+    provider = make_provider(root=tmp_path, todo_store=store)
+    monkeypatch.setattr(
+        store,
+        "get",
+        lambda task_id: {
+            "id": "1",
+            "version": 1,
+            "content": "x" * (_TASK_RESULT_LIMIT + 1),
+            "status": "pending",
+        },
+    )
+    fit_calls = []
+    original_fit = provider_module._fit_result
+
+    def spy_fit(text):
+        fit_calls.append(text)
+        return original_fit(text)
+
+    monkeypatch.setattr(provider_module, "_fit_result", spy_fit)
+
+    result = provider.invoke("todo_get", {"id": "1"})
+
+    assert not result.ok
+    assert result.error == "task result exceeds the result limit"
+    assert fit_calls == []
+
+
+def test_todo_boundary_record_tombstone_and_list_are_complete_portable_json(tmp_path):
+    max_id = str(MAX_TODO_NUMBER)
+    record_store = SessionTodoStore.from_snapshot(
+        {
+            "next_id": MAX_TODO_NUMBER + 1,
+            "tasks": [
+                {
+                    "id": max_id,
+                    "version": MAX_TODO_NUMBER,
+                    "content": "boundary",
+                    "status": "completed",
+                }
+            ],
+        }
+    )
+    record_provider = make_provider(root=tmp_path, todo_store=record_store)
+    record = record_provider.invoke("todo_get", {"id": max_id})
+    listed = record_provider.invoke("todo_list", {})
+
+    tombstone_store = SessionTodoStore.from_snapshot(
+        {
+            "next_id": MAX_TODO_NUMBER,
+            "tasks": [
+                {
+                    "id": str(MAX_TODO_NUMBER - 1),
+                    "version": MAX_TODO_NUMBER - 1,
+                    "content": "delete boundary",
+                    "status": "pending",
+                }
+            ],
+        }
+    )
+    tombstone_provider = make_provider(root=tmp_path, todo_store=tombstone_store)
+    tombstone = tombstone_provider.invoke(
+        "todo_update",
+        {
+            "id": str(MAX_TODO_NUMBER - 1),
+            "expected_version": MAX_TODO_NUMBER - 1,
+            "status": "deleted",
+        },
+    )
+
+    for result in (record, listed, tombstone):
+        assert result.ok
+        payload = json.loads(result.content)
+        assert len(result.content.encode("utf-8")) <= _TASK_RESULT_LIMIT
+        records = payload.get("tasks", [payload]) if isinstance(payload, dict) else []
+        for item in records:
+            if "id" in item:
+                assert 1 <= int(item["id"]) <= MAX_TODO_NUMBER
+            if "version" in item:
+                assert 1 <= item["version"] <= MAX_TODO_NUMBER
+    assert json.loads(tombstone.content) == {
+        "id": str(MAX_TODO_NUMBER - 1),
+        "deleted": True,
+        "version": MAX_TODO_NUMBER,
+    }
 
 
 # -- web_deep_search: gated registration (task-1356 Task 6) -----------------
@@ -1235,8 +1764,9 @@ def test_todo_write_validation_failure_does_not_fire_on_todo_change(tmp_path):
 def _enable_deep_search(monkeypatch):
     monkeypatch.setattr(
         "tldw_chatbook.Agents.local_tool_provider.get_cli_setting",
-        lambda section, key, default=None: True
-        if (section, key) == ("tools", "web_deep_search_enabled") else default,
+        lambda section, key, default=None: (
+            True if (section, key) == ("tools", "web_deep_search_enabled") else default
+        ),
     )
 
 
@@ -1276,8 +1806,11 @@ def _set_deep_search_gate_raw(monkeypatch, raw_value):
     """Patch the gate to return an arbitrary RAW TOML value (no coercion)."""
     monkeypatch.setattr(
         "tldw_chatbook.Agents.local_tool_provider.get_cli_setting",
-        lambda section, key, default=None: raw_value
-        if (section, key) == ("tools", "web_deep_search_enabled") else default,
+        lambda section, key, default=None: (
+            raw_value
+            if (section, key) == ("tools", "web_deep_search_enabled")
+            else default
+        ),
     )
 
 
@@ -1330,7 +1863,11 @@ def test_web_deep_search_handler_threads_three_params(tmp_path, monkeypatch):
     )
     assert r.ok
     assert r.content == "the answer"
-    assert seen == {"question": "why is the sky blue", "engine": "bing", "max_results": 3}
+    assert seen == {
+        "question": "why is the sky blue",
+        "engine": "bing",
+        "max_results": 3,
+    }
 
 
 def test_web_deep_search_handler_omits_optional_params_as_none(tmp_path, monkeypatch):
@@ -1347,7 +1884,11 @@ def test_web_deep_search_handler_omits_optional_params_as_none(tmp_path, monkeyp
     p = make_provider(root=tmp_path)
     r = p.invoke("local:web_deep_search", {"question": "why is the sky blue"})
     assert r.ok
-    assert seen == {"question": "why is the sky blue", "engine": None, "max_results": None}
+    assert seen == {
+        "question": "why is the sky blue",
+        "engine": None,
+        "max_results": None,
+    }
 
 
 def test_web_deep_search_pinned_catalog_list_unchanged_by_default(tmp_path):
@@ -1357,9 +1898,21 @@ def test_web_deep_search_pinned_catalog_list_unchanged_by_default(tmp_path):
     # replacement for that test.
     p = make_provider(root=tmp_path)
     assert [e.name for e in p.list_catalog()] == [
-        "fs_list", "fs_read", "fs_write", "fs_edit", "fs_patch", "fs_glob",
-        "fs_grep", "git_status", "git_diff", "git_log", "git_blame",
-        "git_branches", "web_fetch", "web_search", "web_crawl",
+        "fs_list",
+        "fs_read",
+        "fs_write",
+        "fs_edit",
+        "fs_patch",
+        "fs_glob",
+        "fs_grep",
+        "git_status",
+        "git_diff",
+        "git_log",
+        "git_blame",
+        "git_branches",
+        "web_fetch",
+        "web_search",
+        "web_crawl",
     ]
 
 
@@ -1397,7 +1950,9 @@ def test_timeout_for_tracks_configured_deep_search_timeout_s(tmp_path, monkeypat
     assert p.timeout_for("local:web_deep_search") == 320.0
 
 
-def test_timeout_for_falls_back_on_malformed_deep_search_timeout_s(tmp_path, monkeypatch):
+def test_timeout_for_falls_back_on_malformed_deep_search_timeout_s(
+    tmp_path, monkeypatch
+):
     # A malformed raw TOML value must not reach the derived override
     # unfiltered -- it goes through _deep_search_settings' own coercion
     # (falls back to the 240 default, per config._get_int_timeout_value)
