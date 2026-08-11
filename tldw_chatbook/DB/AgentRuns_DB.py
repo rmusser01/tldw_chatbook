@@ -946,19 +946,29 @@ class AgentRunsDB(BaseDB):
         PR3a-1 Task 2 lets a sub-agent outlive its turn, so a still-
         ``running`` child is not a dead attempt -- it is a live cross-turn
         survivor a retry/regenerate/variant call must not disturb. Flipping
-        its row straight to ``superseded`` (itself a member of
-        ``TERMINAL_RUN_STATUSES``) would not stop the live worker thread;
+        a row straight to ``superseded`` (itself a member of
+        ``TERMINAL_RUN_STATUSES``) would not stop its live worker thread;
         it would only make ``set_status``'s first-writer-wins guard
-        silently drop the child's real terminal write when it finishes,
-        losing its result. So a **child** is only ever touched here when
-        already terminal -- a live child is skipped entirely and settles
-        normally through its own later ``set_status`` call. The run
-        identified by ``run_id`` itself is always marked superseded
-        unconditionally, matching prior behavior: by the time a caller
-        supersedes a prior primary run, that primary's own record has
-        already been persisted terminally (``run_turn`` guarantees this
-        before it returns), so no live-primary case exists in practice --
-        only children can genuinely still be running here.
+        silently drop that run's real terminal write when it finishes for
+        real, losing its result. So this only ever touches rows already in
+        a terminal status -- a live row is skipped entirely and settles
+        normally through its own later ``set_status`` call.
+
+        This guard applies to the run identified by ``run_id`` itself, not
+        just its children: a first draft assumed ``run_turn``'s own
+        "the primary's record is always persisted before this returns"
+        guarantee made the *target* primary always terminal by the time
+        this runs. That guarantee is real but narrower than it looks -- it
+        only covers ``run_turn``'s OWN coroutine returning, not a
+        *different, earlier* run whose coroutine already returned to the
+        UI (e.g. via Stop) while its ``asyncio.to_thread`` worker survives
+        Task cancellation and keeps running. ``supersede_run_id`` is
+        resolved as the newest non-superseded primary for the whole
+        conversation, not necessarily the run tied to the message being
+        retried, so retrying an older failed message can reach a
+        different, still-live, stopped-but-not-dead primary. Guarding the
+        primary's own row the same way the child guard does closes that
+        hole without adding a second code path.
 
         Args:
             run_id: The run whose tree (itself + rows with
@@ -967,17 +977,17 @@ class AgentRunsDB(BaseDB):
                 keeping it for drill-in history.
 
         Returns:
-            The number of rows updated (the run itself, unconditionally,
-            plus any direct sub-agent children that were already
-            terminal). A live child is not counted -- it stays parented
-            and running, untouched.
+            The number of rows updated -- the run itself plus any direct
+            sub-agent children, restricted to whichever of those were
+            already terminal. A live row (primary or child) is not
+            counted -- it stays parented and running, untouched.
         """
         placeholders = ",".join("?" for _ in TERMINAL_RUN_STATUSES)
         with self.transaction() as conn:
             cursor = conn.execute(
                 "UPDATE agent_runs SET status = 'superseded', "
-                "updated_at = ? WHERE id = ? "
-                f"OR (parent_run_id = ? AND status IN ({placeholders}))",
+                "updated_at = ? WHERE (id = ? OR parent_run_id = ?) "
+                f"AND status IN ({placeholders})",
                 (_now_iso(), run_id, run_id, *sorted(TERMINAL_RUN_STATUSES)),
             )
             return cursor.rowcount
