@@ -188,6 +188,10 @@ from ...Chat.console_generate_image import (
     prepare_generation_request,
     run_generation_batch,
 )
+from ...Chat.console_image_edit_operations import (
+    ImageEditCompletion,
+    ImageEditOperationRegistry,
+)
 from ...Chat.console_generate_video import (
     GENERATE_VIDEO_USAGE_TEXT,
     PendingVideoArtifact,
@@ -12741,8 +12745,14 @@ class ChatScreen(BaseAppScreen):
         TASK-347: the header chip and Inspector status/live-work surfaces
         read this so they stop claiming "Ready"/"No active work" mid-run.
         """
+        store = self._console_chat_store
+        session_id = store.active_session_id if store is not None else None
+        image_edit_active = (
+            session_id is not None
+            and self._h3_image_edit_registry().active(session_id) is not None
+        )
         controller = self._console_chat_controller
-        return (
+        return image_edit_active or (
             controller is not None
             and controller.run_state.status in CONSOLE_ACTIVE_RUN_STATUSES
         )
@@ -12758,8 +12768,19 @@ class ChatScreen(BaseAppScreen):
         run_state = (
             getattr(controller, "run_state", None) if controller is not None else None
         )
-        can_stop = bool(getattr(run_state, "is_stop_allowed", False))
-        run_allows_send = bool(getattr(run_state, "is_send_allowed", True))
+        store = self._console_chat_store
+        active_session_id = store.active_session_id if store is not None else None
+        image_edit_active = (
+            active_session_id is not None
+            and self._h3_image_edit_registry().active(active_session_id) is not None
+        )
+        can_stop = image_edit_active or bool(
+            getattr(run_state, "is_stop_allowed", False)
+        )
+        run_allows_send = (
+            bool(getattr(run_state, "is_send_allowed", True))
+            and not image_edit_active
+        )
         can_send = (
             has_draft
             and not bool(self._console_setup_blocked_reason())
@@ -14352,6 +14373,9 @@ class ChatScreen(BaseAppScreen):
         # No super().on_mount(): the dispatcher already invokes
         # BaseAppScreen.on_mount separately for this Mount event.
 
+        self.app_instance._console_h3_image_edit_screen = self
+        if not hasattr(self, "_console_h3_terminal_generations"):
+            self._console_h3_terminal_generations: set[str] = set()
         self._notify_console_fleet_teardown_if_any()
 
         # Restore collapsible states after mount
@@ -14376,6 +14400,7 @@ class ChatScreen(BaseAppScreen):
         self.call_after_refresh(self._sync_console_dictation_availability)
         self.set_timer(0.15, self._sync_console_dictation_availability)
         self.call_after_refresh(self._sync_native_console_chat_ui)
+        self.call_after_refresh(self._reconcile_h3_image_edit_completions)
         self.call_after_refresh(self._restore_console_workbench_focus)
         self.set_timer(0.2, self._restore_console_workbench_focus)
         self.run_worker(self._refresh_console_skill_candidates(), exclusive=False)
@@ -14430,6 +14455,22 @@ class ChatScreen(BaseAppScreen):
 
     async def on_unmount(self) -> None:
         """Release Console-native resources owned by this screen."""
+        registry = self._h3_image_edit_registry()
+        store = self._console_chat_store
+        if store is not None:
+            terminal = getattr(self, "_console_h3_terminal_generations", None)
+            if terminal is None:
+                terminal = set()
+                self._console_h3_terminal_generations = terminal
+            for session in store.sessions():
+                operation = registry.request_cancel(session.id)
+                if operation is not None:
+                    terminal.add(operation.generation)
+        if (
+            getattr(self.app_instance, "_console_h3_image_edit_screen", None)
+            is self
+        ):
+            self.app_instance._console_h3_image_edit_screen = None
         self._drain_pending_console_videos()
         self._stop_console_transcript_sync_timer()
         self._stop_console_cost_ttl_timer()
@@ -14536,6 +14577,10 @@ class ChatScreen(BaseAppScreen):
             if pendings:
                 stash[session.id] = tuple(pendings)
         setattr(app, self._CONSOLE_PENDING_STASH_ATTR, stash)
+        for completion in self._h3_image_edit_registry().completions():
+            self._filter_h3_attachment_from_app_stash(
+                completion.session_id, completion.attachment_id
+            )
 
     def _adopt_console_pending_attachments(self, store: ConsoleChatStore) -> None:
         """Re-stage stashed attachments into the restored store, then empty
@@ -14552,16 +14597,27 @@ class ChatScreen(BaseAppScreen):
         stash = getattr(app, self._CONSOLE_PENDING_STASH_ATTR, None)
         setattr(app, self._CONSOLE_PENDING_STASH_ATTR, {})
         if not isinstance(stash, dict) or not stash:
+            self._reconcile_h3_image_edit_completions(store)
             return
         live_ids = {session.id for session in store.sessions()}
+        completed_attachment_ids = {
+            completion.session_id: completion.attachment_id
+            for completion in self._h3_image_edit_registry().completions()
+        }
         for session_id, pendings in stash.items():
             if session_id not in live_ids:
                 continue
             if not isinstance(pendings, (list, tuple)):
                 continue
             for pending in pendings:
+                if (
+                    getattr(pending, "attachment_id", None)
+                    == completed_attachment_ids.get(session_id)
+                ):
+                    continue
                 if not store.add_pending_attachment(session_id, pending):
                     break  # staging cap reached — matches live staging semantics
+        self._reconcile_h3_image_edit_completions(store)
 
     def _serialize_native_console_state(self) -> dict[str, Any] | None:
         """Return the native Console in-session state for screen restoration."""
@@ -15517,6 +15573,19 @@ class ChatScreen(BaseAppScreen):
         self._sync_console_transcript_guidance()
 
     def _native_run_status_copy(self) -> str:
+        store = self._console_chat_store
+        session_id = store.active_session_id if store is not None else None
+        image_edit = (
+            self._h3_image_edit_registry().active(session_id)
+            if session_id is not None
+            else None
+        )
+        if image_edit is not None:
+            return (
+                "Stopping image edit…"
+                if image_edit.cancel_event.is_set()
+                else "Editing image…"
+            )
         controller = self._console_chat_controller
         if controller is None:
             return ""
@@ -15534,6 +15603,19 @@ class ChatScreen(BaseAppScreen):
         visibility contract. Falls back to the status value when a
         transition set no visible copy.
         """
+        store = self._console_chat_store
+        session_id = store.active_session_id if store is not None else None
+        image_edit = (
+            self._h3_image_edit_registry().active(session_id)
+            if session_id is not None
+            else None
+        )
+        if image_edit is not None:
+            return (
+                "Stopping image edit…"
+                if image_edit.cancel_event.is_set()
+                else "Editing image…"
+            )
         controller = self._console_chat_controller
         run_state = controller.run_state if controller is not None else None
         if run_state is None or run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES:
@@ -15575,6 +15657,18 @@ class ChatScreen(BaseAppScreen):
         self._console_sync_in_progress = True
         self._record_ui_worker_started("console-sync")
         try:
+            store = self._console_chat_store
+            if store is not None:
+                live_session_ids = {session.id for session in store.sessions()}
+                registry = self._h3_image_edit_registry()
+                prior_session_ids = getattr(
+                    self, "_console_h3_known_session_ids", None
+                )
+                if prior_session_ids is not None:
+                    for missing_session_id in prior_session_ids - live_session_ids:
+                        registry.drop_session(missing_session_id)
+                self._console_h3_known_session_ids = live_session_ids
+                self._reconcile_h3_image_edit_completions(store)
             self._sync_console_chat_core_state()
             self._session._sync_console_session_draft()
             # PR#757 review (comment 4): warm the effective-scope cache for
@@ -16591,6 +16685,370 @@ class ChatScreen(BaseAppScreen):
             api_key=resolution.api_key,
         )
 
+    def _h3_image_edit_registry(self) -> ImageEditOperationRegistry:
+        """Return the app-owned H3 operation registry."""
+        registry = getattr(
+            self.app_instance, "console_image_edit_operations", None
+        )
+        if not isinstance(registry, ImageEditOperationRegistry):
+            registry = ImageEditOperationRegistry()
+            self.app_instance.console_image_edit_operations = registry
+        return registry
+
+    @staticmethod
+    def _h3_reference_from_pending(pending: Any):
+        """Build one memory-only source reference without reopening its path."""
+        from io import BytesIO
+
+        from PIL import Image as PILImage
+
+        from ...Image_Generation.capabilities import ResolvedReferenceImage
+
+        if getattr(pending, "file_type", None) != "image":
+            raise ValueError("source_type")
+        data = getattr(pending, "data", None)
+        if type(data) is not bytes or not data:
+            raise ValueError("source_content")
+        mime_type = str(getattr(pending, "mime_type", "") or "").lower()
+        if mime_type not in {"image/png", "image/jpeg", "image/webp"}:
+            raise ValueError("source_mime")
+        try:
+            with PILImage.open(BytesIO(data)) as image:
+                image.load()
+                width, height = image.size
+        except Exception as exc:
+            raise ValueError("source_decode") from exc
+        return ResolvedReferenceImage(
+            file_id=pending.attachment_id,
+            filename=None,
+            mime_type=mime_type,
+            width=width,
+            height=height,
+            bytes_len=len(data),
+            content=data,
+            temp_path=None,
+        )
+
+    def _filter_h3_attachment_from_app_stash(
+        self, session_id: str, attachment_id: str
+    ) -> None:
+        """Drop only the initiating source from the app's remount stash."""
+        app = getattr(self, "app_instance", None)
+        if app is None:
+            return
+        stash = getattr(app, self._CONSOLE_PENDING_STASH_ATTR, None)
+        if not isinstance(stash, dict):
+            return
+        pendings = stash.get(session_id)
+        if not isinstance(pendings, (list, tuple)):
+            return
+        filtered = tuple(
+            pending
+            for pending in pendings
+            if getattr(pending, "attachment_id", None) != attachment_id
+        )
+        if filtered:
+            stash[session_id] = filtered
+        else:
+            stash.pop(session_id, None)
+
+    def _h3_origin_screen_is_live(self, generation: str) -> bool:
+        """Return whether this exact screen/generation may update live UI."""
+        current = getattr(
+            self.app_instance, "_console_h3_image_edit_screen", self
+        )
+        terminal = getattr(self, "_console_h3_terminal_generations", set())
+        return current is self and generation not in terminal
+
+    def _cleanup_h3_completion_in_store(
+        self,
+        store: ConsoleChatStore,
+        completion: ImageEditCompletion,
+        *,
+        clear_visible_composer: bool,
+    ) -> bool:
+        """Hydrate durable success, then perform exact identity cleanup."""
+        try:
+            message = store.merge_persisted_generation_message(
+                completion.session_id, completion.message_id
+            )
+        except Exception:  # noqa: BLE001 - keep cleanup pending for later retry
+            return False
+        if message is None:
+            return False
+
+        try:
+            store.consume_pending_attachment(
+                completion.session_id, completion.attachment_id
+            )
+            remaining = store.pending_attachments(completion.session_id)
+            if any(
+                pending.attachment_id == completion.attachment_id
+                for pending in remaining
+            ):
+                return False
+            if store.session_draft(completion.session_id) == completion.captured_draft:
+                store.set_session_draft(completion.session_id, "")
+        except Exception as exc:  # noqa: BLE001 - committed success is retained
+            logger.bind(
+                component="image_edit",
+                phase="persistence",
+                error_type=type(exc).__name__,
+            ).error("Console image edit cleanup failed")
+            return False
+
+        self._filter_h3_attachment_from_app_stash(
+            completion.session_id, completion.attachment_id
+        )
+        if clear_visible_composer:
+            try:
+                composer = self._console_composer_or_none()
+            except Exception:  # noqa: BLE001 - mounted UI cleanup is retryable
+                composer = None
+            try:
+                if (
+                    composer is not None
+                    and composer.draft_text() == completion.captured_draft
+                ):
+                    composer.clear_draft()
+            except Exception:  # noqa: BLE001 - retain completion for a later screen
+                return False
+        return True
+
+    def _reconcile_h3_image_edit_completions(
+        self, store: ConsoleChatStore | None = None
+    ) -> None:
+        """Adopt byte-free durable completions into a current Console store."""
+        registry = self._h3_image_edit_registry()
+        store = store or self._console_chat_store
+        if store is None:
+            return
+        live_session_ids = {session.id for session in store.sessions()}
+        for completion in registry.completions():
+            if completion.session_id not in live_session_ids:
+                continue
+            if self._cleanup_h3_completion_in_store(
+                store, completion, clear_visible_composer=True
+            ):
+                registry.ack_completion(
+                    completion.session_id, completion.generation
+                )
+
+    def _schedule_current_h3_completion_reconciliation(self) -> None:
+        """Ask the currently mounted Console, if any, to reconcile."""
+        current = getattr(
+            self.app_instance, "_console_h3_image_edit_screen", None
+        )
+        if current is None or current is self:
+            return
+        schedule = getattr(current, "call_after_refresh", None)
+        if callable(schedule):
+            schedule(current._reconcile_h3_image_edit_completions)
+
+    async def _append_h3_image_edit_error(
+        self,
+        *,
+        session_id: str,
+        phase: str,
+        error_type: str,
+        copy: str,
+    ) -> None:
+        """Log and show only stable privacy-safe H3 failure fields."""
+        logger.bind(
+            component="image_edit", phase=phase, error_type=error_type
+        ).error("Console image edit failed")
+        await self._append_native_console_system_message(
+            copy, session_id=session_id
+        )
+
+    async def _run_h3_image_edit_command(
+        self,
+        *,
+        args: Any,
+        cfg: Any,
+        store: ConsoleChatStore,
+        session: ConsoleChatSession,
+    ) -> None:
+        """Validate, own, persist, and reconcile one ComfyUI H3 edit."""
+        from functools import partial
+
+        from ...Image_Generation import worker as image_worker
+        from ...Image_Generation.exceptions import (
+            ComfyUIImageEditError,
+            ImageGenerationCancelled,
+        )
+
+        if args.style is not None:
+            await self._append_native_console_system_message(
+                "ComfyUI image edits do not support style tokens.",
+                session_id=session.id,
+            )
+            return
+        instruction = args.prompt
+        if not instruction.strip():
+            await self._append_native_console_system_message(
+                "ComfyUI image edits require a non-empty instruction.",
+                session_id=session.id,
+            )
+            return
+        pendings = store.pending_attachments(session.id)
+        if len(pendings) != 1:
+            await self._append_native_console_system_message(
+                "ComfyUI image edits require exactly one staged image.",
+                session_id=session.id,
+            )
+            return
+        pending = pendings[0]
+        try:
+            reference = self._h3_reference_from_pending(pending)
+        except (TypeError, ValueError):
+            await self._append_native_console_system_message(
+                "ComfyUI image edits require one valid in-memory PNG, JPEG, or WebP image.",
+                session_id=session.id,
+            )
+            return
+
+        composer = self._console_composer_or_none()
+        captured_draft = (
+            composer.draft_text()
+            if composer is not None
+            else store.session_draft(session.id)
+        )
+        cancel_event = threading.Event()
+        registry = self._h3_image_edit_registry()
+        sampler = getattr(cfg, "comfyui_image_default_sampler", None)
+        build_request = partial(image_worker.build_request, sampler=sampler)
+
+        async def _owned(generation: str) -> None:
+            try:
+                batch = await asyncio.to_thread(
+                    run_generation_batch,
+                    backend="comfyui",
+                    prompt=instruction,
+                    negative_prompt=None,
+                    seed=getattr(cfg, "comfyui_image_default_seed", None),
+                    count=1,
+                    style_name=None,
+                    width=None,
+                    height=None,
+                    steps=getattr(cfg, "comfyui_image_default_steps", None),
+                    cfg_scale=None,
+                    reference_image=reference,
+                    cancel_event=cancel_event,
+                    build=build_request,
+                )
+            except ImageGenerationCancelled:
+                return
+            except ComfyUIImageEditError as exc:
+                await self._append_h3_image_edit_error(
+                    session_id=session.id,
+                    phase=exc.phase,
+                    error_type=type(exc).__name__,
+                    copy=str(exc),
+                )
+                return
+            except Exception as exc:  # noqa: BLE001 - normalized below
+                await self._append_h3_image_edit_error(
+                    session_id=session.id,
+                    phase="history_polling",
+                    error_type=type(exc).__name__,
+                    copy="The image-edit operation did not complete. Please try again.",
+                )
+                return
+            if not batch.successes:
+                await self._append_h3_image_edit_error(
+                    session_id=session.id,
+                    phase="history_polling",
+                    error_type="ImageGenerationError",
+                    copy="The image-edit operation did not complete. Please try again.",
+                )
+                return
+
+            before_ids = {
+                message.id for message in store.messages_for_session(session.id)
+            }
+            try:
+                message = store.append_generation_message(
+                    session.id,
+                    content=generation_content_marker(instruction),
+                    variants=batch.successes,
+                    persist=True,
+                )
+                persisted_message_id = message.persisted_message_id
+                if not persisted_message_id:
+                    raise RuntimeError("durable image message missing")
+            except Exception as exc:  # noqa: BLE001 - normalized below
+                for candidate in store.messages_for_session(session.id):
+                    if candidate.id not in before_ids:
+                        try:
+                            store.delete_message(candidate.id)
+                        except (KeyError, RuntimeError, ValueError):
+                            pass
+                await self._append_h3_image_edit_error(
+                    session_id=session.id,
+                    phase="persistence",
+                    error_type=type(exc).__name__,
+                    copy=(
+                        "The edited image could not be saved locally. "
+                        "The source remains staged."
+                    ),
+                )
+                return
+
+            completion = ImageEditCompletion(
+                session_id=session.id,
+                generation=generation,
+                message_id=persisted_message_id,
+                attachment_id=pending.attachment_id,
+                captured_draft=captured_draft,
+            )
+            registry.publish_completion(completion)
+            self._filter_h3_attachment_from_app_stash(
+                session.id, pending.attachment_id
+            )
+            cleaned = self._cleanup_h3_completion_in_store(
+                store,
+                completion,
+                clear_visible_composer=self._h3_origin_screen_is_live(generation),
+            )
+            if cleaned and self._h3_origin_screen_is_live(generation):
+                registry.ack_completion(session.id, generation)
+            self._schedule_current_h3_completion_reconciliation()
+
+        operation = registry.start(
+            session_id=session.id,
+            attachment_id=pending.attachment_id,
+            captured_draft=captured_draft,
+            cancel_event=cancel_event,
+            runner=_owned,
+        )
+        if operation is None:
+            await self._append_native_console_system_message(
+                "An image edit is already running for this session.",
+                session_id=session.id,
+            )
+            return
+        ui_generations = getattr(self, "_console_h3_ui_generations", None)
+        if ui_generations is None:
+            ui_generations = {}
+            self._console_h3_ui_generations = ui_generations
+        ui_generations[session.id] = operation.generation
+        try:
+            await asyncio.shield(operation.task)
+        except asyncio.CancelledError:
+            cancel_event.set()
+            try:
+                await operation.task
+            except BaseException:  # cancellation outcome never masks caller cancel
+                pass
+            raise
+
+        if (
+            ui_generations.get(session.id) == operation.generation
+            and self._h3_origin_screen_is_live(operation.generation)
+        ):
+            await self._sync_native_console_chat_ui()
+
     async def _console_command_generate_image(self, parse: CommandParse) -> None:
         """Resolve and run one `/generate-image` batch.
 
@@ -16642,10 +17100,27 @@ class ChatScreen(BaseAppScreen):
             workspace_id=store.workspace_context.active_workspace_id,
             settings=self._session._default_console_session_settings(),
         )
+        cfg = get_image_generation_config()
+        backend = args.backend or cfg.default_backend
+        if backend == "comfyui":
+            catalog = list_image_models_for_catalog()
+            entry = next(
+                (item for item in catalog if item.get("name") == backend), None
+            )
+            if entry is None or not entry.get("is_configured"):
+                await self._append_native_console_system_message(
+                    "Image backend 'comfyui' is not enabled/configured. "
+                    "Check [image_generation] settings.",
+                    session_id=session.id,
+                )
+                return
+            await self._run_h3_image_edit_command(
+                args=args, cfg=cfg, store=store, session=session
+            )
+            return
         conversation_pairs = self._console_generate_image_conversation_pairs(
             store, session.id
         )
-        cfg = get_image_generation_config()
         llm_context: LLMContextOptions | None = None
         if not args.prompt.strip():
             llm_context = await self._console_generate_image_llm_context_options(cfg)
@@ -16664,7 +17139,6 @@ class ChatScreen(BaseAppScreen):
                 prepared.reason, session_id=session.id
             )
             return
-        backend = args.backend or cfg.default_backend
         if not backend:
             await self._append_native_console_system_message(
                 "No image generation backend configured. Set "
@@ -18107,6 +18581,14 @@ class ChatScreen(BaseAppScreen):
             return
         if not message.generation_metadata:
             return
+        base_meta = message.generation_metadata[0]
+        if base_meta.params.get("operation") == "edit":
+            self.app_instance.notify(
+                "Image edits cannot be regenerated. Restage the source image and run "
+                "/generate-image :comfyui again.",
+                severity="warning",
+            )
+            return
         inflight = self._console_imagegen_inflight_message_ids()
         if message_id in inflight:
             self.app_instance.notify(
@@ -18124,7 +18606,6 @@ class ChatScreen(BaseAppScreen):
             return
         inflight.add(message_id)
         try:
-            base_meta = message.generation_metadata[0]
             batch = await asyncio.to_thread(
                 run_generation_batch,
                 backend=base_meta.backend,
@@ -18676,7 +19157,20 @@ class ChatScreen(BaseAppScreen):
         # stop_active_run() would only toast "No active Console run to stop."
         # The cancel event wakes the adapter's poll loop immediately.
         store = self._console_chat_store
-        active_session_id = store.active_session_id if store is not None else None
+        active_session_id = (
+            store.active_session_id if store is not None else None
+        )
+        image_edit = (
+            self._h3_image_edit_registry().request_cancel(active_session_id)
+            if active_session_id is not None
+            else None
+        )
+        if image_edit is not None:
+            self.app_instance.notify(
+                "Stopping image edit…", severity="information"
+            )
+            self._schedule_console_control_bar_sync()
+            return
         cancel_event = (
             self._console_videogen_cancel_events().get(active_session_id)
             if active_session_id is not None

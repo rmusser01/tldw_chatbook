@@ -17,6 +17,7 @@ chat_ui`/`app_instance.notify` are stubbed, matching the brief's "mock store
 
 from __future__ import annotations
 
+import asyncio
 from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -36,7 +37,6 @@ from tldw_chatbook.Chat.console_generate_image import (
     LLMContextOptions,
     reset_llm_context_executor,
 )
-from tldw_chatbook.Chat.console_message_actions import ConsoleMessageActionService
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_speech import ConsoleSpeechSnapshotRejected
 from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
@@ -419,6 +419,63 @@ def test_regenerate_refused_while_inflight(monkeypatch):
     assert len(store.get_message(message.id).generation_metadata) == 1
     assert notifications and notifications[0][1].get("severity") == "warning"
     assert "already running" in notifications[0][0].lower()
+
+
+def test_h3_edit_regenerate_refuses_before_capacity_or_inflight_checks(monkeypatch):
+    store = ConsoleChatStore()
+    session = store.ensure_session(title="H3 edit")
+    message = store.append_generation_message(
+        session.id,
+        content="[image] edited result",
+        variants=[
+            (
+                b"edited",
+                "image/png",
+                GenerationVariantMeta(
+                    prompt="private edit instruction",
+                    negative_prompt="",
+                    backend="comfyui",
+                    model=None,
+                    seed=1,
+                    style=None,
+                    params={"operation": "edit"},
+                ),
+            )
+        ],
+    )
+    screen = _bare_generation_screen(store)
+    notices: list[tuple[str, str | None]] = []
+    screen.app_instance.notify = lambda text, severity=None: notices.append(
+        (text, severity)
+    )
+    screen._console_imagegen_inflight_message_ids = lambda: (_ for _ in ()).throw(
+        AssertionError("edit refusal must precede the in-flight gate")
+    )
+    monkeypatch.setattr(
+        chat_screen_module,
+        "get_image_generation_config",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("edit refusal must precede the capacity gate")
+        ),
+    )
+    monkeypatch.setattr(
+        chat_screen_module,
+        "run_generation_batch",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("edit Regenerate must not dispatch")
+        ),
+    )
+
+    asyncio.run(screen._regenerate_console_generation_variant(message.id))
+
+    assert notices == [
+        (
+            "Image edits cannot be regenerated. Restage the source image and run "
+            "/generate-image :comfyui again.",
+            "warning",
+        )
+    ]
+    assert len(store.get_message(message.id).generation_metadata) == 1
 
 
 def test_regenerate_failure_leaves_message_untouched_and_reports_error(monkeypatch):

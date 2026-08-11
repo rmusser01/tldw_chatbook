@@ -21,6 +21,12 @@ from Tests.UI.test_console_native_chat_flow import (
     _select_llamacpp_console,
 )
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_image_edit_operations import (
+    ImageEditCompletion,
+    ImageEditOperationRegistry,
+)
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 
 def _image_pending(name: str, *, path: str) -> PendingAttachment:
@@ -154,3 +160,118 @@ def test_adopt_resets_malformed_stash_without_crashing():
     screen._adopt_console_pending_attachments(store)
     assert screen.app_instance._console_pending_attachment_stash == {}
     assert store.pending_attachments(session_id) == []
+
+
+def test_h3_completion_reconciliation_filters_exact_attachment_and_is_idempotent():
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    source = _image_pending("source.png", path="/private/sentinel/source.png")
+    other = _image_pending("other.png", path="/private/sentinel/other.png")
+    store.add_pending_attachment(session.id, source)
+    store.add_pending_attachment(session.id, other)
+    store.set_session_draft(session.id, "captured edit draft")
+
+    registry = ImageEditOperationRegistry()
+    completion = ImageEditCompletion(
+        session_id=session.id,
+        generation="generation-1",
+        message_id="persisted-message-1",
+        attachment_id=source.attachment_id,
+        captured_draft="captured edit draft",
+    )
+    registry.publish_completion(completion)
+    app = type("App", (), {})()
+    app.console_image_edit_operations = registry
+    app._console_pending_attachment_stash = {
+        session.id: (source, other),
+        "unrelated": (_image_pending("unrelated.png", path=""),),
+    }
+    screen = ChatScreen.__new__(ChatScreen)
+    screen.app_instance = app
+
+    hydrated: list[tuple[str, str]] = []
+
+    def _merge(session_id: str, message_id: str):
+        hydrated.append((session_id, message_id))
+        return type("Message", (), {"persisted_message_id": message_id})()
+
+    store.merge_persisted_generation_message = _merge
+    screen._reconcile_h3_image_edit_completions(store)
+    screen._reconcile_h3_image_edit_completions(store)
+
+    assert hydrated == [(session.id, "persisted-message-1")]
+    assert store.pending_attachments(session.id) == [other]
+    assert store.session_draft(session.id) == ""
+    assert app._console_pending_attachment_stash[session.id] == (other,)
+    assert "unrelated" in app._console_pending_attachment_stash
+    assert registry.completion(session.id) is None
+
+
+def test_h3_completion_preserves_replacement_draft_after_message_presence():
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    source = _image_pending("source.png", path="")
+    store.add_pending_attachment(session.id, source)
+    store.set_session_draft(session.id, "replacement draft")
+    registry = ImageEditOperationRegistry()
+    registry.publish_completion(
+        ImageEditCompletion(
+            session_id=session.id,
+            generation="generation-2",
+            message_id="persisted-message-2",
+            attachment_id=source.attachment_id,
+            captured_draft="captured edit draft",
+        )
+    )
+    screen = ChatScreen.__new__(ChatScreen)
+    screen.app_instance = type(
+        "App",
+        (),
+        {
+            "console_image_edit_operations": registry,
+            "_console_pending_attachment_stash": {},
+        },
+    )()
+    store.merge_persisted_generation_message = lambda *_args: type(
+        "Message", (), {"persisted_message_id": "persisted-message-2"}
+    )()
+
+    screen._reconcile_h3_image_edit_completions(store)
+
+    assert registry.completion(session.id) is None
+    assert store.pending_attachments(session.id) == []
+    assert store.session_draft(session.id) == "replacement draft"
+
+
+def test_h3_completion_waits_for_durable_message_presence_before_cleanup():
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    source = _image_pending("source.png", path="")
+    store.add_pending_attachment(session.id, source)
+    store.set_session_draft(session.id, "captured edit draft")
+    registry = ImageEditOperationRegistry()
+    registry.publish_completion(
+        ImageEditCompletion(
+            session_id=session.id,
+            generation="generation-3",
+            message_id="persisted-message-3",
+            attachment_id=source.attachment_id,
+            captured_draft="captured edit draft",
+        )
+    )
+    screen = ChatScreen.__new__(ChatScreen)
+    screen.app_instance = type(
+        "App",
+        (),
+        {
+            "console_image_edit_operations": registry,
+            "_console_pending_attachment_stash": {},
+        },
+    )()
+    store.merge_persisted_generation_message = lambda *_args: None
+
+    screen._reconcile_h3_image_edit_completions(store)
+
+    assert registry.completion(session.id) is not None
+    assert store.pending_attachments(session.id) == [source]
+    assert store.session_draft(session.id) == "captured edit draft"

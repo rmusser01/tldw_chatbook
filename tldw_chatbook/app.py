@@ -175,6 +175,9 @@ from tldw_chatbook.Chat.console_live_work import (
     ConsoleLiveWorkLaunch,
     resolve_console_live_work_primary_action,
 )
+from tldw_chatbook.Chat.console_image_edit_operations import (
+    ImageEditOperationRegistry,
+)
 from tldw_chatbook.Chat.server_chat_conversation_service import (
     ServerChatConversationService,
 )
@@ -4749,6 +4752,7 @@ class TldwCli(
         phase_start = time.perf_counter()
         self.MediaDatabase = MediaDatabase
         self.app_config = load_settings()
+        self.console_image_edit_operations = ImageEditOperationRegistry()
         self.generated_video_store = _build_generated_video_store()
         # TASK-13157: snapshot any TOML parse failure `load_settings()` just
         # hit -- captured here (mirroring `_instance_lock_status` below, the
