@@ -3902,6 +3902,26 @@ def test_fleet_snapshot_reflects_two_live_handles_in_flight_then_empty_after_run
     test -- the per-run entry is popped in the SAME `finally` that tears
     the run's event loop down, so a completed run's snapshot goes back to
     `[]`, NOT the run's terminal handles.
+
+    PR3a-1 Task 6a, two changes to this test, both forced by children now
+    OUTLIVING their turn (Task 2) and neither weakening what it asserts:
+
+    1. The mid-run peek now happens AFTER `run_reply` has already
+       returned -- measured, not assumed: the primary answers while both
+       children sit in their gated turn, so `run_reply` returns ~1.3ms
+       BEFORE `entered_event` fires. That is exactly the case that used
+       to report `[]` (the published service was torn down the instant
+       the turn ended, taking every survivor with it); the assertion
+       below is unchanged and is now the regression guard for it.
+    2. `_join_fleet_threads()` before the final `== []`. The children are
+       released by `gate.set()` in the `finally` above and settle on
+       their own threads a millisecond or so later; before this PR
+       `_settle_fleet` blocked the turn until they had, which is what
+       made an unsynchronised read deterministic. It no longer does --
+       that IS the feature -- so the test synchronises on the children
+       themselves, the same way every other survivor test on this branch
+       does. The `[]` assertion itself is untouched: once the last child
+       settles, a finished conversation's live fleet is empty again.
     """
     gate = threading.Event()
     gateway = _FleetTwoChildGateway(
@@ -3958,6 +3978,7 @@ def test_fleet_snapshot_reflects_two_live_handles_in_flight_then_empty_after_run
 
     assert result["outcome"].status == "done"
     assert result["outcome"].final_text == "parent final"
+    _join_fleet_threads()
     assert bridge.fleet_snapshot("conv-fleet-peek") == []
 
 
@@ -4032,9 +4053,29 @@ def test_fleet_teardown_pop_is_identity_checked_not_blind(tmp_path):
     assert bridge.fleet_snapshot("conv-resend") == [live_handle]
     assert bridge._fleet_services.get("conv-resend") is service_b
 
-    # And B's OWN (later) teardown still works normally.
+    # And B's OWN (later) teardown still works normally -- the
+    # identity-checked pop this test exists for happens exactly as
+    # before.
     bridge._teardown_fleet_service("conv-resend", service_b)
+    assert bridge._fleet_services.get("conv-resend") is None
+
+    # PR3a-1 Task 6a: what "normally" MEANS after the pop has changed,
+    # and this is the change. B's child is still `"running"`, and a
+    # child that outlives its turn (Task 2) is the case this whole PR
+    # exists for -- so B's service is RETAINED as that child's owner
+    # (nothing else holds its cancel Event) and the row stays on the
+    # panel instead of vanishing the instant the turn ended. The
+    # published-entry pop above is what makes it a survivor row rather
+    # than an in-flight one.
+    assert bridge.fleet_snapshot("conv-resend") == [live_handle]
+
+    # Once that last child settles, the conversation's live fleet is
+    # empty again and the retained service is dropped -- the `[]` this
+    # test asserted before Task 6a, now reached by the child finishing
+    # rather than by the turn ending.
+    live_handle.status = "done"
     assert bridge.fleet_snapshot("conv-resend") == []
+    assert bridge._fleet_survivor_services.get("conv-resend") is None
 
 
 # -- PR2b Task 5: ConsoleAgentBridge.cancel_subagent delegation ----------
@@ -4116,11 +4157,17 @@ def test_cancel_subagent_delegates_to_the_published_services_live_handle(
     runner.join(10)
     assert not runner.is_alive(), "run_reply never returned"
 
-    # The run has finished -- `run_reply`'s own teardown has popped this
-    # conversation's `_fleet_services` entry (mirroring `fleet_snapshot`'s
-    # own post-completion behavior, pinned by `test_fleet_snapshot_
-    # reflects_two_live_handles_in_flight_then_empty_after_run_completes`
-    # above), so the same real handle id no longer succeeds either.
+    # The run has finished AND (PR3a-1 Task 6a) its cancelled child has
+    # settled -- joined explicitly, because `run_reply` no longer waits
+    # for it. Both halves of "no longer succeeds" now hold and are worth
+    # separating: `run_reply`'s teardown popped this conversation's
+    # `_fleet_services` entry (mirroring `fleet_snapshot`'s own
+    # post-completion behavior, pinned by `test_fleet_snapshot_reflects_
+    # two_live_handles_in_flight_then_empty_after_run_completes` above),
+    # and the handle is terminal, so the survivor tier that now backs a
+    # still-live child declines it too rather than reporting a cancel it
+    # cannot deliver.
+    _join_fleet_threads()
     assert bridge.cancel_subagent("conv-cancel", handle_id) is False
 
 
@@ -4136,6 +4183,17 @@ def test_live_snapshot_subagent_status_reaches_done_on_the_live_path(tmp_path):
     touches `AgentRunsDB`); only a restart's `historical_snapshot`
     re-derivation ever saw the real status before. This proves the LIVE
     path itself now agrees, with no restart needed.
+
+    PR3a-1 Task 6a: `_join_fleet_threads()` added, and the assertion is
+    strictly STRONGER for it. The child is no longer settled by the turn
+    (`_settle_fleet` stopped waiting when children were allowed to
+    outlive their turn); measured, it goes terminal ~1.3ms AFTER
+    `run_reply` returns. So this now proves the rail reaches "done" for a
+    child that finished when NOTHING was left running to publish it --
+    `live_snapshot` re-reads the conversation's own coordinator per call
+    rather than serving whatever the last run froze. Reading without the
+    join would have measured the freeze, and would have read "running"
+    on ~28 of 30 attempts (probed).
     """
     scripts = [
         [_fence("spawn_subagent", {"task": "compute 1+1"})],  # primary turn 1
@@ -4145,6 +4203,7 @@ def test_live_snapshot_subagent_status_reaches_done_on_the_live_path(tmp_path):
     bridge, db, store, session, aid = _bridge(tmp_path, scripts)
 
     outcome = _run(bridge, store, session, aid)
+    _join_fleet_threads()
 
     assert outcome.status == "done"
     subagents = bridge.live_snapshot("conv-1").subagents
@@ -4165,6 +4224,11 @@ def test_live_snapshot_subagent_status_reaches_error_when_child_run_fails(tmp_pa
     """PR2b Task 2: an errored child must show `status == "error"` on the
     live path, not the permanently-stuck "running" the pre-task code
     always showed regardless of how the child actually ended.
+
+    PR3a-1 Task 6a: `_join_fleet_threads()` added for the same reason as
+    its `..._reaches_done_...` sibling above -- the turn no longer waits
+    for the child, so the test must, and the rail must still reach the
+    real terminal status afterwards.
     """
 
     class _FleetChildRaisesGateway:
@@ -4200,6 +4264,7 @@ def test_live_snapshot_subagent_status_reaches_error_when_child_run_fails(tmp_pa
     bridge, db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
 
     outcome = _run(bridge, store, session, aid)
+    _join_fleet_threads()
 
     assert outcome.status == "done"  # the PRIMARY still finishes fine
     subagents = bridge.live_snapshot("conv-1").subagents
@@ -4309,6 +4374,13 @@ def test_live_snapshot_two_concurrent_subagents_get_distinct_run_ids_that_dont_c
         gate.set()
     runner.join(10)
     assert not runner.is_alive(), "run_reply never returned"
+    # PR3a-1 Task 6a: the children are released by `gate.set()` above and
+    # settle on their OWN threads, which `run_reply` no longer waits for
+    # -- so the "final publish" this block checks is no longer a publish
+    # at all: `live_snapshot` re-derives from the conversation's live
+    # coordinator on every read. Joining the child threads is what makes
+    # "both reached done" a fact rather than a coin flip.
+    _join_fleet_threads()
 
     assert result["outcome"].status == "done"
     assert result["outcome"].final_text == "parent final"

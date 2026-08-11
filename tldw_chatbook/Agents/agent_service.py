@@ -1511,6 +1511,26 @@ class AgentService:
                 )
             resolved = None
             if agent:
+                # PR3a-1 Task 6a, recorded because the Task 6 audit got
+                # this half-right and the half it missed is the reachable
+                # one. `self._turn_definitions` is per-TURN state read HERE
+                # AT CALL TIME, and `run_turn` replaces it for the next
+                # turn -- the exact shape Task 3 found the run-log writer
+                # in. The audit called it unreachable "because the lookup
+                # sits behind `max_subagents > 0`": that is true of the
+                # SPAWN SCHEMA BUILD (`_make_tool_schemas`), not of this
+                # closure body, which no budget check guards. It is
+                # unreachable only because BOTH outer gates hold -- a child
+                # gets `max_subagents = 0` (`contain_child_budget` /
+                # `clamp_child_budget`), so the spawn tool is never offered
+                # to it and `spawn` is never dispatched on its behalf. If
+                # either gate ever loosens, a SURVIVOR calling
+                # `spawn(agent=...)` would resolve against the NEXT turn's
+                # roster and leak that roster's agent names in the
+                # "available: ..." error string below. Pinned by the
+                # depth-1 `budget["max_subagents"] == 0` assertions in
+                # `Tests/Agents/test_agent_models.py` and
+                # `Tests/Agents/test_fleet_runtime.py`.
                 resolved = next(
                     (d for d in self._turn_definitions if d.name == agent),
                     None,
@@ -2005,6 +2025,21 @@ class AgentService:
         def check_agents() -> ToolResult:
             """Non-blocking status snapshot of every child of this run.
 
+            PR3a-1 Task 6a: plus any child of an EARLIER turn that is
+            still running. With a per-conversation coordinator a survivor
+            stays in `fleet` after the turn that spawned it returned, and
+            leaving it out of the one surface a supervisor can ask "what
+            is still working?" is what the audit called an invisible
+            agent -- the worst outcome for a feature whose whole point is
+            background work. It is reported in its own labelled section
+            rather than mixed into this run's own list, because the two
+            differ in what the supervisor may do with them: `wait_agents`
+            deliberately stays scoped to `my_handle_ids` (collecting a
+            foreign child's RESULT into this turn's history is delivery,
+            which is PR 3a-2's job, and blocking this turn on another
+            turn's child would be worse still). Terminal foreign handles
+            are never listed: they are somebody else's finished business.
+
             Returns:
                 One compact line per child (handle id, agent, status,
                 elapsed seconds, task snippet), or a plain sentence when
@@ -2021,20 +2056,41 @@ class AgentService:
                 )
                 if handle is not None
             ]
-            if not handles:
+            mine = set(my_handle_ids)
+            others = [
+                handle
+                for handle in fleet.snapshot()
+                if handle.handle_id not in mine
+                and handle.status not in TERMINAL_RUN_STATUSES
+            ]
+            if not handles and not others:
                 return ToolResult(
                     ok=True, content="No sub-agents have been started yet."
                 )
             now = self.clock()
-            lines = []
-            for handle in handles:
-                end = handle.finished_at if handle.finished_at is not None else now
+
+            def _line(handle: FleetHandle) -> str:
+                end = (
+                    handle.finished_at
+                    if handle.finished_at is not None
+                    else now
+                )
                 elapsed = max(end - handle.started_at, 0.0)
-                lines.append(
+                return (
                     f"[{handle.handle_id}] {handle.agent or 'sub-agent'} — "
                     f"{handle.status} ({elapsed:.1f}s) — "
                     f"{handle.task[:_SPAWN_ECHO_CHARS]}"
                 )
+
+            lines = [_line(handle) for handle in handles]
+            if others:
+                if lines:
+                    lines.append("")
+                lines.append(
+                    "Still running from an earlier turn (started by a "
+                    "previous message; wait_agents cannot collect these):"
+                )
+                lines.extend(_line(handle) for handle in others)
             return ToolResult(ok=True, content="\n".join(lines))
 
         # Skill-aware invoke_tool, built AFTER spawn (it closes over it): a
@@ -2948,13 +3004,34 @@ class AgentService:
         Returns:
             `True` when a live handle was found and the cancel request was
             actually issued; `False` (a no-op) when there is no live fleet
-            for this service instance right now, or `handle_id` names an
-            unknown or already-terminal handle.
+            for this service instance right now, `handle_id` names an
+            unknown or already-terminal handle, or the handle belongs to
+            ANOTHER service sharing this conversation's coordinator (see
+            the ownership check below).
         """
         fleet = self._fleet
         if fleet is None:
             return False
         if not self._pending_handles(fleet, [handle_id]):
+            return False
+        # PR3a-1 Task 6a -- OWNERSHIP, not just liveness. Once the
+        # coordinator can be injected with a lifetime LONGER than one
+        # service (`ConsoleAgentBridge` now owns one per CONVERSATION and
+        # hands it to the fresh `AgentService` it builds for every
+        # `run_reply`), `fleet` resolves handles this service never
+        # spawned -- an earlier turn's survivor. `_cancel_fleet_handles`
+        # would then find no Event in THIS service's `_fleet_cancels`,
+        # set nothing, and this method would still return `True`: a
+        # silent lie to a user who pressed Cancel on a row that keeps
+        # running. The cancel Event lives with the service that created
+        # it (`spawn` registers it there), which is still reachable --
+        # the bridge keeps a survivor's own service until its last child
+        # settles, precisely so someone can still stop it -- so returning
+        # `False` here lets that owner be tried instead of masking the
+        # miss. Within one turn every reserved handle is registered here
+        # immediately after `fleet.reserve()`, so this never rejects a
+        # handle of this service's own turn.
+        if handle_id not in self._fleet_cancels:
             return False
         self._cancel_fleet_handles([handle_id])
         return True

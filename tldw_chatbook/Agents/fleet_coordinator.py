@@ -249,6 +249,69 @@ class FleetCoordinator:
                 dataclasses.replace(h) for h in self._handles.values()
             ]
 
+    @property
+    def max_live(self) -> int:
+        """The configured live-handle cap.
+
+        Exposed (read-only) so an owner holding this coordinator across
+        turns -- ``ConsoleAgentBridge``, since PR3a-1 Task 6a -- can tell
+        whether ``[agents] max_live_subagents`` still matches the cap this
+        instance was built with, without rebuilding it blindly and
+        orphaning the live children it is currently accounting for.
+        """
+        return self._max_live
+
+    def set_max_live(self, max_live: int) -> None:
+        """Re-size the live cap in place (PR3a-1 Task 6a).
+
+        A cross-turn owner re-reads ``[agents] max_live_subagents`` every
+        turn, and a user can change it mid-conversation. Re-sizing beats
+        replacing the coordinator: a replacement would drop every live
+        handle from the only surface that can see or stop it -- a silent
+        loss of exactly the survivors this PR exists to keep visible --
+        whereas re-sizing keeps them and applies the new cap to the NEXT
+        ``reserve()``. Lowering the cap below the current live count never
+        cancels anything: it simply refuses new reservations until enough
+        children finish, which is the same back-pressure a full fleet
+        already applies.
+
+        Args:
+            max_live: The new cap.
+        """
+        with self._lock:
+            self._max_live = max_live
+
+    def prune_terminal(self) -> int:
+        """Forget every already-terminal handle. Returns how many went.
+
+        PR3a-1 Task 6a. Until this PR a coordinator lived for exactly one
+        turn, so "never forget a handle" cost nothing and bought
+        ``_pending_handles``' "a vanished handle counts as finished"
+        safety. A per-CONVERSATION coordinator lives for the whole
+        process, so without pruning ``_handles`` would grow without bound
+        across a long conversation and ``snapshot()`` would hand the fleet
+        panel every child the conversation has ever run.
+
+        Call it only BETWEEN turns, from the owner, never mid-turn: a
+        handle this turn still holds an id for (``my_handle_ids``,
+        ``_fleet_cancels``) must stay resolvable for the whole turn --
+        ``_settle_fleet``/``wait_agents``/``check_agents`` all resolve
+        ids through ``get()``. Live handles are never pruned, so a
+        survivor of an earlier turn is untouched by construction.
+
+        Returns:
+            The number of handles dropped.
+        """
+        with self._lock:
+            terminal = [
+                handle_id
+                for handle_id in self._handles
+                if handle_id not in self._live_ids
+            ]
+            for handle_id in terminal:
+                del self._handles[handle_id]
+            return len(terminal)
+
     def live_count(self) -> int:
         """Return the number of live (non-terminal) handles.
 

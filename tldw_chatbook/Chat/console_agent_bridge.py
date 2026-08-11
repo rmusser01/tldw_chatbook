@@ -18,7 +18,7 @@ import time
 from collections import deque
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dataclass_replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Sequence
 
@@ -37,6 +37,7 @@ from tldw_chatbook.Agents.agent_models import (
     LOAD_TOOLS_NAME,
     RunBudget,
     RUNTIME_TOOL_NAMES,
+    TERMINAL_RUN_STATUSES,
     SPAWN_TOOL_NAME,
     STEP_ERROR,
     STEP_SPAWN,
@@ -50,9 +51,10 @@ from tldw_chatbook.Agents.agent_models import (
     ToolResult,
     ToolSchema,
 )
+from tldw_chatbook.Agents import agent_service as agent_service_module
 from tldw_chatbook.Agents.agent_service import SUBAGENT_SYSTEM_PROMPT, AgentService
 from tldw_chatbook.Agents.agent_stream import StreamGate
-from tldw_chatbook.Agents.fleet_coordinator import FleetHandle
+from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator, FleetHandle
 from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
     SkillToolProvider,
@@ -1867,6 +1869,50 @@ class ConsoleAgentBridge:
         # -- see that `finally` block's own comment and
         # `test_fleet_teardown_pop_is_identity_checked_not_blind`.
         self._fleet_services: dict[str, AgentService] = {}
+        # PR3a-1 Task 6a -- THE COORDINATOR'S LIFETIME, one per
+        # CONVERSATION.
+        #
+        # `AgentService` builds a fresh `FleetCoordinator` on every
+        # `run_turn` unless one is injected, and this bridge builds a
+        # fresh `AgentService` on every `run_reply` -- so before this
+        # task the coordinator's lifetime was ONE TURN, twice over.
+        # That was coherent only while `_settle_fleet` guaranteed no
+        # child outlived its turn. Since PR3a-1 Task 2 one can, and a
+        # turn-scoped coordinator made every survivor invisible to
+        # `check_agents`/the fleet panel, unstoppable (nothing held its
+        # cancel Event any more), and -- proved by execution in Task 5's
+        # review -- UNCOUNTED: `[agents] max_live_subagents` capped
+        # children WITHIN a turn only, so two turns each spawning 2
+        # children ran 4 at once against a cap of 2, and aggregate live
+        # children scaled with messages sent, bounded by nothing.
+        #
+        # Owning it HERE, above the service, is what makes the cap real:
+        # every `AgentService` this bridge builds for a conversation is
+        # handed the SAME coordinator, so turn 2's `fleet.reserve()`
+        # sees turn 1's survivors still occupying slots and refuses (a
+        # retryable refusal the model is told to collect a child for --
+        # see `AgentService.spawn`'s "live sub-agent limit reached").
+        # Keyed by conversation, not global, because that is the unit
+        # the panel, the cancel button and the user's mental model all
+        # use -- see `_conversation_fleet_coordinator` for the sizing,
+        # pruning and kill-switch rules.
+        self._fleet_coordinators: dict[str, FleetCoordinator] = {}
+        # PR3a-1 Task 6a -- the services of FINISHED runs that still have
+        # a live child, kept only so that child stays STOPPABLE.
+        #
+        # A child's cancel Event lives in the `AgentService` that spawned
+        # it (`spawn` registers it in that service's own
+        # `_fleet_cancels`, which `run_turn` resets per turn), and its
+        # approval-card revoke callback likewise. The shared coordinator
+        # above can SEE a survivor from any later turn, but only its own
+        # service can actually stop it -- which is why
+        # `AgentService.cancel_subagent` now refuses a handle it does not
+        # own rather than reporting a success it cannot deliver. Each
+        # entry is dropped as soon as its last child settles
+        # (`_prune_settled_fleet_survivors`), so this holds at most one
+        # service per turn that left a child running, and live children
+        # are themselves capped by the coordinator above.
+        self._fleet_survivor_services: dict[str, list[AgentService]] = {}
 
     def native_tool_schemas(self) -> list[dict[str, Any]]:
         """Return the native tool schemas available to this bridge.
@@ -2545,6 +2591,16 @@ class ConsoleAgentBridge:
             # lifeline, entered on the child's own thread and torn down
             # when the CHILD finishes -- never when this turn does.
             child_model_scope=adapter.child_lifeline,
+            # PR3a-1 Task 6a: this CONVERSATION's coordinator, not this
+            # turn's -- the only thing that makes `[agents]
+            # max_live_subagents` a bound on the fleet rather than on one
+            # message, and the only thing an earlier turn's survivor is
+            # still visible and stoppable through. `None` when the fleet
+            # kill switch is on, which leaves `AgentService` to take its
+            # own inline path exactly as before.
+            fleet_coordinator=self._conversation_fleet_coordinator(
+                conversation_id
+            ),
         )
         # PR2b Task 1: publish BEFORE `run_turn` is called (below) -- see
         # `self._fleet_services`'s own docstring in `__init__` for the
@@ -2777,11 +2833,181 @@ class ConsoleAgentBridge:
         """
         if self._fleet_services.get(conversation_id) is service:
             self._fleet_services.pop(conversation_id, None)
+        # PR3a-1 Task 6a: the pop above stays exactly as it was -- always,
+        # identity-checked -- but it is no longer the END of this
+        # service's usefulness. If it still has a live child (Task 2's
+        # survivor: the run returned, the child did not), that child's
+        # cancel Event and approval-revoke callback live in THIS service
+        # and nowhere else, so dropping the last reference to it is what
+        # made a survivor unstoppable. Retained until its last child
+        # settles; `_prune_settled_fleet_survivors` does the dropping,
+        # lazily, off the read paths below. Retained on the identity-miss
+        # path too (a stale teardown from an overtaken run still owns its
+        # own children) -- `service` is this call's own object either way.
+        if self._live_handles(service):
+            retained = self._fleet_survivor_services.setdefault(
+                conversation_id, []
+            )
+            if service not in retained:
+                retained.append(service)
+
+    @staticmethod
+    def _live_handles(service: AgentService) -> list[FleetHandle]:
+        """This service's not-yet-terminal fleet handles (PR3a-1 Task 6a).
+
+        Args:
+            service: The service to read. Any object exposing
+                ``fleet_snapshot()`` works (the test doubles do).
+
+        Returns:
+            The handles still running, in coordinator order.
+        """
+        return [
+            handle
+            for handle in service.fleet_snapshot()
+            if handle.status not in TERMINAL_RUN_STATUSES
+        ]
+
+    def _prune_settled_fleet_survivors(self, conversation_id: str) -> None:
+        """Forget retained services whose last child has settled.
+
+        PR3a-1 Task 6a. Called off the read paths (`fleet_snapshot`,
+        `cancel_subagent`, `live_snapshot`) rather than from a completion
+        callback ON PURPOSE: the "last child of a turn finished" signal
+        does not exist yet and PR 3a-2 builds it for auto-wake, so
+        inventing a second one here would be built twice and thrown away
+        once. Nothing depends on the pruning being prompt -- a settled
+        service is inert, and every read that could observe it prunes it
+        first.
+
+        Args:
+            conversation_id: The conversation to prune.
+        """
+        retained = self._fleet_survivor_services.get(conversation_id)
+        if not retained:
+            return
+        still_live = [
+            service for service in retained if self._live_handles(service)
+        ]
+        if still_live:
+            self._fleet_survivor_services[conversation_id] = still_live
+        else:
+            self._fleet_survivor_services.pop(conversation_id, None)
+
+    def _conversation_fleet_coordinator(
+        self, conversation_id: str
+    ) -> FleetCoordinator | None:
+        """The coordinator for this conversation, built on first use.
+
+        PR3a-1 Task 6a. Called once per ``run_reply``, on the run's own
+        thread, before the ``AgentService`` that will use it exists.
+
+        Three rules, each with a reason:
+
+        * **Kill switch.** ``[agents] max_live_subagents <= 1`` means NO
+          fleet (`AgentService`'s own long-standing meaning of that
+          value), so no coordinator is created and none is injected --
+          the service then takes its pre-PR2a inline path unchanged. An
+          existing coordinator is deliberately KEPT (not dropped) so that
+          children spawned before the switch was flipped stay visible and
+          stoppable while they finish.
+        * **Re-sizing, not replacing.** A cap change mid-conversation
+          re-sizes the live coordinator in place. Replacing it would drop
+          every live handle from the only surface that can see or stop
+          it -- a silent loss of exactly the survivors this PR exists to
+          keep.
+        * **Pruning between turns.** Terminal handles are dropped here,
+          at the START of a turn, so the coordinator holds at most the
+          live children plus whatever this turn adds. It cannot be done
+          mid-turn: `_settle_fleet`, `wait_agents` and `check_agents` all
+          resolve their ids through `FleetCoordinator.get`, and this
+          turn's own terminal children must stay resolvable until the
+          turn ends. The cost of pruning here is that the previous turn's
+          finished children leave the rail when the next turn starts --
+          which is what the rail already did anyway (`_live` is
+          overwritten per turn).
+
+        Args:
+            conversation_id: The conversation whose fleet this run joins.
+
+        Returns:
+            The conversation's coordinator, or ``None`` when the fleet is
+            switched off.
+        """
+        # Read through the MODULE, not a from-import: `agent_service.
+        # _setting` is what tests monkeypatch to flip the kill switch
+        # (e.g. `test_inline_fleet_off_spawn_still_produces_a_live_
+        # subagent_row`), and a bound from-import would not see it.
+        max_live = agent_service_module._coerce_max_live_subagents(
+            agent_service_module._setting(
+                agent_service_module.MAX_LIVE_SUBAGENTS_KEY,
+                agent_service_module.DEFAULT_MAX_LIVE_SUBAGENTS,
+            )
+        )
+        if max_live <= 1:
+            return None
+        coordinator = self._fleet_coordinators.get(conversation_id)
+        if coordinator is None:
+            coordinator = FleetCoordinator(max_live=max_live, clock=self._clock)
+            self._fleet_coordinators[conversation_id] = coordinator
+            return coordinator
+        if coordinator.max_live != max_live:
+            coordinator.set_max_live(max_live)
+        coordinator.prune_terminal()
+        return coordinator
+
+    def _conversation_fleet_handles(
+        self, conversation_id: str
+    ) -> list[FleetHandle]:
+        """Every handle this conversation's coordinator still holds.
+
+        Terminal ones included -- this is the rail's source for "the
+        child finished, and here is how" after the turn that spawned it
+        has already returned (PR3a-1 Task 6a). Pruned only between turns
+        (see `_conversation_fleet_coordinator`).
+
+        Args:
+            conversation_id: The conversation to read.
+
+        Returns:
+            Copies of the handles, or ``[]`` when this conversation has
+            no coordinator (never ran, or the fleet kill switch is on).
+        """
+        coordinator = self._fleet_coordinators.get(conversation_id)
+        return coordinator.snapshot() if coordinator is not None else []
 
     # -- rail reads -----------------------------------------------------
 
     def live_snapshot(self, conversation_id: str) -> AgentLiveSnapshot:
-        return self._live.get(conversation_id, AgentLiveSnapshot())
+        """The rail's view of this conversation's agent activity.
+
+        PR3a-1 Task 6a: the ``subagents`` rows are re-derived from the
+        conversation's LIVE coordinator on every read, instead of being
+        frozen at whatever `run_reply` last published. A survivor's
+        status changes AFTER the turn that spawned it has returned --
+        measured at ~1.3ms after `run_reply` returns for a child that was
+        already finishing, and unbounded for one that is genuinely still
+        working -- so a snapshot frozen at the run's last publish shows
+        that child "running" forever, which is precisely the permanently
+        stuck row the audit's F1 describes. Everything else in the
+        snapshot (the primary's own status/steps) is still the published
+        value: it belongs to a run that has ended and does not change.
+
+        Falls back to the published snapshot untouched when this
+        conversation has no coordinator -- the inline/kill-switch path,
+        where there is no live status to read and never was.
+        """
+        self._prune_settled_fleet_survivors(conversation_id)
+        snapshot = self._live.get(conversation_id, AgentLiveSnapshot())
+        handles = self._conversation_fleet_handles(conversation_id)
+        if not handles:
+            return snapshot
+        return dataclass_replace(
+            snapshot,
+            subagents=_subagent_summaries_from_fleet(
+                handles, list(snapshot.subagents)
+            ),
+        )
 
     def fleet_snapshot(self, conversation_id: str) -> list[FleetHandle]:
         """Read-only view of the REAL, live fleet for one conversation.
@@ -2813,10 +3039,34 @@ class ConsoleAgentBridge:
         outside ``agent_service.py``) touches on ``AgentService`` for this
         purpose.
         """
+        self._prune_settled_fleet_survivors(conversation_id)
         service = self._fleet_services.get(conversation_id)
-        if service is None:
-            return []
-        return service.fleet_snapshot()
+        if service is not None:
+            return service.fleet_snapshot()
+        # PR3a-1 Task 6a -- SECOND TIER: no run is in flight, but a child
+        # of a finished one may still be working. Before this tier a
+        # survivor was invisible the instant its turn returned
+        # (`fleet_snapshot` -> `[]`, so the panel showed nothing and the
+        # cancel button had no row to press), which is the F6 defect
+        # dev's own panel tests caught.
+        #
+        # Only LIVE handles here, deliberately: with no run in flight
+        # "the fleet" IS the survivors, and dev's pinned choice -- a
+        # completed run's snapshot goes back to `[]`, not its terminal
+        # handles -- is preserved exactly for the overwhelmingly common
+        # case where nothing outlived the turn. The rail's own row list
+        # (`live_snapshot().subagents`) is where a FINISHED child's final
+        # status is read from; this method answers "what is still
+        # running".
+        handles: list[FleetHandle] = []
+        seen: set[str] = set()
+        for survivor in self._fleet_survivor_services.get(conversation_id, ()):
+            for handle in self._live_handles(survivor):
+                if handle.handle_id in seen:
+                    continue
+                seen.add(handle.handle_id)
+                handles.append(handle)
+        return handles
 
     def cancel_subagent(self, conversation_id: str, handle_id: str) -> bool:
         """Cooperatively cancel ONE live child of this conversation's fleet.
@@ -2841,10 +3091,25 @@ class ConsoleAgentBridge:
             published run's fleet is off) or `handle_id` is unknown/already
             terminal; `True` when a live handle was found and cancelled.
         """
+        self._prune_settled_fleet_survivors(conversation_id)
         service = self._fleet_services.get(conversation_id)
-        if service is None:
-            return False
-        return service.cancel_subagent(handle_id)
+        if service is not None and service.cancel_subagent(handle_id):
+            return True
+        # PR3a-1 Task 6a -- SECOND TIER, same shape as `fleet_snapshot`'s.
+        # A survivor's cancel Event lives in the service that spawned it,
+        # which is no longer the published one once its turn returned (or
+        # once a LATER turn published over it). `AgentService.cancel_
+        # subagent` returns `False` for a handle it does not own -- it
+        # can SEE any handle in the shared coordinator but can only stop
+        # its own -- so falling through to the retained owners here is
+        # what turns "the row is on screen" into "pressing Cancel stops
+        # it". Ordered current-run-first: the common case is one press on
+        # a child of the run in flight, and that answers without touching
+        # this list.
+        for survivor in self._fleet_survivor_services.get(conversation_id, ()):
+            if survivor.cancel_subagent(handle_id):
+                return True
+        return False
 
     def historical_snapshot(self, conversation_id: str) -> AgentLiveSnapshot:
         """Rail summary derived from ``AgentRunsDB`` for a conversation this
