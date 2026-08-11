@@ -10,12 +10,16 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+import logging
 import threading
 from typing import TypeAlias
 from uuid import uuid4
 
 
 ImageEditRunner: TypeAlias = Callable[[str], Awaitable[None]]
+ImageEditSettled: TypeAlias = Callable[[str], None]
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _required_text(value: object, field_name: str) -> None:
@@ -96,6 +100,7 @@ class ImageEditOperationRegistry:
         captured_draft: str,
         cancel_event: threading.Event,
         runner: ImageEditRunner,
+        on_settled: ImageEditSettled | None = None,
     ) -> ActiveImageEditOperation | None:
         """Start one owned child, or refuse when the session is already active."""
         if session_id in self._active or session_id in self._completions:
@@ -108,13 +113,31 @@ class ImageEditOperationRegistry:
             raise TypeError("cancel_event must be a threading.Event")
         if not callable(runner):
             raise TypeError("runner must be callable")
+        if on_settled is not None and not callable(on_settled):
+            raise TypeError("on_settled must be callable")
         generation = str(uuid4())
 
         async def _owned() -> None:
             try:
                 await runner(generation)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # pragma: no cover - final containment seam
+                _LOGGER.error(
+                    "Console image edit runner escaped containment (error_type=%s)",
+                    type(exc).__name__,
+                )
             finally:
-                self.remove_active(session_id, generation)
+                removed = self.remove_active(session_id, generation)
+                if removed and on_settled is not None:
+                    try:
+                        on_settled(generation)
+                    except Exception as exc:  # pragma: no cover - UI scheduling seam
+                        _LOGGER.error(
+                            "Console image edit settlement scheduling failed "
+                            "(error_type=%s)",
+                            type(exc).__name__,
+                        )
 
         task = asyncio.create_task(
             _owned(), name=f"console-h3-image-edit-{generation}"

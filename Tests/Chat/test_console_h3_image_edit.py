@@ -263,6 +263,7 @@ async def test_h3_command_uses_raw_instruction_one_memory_image_and_count_one(
     store = ConsoleChatStore()
     screen, composer = _screen_with_h3_store(store)
     session = store.ensure_session(settings=ConsoleSessionSettings(provider="openai"))
+    screen._console_visible_draft_session_id = session.id
     pending = _pending()
     assert store.add_pending_attachment(session.id, pending)
 
@@ -335,9 +336,12 @@ async def test_h3_command_uses_raw_instruction_one_memory_image_and_count_one(
     )
     task = asyncio.create_task(screen._console_command_generate_image(parse))
     assert await asyncio.to_thread(started.wait, 2)
+    operation = screen.app_instance.console_image_edit_operations.active(session.id)
+    assert operation is not None
     assert composer.draft_text().endswith("preserve  internal   spacing")
     release.set()
     await task
+    await operation.task
 
     assert generic_calls == []
     assert len(batch_calls) == 1
@@ -420,6 +424,100 @@ async def test_h3_refusals_happen_before_generic_preparation_or_generation(
 
 
 @pytest.mark.asyncio
+async def test_h3_source_decode_runs_off_loop_while_message_pump_remains_responsive(
+    monkeypatch,
+):
+    store = ConsoleChatStore()
+    screen, _composer = _screen_with_h3_store(store)
+    session = store.ensure_session(settings=ConsoleSessionSettings(provider="openai"))
+    store.add_pending_attachment(session.id, _pending())
+    monkeypatch.setattr(chat_screen_module, "get_image_generation_config", _cfg)
+    monkeypatch.setattr(
+        chat_screen_module,
+        "list_image_models_for_catalog",
+        lambda: [{"name": "comfyui", "is_configured": True}],
+    )
+    decode_started = threading.Event()
+    release_decode = threading.Event()
+    original_decode = screen._h3_reference_from_snapshot
+
+    def _barrier_decode(snapshot, cfg):
+        decode_started.set()
+        assert threading.current_thread() is not threading.main_thread()
+        assert release_decode.wait(2)
+        return original_decode(snapshot, cfg)
+
+    monkeypatch.setattr(screen, "_h3_reference_from_snapshot", _barrier_decode)
+    monkeypatch.setattr(
+        chat_screen_module,
+        "run_generation_batch",
+        lambda **_kwargs: (_ for _ in ()).throw(ImageGenerationCancelled()),
+    )
+
+    command = asyncio.create_task(
+        screen._console_command_generate_image(
+            CommandParse(
+                kind="command", name="generate-image", args=":comfyui change it"
+            )
+        )
+    )
+    assert await asyncio.to_thread(decode_started.wait, 2)
+    responsive = asyncio.Event()
+    asyncio.get_running_loop().call_soon(responsive.set)
+    await asyncio.wait_for(responsive.wait(), timeout=0.2)
+    release_decode.set()
+    await command
+    operation = screen.app_instance.console_image_edit_operations.active(session.id)
+    assert operation is not None
+    await operation.task
+
+
+@pytest.mark.asyncio
+async def test_h3_oversize_source_is_rejected_before_decode_or_dispatch(monkeypatch):
+    from tldw_chatbook.Image_Generation.request_validation import (
+        IMAGE_GEN_REFERENCE_MAX_BYTES,
+    )
+
+    store = ConsoleChatStore()
+    screen, _composer = _screen_with_h3_store(store)
+    session = store.ensure_session(settings=ConsoleSessionSettings(provider="openai"))
+    store.add_pending_attachment(
+        session.id,
+        _pending(data=b"x" * (IMAGE_GEN_REFERENCE_MAX_BYTES + 1)),
+    )
+    monkeypatch.setattr(chat_screen_module, "get_image_generation_config", _cfg)
+    monkeypatch.setattr(
+        chat_screen_module,
+        "list_image_models_for_catalog",
+        lambda: [{"name": "comfyui", "is_configured": True}],
+    )
+    monkeypatch.setattr(
+        screen,
+        "_h3_reference_from_snapshot",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("decode called")),
+    )
+    monkeypatch.setattr(
+        chat_screen_module,
+        "run_generation_batch",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("dispatch called")),
+    )
+    copy: list[str] = []
+
+    async def _append(message: str, *, session_id: str | None = None) -> None:
+        copy.append(message)
+
+    screen._append_native_console_system_message = _append
+    await screen._console_command_generate_image(
+        CommandParse(kind="command", name="generate-image", args=":comfyui change it")
+    )
+
+    assert copy == [
+        "ComfyUI image edits require one valid in-memory PNG, JPEG, or WebP image."
+    ]
+    assert screen.app_instance.console_image_edit_operations.active(session.id) is None
+
+
+@pytest.mark.asyncio
 async def test_stop_before_adapter_success_is_expected_and_retains_source(monkeypatch):
     store = ConsoleChatStore()
     screen, composer = _screen_with_h3_store(store)
@@ -456,6 +554,7 @@ async def test_stop_before_adapter_success_is_expected_and_retains_source(monkey
     assert active.cancel_event is observed[0]
     screen.app_instance.console_image_edit_operations.request_cancel(session.id)
     await task
+    await active.task
 
     assert store.messages_for_session(session.id) == []
     assert store.pending_attachments(session.id) == [pending]
@@ -521,10 +620,11 @@ async def test_outer_cancellation_drains_success_winner_through_durable_append(
         )
     )
     assert await asyncio.to_thread(success_won.wait, 2)
-    caller.cancel()
+    operation = screen.app_instance.console_image_edit_operations.active(session.id)
+    assert operation is not None
+    await caller
     release_result.set()
-    with pytest.raises(asyncio.CancelledError):
-        await caller
+    await operation.task
 
     assert appended.is_set()
     assert store.pending_attachments(session.id) == []
@@ -591,6 +691,7 @@ async def test_terminal_generation_never_syncs_stale_origin_screen(monkeypatch):
     screen.app_instance._console_h3_image_edit_screen = None
     release_result.set()
     await caller
+    await active.task
 
     screen._sync_native_console_chat_ui.assert_not_awaited()
 
@@ -649,6 +750,9 @@ async def test_persistence_failure_retains_source_and_emits_sanitized_copy(monke
     await screen._console_command_generate_image(
         CommandParse(kind="command", name="generate-image", args=":comfyui change it")
     )
+    operation = screen.app_instance.console_image_edit_operations.active(session.id)
+    assert operation is not None
+    await operation.task
 
     messages = store.messages_for_session(session.id)
     assert len(messages) == 1
@@ -715,6 +819,9 @@ async def test_failure_guidance_persistence_error_falls_back_without_masking_pri
     await screen._console_command_generate_image(
         CommandParse(kind="command", name="generate-image", args=":comfyui change it")
     )
+    operation = screen.app_instance.console_image_edit_operations.active(session.id)
+    assert operation is not None
+    await operation.task
 
     assert persist_attempts == expected_attempts
     messages = store.messages_for_session(session.id)
@@ -807,6 +914,9 @@ async def test_postcommit_consume_exception_keeps_success_and_logs_only_type(mon
     await screen._console_command_generate_image(
         CommandParse(kind="command", name="generate-image", args=":comfyui change it")
     )
+    operation = screen.app_instance.console_image_edit_operations.active(session.id)
+    assert operation is not None
+    await operation.task
 
     messages = store.messages_for_session(session.id)
     assert len(messages) == 1

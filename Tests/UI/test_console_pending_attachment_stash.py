@@ -114,7 +114,7 @@ async def _wait_for_h3_state(pilot, predicate, *, detail: str) -> None:
     while time.monotonic() < deadline:
         if predicate():
             return
-        await pilot.pause()
+        await pilot.pause(0.1)
     raise AssertionError(f"Timed out waiting for {detail}")
 
 
@@ -352,25 +352,107 @@ def test_h3_completion_waits_for_durable_message_presence_before_cleanup():
 
 
 @pytest.mark.asyncio
+async def test_h3_completion_for_session_a_never_clears_identical_visible_draft_b(
+    monkeypatch, tmp_path
+):
+    db = CharactersRAGDB(tmp_path / "h3-two-session-draft.sqlite", "test_client")
+    try:
+        app = _build_test_app()
+        app.chachanotes_db = db
+        host = ConsoleHarness(app)
+        async with host.run_test(size=(160, 48)) as pilot:
+            screen = host.screen_stack[-1]
+            await _wait_for_selector(screen, pilot, "#console-native-composer")
+            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            screen._console_chat_store = store
+            source = _real_image_pending("source.png", attachment_id="source-a")
+            session_a = store.create_session(title="Session A")
+            store.add_pending_attachment(session_a.id, source)
+            store.set_session_draft(session_a.id, "identical draft")
+            persisted = store.append_generation_message(
+                session_a.id,
+                content="[image] edited A",
+                variants=[
+                    (
+                        _png_bytes((15, 9)),
+                        "image/png",
+                        GenerationVariantMeta(
+                            prompt="edited A",
+                            negative_prompt="",
+                            backend="comfyui",
+                            model=None,
+                            seed=12,
+                            style=None,
+                            params={"operation": "edit"},
+                        ),
+                    )
+                ],
+                persist=True,
+            )
+            session_b = store.create_session(title="Session B")
+            store.set_session_draft(session_b.id, "identical draft")
+            screen._console_visible_draft_session_id = session_b.id
+            composer = screen.query_one("#console-native-composer")
+            composer.load_draft("identical draft")
+            draft_writes: list[tuple[str, str]] = []
+            real_set_draft = store.set_session_draft
+
+            def _record_set_draft(session_id: str, draft: str) -> None:
+                draft_writes.append((session_id, draft))
+                real_set_draft(session_id, draft)
+
+            monkeypatch.setattr(store, "set_session_draft", _record_set_draft)
+            generation = "two-session-generation"
+            assert app.console_image_edit_operations.publish_completion(
+                ImageEditCompletion(
+                    session_id=session_a.id,
+                    generation=generation,
+                    message_id=persisted.persisted_message_id or "",
+                    attachment_id=source.attachment_id,
+                    captured_draft="identical draft",
+                )
+            )
+
+            screen._reconcile_h3_image_edit_completions(store)
+
+            assert store.pending_attachments(session_a.id) == []
+            assert store.session_draft(session_a.id) == ""
+            assert store.session_draft(session_b.id) == "identical draft"
+            assert composer.draft_text() == "identical draft"
+            assert draft_writes == [(session_a.id, "")]
+            assert app.console_image_edit_operations.completion(session_a.id) is None
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
 async def test_h3_start_immediately_paints_enabled_stop_on_live_screen(
     monkeypatch,
 ):
     _patch_h3_enabled(monkeypatch)
     app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "test"}
+    app.app_config["api_settings"] = {"openai": {"api_key": "test-key"}}
     host = ConsoleHarness(app)
     started = threading.Event()
     release = threading.Event()
 
     def _blocked_batch(**kwargs):
         started.set()
-        assert release.wait(2)
+        assert kwargs["cancel_event"].wait(2)
+        release.set()
         raise ImageGenerationCancelled()
 
     monkeypatch.setattr(chat_screen_module, "run_generation_batch", _blocked_batch)
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        await pilot.pause()
+        _select_llamacpp_console(console)
+        await _wait_for_h3_state(
+            pilot,
+            lambda: not console._console_setup_modal_blocking(),
+            detail="dismissed Console setup modal",
+        )
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
         store.add_pending_attachment(
@@ -379,23 +461,31 @@ async def test_h3_start_immediately_paints_enabled_stop_on_live_screen(
         )
         composer = console.query_one("#console-native-composer")
         composer.load_draft("/generate-image :comfyui change it")
-        caller = asyncio.create_task(
-            console._console_command_generate_image(
-                CommandParse(
-                    kind="command", name="generate-image", args=":comfyui change it"
-                )
-            )
+        console._request_console_control_bar_sync()
+        await _wait_for_h3_state(
+            pilot,
+            lambda: (
+                console.query_one("#console-send-message", Button).display
+                and not console.query_one("#console-send-message", Button).disabled
+            ),
+            detail="enabled H3 Send button",
         )
+        await pilot.pause(0.1)
+        send = console.query_one("#console-send-message", Button)
+        send.post_message(Button.Pressed(send))
+        await asyncio.wait_for(pilot.pause(), timeout=0.5)
         assert await asyncio.to_thread(started.wait, 2)
-        try:
-            await pilot.pause()
-            await pilot.pause()
-            stop = console.query_one("#console-stop-generation", Button)
-            assert stop.styles.display != "none"
-            assert not stop.disabled
-        finally:
-            release.set()
-            await caller
+        operation = app.console_image_edit_operations.active(session.id)
+        assert operation is not None
+        stop = console.query_one("#console-stop-generation", Button)
+        assert stop.styles.display != "none"
+        assert not stop.disabled
+        await asyncio.wait_for(
+            pilot.click("#console-stop-generation"), timeout=0.5
+        )
+        assert await asyncio.to_thread(release.wait, 2)
+        assert operation.cancel_event.is_set()
+        await operation.task
 
 
 @pytest.mark.asyncio
@@ -468,6 +558,7 @@ async def test_actual_unmount_is_nonblocking_and_fresh_screen_shows_stopping(
 
         release.set()
         await caller
+        await active.task
 
 
 @pytest.mark.asyncio
@@ -588,6 +679,7 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
 
             release.set()
             await caller
+            await operation.task
             expected_content = {
                 "success": "[image] settle terminal",
                 "failure": (
@@ -783,6 +875,8 @@ async def test_batch_failure_after_actual_unmount_never_syncs_stale_screen(
             )
         )
         assert await asyncio.to_thread(started.wait, 2)
+        operation = app.console_image_edit_operations.active(session.id)
+        assert operation is not None
         await asyncio.wait_for(host.pop_screen(), timeout=0.5)
 
         async def _stale_sync_tripwire():
@@ -792,6 +886,7 @@ async def test_batch_failure_after_actual_unmount_never_syncs_stale_screen(
         old._message._sync_native_console_chat_ui_fn = _stale_sync_tripwire
         release.set()
         await caller
+        await operation.task
 
         assert store.pending_attachments(session.id) == [source]
         assert store.session_draft(session.id) == "captured failure draft"
@@ -904,6 +999,7 @@ async def test_late_first_persisted_h3_failure_reconciles_through_normal_restore
 
             release.set()
             await caller
+            await operation.task
             for _ in range(10):
                 await pilot.pause()
                 if app.console_image_edit_operations.failure_notice(session.id) is None:

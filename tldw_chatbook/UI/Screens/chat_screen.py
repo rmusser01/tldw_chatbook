@@ -16705,30 +16705,84 @@ class ChatScreen(BaseAppScreen):
     )
 
     @staticmethod
-    def _h3_reference_from_pending(pending: Any):
-        """Build one memory-only source reference without reopening its path."""
+    def _h3_reference_snapshot(pending: Any) -> tuple[str, bytes, str]:
+        """Snapshot immutable source identity and bytes without decoding."""
+        from ...Image_Generation.request_validation import (
+            IMAGE_GEN_REFERENCE_MAX_BYTES,
+        )
+
+        if getattr(pending, "file_type", None) != "image":
+            raise ValueError("source_type")
+        attachment_id = getattr(pending, "attachment_id", None)
+        if type(attachment_id) is not str or not attachment_id:
+            raise ValueError("source_identity")
+        data = getattr(pending, "data", None)
+        if type(data) is not bytes or not data:
+            raise ValueError("source_content")
+        if len(data) > IMAGE_GEN_REFERENCE_MAX_BYTES:
+            raise ValueError("source_size")
+        mime_type = str(getattr(pending, "mime_type", "") or "").lower()
+        return attachment_id, data, mime_type
+
+    @staticmethod
+    def _h3_reference_from_snapshot(
+        snapshot: tuple[str, bytes, str], cfg: Any
+    ):
+        """Decode and validate one immutable source snapshot off the UI loop."""
         from io import BytesIO
 
         from PIL import Image as PILImage
 
         from ...Image_Generation.capabilities import ResolvedReferenceImage
+        from ...Image_Generation.config import (
+            DEFAULT_MAX_HEIGHT,
+            DEFAULT_MAX_PIXELS,
+            DEFAULT_MAX_WIDTH,
+        )
+        from ...Image_Generation.request_validation import (
+            REFERENCE_IMAGE_ALLOWED_MIMES,
+            REFERENCE_IMAGE_SUPPORTED_MODES,
+        )
 
-        if getattr(pending, "file_type", None) != "image":
-            raise ValueError("source_type")
-        data = getattr(pending, "data", None)
-        if type(data) is not bytes or not data:
-            raise ValueError("source_content")
-        mime_type = str(getattr(pending, "mime_type", "") or "").lower()
-        if mime_type not in {"image/png", "image/jpeg", "image/webp"}:
+        attachment_id, data, mime_type = snapshot
+        if mime_type not in REFERENCE_IMAGE_ALLOWED_MIMES:
             raise ValueError("source_mime")
+        max_width = getattr(cfg, "max_width", DEFAULT_MAX_WIDTH)
+        max_height = getattr(cfg, "max_height", DEFAULT_MAX_HEIGHT)
+        max_pixels = getattr(cfg, "max_pixels", DEFAULT_MAX_PIXELS)
+        if type(max_width) is not int or max_width <= 0:
+            max_width = DEFAULT_MAX_WIDTH
+        if type(max_height) is not int or max_height <= 0:
+            max_height = DEFAULT_MAX_HEIGHT
+        if type(max_pixels) is not int or max_pixels <= 0:
+            max_pixels = DEFAULT_MAX_PIXELS
         try:
             with PILImage.open(BytesIO(data)) as image:
-                image.load()
+                expected_mime = {
+                    "JPEG": "image/jpeg",
+                    "PNG": "image/png",
+                    "WEBP": "image/webp",
+                }.get(str(image.format or "").upper())
                 width, height = image.size
+                if expected_mime != mime_type:
+                    raise ValueError("source_signature")
+                if image.mode not in REFERENCE_IMAGE_SUPPORTED_MODES:
+                    raise ValueError("source_mode")
+                if (
+                    width <= 0
+                    or height <= 0
+                    or width > max_width
+                    or height > max_height
+                    or width * height > max_pixels
+                ):
+                    raise ValueError("source_dimensions")
+                image.load()
         except Exception as exc:
+            if isinstance(exc, ValueError) and str(exc).startswith("source_"):
+                raise
             raise ValueError("source_decode") from exc
         return ResolvedReferenceImage(
-            file_id=pending.attachment_id,
+            file_id=attachment_id,
             filename=None,
             mime_type=mime_type,
             width=width,
@@ -16853,6 +16907,9 @@ class ChatScreen(BaseAppScreen):
             try:
                 if (
                     composer is not None
+                    and store.active_session_id == completion.session_id
+                    and self._console_visible_draft_session_id
+                    == completion.session_id
                     and composer.draft_text() == completion.captured_draft
                 ):
                     composer.clear_draft()
@@ -17142,7 +17199,17 @@ class ChatScreen(BaseAppScreen):
             return
         pending = pendings[0]
         try:
-            reference = self._h3_reference_from_pending(pending)
+            snapshot = self._h3_reference_snapshot(pending)
+        except (TypeError, ValueError):
+            await self._append_native_console_system_message(
+                "ComfyUI image edits require one valid in-memory PNG, JPEG, or WebP image.",
+                session_id=session.id,
+            )
+            return
+        try:
+            reference = await asyncio.to_thread(
+                self._h3_reference_from_snapshot, snapshot, cfg
+            )
         except (TypeError, ValueError):
             await self._append_native_console_system_message(
                 "ComfyUI image edits require one valid in-memory PNG, JPEG, or WebP image.",
@@ -17266,6 +17333,9 @@ class ChatScreen(BaseAppScreen):
             captured_draft=captured_draft,
             cancel_event=cancel_event,
             runner=_owned,
+            on_settled=lambda generation: self._schedule_current_h3_settlement(
+                session.id, generation
+            ),
         )
         if operation is None:
             await self._append_native_console_system_message(
@@ -17280,19 +17350,6 @@ class ChatScreen(BaseAppScreen):
         ui_generations[session.id] = operation.generation
         if self._h3_origin_screen_is_live(operation.generation):
             self._request_console_control_bar_sync()
-        try:
-            await asyncio.shield(operation.task)
-        except asyncio.CancelledError:
-            cancel_event.set()
-            try:
-                await operation.task
-            except BaseException:  # cancellation outcome never masks caller cancel
-                pass
-            raise
-        finally:
-            self._schedule_current_h3_settlement(
-                session.id, operation.generation
-            )
 
     async def _console_command_generate_image(self, parse: CommandParse) -> None:
         """Resolve and run one `/generate-image` batch.
