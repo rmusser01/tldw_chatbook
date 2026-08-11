@@ -480,6 +480,34 @@ async def test_push_panel_availability_is_a_separate_stable_list_action() -> Non
 
 
 @pytest.mark.asyncio
+async def test_push_return_during_mutation_focuses_visible_list_fallback() -> None:
+    """A hidden Push action must not strand focus in the closed workflow."""
+    panel = git_panel_module.LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+
+    async with _PanelHarness(panel).run_test() as pilot:
+        panel.render_push_availability(_push_availability_projection())
+        panel.render_push_progress("checking_remote", operation_id=63)
+        cancel = panel.query_one("#file-notes-git-push-cancel", Button)
+        cancel.focus()
+        await _until(pilot, lambda: cancel.has_focus, "Push cancel did not focus")
+
+        panel.set_mutating(True, "Checking remote…")
+        panel.return_to_push_list()
+        back = panel.query_one("#file-notes-git-back", Button)
+        await _until(
+            pilot,
+            lambda: back.has_focus,
+            "Push return did not focus a visible list fallback",
+        )
+
+        assert not panel.query_one("#file-notes-git-push-review", Button).display
+        assert panel.query_one("#file-notes-git-refresh", Button).disabled
+        assert back.display
+        assert not back.disabled
+
+
+@pytest.mark.asyncio
 async def test_push_panel_review_action_emits_exact_owner_projection() -> None:
     """Replacing the owner projection with row-derived state must fail."""
     panel = git_panel_module.LibraryFileNotesGitPanel()

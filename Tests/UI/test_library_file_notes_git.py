@@ -67,6 +67,10 @@ from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (  # noqa
 )
 
 
+_ASYNC_POLL_ATTEMPTS = 200
+_ASYNC_POLL_INTERVAL_SECONDS = 0.01
+
+
 def test_action_layout_tolerates_rows_not_yet_mounted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -875,11 +879,11 @@ async def _wait_for_current_git_row_projection(
     """Wait until the panel model and mounted row projection agree."""
     panel = workspace._git_panel_widget
     row_list = panel.query_one("#file-notes-git-rows", ListView)
-    for _ in range(200):
+    for _ in range(_ASYNC_POLL_ATTEMPTS):
         mounted_count = len(panel.query(".file-notes-git-row"))
         if mounted_count == len(panel.rows) and row_list.display is bool(panel.rows):
             return
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(_ASYNC_POLL_INTERVAL_SECONDS)
     raise AssertionError(
         "Git row projection did not settle: "
         f"model={len(panel.rows)}, mounted={mounted_count}, "
@@ -902,13 +906,13 @@ async def _open_git_and_stage_one(
     )
     await _wait_for_current_git_row_projection(workspace)
     workspace.query_one("#file-notes-git-stage-selected", Button).press()
-    for _ in range(200):
+    for _ in range(_ASYNC_POLL_ATTEMPTS):
         if len(git_service.status_calls) == 2 and workspace.query_one(
             "#file-notes-git-action-status",
             Static,
         ).display:
             break
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(_ASYNC_POLL_INTERVAL_SECONDS)
     else:
         raise AssertionError("Stage result did not render")
     action_worker = workspace._git_action_worker
@@ -4050,13 +4054,13 @@ async def test_stage_all_summary_counts_the_complete_displayed_snapshot(
         workspace.query_one("#file-notes-git-bulk-toggle", Button).press()
         await pilot.pause()
         workspace.query_one("#file-notes-git-stage-all", Button).press()
-        for _ in range(200):
+        for _ in range(_ASYNC_POLL_ATTEMPTS):
             if (
                 git_service.stage_calls == [(1, 2)]
                 and len(git_service.status_calls) == 2
             ):
                 break
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(_ASYNC_POLL_INTERVAL_SECONDS)
         else:
             raise AssertionError("Stage All did not settle and refresh")
 
@@ -4098,13 +4102,13 @@ async def test_unstage_all_summary_counts_the_complete_displayed_snapshot(
         workspace.query_one("#file-notes-git-bulk-toggle", Button).press()
         await pilot.pause()
         workspace.query_one("#file-notes-git-unstage-all", Button).press()
-        for _ in range(200):
+        for _ in range(_ASYNC_POLL_ATTEMPTS):
             if (
                 git_service.unstage_calls == [(1, 2)]
                 and len(git_service.status_calls) == 2
             ):
                 break
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(_ASYNC_POLL_INTERVAL_SECONDS)
         else:
             raise AssertionError("Unstage All did not settle and refresh")
 
@@ -4446,13 +4450,13 @@ async def test_unstage_selected_reports_counts_and_refreshes_once(
         )
         await _wait_for_current_git_row_projection(workspace)
         workspace.query_one("#file-notes-git-unstage-selected", Button).press()
-        for _ in range(200):
+        for _ in range(_ASYNC_POLL_ATTEMPTS):
             if (
                 git_service.unstage_calls == [(1,)]
                 and len(git_service.status_calls) == 2
             ):
                 break
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(_ASYNC_POLL_INTERVAL_SECONDS)
         else:
             raise AssertionError("Unstage did not settle and refresh once")
         assert workspace._git_last_action is not None

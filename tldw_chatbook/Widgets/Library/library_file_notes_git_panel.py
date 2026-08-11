@@ -1763,22 +1763,32 @@ class LibraryFileNotesGitPanel(Vertical):
         self._show_push_phase("list", None)
         target = (
             "#file-notes-git-push-review"
-            if self._push_availability is not None
+            if self._push_availability is not None and not self._mutating
             else "#file-notes-git-back"
         )
         self.call_after_refresh(self._focus_push_list_control, target)
 
     def _focus_push_list_control(self, selector: str) -> None:
-        """Ignore list-focus repair after teardown or a newer phase."""
+        """Focus the requested list action or its first safe fallback."""
         if not self.is_attached or self._push_phase != "list":
             return
-        control = self.query_one(selector, Widget)
-        if any(
-            isinstance(node, Widget) and not node.display
-            for node in control.ancestors_with_self
-        ):
+        candidates = dict.fromkeys(
+            (
+                selector,
+                "#file-notes-git-refresh",
+                "#file-notes-git-back",
+            )
+        )
+        for candidate in candidates:
+            control = self.query_one(candidate, Button)
+            hidden = any(
+                isinstance(node, Widget) and not node.display
+                for node in control.ancestors_with_self
+            )
+            if hidden or control.disabled:
+                continue
+            control.focus()
             return
-        control.focus()
 
     def restore_push_focus(
         self,
