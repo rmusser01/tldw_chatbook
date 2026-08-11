@@ -1023,6 +1023,17 @@ Input.speech-setting-control {
     padding: 0 1;
 }
 
+/* The forms-wide `Input:focus` rule re-adds a border at higher specificity
+ * than the border-none class rule above; on this height-1 row the border
+ * alone fills the clip and the typed text becomes invisible while focused
+ * (TASK-15421). Keep the row's compact geometry and show focus with the
+ * shared focus tint instead. */
+Input.speech-setting-control:focus {
+    border: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+}
+
 .speech-settings-group {
     height: auto;
     border: none;

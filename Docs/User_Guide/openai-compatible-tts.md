@@ -209,6 +209,9 @@ voice name reached a mock OpenAI-compatible server at a custom Base URL
 with both passed through unmodified (between roughly 2026-07-26 and this
 fix, an internal model-route allowlist rejected any non-official model
 name on the Console path before the request was sent, so this page's
-Model-value instruction did not work there; the Speech Lab playground's
-quick Model/Voice dropdowns still cannot express custom names —
-TASK-15421).*
+Model-value instruction did not work there). Re-verified live 2026-08-11
+with the TASK-15421 fix: the Speech Lab playground now seeds its Model and
+Voice controls from your saved exact selection — a custom name appears as
+"*your-name* (no catalog check)", stays selected, and Generate sends it
+unmodified (previously the playground silently generated with
+`tts-1`/`alloy` regardless of your saved settings).*
