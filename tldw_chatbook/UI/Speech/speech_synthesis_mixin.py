@@ -283,8 +283,14 @@ class SpeechSynthesisMixin:
         revision_matches = self._catalog_configuration_revisions.get(
             provider_id
         ) == service.configuration_revision(provider_id)
+        reference_only_clone = self._is_reference_only_clone_action(
+            provider_id,
+            model_id,
+            clone_action=clone_action,
+        )
         if (
             provider_id in self._pending_voice_selections
+            and not reference_only_clone
             and provider_id not in self._stale_providers
             and catalog.health.state == "available"
             and catalog.health.fresh
@@ -293,7 +299,10 @@ class SpeechSynthesisMixin:
             return "Voices are still loading; wait before generating"
         if (
             provider_id in self._stale_providers
-            or not self._catalog_generation_allowed
+            or (
+                not reference_only_clone
+                and not self._catalog_generation_allowed
+            )
             or catalog.health.state != "available"
             or not catalog.health.fresh
             or not revision_matches
@@ -311,6 +320,25 @@ class SpeechSynthesisMixin:
             if clone_error is not None:
                 return clone_error
         return None
+
+    def _is_reference_only_clone_action(
+        self,
+        provider_id: object,
+        model_id: object,
+        *,
+        clone_action: bool,
+    ) -> bool:
+        """Return whether the exact visible action forbids a catalog voice."""
+
+        if not clone_action or provider_id != AUDIO_CPP_PROVIDER_ID:
+            return False
+        observation = getattr(self, "_audio_cpp_runtime_observation", None)
+        projection = None if observation is None else observation.clone_setup
+        return bool(
+            projection is not None
+            and projection.model_id == model_id
+            and projection.voice_reference_policy == "reference_only"
+        )
 
     def _get_select_key(self, select_widget: Select) -> SelectValue | None:
         """Return exact canonical values for catalog-driven controls."""
@@ -365,6 +393,14 @@ class SpeechSynthesisMixin:
             voice = (
                 SERVER_DEFAULT_VOICE_ID if preset.voice_id is None else preset.voice_id
             )
+        elif self._is_reference_only_clone_action(
+            provider,
+            model,
+            clone_action=clone_action,
+        ):
+            # A reference-only recipe rejects any native voice at adapter
+            # admission. Ignore a stale/loading catalog selection entirely.
+            voice = SERVER_DEFAULT_VOICE_ID
 
         readiness_error = self._generation_readiness_error(
             provider,

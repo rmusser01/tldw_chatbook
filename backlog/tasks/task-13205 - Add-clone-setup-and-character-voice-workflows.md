@@ -1,9 +1,11 @@
 ---
 id: TASK-13205
 title: Add clone setup and character voice workflows
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-08-09 17:39'
+updated_date: '2026-08-11 13:49'
 labels:
   - tts
   - audio-cpp
@@ -40,3 +42,20 @@ Provide transient clone audition, reusable voice-profile save, character assignm
 - [ ] #8 Provider switching, reference/profile edits, late generation, failed passive observation, retry, and busy states cannot replace a successful playable result, execute a stale operation, or strand controls/focus; the full flow meets keyboard/narrow-layout/live-announcement requirements.
 - [ ] #9 Hermetic UI/runtime tests plus clean-profile real-process UAT cover transient audition, save, assignment, character roleplay, audible playback, cancellation, cleanup, and privacy without exposing reference audio, transcript, or paths in evidence.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no new ADR
+ADR path: backlog/decisions/028-character-tts-generation-profile-ownership.md; backlog/decisions/040-speech-lab-current-result-and-auto-play.md; backlog/decisions/051-private-tts-clone-reference-assets.md
+Reason: the accepted ADRs already define profile/assignment ownership, current-result ownership, private clone references, typed admission, and cleanup; this task implements those boundaries without changing them.
+
+1. Add a typed transient clone-audition snapshot and exact canonical-reference admission path over the existing Guided Managed materializer.
+2. Add one atomic profile-reference creation mutation and preserve the exact successful canonical artifact for explicit save.
+3. Build the Speech Lab reference-required action/setup flow with bounded validation, privacy copy, immutable busy/stale projections, and current-result preservation.
+4. Extend Save as Voice Profile with explicit assignment review/handoff to the existing Roleplay character-assignment owner; never alter defaults or assignments implicitly.
+5. Regress the lazy Console/Roleplay Speak path with the assigned exact profile revision and one managed child.
+6. Complete accessibility, privacy, cancellation/cleanup, documentation, real-process UAT, review, and Backlog closeout.
+
+Detailed plan: Docs/superpowers/plans/2026-08-11-task-13205-clone-setup-character-voice-workflows.md
+<!-- SECTION:PLAN:END -->

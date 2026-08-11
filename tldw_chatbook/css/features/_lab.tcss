@@ -373,6 +373,7 @@
 .speech-pane {
     height: 1fr;
     padding: 0 1;
+    overflow-y: auto;
 }
 
 .speech-pane-title {
@@ -539,7 +540,13 @@
  * empty box is what made the first two passes read as sparse. */
 .speech-split {
     height: 1fr;
-    min-height: 0;
+    /* Reference setup and the runtime card are auto-height siblings. Without
+     * a floor they consume the short Lab viewport and Textual compresses the
+     * synthesis text/current-result split to one or two unusable rows. The
+     * current-result pane needs thirteen rows when the clone-only profile-save
+     * action is present; keep that complete action set inside the split and
+     * let the outer pane scroll for the runtime/clone setup below it. */
+    min-height: 13;
     margin-top: 1;
 }
 

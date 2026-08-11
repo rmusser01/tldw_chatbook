@@ -12,6 +12,7 @@ import pytest
 import tldw_chatbook.TTS.playground_types as playground_types
 from tldw_chatbook.TTS import (
     STTSGeneratedAudio,
+    STTSPlaygroundResultProjection,
     STTSPlaygroundRequest,
     TTSRequestedSelectionSnapshot,
 )
@@ -446,6 +447,24 @@ def test_only_native_artifact_provenance_is_profile_save_eligible(
 
     assert getattr(native, "profile_save_eligible", False) is True
     assert getattr(legacy, "profile_save_eligible", False) is False
+
+
+def test_clone_projection_is_save_eligible_from_handler_evidence_flag(
+    tmp_path: Path,
+) -> None:
+    """The UI may offer Save while the handler retains private clone proof."""
+
+    projection = STTSPlaygroundResultProjection(
+        path=tmp_path / "clone.wav",
+        provider_id="audio_cpp",
+        model_id="clone/model",
+        voice_id=None,
+        operation_id="clone-operation",
+        audio_format="wav",
+        clone_profile_save_eligible=True,
+    )
+
+    assert projection.profile_save_eligible is True
 
 
 class _PrivateOption:

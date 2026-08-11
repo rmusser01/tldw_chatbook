@@ -353,7 +353,10 @@ class STTSPlaygroundResultProjection:
     def profile_save_eligible(self) -> bool:
         """Return whether the handler retained exact save provenance."""
 
-        return type(self.requested_selection) is TTSRequestedSelectionSnapshot
+        return bool(
+            self.clone_profile_save_eligible
+            or type(self.requested_selection) is TTSRequestedSelectionSnapshot
+        )
 
     @classmethod
     def from_artifact(

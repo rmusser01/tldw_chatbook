@@ -47,6 +47,7 @@ from uuid import UUID
 
 import pytest
 from rich.text import Text
+from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Vertical
 from textual.screen import Screen
@@ -343,11 +344,17 @@ async def test_ready_clone_model_mounts_and_canonicalizes_path_free_setup(
             "warning",
         )
 
+        # Reference-only recipes do not consume a catalog voice. A slow or
+        # unsupported voices endpoint must not block the exact clone action,
+        # even when the general controls projection cannot validate that voice.
+        pane._pending_voice_selections["audio_cpp"] = "[stale voice]"
+        pane._catalog_generation_allowed = False
         primary.press()
         await _wait_until(pilot, lambda: len(app.generation_events) == 1)
         request = app.generation_events[0].request
         snapshot = request.clone_audition
         assert snapshot is not None
+        assert request.voice_id is None
         assert snapshot.canonical_reference.reference_text == transcript.text
         assert str(source) not in repr(snapshot)
         assert pane._generation_operation_id == request.operation_id
@@ -2610,7 +2617,9 @@ async def test_runtime_card_actions_remain_scroll_reachable_at_supported_widths(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("terminal_size", ((100, 30), (80, 24)))
+@pytest.mark.parametrize(
+    "terminal_size", ((134, 34), (100, 30), (94, 28), (94, 22), (80, 24))
+)
 async def test_clone_setup_controls_and_status_remain_scroll_reachable(
     monkeypatch: pytest.MonkeyPatch,
     terminal_size: tuple[int, int],
@@ -2645,13 +2654,23 @@ async def test_clone_setup_controls_and_status_remain_scroll_reachable(
     async with app.run_test(size=terminal_size) as pilot:
         screen = _PaneScreen()
         await app.push_screen(screen)
-        await _wait_until(pilot, lambda: len(screen.query(SpeechCloneSetup)) == 1)
+        await _wait_until(
+            pilot,
+            lambda: len(screen.query("#speech-clone-reference-text")) == 1,
+        )
+        await pilot.pause()
+        await _wait_until(
+            pilot,
+            lambda: len(screen.query("#speech-clone-reference-text")) == 1,
+        )
         pane = screen.query_one(SpeechPlaygroundPane)
         primary = screen.query_one("#tts-test-connection-btn", Button)
         assert str(primary.label) == "Create Voice & Generate"
 
         for selector in (
             "#tts-test-connection-btn",
+            "#tts-text-input",
+            "#audio-player-container",
             "#speech-clone-reference-choose",
             "#speech-clone-reference-text",
             "#speech-clone-error",
@@ -2664,6 +2683,96 @@ async def test_clone_setup_controls_and_status_remain_scroll_reachable(
             assert control.region.height > 0, (terminal_size, selector)
             assert screen.region.overlaps(control.region), (terminal_size, selector)
         assert pane.max_scroll_y > 0
+
+
+@pytest.mark.asyncio
+async def test_ready_clone_setup_preserves_editable_text_and_current_result_geometry(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Reference setup must scroll the pane, not compress its core split away."""
+
+    model_id = "<opaque:model>"
+    service = _RuntimeObservationService(
+        _runtime_observation(
+            process_state="running",
+            process_generation=2,
+            capability="available",
+            endpoint="http://127.0.0.1:19001",
+            catalog_revision=11,
+            catalog_fresh=True,
+            saved_setup_source="guided",
+            applied_setup_source="guided",
+            saved_guided_model_ids=(model_id,),
+            applied_guided_model_ids=(model_id,),
+            saved_guided_default_model_id=model_id,
+            applied_guided_default_model_id=model_id,
+            clone_setup=_clone_setup(model_id),
+        )
+    )
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_tts_service_factory",
+        lambda self: _resolved(service),
+    )
+    source = tmp_path / "reference.wav"
+    with wave.open(str(source), "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(24_000)
+        wav_file.writeframes(b"\x00\x00" * 2_400)
+    app = _build_test_app()
+
+    # The real Speech Lab gives the pane about 100 cells after its catalog
+    # rail. At that width the long managed provenance wraps onto four rows;
+    # a full-screen 134-cell pane misses the clipping defect found in UAT.
+    async with app.run_test(size=(100, 28)) as pilot:
+        screen = _PaneScreen()
+        await app.push_screen(screen)
+        await _wait_until(pilot, lambda: len(screen.query(SpeechCloneSetup)) == 1)
+        pane = screen.query_one(SpeechPlaygroundPane)
+        screen.query_one("#tts-text-input", TextArea).text = "Generate speech."
+        screen.query_one("#speech-clone-reference-text", TextArea).text = (
+            "Exact words in the reference."
+        )
+        pane._handle_clone_reference_selection(source)
+        await _wait_until(pilot, lambda: pane._clone_setup_canonical is not None)
+        generated = _native_profile_artifact(tmp_path / "generated.wav")
+        assert generated.requested_selection is not None
+        generated = replace(
+            generated,
+            model_id="pocket-tts-english-bf16",
+            metadata={"process_generation": 1},
+            requested_selection=replace(
+                generated.requested_selection,
+                model_id="pocket-tts-english-bf16",
+            ),
+        )
+        pane._store_delivered_artifact(generated, announce=False)
+        await pilot.pause()
+
+        text_input = screen.query_one("#tts-text-input", TextArea)
+        current_result = screen.query_one("#audio-player-container")
+        export_result = screen.query_one("#audio-export-btn", Button)
+        save_profile = screen.query_one("#audio-save-profile-btn", Button)
+        split = screen.query_one(".speech-split")
+        assert split.region.height >= 6
+        assert text_input.region.height >= 4
+        assert current_result.region.height > 0
+        assert screen.region.overlaps(text_input.region)
+        assert screen.region.overlaps(current_result.region)
+        assert save_profile.display is True
+        assert save_profile.region.height > 0
+        assert not save_profile.region.overlaps(export_result.region)
+        assert current_result.content_region.contains_region(save_profile.region)
+        assert split.content_region.contains_region(save_profile.region)
+        assert screen.region.overlaps(save_profile.region)
+        assert pane.max_scroll_y > 0
+        pane.post_message(
+            events.MouseScrollDown(pane, 10, 20, 0, 1, 0, False, False, False)
+        )
+        await pilot.pause()
+        assert pane.scroll_y > 0
 
 
 @pytest.fixture

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rich.text import Text
 from textual.message import Message
@@ -71,6 +71,32 @@ class AdoptStudioPreferencesRequested(Message):
 
 class SpeechProfileMixin:
     """Profile save/preview behaviour, independent of the layout."""
+
+    if TYPE_CHECKING:
+        # This class is composed with the catalog/synthesis mixins and a
+        # Textual widget by ``SpeechPlaygroundPane``.  Keep the host contract
+        # visible to static analysis without adding runtime members or
+        # duplicating the concrete pane's implementation.
+        is_mounted: bool
+        app: Any
+        _tts_service: Any
+        _catalogs: dict[Any, Any]
+        _catalog_generation_allowed: bool
+        _discovered_voices: dict[Any, Any]
+        current_audio_artifact: Any
+        _generation_operation_id: Any
+
+        def query_one(self, *args: Any, **kwargs: Any) -> Any: ...
+
+        def _sync_generate_enabled(self) -> None: ...
+
+        def _safe_select_options(self, *args: Any, **kwargs: Any) -> Any: ...
+
+        def _refresh_axis_markers(self) -> None: ...
+
+        def _show_provider_specific_controls(self, provider_id: str) -> None: ...
+
+        def _apply_controls(self, controls: Any) -> None: ...
 
     def init_profile_state(self, profile_preset: Any = None) -> None:
         """Initialise the state the profile path reads.
