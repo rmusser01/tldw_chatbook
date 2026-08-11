@@ -594,6 +594,31 @@ class ConsoleAgentController:
                     f"{ConsoleAgentBridge._summarize_persisted_step(s)}"
                     for s in record.get("steps", [])
                 )
+                if not steps:
+                    # PR3a-1 Task 6b (audit F1): a run's steps reach
+                    # `AgentRunsDB` in ONE write, when the run ends
+                    # (`AgentService._persist`), so this record is
+                    # step-less for the whole time a child is actually
+                    # working -- and a fleet child now keeps working after
+                    # the turn that spawned it returned, so that is no
+                    # longer a sub-second window. The bridge's own per-run
+                    # live slot is the only source for it; read it here
+                    # rather than render an empty drill-in for a child
+                    # visibly listed as running. Only when the record has
+                    # nothing: the DB row is COMPLETE once written, while
+                    # the live slot keeps only the last few steps.
+                    # `getattr` tolerates the bare bridge doubles several
+                    # tests in this module use.
+                    live_run_snapshot = getattr(bridge, "live_run_snapshot", None)
+                    live_run = (
+                        live_run_snapshot(conversation_id, drill)
+                        if live_run_snapshot is not None
+                        else None
+                    )
+                    if live_run is not None:
+                        steps = "\n".join(
+                            f"{s.kind}: {s.text}" for s in live_run.steps
+                        )
                 return (
                     f"Sub-agent · {record.get('status')} (Back)",
                     steps,

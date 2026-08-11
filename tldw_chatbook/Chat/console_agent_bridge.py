@@ -21,6 +21,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace as dataclass_replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Sequence
+from uuid import uuid4
 
 if TYPE_CHECKING:
     from tldw_chatbook.UI.Screens.change_review_screen import (
@@ -1888,7 +1889,28 @@ class ConsoleAgentBridge:
         self._allowed_tools = tuple(e.name for e in registry.list_catalog()) + (
             SPAWN_TOOL_NAME,
         )
-        self._live: dict[str, AgentLiveSnapshot] = {}
+        #: PR3a-1 Task 6b (audit F1): the rail's live slots, keyed
+        #: ``conversation_id -> run key -> snapshot`` -- NOT one snapshot
+        #: per conversation.
+        #:
+        #: `on_step` is called for EVERY agent kind, and a fleet child now
+        #: outlives the turn that spawned it, so a single per-conversation
+        #: slot made a survivor's every step overwrite the NEXT turn's rail
+        #: entry with its own turn's step list and count -- and its last
+        #: write left `status="running"` there permanently. The step's own
+        #: run id (an argument `on_step` has always received and ignored)
+        #: is the key that makes each run's progress land in its own slot.
+        #:
+        #: The PRIMARY's key is a per-turn token rather than its run id:
+        #: `run_turn` only returns the run id when the turn ENDS, and the
+        #: rail must publish "running" the moment it starts.
+        #: `_live_primary_keys` records which key `live_snapshot`'s summary
+        #: line reads; a child's slot is reachable through
+        #: `live_run_snapshot` and is never the summary.
+        self._live: dict[str, dict[str, AgentLiveSnapshot]] = {}
+        #: Which `_live[conversation_id]` key holds the rail's summary --
+        #: the newest turn's primary run. Only `run_reply` writes it.
+        self._live_primary_keys: dict[str, str] = {}
         self._historical_cache: dict[str, AgentLiveSnapshot] = {}
         # PR2b Task 1: published for the DURATION of one `run_reply` call
         # -- set right before `service.run_turn(...)` is invoked (below),
@@ -2485,9 +2507,28 @@ class ConsoleAgentBridge:
             provider_stream_signals=provider_stream_signals,
         )
 
+        # PR3a-1 Task 6b (audit F1): this turn's own key into
+        # `self._live[conversation_id]`. Minted here because `run_turn`
+        # only hands back the primary run id when the turn ENDS, and the
+        # rail must show "running" from the moment it starts; every write
+        # below (start, each primary step, the terminal publish) uses this
+        # one key, so an earlier turn's surviving child -- which writes
+        # under its OWN run id -- can never land in it.
+        primary_live_key = uuid4().hex
         live_steps: list[AgentLiveStep] = []
         subagents: list[SubAgentSummary] = []
-        self._live[conversation_id] = AgentLiveSnapshot(status="running")
+        #: run key -> that run's own live step feed. The primary's entry is
+        #: `live_steps` itself, so every existing reader of that local is
+        #: unchanged.
+        run_live_steps: dict[str, list[AgentLiveStep]] = {
+            primary_live_key: live_steps
+        }
+        self._publish_live(
+            conversation_id,
+            primary_live_key,
+            AgentLiveSnapshot(status="running"),
+            primary=True,
+        )
         # A live run is starting -- live_snapshot takes over as the rail's
         # source of truth for this conversation from here on, so any
         # previously cached historical (DB-derived) summary is stale.
@@ -2496,19 +2537,27 @@ class ConsoleAgentBridge:
         def on_step(step: AgentStep, agent_kind: str, run_id: str) -> None:
             # PR 2a (task-3): AgentService now attributes every step to its
             # run id so a fleet of concurrent children can be told apart.
-            # PR 2b Task 2: still accepted (the `LoopDeps.on_step`
-            # signature this closure must match always passes it) but
-            # still not used -- routing fleet rows turned out not to need
-            # it. `service.fleet_snapshot()` below (the `service` local
-            # this closure closes over, late-bound: `on_step` is only ever
-            # CALLED once `service = AgentService(...)` a little further
-            # down has already run) already returns every live child's
-            # real status/run_id/handle_id, correctly told apart by
-            # `FleetCoordinator` itself -- keying `live_steps`/`self._live`
-            # per run_id here too would be redundant bookkeeping for
-            # nothing this bridge (still single-primary-run-at-a-time)
-            # actually needs.
-            live_steps.append(
+            # PR3a-1 Task 6b (audit F1): that attribution is finally USED.
+            # PR 2b Task 2 argued it was redundant because the bridge runs
+            # one primary at a time -- true only while a run cannot outlive
+            # its turn. It can now, so a child's step arriving after this
+            # turn returned would otherwise be published into the slot the
+            # NEXT turn owns: wrong step list, wrong count, and a
+            # `status="running"` that never clears. Each run's feed and
+            # each run's published snapshot are keyed by that run instead.
+            # (`service.fleet_snapshot()` below still supplies the
+            # `subagents` rows, and is still the authority for a child's
+            # STATUS -- this splits the STEP feed, not the row list.)
+            live_key = (
+                primary_live_key
+                if agent_kind == AGENT_KIND_PRIMARY
+                # An empty run id (no run attributed) falls back to this
+                # turn's own key -- the pre-fix destination, so nothing
+                # regresses for a step that cannot be attributed.
+                else (run_id or primary_live_key)
+            )
+            key_steps = run_live_steps.setdefault(live_key, [])
+            key_steps.append(
                 AgentLiveStep(step.kind, self._summarize(step), agent_kind)
             )
             # TASK-1366: pair this result step with the raw before/after
@@ -2585,17 +2634,24 @@ class ConsoleAgentBridge:
                     summary=step.summary,
                     step_index=step.index,
                 )
-            self._live[conversation_id] = AgentLiveSnapshot(
-                status="running",
-                step=len(live_steps),
-                steps=tuple(live_steps[-5:]),
-                # PR2b Task 2: rebuilt from the fleet's REAL live state on
-                # every publish, not appended once and left stuck at the
-                # "running" default -- see
-                # `_subagent_summaries_from_fleet`'s docstring.
-                subagents=_subagent_summaries_from_fleet(
-                    service.fleet_snapshot(), subagents
+            self._publish_live(
+                conversation_id,
+                live_key,
+                AgentLiveSnapshot(
+                    status="running",
+                    step=len(key_steps),
+                    steps=tuple(key_steps[-5:]),
+                    # PR2b Task 2: rebuilt from the fleet's REAL live state
+                    # on every publish, not appended once and left stuck at
+                    # the "running" default -- see
+                    # `_subagent_summaries_from_fleet`'s docstring.
+                    subagents=_subagent_summaries_from_fleet(
+                        service.fleet_snapshot(), subagents
+                    ),
                 ),
+                # PR3a-1 Task 6b: a step from a child NEVER moves the rail's
+                # summary pointer. Only `run_reply` (this turn) may.
+                primary=False,
             )
 
         # C1 (probe-verified security regression): thread the composed MCP
@@ -2856,26 +2912,36 @@ class ConsoleAgentBridge:
             final_text_len=len(outcome.final_text),
             step_count=len(outcome.steps),
         )
-        self._live[conversation_id] = AgentLiveSnapshot(
-            status=outcome.status,
-            step=len(live_steps),
-            steps=tuple(live_steps[-5:]),
-            # PR2b Task 2: `service` here -- NOT `self.fleet_snapshot(
-            # conversation_id)` -- deliberately: the `finally` block just
-            # above already ran `self._teardown_fleet_service`, which pops
-            # THIS run's own `self._fleet_services` entry (assuming no
-            # overlapping resend already overwrote it -- see that
-            # method's docstring), so a lookup by conversation_id here
-            # would see `[]` and wipe out every child's final status right
-            # when the run ends. The `service` local variable is
-            # unaffected by that pop -- by this point `_settle_fleet`
-            # (called from inside `run_turn`, before it returned above)
-            # has already joined/abandoned every fleet child, so every
-            # handle `service.fleet_snapshot()` returns here is already
-            # terminal.
-            subagents=_subagent_summaries_from_fleet(
-                service.fleet_snapshot(), subagents
+        # PR3a-1 Task 6b (audit F1): under THIS turn's own key, so the
+        # terminal status it writes is final -- a surviving child's later
+        # steps land in the child's own slot and can no longer reset this
+        # one to "running" for the rest of the process's life.
+        self._publish_live(
+            conversation_id,
+            primary_live_key,
+            AgentLiveSnapshot(
+                status=outcome.status,
+                step=len(live_steps),
+                steps=tuple(live_steps[-5:]),
+                # PR2b Task 2: `service` here -- NOT `self.fleet_snapshot(
+                # conversation_id)` -- deliberately: the `finally` block
+                # just above already ran `self._teardown_fleet_service`,
+                # which pops THIS run's own `self._fleet_services` entry
+                # (assuming no overlapping resend already overwrote it --
+                # see that method's docstring), so a lookup by
+                # conversation_id here would see `[]` and wipe out every
+                # child's final status right when the run ends. The
+                # `service` local variable is unaffected by that pop -- by
+                # this point `_settle_fleet` (called from inside
+                # `run_turn`, before it returned above) has already
+                # joined/abandoned every fleet child, so every handle
+                # `service.fleet_snapshot()` returns here is already
+                # terminal.
+                subagents=_subagent_summaries_from_fleet(
+                    service.fleet_snapshot(), subagents
+                ),
             ),
+            primary=True,
         )
         # The run just finished -- drop any stale historical cache entry so
         # a *later* resume (in a future process) always re-derives fresh
@@ -3048,6 +3114,13 @@ class ConsoleAgentBridge:
         if coordinator.max_live != max_live:
             coordinator.set_max_live(max_live)
         coordinator.prune_terminal()
+        # PR3a-1 Task 6b (audit F1): the per-run rail slots are bounded by
+        # the SAME rule, and here, for the same reason -- `_live` now gains
+        # one key per sub-agent run and this bridge outlives every turn.
+        self._prune_live_run_slots(
+            conversation_id,
+            {h.run_id for h in coordinator.snapshot() if h.run_id},
+        )
         return coordinator
 
     def _conversation_fleet_handles(
@@ -3092,7 +3165,14 @@ class ConsoleAgentBridge:
         where there is no live status to read and never was.
         """
         self._prune_settled_fleet_survivors(conversation_id)
-        snapshot = self._live.get(conversation_id, AgentLiveSnapshot())
+        # PR3a-1 Task 6b (audit F1): the summary line is the NEWEST TURN's
+        # primary run, resolved through `_live_primary_keys` -- never
+        # whichever run wrote to this conversation last, which is how a
+        # survivor's post-turn step used to repaint it.
+        snapshot = (self._live.get(conversation_id) or {}).get(
+            self._live_primary_keys.get(conversation_id, ""),
+            AgentLiveSnapshot(),
+        )
         handles = self._conversation_fleet_handles(conversation_id)
         if not handles:
             return snapshot
@@ -3102,6 +3182,82 @@ class ConsoleAgentBridge:
                 handles, list(snapshot.subagents)
             ),
         )
+
+    def live_run_snapshot(
+        self, conversation_id: str, run_id: str
+    ) -> AgentLiveSnapshot | None:
+        """One RUN's own live step feed, or ``None`` if this process has
+        none for it (PR3a-1 Task 6b, audit F1).
+
+        This is the only live source of a still-running sub-agent's steps.
+        ``AgentService`` persists a run's steps to ``AgentRunsDB`` once, at
+        the end (``_persist``), so ``subagent_run``'s record carries an
+        EMPTY step list for the whole time a child is actually working --
+        and a fleet child now works on past the turn that spawned it. The
+        rail's drill-in prefers this when it is present and falls back to
+        the DB record otherwise (see ``Console_Modules/agent.py``).
+
+        Args:
+            conversation_id: The conversation whose slots to read.
+            run_id: The run id to look up -- a sub-agent's own, as carried
+                on its ``FleetHandle``/its ``agent_runs`` row.
+
+        Returns:
+            That run's last published snapshot, or ``None`` when this
+            bridge has never seen a step for it (never ran here, ran in a
+            previous process, or its slot has since been pruned).
+        """
+        return (self._live.get(conversation_id) or {}).get(run_id)
+
+    def _publish_live(
+        self,
+        conversation_id: str,
+        run_key: str,
+        snapshot: AgentLiveSnapshot,
+        *,
+        primary: bool,
+    ) -> None:
+        """Write one run's rail snapshot into its own slot.
+
+        ``primary=True`` additionally points the conversation's summary
+        line at ``run_key``; only ``run_reply`` (i.e. the turn itself)
+        passes it. A child -- including one that outlives its turn -- can
+        write its own slot but can never move that pointer, which is the
+        whole of audit F1's fix.
+
+        Thread-safety: same unguarded-dict convention as the rest of this
+        class's per-conversation caches. Both statements are single
+        dict/`setdefault` operations, atomic under the GIL; the only
+        cross-thread contention is one child publishing its own key while
+        the primary publishes another, and distinct keys never collide.
+        """
+        self._live.setdefault(conversation_id, {})[run_key] = snapshot
+        if primary:
+            self._live_primary_keys[conversation_id] = run_key
+
+    def _prune_live_run_slots(self, conversation_id: str, live_run_ids: set) -> None:
+        """Drop finished runs' live slots between turns (PR3a-1 Task 6b).
+
+        `_live[conversation_id]` gains one key per sub-agent run, and this
+        bridge outlives every turn, so without this a long conversation
+        would accumulate one snapshot per child it ever ran. Kept: the
+        conversation's current summary key, and any run still live in its
+        coordinator (a survivor's steps must stay readable while it works).
+        Everything else has, by then, finished and persisted its steps to
+        ``AgentRunsDB``, where the drill-in reads them from.
+
+        Called once per turn, from the same place terminal fleet handles
+        are pruned -- never mid-turn, for the same reason.
+        """
+        slots = self._live.get(conversation_id)
+        if not slots:
+            return
+        keep = set(live_run_ids)
+        primary_key = self._live_primary_keys.get(conversation_id)
+        if primary_key is not None:
+            keep.add(primary_key)
+        for key in [k for k in slots if k not in keep]:
+            slots.pop(key, None)
 
     def fleet_snapshot(self, conversation_id: str) -> list[FleetHandle]:
         """Read-only view of the REAL, live fleet for one conversation.

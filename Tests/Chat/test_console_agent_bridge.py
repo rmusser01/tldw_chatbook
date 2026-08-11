@@ -4858,3 +4858,151 @@ def test_subagent_summaries_from_fleet_inline_path_renders_fallback_unchanged():
     rows = _subagent_summaries_from_fleet([], fallback)
 
     assert rows == tuple(fallback)
+
+
+# -- PR3a-1 Task 6b (audit F1): the rail's live slot is per RUN, not per
+# -- conversation
+#
+# `on_step` published into `self._live[conversation_id]` -- a bridge-lifetime
+# dict the NEXT turn also owns. A child that outlives its turn keeps calling
+# that same closure, so every step it takes after the turn returned
+# overwrote the conversation's rail entry with TURN 1's step list and count,
+# and its LAST write left `status="running"` there permanently: the rail
+# claims a run is live long after everything finished, with no error
+# anywhere. `on_step` has always received the step's own `run_id` and
+# explicitly ignored it; these tests are why it may not.
+
+
+def test_a_survivors_steps_do_not_overwrite_the_next_turns_rail(tmp_path):
+    """Turn 1's surviving child must not repaint turn 2's rail summary.
+
+    The child is held inside its own model call for the whole of turn 2,
+    then released -- so every step it emits lands strictly AFTER turn 2
+    published its own final snapshot. Under the pre-fix code that step
+    reset the conversation's slot to turn 1's steps and left it
+    `"running"` forever.
+    """
+    gate = threading.Event()
+    gateway = _FleetTwoChildGateway(
+        parent_script=[
+            [_fence("spawn_subagent", {"task": "long job"})],
+            ["turn 1 final"],
+            ["turn 2 final"],  # turn 2 spawns nothing
+        ],
+        child_result=["child answer"],
+        gate=gate,
+        needed=1,
+    )
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+    try:
+        outcome_1 = _run(bridge, store, session, aid, conversation_id="conv-rail")
+        assert outcome_1.status == "done"
+        assert gateway.entered_event.wait(5), "the child never started"
+
+        second = _second_turn_message(store, session)
+        outcome_2 = _run(bridge, store, session, second, conversation_id="conv-rail")
+        assert outcome_2.status == "done"
+        assert outcome_2.final_text == "turn 2 final"
+
+        # Turn 2's own published summary -- the baseline the survivor must
+        # not be able to move.
+        after_turn_two = bridge.live_snapshot("conv-rail")
+        assert after_turn_two.status == "done"
+    finally:
+        gate.set()
+    _join_fleet_threads()
+
+    final = bridge.live_snapshot("conv-rail")
+    assert final.status == "done", (
+        "a survivor's step left the conversation's rail stuck at "
+        f"{final.status!r} after every run had finished"
+    )
+    assert final.step == after_turn_two.step, (
+        "the survivor's step count overwrote turn 2's: "
+        f"{final.step} != {after_turn_two.step}"
+    )
+    assert final.steps == after_turn_two.steps, (
+        "the survivor repainted turn 2's step list with turn 1's"
+    )
+
+
+def test_a_survivors_own_steps_are_kept_under_its_own_run_id(tmp_path):
+    """... and are not merely suppressed: dropping them would be the same
+    silent loss, one turn later.
+
+    A live child's steps exist NOWHERE else while it runs -- `AgentService`
+    persists a run's steps to `AgentRunsDB` once, at the end
+    (`_persist`), so the drill-in has nothing to show for a child still
+    working. The per-run slot is that missing live source.
+    """
+    gate = threading.Event()
+    gateway = _FleetTwoChildGateway(
+        parent_script=[
+            [_fence("spawn_subagent", {"task": "long job"})],
+            ["turn 1 final"],
+        ],
+        child_result=["child answer"],
+        gate=gate,
+        needed=1,
+    )
+    bridge, db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+    try:
+        _run(bridge, store, session, aid, conversation_id="conv-rail-child")
+        assert gateway.entered_event.wait(5), "the child never started"
+        child_run_id = bridge.fleet_snapshot("conv-rail-child")[0].run_id
+        assert child_run_id, "the child's run never attached"
+        # The DB has the row but no steps yet -- this is the gap.
+        assert not db.get_run(child_run_id)["steps"]
+    finally:
+        gate.set()
+    _join_fleet_threads()
+
+    child_live = bridge.live_run_snapshot("conv-rail-child", child_run_id)
+    assert child_live is not None, "the survivor's own steps were dropped"
+    assert child_live.step > 0, child_live
+    assert child_live.steps, child_live
+
+
+def test_a_finished_childs_live_slot_does_not_follow_the_conversation_forever(
+    tmp_path,
+):
+    """`_live` gains one key per sub-agent run and this bridge outlives
+    every turn -- so the same bound `FleetCoordinator` handles get.
+
+    Pruned at the START of a turn (never mid-turn, for the reason
+    `_conversation_fleet_coordinator` documents), keeping the current
+    summary key plus any run still live: a survivor's steps must stay
+    readable while it works, and a finished child's are in `AgentRunsDB`
+    by then.
+    """
+    gateway = _ChunkGateway(
+        [
+            [_fence("spawn_subagent", {"task": "first job"})],
+            ["child one"],
+            ["turn 1 final"],
+            [_fence("spawn_subagent", {"task": "second job"})],
+            ["child two"],
+            ["turn 2 final"],
+        ]
+    )
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+
+    _run(bridge, store, session, aid, conversation_id="conv-live-prune")
+    _join_fleet_threads()
+    # Turn 1: its own summary slot plus its child's own slot.
+    assert len(bridge._live["conv-live-prune"]) == 2, bridge._live[
+        "conv-live-prune"
+    ]
+
+    second = _second_turn_message(store, session)
+    _run(bridge, store, session, second, conversation_id="conv-live-prune")
+    _join_fleet_threads()
+
+    assert len(bridge._live["conv-live-prune"]) == 2, (
+        "turn 1's finished slots were never dropped: "
+        f"{bridge._live['conv-live-prune']}"
+    )
+    assert (
+        bridge._live_primary_keys["conv-live-prune"]
+        in bridge._live["conv-live-prune"]
+    )
