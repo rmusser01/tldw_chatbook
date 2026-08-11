@@ -3,7 +3,7 @@ id: TASK-15421
 title: >-
   TTS Playground cannot express custom OpenAI model/voice and ignores saved
   exact preferences
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-11 12:00'
 labels:
@@ -58,7 +58,7 @@ silently accepted a double paste as `studio-modelstudio-model`).
 <!-- AC:BEGIN -->
 - [x] A user whose saved OpenAI selection is an exact non-catalog model/voice can generate in the TTS Playground with those exact values sent to the server
 - [x] The playground's displayed model/voice never silently diverges from what its Generate request sends
-- [ ] Typed text in the Studio Exact model/voice ID inputs is visible while the field is focused
+- [x] Typed text in the Studio Exact model/voice ID inputs is visible while the field is focused
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -143,3 +143,24 @@ evidence recorded here so the next attempt starts warm: border clears on
 Tab (real blur), Escape does not blur, glyphs are `solid` not `tall`,
 run_test cannot reproduce.
 <!-- SECTION:NOTES:END -->
+
+## AC3 Addendum (2026-08-11, follow-up session)
+
+<!-- SECTION:NOTES2:BEGIN -->
+The live-vs-run_test "divergence" dissolved: there was none. The mechanism
+was the reset-tier accessibility rule `*:focus { outline: solid
+$ds-focus-accent }` — Textual paints outlines OVER the widget's outermost
+rendered lines (the rule's own comment warns of this), and a height-1
+input's outermost line IS its only content line, so focus replaced the
+typed value with the outline's box characters. The border rules were a red
+herring throughout: every earlier probe asked `styles.border` (correctly
+empty) and never captured a rendered frame — the obscuring was present in
+run_test all along. Fix: `outline: none` added to the existing
+`Input.speech-setting-control:focus` rule, keeping the `$ds-input-focus-bg`
+tint as the content-safe focus cue (the opt-out + recolour pattern the
+reset comment itself prescribes, TASK-1160 precedent). Pinned by a
+rendered-frame regression test (`export_screenshot`) in
+`Tests/UI/test_speech_live_render_defects.py` — the file for defects only a
+live run exposed, which this almost was. Live-verified: typed text visible
+while focused.
+<!-- SECTION:NOTES2:END -->
