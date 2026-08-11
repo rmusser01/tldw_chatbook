@@ -721,22 +721,77 @@ def test_scoped_queries_are_uniquely_resolvable_by_the_keyword_path_in_scope(
     assert wrong == {}
 
 
-def test_scoped_scopes_are_large_enough_for_a_top_ten_to_exclude(golden):
-    """A small scope cannot report a miss, and the floor is not arbitrary.
+#: The scope every scoped fixture runs under, as shipped. Pinned exactly,
+#: not floored — see `test_the_shared_scoped_scope_is_the_size_its_own_
+#: measurement_requires` for why a floor is the wrong shape here.
+SHIPPED_SCOPE_SIZE = 100
 
-    Measured while authoring: with 32 documents in scope, 1 of 8 candidates
-    missed the top-10; at 80, six did; at 100, seven. A top-10 over a scope
-    of ten documents returns everything in it, so the cell reports recall
-    1.000 for a reason that has nothing to do with retrieval — and it would
-    keep reporting it after the scope-aware-hybrid change, which is a
-    before/after pair that cannot move.
-    """
-    small = {
-        query.id: len(query.scope_slugs or ())
+
+def _scoped_scopes(golden) -> dict[str, tuple[str, ...]]:
+    return {
+        query.id: tuple(query.scope_slugs or ())
         for query in golden
-        if query.category == SCOPED_CATEGORY and len(query.scope_slugs or ()) < 40
+        if query.category == SCOPED_CATEGORY
     }
-    assert small == {}
+
+
+def test_every_scoped_fixture_carries_the_same_scope(golden):
+    """One scope, seven fixtures — asserted, because TOML cannot share a list.
+
+    The scoped fixtures all run under the same collection ("every document
+    the P2ab scale-up added that a scope can name"), and TOML has no way to
+    say that once: the slug list is pasted into each fixture. Seven copies of
+    a hundred slugs is seven chances to diverge, and a diverged scope is
+    invisible in the report — each cell would simply be measured against a
+    different haystack, which is the "plausible numbers that mean something
+    else" failure in its purest form.
+
+    This is the single definition. An intentional change to the collection
+    has to change every copy identically, which is exactly the friction that
+    makes it a decision rather than an edit.
+    """
+    scopes = _scoped_scopes(golden)
+    assert len(scopes) >= 6, f"only {len(scopes)} scoped fixtures found"
+    distinct = set(scopes.values())
+    assert len(distinct) == 1, (
+        "scoped fixtures no longer share one scope; the diverging ids are "
+        f"{sorted(scopes)} with {len(distinct)} distinct slug lists"
+    )
+
+
+def test_the_shared_scoped_scope_is_the_size_its_own_measurement_requires(golden):
+    """The scope size is a MEASURED parameter of the fixture, not a minimum.
+
+    Lever data, from authoring (candidates probed against the shipped
+    corpus, k=10, admission = target misses top-10 in hybrid AND semantic):
+
+        scope size    scoped candidates that failed
+             32                  1 of 8
+             80                  6 of 8
+            100                  7 of 8   <- shipped
+
+    and, re-measured at review against the SHIPPED seven fixtures, a scope
+    trimmed to 40 documents leaves only 4 of 7 failing
+    (`sc-storm-overflow-record` surfaces at rank 7, `sc-sample-point-sign` at
+    9, `sc-duty-board-notice` at 5). A floor of 40 would therefore have
+    passed a corpus whose scoped before-number had silently risen from 0.000
+    to roughly 0.43 — and the scope-aware-hybrid task would then have
+    measured a flip that had mostly already happened.
+
+    So the size is pinned exactly. A scope is only a measurement while a
+    top-10 can exclude something from it; shrinking this list is not a
+    tidy-up, it is a change to the instrument, and the only correct response
+    to this test failing is to re-probe every scoped fixture and rewrite its
+    `# admitted:` line with what the new scope actually produces.
+    """
+    scopes = _scoped_scopes(golden)
+    sizes = {query_id: len(scope) for query_id, scope in scopes.items()}
+    assert set(sizes.values()) == {SHIPPED_SCOPE_SIZE}, (
+        f"scoped scope sizes are {sorted(set(sizes.values()))}, not "
+        f"{SHIPPED_SCOPE_SIZE}: at 40 documents only 4 of these 7 fixtures "
+        "still fail, so a trimmed scope reports a before-number that is not "
+        "0.000 while every other test stays green (see this test's docstring)"
+    )
 
 
 def test_negation_queries_carry_a_cue_their_target_never_uses(golden, by_slug):

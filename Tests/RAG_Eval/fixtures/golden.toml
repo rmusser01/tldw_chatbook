@@ -404,6 +404,53 @@ relevant_slugs = []
 #
 # The rejected candidates' documents stay in the corpus as distractors. That
 # is the point of them now: they are the company each anchor needed.
+#
+# THE REJECTED CANDIDATES THEMSELVES, so the rulings above can be audited
+# without re-authoring them — a verdict whose evidence has to be
+# reconstructed is a verdict nobody checks. `semantic` matched `hybrid` on
+# every one of these, so one rank column is the whole story; `plain` missed
+# all but one, because the keyword path is AND-of-terms and these are
+# questions rather than phrases.
+#
+#   compositional (all 6 rejected; hybrid rank shown)
+#     "which supplier provided the coupling that let go on the north run"
+#         -> note-wrenfold-north-run-history                         rank 2
+#     "who signed off the operator who logged the balance tank overflow"
+#         -> note-renshaw-training-record                            rank 2
+#     "what material was the gasket in the drive that seized on the mixing line"
+#         -> media-mixing-line-strip-report                          rank 1
+#     "which vendor made the switchgear that was replaced after the store flood"
+#         -> note-store-flood-repairs                                rank 1
+#     "who examined the ladder that was condemned at the tower"
+#         -> note-tower-ladder-register                              rank 1
+#     "which shift found the leak that closed the filling head"
+#         -> note-filling-head-leak-log                              rank 1
+#
+#   acronym (all 6 rejected; hybrid rank shown)
+#     "MTBF for the filling head"     -> media-filling-head-reliability  rank 1
+#     "PPE store restocking"          -> media-protective-equipment-store rank 1
+#     "BOM for the capping turret"    -> note-capping-turret-parts       rank 1
+#     "RTO for the settlement ledger" -> note-settlement-ledger-recovery rank 2
+#     "uninterruptible power supply runtime at the gate house"
+#         -> conv-gatehouse-power                                    rank 2
+#     "SOP for the wash bay"          -> note-wash-bay-procedure         rank 4
+#         (the deliberately diluted anchor: four extra wash-bay documents
+#          moved this one from rank 1 to rank 4 and no further — the
+#          evidence that the rank-1s above are bridging rather than anchor
+#          artefacts)
+#
+#   negation (3 of 6 rejected; hybrid rank shown)
+#     "which cabinet has no fan tray fitted"
+#         -> conv-dunnock-row-cooling                                rank 4
+#     "vehicles that are not fitted with a tracker"
+#         -> conv-shared-car-agreement                               rank 6
+#     "which vehicle in the fleet has no tail lift"
+#         -> note-flatbed-loading                                    rank 7
+#
+#   scoped (1 of 8 rejected; hybrid rank shown)
+#     "line marker post" -> note-kelsingham-hedgerow                  rank 10
+#         (plain=2 as well, so its conjunction had stopped resolving
+#          uniquely in scope — it failed both halves of the rule)
 
 # ---------------------------------------------------------------------------
 # scoped (7) — keyword-findable inside the scope, invisible to the vector leg
