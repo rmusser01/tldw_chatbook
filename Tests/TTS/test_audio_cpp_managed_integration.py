@@ -35,7 +35,11 @@ from tldw_chatbook.TTS.adapter_types import (
 )
 from tldw_chatbook.TTS.adapters.audio_cpp import AudioCppAdapter
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
-from tldw_chatbook.TTS.audio_cpp_guided_config import AudioCppSettingsConfig
+from tldw_chatbook.TTS.audio_cpp_guided_config import (
+    AudioCppAcceptedPackage,
+    AudioCppSettingsConfig,
+)
+from tldw_chatbook.TTS.audio_cpp_recipes import AUDIO_CPP_RECIPE_REGISTRY
 from tldw_chatbook.TTS.audio_cpp_package_scanner import (
     scan_audio_cpp_package_root,
 )
@@ -721,12 +725,72 @@ async def test_guided_runtime_sample_readiness_belongs_to_exact_default(
     service, _ = _service(settings.to_mapping(), supervisor)
 
     try:
-        observation = await service.audio_cpp_runtime_observation()
+        observation = await service.audio_cpp_runtime_observation(
+            selected_model_id="clone-voice"
+        )
 
         assert observation.saved_guided_model_ids == ("narrator", "clone-voice")
         assert observation.saved_guided_default_model_id == "clone-voice"
         assert observation.saved_guided_text_ready is False
         assert observation.applied_guided_text_ready is False
+        assert observation.clone_setup is not None
+        assert observation.clone_setup.model_id == "clone-voice"
+        assert observation.clone_setup.family_label == "Pocket TTS"
+        assert observation.clone_setup.recipe_revision == 2
+        assert observation.clone_setup.reference_requirement == "required"
+        assert observation.clone_setup.voice_reference_policy == "reference_only"
+        assert str(tmp_path) not in repr(observation.clone_setup)
+        assert supervisor.launches == 0
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_optional_reference_recipe_keeps_normal_tts_action(
+    tmp_path: Path,
+) -> None:
+    """Task 13205 projects setup only for recipes that require a reference."""
+
+    supervisor = _PreparationSupervisor()
+    recipe = next(
+        candidate
+        for candidate in AUDIO_CPP_RECIPE_REGISTRY.recipes
+        if candidate.package_variant == "pocket_tts_english_safetensors"
+    )
+    accepted = AudioCppAcceptedPackage(
+        package_uuid="d3f6d610-6fd9-4cde-9ea7-cc5175ca445b",
+        recipe_id=recipe.recipe_id,
+        recipe_revision=recipe.recipe_revision,
+        package_variant=recipe.package_variant,
+        public_model_id="optional-clone",
+        canonical_root=str(tmp_path / "pocket-safetensors"),
+        canonical_root_identity="1" * 64,
+        configuration_identity="2" * 64,
+        weight_identity="3" * 64,
+        projection=recipe.projection,
+    )
+    binary = tmp_path / "audiocpp_server"
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    binary.chmod(0o700)
+    settings = AudioCppSettingsConfig.from_mapping(
+        {
+            "mode": "managed",
+            "managed_setup_source": "guided",
+            "guided_binary_path": str(binary),
+            "guided_packages": [accepted.model_dump(mode="json")],
+            "guided_default_model_id": "optional-clone",
+        }
+    )
+    service, _ = _service(settings.to_mapping(), supervisor)
+
+    try:
+        observation = await service.audio_cpp_runtime_observation(
+            selected_model_id="optional-clone"
+        )
+
+        assert observation.clone_setup is None
+        assert observation.applied_guided_text_ready is True
         assert supervisor.launches == 0
     finally:
         await service.close()
@@ -753,6 +817,53 @@ async def test_runtime_observation_reports_staged_managed_over_applied_external(
         assert observation.process.state == "stopped"
         assert observation.saved_managed_binary_path == managed["managed_binary_path"]
         assert observation.applied_managed_binary_path is None
+        assert factory_configs == []
+        assert supervisor.launches == 0
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_first_deliberate_start_projects_staged_guided_clone_setup(
+    tmp_path: Path,
+) -> None:
+    """A first-time staged clone model explains the setup action before launch."""
+
+    supervisor = _PreparationSupervisor()
+    package = _accepted_guided_package(
+        tmp_path / "models" / "pocket",
+        filename="pocket-tts-english-bf16.gguf",
+        package_variant="pocket_tts_english_bf16",
+        public_model_id="clone-voice",
+    )
+    binary = tmp_path / "audiocpp_server"
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    binary.chmod(0o700)
+    managed = AudioCppSettingsConfig.from_mapping(
+        {
+            "mode": "managed",
+            "managed_setup_source": "guided",
+            "guided_binary_path": str(binary),
+            "guided_packages": [package.model_dump(mode="json")],
+            "guided_default_model_id": "clone-voice",
+        }
+    )
+    service, factory_configs = _service(_external_config(), supervisor)
+    await _stage(service, managed.to_mapping(), generation=7)
+
+    try:
+        observation = await service.audio_cpp_runtime_observation(
+            selected_model_id="clone-voice"
+        )
+
+        assert observation.saved_mode == "managed"
+        assert observation.applied_mode == "external"
+        assert observation.pending_configuration is True
+        assert observation.process.state == "stopped"
+        assert observation.clone_setup is not None
+        assert observation.clone_setup.model_id == "clone-voice"
+        assert observation.clone_setup.reference_requirement == "required"
         assert factory_configs == []
         assert supervisor.launches == 0
     finally:

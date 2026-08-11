@@ -41,6 +41,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSNativeCapabilityObservation,
     TTSNativeCapabilitySnapshot,
     TTSNativeCloneAdapter,
+    TTSCloneGenerationEvidence,
     TTSOperationError,
     TTSProgress,
     TTSProviderCatalog,
@@ -50,11 +51,13 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSStructuredVoiceAdapter,
     TTSVoiceDiscoveryResult,
     _new_admitted_audio_cpp_clone_request,
+    _new_tts_clone_generation_evidence,
 )
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.TTS.audio_cpp_guided_config import AudioCppSettingsConfig
 from tldw_chatbook.TTS.audio_cpp_recipes import (
+    AUDIO_CPP_RECIPE_REGISTRY,
     audio_cpp_guided_default_is_text_ready,
 )
 from tldw_chatbook.TTS.audio_cpp_supervisor import (
@@ -65,7 +68,11 @@ from tldw_chatbook.TTS.audio_cpp_supervisor import (
     _AudioCppGenerationChanged,
 )
 from tldw_chatbook.TTS.legacy_bridge import resolve_legacy_route
-from tldw_chatbook.TTS.playground_types import TTSRequestedSelectionSnapshot
+from tldw_chatbook.TTS.playground_types import (
+    STTSPlaygroundCloneSnapshot,
+    STTSPlaygroundProfilePreview,
+    TTSRequestedSelectionSnapshot,
+)
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.effective_settings import (
     NativeCapabilityReader,
@@ -80,9 +87,14 @@ from tldw_chatbook.TTS.profile_reference_materialization import (
     TTSCloneReferenceMaterialization,
     TTSCloneReferenceMaterializer,
 )
+from tldw_chatbook.TTS.profile_reference_types import (
+    CanonicalTTSCloneReference,
+    TTSCloneReference,
+)
 from tldw_chatbook.TTS.request_admission import (
     TTSRequestAdmissionCoordinator,
-    _ResolvedTTSCloneExecution,
+    TTSProfileReferenceResolver,
+    _ResolvedTTSCloneExecutionAuthority,
 )
 from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferencesSnapshot
 
@@ -95,9 +107,95 @@ _NATIVE_CAPABILITY_VOICE_CONCURRENCY = 4
 _NATIVE_CAPABILITY_MAX_MODEL_ROWS = 50
 
 
+def _canonical_clone_reference(
+    reference: CanonicalTTSCloneReference | TTSCloneReference,
+) -> CanonicalTTSCloneReference:
+    """Detach one admitted reference into exact canonical evidence."""
+
+    if type(reference) is CanonicalTTSCloneReference:
+        return CanonicalTTSCloneReference(
+            wav_bytes=reference.wav_bytes,
+            reference_text=reference.reference_text,
+            sha256=reference.sha256,
+            byte_length=reference.byte_length,
+            duration_ms=reference.duration_ms,
+            sample_rate_hz=reference.sample_rate_hz,
+            channels=reference.channels,
+            sample_encoding=reference.sample_encoding,
+        )
+    if type(reference) is TTSCloneReference:
+        summary = reference.summary
+        return CanonicalTTSCloneReference(
+            wav_bytes=reference.wav_bytes,
+            reference_text=reference.reference_text,
+            sha256=reference.sha256,
+            byte_length=summary.byte_length,
+            duration_ms=summary.duration_ms,
+            sample_rate_hz=summary.sample_rate_hz,
+            channels=summary.channels,
+            sample_encoding=summary.sample_encoding,
+        )
+    raise TypeError("Clone reference authority is invalid")
+
+
 def _native_capability_deadline() -> float:
     """Return the one aggregate deadline for a capability observation."""
     return asyncio.get_running_loop().time() + _NATIVE_CAPABILITY_TIMEOUT_SECONDS
+
+
+def _audio_cpp_clone_setup_projection(
+    settings: AudioCppSettingsConfig,
+    selected_model_id: str | None,
+) -> AudioCppCloneSetupProjection | None:
+    """Project exact Guided clone setup metadata without exposing package paths."""
+
+    if selected_model_id is None:
+        return None
+    if (
+        type(selected_model_id) is not str
+        or not selected_model_id
+        or selected_model_id != selected_model_id.strip()
+        or len(selected_model_id) > 256
+        or any(ord(character) < 32 for character in selected_model_id)
+    ):
+        raise ValueError("audio.cpp selected model ID is invalid")
+    if settings.mode != "managed" or settings.managed_setup_source != "guided":
+        return None
+    accepted = next(
+        (
+            package
+            for package in settings.guided_packages
+            if package.public_model_id == selected_model_id
+        ),
+        None,
+    )
+    if accepted is None:
+        return None
+    try:
+        recipe = AUDIO_CPP_RECIPE_REGISTRY.validate_accepted(accepted)
+    except ValueError:
+        return None
+    if (
+        "clone" not in recipe.capabilities
+        or recipe.reference_requirement.value != "required"
+    ):
+        return None
+    family_labels = {
+        "pocket_tts": "Pocket TTS",
+        "supertonic": "Supertonic",
+    }
+    return AudioCppCloneSetupProjection(
+        model_id=selected_model_id,
+        recipe_id=recipe.recipe_id,
+        recipe_revision=recipe.recipe_revision,
+        family_label=family_labels.get(
+            recipe.family,
+            recipe.family.replace("_", " ").title(),
+        ),
+        recipe_label=recipe.display_name,
+        reference_requirement=recipe.reference_requirement.value,
+        voice_reference_policy=recipe.voice_reference_policy.value,
+    )
 
 
 TTSSettingsProviderStatus = Literal[
@@ -107,6 +205,51 @@ TTSSettingsProviderStatus = Literal[
     "superseded",
     "unavailable",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class AudioCppCloneSetupProjection:
+    """Path-free setup guidance for one exact selected Guided clone model."""
+
+    model_id: str
+    recipe_id: str
+    recipe_revision: int
+    family_label: str
+    recipe_label: str
+    reference_requirement: Literal["none", "optional", "required"]
+    voice_reference_policy: Literal[
+        "native_only",
+        "reference_only",
+        "either",
+        "both_required_combined",
+    ]
+
+    def __post_init__(self) -> None:
+        for value, label, limit in (
+            (self.model_id, "model ID", 256),
+            (self.recipe_id, "recipe ID", 256),
+            (self.family_label, "family label", 128),
+            (self.recipe_label, "recipe label", 256),
+        ):
+            if (
+                type(value) is not str
+                or not value
+                or value != value.strip()
+                or len(value) > limit
+                or any(ord(character) < 32 for character in value)
+            ):
+                raise ValueError(f"audio.cpp clone setup {label} is invalid")
+        if type(self.recipe_revision) is not int or self.recipe_revision < 1:
+            raise ValueError("audio.cpp clone setup recipe revision is invalid")
+        if self.reference_requirement not in {"none", "optional", "required"}:
+            raise ValueError("audio.cpp clone setup reference requirement is invalid")
+        if self.voice_reference_policy not in {
+            "native_only",
+            "reference_only",
+            "either",
+            "both_required_combined",
+        }:
+            raise ValueError("audio.cpp clone setup voice policy is invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +281,7 @@ class AudioCppRuntimeObservation:
     applied_guided_default_model_id: str | None = None
     saved_guided_text_ready: bool = False
     applied_guided_text_ready: bool = False
+    clone_setup: AudioCppCloneSetupProjection | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -404,7 +548,7 @@ class _AdmittedTTSOperation:
         ],
         observe_cleanup: Callable[[asyncio.Task[None]], None],
         audio_cpp_preparation: _AudioCppPreparation | None,
-        clone_execution: _ResolvedTTSCloneExecution | None,
+        clone_execution: _ResolvedTTSCloneExecutionAuthority | None,
         clone_materializer: TTSCloneReferenceMaterializer | None,
     ) -> None:
         self._request = request
@@ -434,6 +578,14 @@ class _AdmittedTTSOperation:
         progress_sink: ProgressSink | None = None,
     ) -> TTSAudioResponse:
         """Execute the admitted request exactly once."""
+        response, _evidence = await self.synthesize_with_evidence(progress_sink)
+        return response
+
+    async def synthesize_with_evidence(
+        self,
+        progress_sink: ProgressSink | None = None,
+    ) -> tuple[TTSAudioResponse, TTSCloneGenerationEvidence | None]:
+        """Execute once and retain exact clone-success evidence internally."""
         if self._used:
             raise RuntimeError("The admitted TTS operation has already been used")
         self._claimed = True
@@ -453,6 +605,7 @@ class _AdmittedTTSOperation:
         generation_changed = False
         materialization: TTSCloneReferenceMaterialization | None = None
         capability: AudioCppCloneCapabilityAdmission | None = None
+        clone_evidence: TTSCloneGenerationEvidence | None = None
         try:
             with _adapter_admission_scope(
                 lease.adapter,
@@ -512,6 +665,20 @@ class _AdmittedTTSOperation:
                         admitted_request,
                         safe_sink,
                     )
+                    try:
+                        clone_evidence = _new_tts_clone_generation_evidence(
+                            capability=capability,
+                            canonical_reference=_canonical_clone_reference(
+                                self._clone_execution.reference
+                            ),
+                            provider_configuration_revision=(
+                                lease.configuration_revision
+                            ),
+                            applied_provider_generation=lease.applied_generation,
+                        )
+                    except BaseException as error:
+                        await _cleanup_preserving_primary(response.aclose, error)
+                        raise
                     response.add_cleanup(materialization.aclose)
                     materialization = None
                     capability = None
@@ -584,7 +751,7 @@ class _AdmittedTTSOperation:
             for cleanup_task in cleanup_tasks:
                 cleanup_task.add_done_callback(self._observe_cleanup)
             raise closed_error
-        return managed_response
+        return managed_response, clone_evidence
 
     async def close(self) -> None:
         """Release an admitted operation that has not started execution."""
@@ -875,7 +1042,7 @@ class TTSService:
         reservation: _OperationCapacityReservation,
         *,
         expected_configuration_revision: int | None = None,
-        clone_execution: _ResolvedTTSCloneExecution | None = None,
+        clone_execution: _ResolvedTTSCloneExecutionAuthority | None = None,
     ) -> _AdmittedTTSOperation:
         """Acquire a provider lease using capacity reserved by this service."""
         try:
@@ -1710,6 +1877,9 @@ class TTSService:
         default_profile: TTSDefaultProfileSelection | None = None,
         studio_draft: TTSStudioDraftSelection | None = None,
         studio_preferences: StudioTTSPreferencesSnapshot | None = None,
+        clone_audition: STTSPlaygroundCloneSnapshot | None = None,
+        profile_preview: STTSPlaygroundProfilePreview | None = None,
+        profile_reference_resolver: TTSProfileReferenceResolver | None = None,
         progress_sink: ProgressSink | None = None,
     ) -> tuple[TTSAudioResponse, TTSEffectiveSelectionSnapshot]:
         """Resolve owner-scoped settings and synthesize one admitted request."""
@@ -1721,6 +1891,42 @@ class TTSService:
             default_profile=default_profile,
             studio_draft=studio_draft,
             studio_preferences=studio_preferences,
+            clone_audition=clone_audition,
+            profile_preview=profile_preview,
+            profile_reference_resolver=profile_reference_resolver,
+            progress_sink=progress_sink,
+        )
+
+    async def synthesize_effective_with_evidence(
+        self,
+        *,
+        text: str,
+        explicit: TTSSelectionOverrides | None = None,
+        character_profile: TTSCharacterProfileSelection | None = None,
+        default_profile: TTSDefaultProfileSelection | None = None,
+        studio_draft: TTSStudioDraftSelection | None = None,
+        studio_preferences: StudioTTSPreferencesSnapshot | None = None,
+        clone_audition: STTSPlaygroundCloneSnapshot | None = None,
+        profile_preview: STTSPlaygroundProfilePreview | None = None,
+        profile_reference_resolver: TTSProfileReferenceResolver | None = None,
+        progress_sink: ProgressSink | None = None,
+    ) -> tuple[
+        TTSAudioResponse,
+        TTSEffectiveSelectionSnapshot,
+        TTSCloneGenerationEvidence | None,
+    ]:
+        """Synthesize and retain exact clone-success evidence for STTS."""
+
+        return await self._request_admission.synthesize_effective_with_evidence(
+            text=text,
+            explicit=explicit,
+            character_profile=character_profile,
+            default_profile=default_profile,
+            studio_draft=studio_draft,
+            studio_preferences=studio_preferences,
+            clone_audition=clone_audition,
+            profile_preview=profile_preview,
+            profile_reference_resolver=profile_reference_resolver,
             progress_sink=progress_sink,
         )
 
@@ -2005,8 +2211,12 @@ class TTSService:
             raise RuntimeError("Managed audio.cpp lifecycle is unavailable")
         return supervisor.snapshot()
 
-    async def audio_cpp_runtime_observation(self) -> AudioCppRuntimeObservation:
-        """Return saved, applied, process, and catalog state without provider work."""
+    async def audio_cpp_runtime_observation(
+        self,
+        *,
+        selected_model_id: str | None = None,
+    ) -> AudioCppRuntimeObservation:
+        """Return passive runtime state and selected Guided-model setup metadata."""
         supervisor = self._audio_cpp_supervisor
         if supervisor is None:
             raise RuntimeError("Managed audio.cpp lifecycle is unavailable")
@@ -2074,6 +2284,17 @@ class TTSService:
                             tts_capability = "available"
                         elif catalog.health.state == "not_configured":
                             tts_capability = "not_configured"
+                clone_settings = applied_settings
+                if (
+                    saved_generation != configuration.applied_generation
+                    and saved.mode == "managed"
+                    and process.state in {"stopped", "unavailable"}
+                ):
+                    clone_settings = saved_settings
+                clone_setup = _audio_cpp_clone_setup_projection(
+                    clone_settings,
+                    selected_model_id,
+                )
 
                 return AudioCppRuntimeObservation(
                     saved_mode=saved.mode,
@@ -2161,6 +2382,7 @@ class TTSService:
                         and applied_settings.managed_setup_source == "guided"
                         and audio_cpp_guided_default_is_text_ready(applied_settings)
                     ),
+                    clone_setup=clone_setup,
                 )
 
     async def start_and_test_audio_cpp(self) -> TTSProviderCatalog:

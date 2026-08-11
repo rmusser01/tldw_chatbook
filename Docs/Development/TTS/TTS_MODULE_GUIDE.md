@@ -197,11 +197,11 @@ retained v2 backup, and only then start the older build. This necessarily
 accepts loss of post-migration profile changes, including all clone references
 and later profile or assignment edits.
 
-TASK-13204 adds execution for an exact reference already stored on a profile;
-it does not add reference setup controls in Speech Lab or voice-bundle
-portability. Ordinary portable profile wire version 1 remains unchanged and
-contains no reference summary, bytes, transcript, digest, or source path.
-Explicit sensitive voice bundles are a separate later workstream.
+TASK-13205 adds the reference setup and explicit save workflow described below.
+It does not add voice-bundle portability. Ordinary portable profile wire
+version 1 remains unchanged and contains no reference summary, bytes,
+transcript, digest, or source path. Explicit sensitive voice bundles are a
+separate later workstream.
 
 #### Guided clone execution and materialization
 
@@ -249,6 +249,45 @@ content is suppressed for that exact managed process generation so chunked or
 delayed echoes cannot retain the path or transcript in diagnostics. Public
 errors and response metadata remain value-independent. The next process
 generation starts with normal bounded sanitized diagnostics.
+
+#### Speech Lab clone setup, save, and Roleplay assignment
+
+When the selected ready Guided model exposes a reviewed reference-required
+recipe, Speech Lab replaces ordinary generation with one **Create Voice &
+Generate** path. The pane accepts a bounded PCM16 WAV and required bounded
+transcript, canonicalizes them off the UI loop, and retains that canonical
+value only as the current setup draft. Picker cancellation is inert; validation
+focuses the invalid field without discarding the other field. The interface
+states that the reference, transcript, profile database, and short-lived
+materialization are local plaintext rather than encrypted data.
+
+Starting clone generation captures the provider/model/applied-generation and
+draft revision. The admitted service owns the reference below the public
+request boundary, materializes it only after the exact Guided capability is
+accepted, and returns clone evidence only with a structurally valid complete
+WAV. A failed or stale operation leaves the setup draft available for retry and
+cannot replace the last playable result. A successful matching operation
+transfers exact canonical authority to the handler-owned current result and
+clears the pane draft; the pane receives only a playback-safe projection.
+
+**Save as Voice Profile** is offered only for that handler-owned successful
+result. The profile service atomically creates the generation profile and its
+reference from the admitted evidence, without reopening the source WAV or
+reading mutable selectors. The review can save unassigned or navigate to
+Roleplay with a non-authoritative profile identity suggestion. It never changes
+the app default or a character assignment. Roleplay validates that suggestion
+against a fresh repository generation/profile revision, marks it as suggested,
+and persists an assignment only when the user explicitly selects it.
+
+Console **Speak** then resolves the exact character assignment and stored
+reference before provider readiness work. The first Speak lazily starts or
+joins the one compatible Guided Managed child and uses the assigned model and
+reference; global defaults cannot override it. Profile/character browsing is
+passive. Message, assignment, profile/reference, configuration, recipe, or
+process-generation changes at an admission boundary fail stale rather than
+switching identity. Result replacement, discard, pane/app close, and response
+cleanup release their respective canonical, artifact, materialization, and
+lease ownership in order.
 
 Profiles persist generation selections, not connection or process
 configuration. Provider origins, credentials, API keys, custom headers, binary

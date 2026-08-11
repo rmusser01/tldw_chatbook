@@ -11,6 +11,7 @@ from typing import Any, Literal, Protocol, runtime_checkable
 from tldw_chatbook.TTS.profile_reference_materialization import (
     TTSCloneReferenceMaterialization,
 )
+from tldw_chatbook.TTS.profile_reference_types import CanonicalTTSCloneReference
 
 ProgressSink = Callable[["TTSProgress"], Awaitable[None]]
 CleanupCallback = Callable[[], Awaitable[None]]
@@ -282,6 +283,79 @@ class AudioCppCloneCapabilityAdmission:
             "_applied_provider_generation",
             applied_provider_generation,
         )
+
+
+_TTS_CLONE_GENERATION_EVIDENCE_TOKEN = object()
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class TTSCloneGenerationEvidence:
+    """Private proof of one successful, exactly admitted clone generation."""
+
+    _constructor_token: object = field(repr=False, compare=False)
+    canonical_reference: CanonicalTTSCloneReference = field(repr=False)
+    model_id: str
+    recipe_id: str
+    recipe_revision: int
+    provider_configuration_revision: int
+    applied_provider_generation: int
+    process_generation: int
+
+    def __post_init__(self) -> None:
+        if (
+            self._constructor_token is not _TTS_CLONE_GENERATION_EVIDENCE_TOKEN
+            or type(self.canonical_reference) is not CanonicalTTSCloneReference
+            or type(self.model_id) is not str
+            or not self.model_id
+            or type(self.recipe_id) is not str
+            or not self.recipe_id
+            or type(self.recipe_revision) is not int
+            or self.recipe_revision < 1
+            or type(self.provider_configuration_revision) is not int
+            or self.provider_configuration_revision < 0
+            or type(self.applied_provider_generation) is not int
+            or self.applied_provider_generation < 0
+            or type(self.process_generation) is not int
+            or self.process_generation < 1
+        ):
+            raise ValueError("Clone generation evidence is invalid")
+
+    def __repr__(self) -> str:
+        return "TTSCloneGenerationEvidence(<private>)"
+
+    def __copy__(self) -> TTSCloneGenerationEvidence:
+        raise TypeError("Clone generation evidence cannot be copied")
+
+    def __deepcopy__(self, _memo: dict[int, object]) -> TTSCloneGenerationEvidence:
+        raise TypeError("Clone generation evidence cannot be copied")
+
+
+def _new_tts_clone_generation_evidence(
+    *,
+    capability: AudioCppCloneCapabilityAdmission,
+    canonical_reference: CanonicalTTSCloneReference,
+    provider_configuration_revision: int,
+    applied_provider_generation: int,
+) -> TTSCloneGenerationEvidence:
+    """Create evidence only from an exact sealed adapter capability."""
+
+    if (
+        type(capability) is not AudioCppCloneCapabilityAdmission
+        or capability._materialization is None
+        or capability._provider_revision != provider_configuration_revision
+        or capability._applied_provider_generation != applied_provider_generation
+    ):
+        raise ValueError("Clone generation evidence is invalid")
+    return TTSCloneGenerationEvidence(
+        _TTS_CLONE_GENERATION_EVIDENCE_TOKEN,
+        canonical_reference=canonical_reference,
+        model_id=capability.model_id,
+        recipe_id=capability.recipe_id,
+        recipe_revision=capability.recipe_revision,
+        provider_configuration_revision=provider_configuration_revision,
+        applied_provider_generation=applied_provider_generation,
+        process_generation=capability.process_generation,
+    )
 
 
 def _new_audio_cpp_clone_capability(

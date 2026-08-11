@@ -16,17 +16,20 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rich.text import Text
 from textual.message import Message
 from textual.widgets import Button, Select, Static
 
 from tldw_chatbook.TTS import (
+    LoadedTTSProfile,
     ProfileAvailabilityState,
     TTSPlaygroundSelectionPreset,
 )
 from tldw_chatbook.TTS.adapter_types import TTSRegistryClosedError
+from tldw_chatbook.Constants import TAB_PERSONAS
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 
 from tldw_chatbook.UI.stts_playground_catalog import (
     AUDIO_CPP_PROVIDER_ID,
@@ -37,8 +40,13 @@ from tldw_chatbook.UI.stts_playground_catalog import (
 from tldw_chatbook.UI.stts_profile_library import (
     PROFILE_ACTION_FAILED_COPY,
     PROFILE_STORE_UNAVAILABLE_COPY,
+    TTSCloneProfileSaveReview,
+    TTSCloneProfileSaveReviewModal,
     TTSProfileNameModal,
     profile_action_error_copy,
+)
+from tldw_chatbook.Widgets.Persona_Widgets.personas_character_tts_widget import (
+    CharacterTTSProfileSuggestion,
 )
 
 
@@ -63,6 +71,32 @@ class AdoptStudioPreferencesRequested(Message):
 
 class SpeechProfileMixin:
     """Profile save/preview behaviour, independent of the layout."""
+
+    if TYPE_CHECKING:
+        # This class is composed with the catalog/synthesis mixins and a
+        # Textual widget by ``SpeechPlaygroundPane``.  Keep the host contract
+        # visible to static analysis without adding runtime members or
+        # duplicating the concrete pane's implementation.
+        is_mounted: bool
+        app: Any
+        _tts_service: Any
+        _catalogs: dict[Any, Any]
+        _catalog_generation_allowed: bool
+        _discovered_voices: dict[Any, Any]
+        current_audio_artifact: Any
+        _generation_operation_id: Any
+
+        def query_one(self, *args: Any, **kwargs: Any) -> Any: ...
+
+        def _sync_generate_enabled(self) -> None: ...
+
+        def _safe_select_options(self, *args: Any, **kwargs: Any) -> Any: ...
+
+        def _refresh_axis_markers(self) -> None: ...
+
+        def _show_provider_specific_controls(self, provider_id: str) -> None: ...
+
+        def _apply_controls(self, controls: Any) -> None: ...
 
     def init_profile_state(self, profile_preset: Any = None) -> None:
         """Initialise the state the profile path reads.
@@ -116,7 +150,7 @@ class SpeechProfileMixin:
             self._sync_generate_enabled()
 
     @staticmethod
-    def _dismiss_profile_name_modal(modal: TTSProfileNameModal) -> None:
+    def _dismiss_profile_name_modal(modal: Any) -> None:
         if modal.is_mounted and modal.is_current:
             modal.dismiss(None)
 
@@ -303,13 +337,18 @@ class SpeechProfileMixin:
             self._sync_save_profile_action()
             return
 
-        modal = TTSProfileNameModal()
+        clone_save = artifact.clone_profile_save_eligible
+        modal = (
+            TTSCloneProfileSaveReviewModal()
+            if clone_save
+            else TTSProfileNameModal()
+        )
         active = self._active_profile_name_modal
         if active is not None:
             self._dismiss_profile_name_modal(active)
         self._active_profile_name_modal = modal
         try:
-            display_name = await self.app.push_screen_wait(modal)
+            modal_result = await self.app.push_screen_wait(modal)
         except asyncio.CancelledError:
             self._dismiss_profile_name_modal(modal)
             if self.is_mounted:
@@ -326,7 +365,19 @@ class SpeechProfileMixin:
         finally:
             if self._active_profile_name_modal is modal:
                 self._active_profile_name_modal = None
-        if not isinstance(display_name, str) or not display_name.strip():
+        if clone_save:
+            if type(modal_result) is not TTSCloneProfileSaveReview:
+                self._sync_save_profile_action()
+                return
+            display_name = modal_result.display_name
+            choose_character = modal_result.choose_character
+        else:
+            if not isinstance(modal_result, str) or not modal_result.strip():
+                self._sync_save_profile_action()
+                return
+            display_name = modal_result
+            choose_character = False
+        if not display_name.strip():
             self._sync_save_profile_action()
             return
 
@@ -344,7 +395,13 @@ class SpeechProfileMixin:
                     PROFILE_STORE_UNAVAILABLE_COPY
                 )
                 return
-            await service.create_from_artifact(display_name, artifact)
+            handler = getattr(self.app, "_stts_handler", None)
+            save_current = getattr(handler, "save_current_playground_profile", None)
+            if not callable(save_current):
+                raise RuntimeError("The current speech result is unavailable")
+            saved = await save_current(artifact.operation_id, display_name, service)
+            if clone_save and type(saved) is not LoadedTTSProfile:
+                raise RuntimeError("The saved voice profile result is unavailable")
         except asyncio.CancelledError:
             raise
         except Exception as error:  # noqa: BLE001 - map to bounded UI copy
@@ -359,6 +416,22 @@ class SpeechProfileMixin:
             if self.is_mounted:
                 self._sync_save_profile_action()
         self.query_one("#audio-player-status", Static).update("Voice profile saved.")
+        if clone_save and choose_character:
+            assert type(saved) is LoadedTTSProfile
+            profile = saved.profile
+            self.app.post_message(
+                NavigateToScreen(
+                    TAB_PERSONAS,
+                    {
+                        "view": "characters",
+                        "voice_profile_suggestion": CharacterTTSProfileSuggestion(
+                            profile_id=profile.profile_id,
+                            repository_generation=saved.repository_generation,
+                            profile_revision=profile.revision,
+                        ),
+                    },
+                )
+            )
 
     def _sync_profile_preview_status(self) -> None:
         banner = self.query_one("#tts-profile-preview-status", Static)

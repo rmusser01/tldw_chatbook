@@ -15,8 +15,15 @@ from tldw_chatbook.TTS import AudioCppRuntimeObservation
 from ..Workbench.workbench_state import WorkbenchAction
 from .speech_action_strip import SpeechActionStrip
 
-AudioCppRuntimeOperation = Literal["test", "sample", "restart", "shutdown"]
+AudioCppRuntimeOperation = Literal[
+    "test",
+    "sample",
+    "clone_generate",
+    "restart",
+    "shutdown",
+]
 AudioCppSampleState = Literal["not_attempted", "generating", "failed", "ready"]
+AudioCppCloneDraftState = Literal["missing", "processing", "invalid", "ready"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,6 +32,7 @@ class AudioCppRuntimeCardObservation:
 
     runtime: AudioCppRuntimeObservation
     sample_state: AudioCppSampleState = "not_attempted"
+    clone_draft_state: AudioCppCloneDraftState = "missing"
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,6 +186,15 @@ def _runtime_actions(
         )
 
     live_managed = observation.applied_mode == "managed" and state in _LIVE_STATES
+    clone_setup_ready = bool(
+        observation.clone_setup is not None
+        and not observation.pending_configuration
+        and live_managed
+        and observation.applied_managed_setup_source == "guided"
+        and observation.clone_setup.model_id in observation.applied_guided_model_ids
+        and observation.tts_capability == "available"
+        and observation.catalog_fresh
+    )
     if (
         observation.pending_configuration
         and observation.saved_mode == "external"
@@ -206,6 +223,26 @@ def _runtime_actions(
             tooltip="Restart the unhealthy managed audio.cpp server",
             progress_label="Restarting…",
         )
+    elif clone_setup_ready:
+        draft_reasons = {
+            "missing": "Choose a reference WAV and enter its transcript first.",
+            "processing": "Wait for the reference WAV to finish validation.",
+            "invalid": "Correct the reference WAV or transcript before generating.",
+            "ready": "",
+        }
+        primary = _action(
+            "clone_generate",
+            "Create Voice & Generate",
+            card_observation.clone_draft_state == "ready",
+            draft_reasons[card_observation.clone_draft_state],
+            tooltip=(
+                "Generate one complete WAV with the staged local voice reference"
+                if card_observation.clone_draft_state == "ready"
+                else draft_reasons[card_observation.clone_draft_state]
+            ),
+            progress_label="Creating Voice…",
+            post_operation_focus="#audio-play-btn",
+        )
     elif observation.saved_mode == "managed" and state in {
         "stopped",
         "unavailable",
@@ -217,7 +254,19 @@ def _runtime_actions(
             and guided_default is not None
             and guided_default in observation.saved_guided_model_ids
         )
-        if guided_sample_ready:
+        if observation.clone_setup is not None:
+            primary = _action(
+                "test",
+                "Start & Set Up Voice",
+                True,
+                tooltip=(
+                    "Start audio.cpp and verify the selected clone model before "
+                    "setting up its voice reference"
+                ),
+                progress_label="Starting & Testing…",
+                post_operation_focus="#speech-clone-reference-choose",
+            )
+        elif guided_sample_ready:
             primary = _action(
                 "sample",
                 "Start & Generate Sample",

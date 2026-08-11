@@ -35,7 +35,7 @@ from tldw_chatbook.Widgets.enhanced_file_picker import (
     EnhancedFileSave as FileSave,
 )
 
-from tldw_chatbook.TTS import STTSGeneratedAudio
+from tldw_chatbook.TTS import STTSGeneratedAudio, STTSPlaygroundResultProjection
 from tldw_chatbook.TTS.playground_types import PROFILE_SAVE_BLOCK_PROVIDER_OPTIONS
 
 
@@ -80,9 +80,11 @@ class SpeechPlaybackMixin:
 
     def _generation_complete(
         self,
-        artifact: STTSGeneratedAudio | None,
+        artifact: STTSGeneratedAudio | STTSPlaygroundResultProjection | None,
     ) -> None:
-        """Store one delivered artifact independently of current selectors."""
+        """Store only sanitized result facts independently of selectors."""
+        if type(artifact) is STTSGeneratedAudio:
+            artifact = STTSPlaygroundResultProjection.from_artifact(artifact)
         if (
             artifact is not None
             and artifact.operation_id == self._retired_profile_operation_id
@@ -142,7 +144,7 @@ class SpeechPlaybackMixin:
 
     async def _replace_result_after_playback(
         self,
-        artifact: STTSGeneratedAudio,
+        artifact: STTSPlaygroundResultProjection,
     ) -> None:
         """Retire older playback before publishing and optionally playing a result."""
 
@@ -189,7 +191,10 @@ class SpeechPlaybackMixin:
                 self._generation_operation_id = None
                 self._sync_generate_enabled()
 
-    def _publish_delivered_artifact(self, artifact: STTSGeneratedAudio) -> None:
+    def _publish_delivered_artifact(
+        self,
+        artifact: STTSPlaygroundResultProjection,
+    ) -> None:
         """Publish one result only after prior playback ownership is settled."""
 
         self._store_delivered_artifact(artifact, announce=True)
@@ -216,7 +221,7 @@ class SpeechPlaybackMixin:
         """
         #: The most recent generated file and its artifact handle.
         self.current_audio_file: Any = None
-        self.current_audio_artifact: STTSGeneratedAudio | None = None
+        self.current_audio_artifact: STTSPlaygroundResultProjection | None = None
         #: In-flight playback and its progress ticker, so both can be
         #: cancelled when a new take starts or the pane unmounts.
         self._progress_timer_task: Any = None
@@ -326,10 +331,12 @@ class SpeechPlaybackMixin:
 
     def _store_delivered_artifact(
         self,
-        artifact: STTSGeneratedAudio,
+        artifact: STTSGeneratedAudio | STTSPlaygroundResultProjection,
         *,
         announce: bool,
     ) -> None:
+        if type(artifact) is STTSGeneratedAudio:
+            artifact = STTSPlaygroundResultProjection.from_artifact(artifact)
         self.current_audio_artifact = artifact
         self.current_audio_file = artifact.path
         self._profile_save_suppressed = False
@@ -408,7 +415,7 @@ class SpeechPlaybackMixin:
 
     @staticmethod
     def _artifact_duration_seconds(
-        artifact: STTSGeneratedAudio | None,
+        artifact: STTSPlaygroundResultProjection | None,
     ) -> float | None:
         """Return a positive duration from bounded artifact metadata, if known."""
 
@@ -467,7 +474,9 @@ class SpeechPlaybackMixin:
         return " · ".join(parts)
 
     @staticmethod
-    def _current_result_provenance_copy(artifact: STTSGeneratedAudio) -> str:
+    def _current_result_provenance_copy(
+        artifact: STTSPlaygroundResultProjection,
+    ) -> str:
         """Return path-free provenance captured with the delivered artifact."""
 
         provider = (
@@ -496,7 +505,7 @@ class SpeechPlaybackMixin:
         return " · ".join(parts)
 
     @staticmethod
-    def _result_lifecycle_copy(artifact: STTSGeneratedAudio) -> str:
+    def _result_lifecycle_copy(artifact: STTSPlaygroundResultProjection) -> str:
         """State the file's lifecycle, and why Save is missing when it is.
 
         An unexplained missing Save affordance is the chrome-honesty defect
@@ -549,12 +558,12 @@ class SpeechPlaybackMixin:
             return audio_path, lambda: None
 
         handler = getattr(self.app, "_stts_handler", None)
-        acquire = getattr(handler, "lease_playground_artifact", None)
-        release = getattr(handler, "release_playground_artifact", None)
+        acquire = getattr(handler, "lease_playground_result", None)
+        release = getattr(handler, "release_playground_result", None)
         if not callable(acquire) or not callable(release):
             return audio_path, lambda: None
         try:
-            if not acquire(artifact):
+            if not acquire(artifact.operation_id, artifact.path):
                 return None
         except Exception as error:
             logger.debug(
@@ -571,7 +580,7 @@ class SpeechPlaybackMixin:
                 return
             released = True
             try:
-                release(artifact)
+                release(artifact.operation_id, artifact.path)
             except Exception as error:
                 logger.debug(
                     "Could not release Playground artifact ({})",
@@ -1167,6 +1176,9 @@ class SpeechPlaybackMixin:
     async def on_unmount(self) -> None:
         """Clean up resources when widget is unmounted"""
         try:
+            close_clone_setup = getattr(self, "_close_clone_setup", None)
+            if callable(close_clone_setup):
+                await close_clone_setup()
             self.app.workers.cancel_group(self, "stts-catalog-discovery")
             self.app.workers.cancel_group(self, "stts-voice-discovery")
             self.app.workers.cancel_group(self, "stts-playback")

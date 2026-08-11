@@ -26,6 +26,8 @@ import asyncio
 from collections.abc import Mapping
 from dataclasses import replace
 from datetime import datetime, timezone
+from functools import partial
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from textual import on
@@ -36,6 +38,8 @@ from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from tldw_chatbook.TTS import (
     AudioCppRuntimeObservation,
+    CanonicalTTSCloneReference,
+    STTSPlaygroundCloneSnapshot,
     TTSPlaygroundSelectionPreset,
     TTSPreferencesSnapshot,
 )
@@ -63,6 +67,7 @@ from ..Workbench.workbench_state import WorkbenchAction
 from .speech_action_strip import SpeechActionStrip
 from .speech_axis_row import AXIS_EMPTY_PROMPTS, SpeechAxisRow
 from .audio_cpp_runtime_card import (
+    AudioCppCloneDraftState,
     AudioCppRuntimeAction,
     AudioCppRuntimeCard,
     AudioCppRuntimeCardObservation,
@@ -72,6 +77,7 @@ from .audio_cpp_runtime_card import (
     project_audio_cpp_unknown_action,
 )
 from .speech_catalog_mixin import SpeechCatalogMixin
+from .speech_clone_setup import SpeechCloneSetup
 from .speech_playback_mixin import EXAMPLE_TEXTS, SpeechPlaybackMixin
 from .speech_playground_model import AXIS_CONTROLS
 from .speech_profile_mixin import (
@@ -98,8 +104,28 @@ from .speech_settings_contracts import (
     speech_tts_model_scope,
 )
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.TTS.profile_reference_audio import canonicalize_reference_wav
+from tldw_chatbook.TTS.profile_reference_types import (
+    MAX_REFERENCE_TEXT_CHARACTERS,
+    validate_reference_text,
+)
+from tldw_chatbook.Third_Party.textual_fspicker import Filters
+from tldw_chatbook.Utils.input_validation import validate_text_input
+from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
 
 _AUDIO_CPP_RUNTIME_POLL_SECONDS = 5.0
+
+
+def _validate_clone_transcript_input(value: str) -> str:
+    """Apply shared boundary checks before clone-specific normalization."""
+
+    if not validate_text_input(
+        value,
+        max_length=MAX_REFERENCE_TEXT_CHARACTERS,
+        allow_html=True,
+    ):
+        raise ValueError("reference_text")
+    return validate_reference_text(value)
 
 if TYPE_CHECKING:
     pass
@@ -115,6 +141,10 @@ SPEECH_SPLIT_MIN_WIDTH = 86
 
 class OpenStudioPreferencesRequested(Message):
     """Ask the owning Speech window to show its Studio-only editor."""
+
+
+class OpenVoiceProfilesRequested(Message):
+    """Ask the owning Speech window to open its existing Voice Profiles view."""
 
 
 #: Providers that synthesize from a reference clip, so the clip picker is
@@ -329,6 +359,14 @@ class SpeechPlaygroundPane(
         self._audio_cpp_sample_state: AudioCppSampleState = "not_attempted"
         self._audio_cpp_sample_identity: tuple[int, int, int] | None = None
         self._audio_cpp_sample_focus_target: str | None = None
+        self._clone_setup_context: tuple[str, str, int, int] | None = None
+        self._clone_setup_source_path: Path | None = None
+        self._clone_setup_canonical: CanonicalTTSCloneReference | None = None
+        self._clone_setup_draft_revision = 0
+        self._clone_setup_validation_task: asyncio.Task[None] | None = None
+        self._clone_setup_retained_tasks: set[asyncio.Task[None]] = set()
+        self._clone_setup_validation_lock = asyncio.Lock()
+        self._clone_setup_error: str | None = None
         self.init_synthesis_state()
         self.init_catalog_state()
         self._seed_session_control_snapshot()
@@ -551,6 +589,307 @@ class SpeechPlaygroundPane(
             )
         )
 
+    @on(Button.Pressed, "#speech-clone-reference-choose")
+    def _on_choose_clone_reference(self, event: Button.Pressed) -> None:
+        """Open the bounded WAV picker for the visible clone setup."""
+
+        event.stop()
+        picker = FileOpen(
+            title="Choose reference WAV",
+            filters=Filters(("WAV audio", lambda path: path.suffix.lower() == ".wav")),
+            context="speech_clone_reference",
+        )
+        self.app.push_screen(picker, self._handle_clone_reference_selection)
+
+    @on(Button.Pressed, "#speech-clone-reference-clear")
+    def _on_clear_clone_reference(self, event: Button.Pressed) -> None:
+        """Drop only the staged clone reference and retain the transcript."""
+
+        event.stop()
+        self._replace_clone_reference_source(None)
+
+    @on(Button.Pressed, "#speech-clone-use-profile")
+    def _on_use_existing_voice_profile(self, event: Button.Pressed) -> None:
+        """Open the existing Voice Profiles library without duplicating a picker."""
+
+        event.stop()
+        self.post_message(OpenVoiceProfilesRequested())
+
+    def _handle_clone_reference_selection(self, path: str | Path | None) -> None:
+        """Accept picker cancellation or stage one source path for validation."""
+
+        if path is None:
+            return
+        self._replace_clone_reference_source(Path(path))
+
+    def _replace_clone_reference_source(self, path: Path | None) -> None:
+        """Fence the old draft, retain no basename, and validate the new source."""
+
+        self._clone_setup_draft_revision += 1
+        previous = self._clone_setup_validation_task
+        if path is None:
+            if previous is not None and not previous.done():
+                previous.cancel()
+            self._clone_setup_validation_task = None
+        self._clone_setup_source_path = path
+        self._clone_setup_canonical = None
+        self._clone_setup_error = None
+        if path is not None:
+            self._schedule_clone_reference_validation(delay_seconds=0.0)
+        self._refresh_clone_setup_presentation()
+
+    def _clone_transcript(self) -> str:
+        try:
+            return self.query_one("#speech-clone-reference-text", TextArea).text
+        except NoMatches:
+            return ""
+
+    def _schedule_clone_reference_validation(self, *, delay_seconds: float) -> None:
+        """Retain one revision-fenced canonicalization task off the event loop."""
+
+        source = self._clone_setup_source_path
+        context = self._clone_setup_context
+        if source is None or context is None:
+            return
+        transcript = self._clone_transcript()
+        try:
+            normalized_text = _validate_clone_transcript_input(transcript)
+        except Exception:
+            self._clone_setup_canonical = None
+            self._clone_setup_error = "Enter the exact spoken transcript."
+            self._refresh_clone_setup_presentation()
+            return
+        self._clone_setup_draft_revision += 1
+        revision = self._clone_setup_draft_revision
+        previous = self._clone_setup_validation_task
+        if previous is not None and not previous.done():
+            previous.cancel()
+        task = asyncio.create_task(
+            self._validate_clone_reference(
+                source=source,
+                transcript=normalized_text,
+                context=context,
+                revision=revision,
+                delay_seconds=delay_seconds,
+            ),
+            name="speech_clone_reference_validation",
+        )
+        self._clone_setup_validation_task = task
+        self._clone_setup_retained_tasks.add(task)
+        task.add_done_callback(self._clone_setup_retained_tasks.discard)
+        self._clone_setup_error = None
+        self._refresh_clone_setup_presentation()
+
+    async def _validate_clone_reference(
+        self,
+        *,
+        source: Path,
+        transcript: str,
+        context: tuple[str, str, int, int],
+        revision: int,
+        delay_seconds: float,
+    ) -> None:
+        """Join superseded work and publish only exact current canonical bytes."""
+
+        current = asyncio.current_task()
+        assert current is not None
+        try:
+            if delay_seconds > 0:
+                await asyncio.sleep(delay_seconds)
+            async with self._clone_setup_validation_lock:
+                if (
+                    self._clone_setup_validation_task is not current
+                    or self._clone_setup_draft_revision != revision
+                    or self._clone_setup_context != context
+                    or self._clone_setup_source_path != source
+                ):
+                    return
+                thread_task = asyncio.create_task(
+                    asyncio.to_thread(canonicalize_reference_wav, source, transcript),
+                    name="speech_clone_reference_canonicalize",
+                )
+                try:
+                    canonical = await asyncio.shield(thread_task)
+                except asyncio.CancelledError:
+                    try:
+                        await thread_task
+                    except BaseException:
+                        pass
+                    raise
+                except Exception:
+                    if (
+                        self._clone_setup_validation_task is current
+                        and self._clone_setup_draft_revision == revision
+                        and self._clone_setup_context == context
+                        and self._clone_setup_source_path == source
+                    ):
+                        self._clone_setup_canonical = None
+                        self._clone_setup_error = (
+                            "Choose a valid, bounded PCM WAV reference."
+                        )
+                        self.call_after_refresh(
+                            self._focus_audio_cpp_action_target,
+                            "#speech-clone-reference-choose",
+                        )
+                    return
+                if (
+                    self.is_mounted
+                    and self._clone_setup_validation_task is current
+                    and self._clone_setup_draft_revision == revision
+                    and self._clone_setup_context == context
+                    and self._clone_setup_source_path == source
+                ):
+                    self._clone_setup_canonical = canonical
+                    self._clone_setup_error = None
+        finally:
+            if self._clone_setup_validation_task is current:
+                self._clone_setup_validation_task = None
+                self._refresh_clone_setup_presentation()
+
+    async def _close_clone_setup(self) -> None:
+        """Seal and join the exact retained canonicalization task on teardown."""
+
+        self._clone_setup_draft_revision += 1
+        task = self._clone_setup_validation_task
+        self._clone_setup_validation_task = None
+        tasks = set(self._clone_setup_retained_tasks)
+        if task is not None:
+            tasks.add(task)
+        for retained in tasks:
+            if not retained.done() and retained.cancelling() == 0:
+                retained.cancel()
+        for retained in tasks:
+            try:
+                await retained
+            except BaseException:
+                pass
+        self._clone_setup_retained_tasks.clear()
+        self._clone_setup_source_path = None
+        self._clone_setup_canonical = None
+        self._clone_setup_error = None
+        self._clone_setup_context = None
+
+    def _refresh_clone_setup_presentation(self) -> None:
+        """Reproject setup and primary action from current immutable facts."""
+
+        observation = self._audio_cpp_runtime_observation
+        if observation is None or not self.is_mounted:
+            return
+        try:
+            setup = self.query_one("#speech-clone-setup", SpeechCloneSetup)
+            setup.apply_draft_state(
+                self._clone_setup_draft_state(observation),
+                source_selected=self._clone_setup_source_path is not None,
+                error_copy=self._clone_setup_error,
+            )
+            card_observation = self._audio_cpp_card_observation(observation)
+            projection = project_audio_cpp_runtime_card(card_observation)
+            self._set_audio_cpp_primary_action(
+                projection.primary_action,
+                card_observation,
+            )
+            primary = self.query_one("#tts-test-connection-btn", Button)
+            primary.label = projection.primary_action.label
+            primary.disabled = not projection.primary_action.enabled
+            primary.tooltip = projection.primary_action.tooltip
+            primary.refresh(layout=True)
+            self._sync_generate_enabled()
+        except NoMatches:
+            return
+
+    def _generate_clone_audition(self) -> None:
+        """Generate only when the visible exact clone action remains enabled."""
+
+        observation = self._audio_cpp_runtime_observation
+        if observation is None:
+            return
+        card_observation = self._audio_cpp_card_observation(observation)
+        action = project_audio_cpp_runtime_card(card_observation).primary_action
+        if action.operation != "clone_generate" or not action.enabled:
+            self.app.notify(
+                action.disabled_reason or "Voice setup is not ready.",
+                severity="warning",
+            )
+            return
+        self._generate_tts(clone_action=True)
+
+    def _clone_setup_generation_error(
+        self,
+        provider_id: object,
+        model_id: object,
+        *,
+        clone_action: bool,
+    ) -> str | None:
+        """Reserve clone-capable models for their exact projected action."""
+
+        if (
+            provider_id != "audio_cpp"
+            or not isinstance(model_id, str)
+            or self._profile_preset is not None
+        ):
+            return None
+        observation = self._audio_cpp_runtime_observation
+        projection = None if observation is None else observation.clone_setup
+        if projection is None or projection.model_id != model_id:
+            return None
+        card_observation = self._audio_cpp_card_observation(observation)
+        action = project_audio_cpp_runtime_card(card_observation).primary_action
+        if clone_action and action.operation == "clone_generate" and action.enabled:
+            return None
+        if action.operation == "clone_generate" and not action.enabled:
+            return action.disabled_reason or "Complete voice setup before generating."
+        return "Use Create Voice & Generate for this reference-based model."
+
+    def _clone_audition_for_request(
+        self,
+        provider_id: str,
+        model_id: str,
+    ) -> STTSPlaygroundCloneSnapshot | None:
+        """Freeze the exact current private draft below the public UI boundary."""
+
+        if provider_id != "audio_cpp" or self._profile_preset is not None:
+            return None
+        observation = self._audio_cpp_runtime_observation
+        canonical = self._clone_setup_canonical
+        projection = None if observation is None else observation.clone_setup
+        if (
+            observation is None
+            or projection is None
+            or projection.model_id != model_id
+            or self._clone_setup_context
+            != self._clone_setup_observation_context(observation)
+            or canonical is None
+            or self._clone_setup_draft_state(observation) != "ready"
+            or observation.pending_configuration
+            or observation.process.state != "running"
+            or observation.tts_capability != "available"
+            or not observation.catalog_fresh
+        ):
+            return None
+        return STTSPlaygroundCloneSnapshot(
+            draft_revision=self._clone_setup_draft_revision,
+            canonical_reference=canonical,
+        )
+
+    def _accept_clone_generation_result(
+        self,
+        operation_id: str,
+        draft_revision: int,
+    ) -> None:
+        """Drop only the exact staged draft accepted by the handler result."""
+
+        if (
+            self._generation_operation_id != operation_id
+            or self._clone_setup_draft_revision != draft_revision
+            or self._clone_setup_canonical is None
+        ):
+            return
+        self._clone_setup_draft_revision += 1
+        self._clone_setup_source_path = None
+        self._clone_setup_canonical = None
+        self._clone_setup_error = None
+        self._refresh_clone_setup_presentation()
+
     @on(Button.Pressed, "#audio-cpp-runtime-restart")
     def _on_audio_cpp_restart(self, event: Button.Pressed) -> None:
         """Run the existing managed replacement operation from Speech Lab."""
@@ -574,6 +913,9 @@ class SpeechPlaygroundPane(
         if not action.enabled:
             if action.disabled_reason:
                 self.app.notify(action.disabled_reason, severity="warning")
+            return True
+        if action.operation == "clone_generate":
+            self._generate_clone_audition()
             return True
         self._request_audio_cpp_lifecycle(
             action.operation,
@@ -615,6 +957,41 @@ class SpeechPlaygroundPane(
         Args:
             event: Any TextArea change in this pane.
         """
+        if event.text_area.id == "speech-clone-reference-text":
+            try:
+                setup = self.query_one("#speech-clone-setup", SpeechCloneSetup)
+                setup.update_transcript_guidance(event.text_area.text)
+            except NoMatches:
+                return
+            if self._clone_setup_source_path is None:
+                self._clone_setup_error = "Choose a reference WAV."
+                self._refresh_clone_setup_presentation()
+                return
+            canonical = self._clone_setup_canonical
+            try:
+                transcript = _validate_clone_transcript_input(event.text_area.text)
+            except Exception:
+                self._clone_setup_canonical = None
+                self._clone_setup_error = "Enter the exact spoken transcript."
+                self._refresh_clone_setup_presentation()
+                return
+            if canonical is not None:
+                self._clone_setup_draft_revision += 1
+                self._clone_setup_canonical = CanonicalTTSCloneReference(
+                    wav_bytes=canonical.wav_bytes,
+                    reference_text=transcript,
+                    sha256=canonical.sha256,
+                    byte_length=canonical.byte_length,
+                    duration_ms=canonical.duration_ms,
+                    sample_rate_hz=canonical.sample_rate_hz,
+                    channels=canonical.channels,
+                    sample_encoding=canonical.sample_encoding,
+                )
+                self._clone_setup_error = None
+                self._refresh_clone_setup_presentation()
+                return
+            self._schedule_clone_reference_validation(delay_seconds=0.3)
+            return
         self.handle_text_changed(event)
 
     @on(Select.Changed)
@@ -632,6 +1009,14 @@ class SpeechPlaygroundPane(
         """
         self._mirror_axis_edit(event.select.id, event.value)
         self.handle_provider_select_changed(event)
+        if (
+            event.select.id == "tts-model-select"
+            and isinstance(event.value, str)
+            and self._selected_runtime_provider() == "audio_cpp"
+        ):
+            self._clear_clone_setup(remove_component=True)
+            self._audio_cpp_runtime_observation = None
+            self._request_audio_cpp_runtime_observation()
 
     def _mirror_axis_edit(self, control_id: str | None, value: object) -> None:
         """Mirror a user's direct edit of an axis control into the model.
@@ -1221,12 +1606,18 @@ class SpeechPlaygroundPane(
         self,
         provider_id: object,
         model_id: object,
+        *,
+        clone_action: bool = False,
     ) -> str | None:
         """Fence both button and keyboard generation during managed transitions."""
 
         if provider_id == "audio_cpp" and self._audio_cpp_runtime_status_failed:
             return "Runtime status must be checked before this action is available."
-        error = super()._generation_readiness_error(provider_id, model_id)
+        error = super()._generation_readiness_error(
+            provider_id,
+            model_id,
+            clone_action=clone_action,
+        )
         if error is not None:
             return error
         if (
@@ -1287,6 +1678,7 @@ class SpeechPlaygroundPane(
                 self._sync_audio_cpp_probe_label(None)
             self._request_audio_cpp_runtime_observation()
             return
+        self._clear_clone_setup(remove_component=True)
         self._audio_cpp_runtime_request_generation += 1
         self._audio_cpp_runtime_status_failed = False
         self._audio_cpp_primary_action = None
@@ -1329,6 +1721,116 @@ class SpeechPlaygroundPane(
         return AudioCppRuntimeCardObservation(
             runtime=observation,
             sample_state=sample_state,
+            clone_draft_state=self._clone_setup_draft_state(observation),
+        )
+
+    def _clone_setup_draft_state(
+        self,
+        observation: AudioCppRuntimeObservation,
+    ) -> AudioCppCloneDraftState:
+        """Return draft truth only for the exact currently projected recipe."""
+
+        projection = observation.clone_setup
+        if projection is None:
+            return "missing"
+        if self._clone_setup_context != self._clone_setup_observation_context(
+            observation
+        ):
+            return "missing"
+        task = self._clone_setup_validation_task
+        if task is not None and not task.done():
+            return "processing"
+        if self._clone_setup_canonical is not None:
+            return "ready"
+        if self._clone_setup_error is not None:
+            return "invalid"
+        return "missing"
+
+    @staticmethod
+    def _clone_setup_observation_context(
+        observation: AudioCppRuntimeObservation,
+    ) -> tuple[str, str, int, int] | None:
+        """Bind a private draft to the exact applied recipe generation."""
+
+        projection = observation.clone_setup
+        if projection is None:
+            return None
+        return (
+            projection.model_id,
+            projection.recipe_id,
+            projection.recipe_revision,
+            observation.applied_configuration_generation,
+        )
+
+    def _clear_clone_setup(self, *, remove_component: bool) -> None:
+        """Fence staged private reference state without touching source files."""
+
+        self._clone_setup_draft_revision += 1
+        task = self._clone_setup_validation_task
+        if task is not None and not task.done():
+            task.cancel()
+        self._clone_setup_validation_task = None
+        self._clone_setup_source_path = None
+        self._clone_setup_canonical = None
+        self._clone_setup_error = None
+        self._clone_setup_context = None
+        if not remove_component or not self.is_mounted:
+            return
+        try:
+            self.query_one("#speech-clone-setup-host", Vertical).remove_children()
+        except NoMatches:
+            pass
+
+    def _sync_clone_setup_component(
+        self,
+        observation: AudioCppRuntimeObservation,
+    ) -> None:
+        """Mount only the exact selected recipe's focused clone setup."""
+
+        projection = observation.clone_setup
+        try:
+            selected_model = self._current_select_value("#tts-model-select")
+            host = self.query_one("#speech-clone-setup-host", Vertical)
+        except NoMatches:
+            return
+        if projection is None or selected_model != projection.model_id:
+            self._clear_clone_setup(remove_component=True)
+            return
+        setup_ready = bool(
+            not observation.pending_configuration
+            and observation.applied_mode == "managed"
+            and observation.applied_managed_setup_source == "guided"
+            and observation.process.state == "running"
+            and observation.tts_capability == "available"
+            and observation.catalog_fresh
+        )
+        context = self._clone_setup_observation_context(observation)
+        assert context is not None
+        try:
+            setup = host.query_one(SpeechCloneSetup)
+        except NoMatches:
+            setup = None
+        if self._clone_setup_context != context:
+            if not setup_ready:
+                self._clear_clone_setup(remove_component=True)
+                return
+            self._clear_clone_setup(remove_component=False)
+            self._clone_setup_context = context
+            if setup is not None:
+                setup.apply_projection(projection)
+        if setup is None:
+            if not setup_ready:
+                return
+            setup = SpeechCloneSetup(
+                projection,
+                draft_state=self._clone_setup_draft_state(observation),
+                id="speech-clone-setup",
+            )
+            host.mount(setup)
+        setup.apply_draft_state(
+            self._clone_setup_draft_state(observation),
+            source_selected=self._clone_setup_source_path is not None,
+            error_copy=self._clone_setup_error,
         )
 
     def _set_audio_cpp_primary_action(
@@ -1531,7 +2033,10 @@ class SpeechPlaygroundPane(
             else:
                 await service.shutdown_audio_cpp()
             if operation == "sample":
-                completed_observation = await service.audio_cpp_runtime_observation()
+                selected_model_id = self._audio_cpp_sample_model(accepted_observation)
+                completed_observation = await service.audio_cpp_runtime_observation(
+                    selected_model_id=selected_model_id
+                )
         except asyncio.CancelledError:
             raise
         except Exception as error:
@@ -1648,7 +2153,15 @@ class SpeechPlaygroundPane(
                     self.query_one("#tts-refresh-catalog-btn", Button).disabled = False
                 except NoMatches:
                     pass
-        self._request_audio_cpp_runtime_observation()
+        observe_runtime = getattr(
+            self._tts_service,
+            "audio_cpp_runtime_observation",
+            None,
+        )
+        if audio_cpp_selected and not callable(observe_runtime):
+            self._render_audio_cpp_runtime_observation_failure()
+        else:
+            self._request_audio_cpp_runtime_observation()
         if operation != "sample" or failure_copy is not None:
             self.call_after_refresh(
                 self._focus_audio_cpp_action_target,
@@ -1813,14 +2326,29 @@ class SpeechPlaygroundPane(
             return
         self._audio_cpp_runtime_request_generation += 1
         request_generation = self._audio_cpp_runtime_request_generation
+        try:
+            selected_model = self._current_select_value("#tts-model-select")
+        except NoMatches:
+            selected_model = None
+        selected_model_id = (
+            selected_model if isinstance(selected_model, str) else None
+        )
         self.run_worker(
-            self._observe_audio_cpp_runtime(request_generation),
+            partial(
+                self._observe_audio_cpp_runtime,
+                request_generation,
+                selected_model_id,
+            ),
             group="speech-audio-cpp-runtime-observation",
             exclusive=True,
             exit_on_error=False,
         )
 
-    async def _observe_audio_cpp_runtime(self, request_generation: int) -> None:
+    async def _observe_audio_cpp_runtime(
+        self,
+        request_generation: int,
+        selected_model_id: str | None,
+    ) -> None:
         """Read and apply one coherent runtime observation without provider work."""
 
         try:
@@ -1833,7 +2361,7 @@ class SpeechPlaygroundPane(
             observe = getattr(service, "audio_cpp_runtime_observation", None)
             if not callable(observe):
                 return
-            observation = await observe()
+            observation = await observe(selected_model_id=selected_model_id)
             if type(observation) is not AudioCppRuntimeObservation:
                 raise TypeError("Unexpected audio.cpp runtime observation")
         except asyncio.CancelledError:
@@ -1845,12 +2373,19 @@ class SpeechPlaygroundPane(
 
         if not self._audio_cpp_runtime_result_is_current(request_generation):
             return
+        try:
+            current_model = self._current_select_value("#tts-model-select")
+        except NoMatches:
+            return
+        if current_model != selected_model_id:
+            return
         if not self._audio_cpp_runtime_observation_is_current_enough(observation):
             return
         self._audio_cpp_runtime_status_failed = False
         self._audio_cpp_runtime_observation = observation
         if self._audio_cpp_lifecycle_busy is not None:
             return
+        self._sync_clone_setup_component(observation)
         card_observation = self._audio_cpp_card_observation(observation)
         try:
             card = self.query_one("#audio-cpp-runtime-card", AudioCppRuntimeCard)
@@ -2084,6 +2619,7 @@ class SpeechPlaygroundPane(
         runtime_card = AudioCppRuntimeCard(id="audio-cpp-runtime-card")
         runtime_card.display = self.provider == "audio_cpp"
         yield runtime_card
+        yield Vertical(id="speech-clone-setup-host", classes="speech-clone-setup-host")
 
         yield Static(
             "Loading TTS providers…",

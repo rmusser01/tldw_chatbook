@@ -17,7 +17,10 @@ try:  # pragma: no cover - exercised by the explicit platform seam.
 except ImportError:  # pragma: no cover - Windows is intentionally unsupported here.
     fcntl = None  # type: ignore[assignment]
 
-from tldw_chatbook.TTS.profile_reference_types import TTSCloneReference
+from tldw_chatbook.TTS.profile_reference_types import (
+    CanonicalTTSCloneReference,
+    TTSCloneReference,
+)
 from tldw_chatbook.Utils.private_paths import secure_private_directory
 
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
@@ -135,7 +138,7 @@ class TTSCloneReferenceMaterializer:
 
     async def materialize(
         self,
-        reference: TTSCloneReference,
+        reference: TTSCloneReference | CanonicalTTSCloneReference,
     ) -> TTSCloneReferenceMaterialization:
         """Publish one private owner from an exact stored reference.
 
@@ -160,7 +163,7 @@ class TTSCloneReferenceMaterializer:
                 raise TTSCloneMaterializationError("closed")
             if not _POSIX_SUPPORTED:
                 raise TTSCloneMaterializationError("unsupported")
-            if type(reference) is not TTSCloneReference:
+            if type(reference) not in (TTSCloneReference, CanonicalTTSCloneReference):
                 raise TTSCloneMaterializationError("unavailable")
 
             await self._ensure_swept()

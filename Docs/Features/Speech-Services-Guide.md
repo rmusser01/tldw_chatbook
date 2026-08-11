@@ -120,11 +120,12 @@ Removal is best-effort deletion, not forensic erasure: copies may remain in
 backups, filesystem snapshots, SQLite recovery data, or storage media. The
 Windows privacy posture remains unverified until TASK-13208.
 
-Profiles that already contain a reference can now use it for compatible Guided
-Managed audio.cpp generation. Chatbook does not yet provide a clone-reference
-setup control or voice-bundle portability. Ordinary profile/card portability
-remains wire version 1 and omits reference metadata, audio, transcript, digest,
-and source paths. Do not treat an ordinary profile export as a reference backup.
+Profiles that contain a reference can use it for compatible Guided Managed
+audio.cpp generation. Speech Lab now provides the supported setup path for a
+reviewed reference-required Guided model; voice-bundle portability remains
+unsupported. Ordinary profile/card portability remains wire version 1 and
+omits reference metadata, audio, transcript, digest, and source paths. Do not
+treat an ordinary profile export as a reference backup.
 
 For clone generation, Chatbook freezes the exact profile/reference revision,
 then verifies a reviewed clone-capable Guided recipe and the exact
@@ -151,6 +152,45 @@ suppressed for a process generation after its first clone admission so delayed
 path or transcript echoes do not enter the diagnostics view. Windows managed
 materialization remains deferred; use an External server there, which
 intentionally cannot receive local references.
+
+#### Create and assign a cloned Voice Profile
+
+1. Configure a reviewed clone-capable package under **Global Settings → Speech
+   & TTS → audio.cpp → Managed local server → Guided setup**. Saving remains
+   passive and does not start audio.cpp.
+2. Open **Speech Services → Playground**, select audio.cpp and the
+   reference-required Guided model, then use **Start & Set Up Voice** if the
+   child is not running.
+3. Choose a bounded PCM16 WAV and enter the exact bounded transcript. Chatbook
+   shows no source path and warns that the reference, transcript, profile
+   database, and temporary request file are local plaintext, not encrypted.
+4. Choose **Create Voice & Generate**. Chatbook starts or joins its one managed
+   child lazily, verifies the exact recipe/model/process generation, creates a
+   private short-lived request materialization, and keeps the previous playable
+   result if this attempt fails. On success, use the normal **Play** control.
+5. Choose **Save as Voice Profile**. Review the name, then either save it
+   unassigned or continue to Roleplay. The saved profile uses the exact
+   successful reference and transcript; Chatbook does not reopen your source
+   file or copy the current selectors.
+6. In Roleplay, select a character and explicitly choose the suggested Voice
+   Profile. Opening the page or seeing the suggestion does not assign it and
+   does not change the app-wide default.
+7. Start or continue that character's Console session and use **Speak** on a
+   response. The exact assigned profile revision wins over global defaults; the
+   first request starts or joins the compatible child and produces the normal
+   complete-WAV playback result.
+
+Changing the message, assignment, profile/reference, Guided configuration, or
+managed child before admission causes a stale/refusal result rather than a
+silent provider/model/voice switch. A later edit affects the next Speak only.
+Discarding/replacing the result or closing Chatbook removes Chatbook-owned
+temporary audio and materializations; it never deletes the WAV you selected.
+
+This workflow does not send client-local references to External audio.cpp or a
+Managed setup that uses your own `server.json`. It does not export reference
+bytes in ordinary profiles/cards, create portable voice bundles, claim Windows
+managed-reference parity, or enable a recipe that is not in the reviewed
+release-0.5.1 registry.
 
 When Chatbook first opens a version 2 profile store, it creates and validates a
 retained v2 pre-migration backup before migrating to version 3. Older Chatbook

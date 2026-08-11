@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 import struct
+import threading
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -107,6 +108,179 @@ async def _create(
 ) -> tuple[int, int]:
     created = await repository.create_profile(_draft(name), profile_id)
     return created.generation, created.value.revision
+
+
+@pytest.mark.asyncio
+async def test_create_profile_with_reference_commits_one_revision_two_profile(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    canonical = _canonical(sample=7)
+    async with _opened_repository(path) as repository:
+        created = await repository.create_profile_with_reference(
+            _draft("Clone voice"),
+            PROFILE_A,
+            canonical,
+            expected_generation=repository.generation,
+        )
+
+        assert created.generation == repository.generation
+        assert created.value.profile_id == PROFILE_A
+        assert created.value.revision == 2
+        assert created.value.reference is not None
+        assert created.value.reference.reference_id == REFERENCE_A
+        exact = await repository.get_reference(
+            PROFILE_A,
+            expected_revision=2,
+            expected_generation=created.generation,
+        )
+        assert exact.value.wav_bytes == canonical.wav_bytes
+        assert exact.value.reference_text == canonical.reference_text
+
+
+@pytest.mark.asyncio
+async def test_create_profile_with_reference_rolls_back_both_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    async with _opened_repository(path) as repository:
+        real_put = repository._worker_put_reference
+
+        def fail_after_profile_insert(*args: Any, **kwargs: Any) -> Any:
+            real_put(*args, **kwargs)
+            raise ProfileRepositoryError("operation_failed")
+
+        monkeypatch.setattr(
+            repository,
+            "_worker_put_reference",
+            fail_after_profile_insert,
+        )
+        with pytest.raises(ProfileRepositoryError) as caught:
+            await repository.create_profile_with_reference(
+                _draft("Rollback clone"),
+                PROFILE_A,
+                _canonical(),
+                expected_generation=repository.generation,
+            )
+        _assert_error(caught.value, "operation_failed")
+
+        page = await repository.list_profiles()
+        assert page.value.total == 0
+        with pytest.raises(ProfileRepositoryError) as missing:
+            await repository.get_profile(PROFILE_A)
+        _assert_error(missing.value, "missing")
+
+
+@pytest.mark.asyncio
+async def test_create_profile_with_reference_rejects_stale_generation_before_write(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    async with _opened_repository(path) as repository:
+        with pytest.raises(ProfileRepositoryError) as caught:
+            await repository.create_profile_with_reference(
+                _draft("Stale clone"),
+                PROFILE_A,
+                _canonical(),
+                expected_generation=repository.generation + 1,
+            )
+        _assert_error(caught.value, "stale")
+        assert (await repository.list_profiles()).value.total == 0
+
+
+@pytest.mark.asyncio
+async def test_create_profile_with_reference_enforces_quota_atomically(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    monkeypatch.setattr(profile_repository, "MAX_REFERENCE_COUNT", 0)
+    async with _opened_repository(path) as repository:
+        with pytest.raises(ProfileRepositoryError) as caught:
+            await repository.create_profile_with_reference(
+                _draft("Quota clone"),
+                PROFILE_A,
+                _canonical(),
+                expected_generation=repository.generation,
+            )
+        _assert_error(caught.value, "reference_quota")
+        assert (await repository.list_profiles()).value.total == 0
+
+
+@pytest.mark.asyncio
+async def test_create_profile_with_reference_collision_commits_no_reference(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    async with _opened_repository(path) as repository:
+        await repository.create_profile(_draft("Existing"), PROFILE_A)
+
+        with pytest.raises(ProfileRepositoryError) as caught:
+            await repository.create_profile_with_reference(
+                _draft(" existing "),
+                PROFILE_B,
+                _canonical(),
+                expected_generation=repository.generation,
+            )
+        _assert_error(caught.value, "conflict")
+        page = await repository.list_profiles()
+        assert page.value.total == 1
+        assert page.value.profiles[0].profile_id == PROFILE_A
+        assert page.value.profiles[0].reference is None
+
+
+@pytest.mark.asyncio
+async def test_cancelled_create_profile_with_reference_never_leaves_one_row(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    repository = profile_repository.TTSProfileRepository(
+        path,
+        _clock=lambda: NOW,
+        _uuid_factory=_UUIDSequence(iter((REFERENCE_A,))),
+    )
+    await repository.open()
+    entered = threading.Event()
+    release = threading.Event()
+    real_put = repository._worker_put_reference
+
+    def blocked_put(*args: Any, **kwargs: Any) -> Any:
+        entered.set()
+        if not release.wait(1.0):
+            raise AssertionError("test did not release reference write")
+        return real_put(*args, **kwargs)
+
+    monkeypatch.setattr(repository, "_worker_put_reference", blocked_put)
+    task = asyncio.create_task(
+        repository.create_profile_with_reference(
+            _draft("Cancelled clone"),
+            PROFILE_A,
+            _canonical(),
+            expected_generation=repository.generation,
+        )
+    )
+    try:
+        assert await asyncio.to_thread(entered.wait, 1.0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        release.set()
+        await repository.close()
+    finally:
+        release.set()
+        if repository.state is not profile_repository.ProfileRepositoryState.CLOSED:
+            await repository.close()
+
+    async with _opened_repository(path) as reopened:
+        page = await reopened.list_profiles()
+        assert page.value.total in (0, 1)
+        if page.value.total == 1:
+            profile = page.value.profiles[0]
+            assert profile.profile_id == PROFILE_A
+            assert profile.revision == 2
+            assert profile.reference is not None
 
 
 def _assert_error(error: ProfileRepositoryError, code: str) -> None:

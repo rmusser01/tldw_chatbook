@@ -75,7 +75,13 @@ _SOURCE_AXES = frozenset(
     }
 )
 _ERROR_AXES = _SOURCE_AXES | frozenset(
-    {"provider_catalog", "provider_configuration", "studio_preferences"}
+    {
+        "clone_audition",
+        "profile_reference",
+        "provider_catalog",
+        "provider_configuration",
+        "studio_preferences",
+    }
 )
 _ERROR_CODES = frozenset(
     {

@@ -235,6 +235,24 @@ label; a correct reactive value does not prove that layout was recomputed.
 
 ---
 
+## Test embedded panes at their allocated width, not the terminal width
+
+**TASK-13205, 2026-08-11.** The Speech Lab clone-result geometry regression
+mounted the pane in a 134-column Pilot viewport and proved every action was
+inside the split. Live UAT still clipped **Save as Voice Profile**: the real
+screen reserves a catalog rail, leaving the pane about 100 cells. At that width
+the managed provenance wraps onto an extra row and the last action began one
+row below the split. Re-running the same containment assertion at the pane's
+actual allocated width reproduced the failure and justified a one-row minimum
+height correction.
+
+**What to do.** For a pane embedded beside a fixed or responsive rail, test the
+pane at the width its parent actually allocates, including the wrapping-heavy
+state. A terminal-size test can be truthful for a standalone harness and still
+miss clipping caused by the production parent layout.
+
+---
+
 ## Passing the suites a change touches is not passing the suites it can reach
 
 **The trap.** You run the tests near your edit. The breakage is somewhere that merely
