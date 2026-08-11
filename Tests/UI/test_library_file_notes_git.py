@@ -4981,11 +4981,8 @@ async def test_narrow_delete_confirmation_keeps_complete_action_labels(
     async with _WorkspaceHarness(workspace).run_test(size=(40, 20)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
         assert await workspace.open_path("folder/one.md")
-        await _wait_until(
-            pilot,
-            lambda: workspace.has_class("-stack-editor-actions"),
-            "narrow editor actions did not switch to the three-column grid",
-        )
+        await pilot.pause()
+        _assert_visible_editor_actions_fit(workspace)
         delete = workspace.query_one("#file-notes-delete", Button)
         delete.press()
         await _wait_until(
@@ -4993,7 +4990,11 @@ async def test_narrow_delete_confirmation_keeps_complete_action_labels(
             lambda: workspace._delete_confirmation_path == "folder/one.md",
             "Delete did not enter its confirmation state",
         )
-        await pilot.pause()
+        await _wait_until(
+            pilot,
+            lambda: workspace.has_class("-stack-editor-actions"),
+            "long Delete confirmation did not switch to the fitted grid",
+        )
 
         assert str(delete.label) == "Confirm delete"
         assert delete.has_class("-confirm-delete")
@@ -5026,11 +5027,7 @@ async def test_narrow_editor_actions_keep_complete_labels_at_40_by_20(
     async with _WorkspaceHarness(workspace).run_test(size=(40, 20)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
         assert await workspace.open_path("folder/one.md")
-        await _wait_until(
-            pilot,
-            lambda: workspace.has_class("-stack-editor-actions"),
-            "narrow editor actions did not switch to the three-column grid",
-        )
+        await pilot.pause()
         _assert_visible_editor_actions_fit(workspace)
         protect = workspace.query_one("#file-notes-protect", Button)
         assert str(protect.label) == "Protect"
@@ -5041,7 +5038,6 @@ async def test_narrow_editor_actions_keep_complete_labels_at_40_by_20(
             "Protect did not expose the complete Unprotect label",
         )
         await pilot.pause()
-        assert workspace.has_class("-stack-editor-actions")
         _assert_visible_editor_actions_fit(workspace)
     await workspace.shutdown()
     owner.shutdown()

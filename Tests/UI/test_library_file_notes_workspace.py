@@ -4,23 +4,21 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
-import sys
 import threading
-import types
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from rich.cells import cell_len
 from textual.app import App, ComposeResult
+from textual.color import Color
 from textual.containers import Vertical
 from textual.css.query import NoMatches
 from textual.widgets import Button, Input, TextArea, Tree
 
-# Avoid importing the unrelated optional MLX stack during focused UI tests.
-sys.modules.setdefault("parakeet_mlx", types.ModuleType("parakeet_mlx"))
-
+import Tests.UI._optional_module_stubs  # noqa: F401
 import tldw_chatbook.Widgets.Library.library_file_notes_workspace as workspace_module  # noqa: E402
 from tldw_chatbook.config import ConfigMutationResult  # noqa: E402
 from tldw_chatbook.Library.library_shell_state import (  # noqa: E402
@@ -236,6 +234,39 @@ def _tree_labels(tree: Tree) -> list[str]:
 def _replace_editor_text(editor: TextArea, text: str) -> None:
     editor.select_all()
     editor.replace(text, editor.selection.start, editor.selection.end)
+
+
+def _visible_editor_action_ids(
+    workspace: LibraryFileNotesWorkspace,
+) -> set[str]:
+    """Return the currently disclosed editor action ids."""
+    return {
+        button.id
+        for toolbar in workspace.query(".file-notes-toolbar")
+        for button in toolbar.query(Button)
+        if button.display and button.id is not None
+    }
+
+
+def _assert_visible_editor_actions_fit(
+    workspace: LibraryFileNotesWorkspace,
+) -> None:
+    """Assert disclosed actions keep complete labels inside the editor pane."""
+    pane = workspace.query_one("#file-notes-editor-pane")
+    visible = tuple(
+        button
+        for toolbar in pane.query(".file-notes-toolbar")
+        if toolbar.display
+        for button in toolbar.query(Button)
+        if button.display
+    )
+    assert visible
+    for button in visible:
+        label = str(button.label)
+        assert button.render_line(0).text.strip() == label
+        assert button.render().plain == label
+        assert cell_len(label) <= button.content_region.width
+        assert pane.content_region.contains_region(button.region)
 
 
 def _delayed_call(call):
@@ -2430,3 +2461,216 @@ async def test_library_database_files_switch_retains_workspace_and_database_canv
     await workspace.shutdown()
     with pytest.raises(sqlite3.ProgrammingError):
         owned_replica.list_deleted(str(root.resolve()))
+
+
+@pytest.mark.asyncio
+async def test_file_notes_focus_is_content_safe_under_production_css(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "focused.md").write_text("focus stays readable\n", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        poll_interval=10,
+    )
+
+    async with _production_workspace_context(workspace, size=(120, 40)) as pilot:
+        assert await workspace.open_path("focused.md")
+
+        buttons = (
+            workspace.query_one("#file-notes-root-details", Button),
+            workspace.query_one("#file-notes-choose-root", Button),
+            workspace.query_one("#file-notes-session-changes", Button),
+            *tuple(
+                button
+                for toolbar in workspace.query(".file-notes-toolbar")
+                for button in toolbar.query(Button)
+                if button.display
+            ),
+        )
+        for button in buttons:
+            button.focus()
+            await pilot.pause()
+            assert button.has_focus
+            assert button.render_line(0).text.strip() == str(button.label)
+            assert not button.styles.outline
+            assert button.styles.background == Color.parse("#51677e")
+            assert button.styles.text_style.bold
+            assert button.styles.text_style.underline
+
+        for selector in ("#file-notes-tree", "#file-notes-search-results"):
+            tree = workspace.query_one(selector, Tree)
+            tree.display = True
+            tree.focus()
+            await pilot.pause()
+            assert tree.has_focus
+            assert not tree.styles.outline
+            cursor = tree.get_component_styles("tree--cursor")
+            assert cursor.background == Color.parse("#51677e")
+            assert cursor.text_style.bold
+            assert cursor.text_style.underline
+
+        for selector, widget_type in (
+            ("#file-notes-search", Input),
+            ("#file-notes-path", Input),
+            ("#file-notes-editor", TextArea),
+        ):
+            field = workspace.query_one(selector, widget_type)
+            field.focus()
+            await pilot.pause()
+            assert field.has_focus
+            assert not field.styles.outline
+            assert field.styles.border.top[0] not in {"", "none"}
+
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_file_notes_discloses_actions_by_editor_state_and_redirects_focus(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "state.md").write_text("saved\n", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        autosave_delay=10,
+        poll_interval=10,
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        assert _visible_editor_action_ids(workspace) == {
+            "file-notes-new",
+            "file-notes-refresh",
+        }
+
+        assert await workspace.open_path("state.md")
+        assert _visible_editor_action_ids(workspace) == {
+            "file-notes-new",
+            "file-notes-move",
+            "file-notes-delete",
+            "file-notes-protect",
+            "file-notes-reload",
+            "file-notes-refresh",
+        }
+
+        delete = workspace.query_one("#file-notes-delete", Button)
+        editor = workspace.query_one("#file-notes-editor", TextArea)
+        delete.focus()
+        await pilot.pause()
+        assert delete.has_focus
+        with workspace._hold_path_transition() as transition:
+            assert transition is not None
+            editor.focus()
+            await pilot.pause()
+            assert editor.has_focus
+        await pilot.pause()
+        assert editor.has_focus
+
+        _replace_editor_text(editor, "dirty recovery")
+        await _wait_until(
+            pilot,
+            lambda: workspace.save_state == "dirty",
+            "draft did not disclose recovery action",
+        )
+        assert _visible_editor_action_ids(workspace) == {
+            "file-notes-new",
+            "file-notes-move",
+            "file-notes-delete",
+            "file-notes-protect",
+            "file-notes-reload",
+            "file-notes-save-copy",
+            "file-notes-refresh",
+        }
+
+        assert await workspace.flush_pending_work()
+        delete.focus()
+        delete.press()
+        await _wait_until(
+            pilot,
+            lambda: str(delete.label) == "Confirm delete",
+            "delete confirmation did not arm",
+        )
+        assert delete.display and delete.has_focus
+        delete.press()
+        restore = workspace.query_one("#file-notes-restore", Button)
+        await _wait_until(
+            pilot,
+            lambda: (
+                restore.display
+                and workspace._selected_deleted_path == "state.md"
+            ),
+            "delete did not project tombstone actions",
+        )
+        assert _visible_editor_action_ids(workspace) == {
+            "file-notes-new",
+            "file-notes-restore",
+            "file-notes-refresh",
+        }
+        focused = workspace.app.focused
+        assert focused is not None
+        assert not delete.has_focus
+        assert focused.display
+
+        with workspace._hold_path_transition() as transition:
+            assert transition is not None
+            visible_buttons = tuple(
+                button
+                for toolbar in workspace.query(".file-notes-toolbar")
+                for button in toolbar.query(Button)
+                if button.display
+            )
+            assert visible_buttons
+            assert all(button.disabled for button in visible_buttons)
+            assert "temporarily unavailable" in _static_text(
+                workspace,
+                "#file-notes-action-status",
+            ).lower()
+
+    replica.close()
+
+
+@pytest.mark.parametrize("size", ((160, 45), (120, 40), (64, 28)))
+@pytest.mark.asyncio
+async def test_file_notes_disclosed_actions_fit_wide_and_compact_layouts(
+    tmp_path: Path,
+    size: tuple[int, int],
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "layout.md").write_text("layout\n", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        autosave_delay=10,
+        poll_interval=10,
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=size) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        assert await workspace.open_path("layout.md")
+        _replace_editor_text(
+            workspace.query_one("#file-notes-editor", TextArea),
+            "recovery layout",
+        )
+        await _wait_until(
+            pilot,
+            lambda: workspace.save_state == "dirty",
+            "recovery action did not appear",
+        )
+        await pilot.pause()
+        assert workspace.editor_visible
+        _assert_visible_editor_actions_fit(workspace)
+
+        workspace._set_delete_confirmation("layout.md")
+        await pilot.pause()
+        _assert_visible_editor_actions_fit(workspace)
+
+    replica.close()
