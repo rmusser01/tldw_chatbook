@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import builtins
 from dataclasses import fields
 from io import BytesIO
 from types import SimpleNamespace
@@ -82,6 +83,8 @@ def _screen_with_h3_store(
     screen._console_composer_or_none = lambda: composer
     screen.app_instance.console_image_edit_operations = ImageEditOperationRegistry()
     screen.app_instance._console_pending_attachment_stash = {}
+    screen.app_instance._console_h3_image_edit_screen = screen
+    screen._request_console_control_bar_sync = lambda: None
     return screen, composer
 
 
@@ -281,6 +284,24 @@ async def test_h3_command_uses_raw_instruction_one_memory_image_and_count_one(
         return message
 
     monkeypatch.setattr(store, "append_generation_message", _durable_append)
+    screen._ensure_console_video_store = lambda: (_ for _ in ()).throw(
+        AssertionError("H3 image edit must not access the Video store")
+    )
+    monkeypatch.setattr(
+        chat_screen_module,
+        "run_video_generation",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("H3 image edit must not call Video generation")
+        ),
+    )
+    real_import = builtins.__import__
+
+    def _guard_video_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if "Video_Generation" in name:
+            raise AssertionError("H3 image edit must not import Video Generation")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", _guard_video_import)
 
     parse = CommandParse(
         kind="command",
@@ -604,12 +625,15 @@ async def test_persistence_failure_retains_source_and_emits_sanitized_copy(monke
         CommandParse(kind="command", name="generate-image", args=":comfyui change it")
     )
 
-    assert store.messages_for_session(session.id) == []
+    messages = store.messages_for_session(session.id)
+    assert len(messages) == 1
+    assert messages[0].role.value == "system"
+    assert messages[0].content == (
+        "The edited image could not be saved locally. The source remains staged."
+    )
     assert store.pending_attachments(session.id) == [pending]
     assert composer.draft_text().endswith("preserve  internal   spacing")
-    assert system_copy == [
-        "The edited image could not be saved locally. The source remains staged."
-    ]
+    assert system_copy == []
     assert privacy_logger.bindings == [
         {
             "component": "image_edit",

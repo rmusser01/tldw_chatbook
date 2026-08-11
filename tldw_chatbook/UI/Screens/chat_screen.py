@@ -16768,13 +16768,49 @@ class ChatScreen(BaseAppScreen):
         clear_visible_composer: bool,
     ) -> bool:
         """Hydrate durable success, then perform exact identity cleanup."""
+        session = next(
+            (
+                candidate
+                for candidate in store.sessions()
+                if candidate.id == completion.session_id
+            ),
+            None,
+        )
+        if session is None:
+            return False
+        recovered_conversation_id = False
+        if session.persisted_conversation_id is None and store.persistence is not None:
+            db = getattr(store.persistence, "db", None)
+            read_message = getattr(db, "get_message_by_id", None)
+            try:
+                row = read_message(completion.message_id) if callable(read_message) else None
+            except Exception:  # noqa: BLE001 - retry the byte-free record later
+                row = None
+            conversation_id = (
+                row.get("conversation_id") if isinstance(row, Mapping) else None
+            )
+            if (
+                isinstance(row, Mapping)
+                and row.get("id") == completion.message_id
+                and row.get("sender") == ConsoleMessageRole.ASSISTANT.value
+                and type(row.get("image_data")) is bytes
+                and row.get("image_mime_type") == "image/png"
+                and type(conversation_id) is str
+                and conversation_id
+            ):
+                session.persisted_conversation_id = conversation_id
+                recovered_conversation_id = True
         try:
             message = store.merge_persisted_generation_message(
                 completion.session_id, completion.message_id
             )
         except Exception:  # noqa: BLE001 - keep cleanup pending for later retry
+            if recovered_conversation_id:
+                session.persisted_conversation_id = None
             return False
         if message is None:
+            if recovered_conversation_id:
+                session.persisted_conversation_id = None
             return False
 
         try:
@@ -16849,17 +16885,32 @@ class ChatScreen(BaseAppScreen):
         self,
         *,
         session_id: str,
+        generation: str,
         phase: str,
         error_type: str,
         copy: str,
     ) -> None:
-        """Log and show only stable privacy-safe H3 failure fields."""
+        """Append safe failure copy without touching a terminal screen's UI."""
         logger.bind(
             component="image_edit", phase=phase, error_type=error_type
         ).error("Console image edit failed")
-        await self._append_native_console_system_message(
-            copy, session_id=session_id
-        )
+        store = self._console_chat_store
+        if store is None:
+            return
+        try:
+            store.append_message(
+                session_id,
+                role=ConsoleMessageRole.SYSTEM,
+                content=copy,
+            )
+        except KeyError:
+            return
+        ui_generations = getattr(self, "_console_h3_ui_generations", {})
+        if (
+            ui_generations.get(session_id) == generation
+            and self._h3_origin_screen_is_live(generation)
+        ):
+            await self._sync_native_console_chat_ui()
 
     async def _run_h3_image_edit_command(
         self,
@@ -16942,6 +16993,7 @@ class ChatScreen(BaseAppScreen):
             except ComfyUIImageEditError as exc:
                 await self._append_h3_image_edit_error(
                     session_id=session.id,
+                    generation=generation,
                     phase=exc.phase,
                     error_type=type(exc).__name__,
                     copy=str(exc),
@@ -16950,6 +17002,7 @@ class ChatScreen(BaseAppScreen):
             except Exception as exc:  # noqa: BLE001 - normalized below
                 await self._append_h3_image_edit_error(
                     session_id=session.id,
+                    generation=generation,
                     phase="history_polling",
                     error_type=type(exc).__name__,
                     copy="The image-edit operation did not complete. Please try again.",
@@ -16958,6 +17011,7 @@ class ChatScreen(BaseAppScreen):
             if not batch.successes:
                 await self._append_h3_image_edit_error(
                     session_id=session.id,
+                    generation=generation,
                     phase="history_polling",
                     error_type="ImageGenerationError",
                     copy="The image-edit operation did not complete. Please try again.",
@@ -16986,6 +17040,7 @@ class ChatScreen(BaseAppScreen):
                             pass
                 await self._append_h3_image_edit_error(
                     session_id=session.id,
+                    generation=generation,
                     phase="persistence",
                     error_type=type(exc).__name__,
                     copy=(
@@ -17033,6 +17088,8 @@ class ChatScreen(BaseAppScreen):
             ui_generations = {}
             self._console_h3_ui_generations = ui_generations
         ui_generations[session.id] = operation.generation
+        if self._h3_origin_screen_is_live(operation.generation):
+            self._request_console_control_bar_sync()
         try:
             await asyncio.shield(operation.task)
         except asyncio.CancelledError:
@@ -19169,7 +19226,7 @@ class ChatScreen(BaseAppScreen):
             self.app_instance.notify(
                 "Stopping image edit…", severity="information"
             )
-            self._schedule_console_control_bar_sync()
+            self._request_console_control_bar_sync()
             return
         cancel_event = (
             self._console_videogen_cancel_events().get(active_session_id)
@@ -20227,7 +20284,12 @@ class ChatScreen(BaseAppScreen):
             active_session_id is not None
             and active_session_id in self._console_videogen_inflight_sessions()
         )
-        run_active = run_active or videogen_active
+        image_edit_active = (
+            active_session_id is not None
+            and self._h3_image_edit_registry().active(active_session_id) is not None
+        )
+        run_active = run_active or videogen_active or image_edit_active
+        send_blocked = send_blocked or image_edit_active
         setup_blocked_reason = self._console_setup_blocked_reason()
         attachment_blocked_reason = self._console_attachment_blocked_reason()
         send_blocked = (
