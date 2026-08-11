@@ -8678,8 +8678,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 notify("Failed to load watchlist items.", severity="error")
 
     @on(ItemSelected)
-    def handle_item_selected(self, event: ItemSelected) -> None:
+    async def handle_item_selected(self, event: ItemSelected) -> None:
         event.stop()
+        # TASK-15464: fetch the DETAIL body BEFORE any of the selection
+        # writes below, not after. `ContentPane.item` is a `recompose=True`
+        # reactive, so merging `content` into `event.item` first means one
+        # recompose per selection with the body already in it, instead of
+        # an empty-bodied recompose immediately followed by a second one
+        # once a background fetch lands -- exactly the recompose-storm
+        # shape this whole audit exists to remove from this screen.
+        await self._load_item_content(event.item)
         self._select_entity(event.item)
         # Route to the reader (Task 4), independent of `_select_entity`'s
         # generic Inspector reconciliation above: Sources/Runs/Rules also
@@ -8699,6 +8707,55 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         except NoMatches:
             pass
         self._mark_item_read_on_open(event.item)
+
+    async def _load_item_content(self, item: dict[str, Any] | None) -> None:
+        """Backfill `item["content"]` from the DETAIL fetch (TASK-15464).
+
+        `get_new_items`'s list-page projection no longer selects `content`
+        (up to 100 rows' worth of full scraped article/diff text, on every
+        Items-pane refresh, for a column no list row ever rendered -- the
+        audit's named cost), so a freshly loaded list row carries no
+        `content` key at all. This fetches it for exactly the item about to
+        be opened, mutating `item` IN PLACE so the one dict object already
+        shared by `ItemsPane.items`, `_selected_content_item`, and (about to
+        be) `ContentPane.item` all see the same body once this returns --
+        never a second, separate copy for the reader to drift from the list.
+
+        A miss (`get_item_content` returning `None`) leaves `item` untouched
+        rather than clearing an existing `content` key -- a caller that
+        built its own item dict directly, bypassing this screen's own query
+        entirely (every test that seeds `ItemsPane.items` with a synthetic
+        dict already carrying `content`, e.g.
+        `test_selecting_an_item_renders_it_in_the_content_region`), keeps
+        working unchanged. `item is None` (nothing selected) and any
+        failure fetching content (the active backend does not support
+        single-item reads, the row no longer exists, a transient DB error)
+        are both silently absorbed: content is the reader's body, not a
+        status the caller is relying on this to report -- see
+        `content_pane.render_for`'s own docstring on the same "never take
+        the app down over a reader nicety" rule.
+
+        Args:
+            item: The item about to be opened, or `None`. Mutated in place
+                when a fetch returns a real value.
+        """
+        if item is None:
+            return
+        item_id = item.get("id")
+        if item_id is None:
+            return
+        try:
+            fetched = await self._controller.get_item_content(
+                runtime_backend=self.runtime_backend,
+                item_id=item_id,
+            )
+        except Exception:
+            logger.opt(exception=True).debug(
+                "Failed to load watchlist item content for the reader."
+            )
+            return
+        if fetched is not None:
+            item["content"] = fetched
 
     def _reader_position_text(self) -> str:
         """The reader footer's "N of M" (TASK-3072 plan task 9).

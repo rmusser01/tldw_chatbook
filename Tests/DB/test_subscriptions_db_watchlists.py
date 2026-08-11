@@ -1,3 +1,5 @@
+import sqlite3
+
 import pytest
 
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
@@ -12,6 +14,15 @@ def db(tmp_path):
 def _columns(db, table):
     cursor = db.conn.cursor()
     return {row[1] for row in cursor.execute(f"PRAGMA table_info({table})")}
+
+
+def _xcolumns(db, table):
+    """Like `_columns`, but via `table_xinfo` -- the only pragma that lists
+    a virtual generated column (TASK-15464; `PRAGMA table_info` omits it
+    entirely, which is the whole reason `_ensure_watchlists_schema`'s
+    `effective_date` guard reads this pragma instead of `table_info`)."""
+    cursor = db.conn.cursor()
+    return {row[1]: row for row in cursor.execute(f"PRAGMA table_xinfo({table})")}
 
 
 def _tables(db):
@@ -977,6 +988,337 @@ def test_get_new_items_falls_back_to_created_at_when_unpublished(db):
         "https://f.example/undated",
         "https://f.example/dated",
     ]
+
+
+# --- TASK-15464: narrow list projection + indexed effective-date ordering ------
+
+
+def test_effective_date_generated_column_and_index_created(db):
+    """AC#2: a stored, indexed effective-date column exists.
+
+    `PRAGMA table_info` -- the `_columns` helper, and `items_cols` inside
+    `_ensure_watchlists_schema` itself -- does NOT list a virtual generated
+    column at all; only `table_xinfo` does. This test deliberately uses
+    `_xcolumns`, not `_columns`, so it would fail loudly if that distinction
+    were ever forgotten.
+    """
+    xcols = _xcolumns(db, "subscription_items")
+    assert "effective_date" in xcols
+    assert "effective_date" not in _columns(db, "subscription_items")
+
+    indexes = {
+        row[0]
+        for row in db.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='subscription_items'"
+        )
+    }
+    assert "idx_subscription_items_effective_date" in indexes
+
+
+def test_schema_migration_over_effective_date_is_idempotent(db):
+    """Re-running the migration must not re-ALTER the generated column --
+    it would raise "duplicate column name: effective_date". This is the
+    `table_xinfo`-vs-`table_info` guard's own regression test: swapping the
+    guard back to `table_info` makes this go red immediately.
+    """
+    db._ensure_watchlists_schema()
+    db._ensure_watchlists_schema()
+    db._ensure_watchlists_schema()
+    assert "effective_date" in _xcolumns(db, "subscription_items")
+
+
+def test_get_new_items_excludes_content_and_extracted_data_from_list_rows(db):
+    """AC#1: the list-page projection carries every column EXCEPT
+    `content` (full body) and `extracted_data` (an API source's raw
+    upstream payload) -- neither has a reader on the list path (see
+    `SubscriptionsDB._LIST_ITEM_COLUMNS`'s docstring).
+    """
+    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    with db.transaction() as conn:
+        persist_subscription_item(
+            conn,
+            source_id,
+            {
+                "url": "https://a.example/1",
+                "title": "A",
+                "content": "full scraped article body",
+                "extracted_data": {"raw": "upstream payload"},
+                "content_hash": "h1",
+            },
+            run_id=None,
+            now="2026-08-11T00:00:00+00:00",
+        )
+
+    rows = db.get_new_items(status=None)
+    assert len(rows) == 1
+    assert "content" not in rows[0]
+    assert "extracted_data" not in rows[0]
+    # Every other column the reader actually depends on (via
+    # `normalize_watchlist_item`) is still present.
+    for expected in (
+        "id", "subscription_id", "url", "title", "content_hash",
+        "published_date", "author", "status", "created_at", "updated_at",
+        "queued_for_briefing", "run_id", "alert_matches", "content_format",
+        "content_kind", "is_flagged", "subscription_name", "subscription_type",
+    ):
+        assert expected in rows[0], f"missing expected list column: {expected}"
+
+
+def test_get_new_items_content_preview_is_a_cheap_prefix_not_the_full_body(db):
+    """The list row's own snippet source (`article_list._render_row`) reads
+    `content_preview`, a `substr(content, 1, 2000)` projection -- present on
+    every list row (unlike `content` itself) and always short, even when the
+    underlying body is much longer.
+    """
+    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    long_body = "word " * 10_000  # 50,000 characters, far past the 2000-character cap.
+    with db.transaction() as conn:
+        persist_subscription_item(
+            conn,
+            source_id,
+            {"url": "https://a.example/1", "title": "A", "content": long_body, "content_hash": "h1"},
+            run_id=None,
+            now="2026-08-11T00:00:00+00:00",
+        )
+
+    rows = db.get_new_items(status=None)
+    assert len(rows) == 1
+    assert "content" not in rows[0]
+    assert rows[0]["content_preview"] == long_body[:2000]
+    assert len(rows[0]["content_preview"]) < len(long_body)
+
+
+def test_get_new_items_search_like_fallback_still_matches_on_content(db):
+    """The LIKE-fallback search predicate still filters on `i.content` --
+    narrowing the SELECT list narrows what comes back in the row, not what
+    the search box can match against.
+    """
+    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    with db.transaction() as conn:
+        persist_subscription_item(
+            conn,
+            source_id,
+            {
+                "url": "https://a.example/1",
+                "title": "Untitled",
+                "content": "a rare word: FrobnicateXYZ",
+                "content_hash": "h1",
+            },
+            run_id=None,
+            now="2026-08-11T00:00:00+00:00",
+        )
+    # Force the LIKE fallback path deterministically rather than relying on
+    # a MATCH failing for some other reason.
+    db.conn.execute("DROP TABLE subscription_items_fts")
+    db.conn.commit()
+
+    rows = db.get_new_items(status=None, search="FrobnicateXYZ")
+    assert len(rows) == 1
+    assert "content" not in rows[0]
+
+
+def test_get_item_content_returns_full_body(db):
+    """AC#1: the DETAIL fetch still loads full content."""
+    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    with db.transaction() as conn:
+        item_id = persist_subscription_item(
+            conn,
+            source_id,
+            {
+                "url": "https://a.example/1",
+                "title": "A",
+                "content": "full scraped article body",
+                "content_hash": "h1",
+            },
+            run_id=None,
+            now="2026-08-11T00:00:00+00:00",
+        )
+
+    assert db.get_item_content(item_id) == "full scraped article body"
+
+
+def test_get_item_content_returns_none_for_missing_row(db):
+    assert db.get_item_content(999999) is None
+
+
+def test_get_item_content_returns_none_for_row_with_null_content(db):
+    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    with db.transaction() as conn:
+        conn.execute(
+            "INSERT INTO subscription_items (subscription_id, url, title) VALUES (?, ?, ?)",
+            (source_id, "https://a.example/1", "No body"),
+        )
+        item_id = conn.execute(
+            "SELECT id FROM subscription_items WHERE url = ?", ("https://a.example/1",)
+        ).fetchone()[0]
+
+    assert db.get_item_content(item_id) is None
+
+
+_LEGACY_SCHEMA_SQL = """
+    CREATE TABLE subscriptions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT, type TEXT, source TEXT NOT NULL UNIQUE,
+        priority INTEGER DEFAULT 3, tags TEXT, folder TEXT,
+        is_active BOOLEAN DEFAULT 1, is_paused BOOLEAN DEFAULT 0,
+        check_frequency INTEGER DEFAULT 3600, last_checked DATETIME,
+        last_success DATETIME, last_error TEXT, error_count INTEGER DEFAULT 0,
+        consecutive_failures INTEGER DEFAULT 0, auto_pause_threshold INTEGER DEFAULT 10,
+        description TEXT, custom_headers TEXT, auth_config TEXT, extraction_rules TEXT,
+        rate_limit_config TEXT, notification_threshold FLOAT DEFAULT 0.1,
+        auto_ingest BOOLEAN DEFAULT 0, notification_config TEXT,
+        change_threshold FLOAT DEFAULT 0.0, ignore_selectors TEXT,
+        etag TEXT, last_modified TEXT,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE subscription_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        subscription_id INTEGER NOT NULL,
+        url TEXT NOT NULL, title TEXT, content_hash TEXT, published_date DATETIME,
+        author TEXT, categories TEXT, enclosures TEXT, extracted_data TEXT,
+        status TEXT DEFAULT 'new', media_id INTEGER, processing_error TEXT,
+        previous_hash TEXT, change_percentage FLOAT, diff_summary TEXT, change_type TEXT,
+        canonical_url TEXT, duplicate_of INTEGER,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(subscription_id, url, content_hash)
+    );
+"""
+
+
+def test_ordering_parity_legacy_backfill_vs_new_insert_maintained(tmp_path):
+    """AC#2/AC#3: sort-semantics parity between the OLD inline
+    `COALESCE(datetime(published_date), datetime(created_at))` expression
+    and the new stored `effective_date` column + index, over a fixture that
+    mixes:
+
+    - a LEGACY row set, inserted into a hand-built pre-migration database
+      (no `effective_date` column, no `SubscriptionsDB` involved yet) and
+      then BACKFILLED by opening it through `SubscriptionsDB` -- exercising
+      the migration's `ALTER TABLE`, not just a fresh schema's
+      `CREATE TABLE`;
+    - a "NEW" row set, inserted afterwards through the real
+      `persist_subscription_item` write path, exercising the generated
+      column's INSERT-time maintenance;
+    - valid, NULL, and unparseable-garbage `published_date`;
+    - ties (identical effective dates), including one tied PAIR across the
+      legacy/new boundary.
+
+    The expected order is not a hand-written list: it is the SAME OLD
+    expression, independently recomputed against the live table, so this
+    test would fail if the new column/index ever disagreed with what
+    today's query actually computes -- not merely with what a human
+    predicted it would compute.
+    """
+    path = tmp_path / "legacy.db"
+    conn = sqlite3.connect(str(path))
+    conn.executescript(_LEGACY_SCHEMA_SQL)
+    conn.execute(
+        "INSERT INTO subscriptions (id, name, type, source) "
+        "VALUES (1, 'Legacy', 'rss', 'https://legacy.example/f')"
+    )
+    legacy_rows = [
+        # (url, published_date, created_at)
+        ("https://legacy.example/valid", "2024-01-16T09:00:00Z", "2024-01-01 00:00:00"),
+        ("https://legacy.example/null", None, "2024-02-01 00:00:00"),
+        ("https://legacy.example/garbage", "not-a-real-date", "2024-03-01 00:00:00"),
+        ("https://legacy.example/tie-a", "2024-05-01T00:00:00Z", "2024-01-01 00:00:00"),
+        ("https://legacy.example/tie-b", "2024-05-01T00:00:00Z", "2024-01-01 00:00:00"),
+    ]
+    for url, published, created in legacy_rows:
+        conn.execute(
+            "INSERT INTO subscription_items "
+            "(subscription_id, url, title, published_date, created_at, content_hash) "
+            "VALUES (1, ?, ?, ?, ?, ?)",
+            (url, url, published, created, url),
+        )
+    conn.commit()
+    conn.close()
+
+    # Opening through SubscriptionsDB runs `_ensure_watchlists_schema`,
+    # ALTERing the generated column onto this pre-existing table and
+    # building the index over these five already-there rows -- the "legacy
+    # backfill" half of the fixture.
+    legacy_db = SubscriptionsDB(str(path), client_id="parity-probe")
+    try:
+        # "NEW" rows, inserted through the real write path AFTER the column
+        # exists -- the "insert-maintained" half. One is tied with a LEGACY
+        # row (a mixed legacy/new tie).
+        with legacy_db.transaction() as sconn:
+            for url, title, published, now, content_hash in (
+                ("https://new.example/valid", "new valid", "2024-06-01T00:00:00Z", "2024-01-01T00:00:00+00:00", "n1"),
+                ("https://new.example/null", "new null", None, "2024-04-01T00:00:00+00:00", "n2"),
+                ("https://new.example/garbage", "new garbage", "still-garbage", "2024-04-15T00:00:00+00:00", "n3"),
+                ("https://new.example/tie-c", "new tie", "2024-05-01T00:00:00Z", "2024-01-01T00:00:00+00:00", "n4"),
+            ):
+                persist_subscription_item(
+                    sconn,
+                    1,
+                    {"url": url, "title": title, "published_date": published, "content_hash": content_hash},
+                    run_id=None,
+                    now=now,
+                )
+
+        old_order = [
+            row[0]
+            for row in legacy_db.conn.execute(
+                """
+                SELECT id FROM subscription_items
+                ORDER BY COALESCE(datetime(published_date), datetime(created_at)) DESC, id ASC
+                """
+            ).fetchall()
+        ]
+
+        new_rows = legacy_db.get_new_items(status=None, limit=100)
+        new_order = [r["id"] for r in new_rows]
+
+        assert len(old_order) == 9  # 5 legacy + 4 new
+        assert new_order == old_order
+    finally:
+        legacy_db.close()
+
+
+def test_get_new_items_since_predicate_uses_effective_date_column(db):
+    """The `since` predicate was rewritten to `i.effective_date >= datetime(?)`
+    (TASK-15464) -- provably the same expression as the old inline
+    COALESCE, since `effective_date` IS that expression. This is the
+    regression test: a fixture spanning the floor, including a NULL
+    `published_date` row whose `created_at` decides which side of the floor
+    it lands on.
+    """
+    source_id = db.add_subscription(name="Feed", type="rss", source="https://f.example/f")
+    _insert_item(db, source_id, "https://f.example/before", "before", "body")
+    _insert_item(db, source_id, "https://f.example/at", "at", "body")
+    _insert_item(db, source_id, "https://f.example/after", "after", "body")
+    _insert_item(db, source_id, "https://f.example/undated-after", "undated-after", "body")
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE subscription_items SET published_date = ? WHERE url = ?",
+            ("2026-08-06T00:00:00+00:00", "https://f.example/before"),
+        )
+        conn.execute(
+            "UPDATE subscription_items SET published_date = ? WHERE url = ?",
+            ("2026-08-07T00:00:00+00:00", "https://f.example/at"),
+        )
+        conn.execute(
+            "UPDATE subscription_items SET published_date = ? WHERE url = ?",
+            ("2026-08-08T00:00:00+00:00", "https://f.example/after"),
+        )
+        # No published_date at all; created_at (default CURRENT_TIMESTAMP,
+        # i.e. "now") is well after the floor.
+        conn.execute(
+            "UPDATE subscription_items SET created_at = ? WHERE url = ?",
+            ("2026-08-09T00:00:00+00:00", "https://f.example/undated-after"),
+        )
+
+    rows = db.get_new_items(status=None, since="2026-08-07T00:00:00+00:00")
+
+    assert {r["url"] for r in rows} == {
+        "https://f.example/at",
+        "https://f.example/after",
+        "https://f.example/undated-after",
+    }
 
 
 # --- TASK-3791: search/since predicates on get_new_items -----------------------

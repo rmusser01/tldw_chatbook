@@ -89,7 +89,15 @@ def _render_row(item: dict[str, Any]) -> Text:
     else:
         out.append(title)
 
-    snippet = body_snippet(item.get("content"))
+    # TASK-15464: `content_preview` is the list row's own cheap `substr`
+    # projection (`SubscriptionsDB._LIST_ITEM_COLUMNS`) -- never the full
+    # body, which the list-page query no longer selects at all. Falls back
+    # to `content` for a hand-built dict that never went through that query
+    # (tests; a future non-DB source), or for an item already opened once
+    # this session (`_load_item_content` merges the full body into the same
+    # shared dict, and `content_preview` -- itself already >= any 160-char
+    # snippet's worth of text -- is left as whichever the query supplied).
+    snippet = body_snippet(item.get("content_preview") or item.get("content"))
     if snippet:
         out.append("\n")
         out.append(snippet, style="dim")

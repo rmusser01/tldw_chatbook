@@ -322,6 +322,49 @@ class WatchlistScopeService:
             )
         )
 
+    async def get_item_content(
+        self,
+        *,
+        runtime_backend: WatchlistBackend | str | None = None,
+        item_id: Any,
+    ) -> str | None:
+        """Read one content item's full body text -- the reader's DETAIL fetch.
+
+        TASK-15464 counterpart to `get_item_status` above -- same routing
+        (`items.detail`, both single-item reads under the DETAIL policy
+        `watchlists.items` already registers) and the same local-only
+        restriction.
+
+        Args:
+            runtime_backend: Target backend (``local`` or ``server``).
+            item_id: Item identifier, namespaced (``local:watchlist_item:2``)
+                or bare.
+
+        Returns:
+            The stored content, or `None` if no row has this id, or the row
+            has one but its content is itself NULL. Unlike `get_item_status`
+            this does not raise `KeyError` on a miss -- see
+            `SubscriptionsDB.get_item_content`'s docstring for why a missing
+            row and a present-but-empty one are not distinguished for this
+            column.
+
+        Raises:
+            ValueError: If the server backend is requested; item content
+                reads are local-only, exactly as `list_items` and
+                `get_item_status` are.
+        """
+        backend = self._normalize_backend(runtime_backend)
+        self._enforce_policy(backend, "items.detail")
+        if backend == WatchlistBackend.SERVER:
+            raise ValueError(
+                "Item content reads are only supported for the local backend "
+                "in this slice."
+            )
+        service = self._service_for_backend(backend)
+        return await self._maybe_await(
+            service.get_item_content(self._source_id_from_item_id(item_id))
+        )
+
     async def update_item(
         self,
         *,
