@@ -590,6 +590,33 @@ class LocalWatchlistsService:
             raise ValueError(f"Invalid watchlist item id: {item_id!r}") from exc
         return self._db().get_item_status(row_id)
 
+    async def get_item_content(self, item_id: Any) -> str | None:
+        """Read one item's full body text -- the reader's DETAIL fetch.
+
+        TASK-15464 counterpart to `get_item_status` immediately above:
+        `list_items`'s underlying `get_new_items` no longer selects
+        `content` for list rows (the audit's named cost -- full scraped
+        article/diff text on up to 100 rows per refresh), so the reader
+        fetches it here, once, only for the item actually opened.
+
+        Args:
+            item_id: The item's local row id (bare, not namespaced).
+
+        Returns:
+            The stored content, or `None` if no row has this id, or the row
+            has one but its content is itself NULL (see
+            `SubscriptionsDB.get_item_content`'s docstring for why the two
+            are not distinguished).
+
+        Raises:
+            ValueError: If `item_id` is not an integer id.
+        """
+        try:
+            row_id = int(item_id)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid watchlist item id: {item_id!r}") from exc
+        return self._db().get_item_content(row_id)
+
     async def get_url_snapshots(
         self, source_id: Any, url: str, *, limit: int = 2
     ) -> list[dict[str, Any]]:

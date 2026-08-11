@@ -571,11 +571,22 @@ def normalize_watchlist_item(source: str, row: Mapping[str, Any]) -> dict[str, A
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
         "published_date": row.get("published_date"),
-        # Phase D reader fields. `get_new_items` is `SELECT i.*`, so these are
-        # already on the row -- this dict was simply not carrying them, which
-        # made every item title-only downstream regardless of what Phase A
-        # persisted.
+        # Phase D reader fields. Originally added because `get_new_items` was
+        # `SELECT i.*` and these were already on the row but this dict simply
+        # was not carrying them (title-only downstream regardless of what
+        # Phase A persisted). TASK-15464: `get_new_items` is NO LONGER
+        # `SELECT i.*` -- `content` is absent from a freshly-loaded LIST row
+        # now (fetched separately, once, only for an opened item -- see
+        # `SubscriptionsDB.get_item_content` and
+        # `WatchlistsCollectionsScreen._load_item_content`). `row.get(...)`
+        # here still does the right thing either way: `None` when absent,
+        # the real value once `_load_item_content` has merged it in.
         "content": row.get("content"),
+        # TASK-15464: the list row's OWN preview snippet source
+        # (`article_list._render_row`'s `body_snippet`) -- a cheap `substr`
+        # projection (`_LIST_ITEM_COLUMNS`), never the full body. Present on
+        # every list row regardless of whether `content` itself is.
+        "content_preview": row.get("content_preview"),
         "content_kind": row.get("content_kind"),
         # Read by `content_pane.render_article` to decide whether the body is
         # markdown source or plain text.
@@ -585,10 +596,9 @@ def normalize_watchlist_item(source: str, row: Mapping[str, Any]) -> dict[str, A
         "change_percentage": row.get("change_percentage"),
         "change_type": row.get("change_type"),
         "diff_summary": row.get("diff_summary"),
-        # Spec #2 phase 1 read-path lesson (Phase D's shape, repeated):
-        # `get_new_items` is `SELECT i.*`, so the DB already returns this
-        # column -- coerce SQLite's 0/1 to an actual bool, or every
-        # downstream consumer sees a truthy int instead of a real flag.
+        # Spec #2 phase 1 read-path lesson (Phase D's shape, repeated).
+        # Coerce SQLite's 0/1 to an actual bool, or every downstream
+        # consumer sees a truthy int instead of a real flag.
         "queued_for_briefing": bool(row.get("queued_for_briefing")),
         # task-3072: same column-present/bool-coercion shape for the star.
         "is_flagged": bool(row.get("is_flagged")),

@@ -660,6 +660,80 @@ class SubscriptionsDB(BaseDB):
         if "is_flagged" not in items_cols:
             cursor.execute("ALTER TABLE subscription_items ADD COLUMN is_flagged BOOLEAN DEFAULT 0")
 
+        # TASK-15464: a stored, indexed effective-date column, replacing the
+        # per-row `COALESCE(datetime(published_date), datetime(created_at))`
+        # expression `get_new_items` used to ORDER BY -- unindexable, so
+        # every Items-pane refresh sorted the WHOLE table before its LIMIT
+        # ever applied.
+        #
+        # `GENERATED ALWAYS AS (...) VIRTUAL`, not a plain column maintained
+        # by a trigger or by application code: it is auto-computed for every
+        # existing row (no separate backfill UPDATE -- SQLite evaluates the
+        # expression on demand, and materializes it into the index below at
+        # index-build time, over however many legacy rows already exist) and
+        # auto-maintained on every INSERT/UPDATE of `published_date` or
+        # `created_at`, through every write path there is or ever will be --
+        # unlike a trigger, which only covers paths someone remembered to
+        # keep it in sync with, and unlike the current single write path
+        # (`persist_subscription_item`), which would otherwise be the one
+        # place a future column-writer would have to remember to update too.
+        # `STORED` was tried first and rejected: SQLite's `ALTER TABLE ADD
+        # COLUMN` refuses it outright ("cannot add a STORED column") --
+        # only `VIRTUAL` can be added to an existing table after the fact;
+        # probe-verified (task-15464) before deciding.
+        #
+        # The expression is deliberately byte-for-byte the same one
+        # `get_new_items`'s ORDER BY and `since` predicate used to spell out
+        # inline, and probe-verified (task-15464) against real SQLite
+        # (3.49.1) before this was written:
+        #   - NULL, `''`, or an unparseable `published_date` (`datetime()`
+        #     returns NULL for all three) falls back to `created_at`,
+        #     identically to the old expression -- because it IS the old
+        #     expression, just stored instead of recomputed per row per
+        #     query.
+        #   - A mixed-format `created_at` (space-separated
+        #     `CURRENT_TIMESTAMP` vs. ingest's ISO `T`+offset) normalizes
+        #     through the same `datetime()` call either way.
+        #   - Ties (equal effective date) sort by ascending `id` today, with
+        #     or without this index -- SQLite appends the rowid as a
+        #     non-unique index's own implicit final key, so an index scan
+        #     produces the identical tie order a full-table sort already
+        #     does. The ORDER BY clauses below make this explicit
+        #     (`, i.id ASC`) rather than leaning on that implicit behaviour.
+        #
+        # TRAP, found by the same probe: `PRAGMA table_info` does NOT list a
+        # virtual generated column at all -- SQLite reports it only through
+        # `PRAGMA table_xinfo` (in that pragma's `hidden` field). The
+        # idempotency guard below therefore reads `table_xinfo`, not the
+        # `table_info`-sourced `items_cols` every other guard in this method
+        # uses: guarding on `items_cols` here would find "effective_date"
+        # absent FOREVER (it can never appear in `table_info`'s output) and
+        # re-run the ALTER on every single schema init after the first,
+        # crashing with "duplicate column name: effective_date" the very
+        # next time this method runs.
+        #
+        # No `BEGIN IMMEDIATE` wrapper (contrast the `extraction_fingerprint`
+        # migration above): that one needs atomicity because a DDL statement
+        # autocommits immediately under Python's sqlite3 implicit-BEGIN
+        # policy, and a crash between ITS ALTER and its follow-up UPDATEs
+        # would leave the one-time gate spent with the data half-migrated.
+        # There are no follow-up DML statements here to strand -- the ALTER
+        # and the CREATE INDEX are each independently atomic DDL, and a
+        # generated column cannot be written to directly (confirmed by the
+        # same probe: an explicit INSERT/UPDATE naming it raises), so there
+        # is no data-migration step for a crash to catch mid-way at all.
+        items_xcols = {row[1] for row in cursor.execute("PRAGMA table_xinfo(subscription_items)")}
+        if "effective_date" not in items_xcols:
+            cursor.execute(
+                "ALTER TABLE subscription_items ADD COLUMN effective_date TEXT "
+                "GENERATED ALWAYS AS "
+                "(COALESCE(datetime(published_date), datetime(created_at))) VIRTUAL"
+            )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_subscription_items_effective_date "
+            "ON subscription_items(effective_date DESC)"
+        )
+
         # Snapshot extraction fingerprint + one-time TASK-1362 "noise, not
         # volume" data migration (spec:
         # Docs/superpowers/specs/2026-07-29-watchlists-noise-not-volume-design.md
@@ -1824,6 +1898,53 @@ class SubscriptionsDB(BaseDB):
         """
         return '"' + term.replace('"', '""') + '"'
 
+    #: The list-page projection shared by `get_new_items` and its
+    #: `_search_items_rows` search half (TASK-15464). Deliberately NOT
+    #: `i.*`: the old `SELECT i.*` dragged two unbounded-size columns into
+    #: every one of up to 100 list rows on every Items-pane refresh, and
+    #: neither has a single reader on the list path --
+    #:
+    #: - `content`: the audit's named cost, full scraped article/diff text.
+    #:   Read only by the DETAIL path now (`get_item_content`, a one-row
+    #:   fetch on selection -- see that method's docstring), not by anything
+    #:   that renders the list itself.
+    #: - `extracted_data`: for an API-type subscription,
+    #:   `LocalWatchlistsService._normalize_api_item` stores the entire raw
+    #:   upstream item payload here (`"extracted_data": item`) -- just as
+    #:   unbounded as `content`, and `normalize_watchlist_item` never maps
+    #:   it into its output dict at all, on this query or any other. Nothing
+    #:   downstream of `get_new_items` has ever read it.
+    #:
+    #: Every other column below IS read somewhere downstream of this query
+    #: today (`watchlist_normalizers.normalize_watchlist_item`, the reader's
+    #: `item_dates` sort, or `WatchlistsCollectionsScreen` directly) --
+    #: traced column-by-column in task-15464's Implementation Notes.
+    #:
+    #: One exception traced the OTHER way: `article_list._render_row` (the
+    #: Read tab's row renderer) DOES read `content` on the list path, for a
+    #: 160-char preview snippet under the title (`html_text.body_snippet`).
+    #: Rather than let that one reader drag the full column back in,
+    #: `content_preview` is a CHEAP projected expression -- a raw 2000-byte
+    #: prefix, not the whole (possibly many-KB) body -- comfortably enough
+    #: raw text for `body_snippet` to find its 160 plain-text characters
+    #: after HTML-tag-stripping in every realistic case; a snippet cut a few
+    #: characters short on some pathological markup-to-text ratio is an
+    #: acceptable soft failure for a preview, unlike truncating the reader's
+    #: actual body. `article_list.py` prefers this column and falls back to
+    #: `content` only for a hand-built dict that never went through this
+    #: query at all (tests; a future non-DB source).
+    _LIST_ITEM_COLUMNS = (
+        "i.id, i.subscription_id, i.url, i.title, i.content_hash, "
+        "i.published_date, i.author, i.categories, i.enclosures, i.status, "
+        "i.media_id, i.processing_error, i.previous_hash, "
+        "i.change_percentage, i.diff_summary, i.change_type, "
+        "i.canonical_url, i.duplicate_of, i.created_at, i.updated_at, "
+        "i.queued_for_briefing, i.run_id, i.alert_matches, "
+        "i.content_format, i.content_kind, i.is_flagged, "
+        "substr(i.content, 1, 2000) AS content_preview, "
+        "s.name as subscription_name, s.type as subscription_type"
+    )
+
     def _search_items_rows(
         self,
         conn: Any,
@@ -1852,12 +1973,12 @@ class SubscriptionsDB(BaseDB):
         try:
             return conn.execute(
                 f"""
-                SELECT i.*, s.name as subscription_name, s.type as subscription_type
+                SELECT {self._LIST_ITEM_COLUMNS}
                 FROM subscription_items i
                 JOIN subscription_items_fts ON subscription_items_fts.rowid = i.id
                 JOIN subscriptions s ON i.subscription_id = s.id
                 {fts_where}
-                ORDER BY COALESCE(datetime(i.published_date), datetime(i.created_at)) DESC
+                ORDER BY i.effective_date DESC, i.id ASC
                 LIMIT ?
                 """,
                 tuple([*params, match, limit]),
@@ -1881,11 +2002,11 @@ class SubscriptionsDB(BaseDB):
         )
         return conn.execute(
             f"""
-            SELECT i.*, s.name as subscription_name, s.type as subscription_type
+            SELECT {self._LIST_ITEM_COLUMNS}
             FROM subscription_items i
             JOIN subscriptions s ON i.subscription_id = s.id
             {like_where}
-            ORDER BY COALESCE(datetime(i.published_date), datetime(i.created_at)) DESC
+            ORDER BY i.effective_date DESC, i.id ASC
             LIMIT ?
             """,
             tuple([*params, *like_params, limit]),
@@ -1925,6 +2046,14 @@ class SubscriptionsDB(BaseDB):
         every other predicate, and of each other), and `statuses` is the
         multi-status form of `status` for a caller that wants more than one
         bucket without wanting all of them.
+
+        TASK-15464: rows carry every `subscription_items` column EXCEPT
+        `content` (full body text) and `extracted_data` (an API source's raw
+        upstream payload) -- both unbounded-size, and neither has a reader
+        on this list-page path (see `_LIST_ITEM_COLUMNS`'s docstring for the
+        trace). A caller that needs the body of ONE already-listed item
+        (opening it in the reader) fetches it separately through
+        `get_item_content`, a single indexed-by-id read.
 
         Args:
             subscription_id: Restrict to one subscription, or `None` for all.
@@ -2020,9 +2149,16 @@ class SubscriptionsDB(BaseDB):
             # string; the COALESCE wraps the NORMALIZED values so an
             # unparseable feed-supplied published_date (datetime() -> NULL)
             # falls back to created_at instead of poisoning the compare.
-            predicates.append(
-                "COALESCE(datetime(i.published_date), datetime(i.created_at)) >= datetime(?)"
-            )
+            #
+            # TASK-15464: `i.effective_date` IS this exact COALESCE
+            # expression -- see the migration comment in
+            # `_ensure_watchlists_schema` -- stored/generated rather than
+            # recomputed, so this predicate is byte-for-byte equivalent to
+            # the inline form it replaces, and now shares the same
+            # `idx_subscription_items_effective_date` index the ORDER BY
+            # below uses, instead of computing `datetime()` per row per
+            # query.
+            predicates.append("i.effective_date >= datetime(?)")
             params.append(since)
         where_clause = f"WHERE {' AND '.join(predicates)}" if predicates else ""
 
@@ -2036,11 +2172,11 @@ class SubscriptionsDB(BaseDB):
                 params.append(limit)
                 rows = conn.execute(
                     f"""
-                    SELECT i.*, s.name as subscription_name, s.type as subscription_type
+                    SELECT {self._LIST_ITEM_COLUMNS}
                     FROM subscription_items i
                     JOIN subscriptions s ON i.subscription_id = s.id
                     {where_clause}
-                    ORDER BY COALESCE(datetime(i.published_date), datetime(i.created_at)) DESC
+                    ORDER BY i.effective_date DESC, i.id ASC
                     LIMIT ?
                     """,
                     tuple(params),
@@ -2079,6 +2215,44 @@ class SubscriptionsDB(BaseDB):
         if row is None:
             raise KeyError(f"Subscription item not found: {item_id}")
         return str(row["status"] or "new")
+
+    def get_item_content(self, item_id: int) -> Optional[str]:
+        """The full body text of one item -- the reader's DETAIL fetch.
+
+        TASK-15464. `get_new_items`'s list-page projection (`_LIST_ITEM_
+        COLUMNS`) deliberately excludes `content`: up to 100 rows' worth of
+        full scraped article/diff text, dragged along on every Items-pane
+        refresh for a column no list row ever rendered. This is the other
+        half -- a single indexed-by-primary-key read, fetched once, only
+        for the item actually opened in the reader.
+
+        Deliberately `Optional[str]` rather than raising, UNLIKE the
+        sibling `get_item_status` immediately above: `status` always has a
+        value once a row exists (defaulting to `"new"`, so `None` can only
+        mean "no such row" and a raise is the honest signal). `content` has
+        no such guarantee -- a row that exists but was never scraped a body
+        (mid-ingest, or a `change`-kind item whose renderable is
+        `diff_summary` instead) legitimately has `content IS NULL`, which is
+        not an error. Both "no such row" and "row exists, content is NULL"
+        return `None` here, indistinguishably -- the caller
+        (`WatchlistsCollectionsScreen._load_item_content`) treats a `None`
+        the same way either way: leave whatever `content` the caller's own
+        item dict already carries untouched, rather than raise or overwrite
+        it with an empty body.
+
+        Args:
+            item_id: The `subscription_items` row id.
+
+        Returns:
+            The stored `content`, or `None` if no row has this id, or the
+            row has one but its `content` column is itself NULL.
+        """
+        with self.transaction() as conn:
+            row = conn.execute(
+                "SELECT content FROM subscription_items WHERE id = ?",
+                (item_id,),
+            ).fetchone()
+        return row["content"] if row is not None else None
 
     def get_url_snapshots(
         self, subscription_id: int, url: str, *, limit: int = 2
