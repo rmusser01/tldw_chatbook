@@ -34,6 +34,19 @@ from tldw_chatbook.TTS.migrations.v0_to_v1 import (
 )
 from tldw_chatbook.TTS.migrations.v0_to_v1 import migrate as _migrate_v0_to_v1
 from tldw_chatbook.TTS.migrations.v1_to_v2 import migrate as _migrate_v1_to_v2
+from tldw_chatbook.TTS.migrations.v2_to_v3 import (
+    REFERENCE_ID_INDEX as _REFERENCE_ID_INDEX,
+)
+from tldw_chatbook.TTS.migrations.v2_to_v3 import (
+    REFERENCE_ID_INDEX_DDL as _REFERENCE_ID_INDEX_DDL,
+)
+from tldw_chatbook.TTS.migrations.v2_to_v3 import (
+    REFERENCE_TABLE as _REFERENCE_TABLE,
+)
+from tldw_chatbook.TTS.migrations.v2_to_v3 import (
+    REFERENCE_TABLE_DDL as _REFERENCE_TABLE_DDL,
+)
+from tldw_chatbook.TTS.migrations.v2_to_v3 import migrate as _migrate_v2_to_v3
 from tldw_chatbook.TTS.profile_types import (
     AssignedTTSProfileSnapshot,
     CharacterRef,
@@ -45,7 +58,7 @@ from tldw_chatbook.TTS.profile_types import (
     canonical_json_options,
 )
 
-CURRENT_PROFILE_SCHEMA_VERSION = 2
+CURRENT_PROFILE_SCHEMA_VERSION = 3
 BUSY_TIMEOUT_MS = 5_000
 _DEADLINE_PROGRESS_OPCODE_INTERVAL = 1_000
 _MAX_PERSISTED_DISPLAY_NAME_CHARACTERS = 128
@@ -367,6 +380,7 @@ def decode_assigned_snapshot(row: RowLike) -> AssignedTTSProfileSnapshot:
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     0: _migrate_v0_to_v1,
     1: _migrate_v1_to_v2,
+    2: _migrate_v2_to_v3,
 }
 
 
@@ -417,7 +431,9 @@ def _validated_quoted_identifier(identifier: object, identifier_kind: str) -> st
     return escape_identifier(exact_identifier)
 
 
-def _validate_owned_schema_sql(connection: sqlite3.Connection) -> None:
+def _validate_owned_schema_sql(
+    connection: sqlite3.Connection, *, schema_version: int
+) -> None:
     expected = {
         ("table", PROFILE_TABLE): _normalized_ddl(_PROFILE_TABLE_DDL),
         ("table", ASSIGNMENT_TABLE): _normalized_ddl(_ASSIGNMENT_TABLE_DDL),
@@ -425,6 +441,11 @@ def _validate_owned_schema_sql(connection: sqlite3.Connection) -> None:
             _ASSIGNMENT_PROFILE_INDEX_DDL
         ),
     }
+    if schema_version == 3:
+        expected[("table", _REFERENCE_TABLE)] = _normalized_ddl(_REFERENCE_TABLE_DDL)
+        expected[("index", _REFERENCE_ID_INDEX)] = _normalized_ddl(
+            _REFERENCE_ID_INDEX_DDL
+        )
     actual: dict[tuple[str, str], str] = {}
     for row in connection.execute(
         """
@@ -552,20 +573,27 @@ def _run_with_deadline_progress(
 def _validate_schema(
     connection: sqlite3.Connection,
     *,
+    expected_version: int | None = None,
     check_deadline: Callable[[], None] | None = None,
 ) -> None:
     """Validate every required structural and integrity invariant.
 
-    The structural manifest is identical for v1 and v2 -- v2 has no DDL
-    change, so this same check guards both a not-yet-upgraded populated v1
-    store and an already-current v2 store.
+    Versions one and two share the legacy manifest. Version three additionally
+    owns the exact private clone-reference table and unique reference index.
     """
 
     try:
+        version = (
+            connection.execute("PRAGMA user_version").fetchone()[0]
+            if expected_version is None
+            else expected_version
+        )
+        if type(version) is not int or version not in (1, 2, 3):
+            raise ValueError
         _run_with_deadline_progress(
             connection,
             check_deadline,
-            lambda: _validate_schema_body(connection),
+            lambda: _validate_schema_body(connection, schema_version=version),
         )
     except ProfileRepositoryError:
         raise
@@ -575,15 +603,20 @@ def _validate_schema(
         raise _repository_error("schema_corrupt") from None
 
 
-def _validate_schema_body(connection: sqlite3.Connection) -> None:
+def _validate_schema_body(
+    connection: sqlite3.Connection, *, schema_version: int
+) -> None:
     """Validate schema invariants while any caller-owned progress hook is active."""
 
     try:
         if connection.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
             raise ValueError
-        if _user_tables(connection) != {PROFILE_TABLE, ASSIGNMENT_TABLE}:
+        expected_tables = {PROFILE_TABLE, ASSIGNMENT_TABLE}
+        if schema_version == 3:
+            expected_tables.add(_REFERENCE_TABLE)
+        if _user_tables(connection) != expected_tables:
             raise ValueError
-        _validate_owned_schema_sql(connection)
+        _validate_owned_schema_sql(connection, schema_version=schema_version)
 
         if _table_xinfo_manifest(connection, PROFILE_TABLE) != [
             (0, "profile_id", "TEXT", 0, None, 1, 0),
@@ -667,6 +700,56 @@ def _validate_schema_body(connection: sqlite3.Connection) -> None:
         ) != (PROFILE_TABLE, "profile_id", "profile_id", "RESTRICT"):
             raise ValueError
 
+        if schema_version == 3:
+            if _table_xinfo_manifest(connection, _REFERENCE_TABLE) != [
+                (0, "profile_id", "TEXT", 0, None, 1, 0),
+                (1, "reference_id", "TEXT", 1, None, 0, 0),
+                (2, "wav_bytes", "BLOB", 1, None, 0, 0),
+                (3, "reference_text", "TEXT", 1, None, 0, 0),
+                (4, "sha256", "TEXT", 1, None, 0, 0),
+                (5, "byte_length", "INTEGER", 1, None, 0, 0),
+                (6, "duration_ms", "INTEGER", 1, None, 0, 0),
+                (7, "sample_rate_hz", "INTEGER", 1, None, 0, 0),
+                (8, "channels", "INTEGER", 1, None, 0, 0),
+                (9, "sample_encoding", "TEXT", 1, None, 0, 0),
+                (10, "created_at", "TEXT", 1, None, 0, 0),
+                (11, "updated_at", "TEXT", 1, None, 0, 0),
+            ]:
+                raise ValueError
+            if not _has_exact_primary_key_index(
+                connection, _REFERENCE_TABLE, ("profile_id",)
+            ):
+                raise ValueError
+            reference_index_rows = list(
+                connection.execute(f"PRAGMA index_list({_REFERENCE_TABLE})")
+            )
+            reference_indexes = {row["name"]: row for row in reference_index_rows}
+            reference_id_index = reference_indexes.get(_REFERENCE_ID_INDEX)
+            if (
+                len(reference_index_rows) != 2
+                or reference_id_index is None
+                or reference_id_index["origin"] != "c"
+                or reference_id_index["partial"] != 0
+                or reference_id_index["unique"] != 1
+                or not _has_exact_binary_index_keys(
+                    connection, _REFERENCE_ID_INDEX, ("reference_id",)
+                )
+            ):
+                raise ValueError
+            reference_foreign_keys = list(
+                connection.execute(f"PRAGMA foreign_key_list({_REFERENCE_TABLE})")
+            )
+            if len(reference_foreign_keys) != 1:
+                raise ValueError
+            reference_foreign_key = reference_foreign_keys[0]
+            if (
+                reference_foreign_key["table"],
+                reference_foreign_key["from"],
+                reference_foreign_key["to"],
+                reference_foreign_key["on_delete"],
+            ) != (PROFILE_TABLE, "profile_id", "profile_id", "CASCADE"):
+                raise ValueError
+
         quick_check = [row[0] for row in connection.execute("PRAGMA quick_check")]
         if quick_check != ["ok"]:
             raise ValueError
@@ -676,6 +759,46 @@ def _validate_schema_body(connection: sqlite3.Connection) -> None:
         raise
     except Exception:
         raise _repository_error("schema_corrupt") from None
+
+
+def _validate_full_integrity(connection: sqlite3.Connection) -> None:
+    """Run full integrity and foreign-key validation before migration commit."""
+
+    if [row[0] for row in connection.execute("PRAGMA integrity_check")] != ["ok"]:
+        raise ValueError
+    if list(connection.execute("PRAGMA foreign_key_check")):
+        raise ValueError
+
+
+def _migration_domain_snapshot(
+    connection: sqlite3.Connection,
+) -> tuple[tuple[tuple[object, ...], ...], tuple[tuple[object, ...], ...]]:
+    """Capture exact ordered v2 profile and assignment persistence domains."""
+
+    profiles = tuple(
+        tuple(row)
+        for row in connection.execute(
+            """
+            SELECT profile_id, display_name, normalized_name, provider_id,
+                   model_id, voice_id, response_format, speed, options_json,
+                   revision, created_at, updated_at
+            FROM tts_generation_profiles
+            ORDER BY profile_id
+            """
+        )
+    )
+    assignments = tuple(
+        tuple(row)
+        for row in connection.execute(
+            """
+            SELECT source, authority_id, character_id, profile_id,
+                   created_at, updated_at
+            FROM character_tts_assignments
+            ORDER BY source, authority_id, character_id
+            """
+        )
+    )
+    return profiles, assignments
 
 
 class _CleanupState:
@@ -717,7 +840,12 @@ def _run_migrations(connection: sqlite3.Connection, from_version: int) -> None:
     try:
         connection.execute("BEGIN IMMEDIATE")
         version = from_version
+        v2_domain_snapshot: (
+            tuple[tuple[tuple[object, ...], ...], tuple[tuple[object, ...], ...]] | None
+        ) = None
         while version < CURRENT_PROFILE_SCHEMA_VERSION:
+            if version == 2:
+                v2_domain_snapshot = _migration_domain_snapshot(connection)
             migration = MIGRATIONS.get(version)
             if migration is None:
                 raise RuntimeError
@@ -731,6 +859,17 @@ def _run_migrations(connection: sqlite3.Connection, from_version: int) -> None:
                 or version_row[0] != version
             ):
                 raise RuntimeError
+        if v2_domain_snapshot is None:
+            raise RuntimeError
+        _validate_full_integrity(connection)
+        _validate_schema_body(connection, schema_version=3)
+        if (
+            connection.execute(f"SELECT count(*) FROM {_REFERENCE_TABLE}").fetchone()[0]
+            != 0
+        ):
+            raise RuntimeError
+        if _migration_domain_snapshot(connection) != v2_domain_snapshot:
+            raise RuntimeError
         connection.commit()
     except BaseException as error:
         body_error = error
@@ -878,6 +1017,7 @@ def open_profile_store(
         elif version < CURRENT_PROFILE_SCHEMA_VERSION:
             _validate_schema(
                 connection,
+                expected_version=version,
                 check_deadline=check_deadline,
             )
             journal_mode = connection.execute("PRAGMA journal_mode = WAL").fetchone()[0]
@@ -1191,6 +1331,7 @@ def validate_profile_candidate(
             # is never opened for write; only this disposable copy is.
             _validate_schema(
                 upgrade_connection,
+                expected_version=candidate_version,
                 check_deadline=check_deadline,
             )
             _run_migrations(upgrade_connection, candidate_version)
