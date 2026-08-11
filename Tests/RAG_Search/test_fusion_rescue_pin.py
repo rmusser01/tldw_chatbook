@@ -15,18 +15,28 @@ they are deliberately hand-built rather than corpus-driven -- the eval
 harness that produced the measurement is env-gated and needs a warm model
 cache, so it cannot be the thing that notices a defaults revert.
 
-TWO PROPERTIES, TWO PINS (they are different mechanisms and a single test at
-the boundary would conflate them):
+THREE PINS, because the boundary holds more than one thing and a single test
+sitting on it would conflate them:
 
 1. **The weighting pin** -- at vector rank 10 the keyword row wins on SCORE
-   (0.0500 > 0.0467). This is what reverting `rrf_k` to 60 reds, and it does
-   not depend on any sort-order convention.
-2. **The rank-9 tie** -- at vector rank 9 the two scores are *mathematically
-   equal* (3/10 x 1/6 == 7/10 x 1/14 == 1/20). The keyword row still comes
-   first, but NOT because the weighting prefers it; it is the documented
-   `(-score, fts_rank, vector_rank)` ordering, whose absent-leg-last
-   convention is pinned float-robustly in the third test. "Outranks from
-   rank 9" would be an overclaim about the weighting.
+   (0.0500 > 0.0467) with margin to spare. This is what reverting `rrf_k` to
+   60 reds, and it depends on neither float rounding nor any sort convention.
+   It is the conservative statement of the guarantee: *strictly outranks from
+   vector rank 10*.
+2. **The boundary pin** -- vector rank 9 is where the weighting stops
+   *strictly* preferring the keyword row: in exact rational arithmetic the
+   two scores are EQUAL there (3/10 x 1/6 == 7/10 x 1/14 == 1/20). The
+   keyword row still ranks above it. Which mechanism delivers that depends on
+   arithmetic, and the honest answer is "score, in the floats production
+   actually computes": `(1.0 - 0.7) * (1.0/6)` rounds to exactly 0.05 while
+   `0.7 * (1.0/14)` is 0.049999999999999996, so the comparison is decided one
+   ULP apart and the sort never reaches the tie-break. In exact arithmetic it
+   would be the tie-break instead. Both are true of different arithmetics;
+   neither is a claim that the WEIGHTING prefers the keyword row at rank 9.
+3. **The convention pin** -- `(-score, fts_rank, vector_rank)` with absent
+   legs last, on a bit-identical pair so the comparison genuinely reaches the
+   tie-break. This is the ONLY test here that pins that convention; pin 2
+   does not exercise it under the numbers the product runs.
 
 Tests 1 and 2 run through the real `_hybrid_search` seam on an untouched
 `RAGConfig()`, so they fail if the shipped DEFAULT moves -- not merely if the
@@ -184,25 +194,51 @@ def test_fts_only_row_outranks_a_vector_only_row_at_vector_rank_10(monkeypatch):
     )
 
 
-# --- Pin 2: the rank-9 TIE (a different mechanism) --------------------------
+# --- Pin 2: where the boundary IS (and which arithmetic decides it) --------
 
 
-def test_at_vector_rank_9_the_keyword_row_wins_a_mathematical_tie(monkeypatch):
-    """Rank 9 is a TIE on the weights, decided by the documented ordering.
+def test_vector_rank_9_is_the_exact_boundary_and_the_keyword_row_still_ranks_above(
+    monkeypatch,
+):
+    """Rank 9 is the exact equality point; pin 1's "from rank 10" is why.
 
-    3/10 x 1/6 and 7/10 x 1/14 are both exactly 1/20, so the keyword row's
-    win here says nothing about the weighting -- it is
-    `(-score, fts_rank, vector_rank)` with absent ranks sorting last (pinned
-    on its own, float-robustly, in the next test). Stated separately from
-    pin 1 so "outranks from rank 9" is never read as a weighting claim.
+    In exact rational arithmetic `3/10 x 1/6 == 7/10 x 1/14 == 1/20`, so the
+    weighting does NOT strictly prefer the keyword row at vector rank 9 --
+    which is precisely why the guarantee is stated conservatively as "from
+    rank 10" and why this row is pinned separately.
+
+    The keyword row nevertheless ranks above the rank-9 vector row, and this
+    test asserts that outcome without claiming a mechanism it does not
+    exercise: in the floats the code actually computes,
+    `(1.0 - alpha) * (1.0/6)` rounds to exactly 0.05 while
+    `alpha * (1.0/14)` is 0.049999999999999996, so the FTS row wins ON SCORE
+    by one ULP and `reciprocal_rank_fusion`'s sort never reaches its
+    tie-break. (In exact arithmetic the tie-break is what would decide it.
+    That convention is pinned on its own, on a bit-identical pair, in the
+    next test.) Both facts are asserted below so a future float change that
+    flips the ULP fails HERE, loudly, rather than silently changing which
+    mechanism the suite is really covering.
     """
     service = _default_service()
-    alpha = Fraction(str(service.config.search.hybrid_alpha))
+    alpha = service.config.search.hybrid_alpha
     rrf_k = service.config.search.rrf_k
 
-    assert (1 - alpha) / (rrf_k + 1) == alpha / (rrf_k + 9), (
-        "the shipped weighting no longer ties at vector rank 9; the boundary "
-        "moved, so this pin and pin 1 are describing the wrong ranks"
+    exact_alpha = Fraction(str(alpha))
+    assert (1 - exact_alpha) / (rrf_k + 1) == exact_alpha / (rrf_k + 9), (
+        "the shipped weighting no longer ties at vector rank 9 in exact "
+        "arithmetic; the boundary moved, so this pin and pin 1 are describing "
+        "the wrong ranks"
+    )
+
+    # The arithmetic the product runs, spelled exactly as fusion.py computes
+    # it (`(1.0 - alpha) * fts_rrf`, never a 0.3 literal).
+    keyword_score = (1.0 - alpha) * (1.0 / (rrf_k + 1))
+    vector_rank_9_score = alpha * (1.0 / (rrf_k + 9))
+    assert keyword_score > vector_rank_9_score, (
+        "in float arithmetic the keyword row no longer edges the rank-9 vector "
+        f"row on score ({keyword_score!r} vs {vector_rank_9_score!r}); the "
+        "ordering below is now the tie-break's doing, not the score's, and "
+        "this docstring must be corrected rather than the assertion relaxed"
     )
 
     keyword = [_keyword_row(KEYWORD_ONLY_ID)]
@@ -210,21 +246,23 @@ def test_at_vector_rank_9_the_keyword_row_wins_a_mathematical_tie(monkeypatch):
     order = _fuse_through_the_seam(service, monkeypatch, keyword, semantic, top_k=10)
 
     assert order.index(keyword[0].id) < order.index(semantic[8].id), (
-        f"on an exact score tie the FTS-only row must sort first: {order}"
+        f"the FTS-only row must still rank above the rank-9 vector row: {order}"
     )
 
 
 # --- Pin 3: the ordering convention itself, without float luck --------------
 
 
-def test_absent_legs_sort_last_on_an_exactly_equal_score(monkeypatch):
+def test_absent_legs_sort_last_on_an_exactly_equal_score():
     """`(-score, fts_rank, vector_rank)`: a present rank beats an absent one.
 
-    Pin 2's tie is exact in rational arithmetic but the two sides round to
-    *different* floats (0.05 vs 0.049999999999999996), so it cannot prove the
-    convention it depends on. This one builds a bit-identical pair --
-    alpha 0.5 puts both legs on the same expression at the same rank -- so the
-    comparison genuinely reaches the tie-break.
+    Pin 2's rank-9 row is an exact tie in rational arithmetic, but the two
+    sides round to *different* floats (0.05 vs 0.049999999999999996), so at
+    the shipped numbers it never reaches this convention at all -- it is
+    decided one ULP apart on score. Nothing else in the suite covers the
+    convention, so this test builds a bit-identical pair (alpha 0.5 puts both
+    legs on the same expression at the same rank) and the comparison genuinely
+    does reach the tie-break.
     """
     fts_only = _keyword_row("111")
     vector_only = _vector_row("222", score=0.5)

@@ -357,9 +357,12 @@ def test_library_use_in_console_bundle_matches_console_run_builder_shape():
 def test_evidence_bundle_hybrid_reference_scores_the_vector_leg_not_the_fusion():
     """(RAG-port P0/Task 6) `EvidenceReference.score` is declared as a
     retrieval score on the unit interval and is adapted downstream as a
-    `ZERO_TO_ONE` similarity -- so a fused RRF number (~0.016, whose
-    theoretical max at the shipped `rrf_k=60` is 1/61) must never occupy
-    that slot. The honest similarity for a hybrid row is Task 2's preserved
+    `ZERO_TO_ONE` similarity -- so a fused RRF number (theoretical max
+    `1/(rrf_k + 1)`: the ~0.016 these rows carry came from `rrf_k=60`, and
+    the shipped k is now 5, i.e. ~0.167 -- still not a similarity, at any k)
+    must never occupy that slot. The rule is enforced by score KIND, not by
+    magnitude, so these hand-built rows stay valid. The honest similarity
+    for a hybrid row is Task 2's preserved
     vector leg; the fused number stays available, unaltered, in the
     reference's `hybrid_fusion` metadata block."""
     bundle = build_library_rag_evidence_bundle(

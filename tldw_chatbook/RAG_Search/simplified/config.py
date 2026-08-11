@@ -64,8 +64,10 @@ DEFAULT_HYBRID_POOL_MULTIPLIER = 2
 # beaten by every vector-only row down to rank ~83 and can never enter the
 # fused top-k: hybrid could not rescue a document the vector leg missed. At
 # k=5 an FTS-only rank-1 row strictly outranks vector-only rows from rank 10
-# (and takes rank 9 on the documented `(-score, fts_rank, vector_rank)`
-# tie-break), which is inside the window fusion actually sees.
+# -- well inside the window fusion actually sees. (Rank 9 is the exact
+# equality point, `3/10 x 1/6 == 7/10 x 1/14`; the keyword row still ranks
+# above it, but by one ULP of float rounding rather than by the weighting, so
+# 10 is the honest boundary to quote.)
 #
 # On the 49-document eval corpus this moved keyword recall@10 0.938 -> 1.000
 # and keyword NDCG 0.938 -> 0.957 with no per-category cell regressing.

@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
 import pytest
+from loguru import logger
 
 from tldw_chatbook.RAG_Search.fusion import (
     DEFAULT_HYBRID_ALPHA,
@@ -346,6 +347,36 @@ class TestResolveRrfK:
         )
 
         assert resolve_rrf_k() == 15
+
+    def test_unreadable_profile_falls_back_to_the_SHIPPED_default(self, monkeypatch):
+        """A profile that RAISES must not silently revert the fix.
+
+        The profile is where the shipped `rrf_k` lives, so when it cannot be
+        read the honest answer is the value it would have supplied
+        (`DEFAULT_HYBRID_RRF_K` = 5) -- not fusion's server-parity 60, which
+        would quietly put whichever path hit the error back on the weighting
+        TASK-4110 measured away from. Before Task 5 the two were the same
+        number and this branch was untestable in any meaningful sense.
+        """
+        from tldw_chatbook.RAG_Search.fusion import resolve_rrf_k
+        import tldw_chatbook.RAG_Search.simplified.active_config as ac
+
+        def _boom(*a, **k):
+            raise RuntimeError("profile store unavailable")
+
+        monkeypatch.setattr(ac, "resolve_active_rag_config", _boom)
+
+        messages = []
+        sink_id = logger.add(lambda m: messages.append(str(m)), level="WARNING")
+        try:
+            assert resolve_rrf_k(None) == DEFAULT_HYBRID_RRF_K == 5
+            assert resolve_rrf_k() == DEFAULT_HYBRID_RRF_K
+        finally:
+            logger.remove(sink_id)
+
+        assert any("Could not read rrf_k" in message for message in messages), (
+            f"a silently-swallowed profile failure must leave a trace: {messages}"
+        )
 
     @pytest.mark.parametrize(
         "value,expected", [(60, 60), (0, 0), ("42", 42), (59.5, 59)]

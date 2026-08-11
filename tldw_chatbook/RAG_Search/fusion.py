@@ -289,10 +289,16 @@ def resolve_rrf_k(value: Optional[Any] = None) -> int:
             for alpha.
 
     Returns:
-        A non-negative int; ``DEFAULT_RRF_K`` (60, server parity) when the
-        value (after the active-profile fallback) is missing, non-numeric,
-        or negative. Invalid values are logged, never raised: a
-        misconfigured pipeline must not abort search at merge time.
+        A non-negative int. Two different last resorts, deliberately:
+        an explicitly-supplied value that is non-numeric or negative falls
+        back to ``DEFAULT_RRF_K`` (60) -- the library's own sanitization
+        constant, shared with ``reciprocal_rank_fusion``, for a caller who
+        stated something wrong -- while a profile that cannot be READ falls
+        back to ``config.DEFAULT_HYBRID_RRF_K`` (5), the shipped default the
+        profile would have supplied. A profile that resolves but carries
+        ``rrf_k = None`` states nothing, and takes ``DEFAULT_RRF_K``.
+        Invalid values are logged, never raised: a misconfigured pipeline
+        must not abort search at merge time.
     """
     if value is None:
         try:
@@ -300,8 +306,25 @@ def resolve_rrf_k(value: Optional[Any] = None) -> int:
 
             value = resolve_active_rag_config().search.rrf_k
         except Exception as e:  # config loading must never break search
-            logger.warning(f"Could not read rrf_k from active profile: {e}")
-            value = None
+            # The PROFILE is where the shipped default lives (TASK-4110 Task
+            # 5 moved it to 5), so a profile that cannot be read must fall
+            # back to that same shipped value -- falling back to fusion's
+            # server-parity 60 here would silently revert the measured
+            # weighting on whichever path hit the error, which is exactly
+            # the "one path strands the other" failure this resolver exists
+            # to prevent. Imported lazily (this module must not depend on
+            # the config package at import time; `simplified.config` imports
+            # DEFAULT_HYBRID_ALPHA from here) and defensively (the last
+            # resort must itself be total).
+            try:
+                from .simplified.config import DEFAULT_HYBRID_RRF_K as shipped_k
+            except Exception:  # pragma: no cover - a constant import
+                shipped_k = DEFAULT_RRF_K
+            logger.warning(
+                f"Could not read rrf_k from active profile: {e}; "
+                f"falling back to the shipped default {shipped_k}"
+            )
+            return shipped_k
     if value is None:
         return DEFAULT_RRF_K
     try:

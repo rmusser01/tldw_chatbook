@@ -1402,10 +1402,12 @@ class TestLibraryRagAllMatchesWeak:
 class TestLibraryRagScoreKindAwareBands:
     """(RAG-port P0/Task 6) The match band is a claim about *cosine
     similarity*. Hybrid retrieval replaces every row's score with an
-    RRF-fused number whose theoretical maximum is `1/(rrf_k + 1)` ~= 0.016
-    at the shipped `rrf_k=60` -- an order of magnitude below the 0.2 weak
-    boundary -- so banding a fused score on cosine thresholds renders a
-    wall of "match: weak (0.02)" on results that are in fact excellent.
+    RRF-fused number whose theoretical maximum is `1/(rrf_k + 1)` -- ~0.016
+    at the `rrf_k=60` these fixtures were written against, ~0.167 at the
+    shipped k of 5 (TASK-4110). Both are below the 0.2 weak boundary, but
+    the disqualifier is the KIND, not the magnitude: banding a fused score
+    on cosine thresholds renders a wall of "match: weak (0.02)" on results
+    that are in fact excellent.
     Reranker scores are worse still: an LLM 0-10 scale or a raw
     cross-encoder logit is not on the unit interval at all.
 

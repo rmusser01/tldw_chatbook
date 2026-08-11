@@ -1821,9 +1821,11 @@ def test_hybrid_result_row_renders_the_vector_leg_band_not_the_fused_score() -> 
 
     Before this, every hybrid search rendered a wall of
     "match: weak (0.02)": RRF fused scores top out at `1/(rrf_k + 1)`
-    ~= 0.016 at the shipped `rrf_k=60`, an order of magnitude below the
-    0.2 weak boundary, so the panel banded excellent results as barely
-    matching. This pins the whole path -- service row shape -> row
+    ~= 0.016 at the `rrf_k=60` of the time (~0.167 at the shipped k of 5
+    since TASK-4110 -- still under the 0.2 weak boundary, and still not a
+    similarity), so the panel banded excellent results as barely matching.
+    Banding is chosen by score KIND, so this row's number stays
+    representative. This pins the whole path -- service row shape -> row
     normalization -> composed title -- not just the pure band function.
     """
     from tldw_chatbook.Library.library_rag_state import LibraryRagResultRow
