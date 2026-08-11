@@ -235,6 +235,17 @@ def test_pool_multiplier_widens_hybrid_legs_only(monkeypatch):
 
 
 def test_invalid_rrf_k_falls_back_to_default_with_warning(warnings_captured):
+    """ORACLE UPDATE (Task 5, review round 2), disclosed: the fallback moves
+    ``DEFAULT_RRF_K`` (60) -> ``DEFAULT_HYBRID_RRF_K`` (5).
+
+    ``_fuse_hybrid_results`` sanitizes through ``resolve_rrf_k``, and every
+    fallback in that APP-CONFIG resolver is now the shipped default -- a
+    ``config.search.rrf_k`` polluted to a negative number must degrade to the
+    weighting the app ships, not to the server-parity constant TASK-4110
+    measured away from. What this test is really for is unchanged: an invalid
+    k must not reach the fusion math (a negative k divides by zero at rank 1)
+    and must leave a trace.
+    """
     fused = RAGService._fuse_hybrid_results(
         keyword_results=[_result("m1", 0.5)],
         semantic_results=[],
@@ -244,7 +255,7 @@ def test_invalid_rrf_k_falls_back_to_default_with_warning(warnings_captured):
         include_citations=False,
     )
     row = fused[0]
-    assert row.metadata["hybrid_fusion"]["rrf_k"] == DEFAULT_RRF_K
+    assert row.metadata["hybrid_fusion"]["rrf_k"] == DEFAULT_HYBRID_RRF_K
 
     assert any("rrf_k" in message for message in warnings_captured), (
         "an invalid rrf_k must leave a warning trace"

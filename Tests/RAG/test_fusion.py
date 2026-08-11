@@ -304,11 +304,22 @@ class TestResolveRrfK:
     resolve_rrf_k with no explicit value).
     """
 
-    def test_none_returns_default(self, monkeypatch):
+    def test_profile_with_nothing_to_say_returns_the_shipped_default(
+        self, monkeypatch
+    ):
         """No explicit value AND the active profile has nothing to say
-        (``search.rrf_k`` itself resolves to ``None``) -> DEFAULT_RRF_K.
-        Mocked rather than relying on the test env's real default profile,
-        so this is deterministic regardless of what that profile contains.
+        (``search.rrf_k`` itself resolves to ``None``) -> the SHIPPED
+        default. Mocked rather than relying on the test env's real default
+        profile, so this is deterministic regardless of what that profile
+        contains.
+
+        ORACLE UPDATE (TASK-4110 Task 5, review round 2), disclosed: this
+        expected ``DEFAULT_RRF_K`` (60) when the two constants were the same
+        number. `resolve_rrf_k` is the APP-CONFIG resolver and every one of
+        its fallbacks is now the app's shipped default -- a profile that
+        states nothing is exactly the case the shipped default exists for,
+        and returning 60 here would strand this path on the weighting
+        TASK-4110 measured away from.
         """
         from tldw_chatbook.RAG_Search.fusion import resolve_rrf_k
         import tldw_chatbook.RAG_Search.simplified.active_config as ac
@@ -323,8 +334,8 @@ class TestResolveRrfK:
             ac, "resolve_active_rag_config", lambda *a, **k: _FakeConfig()
         )
 
-        assert resolve_rrf_k(None) == DEFAULT_RRF_K
-        assert resolve_rrf_k() == DEFAULT_RRF_K
+        assert resolve_rrf_k(None) == DEFAULT_HYBRID_RRF_K
+        assert resolve_rrf_k() == DEFAULT_HYBRID_RRF_K
 
     def test_reads_from_active_profile(self, monkeypatch):
         """THE PIN: mirrors TestResolveHybridAlpha.test_reads_from_active_profile
@@ -387,17 +398,49 @@ class TestResolveRrfK:
         assert resolve_rrf_k(value) == expected
 
     @pytest.mark.parametrize("bad", ["abc", -1, -60, object()])
-    def test_invalid_values_fall_back_to_default(self, bad):
+    def test_invalid_values_fall_back_to_the_shipped_default(self, bad):
         """``None`` is deliberately NOT parametrized here (TASK-4110
         review): it is no longer simply "an invalid value" that
         short-circuits to the default -- it is the "no explicit override"
         sentinel that now triggers a real active-profile lookup first (see
-        ``test_none_returns_default`` / ``test_reads_from_active_profile``
-        above).
+        ``test_profile_with_nothing_to_say_returns_the_shipped_default`` /
+        ``test_reads_from_active_profile`` above).
+
+        ORACLE UPDATE (TASK-4110 Task 5, review round 2), disclosed: this
+        expected ``DEFAULT_RRF_K`` (60). An explicitly-supplied invalid
+        value is NOT a library-level accident here -- it is reachable
+        straight from user configuration (a TOML pipeline's
+        ``steps[].config.rrf_k``, or a round-tripped
+        ``config.search.rrf_k``), so a config carrying ``rrf_k = "oops"``
+        would have silently reverted that one path to the measured-broken
+        60 while every other path ran at 5. ``DEFAULT_RRF_K`` survives only
+        as ``reciprocal_rank_fusion``'s own no-config signature default,
+        pinned in ``TestReciprocalRankFusion``.
         """
         from tldw_chatbook.RAG_Search.fusion import resolve_rrf_k
 
-        assert resolve_rrf_k(bad) == DEFAULT_RRF_K
+        assert resolve_rrf_k(bad) == DEFAULT_HYBRID_RRF_K
+
+    @pytest.mark.parametrize("bad", ["oops", -7])
+    def test_an_invalid_value_is_named_in_the_warning(self, bad):
+        """Falling back quietly would hide a real misconfiguration.
+
+        The value the user actually wrote must appear in the log line --
+        "falling back to 5" alone leaves nothing to grep for when a TOML
+        pipeline's `rrf_k` is a typo.
+        """
+        from tldw_chatbook.RAG_Search.fusion import resolve_rrf_k
+
+        messages = []
+        sink_id = logger.add(lambda m: messages.append(str(m)), level="WARNING")
+        try:
+            assert resolve_rrf_k(bad) == DEFAULT_HYBRID_RRF_K
+        finally:
+            logger.remove(sink_id)
+
+        assert any(str(bad) in message for message in messages), (
+            f"the rejected value {bad!r} must appear in the warning: {messages}"
+        )
 
 
 class TestRAGServiceFusion:
@@ -847,11 +890,18 @@ class TestPipelineRrfMerge:
 
     @pytest.mark.parametrize("bad_k", ["abc", -1])
     def test_bad_rrf_k_config_does_not_abort_pipeline(self, monkeypatch, bad_k):
-        """Misconfigured steps[].config.rrf_k must fall back to 60, not crash.
+        """Misconfigured steps[].config.rrf_k must fall back, not crash.
 
         Unguarded int() raised ValueError on non-numeric values, and a
         negative k (e.g. -1 with rank 1) divided by zero — both aborted the
-        whole pipeline at merge time.
+        whole pipeline at merge time. THAT is what this test is for; the
+        particular fallback number is incidental to its intent.
+
+        ORACLE UPDATE (TASK-4110 Task 5, review round 2), disclosed: the
+        expected value moves 60 -> the shipped default. A user's TOML
+        pipeline spec is exactly the "reachable from app config" case, so a
+        typo'd `rrf_k` must degrade to the weighting the app actually ships,
+        not to the server-parity constant this task measured away from.
         """
         from tldw_chatbook.RAG_Search import pipeline_builder_simple as pbs
 
@@ -877,12 +927,8 @@ class TestPipelineRrfMerge:
         results = asyncio.run(pbs._execute_parallel_step(step_config, context))
 
         assert [r.id for r in results] == ["m1"]
-        # An EXPLICIT-but-invalid step value falls back to DEFAULT_RRF_K, never
-        # to the profile: `resolve_rrf_k` only consults the profile when no
-        # value was supplied at all. So this one is still 60 even though the
-        # shipped profile default is now 5.
-        assert results[0].score == pytest.approx(1 / (K + 1))
-        assert results[0].metadata["hybrid_fusion"]["rrf_k"] == K
+        assert results[0].score == pytest.approx(1 / (PROFILE_K + 1))
+        assert results[0].metadata["hybrid_fusion"]["rrf_k"] == PROFILE_K
 
     def test_overlap_keeps_semantic_citation_metadata(self, monkeypatch):
         """A doc in both legs must keep the vector leg's citation metadata.

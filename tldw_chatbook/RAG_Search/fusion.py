@@ -261,6 +261,43 @@ def resolve_hybrid_alpha(explicit: Optional[float] = None) -> float:
     return alpha
 
 
+def _shipped_rrf_k() -> int:
+    """The app's shipped RRF constant, for every fallback in ``resolve_rrf_k``.
+
+    ``DEFAULT_RRF_K`` (60) is deliberately NOT used as a fallback by the
+    config resolver (TASK-4110 Task 5, review round 2). Every input this
+    resolver sanitizes is reachable from user configuration --
+    ``pipeline_builder_simple`` passes a TOML pipeline's
+    ``steps[].config.rrf_k`` and ``RAGService`` passes
+    ``config.search.rrf_k``, either of which a hand-edited or
+    round-tripped config can turn into ``"oops"``, ``-1`` or ``None`` --
+    so falling back to the server-parity 60 would silently revert THAT path
+    to the weighting TASK-4110 measured away from, while every other path
+    stayed at 5. One resolver, one fallback.
+
+    ``DEFAULT_RRF_K`` remains the no-config fallback of the pure function
+    (``reciprocal_rank_fusion``'s own signature default and its
+    negative-``rrf_k`` sanitization). That is a different thing: a library
+    invariant for a caller who supplied nothing, not an app-config decision,
+    and it is unreachable from the live call sites, which always resolve
+    through here first.
+
+    Returns:
+        ``config.DEFAULT_HYBRID_RRF_K``. Imported lazily -- this module must
+        not depend on the config package at import time, since
+        ``simplified.config`` imports ``DEFAULT_HYBRID_ALPHA`` from here --
+        and defensively: a last resort must itself be total, so an import
+        failure degrades to ``DEFAULT_RRF_K`` rather than raising out of a
+        function whose whole contract is that it never breaks search.
+    """
+    try:
+        from .simplified.config import DEFAULT_HYBRID_RRF_K
+
+        return DEFAULT_HYBRID_RRF_K
+    except Exception:  # pragma: no cover - importing a module constant
+        return DEFAULT_RRF_K
+
+
 def resolve_rrf_k(value: Optional[Any] = None) -> int:
     """Resolve the RRF constant k from an untrusted (config) value.
 
@@ -289,50 +326,34 @@ def resolve_rrf_k(value: Optional[Any] = None) -> int:
             for alpha.
 
     Returns:
-        A non-negative int. Two different last resorts, deliberately:
-        an explicitly-supplied value that is non-numeric or negative falls
-        back to ``DEFAULT_RRF_K`` (60) -- the library's own sanitization
-        constant, shared with ``reciprocal_rank_fusion``, for a caller who
-        stated something wrong -- while a profile that cannot be READ falls
-        back to ``config.DEFAULT_HYBRID_RRF_K`` (5), the shipped default the
-        profile would have supplied. A profile that resolves but carries
-        ``rrf_k = None`` states nothing, and takes ``DEFAULT_RRF_K``.
-        Invalid values are logged, never raised: a misconfigured pipeline
-        must not abort search at merge time.
+        A non-negative int. **Every** fallback in this resolver is the app's
+        shipped default (``config.DEFAULT_HYBRID_RRF_K``, 5): a profile that
+        cannot be read, a profile with nothing to say, a non-numeric value
+        and a negative value all land there. ``DEFAULT_RRF_K`` (60) is NOT a
+        fallback here -- see ``_shipped_rrf_k`` for why. Invalid values are
+        logged, never raised: a misconfigured pipeline must not abort search
+        at merge time.
     """
+    shipped_k = _shipped_rrf_k()
     if value is None:
         try:
             from .simplified.active_config import resolve_active_rag_config
 
             value = resolve_active_rag_config().search.rrf_k
         except Exception as e:  # config loading must never break search
-            # The PROFILE is where the shipped default lives (TASK-4110 Task
-            # 5 moved it to 5), so a profile that cannot be read must fall
-            # back to that same shipped value -- falling back to fusion's
-            # server-parity 60 here would silently revert the measured
-            # weighting on whichever path hit the error, which is exactly
-            # the "one path strands the other" failure this resolver exists
-            # to prevent. Imported lazily (this module must not depend on
-            # the config package at import time; `simplified.config` imports
-            # DEFAULT_HYBRID_ALPHA from here) and defensively (the last
-            # resort must itself be total).
-            try:
-                from .simplified.config import DEFAULT_HYBRID_RRF_K as shipped_k
-            except Exception:  # pragma: no cover - a constant import
-                shipped_k = DEFAULT_RRF_K
             logger.warning(
                 f"Could not read rrf_k from active profile: {e}; "
                 f"falling back to the shipped default {shipped_k}"
             )
             return shipped_k
     if value is None:
-        return DEFAULT_RRF_K
+        return shipped_k
     try:
         k = int(float(value))
     except (TypeError, ValueError):
-        logger.warning(f"Invalid rrf_k {value!r}; falling back to {DEFAULT_RRF_K}")
-        return DEFAULT_RRF_K
+        logger.warning(f"Invalid rrf_k {value!r}; falling back to {shipped_k}")
+        return shipped_k
     if k < 0:
-        logger.warning(f"rrf_k {k} is negative; falling back to {DEFAULT_RRF_K}")
-        return DEFAULT_RRF_K
+        logger.warning(f"rrf_k {k} is negative; falling back to {shipped_k}")
+        return shipped_k
     return k
