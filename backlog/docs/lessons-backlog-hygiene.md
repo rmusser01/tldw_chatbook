@@ -321,6 +321,32 @@ setup in a multi-step Backlog script, validate command lookup (for example with
 
 ---
 
+## `backlog task <id>` and `task edit <id>` silently do nothing for a FIVE-digit id
+
+**TASK-15463, 2026-08-11 (backlog CLI 1.44.0, the bun build on `PATH`).** The
+standard opening moves — `backlog task edit 15463 -s "In Progress" -a @claude`
+then `--plan "..."` — both printed `Updated task TASK-` and exited 0. Neither
+touched `backlog/tasks/task-15463 - ....md`. What they actually did was create a
+new file literally named **`backlog/tasks/task-task- - .md`**, with an empty
+title, empty status, and `id: TASK-TASK-`, carrying a copy of the real task's
+description. It reappeared on every retry.
+
+`backlog task 15463 --plain` shows the same failure read-only: it resolves and
+prints the correct *file path*, then renders `Task TASK- - ` with an empty
+status and no acceptance criteria. `backlog task 4026 --plain` (four digits) on
+the same checkout renders perfectly, and `backlog task list --plain` lists all
+84 five-digit tasks correctly — so this is specific to addressing a single task
+whose id is five digits. `TASK-15463` and `15463` behave identically.
+
+**What to do.** For a five-digit id, edit the task file directly (status,
+assignee, `## Implementation Plan`, `## Implementation Notes`, and the AC
+checkboxes inside the `<!-- AC:BEGIN -->` markers) — that file is the source of
+truth the board reads. After ANY `backlog task edit` on a high id, run
+`git status backlog/` and delete a stray `task-task- - .md` if one appeared;
+committing it would put a nameless, statusless task on the board.
+
+---
+
 ## Related
 
 - `lessons-testing-evidence.md`

@@ -1419,15 +1419,19 @@ async def _open_items_with_seeded_item(pilot, screen, app, db):
     `app.watchlist_bundle_service._db` is pointed at `db` only AFTER the
     initial mount's background loads have settled (`pane.items` populated),
     never before: mounting the screen fires several CONCURRENT background
-    loads that each construct a fresh `SubscriptionsDB(...)` against this
-    same brand-new file, and reassigning earlier lets those races hit the
-    one-time schema-migration gate on this connection's cached schema view.
-    Observed directly: an early reassignment intermittently made the very
-    next write on `db` raise `OperationalError: no such table:
-    subscription_items`, which then self-healed on an immediate retry --
-    proof it was a startup race, not a real absence of the table. Waiting
-    for the settle removes the race instead of papering over it with a
-    retry loop.
+    loads, and reassigning earlier let those races hit the one-time
+    schema-migration gate on this connection's cached schema view. Observed
+    directly: an early reassignment intermittently made the very next write
+    on `db` raise `OperationalError: no such table: subscription_items`,
+    which then self-healed on an immediate retry -- proof it was a startup
+    race, not a real absence of the table.
+
+    task-15463 removed the source of that race rather than only avoiding it:
+    the app now builds ONE `SubscriptionsDB`, so no background load and no
+    FTS-backfill worker re-runs `_initialize_schema` (~52 statements,
+    measured at 238 ms) against the same file while other threads are
+    opening connections to it. The wait is kept anyway -- it also settles the
+    loads this test then asserts against.
     """
     screen.active_section = "items"
     await pilot.pause(0.3)
@@ -1613,14 +1617,14 @@ async def test_the_item_status_write_runs_off_the_event_loop_thread():
         pane = await _open_items_with_seeded_item(pilot, screen, app, db)
         row_key = str(pane.items[0]["id"])
 
-        # `LocalWatchlistsService._db()` builds a brand-new `SubscriptionsDB`
-        # on every call (`app.py`'s `_wire_watchlists_and_notifications_
-        # services`), so the instance-level spy above -- on THIS `db` object
-        # -- is invisible to the real write path unless `db_factory` is
-        # repointed at this exact object. Same reasoning as
-        # `_open_items_with_seeded_item`'s `watchlist_bundle_service._db`
-        # reassignment just above, done here only after the initial mount's
-        # background loads have settled, for the identical race reason.
+        # Since task-15463 `_db()` returns the app's ONE `SubscriptionsDB`,
+        # and `_seed_new_item` hands back that same object -- so the
+        # instance-level spy above is already on the write path. The
+        # reassignment is kept as the explicit pin that it is: repointing
+        # `db_factory` must still take effect (its setter drops the cached
+        # instance), and a future wiring that hands the service a different
+        # database has to keep this test honest rather than silently spying
+        # on an object nothing writes to.
         app.local_watchlists_service.db_factory = lambda: db
 
         pane.select_item_by_id(row_key)

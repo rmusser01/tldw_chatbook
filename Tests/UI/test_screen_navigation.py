@@ -1118,34 +1118,39 @@ from Tests.UI.background_signals import (  # noqa: E402
 
 
 def test_local_watchlists_service_db_factory_resolves_the_same_path_as_the_eager_subscriptions_db():
-    """task-1631: `_build_test_app`'s `get_subscriptions_db_path` patch must
-    stay in effect for the WHOLE test, not just `TldwCli.__init__`.
+    """task-1631: the watchlists service and the eager `subscriptions_db`
+    must be one database -- and, since task-15463, one *instance*.
 
-    `LocalWatchlistsService.db_factory` (wired inside
-    `_wire_watchlists_and_notifications_services`) is a lambda that
-    re-resolves `get_subscriptions_db_path()` fresh on every call rather than
-    once at construction, so calling it here -- well after `_build_test_app()`
-    has already returned -- exercises exactly the "every call the running
-    screen makes" case the split used to break. `watchlist_bundle_service.db`
-    is the SAME eager `subscriptions_db` built during `__init__`
-    (`self.watchlist_bundle_service = WatchlistBundleService(subscriptions_db)`),
-    so it is the other half of the comparison.
+    `watchlist_bundle_service.db` is the `subscriptions_db` built during
+    `__init__` (`self.watchlist_bundle_service = WatchlistBundleService(
+    subscriptions_db)`); `local_watchlists_service.db_factory()` is what
+    every watchlists read and write goes through. task-1631 pinned that they
+    resolve the same on-disk file, because `db_factory` used to be a lambda
+    re-resolving `get_subscriptions_db_path()` per call and
+    `_build_test_app`'s patch could fall out of scope before it ran.
 
-    Compares RESOLVED PATHS, not object identity: `db_factory()` builds a
-    brand-new `SubscriptionsDB` instance on every call by design (mirroring
-    production), so the two sides are never the same object even when the
-    harness is correct -- only the underlying on-disk file must match.
+    task-15463 made the factory return the ONE instance wired at startup
+    instead of constructing a fresh `SubscriptionsDB` per call (~52-statement
+    schema script each time), so the assertion is now identity -- strictly
+    stronger than the path comparison it replaces, and the production
+    property AC#1 asks for: one instance per app session. The path assertion
+    is kept underneath it so a failure still says which files diverged.
     """
     app = _build_test_app()
 
-    eager_path = app.watchlist_bundle_service.db.db_path
-    lazy_path = app.local_watchlists_service.db_factory().db_path
+    eager_db = app.watchlist_bundle_service.db
+    lazy_db = app.local_watchlists_service.db_factory()
 
-    assert lazy_path == eager_path, (
+    assert lazy_db.db_path == eager_db.db_path, (
         "local_watchlists_service.db_factory() resolved a DIFFERENT on-disk "
-        f"file ({lazy_path}) than the eagerly-built subscriptions_db "
-        f"({eager_path}) -- the get_subscriptions_db_path patch fell out of "
-        "scope before this call, splitting the app across two databases"
+        f"file ({lazy_db.db_path}) than the eagerly-built subscriptions_db "
+        f"({eager_db.db_path}) -- the get_subscriptions_db_path patch fell "
+        "out of scope before this call, splitting the app across two databases"
+    )
+    assert lazy_db is eager_db, (
+        "the watchlists service must hand out the SAME SubscriptionsDB the "
+        "rest of the app was wired with (task-15463), not a second instance "
+        "on the same file"
     )
 
 

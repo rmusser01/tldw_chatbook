@@ -2833,3 +2833,38 @@ stricter timeout for one caller, a feature gated in one surface and not
 another. Sibling of "Mutation-test every guard you add" and "A guard test
 must be PROVEN to discriminate", with the twist that here the thing left
 unpinned was a DESIGN DECISION, not a behaviour.
+## Holding ONE database instance turns an intermittent schema-cache race into a permanent one (TASK-15463, 2026-08-11)
+
+Caching `SubscriptionsDB` instead of rebuilding it per service call (a ~52-statement
+`executescript` per call, ~85x the cost of a held instance) made two Watchlists UI tests
+fail deterministically with `sqlite3.OperationalError: no such table: subscription_items`
+— on a table that `sqlite_master`, queried microseconds later on the SAME connection,
+listed. An immediate retry of the identical UPDATE succeeded.
+
+A timestamped probe over `SubscriptionsDB.__init__` / `_get_connection` explained it:
+
+```
+0.0614  INIT app instance      (main thread)
+0.4502  INIT second instance   (FTS-backfill worker thread) -- _initialize_schema
+0.4511  CONN opened on the app instance, by an asyncio.to_thread worker   <-- inside that window
+0.6884  second instance's _initialize_schema finishes (238 ms)
+3.0311  that worker's UPDATE: "no such table: subscription_items"
+```
+
+A connection opened while another connection is rewriting the schema caches a view without
+the tables being rewritten. With a database rebuilt per call, that view lived for one call
+and the next call built a fresh connection — so the defect surfaced only as an
+*intermittent* flake, already documented in `Tests/UI/test_watchlists_inspector.py` as
+"self-healed on an immediate retry". Hold the instance and the poisoned connection lives as
+long as the thread does: every write that lands on it fails.
+
+The fix was to remove the second `_initialize_schema` (the FTS-backfill worker now shares
+the app's one instance — thread-local connections are exactly what makes sharing the
+*instance* safe), not to add a retry.
+
+**What to do.** Before caching any long-lived DB handle, find every OTHER construction of
+that DB class against the same file — each one re-runs schema setup, and any connection
+opened during it can be born stale. And treat a documented "it self-heals on retry" flake
+as a live bug with a shortened fuse: it is one held connection away from being permanent.
+Probing the mechanism cost ~20 minutes (init/connection timeline + one retry inside the
+failing call); guessing at "sqlite locking" would have cost far more and fixed nothing.

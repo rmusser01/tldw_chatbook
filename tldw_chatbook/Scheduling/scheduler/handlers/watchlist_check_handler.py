@@ -9,6 +9,7 @@ from loguru import logger
 
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
+from tldw_chatbook.Subscriptions.db_offload import run_db_off_loop
 from tldw_chatbook.Subscriptions.local_watchlists_service import (
     EXECUTABLE_SOURCE_TYPES,
     LocalWatchlistsService,
@@ -140,6 +141,13 @@ class WatchlistCheckHandler:
     async def handle(self, task: dict[str, Any]) -> None:
         """Process a single watchlist check task.
 
+        task-15463: ``SchedulerLoop`` awaits this directly on the event loop
+        (its queue bookkeeping is threaded, its dispatch is not), so the two
+        synchronous ``SubscriptionsDB`` calls this method owns -- the
+        subscription read here and ``record_check_error`` in
+        ``_record_failure`` -- go through ``run_db_off_loop``. Everything else
+        it touches is the watchlists service, which does the same internally.
+
         Args:
             task: Projected scheduled task dict from ``WatchlistProjection``.
         """
@@ -155,7 +163,11 @@ class WatchlistCheckHandler:
             if subscription_id is None:
                 return
 
-            subscription = self.subscriptions_db.get_subscription(subscription_id)
+            subscription = await run_db_off_loop(
+                self.subscriptions_db,
+                self.subscriptions_db.get_subscription,
+                subscription_id,
+            )
             if subscription is None:
                 logger.warning(f"Subscription {subscription_id} not found")
                 return
@@ -294,7 +306,12 @@ class WatchlistCheckHandler:
                     f"Watchlists: could not mark scheduled run {run_id} failed; "
                     f"falling back to recording the error on the subscription."
                 )
-        self.subscriptions_db.record_check_error(subscription_id, str(exc))
+        await run_db_off_loop(
+            self.subscriptions_db,
+            self.subscriptions_db.record_check_error,
+            subscription_id,
+            str(exc),
+        )
 
     async def _check_in_shadow(
         self, subscription: dict[str, Any], subscription_type: str
