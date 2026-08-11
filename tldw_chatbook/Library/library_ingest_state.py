@@ -37,6 +37,7 @@ from tldw_chatbook.Library.library_ingest_jobs import (
     IngestJobState,
     LibraryIngestJob,
 )
+from tldw_chatbook.Library.server_ingest_request import server_ingest_refusal
 
 
 def _generic_default(name: str, fallback: Any) -> Any:
@@ -717,6 +718,14 @@ class IngestForecast:
             re-import (a floor when ``match_capped``).
         match_capped: Whether ``will_match`` is a capped floor, not a total.
         will_skip: Unsupported files -- never attempted by the pipeline.
+            Always ``0`` under ``targets_server``: the server path skips
+            nothing, it fails what it cannot map (``will_fail_refused``).
+        will_fail_refused: Files the TARGETED backend refuses outright.
+            Server-only today, and a different set from ``will_skip``:
+            the server additionally refuses types it has no media type
+            for (images), while a page is not refused at all because it
+            is routed to the clipper. See
+            :func:`~tldw_chatbook.Library.server_ingest_request.server_ingest_refusal`.
         will_fail_tooling: Files whose type group has an unmet REQUIRED
             feature. The pre-flight already warned about that exact
             dependency, so promising these as imports was the defect.
@@ -745,6 +754,7 @@ class IngestForecast:
     will_match: int = 0
     match_capped: bool = False
     will_skip: int = 0
+    will_fail_refused: int = 0
     will_fail_tooling: int = 0
     will_fail_empty: int = 0
     at_risk: int = 0
@@ -755,7 +765,11 @@ class IngestForecast:
     @property
     def will_fail(self) -> int:
         """Total forecast failures, whatever the reason."""
-        return self.will_fail_tooling + self.will_fail_empty
+        return (
+            self.will_fail_refused
+            + self.will_fail_tooling
+            + self.will_fail_empty
+        )
 
     @property
     def consent_affected(self) -> int:
@@ -814,27 +828,37 @@ def build_ingest_forecast(
         if group != "unsupported"
     }
     will_import = 0
+    fail_refused = 0
     fail_tooling = 0
     at_risk = 0
     tooling_groups: list[str] = []
-    for group, files in type_groups.items():
-        count = len(files)
-        if targets_server:
-            # The local capability probe describes THIS machine; the run
-            # happens elsewhere. Counting a local gap as a certain failure
-            # of a server run is a claim about a machine we never asked.
+    if targets_server:
+        # (task-14827) Ask the backend that will actually run this. The
+        # local verdict answers a different question: a raster image is a
+        # perfectly good LOCAL import (group ``image``, OCR) that the
+        # server has no media type for, and an unclassifiable file is
+        # SKIPPED locally but recorded as a permanent FAILURE by
+        # ``_submit_server_ingest_job``. Per FILE, not per group, because
+        # the refusal is a property of the source, not of the group.
+        for files in preflight.type_groups.values():
+            for path in files:
+                if server_ingest_refusal(str(path)) is None:
+                    will_import += 1
+                else:
+                    fail_refused += 1
+    else:
+        for group, files in type_groups.items():
+            count = len(files)
+            required_missing, optional_missing = classify_missing_features(
+                group, warned
+            )
+            if required_missing:
+                fail_tooling += count
+                tooling_groups.append(group)
+                continue
             will_import += count
-            continue
-        required_missing, optional_missing = classify_missing_features(
-            group, warned
-        )
-        if required_missing:
-            fail_tooling += count
-            tooling_groups.append(group)
-            continue
-        will_import += count
-        if optional_missing:
-            at_risk += count
+            if optional_missing:
+                at_risk += count
     # (task-2223) The duplicate probe is a capped best-effort count over
     # the read≈parse groups; subtract it from the files that would
     # otherwise import, never from the ones already forecast to fail.
@@ -847,7 +871,15 @@ def build_ingest_forecast(
         match_capped=bool(
             getattr(preflight, "already_in_library_capped", False)
         ),
-        will_skip=len(preflight.type_groups.get("unsupported", ())),
+        # (task-14827) Nothing is skipped on the server path -- the
+        # unsupported group's files are inside ``fail_refused`` above,
+        # counted by asking the server mapping rather than the local one.
+        will_skip=(
+            0
+            if targets_server
+            else len(preflight.type_groups.get("unsupported", ()))
+        ),
+        will_fail_refused=fail_refused,
         will_fail_tooling=fail_tooling,
         will_fail_empty=len(getattr(preflight, "empty_files", ()) or ()),
         at_risk=at_risk,
@@ -865,6 +897,38 @@ def build_ingest_forecast(
 #: fail (need tooling)" condemns a run on someone else's machine using
 #: this machine's inventory).
 INGEST_SERVER_TOOLING_UNKNOWN_COPY = "server tooling isn't checked from here"
+
+#: (task-14827) Why the failures in a SERVER forecast are failures. It
+#: names the backend doing the refusing on purpose: half of these files
+#: (raster images) import perfectly well on THIS machine, so the local
+#: vocabulary -- "unsupported", "will skip", "no handler for this format"
+#: -- would tell a user their file is unreadable when what is true is
+#: that this particular destination will not take it.
+INGEST_SERVER_REFUSED_COPY = "unsupported by the server"
+
+
+def server_local_tooling_advisory(missing_components: int) -> str:
+    """The quiet note that replaces the tooling wall in server mode.
+
+    (task-14827 AC#3) A missing local extra is a fact about a machine
+    that is not doing the work, so it is stated as a note rather than
+    shown as a ⚠ blocker with an install button beside it -- while still
+    being stated, because the same selection imported locally WOULD hit
+    it.
+
+    Args:
+        missing_components: How many tooling warnings the pre-flight
+            raised (the count the wall would have rendered).
+
+    Returns:
+        One sentence, no ⚠ glyph.
+    """
+    noun = "component" if missing_components == 1 else "components"
+    verb = "isn't" if missing_components == 1 else "aren't"
+    return (
+        f"{missing_components} local {noun} {verb} installed — that affects "
+        "imports on this machine only; this one runs on the server."
+    )
 
 
 def forecast_summary_line(forecast: IngestForecast | None) -> str:
@@ -912,13 +976,26 @@ def forecast_summary_line(forecast: IngestForecast | None) -> str:
         parts.append(f"{forecast.will_skip} will skip")
     if forecast.will_fail:
         segment = f"{forecast.will_fail} will fail"
-        if forecast.will_fail_tooling and forecast.will_fail_empty:
-            segment += (
-                f" ({forecast.will_fail_tooling} need tooling, "
-                f"{forecast.will_fail_empty} empty)"
+        # Reasons a user can ACT on are named even when they are the only
+        # one; "N empty" is named only alongside another, because the
+        # empty-files line already names those files by name.
+        actionable = [
+            (count, text)
+            for count, text in (
+                (forecast.will_fail_refused, INGEST_SERVER_REFUSED_COPY),
+                (forecast.will_fail_tooling, "need tooling"),
             )
-        elif forecast.will_fail_tooling:
-            segment += " (need tooling)"
+            if count
+        ]
+        if actionable:
+            reason_count = len(actionable) + bool(forecast.will_fail_empty)
+            if reason_count == 1:
+                segment += f" ({actionable[0][1]})"
+            else:
+                fragments = [f"{count} {text}" for count, text in actionable]
+                if forecast.will_fail_empty:
+                    fragments.append(f"{forecast.will_fail_empty} empty")
+                segment += f" ({', '.join(fragments)})"
         parts.append(segment)
     if forecast.targets_server and forecast.will_import:
         parts.append(INGEST_SERVER_TOOLING_UNKNOWN_COPY)
@@ -2305,6 +2382,22 @@ def build_library_ingest_state(
             if line
         )
         warning_commands = preflight_install_commands(feature_warnings)
+        if targets_server and warning_lines:
+            # (task-14827 AC#3) The wall, its ⚠ summary line and its "Copy
+            # install command" button all describe THIS machine's
+            # inventory -- and during a server-targeted import this
+            # machine does no parsing, so running that pip command would
+            # change nothing about the run. Post-14820 the fold at least
+            # stopped condemning the import ("no staged file needs them"),
+            # but a ⚠ block plus an install button is still a wall of
+            # blockers about a machine that isn't doing the work. Demoted
+            # to ONE advisory line, which renders as a quiet note with no
+            # ⚠ glyph -- the glyph is what carries severity here.
+            advisory_lines = advisory_lines + (
+                server_local_tooling_advisory(len(warning_lines)),
+            )
+            warning_lines = []
+            warning_commands = ()
         already = getattr(active_preflight, "already_in_library", 0) or 0
         already_capped = bool(
             getattr(active_preflight, "already_in_library_capped", False)
@@ -2561,10 +2654,15 @@ def build_library_ingest_state(
         else:
             file_noun = "file" if unsupported_count == 1 else "files"
             # (task-2220 owner ruling) Skipped, not "recorded as
-            # failures" -- the pipeline never attempts these.
+            # failures" -- the LOCAL pipeline never attempts these.
+            # (task-14827) ...but the server does not skip: it records a
+            # permanent failure row with a reason, so on that backend the
+            # promise of a quiet skip is the same forecast-vs-receipt
+            # disagreement task-14820 exists to remove.
+            outcome = "will fail" if targets_server else "will be skipped"
             unsupported_line = (
-                f"{unsupported_count} unsupported {file_noun} will be "
-                f"skipped: {unsupported_names}."
+                f"{unsupported_count} unsupported {file_noun} {outcome}: "
+                f"{unsupported_names}."
             )
     else:
         unsupported_line = ""

@@ -24,6 +24,7 @@ from tldw_chatbook.Library.ingest_capabilities import (
     get_type_group,
 )
 from tldw_chatbook.Library.library_ingest_jobs import DEFAULT_CHUNK_SIZE
+from tldw_chatbook.Library.web_clip_request import is_web_clip_source
 from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
     FileIngestionError,
     classify_ingest_source,
@@ -119,6 +120,43 @@ def server_media_type_for(source: str) -> str:
             f"The server backend has no handler for {local_type!r} sources."
         )
     return media_type
+
+
+def server_ingest_refusal(source: str) -> str | None:
+    """Return why a SERVER-targeted submission will refuse ``source``.
+
+    (task-14827) The forecast must ask the backend it is actually
+    targeting, and the two backends refuse different sets: local
+    unsupported-ness is ``get_type_group(...) == UNSUPPORTED_GROUP``,
+    while the server ALSO refuses everything it has no media type for
+    (images, deliberately left server-unmapped by task-3307). Forecasting
+    the server's outcome from the local verdict said "will skip" for
+    files ``_submit_server_ingest_job`` records as permanent FAILURES.
+
+    Mirrors the routing ``submit_library_ingest_job`` performs in server
+    mode rather than re-deriving it: a page is handed to the clipper
+    BEFORE :func:`build_server_ingest_kwargs` is ever asked, so the
+    ingest-jobs API having no media type for one is not a refusal of that
+    import. Everything else is asked the same question the submit path
+    asks, so the two cannot drift.
+
+    Args:
+        source: A local file path or an http(s) URL.
+
+    Returns:
+        The refusal reason -- the exact message the failed job row will
+        carry -- or ``None`` when the server path will accept the source.
+    """
+    text = str(source or "").strip()
+    if not text:
+        return "No source was given."
+    if is_web_clip_source(text):
+        return None
+    try:
+        server_media_type_for(text)
+    except ServerIngestUnsupported as exc:
+        return str(exc)
+    return None
 
 
 def _coerce_int(value: Any, fallback: int) -> int:

@@ -215,3 +215,76 @@ class TestImageSourcesStayLocal:
     def test_build_kwargs_refuses_image_files_too(self) -> None:
         with pytest.raises(ServerIngestUnsupported):
             build_server_ingest_kwargs("/tmp/photo.png", options={})
+
+
+# --- task-14827: what the SERVER path refuses, asked as a question -----------
+
+
+class TestServerIngestRefusal:
+    """(task-14827 AC#1) The forecast has to ask the backend it targets.
+
+    ``server_ingest_refusal`` is that question, and it mirrors what
+    ``submit_library_ingest_job`` actually does in server mode -- including
+    the clipper route, without which every server-mode URL import would be
+    forecast as a certain failure.
+    """
+
+    def test_a_file_the_server_maps_is_not_refused(self) -> None:
+        from tldw_chatbook.Library.server_ingest_request import (
+            server_ingest_refusal,
+        )
+
+        assert server_ingest_refusal("/tmp/notes.txt") is None
+        assert server_ingest_refusal("/tmp/talk.mp3") is None
+        assert server_ingest_refusal("/tmp/book.epub") is None
+
+    def test_an_image_file_is_refused_although_local_imports_it(self) -> None:
+        """The divergence that made this predicate necessary: an image is a
+        real LOCAL capability (the ``image`` group, OCR) with no server
+        media type at all."""
+        from tldw_chatbook.Library.ingest_capabilities import get_type_group
+        from tldw_chatbook.Library.server_ingest_request import (
+            server_ingest_refusal,
+        )
+
+        assert get_type_group("/tmp/photo.png") == "image"
+        reason = server_ingest_refusal("/tmp/photo.png")
+        assert reason is not None
+        assert "image" in reason
+
+    def test_an_unclassifiable_file_is_refused_not_silently_skipped(self) -> None:
+        from tldw_chatbook.Library.server_ingest_request import (
+            server_ingest_refusal,
+        )
+
+        assert server_ingest_refusal("/tmp/weird.xyz") is not None
+
+    def test_a_page_url_is_not_refused_because_it_goes_to_the_clipper(
+        self,
+    ) -> None:
+        """``server_media_type_for`` refuses a page on purpose, but the
+        submit path never asks it: ``is_web_clip_source`` routes the page to
+        the clipper first. A predicate that ignored that would condemn every
+        server-mode URL import."""
+        from tldw_chatbook.Library.server_ingest_request import (
+            server_ingest_refusal,
+            server_media_type_for,
+        )
+
+        with pytest.raises(ServerIngestUnsupported):
+            server_media_type_for("https://example.com/post")
+        assert server_ingest_refusal("https://example.com/post") is None
+
+    def test_a_media_url_is_not_refused_either(self) -> None:
+        from tldw_chatbook.Library.server_ingest_request import (
+            server_ingest_refusal,
+        )
+
+        assert server_ingest_refusal("https://youtube.com/watch?v=abc") is None
+
+    def test_an_empty_source_is_refused(self) -> None:
+        from tldw_chatbook.Library.server_ingest_request import (
+            server_ingest_refusal,
+        )
+
+        assert server_ingest_refusal("   ") is not None

@@ -49,9 +49,16 @@ In server mode the **Export** rail row is disabled, with the tooltip
   2 audio/video files"; a URL reads "1 web page"), a size estimate
   ("3 files · 1.2 MB" — omitted for URLs, whose size isn't known ahead of
   time), any "⚠" warnings about missing tooling, and — if some files
-  can't be handled — "2 unsupported files will be skipped: …". An
+  can't be handled — "2 unsupported files will be skipped: …" (importing
+  on the server, the same line reads "will fail", because that backend
+  records a failure row rather than skipping quietly). An
   unreachable URL reports a plain reason ("URL unreachable — the server
-  name could not be found."), never a raw error dump.
+  name could not be found."), never a raw error dump. When the import is
+  aimed at the server, the missing-tooling block is replaced by a single
+  quiet note ("1 local component isn't installed — that affects imports
+  on this machine only; this one runs on the server."): those extras
+  belong to a machine that is not doing the work, so installing them
+  would not change the run.
 - **Options** — "Expand all" / "Collapse all", then one fold per detected
   content type, titled with its current settings (for example "Plain text
   & HTML — Analyze after import: off, Chunk content: on, …"). Word/Office
@@ -80,7 +87,14 @@ In server mode the **Export** rail row is disabled, with the tooltip
   **server**, the local tooling inventory says nothing about it, so the
   line reads "5 will be sent to the server · server tooling isn't
   checked from here" rather than pretending to know what the server has
-  installed.
+  installed. What the forecast *can* know about a server import is which
+  files that backend will not take at all — images, and anything with no
+  recognised format — and those are counted as failures with the reason
+  named: "3 will be sent to the server · 2 will fail (unsupported by the
+  server)". "Unsupported by the server" is not "unreadable": an image
+  imports fine on this machine, it simply has no place in the server's
+  import API, so switching the target back to this machine changes the
+  number.
 - **Queue** — the "Queue" heading, a per-state count line while jobs
   exist ("This queue: 1 parsing · 2 queued · 1 done" — task-2859: the
   "This queue:" prefix replaced a trailing "— in queue" suffix that
@@ -517,3 +531,17 @@ needs fixing"), and a collapsed title no longer advertises settings for
 controls you cannot edit. In the file picker, the Name/Size/Modified
 headers now line up with their own columns whether or not the listing is
 long enough to show a scrollbar.*
+
+*Verified against fix/ingest-test-health-and-server-forecast — 2026-08-10
+(task-14827): the forecast now asks the backend it is actually aimed at.
+Importing on the server, a file that backend refuses — an image, or a
+format nothing recognises — is counted as a failure with its reason named
+("2 will fail (unsupported by the server)") instead of the local
+pipeline's "will skip", which is what the queue really recorded: the
+submission raised before it ever left this machine and the row landed as
+"✗ failed". The two backends genuinely refuse different sets — an image
+imports locally via OCR and a web page is clipped rather than refused —
+so the wording says which one is refusing. Missing local extras stop
+being presented as blockers during a server-targeted import: the ⚠ block
+and its "Copy install command" button are replaced by one quiet note
+saying the gap affects imports on this machine only.*

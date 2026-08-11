@@ -479,3 +479,277 @@ async def test_empty_folder_creates_no_job_at_all(library_screen, tmp_path):
     await pilot.pause()
 
     assert screen.app_instance.library_ingest_jobs.jobs() == ()
+
+
+# --- task-14827: the SAME governance, for a SERVER submission ---------------
+
+
+class _RecordingIngestTransport:
+    """The HTTP transport, and ONLY the HTTP transport.
+
+    (task-14827 AC#2) The narrowest boundary the server path can be cut
+    at from a test: ``ServerMediaReadingService`` is the real one, so the
+    real ``MediaIngestJobSubmitRequest`` is built and the real response
+    models are parsed and reconciled -- this stands in for
+    ``TLDWAPIClient`` alone, i.e. for the network.
+
+    Two rules keep it from becoming the "fake written to match the call
+    site" the repo has been burned by:
+
+    * every call is bound against ``inspect.signature`` of the REAL
+      ``TLDWAPIClient`` method, so a drifting call site fails here rather
+      than being absorbed by ``**kwargs``;
+    * a ``media_type`` outside :data:`SERVER_ACCEPTED_MEDIA_TYPES` is
+      REJECTED, mirroring the live server's runtime validator that
+      constant was established against.
+
+    It accepts everything else it is handed. That is the fabrication
+    line: this proves what the app SENDS and what it refuses to send, not
+    what a real server then does with a file it received.
+    """
+
+    def __init__(self) -> None:
+        self.submitted: list[dict] = []
+        self._batches: dict[str, list] = {}
+        self._next_id = 0
+
+    @staticmethod
+    def _bind(name: str, args: tuple, kwargs: dict):
+        """Bind a call against the real client's signature, or raise."""
+        import inspect
+
+        from tldw_chatbook.tldw_api.client import TLDWAPIClient
+
+        bound = inspect.signature(getattr(TLDWAPIClient, name)).bind(
+            None, *args, **kwargs
+        )
+        bound.apply_defaults()
+        return bound.arguments
+
+    async def submit_media_ingest_jobs(self, *args, **kwargs):
+        from tldw_chatbook.Library.server_ingest_request import (
+            SERVER_ACCEPTED_MEDIA_TYPES,
+        )
+        from tldw_chatbook.tldw_api.media_reading_schemas import (
+            MediaIngestJobItem,
+            MediaIngestJobStatus,
+            SubmitMediaIngestJobsResponse,
+        )
+
+        arguments = self._bind("submit_media_ingest_jobs", args, kwargs)
+        request_data = arguments["request_data"]
+        file_paths = arguments["file_paths"] or []
+        media_type = str(request_data.media_type)
+        if media_type not in SERVER_ACCEPTED_MEDIA_TYPES:
+            # What the live server's validator does: "Input should be
+            # 'video', 'audio', 'document', 'pdf' or 'ebook'".
+            raise ValueError(f"Input should be one of {SERVER_ACCEPTED_MEDIA_TYPES}")
+
+        sources = list(file_paths) + list(request_data.urls or [])
+        self._next_id += 1
+        batch_id = f"batch-{self._next_id}"
+        items = []
+        statuses = []
+        for source in sources:
+            self._next_id += 1
+            remote_id = self._next_id
+            self.submitted.append(
+                {
+                    "source": source,
+                    "media_type": media_type,
+                    "remote_id": remote_id,
+                }
+            )
+            items.append(
+                MediaIngestJobItem(
+                    id=remote_id,
+                    source=str(source),
+                    source_kind="url" if source in (request_data.urls or []) else "file",
+                    status="queued",
+                )
+            )
+            statuses.append(
+                MediaIngestJobStatus(
+                    id=remote_id, status="completed", job_type="media_ingest"
+                )
+            )
+        self._batches[batch_id] = statuses
+        return SubmitMediaIngestJobsResponse(batch_id=batch_id, jobs=items)
+
+    async def list_media_ingest_jobs(self, *args, **kwargs):
+        from tldw_chatbook.tldw_api.media_reading_schemas import (
+            MediaIngestJobListResponse,
+        )
+
+        arguments = self._bind("list_media_ingest_jobs", args, kwargs)
+        batch_id = str(arguments["batch_id"])
+        return MediaIngestJobListResponse(
+            batch_id=batch_id,
+            jobs=list(self._batches.get(batch_id, ())),
+            has_more=False,
+        )
+
+
+@pytest.mark.asyncio
+async def test_forecast_counts_equal_the_real_receipt_for_a_server_submission(
+    tmp_path, monkeypatch
+):
+    """(task-14827 AC#2) GOVERNANCE, server edition.
+
+    ``test_forecast_counts_equal_the_real_receipt_for_a_mixed_folder``
+    drives the LOCAL submit path only, and that blind spot shipped two
+    server-path divergences in one review round: local tooling gaps
+    subtracted from a server-bound forecast (fixed in the 14820-14826
+    arc), and an unsupported file forecast as "will skip" while
+    ``build_server_ingest_kwargs`` raised and the job FAILED (this task).
+
+    Real ``analyze_path``, real ``build_ingest_forecast``, real
+    ``submit_library_ingest_job`` routing, real
+    ``build_server_ingest_kwargs``, real ``ServerMediaReadingService``,
+    real request/response schemas, real registry and real reconciler.
+    Only the HTTP transport is a stand-in
+    (:class:`_RecordingIngestTransport`) -- see its docstring for exactly
+    what that means the assertions do and do not prove.
+
+    Deliberately holds no 0-byte file: the forecast counts one as a
+    failure, but on this backend the app SENDS it and only the server
+    decides, which this process cannot know and this test must not
+    invent.
+    """
+    from tldw_chatbook.Library.ingest_capabilities import (
+        get_capabilities,
+        _is_installed,
+    )
+    from tldw_chatbook.Library.ingest_preflight import analyze_path
+    from tldw_chatbook.Library.library_ingest_jobs import IngestJobState
+    from tldw_chatbook.Library.library_ingest_state import (
+        build_ingest_forecast,
+        forecast_summary_line,
+    )
+    from tldw_chatbook.Media.server_media_reading_service import (
+        ServerMediaReadingService,
+    )
+    import tldw_chatbook.app as app_module
+    from Tests.Library.test_library_ingest_runner import (
+        _IngestRunnerHarness,
+        _make_db,
+    )
+
+    # The .mp3 below only re-pins the FIRST divergence while this machine
+    # lacks the audio extra; say so loudly rather than passing vacuously.
+    missing_audio = [
+        feature
+        for feature in get_capabilities("audio_video").required_features
+        if not _is_installed(feature)
+    ]
+    assert missing_audio, (
+        "audio tooling is installed here; this fixture cannot show that a "
+        "LOCAL gap no longer condemns a SERVER run"
+    )
+
+    folder = tmp_path / "mixed-server"
+    folder.mkdir()
+    (folder / "notes.txt").write_text("Tides are driven by the moon.")
+    (folder / "memo.txt").write_text("A second perfectly ingestible note.")
+    (folder / "talk.mp3").write_bytes(b"ID3 not really an mp3")
+    (folder / "diagram.png").write_bytes(b"\x89PNG not really a png")
+    (folder / "weird.xyz").write_bytes(b"no handler for this")
+
+    preflight = analyze_path(str(folder))
+    forecast = build_ingest_forecast(preflight, targets_server=True)
+    assert forecast is not None
+    # The line the user reads at the commit point, captured BEFORE the run.
+    # Asserted after the receipt below, so that a broken forecast fails on
+    # the governance claim itself rather than on its wording.
+    commit_line = forecast_summary_line(forecast)
+
+    transport = _RecordingIngestTransport()
+    real_get_cli_setting = app_module.get_cli_setting
+
+    def _server_backend(*args, **kwargs):
+        if args[:2] == ("library.ingest", "backend"):
+            return "server"
+        return real_get_cli_setting(*args, **kwargs)
+
+    monkeypatch.setattr(app_module, "get_cli_setting", _server_backend)
+
+    db = _make_db(tmp_path, name="server-forecast-governance.db")
+    app = _IngestRunnerHarness(db)
+    # The two preconditions ``_resolve_ingest_backend`` reads: the opt-in
+    # (patched above) and a server-mode runtime.
+    app.runtime_policy = SimpleNamespace(
+        state=SimpleNamespace(active_source="server")
+    )
+    app.server_media_reading_service = ServerMediaReadingService(transport)
+    app.REMOTE_INGEST_POLL_SECONDS = 0.01
+    try:
+        async with app.run_test() as pilot:
+            assert app._resolve_ingest_backend() == "server"
+            app.submit_library_ingest_job(source_path=str(folder))
+            assert len(app.library_ingest_jobs.jobs()) == 5
+
+            terminal = {
+                IngestJobState.DONE,
+                IngestJobState.FAILED,
+                IngestJobState.SKIPPED,
+                IngestJobState.CANCELLED,
+            }
+            for _ in range(600):
+                snapshot = app.library_ingest_jobs.jobs()
+                if all(job.state in terminal for job in snapshot):
+                    break
+                await pilot.pause(0.02)
+            else:  # pragma: no cover - diagnostic only
+                raise AssertionError(
+                    "server jobs never settled: "
+                    f"{[(j.source_path, j.state) for j in snapshot]}"
+                )
+
+            outcomes = {
+                Path(job.source_path).name: job
+                for job in app.library_ingest_jobs.jobs()
+            }
+            actual_done = sum(
+                1 for job in outcomes.values() if job.state is IngestJobState.DONE
+            )
+            actual_skipped = sum(
+                1
+                for job in outcomes.values()
+                if job.state is IngestJobState.SKIPPED
+            )
+            actual_failed = sum(
+                1
+                for job in outcomes.values()
+                if job.state is IngestJobState.FAILED
+            )
+
+            assert (
+                forecast.will_import,
+                forecast.will_skip,
+                forecast.will_fail,
+            ) == (actual_done, actual_skipped, actual_failed), (
+                "server forecast disagreed with the receipt: "
+                f"{[(name, job.state.value) for name, job in outcomes.items()]}"
+            )
+            assert {
+                name
+                for name, job in outcomes.items()
+                if job.state is IngestJobState.FAILED
+            } == {"diagram.png", "weird.xyz"}
+            # ...and the ones it promised to SEND really reached the wire,
+            # under the media types the server accepts.
+            assert {
+                Path(record["source"]).name: record["media_type"]
+                for record in transport.submitted
+            } == {
+                "notes.txt": "document",
+                "memo.txt": "document",
+                "talk.mp3": "audio",
+            }
+            # ...and the sentence that carried those numbers to the user.
+            assert commit_line == (
+                "3 will be sent to the server · 2 will fail (unsupported by "
+                "the server) · server tooling isn't checked from here"
+            ), commit_line
+    finally:
+        db.close_connection()
