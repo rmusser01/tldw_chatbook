@@ -9,7 +9,6 @@ import re
 import secrets
 import threading
 import time
-import warnings
 from copy import deepcopy
 from dataclasses import dataclass
 from importlib.resources import files
@@ -30,6 +29,9 @@ from tldw_chatbook.Image_Generation.exceptions import (
     ComfyUIImageEditError,
     ComfyUIImageEditPhase,
     ImageGenerationCancelled,
+)
+from tldw_chatbook.Image_Generation.request_validation import (
+    PILLOW_DECOMPRESSION_WARNING_MAX_PIXELS,
 )
 from tldw_chatbook.Utils.egress import (
     check_url_or_raise,
@@ -1342,18 +1344,27 @@ class ComfyUIImageAdapter:
         finally:
             response.close()
         try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("error", Image.DecompressionBombWarning)
-                with Image.open(io.BytesIO(data)) as image:
-                    if (
-                        image.format != "PNG"
-                        or image.mode not in _SUPPORTED_PNG_MODES
-                        or image.size != (width, height)
-                    ):
-                        raise ValueError("invalid PNG properties")
-                    image.verify()
-                with Image.open(io.BytesIO(data)) as image:
-                    image.load()
+            if len(data) < 24 or data[12:16] != b"IHDR":
+                raise ValueError("invalid PNG header")
+            header_width = int.from_bytes(data[16:20], "big")
+            header_height = int.from_bytes(data[20:24], "big")
+            if (
+                header_width <= 0
+                or header_height <= 0
+                or header_width * header_height
+                > PILLOW_DECOMPRESSION_WARNING_MAX_PIXELS
+            ):
+                raise ValueError("unsafe PNG dimensions")
+            with Image.open(io.BytesIO(data)) as image:
+                if (
+                    image.format != "PNG"
+                    or image.mode not in _SUPPORTED_PNG_MODES
+                    or image.size != (width, height)
+                ):
+                    raise ValueError("invalid PNG properties")
+                image.verify()
+            with Image.open(io.BytesIO(data)) as image:
+                image.load()
         except (
             OSError,
             UnidentifiedImageError,

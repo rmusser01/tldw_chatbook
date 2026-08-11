@@ -34,7 +34,7 @@ _REFERENCE_MIME_BY_FORMAT = {
     "WEBP": "image/webp",
 }
 _pillow_warning_pixels = Image.MAX_IMAGE_PIXELS
-_PILLOW_DECOMPRESSION_WARNING_MAX_PIXELS: int = (
+PILLOW_DECOMPRESSION_WARNING_MAX_PIXELS: int = (
     _pillow_warning_pixels
     if type(_pillow_warning_pixels) is int and _pillow_warning_pixels > 0
     else DEFAULT_MAX_PIXELS
@@ -317,7 +317,7 @@ def _validate_reference_image_content(
                 )
                 header_valid = False
             decoded_pixels = decoded_width * decoded_height
-            if decoded_pixels > _PILLOW_DECOMPRESSION_WARNING_MAX_PIXELS:
+            if decoded_pixels > PILLOW_DECOMPRESSION_WARNING_MAX_PIXELS:
                 issues.append(
                     _issue("reference image exceeds safe decode limits", "reference_image")
                 )

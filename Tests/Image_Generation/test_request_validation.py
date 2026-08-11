@@ -380,8 +380,8 @@ def test_reference_image_warning_band_ceiling_is_sanitized_before_load(
 ):
     from types import SimpleNamespace
 
-    warning_ceiling = Image.MAX_IMAGE_PIXELS
-    assert type(warning_ceiling) is int
+    warning_ceiling = rv.PILLOW_DECOMPRESSION_WARNING_MAX_PIXELS
+    assert warning_ceiling == Image.MAX_IMAGE_PIXELS
     assert warning_ceiling > 0
     width = 100_000
     height = warning_ceiling // width + 1

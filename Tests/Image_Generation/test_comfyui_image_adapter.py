@@ -8,13 +8,15 @@ import json
 import re
 import threading
 import time
+import warnings
+import zlib
 from dataclasses import replace
 from typing import Any
 
 import httpx
 import pytest
 from loguru import logger
-from PIL import Image
+from PIL import Image, PngImagePlugin
 
 from Tests.Image_Generation.test_comfyui_workflow_assets import (
     EXPECTED_DIRECT_LINKS,
@@ -129,6 +131,14 @@ def _png(width: int = 5, height: int = 4, *, mode: str = "RGB") -> bytes:
     output = io.BytesIO()
     image.save(output, format="PNG")
     return output.getvalue()
+
+
+def _png_with_dimensions(width: int, height: int) -> bytes:
+    encoded = bytearray(_png())
+    encoded[16:20] = width.to_bytes(4, "big")
+    encoded[20:24] = height.to_bytes(4, "big")
+    encoded[29:33] = (zlib.crc32(encoded[12:29]) & 0xFFFFFFFF).to_bytes(4, "big")
+    return bytes(encoded)
 
 
 def _reference(*, mime: str = "image/png", width: int = 5, height: int = 4) -> ResolvedReferenceImage:
@@ -1600,6 +1610,113 @@ def test_png_download_is_bounded_and_validated(kind) -> None:
         _make_adapter(script, config=_config(inline_max_bytes=byte_limit)).generate(_request())
 
     _assert_phase(exc, "output_download")
+
+
+def test_concurrent_png_validation_does_not_mutate_warning_filters(
+    monkeypatch,
+) -> None:
+    entered_verify = threading.Event()
+    release_verify = threading.Event()
+    original_verify = PngImagePlugin.PngImageFile.verify
+    worker_errors: list[BaseException] = []
+    worker_results = []
+    script = SuccessfulScript()
+
+    def blocking_verify(image) -> None:
+        entered_verify.set()
+        if not release_verify.wait(2):
+            raise AssertionError("PNG validation did not resume")
+        original_verify(image)
+
+    def generate() -> None:
+        try:
+            worker_results.append(_make_adapter(script).generate(_request()))
+        except BaseException as exc:
+            worker_errors.append(exc)
+
+    monkeypatch.setattr(PngImagePlugin.PngImageFile, "verify", blocking_verify)
+    original_filters = list(warnings.filters)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", Image.DecompressionBombWarning)
+        expected_filters = list(warnings.filters)
+        thread = threading.Thread(target=generate)
+        thread.start()
+        assert entered_verify.wait(2)
+        filters_changed = warnings.filters != expected_filters
+        unrelated_error = None
+        try:
+            warnings.warn("unrelated Pillow warning", Image.DecompressionBombWarning)
+        except BaseException as exc:
+            unrelated_error = exc
+        finally:
+            release_verify.set()
+            thread.join(2)
+
+        assert not thread.is_alive()
+        assert filters_changed is False
+        assert unrelated_error is None
+        assert worker_errors == []
+        assert len(worker_results) == 1
+        assert worker_results[0].content_type == "image/png"
+        assert len(caught) == 1
+        assert warnings.filters == expected_filters
+
+    assert warnings.filters == original_filters
+
+
+def test_png_warning_band_is_rejected_before_full_load(monkeypatch) -> None:
+    warning_ceiling = Image.MAX_IMAGE_PIXELS
+    assert type(warning_ceiling) is int
+    width = 100_000
+    height = warning_ceiling // width + 1
+    output = _png_with_dimensions(width, height)
+    load_calls: list[object] = []
+    base = SuccessfulScript()
+
+    def script(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/view":
+            return httpx.Response(
+                200,
+                content=output,
+                headers={"content-type": "image/png"},
+            )
+        return base(request)
+
+    monkeypatch.setattr(
+        PngImagePlugin.PngImageFile,
+        "load",
+        lambda *args, **kwargs: load_calls.append((args, kwargs)),
+    )
+
+    with pytest.raises(ComfyUIImageEditError) as exc:
+        _make_adapter(script).generate(
+            _request(reference_image=_reference(width=width, height=height))
+        )
+
+    _assert_phase(exc, "output_download")
+    assert load_calls == []
+
+
+def test_png_external_decompression_warning_is_sanitized(monkeypatch) -> None:
+    output = _png()
+    base = SuccessfulScript(output=output)
+    real_open = Image.open
+    open_calls = 0
+
+    def warned_open(*args, **kwargs):
+        nonlocal open_calls
+        open_calls += 1
+        warnings.warn("external Pillow limit", Image.DecompressionBombWarning)
+        return real_open(*args, **kwargs)
+
+    monkeypatch.setattr(adapter_module.Image, "open", warned_open)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", Image.DecompressionBombWarning)
+        with pytest.raises(ComfyUIImageEditError) as exc:
+            _make_adapter(base).generate(_request())
+
+    _assert_phase(exc, "output_download")
+    assert open_calls == 1
 
 
 @pytest.mark.parametrize("encoding", ["gzip", "br"])
