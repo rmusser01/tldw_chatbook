@@ -61,11 +61,23 @@ Read PR #629's property that the current design protects: one loop per run means
 
 - [ ] **Step 2: Choose between these three, and justify it**
 
-- **(A) Promote the loop to the bridge.** One long-lived loop thread owned by `ConsoleAgentBridge`, shared by all runs. Simplest for children; changes the one-client-per-run property to one-client-per-bridge.
-- **(B) Hand surviving children their own loop.** At settle time, if any child is still live, transfer it to a loop the bridge owns; the per-run loop still closes for the common case. Preserves today's property exactly when nothing survives.
-- **(C) Refuse to let a child outlive the turn if it has an in-flight model call**, settling only those. Smallest change; but it makes cross-turn survival unpredictable from the user's view, so treat it as a fallback, not a default.
+**The decision is made: a fleet child owns its own model-call lifeline from
+birth.** It never borrows the turn's loop, so there is nothing to transfer at
+settle time and nothing that dies when the turn ends. This is Claude Code's
+own model — a background subagent is an independent runtime, which is why its
+lifetime is not a problem there.
 
-State the choice, the property it changes, and what you verified — not what you assume.
+Your job is not to re-decide it; it is to implement it and measure the one
+thing it costs. `ConsoleProviderGateway._active_http_client` caches by running
+loop, so per-child loops mean per-child HTTP clients where three children
+currently share one. Measure that (client construction cost, fd count, and
+whether the gateway's own locking assumes a single client) and report numbers,
+not adjectives. If the measurement says per-child clients are genuinely
+expensive, say so with the figures and propose a shared-client-across-loops
+variant — do not silently fall back to the turn-scoped loop.
+
+Do NOT choose option (C)-style "refuse to survive if a call is in flight":
+survival must be predictable from the user's side.
 
 - [ ] **Step 3: Write the failing test first**
 
@@ -159,7 +171,27 @@ For each seam below, a surviving child must either keep a valid one, get a repla
 
 ## Deliberately NOT in this PR (→ PR 3a-2)
 
-- Completion delivery to the supervisor's next turn. Note for that PR, from the survey: a transcript SYSTEM row **does not reach the model** (`console_chat_controller.py:10110-10113` drops everything but USER/ASSISTANT), so delivery must use the system-prompt fold, an evidence-style prefix, or the `turn_bundle_block` append at `console_agent_bridge.py:2205-2226`.
+- **Auto-wake on completion + cross-conversation notification.** Spec §3
+  invariant 5 was corrected on 2026-08-11: a finished child **wakes its
+  supervisor** rather than queuing for the user's next message in that
+  conversation, and the user-facing notification must be reachable from
+  wherever they are. The premise behind the old "no auto-wake" ruling — that
+  the user is watching one conversation — is false for this application,
+  which is built around concurrent conversations, workspaces, watchlists and
+  schedules and hopping between them.
+
+  Two notes for that PR, from the survey: a transcript SYSTEM row **does not
+  reach the model** (`console_chat_controller.py:10110-10113` drops everything
+  but USER/ASSISTANT), so delivery must use the system-prompt fold, an
+  evidence-style prefix, or the `turn_bundle_block` append at
+  `console_agent_bridge.py:2205-2226`. And the injected notice must be
+  unambiguously marked **not user input** — Claude Code's own notifications
+  carry that warning explicitly, which is a hazard worth inheriting the fix
+  for rather than rediscovering.
+
+  This PR must not build anything that makes auto-wake harder: in particular,
+  Task 6's audit should record what a completing cross-turn child can still
+  reach, since that is what 3a-2 will wake the supervisor through.
 - `send_to_agent` + mailboxes. Nothing today injects into a running loop: `messages` is a local of `run_agent_loop` (`agent_runtime.py:519`) and `LoopDeps` carries no message-mutation callable. The only external in-flight influence is cooperative cancellation.
 - Finished-agent continuation (`resumed_from_run_id`).
 - The notification chip (spec §7) — `ConsoleApprovalsChip` (`console_status_chips.py:53`) is the precedent.
