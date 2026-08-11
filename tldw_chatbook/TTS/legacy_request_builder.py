@@ -23,6 +23,7 @@ from __future__ import annotations
 from typing import Literal, cast
 
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
+from tldw_chatbook.TTS.legacy_bridge import openai_internal_model_id
 
 _AudioFormat = Literal["mp3", "opus", "aac", "flac", "wav", "pcm"]
 _VALID_AUDIO_FORMATS = frozenset({"mp3", "opus", "aac", "flac", "wav", "pcm"})
@@ -103,7 +104,7 @@ def build_legacy_speech_request(
         speed=speed,
     )
     if provider_id == "openai":
-        internal_model_id = f"openai_official_{request.model}"
+        internal_model_id = openai_internal_model_id(request.model)
     elif provider_id == "elevenlabs":
         internal_model_id = f"elevenlabs_{request.model}"
     elif provider_id == "kokoro":

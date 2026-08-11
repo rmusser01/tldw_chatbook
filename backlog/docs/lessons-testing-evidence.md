@@ -9,7 +9,34 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
-## A shutdown lease counter can stop seeing work before ownership ends
+## A fix proven at one layer can be unreachable through the product path
+
+**TASK-15420, 2026-08-11.** TASK-2260 (2026-08-04) shipped custom-endpoint
+model/voice passthrough in `OpenAITTSBackend`, pinned by mutation-verified
+backend tests and a real-socket keyless server test, and its user guide was
+live-verified — by varying the *voice*. The Console speak path, however, had
+been rerouted through the request-admission layer (2026-07-26), whose
+`resolve_legacy_route` allowlist rejected every non-official OpenAI *model id*
+before the backend was even constructed. The documented flow (exact custom
+model name) failed on every Console speak for weeks while all ~2,900 TTS-area
+tests stayed green: the tests proved the backend layer, the live check varied
+the one axis the upstream layer did not constrain, and nothing exercised the
+full admitted path with a custom model. Found only by end-to-end UAT driving
+the real TUI against a request-recording mock server.
+
+Sub-trap from the same session: `TTSAudioResponse.byte_stream` is lazy — a
+probe that calls `synthesize_default` and prints the response "succeeding"
+proves nothing, because the HTTP request only fires when the stream is
+consumed. The first counterfactual probe "passed" with zero requests at the
+server; only draining the stream produced the real request.
+
+**What to do.** A regression test for a passthrough/compatibility contract
+must enter at the outermost admitted path (here: `synthesize_default` down to
+the adapter), not the layer that was fixed — any layer added above the fix
+inherits the chance to re-impose the constraint. When live-verifying, vary the
+axis the bug is about (the model, not just the voice). And never trust a
+lazy-stream API's return value as evidence of I/O — consume it and assert at
+the far end (the recording server).
 
 **TASK-13204, 2026-08-10.** A clone-shutdown regression initially asserted
 `TTSAdapterRegistry._total_leases()` while the provider was past its bounded

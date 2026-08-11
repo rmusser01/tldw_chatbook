@@ -40,7 +40,10 @@ from tldw_chatbook.TTS.adapter_types import (
 from tldw_chatbook.TTS.audio_cpp_guided_config import (
     project_audio_cpp_settings_config,
 )
-from tldw_chatbook.TTS.legacy_bridge import legacy_provider_config
+from tldw_chatbook.TTS.legacy_bridge import (
+    legacy_provider_config,
+    openai_internal_model_id,
+)
 from tldw_chatbook.TTS.playground_types import (
     PROFILE_SAVE_BLOCK_PROVIDER_OPTIONS,
     ProfileSaveBlockCode,
@@ -1056,7 +1059,7 @@ class STTSEventHandler:
         provider_id = snapshot.provider_id
         if provider_id == "openai":
             model_id = snapshot.model_id.lower().replace("-", "")
-            return f"openai_official_{model_id}"
+            return openai_internal_model_id(model_id)
         if provider_id == "elevenlabs":
             return f"elevenlabs_{snapshot.model_id}"
         if provider_id == "kokoro":

@@ -37,13 +37,29 @@ _DELEGATED_CLEANUP_FAILURE_NOTE = (
 
 
 class UnknownLegacyModelError(LookupError):
-    """Raised when a compatibility internal model ID is not enumerated."""
+    """Raised when a compatibility internal model ID cannot be routed.
+
+    Enumerated ids route through ``LEGACY_ROUTES``; OpenAI ids also route
+    by their ``OPENAI_INTERNAL_ID_PREFIX`` alone, since custom
+    OpenAI-compatible endpoints define their own model names (TASK-15420).
+    """
 
 
 @dataclass(frozen=True, slots=True)
 class LegacyRoute:
     provider_id: str
     internal_model_id: str
+
+
+#: The one place the OpenAI internal-id shape is defined; every builder of
+#: these ids must use :func:`openai_internal_model_id` so the resolver's
+#: prefix routing and the builders cannot drift apart.
+OPENAI_INTERNAL_ID_PREFIX = "openai_official_"
+
+
+def openai_internal_model_id(model_id: str) -> str:
+    """Compose the internal compatibility id for an OpenAI model."""
+    return f"{OPENAI_INTERNAL_ID_PREFIX}{model_id}"
 
 
 OPENAI_INTERNAL_IDS = (
@@ -253,6 +269,13 @@ def legacy_provider_config(
 
 def resolve_legacy_route(internal_model_id: str) -> LegacyRoute:
     provider_id = LEGACY_ROUTES.get(internal_model_id)
+    if provider_id is None and internal_model_id.removeprefix(
+        OPENAI_INTERNAL_ID_PREFIX
+    ) not in ("", internal_model_id):
+        # Custom OpenAI-compatible endpoints (TASK-2260) define their own
+        # model names; the provider is already known from the prefix, so an
+        # exact-catalog check here would wrongly reject them (TASK-15420).
+        provider_id = "openai"
     if provider_id is None:
         raise UnknownLegacyModelError("The selected TTS model is not available")
     return LegacyRoute(provider_id, internal_model_id)
