@@ -43,10 +43,12 @@ Verify the file is nonempty and contains only diagnostics already present on the
 - Modify: `tldw_chatbook/TTS/profile_portability.py`
 - Modify: `tldw_chatbook/TTS/profile_reference_types.py`
 - Modify: `tldw_chatbook/TTS/profile_types.py`
+- Modify: `tldw_chatbook/TTS/profile_service.py`
 - Modify: `tldw_chatbook/TTS/__init__.py`
 - Modify: `Tests/TTS/test_profile_portability.py`
 - Modify: `Tests/TTS/test_profile_reference_types.py`
 - Modify: `Tests/TTS/test_profile_repository.py`
+- Modify: `Tests/TTS/test_profile_service.py`
 
 - [ ] **Step 1: Write failing wire/domain tests**
 
@@ -74,7 +76,14 @@ def test_v2_omission_decode_is_skip_without_profile() -> None:
 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest \
   Tests/TTS/test_profile_portability.py \
   Tests/TTS/test_profile_reference_types.py \
-  Tests/TTS/test_profile_repository.py -q
+  Tests/TTS/test_profile_repository.py \
+  Tests/TTS/test_profile_service.py -q
+
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m mypy \
+  tldw_chatbook/TTS/profile_portability.py \
+  tldw_chatbook/TTS/profile_reference_types.py \
+  tldw_chatbook/TTS/profile_types.py \
+  tldw_chatbook/TTS/profile_service.py
 ```
 
 Expected: failures for absent v2 omission handling and recipe requirement.
@@ -92,9 +101,10 @@ Temporarily add digest/recipe to v2 and confirm the allowlist test fails. Route 
 ```bash
 git add tldw_chatbook/TTS/profile_portability.py \
   tldw_chatbook/TTS/profile_reference_types.py \
-  tldw_chatbook/TTS/profile_types.py tldw_chatbook/TTS/__init__.py \
+  tldw_chatbook/TTS/profile_types.py tldw_chatbook/TTS/profile_service.py \
+  tldw_chatbook/TTS/__init__.py \
   Tests/TTS/test_profile_portability.py Tests/TTS/test_profile_reference_types.py \
-  Tests/TTS/test_profile_repository.py
+  Tests/TTS/test_profile_repository.py Tests/TTS/test_profile_service.py
 git commit -m "feat(tts): define clone bundle provenance domain"
 ```
 
