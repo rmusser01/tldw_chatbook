@@ -23,6 +23,7 @@ URL_BASED_PROVIDER_KEYS = frozenset(
         "local_vllm",
         "ollama",
         "oobabooga",
+        "qwencloud",
         "tabbyapi",
         "vllm",
     }
@@ -58,6 +59,7 @@ _BUILTIN_PROVIDER_ENDPOINTS = {
     "moonshot": "https://api.moonshot.ai/v1",
     "openai": "https://api.openai.com/v1",
     "openrouter": "https://openrouter.ai/api/v1",
+    "qwencloud": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     "zai": "https://api.z.ai/api/paas/v4",
 }
 

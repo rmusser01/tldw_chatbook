@@ -43,6 +43,7 @@ PROVIDERS_REQUIRING_API_KEY_KEYS = frozenset(
         "moonshot",
         "openai",
         "openrouter",
+        "qwencloud",
         "zai",
     }
 )
@@ -91,6 +92,7 @@ KNOWN_PROVIDER_KEYS = PROVIDERS_REQUIRING_API_KEY_KEYS | KEYLESS_PROVIDER_KEYS
 
 _DEFAULT_API_KEY_ENV_VAR_ALIASES = {
     "mistralai": "MISTRAL_API_KEY",
+    "qwencloud": "DASHSCOPE_API_KEY",
 }
 
 
