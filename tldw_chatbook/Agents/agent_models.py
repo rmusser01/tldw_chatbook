@@ -471,20 +471,22 @@ def contain_child_budget(child: RunBudget, max_wall_seconds: float) -> RunBudget
     exactly as ``clamp_child_budget`` already did -- see that function's
     own docstring for why the real worst-case aggregate spend is
     ``(1 + max_subagents)x`` that ceiling, not a value it bounds
-    directly; this task does not change that math), and COUNT -- stated
-    honestly rather than claimed: ``[agents] max_live_subagents`` bounds
-    live children WITHIN one ``run_turn`` call only. It is **NOT** a
-    cross-turn cap (PR3a-1 Task 5 review, Defect 2, disproved by
-    execution: two consecutive ``run_turn`` calls each spawning 2
-    blocking children yielded 4 simultaneously running against a cap of
-    2). ``AgentService._run_one`` builds a brand-new ``FleetCoordinator``
-    every ``run_turn`` (no cross-turn accounting), and Console constructs
-    a new ``AgentService`` per ``run_reply`` with no
-    ``fleet_coordinator=`` at all, so aggregate live children across
-    turns scale with messages sent, uncapped by anything today. This
-    function does not fix that -- it is Task 6's fix (a long-lived
-    per-conversation coordinator), tracked there, not silently claimed
-    here as already solved.
+    directly; this task does not change that math), and COUNT --
+    ``[agents] max_live_subagents``, enforced by ``FleetCoordinator.
+    reserve``. Read its scope precisely, because it changed twice and
+    the first version of this docstring got it wrong: it bounds live
+    children per COORDINATOR, and a coordinator's lifetime belongs to
+    whoever owns it. For a bare ``AgentService`` with no injected
+    coordinator that is still ONE ``run_turn`` call -- which was ALSO
+    Console's situation until PR3a-1 Task 6a, and is why two consecutive
+    turns each spawning 2 blocking children ran 4 at once against a cap
+    of 2 (Task 5 review, Defect 2, disproved by execution, not
+    argument). Task 6a gave Console a coordinator per CONVERSATION,
+    owned by ``ConsoleAgentBridge`` and injected into every service it
+    builds, so there the cap now holds across turns; nothing caps the
+    aggregate across conversations or across processes. This function
+    does not participate in any of that -- it is stated here only so the
+    third dimension is not read as bounded by something it is not.
 
     Sub-agents still deliberately INHERIT ``max_model_turns`` and
     ``max_steps`` unchanged (the same 2026-07-25 operator decision

@@ -185,18 +185,21 @@ DEFAULT_SUBAGENTS_OUTLIVE_TURN = True
 #: still roughly ``(1 + max_subagents)x`` one run's ceiling (see
 #: ``contain_child_budget``'s docstring).
 #:
-#: COUNT -- **NOT bounded across turns as of this commit** (PR3a-1 Task 5
-#: review, Defect 2, disproved by execution: two consecutive ``run_turn``
-#: calls each spawning 2 blocking children yielded 4 simultaneously
-#: running against a cap of 2). ``AgentService._run_one`` builds a
-#: brand-new ``FleetCoordinator`` every ``run_turn`` (no cross-turn
-#: accounting), and Console constructs a new ``AgentService`` per
-#: ``run_reply`` with no ``fleet_coordinator=`` at all, so aggregate live
-#: children across turns scale with messages sent, uncapped by anything
-#: today -- ``[agents] max_live_subagents`` only bounds children spawned
-#: WITHIN one ``run_turn`` call. This is Task 2's debt, exposed rather
-#: than caused by this task; the fix (a long-lived per-conversation
-#: coordinator) is tracked in PR3a-1 Task 6, not attempted here.
+#: COUNT -- ``[agents] max_live_subagents`` bounds live children per
+#: COORDINATOR, and a coordinator's lifetime belongs to whoever owns it.
+#: With none injected, ``run_turn`` builds a fresh one per call, so the
+#: bound is per-TURN -- which was also Console's situation until PR3a-1
+#: Task 6a, and is why two consecutive ``run_turn`` calls each spawning 2
+#: blocking children ran 4 at once against a cap of 2 (Task 5 review,
+#: Defect 2, disproved by execution). Task 6a made
+#: ``ConsoleAgentBridge`` own one coordinator per CONVERSATION and inject
+#: it into the fresh ``AgentService`` it builds for every ``run_reply``,
+#: so in Console the cap now holds across turns: a later turn's spawn is
+#: refused (retryably) while an earlier turn's survivors hold the slots.
+#: Still true and worth stating: the bound is per conversation and per
+#: process, so N conversations can hold N * max_live_subagents live
+#: children between them, and a caller that injects no coordinator gets
+#: the per-turn bound it always had.
 CHILD_MAX_WALL_SECONDS_KEY = "child_max_wall_seconds"
 DEFAULT_CHILD_MAX_WALL_SECONDS = 1800.0
 #: How long a poll loop sleeps between coordinator checks. Small enough

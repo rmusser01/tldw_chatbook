@@ -142,18 +142,64 @@ _CHAT_CALL_TIMEOUT_SECONDS = 3600.0
 #     covers the 30-turn worst case. This is a backstop, not a target -- fast
 #     cloud models finish 30 turns in a fraction of it, and the user can Stop
 #     at any point (the tool-call wrapper polls cancellation every 0.5s, task-327).
-#   * max_total_tokens=1_000_000: Sub-agents inherit the turn and step budget
-#     (agent_models.clamp_child_budget, operator decision 2026-07-25), so one
-#     message can reach 30 * (1 + max_subagents) = 90 provider turns. The wall
-#     clock bounds that in TIME but not in SPEND. This ceiling is a PER-RUN
-#     bound, not a shared one: `agent_runtime.run_agent_loop`'s
-#     `total_tokens` is a local to each run, and `clamp_child_budget` passes
-#     `max_total_tokens` through to a child UNCHANGED rather than dividing
-#     it -- so the parent and each of up to max_subagents=2 children can
-#     independently spend up to this ceiling. The real worst-case aggregate
-#     across one Console message is therefore roughly 3x this value
+#   * max_total_tokens=1_000_000: Sub-agents inherit the turn and step budget.
+#     Which function bounds a child's OWN wall clock now depends on the
+#     path (PR3a-1 Task 5, spec Sec 5 "Containment"; corrected after a
+#     Task 5 review caught an over-broad first draft, Defect 1):
+#     `AgentService.spawn` branches on `fleet is None or inline`. A
+#     turn-scoped or skill-invoked (`inline=True`) child still gets
+#     `agent_models.clamp_child_budget`'s parent-remainder clamp,
+#     byte-identical to every release before Task 5 -- its worst case is
+#     UNCHANGED by any of this. Only a THREADED, non-inline child (a
+#     native `spawn_subagent` call with the fleet on, the common case
+#     here) goes through `agent_models.contain_child_budget` instead,
+#     which gives it an INDEPENDENT ceiling
+#     (`agent_service.DEFAULT_CHILD_MAX_WALL_SECONDS`, 1800s by default)
+#     unrelated to the parent's own remaining budget -- because PR3a-1
+#     Task 2 lets that kind of child survive past the turn that spawned
+#     it. So: one message can reach 30 * (1 + max_subagents) = 90
+#     provider turns, and for a THREADED survivor the wall clock no
+#     longer bounds that 90-turn worst case in TIME the way it used to --
+#     a child spawned near the end of the parent's own 1800s window can
+#     go on running for up to its own independent 1800s afterward, so the
+#     worst-case wall-clock span from "user sends the message" to "every
+#     threaded child has settled" is now up to roughly double
+#     CONSOLE_MAX_WALL_SECONDS (~3600s / 1 hour at today's defaults), not
+#     CONSOLE_MAX_WALL_SECONDS alone. Also true and easy to miss: a child
+#     blocked INSIDE one provider call is not stopped by its own wall
+#     clock AT ALL -- `run_agent_loop`'s check only runs BETWEEN loop
+#     iterations (before each `deps.call_model`), so a hung provider call
+#     can hold a child open past its ceiling until that call itself
+#     returns, independent of every number in this comment.
+#
+#     SPEND is unaffected by any of this: this ceiling is a PER-RUN
+#     bound, not a shared one -- `agent_runtime.run_agent_loop`'s
+#     `total_tokens` is a local to each run, and BOTH containment
+#     functions pass `max_total_tokens` through to a child UNCHANGED
+#     rather than dividing it -- so the parent and each of up to
+#     max_subagents=2 children can independently spend up to this
+#     ceiling, for a real worst-case aggregate of roughly 3x this value
 #     (~3M tokens), not a value bounded BY it directly. It still sits far
 #     above any normal 30-turn run.
+#
+#     COUNT is bounded across turns as of PR3a-1 Task 6a, and was NOT
+#     before it (Task 5's review disproved that by execution: two
+#     consecutive `run_turn` calls each spawning 2 blocking children ran
+#     4 at once against a cap of 2). `[agents] max_live_subagents` used
+#     to cap children WITHIN one `run_turn` call only -- a brand-new
+#     `FleetCoordinator` per `run_turn`, and a brand-new `AgentService`
+#     per `run_reply` with no coordinator injected -- so aggregate live
+#     children scaled with MESSAGES SENT. Task 6a moved the coordinator's
+#     ownership to this bridge, one per CONVERSATION
+#     (`_conversation_fleet_coordinator`), and injects it into every
+#     service it builds, so a later turn's spawn is refused while an
+#     earlier turn's survivors hold the slots. Read the bound precisely:
+#     it is PER CONVERSATION and per PROCESS -- N concurrent
+#     conversations can hold N * max_live_subagents live children between
+#     them, and nothing caps the aggregate across conversations. What it
+#     does guarantee is that one conversation cannot accumulate an
+#     unbounded fleet by the user pressing Send repeatedly, which is what
+#     it could do before.
 # The engine's own RunBudget defaults (agent_models.RunBudget) keep the
 # bare max_steps=8, so this override applies only at the Console bridge's
 # own config-assembly site (run_reply below); other callers of
@@ -177,15 +223,42 @@ CONSOLE_MAX_WALL_SECONDS = 1800.0
 
 #: Cumulative prompt+completion spend ceiling -- but a PER-RUN one:
 #: `agent_runtime.run_agent_loop`'s `total_tokens` is a per-run local, and
-#: `clamp_child_budget` passes this value through to each sub-agent
-#: UNCHANGED rather than dividing it among children. Sub-agents also
-#: inherit the turn and step budget (agent_models.clamp_child_budget,
-#: operator decision 2026-07-25), so one message can reach
-#: 30 * (1 + max_subagents) = 90 provider turns across the parent and up to
-#: max_subagents=2 children -- each independently able to spend up to this
-#: ceiling, for a real worst-case aggregate of roughly 3x this value
-#: (~3M tokens), not a value THIS constant bounds directly. It still sits
-#: far above any normal 30-turn run.
+#: BOTH of `AgentService.spawn`'s containment functions -- `agent_models.
+#: clamp_child_budget` (turn-scoped/inline children) and `agent_models.
+#: contain_child_budget` (threaded survivor candidates, PR3a-1 Task 5) --
+#: pass this value through to each sub-agent UNCHANGED rather than
+#: dividing it among children. Sub-agents also inherit the turn and step
+#: budget, so one message can reach 30 * (1 + max_subagents) = 90
+#: provider turns across the parent and up to max_subagents=2 children --
+#: each independently able to spend up to this ceiling, for a real
+#: worst-case aggregate SPEND of roughly 3x this value (~3M tokens), not
+#: a value THIS constant bounds directly. It still sits far above any
+#: normal 30-turn run.
+#:
+#: Unlike SPEND, the aggregate is no longer bounded in TIME by this run's
+#: own wall clock for every child: a THREADED survivor (PR3a-1 Task 2
+#: default) can keep running for up to its own independent wall-clock
+#: ceiling (`agent_service.DEFAULT_CHILD_MAX_WALL_SECONDS`) AFTER this
+#: run's own 1800s window ends, so the worst-case wall-clock span from
+#: "user sends the message" to "every threaded child has settled" is now
+#: up to roughly double CONSOLE_MAX_WALL_SECONDS (~3600s / 1 hour at
+#: today's defaults). A turn-scoped or skill-invoked (`inline=True`)
+#: child is UNAFFECTED -- it still clamps to the parent's own remaining
+#: budget exactly as before PR3a-1 Task 5, so its worst case stays
+#: CONSOLE_MAX_WALL_SECONDS alone. Separately, ANY child blocked INSIDE
+#: one provider call is not stopped by its own wall clock at all -- the
+#: ceiling only bites BETWEEN loop iterations, not during one, so a hung
+#: provider call holds its child open past every figure above until that
+#: call itself returns.
+#:
+#: COUNT (`[agents] max_live_subagents`, referenced by max_subagents=2
+#: above) became a real cross-turn bound in PR3a-1 Task 6a and was not
+#: one before it (see Task 5's review, Defect 2): `ConsoleAgentBridge`
+#: now keeps ONE `FleetCoordinator` per conversation and injects it into
+#: the fresh `AgentService` it builds for every `run_reply`, so live
+#: children are capped per CONVERSATION rather than per message. The
+#: cap is not global: N conversations can hold N * max_live_subagents
+#: live children between them in one process.
 CONSOLE_MAX_TOTAL_TOKENS = 1_000_000
 
 CONSOLE_RUN_BUDGET = RunBudget(
@@ -1070,7 +1143,11 @@ class _StreamingModelAdapter:
 
         A child is one agent on one thread, so the override is a plain
         set/restore rather than a stack: nothing nests here (a child never
-        spawns -- ``clamp_child_budget`` zeroes its ``max_subagents``). The
+        spawns -- ``contain_child_budget`` zeroes its ``max_subagents``,
+        PR3a-1 Task 5's replacement for ``clamp_child_budget`` on this
+        THREADED child's path specifically -- an inline/skill child never
+        reaches ``child_lifeline`` at all, since it runs on the parent's
+        own thread). The
         previous value is restored anyway so a future nested caller cannot
         silently lose its own lifeline.
 

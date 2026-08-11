@@ -170,6 +170,10 @@ own task concurrently. The Agent rail shows this directly: several
   fleet handle — skills are not part of the parallel fleet.
 - **How many can run at once.** Capped at `[agents] max_live_subagents` in
   `config.toml` (default **3**; no Settings UI switch — hand-edit the file).
+  The cap applies to the **conversation**, not to one reply: a sub-agent
+  that is still working when its reply finishes keeps holding its slot, so
+  the next message you send can only start as many new sub-agents as there
+  are free slots left.
   Setting it to `1` turns the fleet off entirely: sub-agents go back to
   running one at a time, synchronously, exactly as before. Trying to spawn
   a sub-agent past the live cap is refused ("live sub-agent limit reached
@@ -365,7 +369,8 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
   `[agents] max_live_subagents` below, which caps parallel **sub-agents
   within one reply**.
 - **`[agents] max_live_subagents`** in `config.toml` — how many sub-agents
-  of one reply may run at once (default 3; `1` disables the fleet). No
+  of one conversation may run at once, counting any still working from an
+  earlier message (default 3; `1` disables the fleet). No
   Settings UI switch; see [Parallel sub-agents](#parallel-sub-agents-the-fleet)
   above.
 - **Settings > Agents** — create and manage the named agent definitions the

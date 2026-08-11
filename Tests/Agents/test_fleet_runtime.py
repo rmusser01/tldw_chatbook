@@ -1262,14 +1262,15 @@ def test_children_outlive_their_turn_by_default():
 #
 # SPEND (`max_total_tokens`, passed through unchanged) is untouched by
 # this task and already bounds each run independently of the parent's
-# lifetime. COUNT is NOT: `[agents] max_live_subagents` bounds live
-# children WITHIN one `run_turn` call only -- it is NOT a cross-turn cap
-# (Task 5 review, Defect 2, disproved by execution: two consecutive
-# `run_turn` calls each spawning 2 blocking children yielded 4
-# simultaneously running against a cap of 2, see
-# `test_live_children_are_not_capped_across_turns` below). Fixing that is
-# PR3a-1 Task 6's job (a long-lived per-conversation coordinator), not
-# this one's.
+# lifetime. COUNT was NOT bounded across turns when Task 5 shipped --
+# `[agents] max_live_subagents` capped live children WITHIN one
+# `run_turn` call only (Task 5 review, Defect 2, disproved by execution:
+# two consecutive `run_turn` calls each spawning 2 blocking children
+# yielded 4 simultaneously running against a cap of 2). PR3a-1 Task 6a
+# fixed it by moving the coordinator's ownership up to
+# `ConsoleAgentBridge`, one per conversation, injected into every
+# service; `test_live_children_are_capped_across_turns` below is that
+# test, INVERTED to assert the cap now holds.
 
 
 @pytest.mark.parametrize(
