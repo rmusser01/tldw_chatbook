@@ -103,6 +103,25 @@ async def _sync_tray(console, pilot, state) -> ConsoleWorkspaceContextTray:
     return tray
 
 
+def _section_collapsed(console, group_id: str) -> bool:
+    """Whether a browser SECTION is collapsed in the state the toggle reads.
+
+    Deliberately `_build_console_workspace_context_state()` and not the tray
+    the test synced: that is the exact source
+    `_toggle_console_conversation_browser_section` consults to decide which
+    way to flip.
+    """
+    section_id = group_id.removeprefix("section:")
+    browser = console._workspace._build_console_workspace_context_state()
+    assert browser.conversation_browser is not None
+    section = next(
+        candidate
+        for candidate in browser.conversation_browser.sections
+        if candidate.section_id == section_id
+    )
+    return bool(section.collapsed)
+
+
 def _browser_config(app) -> dict:
     """The persisted grouped-browser preference dict, or an empty dict."""
     console_config = (app.app_config or {}).get("console")
@@ -187,22 +206,50 @@ async def test_browser_section_toggle_persists_its_collapse_preference():
         console = await _mounted_console(host, pilot)
         await _sync_tray(console, pilot, _base_grouped_workspace_state())
 
-        toggles = [
-            button
-            for button in console.query(Button)
-            if str(getattr(button, "id", "") or "").startswith(
-                "console-conversation-browser-section-toggle-"
-            )
-        ]
-        assert toggles, "the grouped browser must render section toggles"
-        toggle = toggles[0]
-        group_id = toggle.group_id
+        def _section_toggles() -> list[Button]:
+            # Re-queried before EVERY press: `_toggle_console_conversation_
+            # browser_section` ends in `_sync_console_workspace_context()`,
+            # which rebuilds the tray with NEW Button instances. The old
+            # object still answers `is_mounted` True but is no longer in the
+            # DOM, and pressing it is a silent no-op.
+            return [
+                button
+                for button in console.query(Button)
+                if str(getattr(button, "id", "") or "").startswith(
+                    "console-conversation-browser-section-toggle-"
+                )
+            ]
+
+        assert _section_toggles(), "the grouped browser must render section toggles"
+        group_id = _section_toggles()[0].group_id
         assert group_id.startswith("section:")
 
-        toggle.press()
-        await pilot.pause()
+        def _press_section_toggle() -> None:
+            # By group_id, not by position: a rebuild is free to reorder.
+            next(
+                button
+                for button in _section_toggles()
+                if button.group_id == group_id
+            ).press()
 
-        assert _browser_config(app).get(group_id) is True
+        # The polarity is NOT a constant. The handler flips the section's
+        # CURRENT collapsed state, taken from the screen's own rebuilt
+        # context -- not from the fabricated tray state `_sync_tray` painted
+        # above. Starred default-collapses while it holds no rows
+        # (TASK-2154.3 LY-04, commit 7dbbc401b), which is the screen's real
+        # situation here, so the first press EXPANDS and persists False.
+        # `is True` pinned the pre-2154.3 default; what this test claims is
+        # that a press persists a preference under the toggle's own key and
+        # that the preference is a genuine flip, so assert that instead.
+        before = _section_collapsed(console, group_id)
+
+        _press_section_toggle()
+        await pilot.pause()
+        assert _browser_config(app).get(group_id) is (not before)
+
+        _press_section_toggle()
+        await pilot.pause()
+        assert _browser_config(app).get(group_id) is before
 
 
 @pytest.mark.asyncio
