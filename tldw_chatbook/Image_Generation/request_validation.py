@@ -334,7 +334,7 @@ def _validate_reference_image_content(
             if not header_valid:
                 return
             image.load()
-    except Image.DecompressionBombError:
+    except (Image.DecompressionBombError, Image.DecompressionBombWarning):
         issues.append(_issue("reference image exceeds safe decode limits", "reference_image"))
         return
     except (OSError, UnidentifiedImageError, ValueError):

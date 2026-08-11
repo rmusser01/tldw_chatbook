@@ -426,6 +426,47 @@ def test_reference_image_warning_band_ceiling_is_sanitized_before_load(
     ]
 
 
+def test_reference_image_external_bomb_warning_is_sanitized(rv):
+    from types import SimpleNamespace
+
+    warning_ceiling = Image.MAX_IMAGE_PIXELS
+    assert type(warning_ceiling) is int
+    width = 100_000
+    height = warning_ceiling // width + 1
+    decoded_pixels = width * height
+    content = _png_with_dimensions(width, height)
+    config = SimpleNamespace(
+        max_prompt_length=10_000,
+        max_width=width + 1,
+        max_height=height + 1,
+        max_pixels=decoded_pixels + 1,
+        max_steps=100,
+    )
+    bad = {
+        "backend": "fal",
+        "prompt": "cat",
+        "extra_params": {},
+        "reference_image": _ref(
+            content=content,
+            bytes_len=len(content),
+            width=None,
+            height=None,
+        ),
+    }
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", Image.DecompressionBombWarning)
+        issues = rv.validate_image_generation_request(bad, config=config)
+
+    assert issues == [
+        rv.ImageGenerationValidationIssue(
+            code="image_params_invalid",
+            message="reference image exceeds safe decode limits",
+            path="reference_image",
+        )
+    ]
+
+
 def test_reference_validation_does_not_mutate_warning_filters_during_concurrent_warning(
     rv,
     monkeypatch,
