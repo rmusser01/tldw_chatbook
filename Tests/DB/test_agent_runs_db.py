@@ -119,17 +119,64 @@ def test_count_subagents_by_conversation_dedupes_ids_and_ignores_blanks(db):
     assert counts == {"conv-a": 1}
 
 
-def test_supersede_run_tree_marks_run_and_children(db):
+def test_supersede_run_tree_marks_run_and_terminal_children(db):
+    # A child that has ALREADY finished (terminal) by the time supersede
+    # runs is superseded exactly as before this task -- that half must not
+    # regress.
     parent = db.create_run(conversation_id="c", agent_kind="primary")
     child = db.create_run(
         conversation_id="c", agent_kind="subagent", task="t", parent_run_id=parent
     )
+    db.set_status(child, "done", result="child finished before supersede")
     other = db.create_run(conversation_id="c", agent_kind="primary")
     changed = db.supersede_run_tree(parent)
     assert changed == 2
     assert db.get_run(parent)["status"] == "superseded"
     assert db.get_run(child)["status"] == "superseded"
     assert db.get_run(other)["status"] == "running"
+
+
+def test_supersede_run_tree_leaves_live_child_untouched(db):
+    # PR3a-1 Task 2 lets a sub-agent outlive its turn. Task 4: superseding
+    # the primary (retry/regenerate/variant) must not flip a still-running
+    # child to a terminal status out from under its live worker thread --
+    # that child is not a dead attempt, it is a real cross-turn survivor
+    # still spending tokens.
+    parent = db.create_run(conversation_id="c", agent_kind="primary")
+    live_child = db.create_run(
+        conversation_id="c", agent_kind="subagent", task="t", parent_run_id=parent
+    )
+    changed = db.supersede_run_tree(parent)
+    # The primary itself is always superseded unconditionally (matching
+    # prior behavior -- by the time a caller retries, run_turn guarantees
+    # a prior primary's own record is already terminal). Only the live
+    # child is skipped, so exactly one row (the parent) is counted.
+    assert changed == 1
+    assert db.get_run(parent)["status"] == "superseded"
+    assert db.get_run(live_child)["status"] == "running"
+    # Lineage stays intact: the child is still parented to the (now
+    # superseded) primary -- this only changes status semantics.
+    assert db.get_run(live_child)["parent_run_id"] == parent
+
+
+def test_supersede_run_tree_does_not_lose_a_live_childs_real_result(db):
+    # The actual defect: superseding used to flip a live child straight to
+    # the terminal status 'superseded'. Because 'superseded' is itself a
+    # TERMINAL_RUN_STATUSES member, set_status's first-writer-wins guard
+    # then silently dropped the child's real terminal write when it
+    # finished for real -- the row lied dead while the child was alive, and
+    # its genuine result was lost on arrival. Assert the result is
+    # READABLE afterwards, not merely that the row isn't 'superseded'.
+    parent = db.create_run(conversation_id="c", agent_kind="primary")
+    live_child = db.create_run(
+        conversation_id="c", agent_kind="subagent", task="t", parent_run_id=parent
+    )
+    db.supersede_run_tree(parent)  # primary retried while the child runs on
+    updated = db.set_status(live_child, "done", result="the child's real answer")
+    assert updated is True
+    run = db.get_run(live_child)
+    assert run["status"] == "done"
+    assert run["result"] == "the child's real answer"
 
 
 def test_list_runs_filters_superseded_when_asked(db):

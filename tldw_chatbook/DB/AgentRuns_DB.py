@@ -941,7 +941,24 @@ class AgentRunsDB(BaseDB):
         return {row["conversation_id"]: int(row["n"]) for row in rows}
 
     def supersede_run_tree(self, run_id: str) -> int:
-        """Mark a run and its direct children ``superseded``.
+        """Mark a run, and its already-terminal direct children, ``superseded``.
+
+        PR3a-1 Task 2 lets a sub-agent outlive its turn, so a still-
+        ``running`` child is not a dead attempt -- it is a live cross-turn
+        survivor a retry/regenerate/variant call must not disturb. Flipping
+        its row straight to ``superseded`` (itself a member of
+        ``TERMINAL_RUN_STATUSES``) would not stop the live worker thread;
+        it would only make ``set_status``'s first-writer-wins guard
+        silently drop the child's real terminal write when it finishes,
+        losing its result. So a **child** is only ever touched here when
+        already terminal -- a live child is skipped entirely and settles
+        normally through its own later ``set_status`` call. The run
+        identified by ``run_id`` itself is always marked superseded
+        unconditionally, matching prior behavior: by the time a caller
+        supersedes a prior primary run, that primary's own record has
+        already been persisted terminally (``run_turn`` guarantees this
+        before it returns), so no live-primary case exists in practice --
+        only children can genuinely still be running here.
 
         Args:
             run_id: The run whose tree (itself + rows with
@@ -950,13 +967,17 @@ class AgentRunsDB(BaseDB):
                 keeping it for drill-in history.
 
         Returns:
-            The number of rows updated (the run itself plus its direct
-            sub-agent children).
+            The number of rows updated (the run itself, unconditionally,
+            plus any direct sub-agent children that were already
+            terminal). A live child is not counted -- it stays parented
+            and running, untouched.
         """
+        placeholders = ",".join("?" for _ in TERMINAL_RUN_STATUSES)
         with self.transaction() as conn:
             cursor = conn.execute(
                 "UPDATE agent_runs SET status = 'superseded', "
-                "updated_at = ? WHERE id = ? OR parent_run_id = ?",
-                (_now_iso(), run_id, run_id),
+                "updated_at = ? WHERE id = ? "
+                f"OR (parent_run_id = ? AND status IN ({placeholders}))",
+                (_now_iso(), run_id, run_id, *sorted(TERMINAL_RUN_STATUSES)),
             )
             return cursor.rowcount
