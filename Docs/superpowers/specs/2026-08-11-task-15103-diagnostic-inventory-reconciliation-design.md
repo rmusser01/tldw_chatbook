@@ -111,24 +111,50 @@ history and the current AST inventory:
 5. persist the complete review in
    `Docs/security/task-15103-diagnostic-review.json`.
 
-The review artifact records the exact incident and final base revisions plus
-one row for every changed diagnostic multiset atom. An atom carries the owner
-path, method, full content digest, multiplicity delta, and optional qualified
-scope for navigation. Rewrites are represented by a change group containing
-one or more removed atoms and one or more added atoms; additions and deletions
-need only one side. The change group—not each atom—owns the single disposition,
-rationale, permitted dynamic fields, and proven provenance. This does not claim
-a unique identity for indistinguishable duplicate calls or treat pure
-relocation as a review event when the canonical inventory deliberately does
-not.
+The review artifact separates its policy oracle from mechanically derived
+acceptance evidence. Its planned contract is committed before production is
+edited: exact incident/planning revisions, the starting owner pairs, and one
+row for every changed diagnostic multiset atom. An atom carries the owner path,
+method, full content digest, multiplicity delta, and optional qualified scope
+for navigation. Rewrites are represented by a change group containing one or
+more removed atoms and one or more proposed surviving atoms; additions and
+deletions need only one side. The change group—not each atom—owns the single
+disposition, rationale, permitted dynamic fields, and proven provenance. This
+does not claim a unique identity for indistinguishable duplicate calls or treat
+pure relocation as a review event when the canonical inventory deliberately
+does not.
 
 Each change group records an exact introducing commit when Git proves one, or
 the narrowest verified commit range when rebases, copies, duplicates, or
-intermediate rewrites make single-commit provenance non-unique. The artifact
-also records the starting and reviewed-final complete call-count/digest pair
-for each of the 17 owners. Removed and rewritten historical calls therefore
-remain reviewable rather than disappearing behind aggregate counts or false
-one-to-one pairings.
+intermediate rewrites make single-commit provenance non-unique. Production
+repairs may not edit their own disposition, permitted fields, rationale, or
+proposed surviving-call contract. If implementation proves a contract wrong,
+work stops and a separately reviewed ledger-contract amendment is committed
+before production resumes.
+
+The canonical semantic atom is the compact, key-sorted JSON serialization of
+`method`, `event`, `message_shape`, `expressions`, `captures_exception`, and
+`level_expression` from the alias-aware `DiagnosticCall`; its digest is the
+full lowercase 64-character SHA-256 of those UTF-8 bytes. Owner path is carried
+by the group rather than duplicated in the digest. Qualified scope, line, and
+occurrence are navigation aids only and never participate in semantic equality.
+Identical semantic atoms are compared as multisets with explicit multiplicity,
+so relocation is ignored while deleting or adding a duplicate remains visible.
+
+After every repair matches the frozen semantic contracts, acceptance appends
+the exact final base revision plus the reviewed-final complete
+call-count/digest pair for each of the 17 owners and changes the ledger state
+from `planned` to `reviewed`. The schema requires final evidence only in the
+reviewed state and forbids it in the planned state, so the canonical artifact
+never contains nulls, TODOs, placeholder digests, or speculative raw-source
+digests. Removed and rewritten historical calls remain reviewable rather than
+disappearing behind aggregate counts or false one-to-one pairings.
+
+The otherwise exact top-level schema permits `integration_checkpoint` only on
+a reviewed ledger during final integration. Its pre-rebase half is committed
+before rebasing and its post-rebase half is required afterward; both contain
+exact base/HEAD, aggregate semantic-multiset count/digest, and every owner's
+count/digest. Unknown checkpoint keys or an invalid pre/post lifecycle fail.
 
 The final task Implementation Notes retain the exact ledger hash, reconcile
 change-group totals by disposition, and separately reconcile atom multiplicity
@@ -243,7 +269,10 @@ evidence.
 Mutation tests must make this boundary red for an unknown top-level field, a
 forged derived summary, an eighteenth owner, an owner/reason classification
 change on one of the 17 paths, and a persistent-sink change. Each mutant is
-restored before the next, and byte hashes plus clean status prove restoration.
+restored before the next. A non-equal mutant hash proves the mutation occurred;
+restored byte hashes and equality to the recorded legitimate pre-mutation diff
+prove restoration without falsely requiring a clean worktree before the
+intended manifest/ledger changes are committed.
 Except for the mutant that deliberately forges a summary, each mutated document
 must first recompute its owner-file, TASK-492, TASK-494, and sink-file totals so
 it is internally consistent. Every mutant must then fail the assertion that
@@ -251,12 +280,17 @@ owns its intended invariant—with a specific unknown-field, unreviewed-owner,
 classification, or topology failure—not a stale-summary check or another
 incidental assertion.
 
-Immediately before the final rebase, record the complete diagnostic-call
-multiset for every one of the 17 owners, not only its inventory entry. After
-rebasing onto the final `origin/dev`, compare every complete population with
-that checkpoint. Any added, removed, or changed call—including a new call
-inside an already-authorized owner—reopens the per-call audit, provenance
-review, ledger, tests, and manifest comparison before closeout.
+Immediately before the final rebase, commit to the canonical ledger the
+complete canonical-semantic-atom multiset hash and per-owner count/hash for all
+17 owners, not only each inventory entry. Scope/line/occurrence remain external
+navigation evidence and do not affect equality. The committed checkpoint keeps
+the rebase worktree clean and makes the comparison reproducible. After rebasing
+onto the final `origin/dev`, append the post-rebase per-owner evidence and
+compare every complete semantic population with the checkpoint. Any added,
+removed, rewritten, re-aliased, multiplicity-changing, or capture-changing
+atom—including a new call inside an already-authorized owner—reopens the
+per-call audit, provenance review, ledger, tests, and manifest comparison before
+closeout. Pure relocation does not.
 
 ## Error and behavior preservation
 

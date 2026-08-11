@@ -27,3 +27,29 @@ TASK-3796 final review independently reproduced a stale persistent-diagnostic in
 - [ ] #3 The focused architecture checker and regression coverage pass without constructing a test application
 - [ ] #4 Every generated-versus-stored delta for the recorded 17 owner paths is reviewed under ADR-029
 <!-- AC:END -->
+
+## Implementation Plan
+
+Detailed executable plan:
+`Docs/superpowers/plans/2026-08-11-task-15103-diagnostic-inventory-reconciliation.md`
+
+1. Freeze the exact 17-owner incident in a schema-validated multiset ledger
+   with per-group provenance and disposition evidence.
+2. Replace the shallow TASK-15103 review path with a ledger-driven guard that
+   reuses the existing alias-aware diagnostic extractor and mutation-tests all
+   supported message/capture forms.
+3. Add direct real-production-function privacy sentinels and repair unsafe
+   Agents, Chat, MCP, RAG, UI, and application diagnostics in reviewed batches.
+4. Regenerate the production diagnostic manifest only after all source and
+   ledger gates pass, then prove the boundary rejects unknown data, forged
+   summaries, extra owners, classification changes, and sink changes.
+5. Rebase onto the latest `dev`, compare the complete call population for all
+   17 owners, rerun only touched-function tests/static gates, complete
+   independent review, and close the task.
+
+ADR required: no
+
+ADR path: `backlog/decisions/029-local-private-data-boundary.md`
+
+Reason: this task enforces the existing ADR-029 privacy boundary without
+changing persistent-sink ownership, storage, or the metadata policy.
