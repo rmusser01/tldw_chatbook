@@ -347,6 +347,7 @@ GENERAL_ANALYZE_STREAM_EXCEPTION_CANARY = "GENERAL_ANALYZE_STREAM_EXCEPTION_CANA
 GENERAL_OPENAI_ENDPOINT_CANARY = "http://GENERAL_OPENAI_ENDPOINT_CANARY_3796.invalid/v1"
 GENERAL_OPENAI_STREAM_CANARY = "GENERAL_OPENAI_STREAM_CANARY_3796"
 GENERAL_OPENAI_STREAM_EXCEPTION_CANARY = "GENERAL_OPENAI_STREAM_EXCEPTION_CANARY_3796"
+GENERAL_OPENAI_PRIVATE_STREAMING_VALUE = "PRIVATE_STREAMING_VALUE_3796"
 GENERAL_OPENAI_EXCEPTION_CANARY = "GENERAL_OPENAI_EXCEPTION_CANARY_3796"
 GENERAL_ANTHROPIC_RESPONSE_CANARY = "GENERAL_ANTHROPIC_RESPONSE_CANARY_3796"
 GENERAL_ANTHROPIC_STREAM_CANARY = "GENERAL_ANTHROPIC_STREAM_CANARY_3796"
@@ -3786,6 +3787,49 @@ def test_general_openai_missing_config_credential_preserves_error_contract(
     assert post_calls == []
     assert "OpenAI Summarize: Config credential lookup completed" in captured.text
     assert "OpenAI: Credential configured" not in captured.text
+
+
+def test_general_openai_truthy_non_boolean_streaming_value_is_not_logged(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_provider_settings(),
+    )
+    response = _FakeResponse(
+        lines=(
+            b'data: {"choices":[{"delta":{"content":"fixed streamed chunk"}}]}',
+            b"data: [DONE]",
+        )
+    )
+    post_calls = _install_signature_bound_general_session_post(
+        monkeypatch,
+        response,
+    )
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        stream = general_summarization.summarize_with_openai(
+            "fixed-general-openai-key",
+            "fixed input",
+            "fixed prompt",
+            streaming=GENERAL_OPENAI_PRIVATE_STREAMING_VALUE,
+        )
+        assert inspect.isgenerator(stream)
+        assert response.iter_lines_started is False
+        assert response.closed is False
+        chunks = list(stream)
+
+    assert chunks == ["fixed streamed chunk"]
+    assert len(post_calls) == 1
+    post_args, post_kwargs = post_calls[0]
+    assert post_args == ("http://openai.invalid/v1/chat/completions",)
+    assert post_kwargs["stream"] == GENERAL_OPENAI_PRIVATE_STREAMING_VALUE
+    assert post_kwargs["json"]["stream"] == GENERAL_OPENAI_PRIVATE_STREAMING_VALUE
+    assert response.iter_lines_started is True
+    assert response.closed is True
+    assert GENERAL_OPENAI_PRIVATE_STREAMING_VALUE not in captured.text
+    assert "OpenAI: Request options prepared" in captured.text
 
 
 @pytest.mark.parametrize(

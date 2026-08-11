@@ -844,10 +844,7 @@ def summarize_with_openai(
 
         logging.debug(f"OpenAI: Received text length: {len(text)}")
         logging.debug("OpenAI: Custom prompt configured")
-        logging.debug(
-            "OpenAI: Request options prepared; streaming=%s",
-            streaming,
-        )
+        logging.debug("OpenAI: Request options prepared")
 
         headers = {
             "Authorization": f"Bearer {api_key}",
