@@ -1135,7 +1135,44 @@ class AgentService:
         agent_definition: str | None = None,
         definition_fingerprint: str | None = None,
         on_run_id: Callable[[str], None] | None = None,
+        run_log_writer: "RunLogWriter | None" = None,
     ) -> tuple[str, RunOutcome]:
+        # PR3a-1 Task 3 -- THE WRITER THIS RUN RECORDS THROUGH, resolved
+        # ONCE, here, and closed over by every log closure below instead of
+        # being read off `self.run_log_writer` at call time.
+        #
+        # Why this is not cosmetic: a sub-agent can now outlive the turn
+        # that spawned it (Task 2), and `run_turn` REPLACES
+        # `self.run_log_writer` with a fresh writer bound to the NEXT
+        # turn's primary. A survivor still emitting records after its turn
+        # therefore used to record through whatever writer the service
+        # happened to be holding -- measured: turn 1's child wrote ZERO
+        # records into turn 1's tree, and its `model` record landed in turn
+        # 2's directory tagged with turn 1's child run id. That is worse
+        # than a dropped write: the child's "Full run log" renders empty
+        # (`console_agent_bridge.load_run_log_text` filters the owning
+        # primary's directory by the child's run id) while a FOREIGN run's
+        # records become reachable through `search_run_log`/`run_log_slice`
+        # scoped to turn 2's tree -- the inverse of the property
+        # `test_run_log_sandbox_isolation` / `test_run_log_workspace_
+        # isolation` defend.
+        #
+        # Note what this is NOT: deferring `run_turn`'s `close()` fixes
+        # nothing here. `close()` only fsyncs the final segment -- it
+        # leaves the writer active and every later `append` lands normally
+        # (records open their own file handle per write) -- so closure was
+        # never the mechanism. The attribute SWAP was, and deferral does
+        # not touch it.
+        #
+        # `spawn` passes its own resolved writer down to every child (see
+        # `child_kwargs`), on the PARENT's thread at spawn time, so a child
+        # thread that does not get scheduled until the next turn has begun
+        # still records into the tree it belongs to. Reusing one writer
+        # across two run TREES stays forbidden -- `bind()` latches
+        # permanently -- and nothing here does that: a child shares its
+        # parent's writer, which is its own tree's writer, exactly as
+        # before.
+        writer = run_log_writer if run_log_writer is not None else self.run_log_writer
         run_id = self.db.create_run(
             conversation_id=conversation_id,
             agent_kind=agent_kind,
@@ -1162,7 +1199,7 @@ class AgentService:
         # Two-phase: the writer was constructed before any run id existed.
         # Only the PRIMARY run binds; a child finds it already bound.
         if agent_kind == AGENT_KIND_PRIMARY:
-            self.run_log_writer.bind(run_id)
+            writer.bind(run_id)
         started = self.clock()
 
         active, offer_find_load = initial_disclosure(self.registry, config.budget)
@@ -1234,7 +1271,7 @@ class AgentService:
         # prompt can never mention a tool this run didn't actually disclose.
         log_active = (
             agent_kind == AGENT_KIND_PRIMARY
-            and self.run_log_writer.is_active
+            and writer.is_active
             and (runtime_schemas or active)
         )
         if log_active:
@@ -1474,6 +1511,18 @@ class AgentService:
                 definition_fingerprint=(
                     compute_definition_fingerprint(resolved) if resolved else None
                 ),
+                # PR3a-1 Task 3: THIS run tree's writer, captured here on
+                # the PARENT's thread rather than looked up later from the
+                # child's. A child that outlives the turn (Task 2) may not
+                # even reach `_run_one` until `run_turn` has replaced
+                # `self.run_log_writer` for the next turn; resolving it at
+                # spawn removes that race entirely, and the child then
+                # records into its own tree for its whole life. Sharing the
+                # parent's writer is not "reusing a writer across trees"
+                # (which `bind()`'s permanent latch forbids) -- parent and
+                # child ARE one tree, and one writer per tree is what keeps
+                # record numbers unique across it.
+                run_log_writer=writer,
             )
             if fleet is None or inline:
                 # -- INLINE path: byte-identical to every release before
@@ -1995,7 +2044,7 @@ class AgentService:
                 search_records,
             )
 
-            log_dir = self.run_log_writer.log_dir
+            log_dir = writer.log_dir
             if log_dir is None:
                 return ToolResult(ok=False, error="No run log is available.")
             contains = str(args.get("contains", ""))
@@ -2233,7 +2282,7 @@ class AgentService:
                 load_records,
             )
 
-            log_dir = self.run_log_writer.log_dir
+            log_dir = writer.log_dir
             if log_dir is None:
                 return ToolResult(ok=False, error="No run log is available.")
             group_by = str(args.get("group_by") or "tool")
@@ -2304,7 +2353,7 @@ class AgentService:
             """
             from .run_log_search import format_slice, load_records, slice_records
 
-            log_dir = self.run_log_writer.log_dir
+            log_dir = writer.log_dir
             if log_dir is None:
                 return ToolResult(ok=False, error="No run log is available.")
             try:
@@ -2344,10 +2393,16 @@ class AgentService:
             The ``LoopDeps.on_record`` callable: called by
             ``agent_runtime.run_agent_loop`` (via its ``_emit_record``
             helper) at the two points the COMPLETE value exists, before any
-            truncation. Wraps ``self.run_log_writer.append`` with this
-            run's identity (``run_id``, ``agent_kind``) and defensively
-            stringifies every payload field, so a malformed payload can
-            never raise here either.
+            truncation. Wraps ``writer.append`` with this run's identity
+            (``run_id``, ``agent_kind``) and defensively stringifies every
+            payload field, so a malformed payload can never raise here
+            either.
+
+            PR3a-1 Task 3: ``writer`` is THIS RUN's writer, closed over
+            from ``_run_one``'s own resolution above -- deliberately not
+            ``self.run_log_writer``, which the NEXT ``run_turn`` replaces
+            out from under a surviving child mid-run. See that resolution's
+            comment for the misfiling this fixed.
 
             Args:
                 record_type: ``"model"``, ``"tool_call"``, or
@@ -2365,7 +2420,7 @@ class AgentService:
                 ``_truncate_tool_result``). ``None`` when the writer is
                 inactive or the underlying write failed -- never raises.
             """
-            return self.run_log_writer.append(
+            return writer.append(
                 run_id=run_id,
                 kind=agent_kind,
                 type=record_type,
@@ -2566,6 +2621,20 @@ class AgentService:
             docstring), so reusing one writer across two ``run_turn`` calls
             would append the second tree's records into the first tree's
             already-bound directory and overwrite its manifest.
+
+            PR3a-1 Task 3: because a sub-agent can outlive this turn, that
+            per-tree writer is passed DOWN to each child at spawn (see
+            ``_run_one``'s ``run_log_writer`` argument) rather than read
+            off ``self.run_log_writer`` when a record is emitted. A
+            survivor therefore keeps writing into ITS OWN tree's directory
+            after this method has returned and replaced the attribute --
+            which also means the manifest written below is a snapshot:
+            ``record_count`` and ``segments`` do not count what a survivor
+            appends afterwards. That is tolerable precisely because the
+            manifest is not load-bearing (segment discovery is glob+sort in
+            ``run_log_search.load_records``), and ``close()`` is likewise
+            not a barrier -- it fsyncs the final segment and leaves the
+            writer active, so a survivor's later appends still land.
         """
         if supersede_run_id:
             self.db.supersede_run_tree(supersede_run_id)
