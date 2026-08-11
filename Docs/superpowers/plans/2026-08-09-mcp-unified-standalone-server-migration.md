@@ -1000,3 +1000,31 @@ git add 'backlog/tasks/task-2512 - Migrate-MCP-server-from-FastMCP-to-tldw_serve
 # If and only if Step 8 added a new evidence-backed lesson, add that exact lesson file by name.
 git commit -m "docs(mcp): close mcp-unified migration"
 ```
+
+### Task 9 closeout evidence (2026-08-10)
+
+- Integrated `origin/dev` `ced98b9a42da8fa834e7851b1e7e357bb9a7dfd2`;
+  independent final review returned **Ready** with no Critical, Important, or
+  Minor findings on clean commit
+  `0f7200aced210038c2868d132c6ccdf630f43866`.
+- The exact final MCP suite passed 1,007 tests with one known dependency
+  warning. The focused lifecycle/race subset passed 17 tests, and the
+  documentation contract passed 59 tests. Changed-file Ruff format/check,
+  mypy over the four MCP production modules, Bandit over the five MCP security
+  targets, compileall, and both diff-quality checks passed.
+- Wheel and sdist isolation passed earlier in Task 8. A final normal-network
+  refresh installed both artifacts successfully, then both hit the newly
+  shared upstream omission of
+  `chachanotes_v32_to_v33_console_context_memory.sql`; the identical installed-
+  distribution node failed for the same missing migration on clean
+  `origin/dev`. The complete final scoped command therefore reported 1,083
+  passed and four non-MCP failures: that shared artifact omission, the shared
+  `frontmatter` optional-feature metadata mismatch, and the two artifact cases
+  blocked by the same omission.
+- The repository owner explicitly instructed the task to **ignore all CI
+  checks**. Repository-full/CI are waived, not green: the earlier full run
+  reached about 83% and stopped at the shared Library navigation test hang.
+  Exact branch and clean-dev 300-second timeouts isolated the stale test stub;
+  TASK-14878 changed it to the typed permitted `NoteFlushOutcome` and made the
+  exact node and adjacent transition group pass. No later repository-full or
+  CI result is represented as successful.

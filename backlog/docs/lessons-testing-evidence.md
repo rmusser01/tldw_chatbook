@@ -2122,7 +2122,7 @@ decides.
 
 ---
 
-## An `await event.wait()` on a fire-and-forget task hangs on the task's OWN exception — and the timeout dump names nothing (2026-08-10, TASK-3316)
+## An `await event.wait()` on a fire-and-forget task hangs on the task's OWN exception — and the timeout dump names nothing (2026-08-10, TASK-3316/TASK-14878)
 
 **Incident.** `Tests/UI/test_screen_navigation.py::test_file_notes_collections_
 source_transition_blocks_mutation_through_recompose` hung forever on dev, so
@@ -2146,6 +2146,14 @@ whole, and the signal became unreachable. **This predates the media-ingest arcs:
 running the test from `git archive` copies of both sides of that merge is
 decisive — `86e511781` (its first parent) *1 passed in 3.64s*, `6b4ccf475`
 *hang → process killed*.
+
+TASK-2512 rediscovered the same harness drift when its repository run reached
+about 83% and stopped advancing. The exact node timed out at 300 seconds on
+both the feature branch and clean `origin/dev` `8d764c03`; TASK-14878 then
+changed only the stub to `NoteFlushOutcome(PERMITTED)`. The exact node passed
+in 1.08 seconds and its eight-node adjacent group passed in 2.18 seconds. That
+branch/clean-dev comparison plus the typed-stub mutation proved a shared test
+harness defect, not an MCP runtime regression.
 
 **The trap that cost the most time.** task-1466's advice, "the timeout stack dump
 names it", does NOT hold here. The dump showed only `MainThread` idle in

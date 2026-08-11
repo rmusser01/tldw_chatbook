@@ -1,10 +1,10 @@
 ---
 id: TASK-2512
 title: Migrate MCP server from FastMCP to tldw_server's mcp-unified package
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-06 07:18'
-updated_date: '2026-08-10 11:55'
+updated_date: '2026-08-11 04:07'
 labels:
   - mcp
   - fastmcp
@@ -51,13 +51,29 @@ Detailed plan: `Docs/superpowers/plans/2026-08-09-mcp-unified-standalone-server-
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The public `mcp-unified==0.2.1` programmatic stdio, tool, resource, resource-template, prompt, typed-error, and required protocol-revision surfaces are verified against the real package.
-- [ ] #2 ADR-053, the reviewed migration specification, and the implementation plan define the standalone runtime, canonical mappings, privacy boundary, resource continuation, and local-tool permission behavior.
-- [ ] #3 The standalone server exposes exactly nine implemented built-in tools, five resource templates plus the dynamic resource catalog, five prompts, and all explicitly enabled phase-4 local-agent tools through `mcp-unified`; retired `ingest_media` remains absent from discovery and refused by direct dispatch.
-- [ ] #4 The eighteen in-app-only `library_*` tools remain available through their descriptor-backed direct runtime, remain absent from standalone stdio, and retain raw in-app `tools/call` refusal.
-- [ ] #5 Tool values, fixed/redacted typed local-tool failures, namespaced resource dictionaries, long resource chunks, non-empty prompt messages, and prompt arguments map to bounded canonical MCP results with regression coverage.
-- [ ] #6 Both `mcp[cli]` declarations and every live availability/dependency surface are replaced by the exact `mcp-unified==0.2.1` optional dependency, with no production FastMCP or official-SDK import remaining.
-- [ ] #7 Chatbook's hand-written client negotiates `2025-03-26`, the adapter passes real `2025-11-25` and current-profile flows with batching limited to `2025-03-26`, catalog pagination fails closed at malformed or over-bound cursors, resource `_meta` is preserved exactly, and the existing subprocess configuration command remains valid.
-- [ ] #8 Wheel and sdist `[mcp]` installs independently pass a site-packages-isolated standalone protocol smoke confined to temporary configuration/data/workspace paths, and the relevant MCP, Library, packaging, documentation, static-analysis, and security gates are green or compared against an identical clean-dev baseline.
-- [ ] #9 User and developer documentation explain installation, supported protocol behavior, continuation, the standalone-versus-in-app Library boundary, the Library Import path replacing retired `ingest_media`, and the privacy risk of exposing local data to an external MCP client or cloud model.
+- [x] #1 The public `mcp-unified==0.2.1` programmatic stdio, tool, resource, resource-template, prompt, typed-error, and required protocol-revision surfaces are verified against the real package.
+- [x] #2 ADR-053, the reviewed migration specification, and the implementation plan define the standalone runtime, canonical mappings, privacy boundary, resource continuation, and local-tool permission behavior.
+- [x] #3 The standalone server exposes exactly nine implemented built-in tools, five resource templates plus the dynamic resource catalog, five prompts, and all explicitly enabled phase-4 local-agent tools through `mcp-unified`; retired `ingest_media` remains absent from discovery and refused by direct dispatch.
+- [x] #4 The eighteen in-app-only `library_*` tools remain available through their descriptor-backed direct runtime, remain absent from standalone stdio, and retain raw in-app `tools/call` refusal.
+- [x] #5 Tool values, fixed/redacted typed local-tool failures, namespaced resource dictionaries, long resource chunks, non-empty prompt messages, and prompt arguments map to bounded canonical MCP results with regression coverage.
+- [x] #6 Both `mcp[cli]` declarations and every live availability/dependency surface are replaced by the exact `mcp-unified==0.2.1` optional dependency, with no production FastMCP or official-SDK import remaining.
+- [x] #7 Chatbook's hand-written client negotiates `2025-03-26`, the adapter passes real `2025-11-25` and current-profile flows with batching limited to `2025-03-26`, catalog pagination fails closed at malformed or over-bound cursors, resource `_meta` is preserved exactly, and the existing subprocess configuration command remains valid.
+- [x] #8 Wheel and sdist `[mcp]` installs independently pass a site-packages-isolated standalone protocol smoke confined to temporary configuration/data/workspace paths, and the relevant MCP, Library, packaging, documentation, static-analysis, and security gates are green or compared against an identical clean-dev baseline.
+- [x] #9 User and developer documentation explain installation, supported protocol behavior, continuation, the standalone-versus-in-app Library boundary, the Library Import path replacing retired `ingest_media`, and the privacy risk of exposing local data to an external MCP client or cloud model.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Migrated the standalone MCP runtime from the removed FastMCP surface to the exact optional dependency mcp-unified==0.2.1. A thin ChatbookGatewayRuntime preserves canonical tool, resource, resource-template, and prompt mapping while the dependency owns stdio JSON-RPC negotiation and projection. The finalized standalone surface contains nine implemented built-ins, five resource templates plus dynamic resources, five prompts, and explicitly enabled permission-gated local tools. The upstream TASK-4000 removal of the fabricated ingest_media placeholder was preserved; ingest_media remains absent/refused and documentation directs persistent ingestion to Library Import.
+
+The eighteen library_* tools remain private to the in-process descriptor-backed runtime and raw calls remain refused. External MCP clients can read authorized private Library data and send it onward; internal diagnostics/refusals remain payload-free. Sync local handlers run through asyncio.to_thread: cancellation stops the await/output path but cannot roll back side effects already started in a worker thread.
+
+Integration renumbered the MCP decision from ADR-052 to ADR-053 to preserve the upstream ADR-052 record without changing the architecture. Review-driven TDD hardened official legacy-name compatibility, bounded catalog/resource behavior, partial and established connection ownership, cancellation/timeout precedence, same-ID pre-spawn reservation, payload-free initialization/discovery logging, and truthful disconnect_all reporting. The same independent reviewer returned Ready with no Critical, Important, or Minor findings on clean commit 0f7200aced210038c2868d132c6ccdf630f43866 over origin/dev ced98b9a42da8fa834e7851b1e7e357bb9a7dfd2.
+
+Modified categories: dependency and optional-feature declarations; MCP adapter/server/client/local-tool/prompt/runtime modules; protocol, lifecycle, Library-boundary, documentation, UI-harness, and artifact-isolation tests; user/developer documentation; ADR/spec/plan/task governance; and the TASK-14878 typed navigation-test stub correction.
+
+Evidence: exact final Tests/MCP passed 1,007 tests with one known dependency warning; the final lifecycle/race subset passed 17; the documentation contract passed 59. Changed-file Ruff format/check passed; mypy over four MCP production modules, Bandit over five MCP security targets, compileall, and working-tree/committed diff checks passed. Earlier Task 8 wheel and sdist site-packages isolation passed. A final normal-network artifact refresh installed both distributions, then both encountered the newly shared upstream omission of chachanotes_v32_to_v33_console_context_memory.sql. The complete final scoped command reported 1,083 passed and four non-MCP failures: clean origin/dev reproduced the frontmatter optional-feature mismatch and the installed-wheel missing-migration failure exactly, while the two branch-only artifact cases reached that same missing migration.
+
+Repository owner instruction: ignore all CI checks. Repository-full and CI were waived and are not green evidence. The earlier full run reached about 83% and stopped at the shared Library navigation hang; the exact node timed out at 300 seconds on both branch and clean dev. TASK-14878 updated the stale stub to NoteFlushOutcome(PERMITTED), after which the exact node passed in 1.08 seconds and its adjacent group passed in 2.18 seconds. No later repository-full or CI run is represented as successful.
+<!-- SECTION:NOTES:END -->
