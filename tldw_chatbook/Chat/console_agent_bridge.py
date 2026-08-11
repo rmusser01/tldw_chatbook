@@ -933,6 +933,20 @@ class _StreamingModelAdapter:
         A fleet child's own lifeline when one is active on this thread,
         else the turn's loop (the primary agent, and any inline sub-agent
         it runs on its own thread, where turn-scoped is exactly right).
+
+        **Before wiring a new caller through here, read this.** The
+        fallback is the TURN's loop, and thread-locals do not inherit: any
+        thread that did not itself enter ``child_lifeline`` gets the turn's
+        loop no matter which agent's work it is doing. That is correct for
+        every caller today -- ``chat_call`` has exactly one consumer
+        (``AgentService.chat_call``) and is only ever reached on the
+        agent's own thread, so the ``tool-*`` daemon threads
+        ``_call_with_timeout`` spawns never arrive here. But if one ever
+        did, after its turn had ended, it would submit onto a loop that is
+        stopped-but-not-closed and block for the full
+        ``_CHAT_CALL_TIMEOUT_SECONDS`` rather than failing loudly. A new
+        caller on a borrowed thread needs its own lifeline, not this
+        fallback.
         """
         child_loop = getattr(self._thread_loop, "loop", None)
         return self._loop if child_loop is None else child_loop
@@ -958,12 +972,26 @@ class _StreamingModelAdapter:
                 (thread exhaustion). Deliberately propagated rather than
                 degraded to the turn's loop: a child that quietly ran on a
                 loop due to die at end of turn would make survival
-                unpredictable from the user's side. The spawning
-                ``run_child`` catches it and the child's run row persists a
-                terminal status with the reason.
+                unpredictable from the user's side. Note where the reason
+                surfaces -- this scope is entered OUTSIDE ``_run_one``, so
+                ``create_run`` has not happened and **no run row exists**
+                to carry a status (probe-verified: ``child_run_rows == 0``).
+                ``run_child``'s ``except BaseException`` catches it and
+                reports it on the FLEET HANDLE (``fleet.finish(...,
+                RUN_ERROR, error=...)``), which is what the parent reads
+                back from ``wait_agents``/``check_agents``.
         """
+        # Name it WITHOUT the `fleet-` prefix that names a child's RUN
+        # thread (`AgentService.spawn`): the plain concatenation produced
+        # `fleet-loop-fleet-<handle>`, which `Tests/Chat/
+        # test_console_agent_bridge.py::_join_fleet_threads` -- and anything
+        # else enumerating children by that prefix -- would pick up as a
+        # second, phantom child. Harmless while lifelines shut down
+        # promptly; a wedged one would make every such sweep burn its full
+        # timeout. The handle still identifies it.
         lifeline = _ModelCallLifeline(
-            f"fleet-loop-{threading.current_thread().name}"
+            "child-loop-"
+            + threading.current_thread().name.removeprefix("fleet-")
         )
         try:
             lifeline.start()
