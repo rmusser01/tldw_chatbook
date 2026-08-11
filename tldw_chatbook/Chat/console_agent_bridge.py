@@ -776,47 +776,75 @@ def _subagent_summaries_from_fleet(
     rest of that run, and every child's real status/run_id/handle_id is
     always current.
 
-    ``handles`` is ALWAYS ``[]`` in the inline path (``[agents]
-    max_live_subagents <= 1``: no coordinator ever exists for this run, so
-    ``fallback`` -- the STEP_SPAWN-derived list ``on_step`` has been
-    building all along, one ``SubAgentSummary(step.summary or "")`` per
-    spawn, status stuck at its dataclass default ``"running"`` -- is the
-    ONLY source of rows, for the run's entire duration. This function
-    cannot improve on that there: there is no coordinator to read a real
-    status from.
+    ``handles`` non-empty means AT LEAST ONE handle has been reserved for
+    this run -- and once that is true, ``handles`` is used EXCLUSIVELY;
+    ``fallback`` is discarded for this publish (round-2 review: this is
+    deliberate, not a gap left to fix later -- see below). ``handles`` is
+    ALWAYS ``[]`` in the inline path (``[agents] max_live_subagents <=
+    1``: no coordinator ever exists for this run), where ``fallback`` --
+    the STEP_SPAWN-derived list ``on_step`` has been building all along,
+    one ``SubAgentSummary(step.summary or "")`` per spawn, status stuck
+    at its dataclass default ``"running"`` -- is the ONLY source of rows,
+    for the run's entire duration. This function cannot improve on that
+    there: there is no coordinator to read a real status from.
 
-    On a fleet-ON run, ``handles`` and ``fallback`` are MERGED, not
-    replace-on-non-empty (review fix, PR2b Task 2 round 2): a naive "use
-    handles whenever non-empty" made a just-spawned child's row VANISH for
-    exactly one publish. Every reserved handle's STEP_SPAWN step is
-    appended to ``fallback`` immediately before that SAME spawn's own
-    ``fleet.reserve()`` call a few lines later, in the very same
-    synchronous call (see ``agent_runtime.py``'s ``add(STEP_SPAWN, ...)``
-    then ``deps.spawn(...)``, and ``on_step``'s own comment at that
-    append) -- and spawn calls within one tool-call batch are processed
-    strictly one at a time on the primary's own thread, never
-    interleaved. So ``fallback``'s first ``len(handles)`` entries always
-    correspond, in the same order, to ``handles`` itself; any FURTHER
-    ``fallback`` entries are children whose STEP_SPAWN step has fired but
-    whose handle does not exist yet (reservation pending -- the same
-    brief, self-correcting window as before, now rendered honestly
-    instead of dropped: ``running``, empty ``run_id``/``handle_id``,
-    since they have no coordinator identity yet). Appending that surplus
-    after the fleet rows keeps the tuple append-only and order-stable
-    across publishes -- no vanish/reappear churn for a UI panel keying
-    rows off position (Task 3/4 build on exactly that).
+    On a fleet-ON run, there IS a real gap: a child's STEP_SPAWN step is
+    appended to ``fallback`` one ``on_step`` call before that SAME
+    spawn's own ``fleet.reserve()`` runs a few lines later (see
+    ``agent_runtime.py``'s ``add(STEP_SPAWN, ...)`` then
+    ``deps.spawn(...)``, and ``on_step``'s own comment at that append) --
+    so a just-declared child can be missing from ``handles`` for exactly
+    one publish if an EARLIER sibling already has a handle (``handles``
+    non-empty takes this branch, dropping the not-yet-reserved one along
+    with the rest of ``fallback``). This is accepted, not fixed, for two
+    reasons:
+
+    1. It is bounded and effectively unobservable. Every dispatched tool
+       call -- spawn included -- gets an unconditional STEP_TOOL_RESULT
+       step immediately after (``agent_runtime.py:974``, the very next
+       statement after the batch loop's dispatch), and for a fleet spawn
+       ``deps.spawn(...)`` between those two steps is just
+       ``fleet.reserve()`` + ``thread.start()`` -- no I/O, sub-millisecond.
+       The rail polls this snapshot on a ~0.2s (200ms) timer
+       (``chat_screen.py``'s ``_sync_native_console_chat_ui`` tick). A gap
+       many orders of magnitude narrower than one poll interval, that
+       self-corrects on the very next publish, is not something a poll can
+       realistically ever observe.
+    2. PR2b Task 2 round 2 tried to close it anyway, by merging: fleet
+       rows plus whatever ``fallback`` entries fall after
+       ``handles``'s own length. That relies on ``fallback``'s first
+       ``len(handles)`` entries corresponding 1:1, in order, to
+       ``handles`` -- which is FALSE in a reachable, common case:
+       ``AgentService.spawn()`` refuses a call (unknown named agent,
+       ``agent_service.py`` ~:1210; sub-agent budget exhausted, ~:1223)
+       AFTER its STEP_SPAWN step has already been appended to
+       ``fallback`` but BEFORE ``fleet.reserve()`` ever runs -- so that
+       refusal's ``fallback`` entry has no handle counterpart, ever, for
+       the rest of the run. A later, SUCCESSFUL spawn then shifts every
+       position after it out of alignment: e.g. ``fallback = ["task X
+       (unknown agent)", "task Y"]``, ``handles = [handle_for_task_Y]``
+       -- the positional merge renders task Y from ``handles`` (correct)
+       PLUS ``fallback[1:] = ["task Y"]`` again (a second, permanently
+       stale, blank-id duplicate of the SAME child), while task X stays
+       dropped either way. The bounded, self-correcting transient this
+       function accepts is preferable to a permanent, visibly-wrong
+       duplicate row for the entire rest of the run -- an LLM naming an
+       unknown agent is not a rare path. (Task X's row -- a refused
+       spawn producing no row at all on the fleet path -- is a
+       pre-existing, separate gap this function does not address either
+       way.)
     """
-    fleet_rows = tuple(
-        SubAgentSummary(
-            text=(f"[{h.agent}] {h.task}" if h.agent else h.task)[:200],
-            status=h.status,
-            run_id=h.run_id or "",
-            handle_id=h.handle_id,
+    if handles:
+        return tuple(
+            SubAgentSummary(
+                text=(f"[{h.agent}] {h.task}" if h.agent else h.task)[:200],
+                status=h.status,
+                run_id=h.run_id or "",
+                handle_id=h.handle_id,
+            )
+            for h in handles
         )
-        for h in handles
-    )
-    surplus = tuple(fallback[len(fleet_rows) :])
-    return fleet_rows + surplus
+    return tuple(fallback)
 
 
 @dataclass(frozen=True)
@@ -2192,23 +2220,21 @@ class ConsoleAgentBridge:
                 tool_diff = _pair_step_diff(pending_diffs, step.tool_name)
             if agent_kind == AGENT_KIND_PRIMARY:
                 if step.kind == STEP_SPAWN:
-                    # PR2b Task 2: the sole source of rows on the INLINE
-                    # path (fleet off) -- AND, on a fleet-ON run, still
-                    # the ONLY source for a child whose STEP_SPAWN step
-                    # has fired here but whose `fleet.reserve()` call (a
-                    # few lines below this, back in agent_runtime.py, in
-                    # the SAME synchronous spawn-processing step) has not
-                    # run yet. Round-2 review fix: an earlier version of
-                    # this comment called entries appended past that
-                    # point "dead weight" and dropped them outright in
-                    # `_subagent_summaries_from_fleet` whenever ANY handle
-                    # existed -- which made every child but the first
-                    # VANISH from the live rail for exactly one publish
-                    # (reproduced and fixed; see that function's own
-                    # docstring). Do not re-derive "dead weight" from this
-                    # comment and re-break it -- `_subagent_summaries_
-                    # from_fleet` MERGES this list with the fleet's real
-                    # handles, it does not just fall back to it.
+                    # PR2b Task 2: this is this run's ONLY source of rows
+                    # on the inline path (fleet off, `[agents]
+                    # max_live_subagents <= 1`) -- there is no coordinator
+                    # there, ever, so every entry appended here stays live
+                    # for the run's whole duration. On a fleet-ON run it
+                    # is superseded, publish by publish, as soon as ANY
+                    # handle has been reserved (`_subagent_summaries_
+                    # from_fleet` then uses `service.fleet_snapshot()`
+                    # exclusively, not a merge -- see that function's own
+                    # docstring for why a positional merge was tried and
+                    # reverted: it silently duplicated a child's row
+                    # forever whenever an EARLIER spawn in the same run
+                    # had been refused, e.g. an unknown named agent).
+                    # Entries appended here past that point are still
+                    # correct, just unused by that publish.
                     subagents.append(SubAgentSummary(step.summary or ""))
                 # format_agent_step_marker is the single source of truth for
                 # marker text -- shared with resume_marker_messages below --

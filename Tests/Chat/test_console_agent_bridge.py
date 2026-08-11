@@ -4116,88 +4116,83 @@ def test_inline_fleet_off_spawn_still_produces_a_live_subagent_row(
     assert subagents[0].handle_id == ""
 
 
-# -- PR2b Task 2 round 2 (review fix): merge, don't replace -------------
+# -- PR2b Task 2 round 2 (review correction): all-or-nothing is right ---
 #
-# `_subagent_summaries_from_fleet` is a pure function of its two
-# arguments, so these pin the exact defect directly against it -- no
-# threading/gating needed to reproduce "A reserved, B's STEP_SPAWN fired
-# but not yet reserved", which is transient and racy to catch live.
+# The merge attempted in round 2 (fleet rows + whatever `fallback` entries
+# fall after `len(handles)`) assumed `fallback`'s first `len(handles)`
+# entries always correspond, in order, to `handles`. That is false
+# whenever an EARLIER spawn in the same run was REFUSED:
+# `AgentService.spawn()` returns before `fleet.reserve()` ever runs for an
+# unknown named agent (`agent_service.py` ~:1210) or an exhausted
+# sub-agent budget (~:1223) -- but its STEP_SPAWN step still lands in
+# `fallback` unconditionally, before the refusal is even known
+# (`agent_runtime.py` appends it, then calls `deps.spawn(...)`). That
+# refused entry never gets a handle, ever, for the rest of the run. Every
+# SUCCESSFUL spawn after it then shifts `fallback[len(handles):]` out of
+# alignment with the handles it's supposed to be "the surplus beyond" --
+# permanently duplicating an already-reserved sibling's row instead of
+# transiently showing the truly-pending one. Reverted to all-or-nothing
+# (`if handles: <fleet rows exclusively> else: <fallback>`); see
+# `_subagent_summaries_from_fleet`'s own docstring for the full
+# trade-off -- the transient this reintroduces is bounded to
+# sub-millisecond (the very next step is an unconditional
+# STEP_TOOL_RESULT, `agent_runtime.py:974`) against the rail's ~200ms
+# poll, so it is not realistically observable, unlike the permanent
+# duplicate the merge produced.
 
 
-def test_subagent_summaries_from_fleet_keeps_pre_reserve_row_visible():
-    """The all-or-nothing bug: once ANY handle existed, the OLD code used
-    `handles` exclusively and dropped the rest of `fallback` outright --
-    so a child whose STEP_SPAWN step had already been appended to
-    `fallback` but whose `fleet.reserve()` call had not yet run (a few
-    lines later, in the very same synchronous spawn-processing step; see
-    `on_step`'s own comment at the STEP_SPAWN append) would VANISH from
-    the published row set for exactly one publish, then reappear once its
-    own handle existed. Reproduces that exact moment directly: A already
-    has a real handle, B only has a `fallback` entry.
+def test_subagent_summaries_from_fleet_never_duplicates_or_resurrects_a_refused_sibling():
+    """Pins the defect that actually matters: once ANY handle has been
+    reserved, rows come SOLELY from the coordinator. A `fallback` entry
+    left behind by an EARLIER refused spawn (unknown agent, exhausted
+    budget -- see `agent_service.py`'s `spawn()`) must never appear, and
+    must never cause a LATER, successfully-reserved sibling's row to be
+    duplicated.
+
+    Reproduces the exact round-2 regression: task X's spawn was refused
+    (its STEP_SPAWN step is in `fallback`; it never gets a handle); task
+    Y's spawn succeeded (it is in both `fallback` and `handles`).
+
+    Mutation-checked: re-applying the round-2 merge form (`fleet_rows +
+    fallback[len(fleet_rows):]`) turns this test red --
+    `len(rows) == 1` fails (`assert 2 == 1`) because task Y is
+    duplicated by the shifted-out-of-alignment `fallback[1:]`.
     """
-    handle_a = FleetHandle(
-        handle_id="h-a", run_id="run-a", agent=None, task="task A", status="running"
-    )
     fallback = [
-        SubAgentSummary("task A"),  # mirrors handle_a -- already reserved
-        SubAgentSummary("task B"),  # STEP_SPAWN fired, reserve() not yet run
+        SubAgentSummary("task X (unknown agent)"),  # refused -- no handle, ever
+        SubAgentSummary("task Y"),
+    ]
+    handle_y = FleetHandle(
+        handle_id="h-y", run_id="run-y", agent=None, task="task Y", status="running"
+    )
+
+    rows = _subagent_summaries_from_fleet([handle_y], fallback)
+
+    assert len(rows) == 1, rows
+    assert rows[0].text == "task Y"
+    assert rows[0].handle_id == "h-y"
+    assert rows[0].run_id == "run-y"
+    assert not any("task X" in r.text for r in rows), (
+        "a refused sibling's stale fallback row must never appear once "
+        "the fleet has any real handle"
+    )
+    assert sum(1 for r in rows if r.text == "task Y") == 1, (
+        "task Y must not be duplicated by a stale fallback entry shifted "
+        "out of alignment by the earlier refusal"
+    )
+
+
+def test_subagent_summaries_from_fleet_inline_path_renders_fallback_unchanged():
+    """Fleet off (`handles == []` -- e.g. `[agents] max_live_subagents <=
+    1`, no coordinator ever exists for this run): every `fallback` row
+    must still render, unchanged. This path has no other source of
+    truth, and the all-or-nothing revert must not disturb it.
+    """
+    fallback = [
+        SubAgentSummary("task A"),
+        SubAgentSummary("task B", status="running"),
     ]
 
-    merged = _subagent_summaries_from_fleet([handle_a], fallback)
+    rows = _subagent_summaries_from_fleet([], fallback)
 
-    assert [s.text for s in merged] == ["task A", "task B"], merged
-    assert merged[0].status == "running"
-    assert merged[0].handle_id == "h-a"
-    assert merged[0].run_id == "run-a"
-    # B has no coordinator identity yet -- rendered honestly (running,
-    # blank ids), not invented and not dropped.
-    assert merged[1].status == "running"
-    assert merged[1].handle_id == ""
-    assert merged[1].run_id == ""
-
-
-def test_subagent_summaries_from_fleet_does_not_duplicate_a_reserved_child():
-    """Once B ALSO reserves, there must be exactly ONE row for it -- not
-    one from `handles` and a second, stale one surviving from
-    `fallback`. Asserts the ROW COUNT specifically: a naive `tuple(handles)
-    + tuple(fallback)` merge (rather than slicing off the fallback
-    entries `handles` already covers) would pass any membership-only
-    check while silently doubling every already-reserved row.
-    """
-    handle_a = FleetHandle(
-        handle_id="h-a", run_id="run-a", agent=None, task="task A", status="running"
-    )
-    handle_b = FleetHandle(
-        handle_id="h-b", run_id="run-b", agent=None, task="task B", status="running"
-    )
-    fallback = [SubAgentSummary("task A"), SubAgentSummary("task B")]
-
-    merged = _subagent_summaries_from_fleet([handle_a, handle_b], fallback)
-
-    assert len(merged) == 2, merged
-    assert [s.text for s in merged] == ["task A", "task B"]
-    assert merged[1].handle_id == "h-b"
-    assert merged[1].run_id == "run-b"
-
-
-def test_subagent_summaries_from_fleet_row_order_is_stable_across_publishes():
-    """A UI panel keys rows off position (Task 3/4 build per-row widgets
-    on structural identity/order) -- the row order at the "A reserved, B
-    pending" publish must match the row order once both are reserved:
-    append-only growth, never a reorder, and (combined with the two tests
-    above) never a vanish/reappear either.
-    """
-    handle_a = FleetHandle(
-        handle_id="h-a", run_id="run-a", agent=None, task="task A", status="running"
-    )
-    handle_b = FleetHandle(
-        handle_id="h-b", run_id="run-b", agent=None, task="task B", status="running"
-    )
-    fallback = [SubAgentSummary("task A"), SubAgentSummary("task B")]
-
-    pre_reserve = _subagent_summaries_from_fleet([handle_a], fallback)
-    post_reserve = _subagent_summaries_from_fleet([handle_a, handle_b], fallback)
-
-    assert [s.text for s in pre_reserve] == ["task A", "task B"]
-    assert [s.text for s in post_reserve] == ["task A", "task B"]
-    assert [s.text for s in pre_reserve] == [s.text for s in post_reserve]
+    assert rows == tuple(fallback)
