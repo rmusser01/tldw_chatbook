@@ -912,6 +912,17 @@ async def test_studio_profile_preview_forwards_only_identity_and_private_resolve
     service = _StudioService(response, effective_model_id="clone-model")
     profile_reference = object()
     profile_service = SimpleNamespace(
+        get_profile=AsyncMock(
+            return_value=SimpleNamespace(
+                repository_generation=8,
+                profile=SimpleNamespace(
+                    revision=5,
+                    provider_id="audio_cpp",
+                    model_id="clone-model",
+                    reference=object(),
+                ),
+            )
+        ),
         get_reference=AsyncMock(return_value=profile_reference)
     )
     app = SimpleNamespace(
@@ -965,11 +976,20 @@ async def test_studio_profile_preview_forwards_only_identity_and_private_resolve
             preview.profile_revision,
         )
         assert resolved is profile_reference
+        profile_service.get_profile.assert_awaited_once_with(preview.profile_id)
         profile_service.get_reference.assert_awaited_once_with(
             preview.profile_id,
             expected_generation=preview.repository_generation,
             expected_revision=preview.profile_revision,
         )
+        profile_service.get_profile.return_value.profile.model_id = "other-model"
+        with pytest.raises(RuntimeError, match="profile preview is stale"):
+            await resolver(  # type: ignore[operator]
+                preview.profile_id,
+                preview.repository_generation,
+                preview.profile_revision,
+            )
+        assert profile_service.get_reference.await_count == 1
     finally:
         artifact.path.unlink(missing_ok=True)
 

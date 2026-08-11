@@ -999,6 +999,16 @@ class STTSEventHandler:
                 profile_service = await loader()
                 if profile_service is None:
                     raise RuntimeError("TTS profile service is unavailable")
+                loaded = await profile_service.get_profile(profile_id)
+                profile = loaded.profile
+                if (
+                    loaded.repository_generation != repository_generation
+                    or profile.revision != profile_revision
+                    or profile.provider_id != snapshot.provider_id
+                    or profile.model_id != snapshot.model_id
+                    or profile.reference is None
+                ):
+                    raise RuntimeError("TTS profile preview is stale")
                 return await profile_service.get_reference(
                     profile_id,
                     expected_generation=repository_generation,
