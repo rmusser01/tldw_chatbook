@@ -137,7 +137,20 @@ class TTSCloneReferenceMaterializer:
         self,
         reference: TTSCloneReference,
     ) -> TTSCloneReferenceMaterialization:
-        """Publish one private owner from an exact stored reference."""
+        """Publish one private owner from an exact stored reference.
+
+        Args:
+            reference: Exact canonical reference to materialize privately.
+
+        Returns:
+            A live opaque owner for the operation-scoped reference asset.
+
+        Raises:
+            TTSCloneMaterializationError: If the platform, root, reference,
+                publication, or materializer lifecycle is unavailable.
+            BaseException: A caller control-flow signal after retained worker
+                cleanup reaches a terminal state.
+        """
         call = cast(asyncio.Task[object] | None, asyncio.current_task())
         if call is not None:
             self._materialize_calls.add(call)
@@ -238,7 +251,9 @@ class TTSCloneReferenceMaterializer:
         current = asyncio.current_task()
         calls = [task for task in self._materialize_calls if task is not current]
         if calls:
-            await asyncio.gather(*(asyncio.shield(task) for task in calls), return_exceptions=True)
+            await asyncio.gather(
+                *(asyncio.shield(task) for task in calls), return_exceptions=True
+            )
         handle_calls = [task for task in self._handle_calls if task is not current]
         if handle_calls:
             await asyncio.gather(
@@ -377,10 +392,7 @@ def _private_directory(info: os.stat_result) -> bool:
 
 
 def _private_regular_file(info: os.stat_result) -> bool:
-    return (
-        _owned_regular_file(info)
-        and stat.S_IMODE(info.st_mode) == _OWNER_FILE_MODE
-    )
+    return _owned_regular_file(info) and stat.S_IMODE(info.st_mode) == _OWNER_FILE_MODE
 
 
 def _owned_regular_file(info: os.stat_result) -> bool:
@@ -460,9 +472,8 @@ def _create_materialization_sync(
             dir_fd=root_fd,
             follow_symlinks=False,
         )
-        if (
-            not _private_directory(owner_info)
-            or _identity(owner_info) != _identity(named_owner_info)
+        if not _private_directory(owner_info) or _identity(owner_info) != _identity(
+            named_owner_info
         ):
             raise OSError("unsafe owner")
 
@@ -500,10 +511,9 @@ def _create_materialization_sync(
                 dir_fd=owner_fd,
                 follow_symlinks=False,
             )
-            if (
-                not _private_regular_file(asset_info)
-                or _identity(asset_info) != _identity(named_asset_info)
-            ):
+            if not _private_regular_file(asset_info) or _identity(
+                asset_info
+            ) != _identity(named_asset_info):
                 raise OSError("unsafe asset")
         finally:
             os.close(asset_fd)
@@ -621,9 +631,8 @@ def _prepare_runtime_root_sync(root: Path) -> tuple[Path, tuple[int, int]]:
     try:
         root_info = os.fstat(root_fd)
         named_info = os.stat(selected, follow_symlinks=False)
-        if (
-            not _private_directory(root_info)
-            or _identity(root_info) != _identity(named_info)
+        if not _private_directory(root_info) or _identity(root_info) != _identity(
+            named_info
         ):
             raise OSError("unsafe runtime root")
         _lock_root_exclusive(root_fd)
@@ -677,9 +686,9 @@ def _sweep_orphans(root_fd: int) -> None:
                 continue
             lock_fd = os.open("owner.lock", _FILE_FLAGS, dir_fd=owner_fd)
             lock_info = os.fstat(lock_fd)
-            if not _owned_regular_file(lock_info) or _identity(
-                lock_info
-            ) != _identity(named_lock_info):
+            if not _owned_regular_file(lock_info) or _identity(lock_info) != _identity(
+                named_lock_info
+            ):
                 continue
             if stat.S_IMODE(lock_info.st_mode) != _OWNER_FILE_MODE:
                 os.fchmod(lock_fd, _OWNER_FILE_MODE)
@@ -701,10 +710,9 @@ def _sweep_orphans(root_fd: int) -> None:
                 asset_fd = os.open(asset_name, _FILE_FLAGS, dir_fd=owner_fd)
                 try:
                     asset_info = os.fstat(asset_fd)
-                    if (
-                        not _owned_regular_file(asset_info)
-                        or _identity(asset_info) != _identity(named_asset_info)
-                    ):
+                    if not _owned_regular_file(asset_info) or _identity(
+                        asset_info
+                    ) != _identity(named_asset_info):
                         continue
                     if stat.S_IMODE(asset_info.st_mode) != _OWNER_FILE_MODE:
                         os.fchmod(asset_fd, _OWNER_FILE_MODE)
@@ -761,17 +769,15 @@ def _cleanup_materialization_sync(record: _MaterializationRecord) -> None:
     except FileNotFoundError:
         named_asset_info = None
     if named_asset_info is not None:
-        if (
-            _identity(named_asset_info) != record.asset_identity
-            or not _private_regular_file(named_asset_info)
-        ):
+        if _identity(
+            named_asset_info
+        ) != record.asset_identity or not _private_regular_file(named_asset_info):
             raise OSError("owned materialization changed")
         os.unlink(record.asset_name, dir_fd=record.owner_fd)
 
     lock_info = os.fstat(record.lock_fd)
-    if (
-        _identity(lock_info) != record.lock_identity
-        or not _private_open_lock(lock_info)
+    if _identity(lock_info) != record.lock_identity or not _private_open_lock(
+        lock_info
     ):
         raise OSError("owned materialization changed")
     try:
@@ -783,10 +789,9 @@ def _cleanup_materialization_sync(record: _MaterializationRecord) -> None:
     except FileNotFoundError:
         named_lock_info = None
     if named_lock_info is not None:
-        if (
-            _identity(named_lock_info) != record.lock_identity
-            or not _private_regular_file(named_lock_info)
-        ):
+        if _identity(
+            named_lock_info
+        ) != record.lock_identity or not _private_regular_file(named_lock_info):
             raise OSError("owned materialization changed")
         os.unlink("owner.lock", dir_fd=record.owner_fd)
 

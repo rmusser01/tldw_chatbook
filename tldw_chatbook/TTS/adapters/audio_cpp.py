@@ -464,7 +464,19 @@ class AudioCppAdapter:
         self,
         request: TTSRequest,
     ) -> AudioCppCloneCapabilityAdmission:
-        """Issue single-use authority for one ready Guided model generation."""
+        """Issue single-use authority for one ready Guided model generation.
+
+        Args:
+            request: Exact public request already bound to this adapter lease.
+
+        Returns:
+            Opaque single-use authority for the matching Guided process and
+            recipe generation.
+
+        Raises:
+            TTSOperationError: If the source, request, catalog, recipe, or
+                managed process generation cannot admit clone synthesis.
+        """
         self.preflight_clone_source()
         if type(request) is not TTSRequest or not self._valid_speech_request(request):
             raise self._operation_error(_REQUEST_INVALID, uuid4().hex) from None
@@ -479,12 +491,9 @@ class AudioCppAdapter:
                 _MANAGED_CONFIGURATION_INVALID,
                 uuid4().hex,
             ) from None
-        if (
-            "clone" not in recipe.capabilities
-            or not recipe.admits_voice_reference(
-                has_voice=request.voice is not None,
-                has_reference=True,
-            )
+        if "clone" not in recipe.capabilities or not recipe.admits_voice_reference(
+            has_voice=request.voice is not None,
+            has_reference=True,
         ):
             raise self._operation_error(_REQUEST_INVALID, uuid4().hex) from None
         process_generation = self._current_clone_process_generation()
@@ -1022,8 +1031,7 @@ class AudioCppAdapter:
         except Exception:
             live_owner = False
         if (
-            self._clone_capabilities.get(capability_token)
-            is not capability
+            self._clone_capabilities.get(capability_token) is not capability
             or not live_owner
         ):
             return _REQUEST_INVALID
