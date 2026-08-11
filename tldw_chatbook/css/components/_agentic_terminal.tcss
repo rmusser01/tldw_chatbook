@@ -3251,6 +3251,116 @@ with stray left-edge border fragments), and padding 0 1 so the full
     min-height: 0;
 }
 
+/* PR2b Task 3: the reusable Inspector-style section component (header +
+   optional chevron + optional right-aligned summary, row body, optional
+   "View all" tail). Ships the grammar once -- Agents (Task 4) is the first
+   consumer; Changes/Sources/Workspace sections follow later against these
+   same classes (spec section 7). */
+.console-inspector-section {
+    height: auto;
+    min-height: 0;
+    margin: 0 0 1 0;
+}
+
+.console-inspector-section-header {
+    height: 1;
+    min-height: 1;
+    layout: horizontal;
+    align: left middle;
+}
+
+.console-inspector-section-title {
+    width: 1fr;
+    min-width: 0;
+    height: 1;
+    text-style: bold;
+    color: $ds-text-primary;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+.console-inspector-section-summary {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    color: $ds-text-muted;
+    text-align: right;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+.console-inspector-section-toggle {
+    width: 3;
+    min-width: 3;
+    height: 1;
+    text-style: bold;
+}
+
+.console-inspector-section-toggle:focus {
+    background: $ds-action-focus 30%;
+    text-style: underline bold;
+}
+
+.console-inspector-section-body {
+    height: auto;
+    min-height: 0;
+    padding: 0 0 0 1;
+}
+
+.console-inspector-section-row {
+    height: auto;
+    min-height: 2;
+    padding: 0 1;
+}
+
+.console-inspector-section-row:focus {
+    background: $ds-action-focus 20%;
+}
+
+.console-inspector-section-row-primary {
+    height: 1;
+    color: $ds-text-primary;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+.console-inspector-section-row-secondary {
+    height: 1;
+    color: $ds-text-muted;
+    text-style: dim;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+/* Status-colored variants of the row's PRIMARY line only -- the secondary
+   (dimmed detail) line stays muted regardless of status. Class names are
+   built via f-string interpolation in console_inspector_section.py, which
+   is out of scope for test_css_class_coverage_contract.py by design (its
+   docstring: "f-strings ... are out of scope"); these rules are shipped
+   for real styling, not to satisfy that contract. */
+.console-inspector-section-row-running > .console-inspector-section-row-primary {
+    color: $ds-status-running;
+}
+
+.console-inspector-section-row-done > .console-inspector-section-row-primary {
+    color: $ds-status-ready;
+}
+
+.console-inspector-section-row-error > .console-inspector-section-row-primary {
+    color: $ds-status-error;
+}
+
+.console-inspector-section-row-blocked > .console-inspector-section-row-primary {
+    color: $ds-status-blocked;
+}
+
+.console-inspector-section-view-all {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    margin: 1 0 0 0;
+}
+
 .console-live-work-source-readiness {
     height: auto;
     min-height: 0;
