@@ -2714,22 +2714,32 @@ def test_local_custom_openai_success_hides_input_prompt_key_endpoint_and_respons
 
     assert result == CUSTOM_OPENAI_RESPONSE_CANARY
     assert settings_calls == [((), {})]
-    assert len(transport_calls) == 1
-    args, kwargs = transport_calls[0]
-    assert args == (variant.endpoint,)
-    assert kwargs["headers"] == {
-        "Authorization": f"Bearer {variant.api_key}",
-        "Content-Type": "application/json",
-    }
-    assert kwargs["json"]["model"] == variant.model
-    assert kwargs["json"]["messages"] == [
-        {"role": "system", "content": "fixed system message"},
-        {
-            "role": "user",
-            "content": (
-                f"{CUSTOM_OPENAI_INPUT_CANARY} \n\n\n\n{CUSTOM_OPENAI_PROMPT_CANARY}"
-            ),
-        },
+    assert transport_calls == [
+        (
+            (variant.endpoint,),
+            {
+                "headers": {
+                    "Authorization": f"Bearer {variant.api_key}",
+                    "Content-Type": "application/json",
+                },
+                "json": {
+                    "model": variant.model,
+                    "messages": [
+                        {"role": "system", "content": "fixed system message"},
+                        {
+                            "role": "user",
+                            "content": (
+                                f"{CUSTOM_OPENAI_INPUT_CANARY} "
+                                f"\n\n\n\n{CUSTOM_OPENAI_PROMPT_CANARY}"
+                            ),
+                        },
+                    ],
+                    "max_tokens": 64,
+                    "temperature": 0.2,
+                    "stream": False,
+                },
+            },
+        )
     ]
     for canary in (
         CUSTOM_OPENAI_INPUT_CANARY,
@@ -3035,7 +3045,7 @@ def test_local_custom_openai_missing_provider_section_preserves_error_contract(
 
     with _capture_stdlib_and_loguru(caplog) as captured:
         result = variant.summarizer(
-            "fixed-explicit-key",
+            None,
             "fixed input",
             "fixed prompt",
             temp=0.2,
