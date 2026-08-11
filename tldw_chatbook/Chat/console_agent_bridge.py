@@ -1103,13 +1103,53 @@ class _ModelCallLifeline:
             self.loop.close()
 
 
+_BUDGET_USAGE_COUNT_KEYS = (
+    "prompt_tokens",
+    "input_tokens",
+    "completion_tokens",
+    "output_tokens",
+    "total_tokens",
+    "cache_read_input_tokens",
+    "cache_creation_input_tokens",
+)
+_BUDGET_USAGE_DETAILS_KEYS = (
+    "prompt_tokens_details",
+    "input_tokens_details",
+    "input_token_details",
+    "completion_tokens_details",
+    "output_tokens_details",
+    "output_token_details",
+)
+_BUDGET_USAGE_DETAIL_COUNT_KEYS = ("cached_tokens", "reasoning_tokens")
+
+
+def _has_strict_budget_usage_counts(payload: Mapping[str, Any]) -> bool:
+    for key in _BUDGET_USAGE_COUNT_KEYS:
+        if key in payload:
+            value = payload[key]
+            if type(value) is not int or value < 0:
+                return False
+    for key in _BUDGET_USAGE_DETAILS_KEYS:
+        if key not in payload:
+            continue
+        details = payload[key]
+        if not isinstance(details, Mapping):
+            return False
+        for count_key in _BUDGET_USAGE_DETAIL_COUNT_KEYS:
+            if count_key in details:
+                value = details[count_key]
+                if type(value) is not int or value < 0:
+                    return False
+    return True
+
+
 def _openai_usage_from_provider_call(
     payload: Mapping[str, Any] | None,
     *,
     provider: str,
     model: str,
 ) -> dict[str, Any] | None:
-    if not isinstance(payload, Mapping):
+    if not isinstance(payload, Mapping) or not _has_strict_budget_usage_counts(payload):
         return None
     normalized = ProviderUsage.from_provider_payload(
         payload,

@@ -1120,9 +1120,82 @@ def test_anthropic_split_usage_reaches_agent_budget_with_cache_buckets(
         {},
         {"tokens": 12},
         {"prompt_tokens": "not-a-number", "completion_tokens": -5},
+        {
+            "input_tokens": 0,
+            "input_tokens_details": {"cached_tokens": 0},
+            "output_tokens": 0,
+            "output_tokens_details": {"reasoning_tokens": 0},
+            "total_tokens": 0,
+        },
     ],
 )
 def test_provider_usage_handoff_omits_absent_or_nonpositive_payloads(payload):
+    assert (
+        _openai_usage_from_provider_call(
+            payload,
+            provider="openai",
+            model="gpt-4.1",
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "count_key",
+    [
+        "prompt_tokens",
+        "input_tokens",
+        "completion_tokens",
+        "output_tokens",
+        "total_tokens",
+        "cache_read_input_tokens",
+        "cache_creation_input_tokens",
+    ],
+)
+def test_budget_usage_handoff_rejects_each_malformed_top_level_count(count_key):
+    payload = {
+        "prompt_tokens": 1,
+        "input_tokens": 1,
+        "completion_tokens": 1,
+        "output_tokens": 1,
+        "total_tokens": 2,
+        count_key: "1",
+    }
+
+    assert (
+        _openai_usage_from_provider_call(
+            payload,
+            provider="openai",
+            model="gpt-4.1",
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    ("details_key", "details"),
+    [
+        ("prompt_tokens_details", None),
+        ("input_tokens_details", []),
+        ("input_token_details", {"cached_tokens": "1"}),
+        ("completion_tokens_details", {"cached_tokens": False}),
+        ("output_tokens_details", {"reasoning_tokens": 1.5}),
+        ("output_token_details", {"reasoning_tokens": -1}),
+    ],
+)
+def test_budget_usage_handoff_rejects_each_malformed_details_shape_or_count(
+    details_key,
+    details,
+):
+    payload = {
+        "prompt_tokens": 1,
+        "input_tokens": 1,
+        "completion_tokens": 1,
+        "output_tokens": 1,
+        "total_tokens": 2,
+        details_key: details,
+    }
+
     assert (
         _openai_usage_from_provider_call(
             payload,
@@ -1149,6 +1222,169 @@ def test_openai_usage_handoff_preserves_chat_completion_cache_details():
         "completion_tokens": 20,
         "total_tokens": 120,
     }
+
+
+@pytest.mark.parametrize(
+    "usage",
+    [
+        {"input_tokens": True, "output_tokens": 3, "total_tokens": 4},
+        {"input_tokens": "9", "output_tokens": 3, "total_tokens": 12},
+        {"input_tokens": 9.5, "output_tokens": 3, "total_tokens": 12},
+        {"input_tokens": -1, "output_tokens": 3, "total_tokens": 2},
+        {"input_tokens": 9, "output_tokens": 3, "total_tokens": "12"},
+        {
+            "input_tokens": 9,
+            "input_tokens_details": {"cached_tokens": False},
+            "output_tokens": 3,
+            "total_tokens": 12,
+        },
+        {
+            "input_tokens": 9,
+            "input_tokens_details": {"cached_tokens": 2},
+            "output_tokens": 3,
+            "output_tokens_details": {"reasoning_tokens": 1.5},
+            "total_tokens": 12,
+        },
+        {
+            "input_tokens": 9,
+            "input_tokens_details": [],
+            "output_tokens": 3,
+            "total_tokens": 12,
+        },
+        {
+            "input_tokens": 9,
+            "cache_read_input_tokens": "2",
+            "cache_creation_input_tokens": 1.5,
+            "output_tokens": 3,
+        },
+    ],
+    ids=(
+        "bool",
+        "numeric-string",
+        "fractional-float",
+        "negative",
+        "malformed-total",
+        "nested-bool",
+        "nested-float",
+        "malformed-details-shape",
+        "anthropic-cache-fields",
+    ),
+)
+def test_malformed_streamed_usage_uses_agent_estimator_instead_of_coercion(
+    tmp_path,
+    monkeypatch,
+    usage,
+):
+    estimator_calls: list[str] = []
+
+    def count_messages(*_args, **_kwargs):
+        estimator_calls.append("messages")
+        return 40
+
+    def count_text(*_args, **_kwargs):
+        estimator_calls.append("text")
+        return 2
+
+    monkeypatch.setattr(agent_service, "count_tokens_messages", count_messages)
+    monkeypatch.setattr(agent_service, "estimate_tokens", count_text)
+
+    def chat_api_call(**_kwargs):
+        return iter(
+            (
+                {"choices": [{"delta": {"content": "answer"}}]},
+                {
+                    "choices": [{"delta": {"content": ""}, "finish_reason": "stop"}],
+                    "usage": usage,
+                },
+            )
+        )
+
+    gateway = ConsoleProviderGateway(chat_api_call_fn=chat_api_call)
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+    signals = ConsoleProviderStreamSignals()
+    resolution = ConsoleProviderResolution(
+        provider="OpenAI",
+        base_url="https://api.openai.com/v1",
+        model="gpt-4.1",
+        ready=True,
+        readiness_key="openai",
+        execution_key="openai",
+        api_key="openai-test-key",
+        streaming=True,
+    )
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        resolution=resolution,
+        model="gpt-4.1",
+        provider_stream_signals=signals,
+    )
+
+    assert outcome.status == "done"
+    assert outcome.total_tokens == 42
+    assert estimator_calls == ["messages", "text"]
+    # The raw aggregate remains tolerant/unchanged for persistence and cost
+    # consumers; only the AgentService budget handoff fails closed.
+    assert signals.usage_payloads() == [usage]
+
+
+def test_exact_zero_streamed_usage_counts_remain_authoritative(
+    tmp_path,
+    monkeypatch,
+):
+    usage = {
+        "input_tokens": 0,
+        "input_tokens_details": {"cached_tokens": 0},
+        "output_tokens": 3,
+        "output_tokens_details": {"reasoning_tokens": 0},
+        "total_tokens": 3,
+    }
+
+    def fail_estimator(*_args, **_kwargs):
+        raise AssertionError("valid exact-integer usage must remain authoritative")
+
+    monkeypatch.setattr(agent_service, "count_tokens_messages", fail_estimator)
+    monkeypatch.setattr(agent_service, "estimate_tokens", fail_estimator)
+
+    def chat_api_call(**_kwargs):
+        return iter(
+            (
+                {"choices": [{"delta": {"content": "answer"}}]},
+                {
+                    "choices": [{"delta": {"content": ""}, "finish_reason": "stop"}],
+                    "usage": usage,
+                },
+            )
+        )
+
+    gateway = ConsoleProviderGateway(chat_api_call_fn=chat_api_call)
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+    resolution = ConsoleProviderResolution(
+        provider="QwenCloud",
+        base_url="https://workspace.example.test/compatible-mode/v1",
+        model="qwen3.8-max",
+        ready=True,
+        readiness_key="qwencloud",
+        execution_key="qwencloud",
+        api_key="qwen-test-key",
+        streaming=True,
+        api_mode="responses",
+    )
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        resolution=resolution,
+        model="qwen3.8-max",
+    )
+
+    assert outcome.status == "done"
+    assert outcome.total_tokens == 3
 
 
 def test_concurrent_subagent_adapter_calls_keep_terminal_usage_call_scoped(tmp_path):
