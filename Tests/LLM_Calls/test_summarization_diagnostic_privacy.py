@@ -2252,6 +2252,9 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
             if checked_owner.get(key) != generated_owner.get(key)
         }
         assert changed_fields <= mutable_fields
+        assert not changed_fields, (
+            f"checked summarization owner must match generated inventory: {path}"
+        )
 
     sites = _ledger_sites()
     deleted_by_module = Counter(
@@ -2335,6 +2338,24 @@ def test_manifest_boundary_rejects_owned_digest_schema_changes(
 
     with pytest.raises(AssertionError, match="diagnostic digest"):
         _run_manifest_boundary_mutant(monkeypatch, tmp_path, inventory)
+
+
+def test_manifest_boundary_rejects_unreconciled_owned_digest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    checked_inventory = json.loads(INVENTORY_PATH.read_text(encoding="utf-8"))
+    owned_entry = next(
+        owner
+        for owner in checked_inventory["owners"]
+        if owner["path"] == "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py"
+    )
+    owned_entry["diagnostic_digest"] = "0" * 20
+    inventory_path = tmp_path / "production-diagnostic-inventory.json"
+    inventory_path.write_text(json.dumps(checked_inventory), encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "INVENTORY_PATH", inventory_path)
+
+    with pytest.raises(AssertionError, match="must match generated inventory"):
+        test_manifest_boundary_changes_only_summarization_owner_diagnostics()
 
 
 def test_ledger_retains_all_523_starting_sites() -> None:
@@ -5738,6 +5759,50 @@ def test_google_success_hides_credential_input_prompt_and_response(
     assert "Google: Input prepared; character_count=" in captured.text
     assert "Google: Prompt prepared; character_count=" in captured.text
     assert "Google: Summary generated; character_count=" in captured.text
+
+
+def test_google_model_lookup_precedes_prompt_construction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[tuple[str, str] | str] = []
+
+    class PromptValue:
+        def __str__(self) -> str:
+            events.append("prompt")
+            return "fixed prompt"
+
+    real_get_cli_setting = general_summarization.get_cli_setting
+    signature = inspect.signature(real_get_cli_setting)
+    settings = _google_provider_settings()
+
+    def fake_get_cli_setting(*args: object, **kwargs: object) -> object:
+        bound = signature.bind(*args, **kwargs)
+        key = (bound.arguments["section"], bound.arguments.get("key"))
+        events.append(key)
+        if key in settings:
+            return settings[key]
+        return bound.arguments.get("default")
+
+    monkeypatch.setattr(
+        general_summarization,
+        "get_cli_setting",
+        fake_get_cli_setting,
+    )
+    _install_signature_bound_general_config_loader(monkeypatch)
+    _install_signature_bound_general_session_post(
+        monkeypatch,
+        _FakeResponse(json_data={"choices": [{"message": {"content": "fixed"}}]}),
+    )
+
+    result = general_summarization.summarize_with_google(
+        GOOGLE_CREDENTIAL_CANARY,
+        "fixed input",
+        PromptValue(),
+        system_message="fixed system",
+    )
+
+    assert result == "fixed"
+    assert events.index(("google_api", "model")) < events.index("prompt")
 
 
 def test_google_missing_config_credential_does_not_claim_configuration(

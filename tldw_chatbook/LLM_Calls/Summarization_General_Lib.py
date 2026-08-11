@@ -2511,11 +2511,6 @@ def summarize_with_google(
             raise ValueError(f"Google: Invalid input data format: {type(data)}")
 
         logging.debug("Google: Input prepared; character_count=%s", len(text))
-        google_prompt = f"{text} \n\n\n\n{custom_prompt_arg}"
-        logging.debug(
-            "Google: Prompt prepared; character_count=%s",
-            len(google_prompt),
-        )
 
         google_model = get_cli_setting("google_api", "model", "gemini-1.5-pro")
         logging.debug(f"Google: Using model: {google_model}")
@@ -2526,6 +2521,11 @@ def summarize_with_google(
         }
 
         logging.debug("openai: Preparing data + prompt for submittal")
+        google_prompt = f"{text} \n\n\n\n{custom_prompt_arg}"
+        logging.debug(
+            "Google: Prompt prepared; character_count=%s",
+            len(google_prompt),
+        )
         # if temp is None:
         #    temp = 0.7
         if system_message is None:
