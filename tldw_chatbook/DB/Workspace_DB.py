@@ -46,6 +46,21 @@ class WorkspaceDB(BaseDB):
         # query-heavy path (task-15465). Unconditional: synchronous is
         # per-connection, so every held connection needs it re-applied.
         conn.execute("PRAGMA synchronous = NORMAL")
+        # task-3012 (missed at task-3011 port time; fixed at task-15480): a
+        # held (long-lived) connection needs true autocommit. Python's
+        # default isolation mode auto-BEGINs on any DML, and an implicit
+        # transaction accumulated outside `transaction()` makes the explicit
+        # `BEGIN` there fail with "cannot start a transaction within a
+        # transaction" -- and silently ROLLS BACK bare DML on close (masked
+        # pre-task-3011 by per-call connections, which committed
+        # explicitly). Audited (task-15480): every `connection()` call site
+        # in `Workspaces/registry_service.py` is read-only -- every write
+        # there already goes through `transaction()` -- and this class's own
+        # `connection()` sites (`_initialize_schema`'s `executescript`,
+        # `get_schema_version`'s read) self-commit or don't write at all.
+        # Latent today, not live; this closes the correctness fuse before
+        # any future bare-DML call site can trip it.
+        conn.isolation_level = None
         return conn
 
     def _held_connection(self) -> sqlite3.Connection:
@@ -85,7 +100,20 @@ class WorkspaceDB(BaseDB):
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
-        """Run a write transaction on the held connection; roll back on failure."""
+        """Run a write transaction on the held connection; roll back on failure.
+
+        Nesting: this issues an explicit BEGIN on the ONE connection this
+        thread holds, so nesting a second `transaction()` call inside the
+        first raises `sqlite3.OperationalError: cannot start a transaction
+        within a transaction`. Pre-port each block had its own connection
+        and nesting silently "worked"; the outer block still rolls back
+        cleanly here, because the failure propagates through its `except`
+        before reaching the caller.
+
+        Raises:
+            Exception: Re-raised after rolling back, on any error inside
+                the `with` block. On clean exit the transaction commits.
+        """
 
         conn = self._held_connection()
         conn.execute("BEGIN")

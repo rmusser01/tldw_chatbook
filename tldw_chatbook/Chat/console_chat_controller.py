@@ -635,8 +635,9 @@ def build_tool_review_hook(
         # Minor (round 1 review): memoize `allowed_file_roots` across every
         # builtin file-tool row THIS batch checks -- `workspace_id` is fixed
         # for the whole call, so a turn with several read_file/write_file
-        # rows would otherwise re-hit the workspace registry (a fresh
-        # sqlite3 connection per `WorkspaceDB` operation) once per row.
+        # rows would otherwise re-hit the workspace registry (a repeat query
+        # against `WorkspaceDB`'s held, per-thread connection -- task-3011)
+        # once per row.
         # Fresh dict per `review_tool_calls` call -- never reused across
         # turns, so a folder binding added/removed between turns is still
         # picked up on the very next call.

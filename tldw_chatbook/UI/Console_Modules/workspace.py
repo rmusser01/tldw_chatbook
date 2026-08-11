@@ -1129,10 +1129,12 @@ class ConsoleWorkspaceController:
 
         Mirrors ``_read_console_retrieval_scope``'s in-memory-DB guard
         (task-13): ``LocalWorkspaceRegistryService.db`` is never actually
-        ``:memory:``-backed in production (``WorkspaceDB`` opens a brand-new
-        connection per call, incompatible with SQLite's ``:memory:``
-        semantics beyond a single call), but the guard is applied anyway
-        for the same defensive discipline the conversation-scope read uses.
+        ``:memory:``-backed in production (``WorkspaceDB`` (task-3011) holds
+        one connection per THREAD rather than sharing a single connection
+        for ``:memory:``, so each new thread touching it would open its own
+        empty, table-less ``:memory:`` database -- broken beyond a single
+        thread), but the guard is applied anyway for the same defensive
+        discipline the conversation-scope read uses.
         """
         db = getattr(registry_service, "db", None)
         if getattr(db, "is_memory_db", False):

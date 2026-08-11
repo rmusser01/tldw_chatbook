@@ -39,10 +39,12 @@ import pytest
 
 from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
 from tldw_chatbook.DB.RAG_Indexing_DB import RAGIndexingDB
+from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Library.library_collections_service import (
     LocalLibraryCollectionsService,
 )
 from tldw_chatbook.Notifications.client_notifications_db import ClientNotificationsDB
+from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
 
 
 def _count_opens(db) -> list[sqlite3.Connection]:
@@ -603,4 +605,118 @@ class TestNotificationSettingsAreWrittenAtomically:
         assert settings["enabled"] is False
         assert settings["toast_enabled"] is False
         assert settings["category_preferences"] == {"watchlist": {"enabled": False}}
+        db.close()
+
+
+# === 5. WorkspaceDB (task-15480): autocommit + guarded nesting ===
+
+
+def _insert_workspace_record(conn: sqlite3.Connection, workspace_id: str, name: str) -> None:
+    """Bare INSERT against ``workspace_records``, bypassing ``transaction()``.
+
+    No production call site does this today (task-15480's audit found every
+    ``Workspaces/registry_service.py`` write already goes through
+    ``db.transaction()``, and ``Workspace_DB``'s own ``connection()`` sites
+    -- ``_initialize_schema``'s ``executescript`` and ``get_schema_version``
+    -- are a self-committing script and a pure read, respectively). This
+    helper exists to pin the connection property itself, so a FUTURE bare
+    write through ``connection()`` cannot silently reintroduce the
+    task-3012 failure mode.
+    """
+    conn.execute(
+        """
+        INSERT INTO workspace_records (
+            workspace_id, name, description, authority, sync_status,
+            active, archived, created_at, updated_at
+        ) VALUES (?, ?, '', 'local-only', 'not-configured', 0, 0, ?, ?)
+        """,
+        (workspace_id, name, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"),
+    )
+
+
+@pytest.mark.unit
+class TestWorkspaceDBAutocommitAndNesting:
+    """WorkspaceDB (task-3011) predates the task-3012 fix that
+    ``Library_Collections_DB``/``AgentRunsDB`` already carry:
+    ``isolation_level=None`` on the held connection, and a nesting-safe
+    ``transaction()``.
+    """
+
+    def test_isolation_level_is_none(self, tmp_path):
+        db = WorkspaceDB(tmp_path / "workspace.db")
+        assert db._held_connection().isolation_level is None
+        db.close()
+
+    def test_bare_dml_through_connection_survives_closing_the_held_connection(
+        self, tmp_path
+    ):
+        """The exact task-3012 failure: bare DML rolled back on close.
+
+        Under sqlite3's default isolation mode a held connection would
+        auto-BEGIN on the INSERT and never commit it, so closing the
+        connection would silently discard the row.
+        """
+        path = tmp_path / "workspace.db"
+        db = WorkspaceDB(path)
+        with db.connection() as conn:
+            _insert_workspace_record(conn, "bare-dml", "Bare DML")
+        db.close()
+
+        reopened = WorkspaceDB(path)
+        with reopened.connection() as conn:
+            row = conn.execute(
+                "SELECT name FROM workspace_records WHERE workspace_id = ?",
+                ("bare-dml",),
+            ).fetchone()
+        assert row is not None and row["name"] == "Bare DML"
+        reopened.close()
+
+    def test_explicit_begin_still_works_after_bare_dml(self, tmp_path):
+        """A write transaction right after bare DML must not raise.
+
+        Without ``isolation_level=None`` the bare DML above leaves an
+        implicit transaction open on the held connection, and the explicit
+        ``BEGIN`` in ``transaction()`` fails with "cannot start a
+        transaction within a transaction".
+        """
+        db = WorkspaceDB(tmp_path / "workspace.db")
+        with db.connection() as conn:  # bare DML
+            _insert_workspace_record(conn, "bare-dml", "Bare DML")
+
+        service = LocalWorkspaceRegistryService(db)
+        created = service.create_workspace(workspace_id="ws-1", name="One")
+
+        assert created.workspace_id == "ws-1"
+        # Both the bare DML (now durable under isolation_level=None) and the
+        # explicit-transaction write it was followed by must be present.
+        assert {record.workspace_id for record in service.list_workspaces()} == {
+            "bare-dml",
+            "ws-1",
+        }
+        db.close()
+
+    def test_nesting_a_transaction_raises_and_the_outer_block_rolls_back(
+        self, tmp_path
+    ):
+        """One connection per thread means one transaction at a time.
+
+        Pre-port each caller opened its own connection, so nesting silently
+        "worked". It now raises -- and the outer block must still roll
+        back cleanly rather than strand an open transaction on the held
+        connection.
+        """
+        db = WorkspaceDB(tmp_path / "workspace.db")
+        service = LocalWorkspaceRegistryService(db)
+        before = {record.workspace_id for record in service.list_workspaces()}
+
+        with pytest.raises(sqlite3.OperationalError, match="within a transaction"):
+            with db.transaction() as conn:
+                _insert_workspace_record(conn, "outer", "Outer")
+                with db.transaction():
+                    pass
+
+        assert db._held_connection().in_transaction is False
+        assert {
+            record.workspace_id for record in service.list_workspaces()
+        } == before
         db.close()

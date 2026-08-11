@@ -40,10 +40,11 @@ def _default_registry_factory():
     instance without touching the database again.
 
     Thread safety: the cached ``LocalWorkspaceRegistryService`` instance is
-    shared across threads/calls, but ``WorkspaceDB`` opens a fresh
-    ``sqlite3`` connection per operation (see ``WorkspaceDB.connection`` /
-    ``WorkspaceDB.transaction``) rather than holding one open, so sharing
-    the service object does not share any live connection state and is
+    shared across threads/calls. ``WorkspaceDB`` (task-3011) holds one
+    ``sqlite3`` connection per THREAD rather than opening a fresh one per
+    operation -- see ``WorkspaceDB.connection`` / ``WorkspaceDB.transaction``
+    -- so sharing the service object shares no connection ACROSS threads
+    (each thread gets and keeps its own), which is exactly what makes it
     safe under concurrent tool calls.
 
     Returns:
