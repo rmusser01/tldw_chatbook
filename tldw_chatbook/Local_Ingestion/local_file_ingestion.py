@@ -130,6 +130,31 @@ class PermanentIngestError(FileIngestionError):
     """
 
 
+class NoContentExtractedError(FileIngestionError):
+    """Extraction produced no text, so there was nothing to store.
+
+    (task-14821) Raised by ``_reject_empty_extraction`` BEFORE any write
+    is attempted. The Library ingest writer used to stamp every exception
+    escaping that stage as ``category="write_error"``, which described a
+    write that never happened -- and, being the category shown to the
+    user, sent them looking for a database problem instead of the missing
+    extractor the message itself named. ``ingest_error_category`` is the
+    seam the writer reads instead of hard-coding one.
+    """
+
+    ingest_error_category = "no_content"
+
+
+class EmptySourceIngestError(PermanentIngestError):
+    """The source file is 0 bytes: there was nothing to ingest at all.
+
+    (task-14821) Permanent, like every other 0-byte outcome, and reported
+    as its own reason rather than as a write failure.
+    """
+
+    ingest_error_category = "empty_source"
+
+
 class DirectLocalSTTIngestError(FileIngestionError):
     """A sanitized direct-local STT failure crossing the spawn boundary."""
 
@@ -1519,7 +1544,7 @@ def _reject_empty_extraction(payload: Dict[str, Any], file_type: str) -> None:
                 # attempt -- permanent, so the queue row withholds Retry
                 # (the retryable raise below stays retryable: installing
                 # the missing tooling genuinely can fix an extraction miss).
-                raise PermanentIngestError(
+                raise EmptySourceIngestError(
                     f"{name} is empty; there was nothing to ingest."
                 )
         except OSError:
@@ -1531,13 +1556,13 @@ def _reject_empty_extraction(payload: Dict[str, Any], file_type: str) -> None:
         # as nonsense for a file that IS an image. Retryable on purpose:
         # switching Extract text (OCR) on, or installing an OCR backend,
         # genuinely can fix the next attempt.
-        raise FileIngestionError(
+        raise NoContentExtractedError(
             f"No text was found in {name}. An image import stores the text "
             "OCR extracts; turn Extract text (OCR) on and install an OCR "
             "backend (docling, tesseract, easyocr, paddleocr, or docext)."
         )
 
-    raise FileIngestionError(
+    raise NoContentExtractedError(
         f"No text could be extracted from {name}. The {file_type} content may "
         "be scanned images, or the tooling for this file type may not be "
         "installed."

@@ -165,17 +165,31 @@ class FileSystemPickerScreen(ModalScreen[Union[Path, None]]):
             width: 1fr;
         }
 
-        /* task-3304 (MI-15): the padding matches DirectoryNavigation's
-           `border: blank` one-cell inset so the header cells sit over
-           their data columns. */
+        /* task-3304 (MI-15) / task-14825 #5: the header cells must land on
+           their own data columns. The listing insets its content THREE
+           ways, and the original padding compensated for only the first:
+             1. DirectoryNavigation's `border: blank`      -> 1 cell each side
+             2. OptionList's own default `padding: 0 1`    -> 1 cell each side
+             3. the vertical scrollbar, on the right only  -> 2 cells
+           (2) cost a permanent one-cell skew (the `Size` header ended at
+           col 188 over values ending at 186 in the live capture) and (3)
+           added two more the moment the list overflowed -- shipped as
+           "cosmetic and accepted", which reads as a broken table. The
+           scrollbar half is made deterministic by reserving the gutter
+           below rather than by guessing whether it is showing. */
         #file-dialog-column-headers {
             height: 1;
-            padding: 0 1;
+            padding: 0 4 0 2;
             color: $text-muted;
         }
 
         DirectoryNavigation {
             height: 1fr;
+            /* Reserve the scrollbar column whether or not it is showing:
+               without this the whole listing shifts 2 cells left as soon
+               as a directory overflows, and no static header can be right
+               in both states. */
+            scrollbar-gutter: stable;
         }
 
         InputBar {

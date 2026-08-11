@@ -1674,3 +1674,57 @@ class TestImageIngestJobOptions:
         options = app._ingest_job_options(job)
 
         assert options["ocr"] is False
+
+
+class TestWriteStageFailureCategory:
+    """(xhigh review round, F4) The write stage's DEFAULT category.
+
+    task-14821 removed the optimistic "a retry can succeed if transient"
+    branch from every cause that isn't genuinely retryable -- but the
+    writer still stamped ``write_error`` as the default for EVERY
+    exception ``persist_parsed_media`` re-wraps, and ``write_error`` is
+    precisely the one category that still earns that advisory. The defect
+    the task was filed to remove stayed reachable through the default.
+    """
+
+    def test_an_exception_that_declares_its_category_keeps_it(self) -> None:
+        from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
+            NoContentExtractedError,
+        )
+
+        exc = NoContentExtractedError("No text could be extracted from x.pdf.")
+        assert (
+            app_module._library_ingest_write_failure_category(exc)
+            == "no_content"
+        )
+
+    def test_a_real_database_failure_is_a_write_error(self) -> None:
+        """The one cause a bare retry can genuinely clear keeps its name."""
+        from tldw_chatbook.DB.Client_Media_DB_v2 import DatabaseError
+
+        exc = DatabaseError("database is locked")
+        assert (
+            app_module._library_ingest_write_failure_category(exc)
+            == "write_error"
+        )
+
+    def test_an_unknown_write_stage_failure_is_silent_not_optimistic(
+        self,
+    ) -> None:
+        """(task-14821 AC#2) An unknown cause is silent. Stamping it
+        ``write_error`` told the user "the file itself parsed fine" about a
+        failure nobody had classified."""
+        from tldw_chatbook.Library.library_ingest_state import (
+            ingest_retry_advice,
+        )
+
+        category = app_module._library_ingest_write_failure_category(
+            RuntimeError("something nobody classified")
+        )
+        assert category == ""
+        assert (
+            ingest_retry_advice(
+                category=category, message="something nobody classified"
+            )
+            == ""
+        )

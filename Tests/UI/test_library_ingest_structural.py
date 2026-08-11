@@ -30,7 +30,15 @@ from unittest.mock import patch
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Checkbox, Input, Select, Static
+from textual.widgets import (
+    Button,
+    Checkbox,
+    Collapsible,
+    Input,
+    Select,
+    Static,
+)
+from textual.widgets._collapsible import CollapsibleTitle
 
 from tldw_chatbook.Library.ingest_types import PreflightResult
 from tldw_chatbook.Library.library_ingest_state import (
@@ -39,6 +47,7 @@ from tldw_chatbook.Library.library_ingest_state import (
 )
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.Widgets.Library.library_ingest_canvas import (
+    INGEST_PATH_LABEL_COPY,
     LibraryIngestCanvas,
 )
 
@@ -542,6 +551,12 @@ async def test_warning_command_paints_unclipped_in_the_summary():
     app = _CssTrueCanvasHost(_warning_state())
     async with app.run_test(size=(80, 46)) as pilot:
         await pilot.pause()
+        # (task-14822) The per-warning detail now lives behind a fold --
+        # open it, because "unclipped once you can see it" is the claim.
+        pilot.app.query_one(
+            "#ingest-preflight-tooling-detail", Collapsible
+        ).collapsed = False
+        await pilot.pause()
         warning = pilot.app.query_one("#ingest-preflight-warning-0", Static)
         strips = list(pilot.app.screen._compositor.render_strips())
         painted = "".join(
@@ -562,7 +577,12 @@ async def test_warning_command_paints_unclipped_in_the_summary():
 async def test_summary_offers_copy_command_and_copies_it():
     """MI-17: a compact copy affordance sits AT the warning (consistent
     with the guardrail modal's) -- the modal must no longer be the only
-    place the command can be copied from."""
+    place the command can be copied from.
+
+    (xhigh review round, G5) This selection has exactly ONE missing extra,
+    which is now served by the single always-visible control rather than
+    by that control plus an identical per-extra button inside the fold.
+    """
     copied: list[str] = []
 
     class _ClipboardHost(_CanvasHost):
@@ -571,9 +591,491 @@ async def test_summary_offers_copy_command_and_copies_it():
 
     app = _ClipboardHost(_warning_state())
     async with app.run_test() as pilot:
-        button = pilot.app.query_one("#ingest-preflight-copy-command-0", Button)
+        buttons = list(pilot.app.query(".ingest-preflight-copy-command"))
+        assert len(buttons) == 1, [button.id for button in buttons]
+        button = buttons[0]
         assert "cop" in str(button.label).lower()
         button.press()
         await pilot.pause()
 
     assert copied == [_LONG_COMMAND]
+
+
+# --- task-14822: the folded warning block no longer owns the viewport -------
+
+
+def _many_warnings(count: int) -> list[dict[str, str]]:
+    return [
+        {
+            "feature": f"feature_{index}",
+            "label": f"Backend {index}",
+            "hint": f"capability {index}",
+            "command": f'pip install -e ".[extra{index}]"',
+        }
+        for index in range(count)
+    ]
+
+
+def _mixed_folder_state(warning_count: int):
+    """The archetypal mixed folder: supported + unsupported + empty files."""
+    form = LibraryIngestFormState(path="/tmp/mixed")
+    return build_library_ingest_state(
+        (),
+        form=form,
+        preflight=PreflightResult(
+            type_groups={
+                "generic": ["/tmp/mixed/a.txt"],
+                "unsupported": ["/tmp/mixed/b.xyz"],
+            },
+            warnings=_many_warnings(warning_count),
+            errors=[],
+            total_size=10,
+            truncated=False,
+            total_files=2,
+            empty_files=["/tmp/mixed/c.txt"],
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_summary_block_height_does_not_grow_with_the_warning_count():
+    """AC#2: eleven warnings used to cost ~22 rows plus nine stacked copy
+    buttons -- the whole 52-row viewport. Folded, the block is the same
+    height whether there are two warnings or eleven."""
+    heights = {}
+    for count in (2, 11):
+        app = _CssTrueCanvasHost(_mixed_folder_state(count))
+        async with app.run_test(size=(80, 52)) as pilot:
+            await pilot.pause()
+            heights[count] = pilot.app.query_one(
+                "#library-ingest-preflight-summary"
+            ).region.height
+    assert heights[2] == heights[11], (
+        f"the warning block still scales with the warning count: {heights}"
+    )
+    assert heights[11] <= 16, (
+        f"folded summary block is still a wall: {heights[11]} rows"
+    )
+
+
+@pytest.mark.asyncio
+async def test_breakdown_and_start_are_in_view_behind_eleven_warnings():
+    """AC#2: with warnings present, the type breakdown AND the Start
+    affordance are on screen at a supported terminal size -- the pre-fix
+    wall pushed both below the fold."""
+    app = _CssTrueCanvasHost(_mixed_folder_state(11))
+    async with app.run_test(size=(80, 52)) as pilot:
+        await pilot.pause()
+        canvas = pilot.app.query_one(LibraryIngestCanvas)
+        viewport = canvas.region.height
+        breakdown = pilot.app.query_one("#ingest-type-breakdown")
+        start = pilot.app.query_one("#library-ingest-start")
+        assert 0 < breakdown.region.y < viewport, (
+            f"type breakdown below the fold: y={breakdown.region.y} "
+            f"viewport={viewport}"
+        )
+        assert 0 < start.region.y < viewport, (
+            f"Start below the fold: y={start.region.y} viewport={viewport}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_outcome_lines_paint_heavier_than_the_tooling_summary():
+    """AC#3: "1 empty file will fail" is an OUTCOME of this selection; the
+    tooling summary is a fact about the install. They must not paint at
+    the same weight (they shared one class and one colour)."""
+    app = _CssTrueCanvasHost(_mixed_folder_state(11))
+    async with app.run_test(size=(80, 52)) as pilot:
+        await pilot.pause()
+        tooling = pilot.app.query_one("#ingest-preflight-tooling-summary", Static)
+        empty = pilot.app.query_one("#ingest-empty-summary", Static)
+        tooling_style = _painted_style_of_text(
+            pilot.app, tooling.region, "optional"
+        )
+        empty_style = _painted_style_of_text(pilot.app, empty.region, "empty")
+        assert tooling_style is not None and empty_style is not None
+        assert bool(empty_style.bold) and not bool(tooling_style.bold), (
+            "outcome and environment lines still share one weight: "
+            f"outcome bold={empty_style.bold} tooling bold={tooling_style.bold}"
+        )
+        assert empty_style.color != tooling_style.color, (
+            "outcome and environment lines still share one colour"
+        )
+
+
+# --- task-14824: accessibility residue --------------------------------------
+#
+# (a) `#opt-generic-encoding` focus was COLOUR-ONLY: a per-focusable Tab walk
+# found the focused and unfocused plain-text captures byte-identical, at
+# 1.12:1 between the two backgrounds. `LibraryIngestCanvas Select:focus {
+# outline: heavy $accent }` had been declared since task-2014 and never
+# reached the screen: `SelectCurrent` is an opaque child that covers its
+# parent's ENTIRE region, and the compositor paints it over the parent's
+# outline. Any assertion made from `Select.render_lines()` passes anyway --
+# that call renders the widget in isolation, so the covering child is absent.
+# These captures come from the compositor.
+
+#: The heavy box-drawing family. None of these appear in the unfocused
+#: `tall`-border rendering ("▊", "▔", "▎", "▁").
+HEAVY_GLYPHS = ("┏", "┓", "┗", "┛", "━", "┃")
+
+
+def _composited_rows(app: App, widget) -> list[str]:
+    """The widget's region as the COMPOSITOR painted it.
+
+    Not ``widget.render_lines``: that renders the widget alone, so an
+    opaque child painting over its parent -- the exact defect here -- is
+    invisible to it.
+    """
+    strips = list(app.screen._compositor.render_strips())
+    region = widget.region
+    rows = []
+    for y in range(region.y, region.y + region.height):
+        if y >= len(strips):
+            break
+        rows.append(strips[y].text[region.x : region.x + region.width])
+    return rows
+
+
+def _generic_panel_state():
+    form = LibraryIngestFormState(path="/tmp/a.txt")
+    form.expanded_type_groups = {"generic"}
+    return build_library_ingest_state(
+        (),
+        form=form,
+        preflight=_preflight({"generic": ["/tmp/a.txt"]}),
+    )
+
+
+@pytest.mark.asyncio
+async def test_option_select_focus_is_glyph_level_and_dimensionally_stable():
+    """AC#1: every focusable on this canvas, Selects included, must change
+    at the glyph level on focus."""
+    app = _CssTrueCanvasHost(_generic_panel_state())
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.pause()
+        select = pilot.app.query_one("#opt-generic-encoding", Select)
+        assert not select.has_focus
+        region_before = select.region
+        unfocused = _composited_rows(pilot.app, select)
+        assert not any(
+            glyph in row for row in unfocused for glyph in HEAVY_GLYPHS
+        ), f"unfocused select already paints heavy glyphs: {unfocused!r}"
+
+        select.focus()
+        await pilot.pause()
+        focused = _composited_rows(pilot.app, select)
+
+        assert focused != unfocused, (
+            "focus produced a byte-identical composited capture -- the "
+            "colour-only regression this task pinned"
+        )
+        assert any(
+            glyph in row for row in focused for glyph in HEAVY_GLYPHS
+        ), f"focused select shows no structural cue: {focused!r}"
+        # The cue must not eat the value (the task-3302 one-row trap) and
+        # must not move the control.
+        assert any("Auto-detect" in row for row in focused), (
+            f"focus treatment ate the select's value: {focused!r}"
+        )
+        assert select.region == region_before
+        assert len(focused) == len(unfocused)
+
+
+@pytest.mark.asyncio
+async def test_path_field_carries_a_persistent_visible_label():
+    """AC#3: the primary control's identity was placeholder-only, and a
+    placeholder vanishes the moment the field is populated -- exactly the
+    defect task-2012 fixed for the OPTION fields."""
+    form = LibraryIngestFormState(path="/tmp/some/very/long/path.pdf")
+    state = build_library_ingest_state((), form=form)
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        path_input = pilot.app.query_one("#library-ingest-path", Input)
+        assert path_input.value, "precondition: the field is populated"
+        label = pilot.app.query_one("#library-ingest-path-label", Static)
+        text = str(label.renderable)
+        assert text == INGEST_PATH_LABEL_COPY
+        # It must name what the field accepts, which is what the
+        # disappearing placeholder used to be the only carrier of.
+        assert "file" in text.lower() and "url" in text.lower(), text
+        # The label must precede the control it names.
+        canvas_children = list(pilot.app.query_one(LibraryIngestCanvas).children)
+        assert canvas_children.index(label) < canvas_children.index(path_input)
+
+
+@pytest.mark.asyncio
+async def test_input_placeholders_clear_the_contrast_floor_in_both_states():
+    """AC#4: placeholders measured 3.52:1 enabled / 3.49:1 disabled -- below
+    AA for normal text, and a 0.03 delta means a placeholder carries no
+    state cue of its own."""
+    form = LibraryIngestFormState(path="")
+    form.expanded_type_groups = {"audio_video"}
+    form.type_options = {"audio_video": {"transcription_provider": "default"}}
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        preflight=_preflight({"audio_video": ["/tmp/a.mp3"]}),
+    )
+    app = _CssTrueCanvasHost(state)
+    async with app.run_test(size=(100, 70)) as pilot:
+        await pilot.pause()
+        enabled = pilot.app.query_one("#library-ingest-path", Input)
+        disabled = pilot.app.query_one(
+            "#opt-audio_video-transcription_model_dir", Input
+        )
+        assert disabled.disabled is True, "precondition: gate closed"
+        measured = {}
+        for name, widget, needle in (
+            ("enabled", enabled, "Path to a local"),
+            ("disabled", disabled, "parakeet"),
+        ):
+            style = _painted_style_of_text(pilot.app, widget.region, needle)
+            assert style is not None, f"{name} placeholder not painted"
+            measured[name] = _contrast(style.color, style.bgcolor)
+        for name, ratio in measured.items():
+            assert ratio >= 4.5, (
+                f"{name} placeholder still below AA: {ratio:.2f}:1 "
+                f"(measured 3.52/3.49 pre-fix)"
+            )
+
+
+@pytest.mark.asyncio
+async def test_blocked_group_states_its_reason_on_a_keyboard_reachable_title():
+    """AC#2: Textual removes a ``disabled`` widget from the tab order
+    outright (``Widget.focusable`` excludes it), so the ``— needs X
+    installed`` annotations task-3304 added AT the controls are
+    mouse-and-eyes-only for a fully-gated group. The group's collapsible
+    TITLE is a tab stop, so the reason is surfaced there too."""
+    app = _CanvasHost(_audio_state(provider="default"))
+    with patch(_INSTALLED_PATCH, return_value=False):
+        async with app.run_test() as pilot:
+            panel = pilot.app.query_one("#type-group-audio_video", Collapsible)
+            title = panel.query_one(CollapsibleTitle)
+            assert title.focusable, (
+                "the group title must be a tab stop for this to be the fix"
+            )
+            assert "unavailable" in panel.title, panel.title
+            assert "needs" in panel.title, panel.title
+            # And the controls themselves really are unreachable, which is
+            # what makes the title the only honest place for the reason.
+            fields = [
+                widget
+                for widget in panel.query(Input)
+                if widget.id and widget.id.startswith("opt-audio_video-")
+            ]
+            assert fields and not any(widget.focusable for widget in fields)
+
+
+# --- task-14822 AC#2, re-measured in the SHIPPED screen ----------------------
+#
+# The AC was first ticked against the canvas mounted ALONE at 80x52
+# (``test_breakdown_and_start_are_in_view_behind_eleven_warnings`` above).
+# A live pass then found Start ~16 rows below the fold in the real Library
+# screen at 235x52 -- the canvas there sits inside the shell (rail + header
+# chrome), the queue block renders below the form, and a real folder stages
+# FOUR option panels rather than one. This harness measures the shipped
+# geometry, so the number the AC stands on comes from the surface the user
+# actually sees.
+
+
+def _four_group_selection(warning_count: int = 11) -> PreflightResult:
+    """The live shape: a mixed folder spanning four option panels."""
+    type_groups = {
+        "pdf": [f"/tmp/mixed/doc{i}.pdf" for i in range(3)],
+        "audio_video": [f"/tmp/mixed/clip{i}.mp3" for i in range(2)],
+        "ebook": ["/tmp/mixed/book.epub"],
+        "generic": [f"/tmp/mixed/note{i}.txt" for i in range(4)],
+        "unsupported": ["/tmp/mixed/thing.xyz"],
+    }
+    return PreflightResult(
+        type_groups=type_groups,
+        warnings=_many_warnings(warning_count),
+        errors=[],
+        total_size=4096,
+        truncated=False,
+        total_files=sum(len(files) for files in type_groups.values()),
+        empty_files=["/tmp/mixed/empty.txt"],
+    )
+
+
+async def _shipped_ingest_screen(host, pilot, *, warning_count: int = 11):
+    """Drive the real Library screen to a warned, four-group selection."""
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_INGEST_MEDIA
+    from Tests.UI.test_library_shell import (
+        _wait_for_library_shell,
+        _wait_for_selector,
+    )
+
+    screen = host.screen_stack[-1]
+    await _wait_for_library_shell(screen, pilot)
+    await screen._select_library_rail_row(LIBRARY_ROW_INGEST_MEDIA)
+    await _wait_for_selector(screen, pilot, "#library-ingest-path")
+    await pilot.pause()
+    screen._library_ingest_form.path = "/tmp/mixed"
+    screen._library_ingest_form.preflight = _four_group_selection(warning_count)
+    screen._update_library_ingest_dynamic_regions()
+    await pilot.pause()
+    await pilot.pause()
+    return screen
+
+
+def _rows_below_the_fold(canvas, widget) -> int:
+    """How far ``widget`` starts past the canvas viewport's bottom edge."""
+    fold = canvas.scroll_offset.y + canvas.container_size.height
+    return widget.virtual_region.y - fold + 1
+
+
+@pytest.mark.asyncio
+async def test_the_fold_pays_for_itself_in_the_shipped_screen():
+    """AC#2's first half, re-measured where the canvas actually ships.
+
+    Measured 2026-08-10 at 235x52, four staged groups, 11 warnings: the
+    canvas viewport is 43 rows (the shell's rail/header chrome takes 9 of
+    the 52), the type breakdown lands at virtual y=6 -- in view -- and
+    folding the wall moves Start from virtual y=92 to y=59, a 33-row
+    saving. That saving is the fold's real win and is asserted here; what
+    it does NOT buy is Start clearing the fold at 52 rows (see
+    ``test_start_still_needs_scrolling_at_52_rows`` -- AC#2's second half
+    is un-ticked on that evidence).
+    """
+    host = _screen_harness()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _shipped_ingest_screen(host, pilot)
+        canvas = screen.query_one(LibraryIngestCanvas)
+        breakdown = screen.query_one("#ingest-type-breakdown", Static)
+        viewport = canvas.container_size.height
+        breakdown_y = breakdown.virtual_region.y
+        folded_start = screen.query_one(
+            "#library-ingest-start", Button
+        ).virtual_region.y
+
+        # Unfold the tooling detail in place: the wall's cost, measured on
+        # the same surface, is the difference between these two.
+        screen.query_one(
+            "#ingest-preflight-tooling-detail", Collapsible
+        ).collapsed = False
+        await pilot.pause()
+        await pilot.pause()
+        unfolded_start = screen.query_one(
+            "#library-ingest-start", Button
+        ).virtual_region.y
+
+    assert breakdown_y < viewport, (
+        f"type breakdown below the fold in the shipped screen: "
+        f"y={breakdown_y} viewport={viewport}"
+    )
+    saving = unfolded_start - folded_start
+    assert saving >= 25, (
+        "the fold no longer pays for itself in the shipped screen: "
+        f"folded start y={folded_start}, unfolded y={unfolded_start} "
+        f"(saving {saving} rows; measured 33)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_open_fold_survives_a_registry_tick_in_the_shipped_screen():
+    """G3 on the path that actually broke it.
+
+    ``_update_library_ingest_dynamic_regions`` runs on EVERY registry tick
+    (each queued/parsing/writing/done transition of every job) and rebuilds
+    the pre-flight summary with ``refresh(recompose=True)``. The fold was
+    composed ``collapsed=True`` unconditionally, so it snapped shut under a
+    user reading it during an active import.
+    """
+    host = _screen_harness()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _shipped_ingest_screen(host, pilot)
+        fold = screen.query_one("#ingest-preflight-tooling-detail", Collapsible)
+        fold.collapsed = False
+        await pilot.pause()
+
+        # The tick itself, not a stand-in for it.
+        screen._update_library_ingest_dynamic_regions()
+        await pilot.pause()
+        await pilot.pause()
+
+        reborn = screen.query_one(
+            "#ingest-preflight-tooling-detail", Collapsible
+        )
+        assert reborn.collapsed is False, (
+            "the fold snapped shut on a registry tick in the shipped screen"
+        )
+
+
+@pytest.mark.asyncio
+async def test_start_still_needs_scrolling_at_52_rows():
+    """AC#2's second half does NOT hold, pinned with its numbers.
+
+    The AC was ticked from the canvas mounted alone at 80x52 (Start at
+    y=45 of 52). In the shipped screen at 235x52 the canvas viewport is 43
+    rows and Start sits at virtual y=59 -- 17 rows below the fold, which
+    is what the live pass saw. It first clears the fold at a 60-row canvas
+    viewport (terminal height 69). Both facts are asserted so neither can
+    silently change: if a later layout change brings Start into view at 52
+    rows, THIS test fails and AC#2 can be re-ticked on real evidence.
+    """
+    measured: dict[int, tuple[int, int]] = {}
+    for height in (52, 69):
+        host = _screen_harness()
+        async with host.run_test(size=(235, height)) as pilot:
+            screen = await _shipped_ingest_screen(host, pilot)
+            canvas = screen.query_one(LibraryIngestCanvas)
+            start = screen.query_one("#library-ingest-start", Button)
+            measured[height] = (
+                canvas.container_size.height,
+                start.virtual_region.y,
+            )
+
+    viewport_52, start_52 = measured[52]
+    viewport_69, start_69 = measured[69]
+    assert start_52 >= viewport_52, (
+        "Start now fits at 52 rows in the shipped screen -- re-tick "
+        f"task-14822 AC#2 and delete this test: {measured}"
+    )
+    assert start_69 < viewport_69, (
+        "Start no longer clears the fold even at a 60-row canvas viewport: "
+        f"{measured}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_every_canvas_focusable_changes_at_the_glyph_level_on_focus():
+    """AC#1 as a sweep, not a spot check.
+
+    The Select defect was invisible to per-widget ``render_lines`` (which
+    renders a widget WITHOUT the opaque child that covers it), so it
+    survived two focus-contract rounds. This walks every focusable the
+    canvas actually offers and diffs the COMPOSITED capture, which is the
+    only capture a user can see.
+    """
+    form = LibraryIngestFormState(path="/tmp/a.txt")
+    form.expanded_type_groups = {"generic"}
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        preflight=_preflight({"generic": ["/tmp/a.txt"]}),
+    )
+    app = _CssTrueCanvasHost(state)
+    async with app.run_test(size=(100, 80)) as pilot:
+        await pilot.pause()
+        canvas = pilot.app.query_one(LibraryIngestCanvas)
+        focusables = [
+            widget
+            for widget in canvas.query("*")
+            if widget.focusable and widget.region.area
+        ]
+        assert len(focusables) >= 6, f"too few focusables swept: {focusables}"
+        colour_only = []
+        for widget in focusables:
+            pilot.app.screen.set_focus(None)
+            await pilot.pause()
+            before = _composited_rows(pilot.app, widget)
+            widget.focus()
+            await pilot.pause()
+            after = _composited_rows(pilot.app, widget)
+            if before == after:
+                colour_only.append(f"{type(widget).__name__}#{widget.id}")
+        assert not colour_only, (
+            f"focus is colour-only on: {colour_only}"
+        )

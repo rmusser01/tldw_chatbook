@@ -58,6 +58,7 @@ import logging.handlers
 import multiprocessing
 import multiprocessing.connection
 import random
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -1705,6 +1706,38 @@ def _sanitize_library_ingest_error(exc: Exception) -> str:
     """
     sanitized = _sanitize_library_ingest_error_text(str(exc))
     return sanitized if sanitized else exc.__class__.__name__[:200]
+
+
+def _library_ingest_write_failure_category(exc: BaseException) -> str:
+    """Classify an exception escaping the ingest WRITE stage.
+
+    (task-14821) The stage covers two different things: refusing an empty
+    extraction, which happens BEFORE any write, and a genuine database
+    write failure. Exceptions that know which they are declare it on
+    ``ingest_error_category``.
+
+    (xhigh review round) Everything else used to default to
+    ``"write_error"`` -- the ONE category ``ingest_retry_advice`` still
+    answers with "a retry can succeed if the write failure was temporary
+    — the file itself parsed fine". So the optimistic branch task-14821
+    was filed to remove stayed reachable for every unclassified cause,
+    through the default. Only a failure of the database write itself
+    earns that name now; an unknown cause is unnamed, and an unnamed
+    category is silent (task-14821 AC#2) rather than encouraging.
+
+    Args:
+        exc: The exception raised while persisting a parsed payload.
+
+    Returns:
+        The ``error_detail`` category token, or ``""`` when the cause is
+        not known to be a write failure.
+    """
+    declared = str(getattr(exc, "ingest_error_category", "") or "").strip()
+    if declared:
+        return declared
+    if isinstance(exc, (MediaDatabaseError, MediaInputError, sqlite3.Error)):
+        return "write_error"
+    return ""
 
 
 def _resolve_ingest_cookies_file(raw: str) -> tuple[Optional[str], Optional[str]]:
@@ -4468,7 +4501,20 @@ class LibraryIngestQueueMixin:
                         error=_sanitize_library_ingest_error(exc),
                         permanent=classify_parse_failure(exc),
                         error_detail={
-                            "category": "write_error",
+                            # (task-14821 / xhigh review round) The stage
+                            # covers two different things: refusing an
+                            # empty extraction (BEFORE any write) and a
+                            # genuine database write failure. Stamping
+                            # both "write_error" told users nothing was
+                            # saved because of a write problem when there
+                            # had been nothing to save -- and, since
+                            # "write_error" is the one category that still
+                            # earns the optimistic retry advisory, the
+                            # blanket DEFAULT smuggled that advisory back
+                            # in for every unclassified cause.
+                            "category": _library_ingest_write_failure_category(
+                                exc
+                            ),
                             "message": str(exc),
                             "exception_type": exc.__class__.__name__,
                         },

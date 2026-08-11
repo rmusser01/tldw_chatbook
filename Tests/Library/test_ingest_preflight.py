@@ -36,26 +36,30 @@ class TestCollectFiles:
         subdir.mkdir()
         (subdir / "b.txt").write_text("hello")
 
-        files, truncated = _collect_files(tmp_path, 1000)
+        files, truncated, skipped = _collect_files(tmp_path, 1000)
         assert len(files) == 2
         assert {f.name for f in files} == {"a.pdf", "b.txt"}
         assert truncated is False
+        assert skipped == 0
 
     def test_respects_scan_limit(self, tmp_path: Path) -> None:
         for i in range(5):
             (tmp_path / f"file{i}.pdf").write_bytes(b"%PDF")
 
-        files, truncated = _collect_files(tmp_path, 3)
+        files, truncated, skipped = _collect_files(tmp_path, 3)
         assert len(files) == 3
         assert truncated is True
+        # Files left behind by the LIMIT are truncation, never "skipped".
+        assert skipped == 0
 
     def test_exact_scan_limit_is_not_truncated(self, tmp_path: Path) -> None:
         for i in range(3):
             (tmp_path / f"file{i}.pdf").write_bytes(b"%PDF")
 
-        files, truncated = _collect_files(tmp_path, 3)
+        files, truncated, skipped = _collect_files(tmp_path, 3)
         assert len(files) == 3
         assert truncated is False
+        assert skipped == 0
 
     def test_skips_symlinks(self, tmp_path: Path) -> None:
         real_file = tmp_path / "real.pdf"
@@ -63,24 +67,29 @@ class TestCollectFiles:
         symlink = tmp_path / "link.pdf"
         symlink.symlink_to(real_file)
 
-        files, truncated = _collect_files(tmp_path, 1000)
+        files, truncated, skipped = _collect_files(tmp_path, 1000)
         assert len(files) == 1
         assert files[0].name == "real.pdf"
         assert truncated is False
+        assert skipped == 1
 
     def test_empty_directory(self, tmp_path: Path) -> None:
-        files, truncated = _collect_files(tmp_path, 1000)
+        files, truncated, skipped = _collect_files(tmp_path, 1000)
         assert files == []
         assert truncated is False
+        # A genuinely empty folder skipped nothing -- the distinction the
+        # ingest gate needs to stop calling every 0-file folder "empty".
+        assert skipped == 0
 
     def test_skips_hidden_files(self, tmp_path: Path) -> None:
         (tmp_path / "visible.pdf").write_bytes(b"%PDF")
         (tmp_path / ".hidden").write_text("secret")
 
-        files, truncated = _collect_files(tmp_path, 1000)
+        files, truncated, skipped = _collect_files(tmp_path, 1000)
         assert len(files) == 1
         assert files[0].name == "visible.pdf"
         assert truncated is False
+        assert skipped == 1
 
     def test_handles_permission_error(self, tmp_path: Path, monkeypatch) -> None:
         locked = tmp_path / "locked"
@@ -96,9 +105,11 @@ class TestCollectFiles:
 
         monkeypatch.setattr(Path, "iterdir", mock_iterdir)
 
-        files, truncated = _collect_files(tmp_path, 1000)
+        files, truncated, skipped = _collect_files(tmp_path, 1000)
         assert {f.name for f in files} == set()
         assert truncated is False
+        # An unreadable folder is not an empty one.
+        assert skipped == 1
 
 
 class TestProbeUrl:
@@ -543,3 +554,51 @@ def test_png_file_lands_in_the_image_group_task_3307(tmp_path) -> None:
     assert result.type_groups.get("image") == [str(png)]
     assert "unsupported" not in result.type_groups
     assert result.total_files == 1
+
+
+def test_preflight_reports_entries_the_scan_skipped(tmp_path: Path) -> None:
+    """(xhigh review round, F5) ``total_files == 0`` conflates "this folder
+    holds nothing" with "this folder's entries were all skipped" (symlinks
+    and dot-entries), and the ingest gate said "This folder is empty" about
+    both. The pre-flight is the only layer that can tell them apart."""
+    target = tmp_path / "real.txt"
+    target.write_text("hello world")
+    folder = tmp_path / "links"
+    folder.mkdir()
+    (folder / "linked.txt").symlink_to(target)
+    (folder / ".hidden.txt").write_text("hidden")
+
+    result = analyze_path(str(folder))
+
+    assert result.total_files == 0
+    assert result.skipped_entries == 2, (
+        "the pre-flight cannot tell an empty folder from one whose entries "
+        "the scan skipped"
+    )
+
+
+def test_preflight_reports_no_skipped_entries_for_an_empty_folder(
+    tmp_path: Path,
+) -> None:
+    folder = tmp_path / "nothing"
+    folder.mkdir()
+
+    result = analyze_path(str(folder))
+
+    assert (result.total_files, result.skipped_entries) == (0, 0)
+
+
+def test_preflight_does_not_count_skips_inside_collected_subfolders(
+    tmp_path: Path,
+) -> None:
+    """A folder that DID yield files still reports the entries it passed
+    over, but the count never inflates the collected total."""
+    folder = tmp_path / "mixed"
+    folder.mkdir()
+    (folder / "notes.txt").write_text("kept")
+    (folder / ".dotfile").write_text("skipped")
+
+    result = analyze_path(str(folder))
+
+    assert result.total_files == 1
+    assert result.skipped_entries == 1

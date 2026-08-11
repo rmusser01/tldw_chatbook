@@ -103,6 +103,7 @@ from ...Library.library_ingest_state import (
     LibraryIngestCanvasState,
     LibraryIngestFormState,
     LibraryIngestLastSubmission,
+    build_ingest_forecast,
     build_library_ingest_state,
     clamp_chunk_size,
     library_ingest_retry_available,
@@ -19298,6 +19299,22 @@ class LibraryScreen(BaseAppScreen):
         else:
             self._library_ingest_form.expanded_type_groups.discard(event.group)
 
+    @on(LibraryIngestCanvas.ToolingDetailToggled)
+    def sync_library_ingest_tooling_detail_expanded(
+        self,
+        event: LibraryIngestCanvas.ToolingDetailToggled,
+    ) -> None:
+        """Track the "What's missing" fold so recomposes preserve it.
+
+        (review round) The summary widget keeps its own expansion across
+        the in-place ``refresh(recompose=True)`` a registry tick fires,
+        but a STRUCTURAL recompose rebuilds the widget itself -- so the
+        durable copy lives in the form echo, exactly like
+        ``expanded_type_groups`` above.
+        """
+        event.stop()
+        self._library_ingest_form.tooling_detail_expanded = bool(event.expanded)
+
     @on(LibraryIngestCanvas.OptionValueChanged)
     def handle_library_ingest_option_value_changed(
         self,
@@ -19923,7 +19940,42 @@ class LibraryScreen(BaseAppScreen):
         if not callable(submit):
             self._notify_library_ingest_warning(INGEST_UNAVAILABLE_COPY)
             return
-        if form.preflight is not None and form.preflight.warnings:
+        # (task-14823) A selection the pre-flight already knows can import
+        # nothing must not reach the queue: an empty folder used to leave
+        # Start enabled, and the press manufactured "✗ failed · emptydir ·
+        # No files to import were found in this folder." -- a permanent
+        # failure receipt, in the tally and in Recent imports, for an
+        # outcome that was predictable before the click. Enforced HERE,
+        # not only on the Button's disabled flag, so no entry point
+        # (Enter, accelerator, a future caller) can route around it.
+        gate_state = self._build_library_ingest_state()
+        if gate_state.selection_has_nothing_importable is True:
+            reason = gate_state.start_quiet_line
+            if reason:
+                self._notify_library_ingest_warning(reason)
+            return
+        # (xhigh review round) Consent is owed for what the FORECAST puts
+        # at risk, not for the bare presence of a tooling warning. A
+        # server import reads the same local warnings and stakes nothing
+        # on them, so keying off ``preflight.warnings`` demanded a second
+        # press for a confirm line that had no reason to state -- and the
+        # gate line, which derives its copy from this same
+        # ``consent_affected``, would have rendered the plain line while
+        # the screen waited for a consent the user could not see it
+        # wanted. One predicate for both.
+        consent_forecast = build_ingest_forecast(
+            form.preflight,
+            targets_server=(
+                getattr(gate_state, "ingest_backend", "local") == "server"
+            ),
+        )
+        consent_owed = bool(
+            form.preflight is not None
+            and form.preflight.warnings
+            and consent_forecast is not None
+            and consent_forecast.consent_affected
+        )
+        if consent_owed:
             # (task-3314) Mirrors the queue's Clear-finished two-press
             # mechanism (task-2015/2160): arm in place, never submit on
             # the arming press.
