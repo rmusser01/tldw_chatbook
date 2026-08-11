@@ -343,9 +343,12 @@ def test_callback_serializes_mutation_commit_and_return():
 must delegate `__enter__`/`__exit__` without changing production. Also force:
 two creates; two jointly-valid updates on different IDs; same-ID stale
 conflict; two different IDs racing to `in_progress`; and 49 tasks plus two
-creates (one success, one fixed capacity error, exactly 50 live tasks). Use a
-test-only parking mapping to stop the first contender inside the selected real
-`len`/`get`/`setitem` state operation, then observe the second immediately
+creates. When ID space permits beyond the next allocation, assert one success,
+one fixed capacity error, and exactly 50 live tasks. At the terminal boundary
+(`next_id == MAX_TODO_NUMBER`), assert the final ID is issued once and the loser
+receives fixed `task id space exhausted`, because exhaustion precedes capacity.
+Use a test-only parking mapping to stop the first contender inside the selected
+real `len`/`get`/`setitem` state operation, then observe the second immediately
 before its real mutation-lock acquisition. This forced interleaving makes each
 concurrency test fail if either lock disappears and avoids scheduler-delay
 evidence.
