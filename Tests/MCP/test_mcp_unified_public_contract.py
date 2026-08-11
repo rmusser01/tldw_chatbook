@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import inspect
-from importlib.metadata import version
+from importlib.metadata import requires, version
 from importlib.util import find_spec
 from pathlib import Path
 import subprocess
@@ -11,6 +11,7 @@ import sys
 import textwrap
 import tomllib
 
+from packaging.requirements import Requirement
 import pytest
 
 
@@ -53,6 +54,19 @@ def test_mcp_unified_public_contract_is_exact_release() -> None:
     ):
         assert callable(getattr(GatewayCoreRuntime, method_name))
     assert callable(GatewayResourceTemplateRuntime.list_resource_templates)
+
+
+@pytest.mark.skipif(not MCP_UNIFIED_AVAILABLE, reason="mcp-unified extra not installed")
+def test_exact_runtime_release_supplies_gateway_jsonschema_dependency() -> None:
+    dependencies = [Requirement(value) for value in requires("mcp-unified") or []]
+    jsonschema_dependencies = [
+        dependency
+        for dependency in dependencies
+        if dependency.name.lower() == "jsonschema" and dependency.marker is None
+    ]
+
+    assert len(jsonschema_dependencies) == 1
+    assert str(jsonschema_dependencies[0].specifier) == "<5,>=4.23"
 
 
 @pytest.mark.skipif(not MCP_UNIFIED_AVAILABLE, reason="mcp-unified extra not installed")

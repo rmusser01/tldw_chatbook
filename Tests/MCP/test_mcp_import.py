@@ -107,6 +107,49 @@ def test_standalone_runtime_imports_only_the_public_mcp_unified_gateway() -> Non
         _assert_public_gateway_imports(path.read_text(encoding="utf-8"), expected)
 
 
+def test_gateway_runtime_public_docstrings_use_google_sections() -> None:
+    source = (MCP_PACKAGE / "gateway_runtime.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    runtime = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "ChatbookGatewayRuntime"
+    )
+    class_doc = ast.get_docstring(runtime) or ""
+    assert "Args:" in class_doc
+
+    public_methods = {
+        node.name: node
+        for node in runtime.body
+        if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef))
+        and not node.name.startswith("_")
+        and not any(
+            isinstance(decorator, ast.Name) and decorator.id == "overload"
+            for decorator in node.decorator_list
+        )
+    }
+    assert set(public_methods) == {
+        "call_tool",
+        "finalize",
+        "get_prompt",
+        "list_prompts",
+        "list_resource_templates",
+        "list_resources",
+        "list_tools",
+        "prompt",
+        "read_resource",
+        "register_local_tools",
+        "resource",
+        "tool",
+    }
+    for method_name, method in public_methods.items():
+        doc = ast.get_docstring(method) or ""
+        if method_name != "finalize":
+            assert "Args:" in doc, method_name
+        if method_name not in {"finalize", "register_local_tools"}:
+            assert "Returns:" in doc, method_name
+
+
 def test_public_gateway_import_contract_accepts_exact_public_module() -> None:
     _assert_public_gateway_imports(
         "from mcp_unified.gateway import GatewayLimits, serve_stdio",
