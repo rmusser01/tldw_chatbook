@@ -46,8 +46,10 @@ class LibraryMediaTrashCanvas(RecomposeCaptureGuard, Vertical):
         super().__init__(**kwargs)
         self.canvas = canvas
         # Same width contract as ``LibraryMediaCanvas`` -- this view swaps
-        # in for the list inside the same canvas host.
-        self.styles.width = "13fr"
+        # in for the list inside the same canvas host. 1fr (never 13fr):
+        # see that canvas's constructor comment -- an independent 13fr
+        # resolves ~13x wider than the host and clips children.
+        self.styles.width = "1fr"
         self.styles.min_width = 40
 
     def sync_state(self, canvas: LibraryMediaTrashState) -> None:

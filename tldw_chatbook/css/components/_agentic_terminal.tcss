@@ -2254,6 +2254,69 @@ with stray left-edge border fragments), and padding 0 1 so the full
     margin: 0 0 1 0;
 }
 
+/* task-14900: Media list|preview side by side above the screen's one
+   measured width regime. The workbench Horizontal (Collections'
+   `#library-collections-workbench` grammar) splits its panes 1fr|1fr by
+   default; the `library-notes-compact` class -- which the Library screen
+   already maintains on `#library-canvas` at compose time and on every
+   measured `on_resize` crossing of LIBRARY_NOTES_COMPACT_BREAKPOINT --
+   flips it back to today's stacked flow. In the wide split each pane owns
+   its own vertical scroll, which is the point: no more scrolling the whole
+   canvas between list and preview while the right half sits blank. */
+#library-media-workbench {
+    width: 100%;
+    height: 1fr;
+    min-height: 0;
+}
+
+#library-media-list,
+#library-media-preview,
+#library-media-detail-empty {
+    width: 1fr;
+    min-width: 0;
+    height: 100%;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+#library-media-preview,
+#library-media-detail-empty {
+    margin: 0 0 0 1;
+    padding: 0 1;
+}
+
+/* The detail half's placeholder (Collections' "No Collection selected."
+   grammar): muted, and hidden the moment the preview owns the pane. */
+#library-media-detail-empty {
+    color: $ds-text-muted;
+}
+
+#library-media-workbench.has-preview #library-media-detail-empty {
+    display: none;
+}
+
+/* Below the breakpoint: the preserved stacked layout, byte-equivalent to
+   the pre-task-14900 geometry (auto heights, full width, no pane scroll
+   owners, no placeholder). */
+#library-canvas.library-notes-compact #library-media-workbench {
+    layout: vertical;
+    height: auto;
+}
+
+#library-canvas.library-notes-compact #library-media-list,
+#library-canvas.library-notes-compact #library-media-preview {
+    width: 100%;
+    height: auto;
+    margin: 0;
+    padding: 0;
+    overflow-y: hidden;
+}
+
+#library-canvas.library-notes-compact #library-media-detail-empty {
+    display: none;
+}
+
 /* Title: brightest + bold so it anchors the viewer; metadata recedes (muted)
    so the two read as distinct tiers instead of one wall of text. */
 #library-media-viewer-title {

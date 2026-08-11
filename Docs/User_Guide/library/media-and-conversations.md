@@ -35,10 +35,18 @@ Both list canvases follow the same shape, top to bottom:
 - **Row list** — one two-line row per item: the title with a **▸** marker,
   then a dimmer second line (Media: type and age; Conversations:
   "3 messages - 4h"). Hovering a row shows its full title as a tooltip.
-- **Preview block** — appears under the list once a row is selected: a few
-  summary lines plus one action ("Open in viewer" for media, "Open in
-  Console" for conversations). Hidden in Media while Select mode is active
-  (see below) — it never shows an item outside the current selection.
+- **Preview block** — a few summary lines plus one action ("Open in
+  viewer" for media, "Open in Console" for conversations). On a wide
+  terminal the **Media** list shows it **beside** the row list — list on
+  the left, preview on the right, each half scrolling on its own — the
+  same split shape as the Collections workbench; below the Library's one
+  width breakpoint (the same crossing that compacts Notes) it returns to
+  the stacked under-the-list flow. Hidden in Media while Select mode is
+  active (see below) — it never shows an item outside the current
+  selection; in the wide split the right half then says "No preview in
+  Select mode." instead of sitting blank. Conversations keeps the stacked
+  shape at every width, and the Trash view and media viewer are single
+  surfaces that always use the full canvas width.
 
 Opening a media item swaps the list for the **media viewer** (pictured
 above): "‹ Back to list", the title, metadata lines, then the "Content",
@@ -351,3 +359,9 @@ toolbar action, per-item Restore through the existing restore seam, both
 delete confirm copies and the receipt re-pointed at Trash per ADR-055
 Pattern A, and the explicit search decision: trashed items stay out of
 Library search and RAG retrieval until restored.)*
+*Verified against feat/library-queue-batch @ 345da0422 — 2026-08-11
+(task-14900: the Media list's wide side-by-side list | preview split
+described in the layout tour — live at 170/121 cols, back to the stacked
+flow at 119/100, keyboard traversal, Select mode and the bulk toolbar
+checked in both layouts, "No preview in Select mode." placeholder wide
+only.)*

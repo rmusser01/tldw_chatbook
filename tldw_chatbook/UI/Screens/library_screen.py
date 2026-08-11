@@ -2363,6 +2363,60 @@ class LibraryScreen(BaseAppScreen):
         margin: 0;
         overflow-x: hidden;
     }
+
+    /* task-14900: Media list|preview side by side above the measured
+       compact breakpoint; the host's library-notes-compact class flips it
+       back to the stacked flow. No-bundle harness fallback -- the bundle
+       (css/components/_agentic_terminal.tcss) carries the same rules and
+       wins when loaded. */
+    #library-media-workbench {
+        width: 100%;
+        height: 1fr;
+        min-height: 0;
+    }
+
+    #library-media-list,
+    #library-media-preview,
+    #library-media-detail-empty {
+        width: 1fr;
+        min-width: 0;
+        height: 100%;
+        min-height: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
+    }
+
+    #library-media-preview,
+    #library-media-detail-empty {
+        margin: 0 0 0 1;
+        padding: 0 1;
+    }
+
+    #library-media-detail-empty {
+        color: $text-muted;
+    }
+
+    #library-media-workbench.has-preview #library-media-detail-empty {
+        display: none;
+    }
+
+    #library-canvas.library-notes-compact #library-media-workbench {
+        layout: vertical;
+        height: auto;
+    }
+
+    #library-canvas.library-notes-compact #library-media-list,
+    #library-canvas.library-notes-compact #library-media-preview {
+        width: 100%;
+        height: auto;
+        margin: 0;
+        padding: 0;
+        overflow-y: hidden;
+    }
+
+    #library-canvas.library-notes-compact #library-media-detail-empty {
+        display: none;
+    }
     """
 
     def __init__(
