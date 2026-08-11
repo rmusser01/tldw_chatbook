@@ -1781,8 +1781,7 @@ def summarize_with_openrouter(
                                     if "content" in delta:
                                         content = delta["content"]
                                         logging.info(
-                                            "OpenRouter Stream: Content received; character_count=%s",
-                                            len(content),
+                                            "OpenRouter Stream: Content received"
                                         )
                                         full_response += content
                             except json.JSONDecodeError:

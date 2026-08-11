@@ -4717,7 +4717,48 @@ def test_openrouter_stream_hides_returned_content_and_consumes_lines(
     assert post_calls[0][1]["stream"] is True
     assert OPENROUTER_STREAM_CANARY not in captured.text
     assert OPENROUTER_PRIVATE_STREAMING_VALUE not in captured.text
-    assert "OpenRouter Stream: Content received; character_count=" in captured.text
+    assert "OpenRouter Stream: Content received" in captured.text
+
+
+def test_openrouter_stream_non_string_content_preserves_historical_error_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_mid_provider_settings(),
+    )
+    _install_signature_bound_general_config_loader(monkeypatch)
+    response = _FakeResponse(
+        lines=(
+            f"data: {json.dumps({'choices': [{'delta': {'content': 7}}]})}".encode(),
+        )
+    )
+    post_calls = _install_signature_bound_general_session_post(monkeypatch, response)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_openrouter(
+            "fixed-openrouter-key",
+            "fixed input",
+            "fixed prompt",
+            streaming=True,
+        )
+
+    assert result == (
+        "openrouter: Error occurred while processing stream: can only concatenate str "
+        '(not "int") to str'
+    )
+    assert response.iter_lines_started is True
+    assert response.closed is False
+    assert len(post_calls) == 1
+    assert post_calls[0][0] == ()
+    assert post_calls[0][1]["url"] == ("https://openrouter.ai/api/v1/chat/completions")
+    assert post_calls[0][1]["stream"] is True
+    assert json.loads(post_calls[0][1]["data"])["stream"] is True
+    assert "OpenRouter Stream: Content received" in captured.text
+    assert "OpenRouter Stream: Processing failed; exception_type=TypeError" in (
+        captured.text
+    )
 
 
 def test_openrouter_stream_status_failure_hides_body_and_preserves_return(
