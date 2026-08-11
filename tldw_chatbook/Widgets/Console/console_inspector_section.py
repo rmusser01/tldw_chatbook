@@ -100,13 +100,24 @@ class ConsoleInspectorSectionState:
     ``ConsoleInspectorState`` (`console_display_state.py`), the same
     full-snapshot-per-sync pattern ``ConsoleRunInspector`` already uses.
 
+    **Both fields are REQUIRED -- neither has a default** (task-3 review
+    round 3 finding, HIGH: round 1's fix kept per-field defaults, which
+    meant ``ConsoleInspectorSectionState(rows=updated_rows)`` -- omitting
+    ``summary`` -- reproduced the exact same "silently wipes the other
+    dimension" symptom the atomic-state redesign existed to eliminate, one
+    call-frame later. Removing the defaults makes that construction a
+    ``TypeError`` instead of a silent data-loss bug: a caller that means
+    "no summary" must write ``summary=""`` explicitly, which costs one
+    keyword and makes "I forgot a dimension" impossible to express.
+
     Attributes:
         rows: Rows to render.
-        summary: Right-aligned header summary; ``""`` hides it.
+        summary: Right-aligned header summary; ``""`` hides it (an
+            explicit, deliberate choice -- not an omitted argument).
     """
 
-    rows: tuple[InspectorSectionRow, ...] = ()
-    summary: str = ""
+    rows: tuple[InspectorSectionRow, ...]
+    summary: str
 
 
 class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):

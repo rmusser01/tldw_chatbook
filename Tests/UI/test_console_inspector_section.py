@@ -47,6 +47,31 @@ def _rows(
     )
 
 
+def test_state_construction_requires_both_rows_and_summary():
+    """task-3 review round 3, HIGH: round 1's fix kept per-field defaults
+    on `ConsoleInspectorSectionState` (`rows: ... = ()`, `summary: str =
+    ""`), so `ConsoleInspectorSectionState(rows=updated_rows)` --
+    omitting `summary`, the exact "just refresh the rows" shape this test
+    file itself used to write -- silently reproduced the original
+    "sync_state wipes the other dimension" bug one call-frame later.
+    Removing the defaults makes partial construction a `TypeError` instead
+    of a silent data-loss bug."""
+    with pytest.raises(TypeError):
+        ConsoleInspectorSectionState(rows=_rows(1))  # summary omitted
+    with pytest.raises(TypeError):
+        ConsoleInspectorSectionState(summary="2 working")  # rows omitted
+    with pytest.raises(TypeError):
+        ConsoleInspectorSectionState()  # both omitted
+
+
+def test_state_construction_with_an_explicit_empty_summary_still_works():
+    """The deliberate "no summary" case must stay expressible -- it just
+    has to be SAID (`summary=""`), not left to a default."""
+    state = ConsoleInspectorSectionState(rows=_rows(1), summary="")
+    assert state.rows == _rows(1)
+    assert state.summary == ""
+
+
 class _SectionHarness(App[None]):
     """Minimal host mounting one Inspector section directly (no ChatScreen
     involved -- this is a standalone-component test, mirroring the
@@ -342,7 +367,9 @@ async def test_clicking_a_row_after_an_in_place_patch_still_routes_to_the_right_
                 clickable=True,
             ),
         )
-        section.sync_state(ConsoleInspectorSectionState(rows=updated_rows))
+        section.sync_state(
+            ConsoleInspectorSectionState(rows=updated_rows, summary="")
+        )
         await pilot.pause()
 
         assert section.recompose_count == 0
@@ -527,7 +554,9 @@ async def test_row_becoming_clickable_via_sync_state_does_not_recompose():
                 row_id="alpha", primary_text="Agent alpha - running", clickable=True
             ),
         )
-        section.sync_state(ConsoleInspectorSectionState(rows=updated_rows))
+        section.sync_state(
+            ConsoleInspectorSectionState(rows=updated_rows, summary="")
+        )
         await pilot.pause()
 
         # Same row_id sequence -> in-place, even though clickability flipped.
@@ -558,7 +587,7 @@ async def test_sync_state_recomposes_on_a_structural_row_change():
 
         # A third row added is a structural change (different row_id
         # sequence) -- must recompose, not silently drop the new row.
-        section.sync_state(ConsoleInspectorSectionState(rows=_rows(3)))
+        section.sync_state(ConsoleInspectorSectionState(rows=_rows(3), summary=""))
         await pilot.pause()
 
         assert section.recompose_count == 1
