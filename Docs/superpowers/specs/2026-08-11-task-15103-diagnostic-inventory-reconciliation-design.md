@@ -113,13 +113,14 @@ history and the current AST inventory:
 
 The review artifact records the exact incident and final base revisions plus
 one row for every changed diagnostic multiset atom. An atom carries the owner
-path, method, full content digest, multiplicity delta, optional qualified scope
-for navigation, disposition, rationale, permitted dynamic fields, and their
-proven provenance. Rewrites are represented by a change group containing one
-or more removed atoms and one or more added atoms; additions and deletions need
-only one side. This does not claim a unique identity for indistinguishable
-duplicate calls or treat pure relocation as a review event when the canonical
-inventory deliberately does not.
+path, method, full content digest, multiplicity delta, and optional qualified
+scope for navigation. Rewrites are represented by a change group containing
+one or more removed atoms and one or more added atoms; additions and deletions
+need only one side. The change group—not each atom—owns the single disposition,
+rationale, permitted dynamic fields, and proven provenance. This does not claim
+a unique identity for indistinguishable duplicate calls or treat pure
+relocation as a review event when the canonical inventory deliberately does
+not.
 
 Each change group records an exact introducing commit when Git proves one, or
 the narrowest verified commit range when rebases, copies, duplicates, or
@@ -129,10 +130,11 @@ for each of the 17 owners. Removed and rewritten historical calls therefore
 remain reviewable rather than disappearing behind aggregate counts or false
 one-to-one pairings.
 
-The final task Implementation Notes retain the exact ledger hash and reconcile
-its per-owner and per-disposition totals. A mismatch, ambiguous call, missing
-ledger row, or eighteenth owner stops reconciliation; it is not guessed or
-silently absorbed.
+The final task Implementation Notes retain the exact ledger hash, reconcile
+change-group totals by disposition, and separately reconcile atom multiplicity
+by owner and before/after side. A mismatch, ambiguous call, missing ledger row,
+or eighteenth owner stops reconciliation; it is not guessed or silently
+absorbed.
 
 ### Permanent review boundary
 
@@ -261,9 +263,12 @@ review, ledger, tests, and manifest comparison before closeout.
 Diagnostic repair must not turn a formerly lazy operation eager, suppress or
 introduce an exception, change a returned error string, change a retry or
 cancellation branch, alter transaction or persistence order, or change any
-provider request. When historical diagnostic formatting itself raised, the
-existing externally observable contract is characterized before deciding
-whether an explicit equivalent must be retained.
+provider request. The one explicit exception is an error caused solely by
+rendering an ADR-029-prohibited diagnostic value: removing that rendering and
+its logging-time failure is required privacy behavior, not a regression, and
+no equivalent failure is retained. A focused characterization may prove that
+the historical failure was isolated to prohibited rendering and that all
+surrounding legitimate behavior remains unchanged.
 
 Fixed event wording must remain truthful for empty, missing, partially
 configured, cancelled, and failed states. A label such as `configured` or
