@@ -214,6 +214,37 @@ async def _real_agent_citation_controller(
     return result, controller, store, gateway
 
 
+@pytest.fixture(autouse=True)
+def _mcp_tests_keep_a_small_catalog(monkeypatch):
+    """Keep local tools out of these tests' catalog.
+
+    These tests exercise the MCP *permission* gate, not tool disclosure.
+    PR #1474 flipped ``[console] local_tools_enabled`` to default-true,
+    which put 16 local tools into every run's catalog and pushed it from 3
+    to 19 -- past ``DIRECT_DISCLOSE_THRESHOLD`` (16). Past that threshold
+    ``initial_disclosure`` returns no schemas and offers find_tools/
+    load_tools instead, so a scripted model that calls its tool directly
+    is refused at the disclosure gate before the permission gate is ever
+    consulted, and all five MCP tests failed for a reason none of them is
+    about. (It fails CLOSED -- ``allowed_tools`` was always correct.)
+
+    Restoring the pre-#1474 catalog size is the honest fix: it lets these
+    tests keep asserting exactly what they were written to assert, rather
+    than rewriting them to route through find/load. Production disclosure
+    behaviour is deliberately untouched -- see task-15261 for the coverage
+    gap that nothing pins an MCP tool as reachable under the shipped
+    default catalog, which is find/load-shaped and has been since before
+    #1474.
+    """
+    real_get_cli_setting = controller_module.get_cli_setting
+
+    def _small_catalog(section, key, default=None, *args, **kwargs):
+        if section == "console" and key == "local_tools_enabled":
+            return False
+        return real_get_cli_setting(section, key, default, *args, **kwargs)
+
+    monkeypatch.setattr(controller_module, "get_cli_setting", _small_catalog)
+
 def _controller(tmp_path, scripts, *, child_scripts=(), enabled=True):
     gateway = _Gateway(scripts, child_scripts)
     store = ConsoleChatStore()

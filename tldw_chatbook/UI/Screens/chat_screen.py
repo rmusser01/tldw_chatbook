@@ -1906,17 +1906,36 @@ class ChatScreen(BaseAppScreen):
 
     @on(Select.Changed, "#compact-api-provider")
     def on_console_compact_provider_changed(self, event: Select.Changed) -> None:
-        """Mirror native compact provider changes into Console-owned labels."""
+        """Mirror native compact provider changes into Console-owned labels.
+
+        Coalesced through task-3010's seam rather than syncing directly:
+        these two Select watchers ARE the mount-window burst that seam
+        exists to absorb. Instrumenting one screen push showed seven
+        control-bar syncs, four of them from here -- ``#compact-api-model``
+        fires three times and ``#compact-api-provider`` once while the
+        compact selects are populated, and the first three results are
+        overwritten before anything paints. Coalescing them takes that push
+        to three syncs.
+
+        Both handlers must move together: leaving one direct while the
+        other is coalesced fails ``test_requested_sync_still_executes``,
+        because the direct call satisfies the pending request's work
+        without clearing its scheduled flag.
+        """
         if not _is_empty_select_value(event.value):
             self._console_control_provider = str(event.value)
-        self._sync_console_control_bar()
+        self._request_console_control_bar_sync()
 
     @on(Select.Changed, "#compact-api-model")
     def on_console_compact_model_changed(self, event: Select.Changed) -> None:
-        """Mirror native compact model changes into Console-owned labels."""
+        """Mirror native compact model changes into Console-owned labels.
+
+        Coalesced -- see ``on_console_compact_provider_changed`` above for
+        why, and why the two cannot be split.
+        """
         if not _is_empty_select_value(event.value):
             self._console_control_model = str(event.value)
-        self._sync_console_control_bar()
+        self._request_console_control_bar_sync()
 
     @on(ConsoleLeftRail.SectionToggled)
     def on_console_left_rail_section_toggled(

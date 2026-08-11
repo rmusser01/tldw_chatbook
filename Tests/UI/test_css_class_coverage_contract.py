@@ -130,12 +130,6 @@ KNOWN_UNSTYLED: dict[str, str] = {
         "(`ConsoleMarkdownMessage > Static`), so the class carries no "
         "style of its own by design."
     ),
-    "console-markdown-header": (
-        "query-selector handle, same pair as console-markdown-footer "
-        "above: sync_message updates it via query_one('.console-markdown-"
-        "header', Static); styled by the `ConsoleMarkdownMessage > Static` "
-        "type rule in the widget's DEFAULT_CSS."
-    ),
     "console-save-as-context": (
         "plain descriptive Static (role/excerpt text) with no visual "
         "treatment of its own; not queried by class anywhere."
@@ -145,6 +139,18 @@ KNOWN_UNSTYLED: dict[str, str] = {
         "test_console_internals_decomposition.py:427 "
         "(button.has_class('console-send-button')), not a style hook -- "
         "visuals come from the styled `destination-action-button` base."
+    ),
+    "console-settings-context-view": (
+        "duplicates the section's own id (#console-settings-context-view), "
+        "which is what both the widget (query_one) and "
+        "Tests/UI/test_console_context_controls.py select on; the class "
+        "token itself is never used as a selector."
+    ),
+    "console-settings-model-view": (
+        "behavioural grouping marker, not a style hook: "
+        "query('.console-settings-model-view') collects the model-mode "
+        "sections to toggle their display in Python; styling comes from the "
+        "styled console-settings-modal-section class stacked alongside it."
     ),
     "console-settings-error-summary": (
         "presence pinned by test_console_session_settings.py:1764 "
