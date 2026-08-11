@@ -217,7 +217,13 @@ def _resolve_hybrid_pool_multiplier(value: Any) -> int:
     """
     try:
         multiplier = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError: `int()` on an infinite float raises OverflowError
+        # rather than ValueError -- TOML accepts a literal `inf`/`-inf`, so
+        # `hybrid_pool_multiplier = inf` reaches here straight from a
+        # hand-edited config (Qodo PR-1487, same defect as
+        # ``fusion.resolve_rrf_k``). Must fall back like every other
+        # invalid value, not raise before either hybrid leg launches.
         logger.warning(
             f"Invalid hybrid_pool_multiplier {value!r}; falling back to "
             f"{DEFAULT_HYBRID_POOL_MULTIPLIER}"

@@ -442,6 +442,35 @@ class TestResolveRrfK:
             f"the rejected value {bad!r} must appear in the warning: {messages}"
         )
 
+    @pytest.mark.parametrize("bad", ["1e309", float("inf"), float("-inf")])
+    def test_overflow_range_values_fall_back_to_the_shipped_default(self, bad):
+        """Qodo PR-1487: ``int(float(value))`` raises ``OverflowError`` --
+        not ``TypeError`` or ``ValueError`` -- once the float is infinite.
+        ``"1e309"`` parses via ``float()`` to ``inf`` (Python floats top out
+        well below that exponent), and TOML itself accepts a literal
+        ``inf``/``-inf`` float, so both are reachable straight from a
+        hand-edited config's ``rrf_k``. Before the ``OverflowError`` guard
+        this crashed every hybrid search that read such a value instead of
+        falling back like every other invalid value.
+        """
+        from tldw_chatbook.RAG_Search.fusion import resolve_rrf_k
+
+        assert resolve_rrf_k(bad) == DEFAULT_HYBRID_RRF_K
+
+    def test_overflow_range_value_is_named_in_the_warning(self):
+        from tldw_chatbook.RAG_Search.fusion import resolve_rrf_k
+
+        messages = []
+        sink_id = logger.add(lambda m: messages.append(str(m)), level="WARNING")
+        try:
+            assert resolve_rrf_k(float("inf")) == DEFAULT_HYBRID_RRF_K
+        finally:
+            logger.remove(sink_id)
+
+        assert any("inf" in message for message in messages), (
+            f"an overflow-range rrf_k must be named in the warning: {messages}"
+        )
+
 
 class TestRAGServiceFusion:
     """RAGService._fuse_hybrid_results applies the shared fusion math."""

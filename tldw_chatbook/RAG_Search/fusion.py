@@ -356,7 +356,13 @@ def resolve_rrf_k(value: Optional[Any] = None) -> int:
         return shipped_k
     try:
         k = int(float(value))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError: `float(value)` can itself land on an infinite
+        # float ("1e309" overflows float's range, and TOML accepts a
+        # literal `inf`/`-inf`), and `int()` on an infinite float raises
+        # OverflowError rather than ValueError -- Qodo PR-1487. Reachable
+        # straight from a hand-edited config's `rrf_k`, so it must fall
+        # back like every other invalid value, not crash hybrid search.
         logger.warning(f"Invalid rrf_k {value!r}; falling back to {shipped_k}")
         return shipped_k
     if k < 0:

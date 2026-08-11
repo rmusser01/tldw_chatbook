@@ -579,6 +579,13 @@ def test_keyword_mode_cache_key_is_unaffected_by_all_three_fusion_knobs(monkeypa
         ("abc", 2),  # non-numeric -> DEFAULT_HYBRID_POOL_MULTIPLIER
         (None, 2),  # non-numeric -> DEFAULT_HYBRID_POOL_MULTIPLIER
         (object(), 2),  # non-numeric -> DEFAULT_HYBRID_POOL_MULTIPLIER
+        # Qodo PR-1487: `int(value)` raises OverflowError -- not TypeError
+        # or ValueError -- for an infinite float. TOML accepts a literal
+        # `inf`/`-inf`, so `hybrid_pool_multiplier = inf` in a hand-edited
+        # config reaches this resolver directly, before any hybrid leg
+        # launches.
+        (float("inf"), 2),  # overflow -> DEFAULT_HYBRID_POOL_MULTIPLIER
+        (float("-inf"), 2),  # overflow -> DEFAULT_HYBRID_POOL_MULTIPLIER
     ],
 )
 def test_pool_multiplier_resolver_floors_caps_and_falls_back(raw, expected):
@@ -587,6 +594,29 @@ def test_pool_multiplier_resolver_floors_caps_and_falls_back(raw, expected):
     )
 
     assert _resolve_hybrid_pool_multiplier(raw) == expected
+
+
+def test_overflow_range_pool_multiplier_falls_back_with_warning(warnings_captured):
+    """Qodo PR-1487 RED pin: the overflow branch must fall back through the
+    same warned path as every other invalid ``hybrid_pool_multiplier``, not
+    raise ``OverflowError`` out of ``_hybrid_search`` before either leg
+    launches.
+    """
+    from tldw_chatbook.RAG_Search.simplified.config import (
+        DEFAULT_HYBRID_POOL_MULTIPLIER,
+    )
+    from tldw_chatbook.RAG_Search.simplified.rag_service import (
+        _resolve_hybrid_pool_multiplier,
+    )
+
+    assert (
+        _resolve_hybrid_pool_multiplier(float("inf"))
+        == DEFAULT_HYBRID_POOL_MULTIPLIER
+        == 2
+    )
+    assert any(
+        "hybrid_pool_multiplier" in message for message in warnings_captured
+    ), f"an overflow-range hybrid_pool_multiplier must leave a warning trace: {warnings_captured}"
 
 
 def test_invalid_pool_multiplier_falls_back_to_its_own_default_not_search_result_multiplier(
