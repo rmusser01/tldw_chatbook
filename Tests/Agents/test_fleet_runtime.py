@@ -209,6 +209,26 @@ FLEET_CFG = AgentConfig(
     budget=RunBudget(max_steps=40, max_model_turns=40, max_subagents=4),
 )
 
+#: How long a parked approval card waits for the test to answer it.
+_CARD_TIMEOUT = 10.0
+
+#: `FLEET_CFG` with a wall clock short enough that a REGRESSION (a settle
+#: that waits for a child parked on a card nobody will answer until the
+#: turn is over) fails in 20s instead of the 240s default. A survivor's
+#: own budget is clamped from this, so it must still leave the child room
+#: to finish its work after the turn.
+CARD_CFG = AgentConfig(
+    model="test-model",
+    system_prompt="You are helpful.",
+    allowed_tools=("calculator", SPAWN_TOOL_NAME),
+    budget=RunBudget(
+        max_steps=40,
+        max_model_turns=40,
+        max_subagents=2,
+        max_wall_seconds=20.0,
+    ),
+)
+
 #: `FLEET_CFG` with a 1s wall clock, so a TURN-SCOPED settle stops waiting
 #: for a straggler almost immediately instead of humouring it for the
 #: default budget. Used where both settle modes must run the same script.
@@ -784,41 +804,89 @@ def test_a_survivor_persists_a_real_terminal_status_after_its_turn(db):
     assert child["result"] == "late answer"
 
 
-def test_a_survivors_approval_cards_are_not_revoked(db):
-    """A live child's pending approval must survive its turn too.
+def test_a_survivors_pending_approval_is_answerable_after_its_turn(db):
+    """A live child's approval card outlives the turn AND still works.
 
-    `_cancel_fleet_handles` revokes as part of STOPPING a child. A
-    surviving child is not stopped, so revoking its card would fail a
-    legitimate, still-pending tool call closed the moment the supervisor
-    answered -- the exact opposite of what revocation is for.
+    This is the property `_cancel_fleet_handles`' survivor exclusion
+    exists for, tested where the Console actually parks a run: INSIDE
+    `review_tool_calls`, which is where an approval card is armed and
+    where the child's thread waits for the human. The card here is
+    answered only AFTER `run_turn` has returned -- the case the exclusion
+    protects -- and the gate must then release for real: the tool
+    dispatches, its result reaches the child's next provider call, and
+    the child lands `done`.
+
+    An earlier version of this test only asserted that `revoke_approvals`
+    was never called while a child blocked in its PROVIDER call. That
+    child never armed a card at all, so the assertion held even with the
+    exclusion deleted and `_revoke_handle_approvals` no-opped -- vacuous.
     """
-    entered = threading.Event()
-    release = threading.Event()
+    parked = threading.Event()
+    answered = threading.Event()
     revoked: list[str] = []
-    service, _chat, coordinator = make_fleet_service(
+
+    def review(calls, run_id):
+        # Only the CHILD calls calculator; the parent's own spawn review
+        # must not park, or the turn would never reach its answer.
+        if any(call.name == "calculator" for call in calls):
+            parked.set()
+            if not answered.wait(_CARD_TIMEOUT):
+                raise AssertionError("the card was never answered")
+        return {}
+
+    service, chat, coordinator = make_fleet_service(
         db,
         [
-            fence(SPAWN_TOOL_NAME, {"task": "slow task"}),
-            _after(entered, "parent answered early"),
+            fence(SPAWN_TOOL_NAME, {"task": "probe task"}),
+            # The parent answers while the child sits on its card.
+            _after(parked, "parent answered early"),
         ],
-        {"slow task": [_gated_child(entered, release)]},
+        {
+            "probe task": [
+                fence("calculator", {"expression": "1+1"}),
+                "child done",
+            ]
+        },
         revoke_approvals=revoked.append,
+        review_tool_calls=review,
     )
     try:
-        _run_id, _outcome = service.run_turn(
+        _run_id, outcome = service.run_turn(
             conversation_id="c",
             messages=[{"role": "user", "content": "go"}],
-            config=FLEET_CFG,
+            config=CARD_CFG,
             api_endpoint="llama_cpp",
         )
-        assert entered.is_set()
-        assert revoked == [], f"a live child's cards were revoked: {revoked}"
+        assert outcome.status == RUN_DONE
+        assert parked.is_set(), "precondition: the child armed a card"
+        # The turn ended with the card still pending: it must NOT have
+        # been failed closed on the way out, and the child must still be
+        # live to receive the answer.
+        assert revoked == [], f"a live child's card was revoked: {revoked}"
+        assert not coordinator.all_finished()
+        assert _child_row(db)["status"] == RUN_RUNNING
     finally:
-        release.set()
-        _wait_until(
-            coordinator.all_finished, "the released child never finished"
-        )
+        # The human approves -- one turn late, which is the whole point.
+        answered.set()
+    _wait_until(coordinator.all_finished, "the approved child never finished")
+
     assert revoked == []
+    # The gate released for real: the tool ran and produced its answer...
+    child_row = _child_row(db)
+    calc_results = _tool_results(db.get_run(child_row["id"]), "calculator")
+    assert calc_results and "2" in calc_results[0], calc_results
+    # ... that answer reached the child's NEXT provider call ...
+    child_turns = chat.child_calls["probe task"]
+    assert len(child_turns) == 2, "the child never got a turn after the card"
+    assert any(
+        "2" in str(message.get("content", ""))
+        for message in child_turns[1]["messages_payload"]
+    )
+    # ... and the child finished properly, a turn after the one that
+    # spawned it.
+    assert coordinator.snapshot()[0].status == RUN_DONE
+    assert child_row["status"] == RUN_DONE
+    assert child_row["result"] == "child done"
 
 
 def test_stopping_the_turn_still_stops_its_children(db, monkeypatch):

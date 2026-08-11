@@ -89,17 +89,27 @@ def join_fleet_children(service, timeout=10.0):
     returns. Any test whose assertions are about the CHILD (its row, its
     result, its tool calls) must therefore say so explicitly.
 
-    Joining the threads rather than polling the DB is exact: `run_child`
-    finishes the handle and persists the terminal status in its `finally`,
-    so a joined thread has already written everything it will write.
+    Joining the threads rather than polling the DB is exact, and STRICTLY
+    STRONGER than waiting on the coordinator: `run_child`'s `finally`
+    calls `fleet.finish()` BEFORE `db.set_status`, so a finished handle
+    does not imply a terminal row (the setup-exception path is where the
+    two diverge). Anyone reaching for `all_finished()` as a barrier
+    because they want the ROW should reach for this instead.
+
+    A join that times out is asserted, not swallowed: a wedged child would
+    otherwise surface much later as a baffling `assert 0 == 1` in whatever
+    the caller went on to check.
 
     Args:
         service: the `AgentService` whose turn just returned.
-        timeout: per-thread join budget; a test child that outlasts it is
-            wedged, and the caller's own assertions will say so.
+        timeout: per-thread join budget.
     """
-    for thread in list(service._fleet_threads.values()):
+    for handle_id, thread in list(service._fleet_threads.items()):
         thread.join(timeout)
+        assert not thread.is_alive(), (
+            f"sub-agent {handle_id} did not finish within {timeout}s "
+            f"(thread {thread.name} still alive)"
+        )
 
 
 @pytest.fixture()

@@ -2540,8 +2540,21 @@ class AgentService:
 
         Returns:
             A ``(run_id, outcome)`` tuple: the new primary run's id and its
-            terminal ``RunOutcome``. The run record (and any sub-agent run
-            records) are persisted before this returns.
+            terminal ``RunOutcome``. The PRIMARY run's record is always
+            persisted before this returns.
+
+            A sub-agent's record is NOT (PR3a-1 Task 2). It is persisted
+            before return only if that child settled -- it had already
+            finished, the ``[agents] subagents_outlive_turn`` kill switch
+            is off, or the user cancelled this turn (see
+            ``_surviving_handles``). Otherwise the child keeps running:
+            its row is still ``running`` when this returns, and its own
+            thread persists its terminal status later, from
+            ``run_child``'s ``finally``. Anything reading a sub-agent's
+            row (or result, or steps) immediately after this call must
+            therefore wait for that child rather than assume the return
+            of this method is a barrier -- it used to be one, and that
+            implicit guarantee is exactly what this task removed.
 
         Run-log contract:
             The run-log writer is scoped to ONE run tree, not to this
