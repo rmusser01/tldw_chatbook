@@ -674,6 +674,12 @@ class LibraryFileNotesGitPanel(Vertical):
         display: none;
     }
 
+    #file-notes-git-selected-actions,
+    #file-notes-git-bulk-toggle,
+    #file-notes-git-bulk-actions {
+        display: none;
+    }
+
     #file-notes-git-rows {
         height: 1fr;
         min-height: 1;
@@ -1092,6 +1098,7 @@ class LibraryFileNotesGitPanel(Vertical):
         self._trust_available = False
         self._status_ready = False
         self._mutating = False
+        self._bulk_actions_expanded = False
         self._row_render_generation = 0
         self._replacing_rows = False
         self._repository_text = "Repository: not checked"
@@ -1205,6 +1212,11 @@ class LibraryFileNotesGitPanel(Vertical):
                     id="file-notes-git-unstage-selected",
                     compact=True,
                 )
+            yield Button(
+                "Show bulk actions",
+                id="file-notes-git-bulk-toggle",
+                compact=True,
+            )
             with Horizontal(id="file-notes-git-bulk-actions"):
                 yield Button(
                     "Stage all (0)",
@@ -1695,6 +1707,7 @@ class LibraryFileNotesGitPanel(Vertical):
     def _sync_commit_availability(self) -> None:
         if not self.is_mounted:
             return
+        focused = self.screen.focused
         available = self._commit_availability is not None
         count = (
             self._commit_availability.staged_note_count
@@ -1704,10 +1717,16 @@ class LibraryFileNotesGitPanel(Vertical):
         button = self.query_one("#file-notes-git-commit-staged", Button)
         zero = self.query_one("#file-notes-git-commit-zero", Static)
         button.label = f"Commit staged ({count})"
-        button.disabled = count == 0 or self._mutating
-        button.display = available
+        show_action = available and count > 0 and not self._mutating
+        button.disabled = not show_action
+        button.display = show_action
         zero.display = available and count == 0
         self._sync_action_layout(self.content_region.width)
+        if focused is button and not show_action:
+            self.screen.set_focus(
+                self.query_one("#file-notes-git-back", Button),
+                scroll_visible=False,
+            )
 
     def render_push_availability(
         self,
@@ -1725,11 +1744,18 @@ class LibraryFileNotesGitPanel(Vertical):
     def _sync_push_availability(self) -> None:
         if not self.is_attached:
             return
+        focused = self.screen.focused
         button = self.query_one("#file-notes-git-push-review", Button)
         available = self._push_availability is not None
-        button.display = available
-        button.disabled = not available or self._mutating
+        show_action = available and not self._mutating
+        button.display = show_action
+        button.disabled = not show_action
         self._sync_action_layout(self.content_region.width)
+        if focused is button and not show_action:
+            self.screen.set_focus(
+                self.query_one("#file-notes-git-back", Button),
+                scroll_visible=False,
+            )
 
     def return_to_push_list(self) -> None:
         """Clear workflow-only projections and restore the Session Git list."""
@@ -2802,6 +2828,9 @@ class LibraryFileNotesGitPanel(Vertical):
             "#file-notes-git-unstage-selected",
             Button,
         )
+        selected_actions = self.query_one("#file-notes-git-selected-actions")
+        bulk_toggle = self.query_one("#file-notes-git-bulk-toggle", Button)
+        bulk_actions = self.query_one("#file-notes-git-bulk-actions")
         stage_all = self.query_one("#file-notes-git-stage-all", Button)
         unstage_all = self.query_one("#file-notes-git-unstage-all", Button)
         selected_note = self.query_one(
@@ -2823,30 +2852,90 @@ class LibraryFileNotesGitPanel(Vertical):
             )
             self._fit_fixed_regions()
             selected_note.display = True
-        can_mutate = self._status_ready and not self._mutating
-        stage_selected.display = (
-            self._trusted and selected is not None and selected.stage_action is not None
+        can_mutate = (
+            self._status_ready
+            and not self._mutating
+            and not self._replacing_rows
         )
+        show_stage = (
+            self._trusted
+            and selected is not None
+            and selected.stage_action is not None
+        )
+        stage_selected.display = show_stage
         stage_selected.disabled = not can_mutate
         if selected is not None and selected.stage_action == "stage_update":
             stage_selected.label = "Stage update"
         else:
             stage_selected.label = "Stage"
-        unstage_selected.display = (
-            self._trusted and selected is not None and selected.unstage_eligible
+        show_unstage = (
+            self._trusted
+            and selected is not None
+            and selected.stage_action is None
+            and selected.unstage_eligible
         )
+        unstage_selected.display = show_unstage
         unstage_selected.label = "Unstage"
         unstage_selected.disabled = not can_mutate
+        selected_actions.display = show_stage or show_unstage
         stage_count = sum(row.stage_eligible for row in self._rows)
         unstage_count = sum(row.unstage_eligible for row in self._rows)
         stage_all.label = f"Stage all ({stage_count})"
         unstage_all.label = f"Unstage all ({unstage_count})"
-        stage_all.display = self._trusted and bool(self._rows)
-        unstage_all.display = self._trusted and bool(self._rows)
+        bulk_available = (
+            self._trusted
+            and (stage_count > 0 or unstage_count > 0)
+        )
+        if (
+            focused is not None
+            and (
+                (
+                    not (show_stage or show_unstage)
+                    and focused in {stage_selected, unstage_selected}
+                )
+                or (
+                    not bulk_available
+                    and (
+                        focused is bulk_toggle
+                        or focused in {stage_all, unstage_all}
+                    )
+                )
+            )
+        ):
+            if self._trust_available and trust.display:
+                target = trust
+            elif refresh.display and not refresh.disabled:
+                target = refresh
+            else:
+                target = back
+            self.screen.set_focus(target, scroll_visible=False)
+            self.call_after_refresh(partial(self._settle_action_focus, target))
+            focused = target
+        if not bulk_available:
+            self._bulk_actions_expanded = False
+        action_counts = []
+        if stage_count:
+            action_counts.append(f"{stage_count} stage")
+        if unstage_count:
+            action_counts.append(f"{unstage_count} unstage")
+        toggle_verb = "Hide" if self._bulk_actions_expanded else "Show"
+        bulk_toggle.label = f"{toggle_verb} bulk · {' · '.join(action_counts)}"
+        bulk_toggle.display = bulk_available
+        bulk_actions.display = bulk_available and self._bulk_actions_expanded
+        stage_all.display = bulk_actions.display and stage_count > 0
+        unstage_all.display = bulk_actions.display and unstage_count > 0
         stage_all.disabled = not (can_mutate and stage_count > 0)
         unstage_all.disabled = not (can_mutate and unstage_count > 0)
         self._sync_action_layout(self.content_region.width)
         self._repair_hidden_focus(focused, back, trust, refresh)
+
+    def _settle_action_focus(self, target: Button) -> None:
+        """Finish action focus repair without stealing focus outside the panel."""
+        focused = self.screen.focused
+        if focused is not None and self not in focused.ancestors:
+            return
+        if target.display and not target.disabled:
+            self.screen.set_focus(target, scroll_visible=False)
 
     def _repair_hidden_focus(
         self,
@@ -2883,6 +2972,12 @@ class LibraryFileNotesGitPanel(Vertical):
         if not self._replacing_rows and isinstance(item, _SessionGitListItem):
             self._selected_group_id = item.row.group_id
             self._update_actions()
+
+    @on(Button.Pressed, "#file-notes-git-bulk-toggle")
+    def _toggle_bulk_actions(self) -> None:
+        """Expand or collapse the retained bulk Session Git actions."""
+        self._bulk_actions_expanded = not self._bulk_actions_expanded
+        self._update_actions()
 
     @on(ListView.Highlighted, "#file-notes-git-commit-included-notes")
     def _commit_note_highlighted(self, _event: ListView.Highlighted) -> None:

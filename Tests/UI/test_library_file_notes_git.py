@@ -900,16 +900,17 @@ async def _open_git_and_stage_one(
         and len(workspace._git_panel_widget.rows) == 2,
         "initial status did not finish",
     )
+    await _wait_for_current_git_row_projection(workspace)
     workspace.query_one("#file-notes-git-stage-selected", Button).press()
-    await _wait_until(
-        pilot,
-        lambda: len(git_service.status_calls) == 2
-        and workspace.query_one(
+    for _ in range(200):
+        if len(git_service.status_calls) == 2 and workspace.query_one(
             "#file-notes-git-action-status",
             Static,
-        ).display,
-        "Stage result did not render",
-    )
+        ).display:
+            break
+        await asyncio.sleep(0.01)
+    else:
+        raise AssertionError("Stage result did not render")
     action_worker = workspace._git_action_worker
     if action_worker is not None:
         await action_worker.wait()
@@ -943,6 +944,7 @@ async def _open_guarded_commit_form(
         ),
         "guarded commit availability did not render",
     )
+    await _wait_for_current_git_row_projection(workspace)
     commit = workspace.query_one(
         "#file-notes-git-commit-staged",
         Button,
@@ -1060,7 +1062,7 @@ async def test_commit_panel_count_uses_only_the_authorized_projection() -> None:
         )
         await pilot.pause()
         assert str(commit_button.label) == "Commit staged (0)"
-        assert commit_button.disabled
+        assert not commit_button.display
         assert zero_copy.display
         assert _text(zero_copy) == "Stage at least one session note to commit"
 
@@ -1745,8 +1747,12 @@ async def test_commit_uncertain_recovery_has_literal_reason_and_visible_focus(
         )
         assert check_again.display
         assert not check_again.disabled
+        await _wait_until(
+            pilot,
+            lambda: check_again.has_focus,
+            "uncertain recovery action did not receive focus",
+        )
         assert not panel.query_one("#file-notes-git-back", Button).has_focus
-        assert check_again.has_focus
 
         if can_check_again:
             assert not reason.display
@@ -2426,7 +2432,7 @@ async def test_row_action_table_is_driven_by_row_policy(
             expected = "Stage update" if stage_action == "stage_update" else "Stage"
             assert str(stage.label) == expected
             assert not stage.disabled
-        assert unstage.display is unstage_eligible
+        assert unstage.display is (unstage_eligible and stage_action is None)
         assert panel.query_one("#file-notes-git-stage-all", Button).disabled is (
             stage_action is None
         )
@@ -2522,6 +2528,78 @@ async def test_selected_and_bulk_labels_report_selection_and_independent_counts(
         assert "folder/second.md" in _text(selected_note)
         assert str(stage_selected.label) == "Stage update"
         assert str(unstage_selected.label) == "Unstage"
+
+
+@pytest.mark.parametrize("size", ((160, 45), (120, 40), (40, 20)))
+@pytest.mark.asyncio
+async def test_session_git_actions_reveal_only_the_current_next_steps(
+    size: tuple[int, int],
+) -> None:
+    """Verify row and bulk actions use one progressive hierarchy.
+
+    Args:
+        size: Terminal dimensions used to mount the Session Git panel.
+    """
+    first = _row(
+        "unstaged",
+        group_id=11,
+        stage_action="stage",
+        source_path="folder/first.md",
+    )
+    second = _row(
+        "owned_newer_edits",
+        group_id=22,
+        stage_action="stage_update",
+        unstage_eligible=True,
+        source_path="folder/second.md",
+    )
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+
+    async with _PanelHarness(panel).run_test(size=size) as pilot:
+        panel.render_status(_status(first, second))
+        await pilot.pause()
+
+        rows = panel.query_one("#file-notes-git-rows", ListView)
+        stage = panel.query_one("#file-notes-git-stage-selected", Button)
+        unstage = panel.query_one("#file-notes-git-unstage-selected", Button)
+        bulk_toggle = panel.query_one("#file-notes-git-bulk-toggle", Button)
+        bulk_actions = panel.query_one("#file-notes-git-bulk-actions")
+        stage_all = panel.query_one("#file-notes-git-stage-all", Button)
+        unstage_all = panel.query_one("#file-notes-git-unstage-all", Button)
+
+        assert stage.display
+        assert str(stage.label) == "Stage"
+        assert not unstage.display
+        assert bulk_toggle.display
+        assert str(bulk_toggle.label) == "Show bulk · 2 stage · 1 unstage"
+        assert not bulk_actions.display
+
+        bulk_toggle.press()
+        await pilot.pause()
+        assert str(bulk_toggle.label) == "Hide bulk · 2 stage · 1 unstage"
+        assert bulk_actions.display
+        assert stage_all.display
+        assert str(stage_all.label) == "Stage all (2)"
+        assert unstage_all.display
+        assert str(unstage_all.label) == "Unstage all (1)"
+
+        rows.index = 1
+        await pilot.pause()
+        assert stage.display
+        assert str(stage.label) == "Stage update"
+        assert not unstage.display
+
+        unstage_all.focus()
+        await pilot.pause()
+        assert unstage_all.has_focus
+        panel.render_status(_status(_row("clean", group_id=22)))
+        await pilot.pause()
+        assert not bulk_toggle.display
+        assert not bulk_actions.display
+        assert panel.query_one("#file-notes-git-refresh", Button).has_focus
+
+        await _assert_visible_panel_buttons_fit(panel, pilot)
 
 
 @pytest.mark.parametrize("state", ["stale", "error"])
@@ -2728,6 +2806,8 @@ async def test_buttons_emit_typed_messages_with_selected_and_bulk_group_ids() ->
             )
         )
         await pilot.pause()
+        panel.query_one("#file-notes-git-bulk-toggle", Button).press()
+        await pilot.pause()
 
         for selector in (
             "#file-notes-git-stage-selected",
@@ -2785,6 +2865,11 @@ async def test_keyboard_moves_rows_and_focus_without_implicit_enter_action() -> 
         await pilot.pause()
         assert app.focused is rows
 
+        bulk_toggle = panel.query_one("#file-notes-git-bulk-toggle", Button)
+        bulk_toggle.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert panel.query_one("#file-notes-git-bulk-actions").display
         panel.query_one("#file-notes-git-stage-all", Button).focus()
         await pilot.press("enter")
         await _wait_until(pilot, lambda: len(app.messages) == 1, "Enter did not act")
@@ -3026,6 +3111,7 @@ async def test_reopening_cached_status_keeps_mutation_controls_disabled(
             lambda: len(workspace._git_panel_widget.rows) == 2,
             "initial status did not finish",
         )
+        await _wait_for_current_git_row_projection(workspace)
         workspace.query_one("#file-notes-git-stage-selected", Button).press()
         await _wait_until(
             pilot,
@@ -3332,6 +3418,7 @@ async def test_hidden_action_summary_is_presented_after_reopen(
             lambda: len(workspace._git_panel_widget.rows) == 2,
             "initial status did not finish",
         )
+        await _wait_for_current_git_row_projection(workspace)
         initial_status = owner.snapshot(binding).git_status
         assert initial_status is not None
         workspace.query_one("#file-notes-git-stage-selected", Button).press()
@@ -3402,6 +3489,7 @@ async def test_unexpected_action_failure_survives_postflight_refresh(
             and len(workspace._git_panel_widget.rows) == 2,
             "initial status did not finish",
         )
+        await _wait_for_current_git_row_projection(workspace)
         admission = owner.snapshot(binding)
 
         workspace.query_one("#file-notes-git-stage-selected", Button).press()
@@ -3457,6 +3545,7 @@ async def test_hidden_unexpected_action_failure_refreshes_on_reopen(
             and len(workspace._git_panel_widget.rows) == 2,
             "initial status did not finish",
         )
+        await _wait_for_current_git_row_projection(workspace)
         initial_status = owner.snapshot(binding).git_status
         assert initial_status is not None
 
@@ -3887,6 +3976,7 @@ async def test_stage_flushes_then_gate_keeps_editor_back_and_one_latest_refresh(
             lambda: len(git_service.status_calls) == 1,
             "initial status did not finish",
         )
+        await _wait_for_current_git_row_projection(workspace)
         git_service.action_release = asyncio.Event()
         workspace.query_one("#file-notes-git-stage-selected", Button).press()
         await _wait_until(
@@ -3956,6 +4046,9 @@ async def test_stage_all_summary_counts_the_complete_displayed_snapshot(
             "initial status did not finish",
         )
 
+        await _wait_for_current_git_row_projection(workspace)
+        workspace.query_one("#file-notes-git-bulk-toggle", Button).press()
+        await pilot.pause()
         workspace.query_one("#file-notes-git-stage-all", Button).press()
         for _ in range(200):
             if (
@@ -4001,6 +4094,9 @@ async def test_unstage_all_summary_counts_the_complete_displayed_snapshot(
             "initial status did not finish",
         )
 
+        await _wait_for_current_git_row_projection(workspace)
+        workspace.query_one("#file-notes-git-bulk-toggle", Button).press()
+        await pilot.pause()
         workspace.query_one("#file-notes-git-unstage-all", Button).press()
         for _ in range(200):
             if (
@@ -4263,6 +4359,7 @@ async def test_hidden_postflight_starts_no_status_and_transition_wins_admission(
             lambda: len(git_service.status_calls) == 1,
             "initial status did not finish",
         )
+        await _wait_for_current_git_row_projection(workspace)
         transition = owner.try_acquire_transition(binding, "path")
         assert transition is not None
         workspace.query_one("#file-notes-git-stage-selected", Button).press()
@@ -4347,13 +4444,17 @@ async def test_unstage_selected_reports_counts_and_refreshes_once(
             lambda: len(git_service.status_calls) == 1,
             "initial status did not finish",
         )
+        await _wait_for_current_git_row_projection(workspace)
         workspace.query_one("#file-notes-git-unstage-selected", Button).press()
-        await _wait_until(
-            pilot,
-            lambda: git_service.unstage_calls == [(1,)]
-            and len(git_service.status_calls) == 2,
-            "Unstage did not settle and refresh once",
-        )
+        for _ in range(200):
+            if (
+                git_service.unstage_calls == [(1,)]
+                and len(git_service.status_calls) == 2
+            ):
+                break
+            await asyncio.sleep(0.01)
+        else:
+            raise AssertionError("Unstage did not settle and refresh once")
         assert workspace._git_last_action is not None
         assert workspace._git_last_action.text == (
             "Last action: UNSTAGED — 1 session note unstaged; "
@@ -4432,6 +4533,7 @@ async def test_mutation_blocks_root_and_path_while_path_lease_blocks_mutation(
             lambda: len(git_service.status_calls) == 1,
             "initial status did not finish",
         )
+        await _wait_for_current_git_row_projection(workspace)
         git_service.action_release = asyncio.Event()
         workspace.query_one("#file-notes-git-stage-selected", Button).press()
         await _wait_until(
@@ -4491,6 +4593,7 @@ async def test_stage_rechecks_transition_admission_after_flush_await(
             lambda: len(git_service.status_calls) == 1,
             "initial status did not finish",
         )
+        await _wait_for_current_git_row_projection(workspace)
         lease = None
 
         async def flush_then_transition() -> bool:
@@ -4536,6 +4639,7 @@ async def test_stage_draft_conflict_names_save_and_editor_recovery(
             lambda: len(git_service.status_calls) == 1,
             "initial status did not finish",
         )
+        await _wait_for_current_git_row_projection(workspace)
         workspace._set_save_state("conflict", "file changed on disk")
         workspace.query_one("#file-notes-git-stage-selected", Button).press()
         await pilot.pause()
@@ -4702,6 +4806,14 @@ async def test_40x20_prepare_scrolls_actions_below_a_long_linked_root(
             VerticalScroll,
         )
         assert list_surface.can_focus
+        bulk_toggle = panel.query_one("#file-notes-git-bulk-toggle", Button)
+        for _ in range(20):
+            if bulk_toggle.has_focus:
+                break
+            await pilot.press("tab")
+        assert bulk_toggle.has_focus
+        await pilot.press("enter")
+        await pilot.pause()
         stage_all = panel.query_one("#file-notes-git-stage-all", Button)
         for _ in range(20):
             if stage_all.has_focus:
@@ -4735,7 +4847,15 @@ async def test_40x20_prepare_scrolls_actions_below_a_long_linked_root(
             assert list_surface.content_region.contains_region(button.region)
             return button
 
+        async def ensure_bulk_actions_open() -> None:
+            if panel.query_one("#file-notes-git-bulk-actions").display:
+                return
+            await focus_action("#file-notes-git-bulk-toggle")
+            await pilot.press("enter")
+            await pilot.pause()
+
         await focus_action("#file-notes-git-unstage-selected")
+        await ensure_bulk_actions_open()
         await focus_action("#file-notes-git-unstage-all")
         await focus_action("#file-notes-git-commit-staged")
 
@@ -4758,6 +4878,7 @@ async def test_40x20_prepare_scrolls_actions_below_a_long_linked_root(
             _row("owned", group_id=1, unstage_eligible=True),
             _row("owned", group_id=2, unstage_eligible=True),
         )
+        await ensure_bulk_actions_open()
         await focus_action("#file-notes-git-stage-all")
         await pilot.press("enter")
         await _wait_until(
@@ -5345,6 +5466,7 @@ async def test_commit_editor_lease_does_not_make_stage_read_only(
             lambda: len(git_service.status_calls) == 1,
             "status did not finish",
         )
+        await _wait_for_current_git_row_projection(workspace)
         workspace.query_one(
             "#file-notes-git-stage-selected",
             Button,
