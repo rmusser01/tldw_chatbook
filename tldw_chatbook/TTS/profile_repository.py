@@ -337,6 +337,15 @@ def _validate_canonical_reference(value: object) -> CanonicalTTSCloneReference:
             channels=reference.channels,
             sample_encoding=reference.sample_encoding,
         )
+        metadata = validate_canonical_reference_wav(validated.wav_bytes)
+        if (
+            metadata.byte_length != validated.byte_length
+            or metadata.duration_ms != validated.duration_ms
+            or metadata.sample_rate_hz != validated.sample_rate_hz
+            or metadata.channels != validated.channels
+            or metadata.sample_encoding != validated.sample_encoding
+        ):
+            raise ValueError
         if validated != reference:
             raise ValueError
     except BaseException as error:
@@ -483,6 +492,7 @@ def _reserved_store_paths(database_path: Path) -> tuple[Path, ...]:
     return (
         database_path,
         database_path.with_name(f"{database_path.name}.lock"),
+        _v2_migration_backup_path(database_path),
         *(
             database_path.with_name(f"{database_path.name}{suffix}")
             for suffix in _STORE_SIDECAR_SUFFIXES

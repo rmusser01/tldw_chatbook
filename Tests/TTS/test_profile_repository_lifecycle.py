@@ -3075,9 +3075,12 @@ async def test_online_backup_rejects_live_lock_and_sidecar_targets(
     database_path = tmp_path / "profiles.sqlite3"
     repository = _repository(database_path)
     await repository.open()
+    migration_backup = _repository_module()._v2_migration_backup_path(database_path)
+    migration_backup.write_bytes(b"retained-v2-downgrade-snapshot")
     reserved = (
         database_path,
         database_path.with_name(f"{database_path.name}.lock"),
+        migration_backup,
         *(
             database_path.with_name(f"{database_path.name}{suffix}")
             for suffix in (
@@ -3106,14 +3109,18 @@ async def test_online_backup_rejects_symlink_and_hardlink_aliases_to_live_store(
     database_path = tmp_path / "profiles.sqlite3"
     symlink_path = tmp_path / "symlink.sqlite3"
     hardlink_path = tmp_path / "hardlink.sqlite3"
+    retained_alias = tmp_path / "retained-alias.sqlite3"
     repository = _repository(database_path)
     await repository.open()
+    migration_backup = _repository_module()._v2_migration_backup_path(database_path)
+    migration_backup.write_bytes(b"retained-v2-downgrade-snapshot")
     symlink_path.symlink_to(database_path)
     os.link(database_path, hardlink_path)
+    os.link(migration_backup, retained_alias)
 
     try:
         live_bytes = database_path.read_bytes()
-        for destination in (symlink_path, hardlink_path):
+        for destination in (symlink_path, hardlink_path, retained_alias):
             with pytest.raises(ProfileRepositoryError) as caught:
                 await repository.backup_to(destination)
             _assert_safe_error(
@@ -3125,6 +3132,8 @@ async def test_online_backup_rejects_symlink_and_hardlink_aliases_to_live_store(
         assert database_path.read_bytes() == live_bytes
         assert symlink_path.is_symlink()
         assert hardlink_path.stat().st_ino == database_path.stat().st_ino
+        assert retained_alias.stat().st_ino == migration_backup.stat().st_ino
+        assert migration_backup.read_bytes() == b"retained-v2-downgrade-snapshot"
     finally:
         await repository.close()
 

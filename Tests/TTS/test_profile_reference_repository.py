@@ -153,6 +153,39 @@ def test_reference_qualification_deadline_interrupts_aggregate_sql() -> None:
 
 
 @pytest.mark.asyncio
+async def test_set_reference_rejects_digest_valid_noncanonical_wav(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    pseudo_wav = b"not-a-canonical-wave"
+    forged = CanonicalTTSCloneReference(
+        wav_bytes=pseudo_wav,
+        reference_text="Reference transcript",
+        sha256=sha256(pseudo_wav).hexdigest(),
+        byte_length=len(pseudo_wav),
+        duration_ms=1,
+        sample_rate_hz=16_000,
+        channels=1,
+        sample_encoding="pcm_s16le",
+    )
+    async with _opened_repository(path) as repository:
+        generation, revision = await _create(repository, PROFILE_A, "Narrator")
+
+        with pytest.raises(ProfileRepositoryError) as caught:
+            await repository.set_reference(
+                PROFILE_A,
+                forged,
+                expected_revision=revision,
+                expected_generation=generation,
+            )
+        _assert_error(caught.value, "operation_failed")
+        unchanged = await repository.get_profile(PROFILE_A)
+
+        assert unchanged.value.revision == revision
+        assert unchanged.value.reference is None
+
+
+@pytest.mark.asyncio
 async def test_attach_stream_read_and_metadata_only_profile_surfaces(
     tmp_path: Path,
 ) -> None:
