@@ -9,6 +9,35 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## Style probes are not render evidence — capture the frame
+
+**TASK-15421 AC3, 2026-08-11.** The Studio exact-ID input's typed text
+vanished while focused in the live TUI. The hunt fixated on border rules for
+hours because every probe asked `styles.border` — which was empty, correctly,
+in both the live-matching harness and run_test — so the harness appeared to
+CONTRADICT the live app and the divergence got recorded as an unexplained
+live-vs-run_test cascade anomaly. There was no divergence: the reset-tier
+accessibility rule `*:focus { outline: solid }` paints the outline OVER the
+widget's outermost rendered lines (its own comment warns of this), and on a
+height-1 widget that line IS the only content line. The obscuring reproduced
+in run_test all along; no probe ever looked at a rendered frame. One
+`export_screenshot()` assertion (`assert "studio-model" in frame`) found in
+minutes what specificity analysis could not, and now pins the fix in
+`Tests/UI/test_speech_live_render_defects.py` — a file whose own docstring
+already teaches a version of this lesson ("the tests asserted the things a
+test naturally reaches for ... none of which is what was wrong").
+
+**What to do.** When the defect is "the user cannot SEE something," the
+oracle must be the rendered frame (`export_screenshot`/`export_text`, or the
+tmux capture live), not computed styles: `styles.border`, `styles.height`,
+and `region` all report the widget's own properties and are blind to
+anything painted over it — outlines, overlays, tooltips, sibling z-order.
+Before declaring a live-vs-harness divergence, confirm both sides were asked
+the SAME question at the same oracle level; here the "divergence" was one
+side being read at the style level and the other at the pixel level.
+
+---
+
 ## A fix proven at one layer can be unreachable through the product path
 
 **TASK-15420, 2026-08-11.** TASK-2260 (2026-08-04) shipped custom-endpoint
