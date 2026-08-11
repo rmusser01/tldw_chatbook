@@ -3174,6 +3174,15 @@ class ConsoleAgentBridge:
             SubAgentSummary(
                 text=str(record.get("task") or ""),
                 status=str(record.get("status") or "running"),
+                # PR2b Task 4: the rail's per-row click-through needs a
+                # stable identity to resolve a clicked row back to its own
+                # run (`ConsoleAgentController._console_agent_drilldown_
+                # target_run_id`). Historical rows have no coordinator
+                # handle (there is none, post-restart), but they DO have
+                # their own permanent `AgentRunsDB` id -- populate it here
+                # so a resumed conversation's sub-agent rows are just as
+                # drillable as a live run's.
+                run_id=str(record.get("id") or ""),
             )
             for record in records
             if record["agent_kind"] == AGENT_KIND_SUBAGENT

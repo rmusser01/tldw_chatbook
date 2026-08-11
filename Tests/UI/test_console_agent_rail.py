@@ -617,8 +617,11 @@ async def test_drilldown_falls_back_to_overview_after_conversation_switch():
             fake_bridge.active_conversation_id
         )
 
-        # Drill into the (only) sub-agent run of conv-A.
-        console._agent._toggle_console_agent_drilldown_from_subagents_click()
+        # Drill into the (only) sub-agent run of conv-A. TASK-4: the old
+        # cycling toggle is gone -- a row now resolves directly to its own
+        # run id (here that id is already known, matching a real click on
+        # that row).
+        console._agent._drill_into_console_agent_subagent("run-1")
         assert console._console_agent_drilldown_run_id == "run-1"
         status_line, _steps, _subagents = console._agent._console_agent_section_lines()
         assert status_line.startswith("Sub-agent ·")
@@ -939,12 +942,18 @@ async def test_activate_native_console_session_clears_stale_drilldown():
         assert console._console_agent_drilldown_run_id is None
 
 
-# --- Finding D: repeated clicks on the combined sub-agents rail line must
-# reach every sub-agent run, not just the newest one. ---
+# --- Finding D (original): repeated clicks on the combined sub-agents rail
+# line had to reach every sub-agent run, not just the newest one -- the old
+# mechanism was a cycling toggle that stepped one run per click. TASK-4
+# (PR2b supervisor fleet) replaced that cycle with per-row click routing: a
+# specific row's own id now resolves directly to its own run, so "every run
+# is reachable" is proven by clicking rows out of order (not sequentially)
+# and confirming each lands on exactly the run it names -- the meaning
+# Finding D pinned, preserved through a different mechanism. ---
 
 
 @pytest.mark.asyncio
-async def test_subagents_click_cycles_through_every_run_then_overview():
+async def test_clicking_a_specific_subagent_row_drills_into_that_run_directly():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -986,20 +995,45 @@ async def test_subagents_click_cycles_through_every_run_then_overview():
             def live_snapshot(self, conversation_id):
                 return AgentLiveSnapshot()
 
+            def historical_snapshot(self, conversation_id):
+                # Mirrors the real bridge's `_derive_historical_snapshot`
+                # (PR2b Task 4 fix): each row's `run_id` is the record's own
+                # permanent id, exactly what a real resumed conversation's
+                # rows now carry.
+                return AgentLiveSnapshot(
+                    subagents=tuple(
+                        SubAgentSummary(
+                            text=r["task"], status=r["status"], run_id=r["id"]
+                        )
+                        for r in self._RUNS
+                    )
+                )
+
         console._console_agent_bridge = _FakeBridge()
         console._current_console_rail_conversation_id = lambda: "conv-A"
 
-        clicked_sequence = []
-        for _ in range(5):
-            console._agent._toggle_console_agent_drilldown_from_subagents_click()
-            clicked_sequence.append(console._console_agent_drilldown_run_id)
-            await pilot.pause()  # drain the background rail-sync worker
-
-        # newest -> mid -> oldest -> overview -> newest again (wraps).
-        assert clicked_sequence == [
+        rows = console._agent._console_agent_fleet_rows()
+        assert [row.row_id for row in rows] == [
             "run-newest",
             "run-mid",
             "run-oldest",
-            None,
-            "run-newest",
         ]
+
+        # Click rows out of order -- proves each row resolves DIRECTLY to
+        # its own run, not by stepping through a shared cursor.
+        console._agent._drill_into_console_agent_subagent(rows[2].row_id)
+        await pilot.pause()  # drain the background rail-sync worker
+        assert console._console_agent_drilldown_run_id == "run-oldest"
+
+        console._agent._drill_into_console_agent_subagent(rows[0].row_id)
+        await pilot.pause()
+        assert console._console_agent_drilldown_run_id == "run-newest"
+
+        console._agent._drill_into_console_agent_subagent(rows[1].row_id)
+        await pilot.pause()
+        assert console._console_agent_drilldown_run_id == "run-mid"
+
+        # The dedicated Back button (not a row) always returns to the
+        # overview directly, regardless of which row was last drilled into.
+        console._console_agent_drilldown_run_id = None
+        assert console._console_agent_drilldown_run_id is None

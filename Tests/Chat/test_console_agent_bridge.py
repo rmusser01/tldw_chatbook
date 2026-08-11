@@ -994,6 +994,12 @@ def test_historical_snapshot_derives_status_steps_and_subagents_from_db(tmp_path
     assert len(snap.subagents) == 1
     assert snap.subagents[0].text == "research pricing"
     assert snap.subagents[0].status == "done"
+    # PR2b Task 4: a historical/resumed sub-agent row now carries its own
+    # permanent run id -- the rail's per-row click-through
+    # (`ConsoleAgentController._console_agent_drilldown_target_run_id`)
+    # resolves a clicked row directly to its run, and a resumed row with an
+    # empty id could never be drilled into.
+    assert snap.subagents[0].run_id == sub_id
 
 
 def test_historical_snapshot_ignores_subagents_of_other_runs(tmp_path):
