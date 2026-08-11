@@ -1,5 +1,3 @@
-import ast
-import inspect
 import json
 import logging
 import shutil
@@ -1198,21 +1196,18 @@ def test_todo_tool_schemas_pin_exact_keys_bounds_and_mutation_shape(tmp_path):
     )
 
 
-def test_todo_status_schema_uses_the_store_status_source_of_truth(tmp_path):
+def test_todo_status_schema_uses_the_store_status_source_of_truth(
+    monkeypatch, tmp_path
+):
     import tldw_chatbook.Agents.local_tool_provider as provider_module
 
+    patched_statuses = ("completed", "pending", "in_progress")
+    monkeypatch.setattr(provider_module, "TODO_STATUSES", patched_statuses)
     schemas = _task_schemas(make_provider(root=tmp_path, todo_store=SessionTodoStore()))
-    default_specs_tree = ast.parse(inspect.getsource(provider_module._default_specs))
 
     assert not hasattr(provider_module, "_TODO_STATUSES")
-    assert any(
-        isinstance(node, ast.Starred)
-        and isinstance(node.value, ast.Name)
-        and node.value.id == "TODO_STATUSES"
-        for node in ast.walk(default_specs_tree)
-    )
     assert schemas["todo_update"]["properties"]["status"]["enum"] == [
-        *TODO_STATUSES,
+        *patched_statuses,
         "deleted",
     ]
 

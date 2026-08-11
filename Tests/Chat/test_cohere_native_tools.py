@@ -538,6 +538,61 @@ def test_schema_projection_removes_each_unsupported_family_recursively():
     assert tool == original
 
 
+def test_schema_projection_intersects_type_union_and_any_of_order_independently():
+    branches = [
+        {"enum": ["ready"], "description": "Named state."},
+        {
+            "anyOf": [{"const": "queued"}, {"const": None}],
+            "description": "Nested alternatives.",
+        },
+    ]
+    schemas = [
+        {
+            "type": ["string", "null"],
+            "anyOf": deepcopy(branches),
+            "description": "Combined constraints.",
+        },
+        {
+            "anyOf": deepcopy(branches),
+            "description": "Combined constraints.",
+            "type": ["string", "null"],
+        },
+    ]
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "combined",
+                "parameters": schema,
+            },
+        }
+        for schema in schemas
+    ]
+    original = deepcopy(tools)
+
+    projected = [
+        _cohere_tools_payload([tool])[0]["function"]["parameters"] for tool in tools
+    ]
+
+    expected = {
+        "description": "Combined constraints.",
+        "anyOf": [
+            {
+                "type": type_name,
+                "anyOf": [deepcopy(branch)],
+            }
+            for branch in branches
+            for type_name in ("string", "null")
+        ],
+    }
+    assert projected == [expected, expected]
+    assert not (UNSUPPORTED_COHERE_SCHEMA_KEYWORDS & set(_schema_keywords(projected)))
+    assert tools == original
+
+    projected[0]["anyOf"][0]["anyOf"][0]["enum"].append("changed")
+    assert tools == original
+
+
 @patch("requests.Session.post")
 def test_blank_name_tool_is_dropped_locally(mock_post):
     """Mirrors `_google_tools_payload`'s blank-name guard: an entry missing

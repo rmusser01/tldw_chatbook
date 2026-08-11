@@ -1974,13 +1974,16 @@ _COHERE_UNSUPPORTED_SCHEMA_KEYWORDS = frozenset(
 
 def _cohere_schema_projection(schema: dict) -> dict:
     """Return a fresh Cohere strict-tools disclosure subset of ``schema``."""
+    raw_type = schema.get("type")
+    type_union = raw_type if isinstance(raw_type, list) else None
+    existing_any_of = schema.get("anyOf")
     projected: dict = {}
     for key, value in schema.items():
         if key in _COHERE_UNSUPPORTED_SCHEMA_KEYWORDS:
             continue
-        if key == "type" and isinstance(value, list):
-            projected["anyOf"] = [{"type": deepcopy(item)} for item in value]
-        elif key == "properties" and isinstance(value, dict):
+        if type_union is not None and key in {"type", "anyOf"}:
+            continue
+        if key == "properties" and isinstance(value, dict):
             projected[key] = {
                 name: _cohere_schema_projection(property_schema)
                 if isinstance(property_schema, dict)
@@ -1998,6 +2001,23 @@ def _cohere_schema_projection(schema: dict) -> dict:
             ]
         else:
             projected[key] = deepcopy(value)
+
+    if type_union is not None:
+        type_branches = [{"type": deepcopy(item)} for item in type_union]
+        if isinstance(existing_any_of, list):
+            any_of_branches = [
+                _cohere_schema_projection(item)
+                if isinstance(item, dict)
+                else deepcopy(item)
+                for item in existing_any_of
+            ]
+            projected["anyOf"] = [
+                {**type_branch, "anyOf": [deepcopy(any_of_branch)]}
+                for any_of_branch in any_of_branches
+                for type_branch in type_branches
+            ]
+        else:
+            projected["anyOf"] = type_branches
     return projected
 
 
