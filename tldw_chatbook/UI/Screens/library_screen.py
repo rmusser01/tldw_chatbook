@@ -114,7 +114,9 @@ from ...Library.library_ingest_state import (
 )
 from ...Library.library_media_state import (
     LibraryMediaCanvasState,
+    LibraryMediaTrashState,
     build_library_media_state,
+    build_library_media_trash_state,
 )
 from ...Library.library_media_viewer_state import (
     build_library_media_highlight_rows,
@@ -305,6 +307,7 @@ from ...Widgets.Library import (
     LibraryIngestPreflightSummary,
     LibraryIngestQueuePanel,
     LibraryMediaCanvas,
+    LibraryMediaTrashCanvas,
     LibraryMediaViewer,
     LibraryNotesCanvas,
     LibraryPromptsListCanvas,
@@ -380,6 +383,12 @@ LIBRARY_SOURCE_PAGE_SIZES = {
     "media": 50,
     "conversations": 50,
 }
+# task-4025: one fetch page for the media Trash view. Deliberately larger
+# than the media list's snapshot page (trash is browsed rarely and only to
+# recover something); when the trash genuinely exceeds it, the view says so
+# honestly ("showing X of N") rather than pretending the page is the whole
+# trash.
+LIBRARY_MEDIA_TRASH_PAGE_SIZE = 200
 _LIBRARY_PROMPTS_SEARCH_DEBOUNCE_SECONDS = 0.25
 # Skills sort modes (Task 3 of the Skills sub-project): "name" (pure
 # alphabetical) <-> "status" (needs-review first, then alphabetical) --
@@ -1299,7 +1308,7 @@ def _sync_library_canvas(screen: "LibraryScreen", kind: str) -> None:
 
     Args:
         screen: The Library screen instance driving the update.
-        kind: "conversations" or "media".
+        kind: "conversations", "media", or "media-trash".
 
     Returns:
         None.
@@ -1313,6 +1322,14 @@ def _sync_library_canvas(screen: "LibraryScreen", kind: str) -> None:
         elif kind == "media":
             canvas = screen.query_one("#library-media-canvas", LibraryMediaCanvas)
             new_state = screen._build_library_media_state()
+        elif kind == "media-trash":
+            # task-4025: the media canvas's Trash view -- same targeted
+            # contract, its own mounted widget/state builder.
+            canvas = screen.query_one(
+                "#library-media-trash-canvas", LibraryMediaTrashCanvas
+            )
+            new_state = screen._build_library_media_trash_state()
+            screen._selected_media_trash_id = new_state.selected_id
         else:
             raise ValueError(
                 f"Unsupported Library canvas kind for targeted sync: {kind!r}"
@@ -1409,6 +1426,12 @@ class LibraryScreen(BaseAppScreen):
         # a focus hop, converging on the same `#library-search-input`
         # target `/` and F6 already use (`_WORKBENCH_FOCUS_TARGETS`).
         ("escape", "library_media_viewer_back", "Back to media list"),
+        # task-4025: the media Trash view's own Escape -- same disjoint-
+        # gate contract (its check_action passes only while the media
+        # canvas shows its Trash view, where every other escape gate is
+        # False; ``_library_list_canvas_showing_list`` requires the "list"
+        # view, so the broad focus-rail gate is False here too).
+        ("escape", "library_media_trash_back", "Back to media list"),
         ("escape", "library_note_editor_back", "Back to notes list"),
         ("escape", "library_prompt_editor_back", "Back to prompts list"),
         # task-3302 (MI-04): a seventh "escape" binding, same disjoint-gate
@@ -2572,7 +2595,23 @@ class LibraryScreen(BaseAppScreen):
         # entered, set to the succeeded subset when a delete completes, and
         # narrowed to only the still-failed ids by a partial Undo.
         self._library_media_delete_receipt_ids: tuple[str, ...] = ()
+        # task-4025: "list" | "viewer" | "trash" -- the Trash view is the
+        # third in-canvas view of the media canvas (never a rail row or a
+        # `type:` cycle value; see the task file's mechanism decision).
         self._library_media_view: str = "list"
+        # task-4025: the Trash view's own fetch/session state. ``None``
+        # records mean the fetch has not landed yet (the view renders
+        # "Loading Trash…"); the tuple is the ``list_media_trash`` page in
+        # the seam's own trash_date-DESC order. All of it is reset on
+        # every entry/exit so a stale page can never masquerade as fresh.
+        self._library_media_trash_records: tuple[Mapping[str, Any], ...] | None = None
+        self._library_media_trash_total: int = 0
+        self._library_media_trash_error: str = ""
+        # Restore feedback line ("Restored 'Title'.") -- feedback, never a
+        # receipt: ADR-055's receipts accompany destruction, and restore
+        # is recovery, so it gets no Undo affordance.
+        self._library_media_trash_notice: str = ""
+        self._selected_media_trash_id: str = ""
         self._library_media_detail: Mapping[str, Any] | None = None
         self._library_media_editing: bool = False
         self._library_media_confirming_delete: bool = False
@@ -3164,7 +3203,11 @@ class LibraryScreen(BaseAppScreen):
         if (
             (
                 self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
-                and self._library_media_view == "viewer"
+                # task-4025: the Trash view shares the detail surfaces'
+                # honest "esc back to list" context -- its Escape
+                # (``action_library_media_trash_back``) genuinely returns
+                # to the media list, exactly what this set advertises.
+                and self._library_media_view in ("viewer", "trash")
             )
             or self._library_note_editor_active()
             or self._library_prompt_editor_active()
@@ -5115,6 +5158,12 @@ class LibraryScreen(BaseAppScreen):
         selected_media_id = str(state.get("selected_media_id") or "")
         media_view = str(state.get("library_media_view") or "list")
         if media_view == "viewer" and not selected_media_id:
+            media_view = "list"
+        # task-4025: the Trash view is session-transient -- its fetched
+        # page is never persisted, so a restored session lands on the
+        # media list (which is where its "Trash" entry point lives)
+        # rather than an unloaded Trash shell nothing would populate.
+        if media_view == "trash":
             media_view = "list"
         self._selected_media_id = selected_media_id
         self._library_media_view = media_view
@@ -7615,6 +7664,23 @@ class LibraryScreen(BaseAppScreen):
                             content_mode=self._library_media_content_mode,
                             id="library-media-viewer",
                         )
+                elif (
+                    shell.canvas_kind == "media"
+                    and self._library_media_view == "trash"
+                ):
+                    # task-4025: the Trash view -- the media canvas's third
+                    # in-canvas view. Its in-place updater is
+                    # ``_sync_library_canvas(self, "media-trash")``, which
+                    # rebuilds this same state and hands it to the mounted
+                    # canvas's ``sync_state`` (recompose discipline: the
+                    # compose branch and the updater own the same
+                    # conditionals via the one shared state builder).
+                    trash_state = self._build_library_media_trash_state()
+                    self._selected_media_trash_id = trash_state.selected_id
+                    yield LibraryMediaTrashCanvas(
+                        trash_state,
+                        id="library-media-trash-canvas",
+                    )
                 elif shell.canvas_kind == "media":
                     media_state = self._build_library_media_state()
                     self._selected_media_id = media_state.selected_id
@@ -8222,6 +8288,16 @@ class LibraryScreen(BaseAppScreen):
         if self._library_media_select_mode:
             self._library_media_row_selection.reconcile(r.media_id for r in state.rows)
         return state
+
+    def _build_library_media_trash_state(self) -> LibraryMediaTrashState:
+        """Build the media Trash view display state (task-4025)."""
+        return build_library_media_trash_state(
+            self._library_media_trash_records,
+            total=self._library_media_trash_total,
+            selected_id=self._selected_media_trash_id,
+            error=self._library_media_trash_error,
+            notice=self._library_media_trash_notice,
+        )
 
     def _build_library_notes_state(self) -> LibraryNotesListState:
         """Build the notes canvas's list-view display state from local records."""
@@ -12695,6 +12771,289 @@ class LibraryScreen(BaseAppScreen):
         finally:
             self._library_media_bulk_delete_in_flight = False
 
+    # ------------------------------------------------------------------
+    # task-4025: the media Trash view -- browse + restore
+    # ------------------------------------------------------------------
+
+    @on(Button.Pressed, "#library-media-trash-open")
+    def handle_library_media_trash_open(self, event: Button.Pressed) -> None:
+        """Enter the media canvas's Trash view and kick its fetch (task-4025).
+
+        Entering also clears any delete receipt still showing: the receipt
+        is the at-point Undo convenience, and the Trash view IS the durable
+        path it points at -- a receipt surviving a Trash round trip could
+        name items the user just restored there. Select mode cannot
+        genuinely be active here (the button is hidden in select mode,
+        mirroring "Export…"), but the shared exit helper is called
+        defensively so a stale confirmation could never survive into the
+        Trash view either.
+
+        Args:
+            event: Button press event emitted by the list toolbar's "Trash".
+        """
+        event.stop()
+        self._exit_library_media_select_mode(announce_discard=True)
+        self._library_media_delete_receipt_ids = ()
+        self._library_media_view = "trash"
+        self._library_media_trash_records = None
+        self._library_media_trash_total = 0
+        self._library_media_trash_error = ""
+        self._library_media_trash_notice = ""
+        self._selected_media_trash_id = ""
+        self.refresh(recompose=True)
+        self.run_worker(
+            self._load_library_media_trash(),
+            exclusive=True,
+            group="library_media_trash_load",
+        )
+        self.call_after_refresh(self._focus_library_media_trash_entry)
+
+    async def _load_library_media_trash(self) -> None:
+        """Fetch one page of trashed media through the existing seam.
+
+        ``media_reading_scope_service.list_media_trash(mode="local")`` is
+        the same policy-gated seam every other media read on this screen
+        uses -- never raw SQL. Read-only: it touches none of the shared
+        delete/undo state, so it does NOT claim the bulk-delete interlock;
+        its own exclusive worker group only prevents duplicate fetches.
+        """
+        records: tuple[Mapping[str, Any], ...] = ()
+        total = 0
+        error = ""
+        try:
+            service = getattr(self.app_instance, "media_reading_scope_service", None)
+            list_media_trash = getattr(service, "list_media_trash", None)
+            if callable(list_media_trash):
+                payload = await self._run_library_service_call(
+                    list_media_trash,
+                    mode="local",
+                    page=1,
+                    results_per_page=LIBRARY_MEDIA_TRASH_PAGE_SIZE,
+                    isolate_in_worker=True,
+                )
+                items = (
+                    payload.get("items", ()) if isinstance(payload, Mapping) else ()
+                )
+                records = tuple(
+                    item for item in items if isinstance(item, Mapping)
+                )
+                pagination = (
+                    payload.get("pagination", {})
+                    if isinstance(payload, Mapping)
+                    else {}
+                )
+                try:
+                    total = int(pagination.get("total_items", len(records)))
+                except (TypeError, ValueError):
+                    total = len(records)
+            else:
+                error = "Trash is unavailable."
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Failed to load the Library media trash page."
+            )
+            error = "Could not load Trash."
+
+        self._library_media_trash_records = records
+        self._library_media_trash_total = total
+        self._library_media_trash_error = error
+        if self.is_mounted and self._library_media_view == "trash":
+            _sync_library_canvas(self, "media-trash")
+            self.call_after_refresh(self._focus_library_media_trash_entry)
+
+    @on(Button.Pressed, ".library-media-trash-row")
+    def handle_library_media_trash_row(self, event: Button.Pressed) -> None:
+        """Select the pressed trash row (leading "▸ " marker moves to it).
+
+        Args:
+            event: Button press event emitted by a trash row button.
+        """
+        event.stop()
+        media_id = str(getattr(event.button, "media_id", "") or "")
+        if not media_id:
+            return
+        self._selected_media_trash_id = media_id
+        _sync_library_canvas(self, "media-trash")
+
+    @on(Button.Pressed, "#library-media-trash-back")
+    def handle_library_media_trash_back(self, event: Button.Pressed) -> None:
+        """Return from the Trash view to the media list.
+
+        Args:
+            event: Button press event emitted by the "‹ Media" action.
+        """
+        event.stop()
+        self._exit_library_media_trash()
+
+    def _exit_library_media_trash(self) -> None:
+        """Shared Back exit: return the media canvas from Trash to its list.
+
+        Shared by the "‹ Media" button and the Trash view's Escape binding
+        (``action_library_media_trash_back``) -- one seam, mirroring
+        ``_exit_library_media_viewer``. The fetched page and notice are
+        dropped so a re-entry always fetches fresh.
+        """
+        self._library_media_view = "list"
+        self._library_media_trash_records = None
+        self._library_media_trash_total = 0
+        self._library_media_trash_error = ""
+        self._library_media_trash_notice = ""
+        self._selected_media_trash_id = ""
+        self.refresh(recompose=True)
+        # task-2856 AC1's convention: every "back to a list canvas" exit
+        # re-focuses the list's first row.
+        self._arm_library_list_entry_focus()
+
+    def action_library_media_trash_back(self) -> None:
+        """Escape: leave the Trash view for the media list (task-4025).
+
+        ``check_action`` gates this to the media canvas genuinely showing
+        its Trash view, so it only ever fires there.
+        """
+        self._exit_library_media_trash()
+
+    def _focus_library_media_trash_entry(self) -> None:
+        """Focus the Trash view's first row, or its back action when empty.
+
+        The list canvases' armed entry-focus mechanism
+        (``_focus_library_list_entry``) deliberately targets only
+        ``.library-media-row`` etc., so the Trash view does its own direct
+        focus -- first row for immediate Up/Down/Enter, the always-present
+        "‹ Media" back button when there are no rows (loading/empty/error),
+        so a keyboard-only user is never left with nothing focused.
+        """
+        if self._library_media_view != "trash":
+            return
+        try:
+            rows = self.query(".library-media-trash-row")
+            first_row = rows.first()
+        except NoMatches:
+            first_row = None
+        if first_row is not None:
+            first_row.focus()
+            return
+        try:
+            self.query_one("#library-media-trash-back", Button).focus()
+        except (NoMatches, QueryError):
+            pass
+
+    @on(Button.Pressed, "#library-media-trash-restore")
+    def handle_library_media_trash_restore(self, event: Button.Pressed) -> None:
+        """Hand the selected trash item's restore off to a worker (task-4025).
+
+        Reads the RESOLVED selection synchronously (the state builder's
+        fallback-to-first-row, exactly what the "▸" marker shows) before
+        any recompose could change it, then claims the SHARED
+        ``_library_media_bulk_delete_in_flight`` flag and schedules into
+        the SAME exclusive ``library_media_bulk_delete`` worker group as
+        delete/Undo/single-delete: this is the FOURTH mutator of the
+        shared ``_local_source_records["media"]`` / ``_local_source_counts
+        ["media"]`` state, so it joins the one interlock (PR-1473's
+        one-flag rule) instead of racing it.
+
+        Args:
+            event: Button press event emitted by the Trash view's "Restore".
+        """
+        event.stop()
+        if self._library_media_bulk_delete_in_flight:
+            return
+        media_id = self._build_library_media_trash_state().selected_id
+        if not media_id:
+            return
+        self._library_media_bulk_delete_in_flight = True
+        self.run_worker(
+            self._restore_library_media_from_trash(media_id),
+            exclusive=True,
+            group="library_media_bulk_delete",
+        )
+
+    async def _restore_library_media_from_trash(self, media_id: str) -> None:
+        """Restore one trashed item via the existing seam (task-4025).
+
+        ``media_reading_scope_service.restore_media_item(mode="local")``
+        wraps ``MediaDatabase.restore_from_trash`` -- pressing Restore on
+        the Trash surface IS the explicit restore decision task-4026's
+        contract requires (an ``is_trash=0`` flag flip on the existing
+        row; this path never rewrites the row's ``url``, so task-4026's
+        one-directional url-canonicalization edge -- which lives only in
+        ``add_media_with_keywords``'s restore-by-re-import -- cannot occur
+        here). The returned freshly restored row is inserted straight back
+        into ``_local_source_records["media"]`` and the rail count is
+        incremented in place, mirroring ``_undo_library_media_bulk_delete``.
+
+        No receipt is left (ADR-055: receipts accompany destruction;
+        restore is recovery) -- feedback is the row leaving the Trash
+        list, both counts moving, and the transient notice line.
+
+        Args:
+            media_id: The trashed item's id, read by the caller before any
+                recompose could change the selection.
+        """
+        try:
+            service = getattr(self.app_instance, "media_reading_scope_service", None)
+            restore_media_item = getattr(service, "restore_media_item", None)
+            restored_record: Mapping[str, Any] | None = None
+            if callable(restore_media_item):
+                try:
+                    result = await self._run_library_service_call(
+                        restore_media_item,
+                        mode="local",
+                        media_id=media_id,
+                        isolate_in_worker=True,
+                    )
+                    if isinstance(result, Mapping):
+                        restored_record = result
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to restore a Library media item from the "
+                        "Trash view (error_type={}).",
+                        type(exc).__name__,
+                    )
+            if restored_record is None:
+                self._notify_library_media_delete_warning(
+                    "Could not restore this media item."
+                )
+                return
+
+            remaining = tuple(
+                record
+                for record in (self._library_media_trash_records or ())
+                if self._source_record_id(record) != media_id
+            )
+            removed = len(self._library_media_trash_records or ()) - len(remaining)
+            self._library_media_trash_records = remaining
+            self._library_media_trash_total = max(
+                0, self._library_media_trash_total - removed
+            )
+            self._selected_media_trash_id = ""
+
+            existing_ids = {
+                self._source_record_id(record)
+                for record in self._local_source_records.get("media", ())
+            }
+            if self._source_record_id(restored_record) not in existing_ids:
+                self._local_source_records["media"] = self._local_source_records.get(
+                    "media", ()
+                ) + (restored_record,)
+                self._local_source_counts["media"] = self._local_source_counts.get(
+                    "media", 0
+                ) + 1
+
+            title = str(restored_record.get("title") or "").strip()
+            self._library_media_trash_notice = (
+                f"Restored '{title}'." if title else "Restored 1 item."
+            )
+
+            if self.is_mounted:
+                # Full recompose, mirroring ``_undo_library_media_bulk_
+                # delete``'s tail: the rail's "Media N" count just changed
+                # too, and the canvas-scoped sync deliberately skips the
+                # rail.
+                self.refresh(recompose=True)
+                self.call_after_refresh(self._focus_library_media_trash_entry)
+        finally:
+            self._library_media_bulk_delete_in_flight = False
+
     @on(Button.Pressed, "#library-media-open-viewer")
     def handle_library_media_open_viewer(self, event: Button.Pressed) -> None:
         """Open the browse summary's selected media item in the in-Library viewer.
@@ -14429,6 +14788,13 @@ class LibraryScreen(BaseAppScreen):
             return (
                 self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
                 and getattr(self, "_library_media_view", "list") == "viewer"
+            )
+        if action == "library_media_trash_back":
+            # task-4025: only while the media canvas genuinely shows its
+            # Trash view -- mirrors the viewer-back gate above.
+            return (
+                self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+                and getattr(self, "_library_media_view", "list") == "trash"
             )
         if action == "library_note_editor_back":
             return self._library_note_editor_active()

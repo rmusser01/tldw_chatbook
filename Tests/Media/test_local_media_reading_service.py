@@ -374,6 +374,41 @@ def test_local_service_list_media_items_carries_last_modified_for_list_card_age(
     assert row.secondary.startswith("document · ")
 
 
+def test_local_service_list_media_trash_carries_trash_date_for_trashed_age(
+    memory_db_factory,
+):
+    """task-4025: the Library media Trash view shows "trashed <age>" per row.
+
+    ``list_media_trash`` already ORDERs BY ``trash_date`` but did not SELECT
+    it, so the Trash view would have had no timestamp to render. Pins the
+    seam extension end-to-end into the pure state builder the screen uses.
+    """
+    from tldw_chatbook.Library.library_media_state import (
+        build_library_media_trash_state,
+    )
+
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Trashed Doc",
+        content="Body text",
+        media_type="document",
+        keywords=[],
+    )
+    service = LocalMediaReadingService(db)
+    service.delete_media_item(media_id)
+
+    trash = service.list_media_trash(page=1, results_per_page=10)
+
+    item = next(entry for entry in trash["items"] if entry["id"] == media_id)
+    assert item["trash_date"]
+
+    state = build_library_media_trash_state(
+        trash["items"], total=trash["pagination"]["total_items"]
+    )
+    row = next(row for row in state.rows if row.media_id == str(media_id))
+    assert row.secondary.startswith("document · trashed ")
+
+
 def test_local_service_update_media_item_persists_library_edit_fields_without_version(
     memory_db_factory,
 ):

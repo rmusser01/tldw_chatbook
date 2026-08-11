@@ -100,6 +100,23 @@ class LibraryMediaCanvas(RecomposeCaptureGuard, Vertical):
             )
             export_btn.display = not select_mode
             yield export_btn
+            # task-4025: the browsable Trash surface's entry point -- a
+            # plain navigation action (never a `type:` cycle value: `type:`
+            # cycles CONTENT types derived from the records, and trash is a
+            # STATE). Always enabled: the trash count isn't known until its
+            # view fetches, and an empty Trash shows its honest empty copy
+            # rather than this button lying disabled. Hidden in select mode
+            # like "Export…" -- Select's toolbar is for acting on the
+            # selection, not navigating away from it.
+            trash_btn = Button(
+                "Trash",
+                id="library-media-trash-open",
+                classes="library-canvas-action",
+                compact=True,
+                tooltip="Browse and restore deleted media.",
+            )
+            trash_btn.display = not select_mode
+            yield trash_btn
             # Disable only when there's nothing to select AND we're not
             # already in select mode -- in select mode the button is "Done"
             # and must always be pressable so the user can exit even if the
@@ -130,18 +147,16 @@ class LibraryMediaCanvas(RecomposeCaptureGuard, Vertical):
                 # confirm copy, the same pattern this mirrors). The short
                 # "N selected" Static below is unaffected -- it is already
                 # proven to render alongside Buttons in this exact row.
-                # task-4022 AC3: honest about what actually happens --
-                # there is no browsable Trash surface anywhere in the
-                # product (not the rail, not the type: filter, not any
-                # canvas), so the copy no longer implies one. What IS true
-                # after this task: Delete's own receipt offers an
-                # immediate Undo, and (independently) re-importing the
-                # same file later restores it instead of refusing.
+                # task-4025 AC3 (ADR-055 Pattern A): the confirm copy names
+                # the durable recovery path -- the Trash view this task
+                # built (the list toolbar's own "Trash" action) -- on top
+                # of the receipt's immediate Undo. Supersedes task-4022
+                # AC3's honest "there's no Trash view" copy, which was
+                # true only until this surface existed.
                 item_word = "item" if self.canvas.selected_count == 1 else "items"
                 yield Static(
                     f"Delete {self.canvas.selected_count} selected {item_word}? "
-                    "You can undo right away — there's no Trash view to "
-                    "browse later.",
+                    "You can undo right away, or restore later from Trash.",
                     id="library-media-bulk-delete-confirm-copy",
                     markup=False,
                 )
@@ -267,7 +282,10 @@ class LibraryMediaCanvas(RecomposeCaptureGuard, Vertical):
             receipt_row.styles.height = "auto"
             with receipt_row:
                 yield Static(
-                    f"✓ deleted · {receipt_count} {receipt_word}",
+                    # task-4025 (ADR-055 Pattern A): the receipt names the
+                    # durable path too -- "· in Trash" points at the Trash
+                    # view that outlives this receipt's Undo/Dismiss.
+                    f"✓ deleted · {receipt_count} {receipt_word} · in Trash",
                     id="library-media-bulk-delete-receipt-copy",
                     classes="library-toolbar-count",
                     markup=False,

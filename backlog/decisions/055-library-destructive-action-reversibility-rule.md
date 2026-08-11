@@ -26,8 +26,14 @@ same service seam the delete used — never raw SQL) and **Dismiss**. The
 receipt grammar is the media one (task-4022): `✓ deleted · N items` rendered
 where the action completed, surviving until acted on or superseded by a newer
 delete. Undo is the **at-point convenience**; the **durable recovery story is
-a browsable Trash/restore surface** — task-4025 builds it for media, and its
-implementation implements *this rule*, not a new one. Until a store's durable
+a browsable Trash/restore surface** — task-4025 built it for media
+(2026-08-11: the media list's "Trash" view), and its implementation
+implements *this rule*, not a new one. Once a store's durable surface
+exists, the confirm copy and the receipt both **name it** — media's receipt
+reads `✓ deleted · N items · in Trash`, and both confirm copies say
+"restore later from Trash". Restore itself is recovery, not destruction, so
+it owes **no receipt** (a transient notice is feedback, not a receipt — it
+carries no Undo). Until a store's durable
 surface exists, the confirm copy must promise exactly what does exist (Undo
 where implemented; honest "cannot be undone from Library" where nothing is) —
 an honest gap plus a filed conformance task, never silence and never an

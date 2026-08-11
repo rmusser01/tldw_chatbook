@@ -9,6 +9,7 @@ from .library_ingest_canvas import (
     LibraryIngestQueuePanel,
 )
 from .library_media_canvas import LibraryMediaCanvas
+from .library_media_trash_canvas import LibraryMediaTrashCanvas
 from .library_media_viewer import LibraryMediaViewer
 from .library_notes_canvas import LibraryNotesCanvas
 from .library_prompts_canvas import LibraryPromptsListCanvas
@@ -63,6 +64,7 @@ __all__ = [
     "LibraryIngestPreflightSummary",
     "LibraryIngestQueuePanel",
     "LibraryMediaCanvas",
+    "LibraryMediaTrashCanvas",
     "LibraryMediaViewer",
     "LibraryNotesCanvas",
     "LibraryPromptsListCanvas",

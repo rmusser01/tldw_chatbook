@@ -14,6 +14,21 @@ LIBRARY_MEDIA_EMPTY_COPY = (
     "No media in your Library yet. Import something to see it here."
 )
 
+# task-4025: the Trash view's honest empty state -- present tense, no
+# promise of anything beyond what the surface does (items land here on
+# delete and leave on restore).
+LIBRARY_MEDIA_TRASH_EMPTY_COPY = (
+    "Trash is empty. Items you delete from Media land here."
+)
+
+# task-4025 (F-018): every disabled Library action says why -- the Trash
+# view's "Restore" action has two honest disabled reasons (still loading
+# vs. genuinely nothing there) plus its enabled description, mirroring the
+# Export/Delete-selected tooltip pairs in library_shell_state.py.
+LIBRARY_MEDIA_TRASH_RESTORE_TOOLTIP = "Restore the selected item to your Library."
+LIBRARY_MEDIA_TRASH_RESTORE_DISABLED_EMPTY_TOOLTIP = "Nothing in Trash to restore."
+LIBRARY_MEDIA_TRASH_RESTORE_DISABLED_LOADING_TOOLTIP = "Trash is still loading."
+
 _ID_KEYS = ("id", "media_id", "uuid")
 _TYPE_KEYS = ("type", "media_type")
 _UPDATED_KEYS = ("last_modified", "ingestion_date", "date", "updated_at")
@@ -54,6 +69,146 @@ class LibraryMediaCanvasState:
     # until acted on or replaced by a newer bulk-delete action. 0 means no
     # receipt to show (the normal state).
     delete_receipt_count: int = 0
+
+
+@dataclass(frozen=True)
+class LibraryMediaTrashRow:
+    """One selectable row in the Library media Trash view (task-4025)."""
+
+    media_id: str
+    title: str
+    media_type: str
+    secondary: str
+    selected: bool = False
+
+
+@dataclass(frozen=True)
+class LibraryMediaTrashState:
+    """Pure display state for the Library media Trash view (task-4025).
+
+    Attributes:
+        rows: Trashed items in the seam's own trash_date-DESC order.
+        count: Total trashed items reported by the seam (may exceed
+            ``len(rows)`` when the fetch page was smaller than the trash).
+        status_copy: Honest truncation line ("showing X of N") when the
+            fetched rows undercount the total, else "".
+        empty_copy: The empty-Trash copy -- only when the fetch has landed
+            (``loading`` False), succeeded (``error`` empty), and found
+            nothing; "" otherwise so a loading/error state never claims
+            "Trash is empty".
+        selected_id: Resolved selected row id ("" when there are no rows).
+        loading: True while the trash fetch has not landed yet.
+        error: Fetch-failure copy, "" on success.
+        notice: Restore feedback line (e.g. "Restored 'Title'."), "" when
+            nothing to report. Feedback only -- never a receipt: ADR-055's
+            receipts accompany destruction, and restore is recovery.
+    """
+
+    rows: tuple[LibraryMediaTrashRow, ...]
+    count: int
+    status_copy: str
+    empty_copy: str
+    selected_id: str
+    loading: bool = False
+    error: str = ""
+    notice: str = ""
+
+
+def build_library_media_trash_state(
+    records: Sequence[Any] | None,
+    *,
+    total: int = 0,
+    selected_id: str = "",
+    now: datetime | None = None,
+    loading: bool | None = None,
+    error: str = "",
+    notice: str = "",
+) -> LibraryMediaTrashState:
+    """Build the Library media Trash view display state (task-4025).
+
+    Args:
+        records: Trash records from ``list_media_trash`` (id/title/type,
+            plus ``trash_date`` where the seam selected it). ``None`` means
+            the fetch has not landed yet (loading). Row order is preserved
+            as given -- the seam already orders by ``trash_date DESC``, and
+            re-sorting here would silently disagree with it for rows whose
+            ``trash_date`` did not survive the projection.
+        total: The seam's total trashed-item count (may exceed the fetched
+            rows).
+        selected_id: Requested selected media id; falls back to the first
+            row when absent.
+        now: Reference time for the "trashed <age>" secondary; defaults to
+            current UTC time.
+        loading: Explicit loading override; defaults to ``records is None``.
+        error: Fetch-failure copy to surface instead of rows.
+        notice: Restore feedback line to pass through.
+
+    Returns:
+        Immutable Trash view state.
+    """
+    reference_now = now if now is not None else datetime.now(timezone.utc)
+    resolved_loading = (records is None) if loading is None else bool(loading)
+
+    entries: list[tuple[str, str, str, str]] = []
+    for record in records or ():
+        if not isinstance(record, Mapping):
+            continue
+        media_id = _first_present_text(record, _ID_KEYS)
+        if not media_id:
+            continue
+        entries.append(
+            (
+                media_id,
+                _record_title(record),
+                _first_present_text(record, _TYPE_KEYS),
+                _first_present_text(record, ("trash_date",)),
+            )
+        )
+
+    resolved_selected_id = str(selected_id or "")
+    entry_ids = {media_id for media_id, _, _, _ in entries}
+    if resolved_selected_id not in entry_ids:
+        resolved_selected_id = entries[0][0] if entries else ""
+
+    rows = []
+    for media_id, title, media_type, trash_date in entries:
+        age = format_console_relative_age(trash_date, now=reference_now)
+        # The list's own secondary vocabulary ("{type} · {age}" / "{type}"
+        # / "media"), with the age labelled for what it is here: when the
+        # item was trashed, not when it was updated.
+        trashed_age = f"trashed {age}" if age else ""
+        rows.append(
+            LibraryMediaTrashRow(
+                media_id=media_id,
+                title=title,
+                media_type=media_type,
+                secondary=_secondary_text(media_type, trashed_age),
+                selected=media_id == resolved_selected_id,
+            )
+        )
+
+    resolved_total = max(int(total or 0), len(rows))
+    status_copy = (
+        f"showing {len(rows)} of {resolved_total}"
+        if rows and resolved_total > len(rows)
+        else ""
+    )
+    empty_copy = (
+        LIBRARY_MEDIA_TRASH_EMPTY_COPY
+        if not rows and not resolved_loading and not error
+        else ""
+    )
+
+    return LibraryMediaTrashState(
+        rows=tuple(rows),
+        count=resolved_total,
+        status_copy=status_copy,
+        empty_copy=empty_copy,
+        selected_id=resolved_selected_id,
+        loading=resolved_loading,
+        error=str(error or ""),
+        notice=str(notice or ""),
+    )
 
 
 @dataclass(frozen=True)

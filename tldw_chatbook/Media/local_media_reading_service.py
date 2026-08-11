@@ -321,8 +321,12 @@ class LocalMediaReadingService:
         rows = (
             db.get_connection()
             .execute(
+                # task-4025: ``trash_date`` was already the sort key but was
+                # never selected, so the Library Trash view had no timestamp
+                # to render a "trashed <age>" from. Carried through by
+                # ``_build_local_media_list_response``.
                 """
-            SELECT id, title, type
+            SELECT id, title, type, trash_date
             FROM Media
             WHERE deleted = 0 AND is_trash = 1
             ORDER BY trash_date DESC, last_modified DESC, id DESC
@@ -4973,6 +4977,13 @@ class LocalMediaReadingService:
             last_modified = payload.get("last_modified")
             if last_modified:
                 item["last_modified"] = str(last_modified)
+            # task-4025: same conditional-passthrough contract as
+            # ``last_modified`` above -- only present when the source query
+            # selected it (``list_media_trash``), so the Trash view can
+            # render "trashed <age>" per row.
+            trash_date = payload.get("trash_date")
+            if trash_date:
+                item["trash_date"] = str(trash_date)
             items.append(item)
         keywords_map: dict[int, list[str]] = {}
         keywords_available: bool | None = None

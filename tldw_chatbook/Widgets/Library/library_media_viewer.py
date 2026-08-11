@@ -164,14 +164,14 @@ class LibraryMediaViewer(Vertical):
             # A single full-width Static above the toolbar, not inside it --
             # mixing a Static with the toolbar's Buttons is the known
             # non-rendering failure mode called out on ``compose`` above.
-            # task-4022 AC3: no browsable Trash surface exists anywhere in
-            # the product, so this must not imply one. task-14901
-            # (ADR-055): single delete now leaves the same Undo receipt as
-            # "Delete selected", so this promises exactly what the bulk
-            # confirm copy promises -- an immediate Undo, no Trash view.
+            # task-14901 (ADR-055): single delete leaves the same Undo
+            # receipt as "Delete selected". task-4025 AC3: the Trash view
+            # now exists (the media list toolbar's "Trash" action), so the
+            # copy names the durable recovery path exactly like the bulk
+            # confirm does -- one promise, two entry points.
             yield Static(
-                "Delete this media? You can undo right away — there's no "
-                "Trash view to browse later.",
+                "Delete this media? You can undo right away, or restore "
+                "later from Trash.",
                 id="library-media-delete-confirm-copy",
                 markup=False,
             )

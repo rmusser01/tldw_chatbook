@@ -27,10 +27,11 @@ Both list canvases follow the same shape, top to bottom:
   "Conversations (3)" — task-2859: Conversations previously had no
   heading at all, so its top row read as bare "Export…"/"Select" with
   nothing naming the canvas), plus "Export…" and "Select". Media adds a
-  cycling "type: All ⇄" filter right after the heading; Conversations
-  instead has a "Filter conversations… (Enter)" text box, which now
-  renders above the empty-state text (task-2859: it used to sit below
-  "No conversations yet.", reading as an afterthought).
+  cycling "type: All ⇄" filter right after the heading and a "Trash"
+  action (the browsable Trash view — see "Media Trash" below);
+  Conversations instead has a "Filter conversations… (Enter)" text box,
+  which now renders above the empty-state text (task-2859: it used to sit
+  below "No conversations yet.", reading as an afterthought).
 - **Row list** — one two-line row per item: the title with a **▸** marker,
   then a dimmer second line (Media: type and age; Conversations:
   "3 messages - 4h"). Hovering a row shows its full title as a tooltip.
@@ -70,8 +71,8 @@ above): "‹ Back to list", the title, metadata lines, then the "Content",
 **Media's "Delete selected"** (Media only — Conversations has no delete;
 see its own row below) is a second bulk action next to "Export selected".
 Pressing it swaps the strip for a confirmation naming the count — "Delete N
-selected items? You can undo right away — there's no Trash view to browse
-later." — with "Delete" / "Cancel", the same in-place armed-button pattern
+selected items? You can undo right away, or restore later from Trash." —
+with "Delete" / "Cancel", the same in-place armed-button pattern
 as the media viewer's own single-item "Delete" (never a popup modal).
 Confirming moves every checked item to trash (the same soft-delete the
 viewer's Delete uses) and updates the list and the rail's "Media N" count
@@ -81,17 +82,42 @@ the confirmation is showing, so the count you confirm is always the count
 that gets deleted.
 
 A successful delete leaves a receipt in the same spot — "✓ deleted · N
-items" with "Undo" and "Dismiss" — until you act on it or start another
-delete. The viewer's single-item "Delete" leaves the same receipt
-("✓ deleted · 1 item") in the list it returns you to — single and bulk
-delete share one undo story. "Undo" restores every item the receipt names
-(or just the ones still outstanding, if a prior undo partially failed);
-"Dismiss" clears the receipt without restoring anything. There is no persistent Trash view
-to browse later — restoring an item you've dismissed, or deleted in an
-earlier session, means re-importing the same file from
-[Import & export](import-and-export.md): it now restores the item instead
-of refusing, whereas before it silently reported the file as already in
-your Library with no way back.
+items · in Trash" with "Undo" and "Dismiss" — until you act on it or start
+another delete. The viewer's single-item "Delete" leaves the same receipt
+("✓ deleted · 1 item · in Trash") in the list it returns you to — single
+and bulk delete share one undo story. "Undo" restores every item the
+receipt names (or just the ones still outstanding, if a prior undo
+partially failed); "Dismiss" clears the receipt without restoring anything.
+"Undo" is the at-point convenience; the durable way back is the **Trash
+view** the receipt points at (see "Media Trash" below), which lists every
+deleted item — including ones from earlier sessions — and restores them
+per item. (Re-importing the same file from
+[Import & export](import-and-export.md) also still restores a trashed
+match instead of refusing.)
+
+### Media Trash
+
+Press **"Trash"** on the Media toolbar to swap the list for the Trash
+view: "‹ Media" (back), a "Trash (N)" heading, and one two-line row per
+deleted item — the title, then a dim "type · trashed 2h" line saying when
+it was deleted, newest first. Press a row to select it (the **▸** marker
+moves), then **"Restore"** to put it back: the row leaves the Trash, the
+rail's "Media N" count goes up in place, a "Restored 'Title'." line
+confirms it, and the item is back in the media list (and in search
+results) exactly as it was — restore never rewrites the item. "‹ Media" or
+Escape returns to the list.
+
+Notes on the edges: with nothing deleted the view says "Trash is empty.
+Items you delete from Media land here." and "Restore" reads "○ Restore"
+with a reason tooltip; if the trash holds more items than one fetch page,
+a status line says "showing X of N" honestly. Entering Trash clears any
+"✓ deleted…" receipt still showing on the list — the Trash view is the
+durable path that receipt pointed at. Trashed items are **excluded from
+search** (Library search and RAG keyword retrieval both skip them) until
+restored.
+There is no permanent-delete or empty-trash action here yet — restoring is
+the only operation, and nothing is ever removed from the Trash except by
+restoring it.
 
 ### Media list
 
@@ -99,6 +125,7 @@ your Library with no way back.
 |---|---|
 | "type: All ⇄" | Cycles through All plus each media type present in your Library (the tooltip lists the full cycle). While filtered, a status line reads "2 of 5 · type: pdf". |
 | "Export…" / "Select" | The shared grammar above; Export… is scoped to the active type filter. |
+| "Trash" | Opens the Trash view — every deleted media item, restorable per item (see "Media Trash" above). Hidden while selecting, like "Export…". |
 | Row press | Selects the row and shows the preview (title, "Type: …", "Updated: …"). |
 | "Open in viewer" | Opens the selected item in the media viewer. |
 
@@ -143,7 +170,7 @@ of type 'pdf'."
 | "Use in Console" | Stages this item as context for your next Console message. |
 | "Read it later" ↔ "Remove from read-it-later" | Toggles the item on your read-it-later list. |
 | "Open in Library ▸ Media" | Returns to Library's own Media surface (the separate Media screen was retired). |
-| "Delete" | Two-step: shows "Delete this media? You can undo right away — there's no Trash view to browse later." with "Delete" / "Cancel". Confirming trashes the item, returns to the list, and drops the rail's "Media N" count by one immediately, the same as the list's own "Delete selected". The list you land on shows the same receipt as a bulk delete — "✓ deleted · 1 item" with "Undo" / "Dismiss" — and "Undo" restores the item in place. |
+| "Delete" | Two-step: shows "Delete this media? You can undo right away, or restore later from Trash." with "Delete" / "Cancel". Confirming trashes the item, returns to the list, and drops the rail's "Media N" count by one immediately, the same as the list's own "Delete selected". The list you land on shows the same receipt as a bulk delete — "✓ deleted · 1 item · in Trash" with "Undo" / "Dismiss" — "Undo" restores in place, and the Trash view holds the item for later either way. |
 
 ### Conversations
 
@@ -195,6 +222,13 @@ conversation rail instead; that one resumes sessions, this one quotes them.
    whole visible list), then "Export selected".
 2. The "Export bundle (.zip)" form opens — name, destination, and options
    are covered in [import & export](import-and-export.md).
+
+### Recover something you deleted last week
+1. In **Media**, click "Trash" on the toolbar.
+2. Find the item ("Trash (N)" lists everything deleted, newest first, each
+   row saying "type · trashed 3d"), press its row, then "Restore".
+3. "Restored 'Title'." confirms it; "‹ Media" (or Escape) takes you back to
+   the list, where the item — and the rail's "Media N" count — are back.
 
 ### Delete selected media items
 1. In **Media**, click "Select", check the rows you want to remove.
@@ -311,3 +345,9 @@ same "✓ deleted · 1 item" receipt with Undo/Dismiss as "Delete selected" —
 single delete is one-item bulk, sharing the bulk path's undo and its
 in-flight interlock — and its confirm copy promises the undo instead of
 pointing at re-import.)*
+*Verified against feat/library-queue-batch @ db733c62b — 2026-08-11
+(task-4025: the browsable Media Trash view described above — the "Trash"
+toolbar action, per-item Restore through the existing restore seam, both
+delete confirm copies and the receipt re-pointed at Trash per ADR-055
+Pattern A, and the explicit search decision: trashed items stay out of
+Library search and RAG retrieval until restored.)*

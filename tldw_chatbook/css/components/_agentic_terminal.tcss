@@ -1085,7 +1085,11 @@ ConsoleRunLogModal {
     text-style: bold underline;
 }
 
-.library-media-row {
+/* task-4025: the Trash view's rows share the media list's row contract
+   verbatim (one comma-joined rule, not a forked copy) -- the trash rows
+   keep their OWN class only so `_focus_library_list_entry`'s
+   `.library-media-row` query can never grab a trash row. */
+.library-media-row, .library-media-trash-row {
     width: 100%;
     min-width: 0;
     height: 2;
@@ -1114,7 +1118,7 @@ ConsoleRunLogModal {
    ``.library-media-row-selected`` above already uses; `outline: none`
    suppresses the generic fallback so this is the only cue (never
    `outline: heavy`, which eats a compact row's label -- round-3 lesson). */
-.library-media-row:focus {
+.library-media-row:focus, .library-media-trash-row:focus {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
