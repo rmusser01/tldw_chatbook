@@ -300,12 +300,15 @@ on the other wheel-supported targets.
 
 ### Automated platform evidence
 
-The four remaining native gates run through one manually dispatched GitHub
-Actions workflow on Linux x86_64, Linux aarch64, Windows x86_64, and macOS
-x86_64. It does not run on ordinary pushes, pull requests, or the nightly
-suite: each lane downloads roughly 1.35 GB of pinned model and VAD data, and
-the evidence is needed only when the implementation or supported runtime
-changes.
+The four remaining native gates run through one GitHub Actions workflow on
+`ubuntu-24.04`, `ubuntu-24.04-arm`, `windows-2022`, and `macos-15-intel`.
+Because GitHub accepts `workflow_dispatch` only after the workflow exists on
+the default branch, the feature branch is bootstrapped by the explicit
+`task-598-platform-evidence` pull-request label. The workflow listens only for
+that label activity, not ordinary pull-request creation, synchronization, or
+pushes. It retains `workflow_dispatch` for later reruns after merge. Each lane
+downloads roughly 1.35 GB of pinned model and VAD data, so the workflow is not
+part of the ordinary PR or nightly suite.
 
 Each lane uses Python 3.12 and the documented Parakeet ONNX CPU extra, then
 runs one bounded, platform-neutral evidence probe. Before importing application
@@ -314,7 +317,11 @@ managed artifact store, and user-owned external directory. It obtains the
 pinned v2 INT8 root, v3 INT8 root, and Silero VAD through the production
 artifact acquisition boundary, materializes both roots as regular external
 files, and removes the temporary managed Parakeet roots so each runtime closure
-is exactly one external root plus managed VAD.
+is exactly one external root plus managed VAD. To stay comfortably within the
+standard runner's disk allocation, the probe processes v2 and v3 sequentially:
+provision, materialize, remove the temporary managed root, verify, copy/delete,
+infer, record, and remove that external root before starting the other model.
+It does not cache model payloads between jobs.
 
 The probe must prove all of the following on every lane:
 
@@ -328,15 +335,36 @@ The probe must prove all of the following on every lane:
 - no managed Parakeet readiness, active selector, or root remains afterward;
 - shutdown completes within the same bounded run.
 
-The probe writes one path-private JSON result containing the tested commit SHA,
-workflow run and attempt identifiers, platform, architecture, package/runtime
-versions, CPU provider, timings, descriptor and dependency identities,
-invariant results, and bounded failure classification. The workflow uploads
-that JSON for each lane. It never records a local path, credential, username,
-or temporary-directory name. A lane passes only when both native inference
-smokes succeed and its JSON validates. Existing descriptor tests retain the
-F32 and external-data coverage; structural tests do not replace either native
-INT8 inference smoke.
+Inference uses deterministic, standard-library-generated PCM rather than a
+downloaded or committed audio fixture. After artifact provisioning finishes,
+the probe enables the supported Hugging Face offline modes and snapshots the
+relevant caches and managed store. Both inference passes must complete without
+changing those snapshots, which makes the no-provider-download boundary
+observable rather than inferred only from call structure.
+
+A small parent process supervises the application worker with a stdlib
+subprocess timeout. Normal success and caught failures are reported by the
+worker; a hang is terminated by the parent, which writes the same path-private
+timeout result. The workflow has a larger job timeout as the final safety net.
+
+The result contains the tested commit SHA, workflow run and attempt identifiers,
+platform, architecture, resolved package/runtime versions, CPU provider,
+timings, descriptor and dependency identities, invariant results, and bounded
+failure classification. The workflow uploads one JSON file per lane even when
+the probe fails. It never records a local path, credential, username, or
+temporary-directory name. A lane passes only when both native inference smokes
+succeed and its JSON validates. After all lanes pass, their normalized results
+and workflow references are committed as aggregate evidence under
+`Docs/STT_Evaluation/task-598/`; expiring workflow artifacts are not the durable
+task record.
+
+The workflow installs the documented `transcription_parakeet_onnx` extra
+without adding a CI-only ONNX Runtime pin. It records the actually resolved
+runtime because the newest compatible build may differ by platform. A missing
+wheel, resolver failure, absent `CPUExecutionProvider`, or inference failure
+keeps that platform gate open. Existing descriptor tests retain the F32 and
+external-data coverage; structural tests do not replace either native INT8
+inference smoke.
 
 Only affected focused tests, scoped lint, formatting checks for changed files,
 and `git diff --check` run locally. The unrelated full suite is not part of this
