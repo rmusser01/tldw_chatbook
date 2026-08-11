@@ -74,6 +74,11 @@ class _SeededOpenAIHarness(App[None]):
     """A pane opened with saved exact custom OpenAI axis values."""
 
     def compose(self) -> ComposeResult:
+        """Mount the pane seeded like a saved custom-endpoint setup.
+
+        Returns:
+            A ``ComposeResult`` yielding one seeded ``SpeechPlaygroundPane``.
+        """
         seeded = {
             "tts-provider-select": "openai",
             "tts-model-select": "pocket-tts-model",
@@ -97,6 +102,9 @@ async def test_saved_exact_custom_openai_model_and_voice_reach_the_axes(
     pane discarded both in favour of the official catalog's first entries
     (`tts-1` / `alloy`), so Generate synthesized with values the user never
     chose.
+
+    Args:
+        faked_service: Pane service hook pointed at the shared fake.
     """
     app = _SeededOpenAIHarness()
     async with app.run_test(size=(160, 60)) as pilot:

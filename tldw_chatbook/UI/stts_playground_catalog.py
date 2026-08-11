@@ -449,6 +449,12 @@ def pinned_no_catalog_check_option(identifier: str) -> SelectOption:
     "(no catalog check)" is the established honest state for legacy
     providers' exact values (profiles show the same wording): it means
     "there is nothing to check this against", not "something is wrong".
+
+    Args:
+        identifier: Exact custom model or voice id to pin.
+
+    Returns:
+        A ``(label, value)`` select option carrying the id unmodified.
     """
     return (f"{identifier} (no catalog check)", identifier)
 
