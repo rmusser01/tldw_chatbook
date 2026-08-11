@@ -211,13 +211,13 @@ def test_resolve_export_selections_notes_scope_never_touches_media_db(chachanote
 def test_export_scope_label_everything_lists_all_three_counts():
     scope = ExportScope(kind="everything")
     label = export_scope_label(scope, {"media": 128, "conversations": 542, "notes": 87})
-    assert label == "Everything: 128 media · 542 conversations · 87 notes"
+    assert label == "All media, conversations & notes: 128 media · 542 conversations · 87 notes"
 
 
 def test_export_scope_label_everything_includes_zero_count_sources():
     scope = ExportScope(kind="everything")
     label = export_scope_label(scope, {"media": 0, "conversations": 542, "notes": 0})
-    assert label == "Everything: 0 media · 542 conversations · 0 notes"
+    assert label == "All media, conversations & notes: 0 media · 542 conversations · 0 notes"
 
 
 def test_export_scope_label_media_with_type_filter():

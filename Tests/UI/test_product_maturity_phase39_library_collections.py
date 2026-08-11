@@ -630,10 +630,8 @@ async def test_library_collections_create_rename_and_delete_workflow() -> None:
 
         screen.query_one("#library-row-browse-collections", Button).press()
         await _wait_for_selector(screen, pilot, "#library-collections-panel")
-        assert (
-            "Create a local Collection record to start reviewing saved content."
-            in _visible_text(screen)
-        )
+        assert "No Collections yet." in _visible_text(screen)
+        assert "create one below to start" in _visible_text(screen)
 
         screen.query_one("#library-collection-name-input", Input).value = "Research"
         screen.query_one(
@@ -669,7 +667,7 @@ async def test_library_collections_create_rename_and_delete_workflow() -> None:
         await _wait_for_text(
             screen,
             pilot,
-            "Create a local Collection record to start reviewing saved content.",
+            "No Collections yet.",
         )
 
     assert service.deleted == ["collection-1"]

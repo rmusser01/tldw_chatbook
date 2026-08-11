@@ -1072,7 +1072,7 @@ def _custom_policy_recovery_state(
         # `.destination-purpose` line, just with Library's own copy instead
         # of the generic "source material" phrasing artifacts/personas use.
         # (F-013: the copy was rewritten in plain language -- "Search
-        # everything, pick a section on the left, or add something new.")
+        # everything, pick a section, or add something new.")
         ("library", "#library-header-line", "pick a section"),
         ("artifacts", "#artifacts-title", "generated"),
         ("personas", "#personas-header", "who the ai plays"),
@@ -1485,7 +1485,7 @@ async def test_library_destination_empty_state_disables_console_handoff():
         # successor as standalone canvas text; the landing canvas purpose
         # line plus the zero-state rail row counts carry the same "there is
         # nothing here yet" signal, and Console handoff stays disabled.
-        assert "Search everything, pick a section on the left, or add something new." in text
+        assert "Search everything, pick a section, or add something new." in text
         assert "Notes (0)" in text
         assert "Media (0)" in text
         assert "Conversations (0)" in text

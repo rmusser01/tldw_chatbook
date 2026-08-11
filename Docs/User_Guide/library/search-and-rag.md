@@ -30,7 +30,7 @@ Top to bottom on the main canvas:
 - **"Search / RAG"** — the canvas title (task-2859: dropped the redundant
   "Library " prefix and now matches the rail row's own "Search / RAG"
   spacing; it used to read "Library Search/RAG").
-- **Query row** — the **"mode: Search ▸"** button (click to cycle to
+- **Query row** — the **"mode: Search ⇄"** button (click to cycle to
   "mode: RAG Answer ▸" and back), the query box ("Ask or search Library
   sources"), and **Run** (reads "Searching…" while a search is in flight).
   A one-line status sits underneath.
@@ -499,3 +499,10 @@ settings page nowhere in the list. Ordinary semantic queries were unharmed:
 `library/import-and-export.md` first, and "change the color theme and
 appearance" returned a byte-identical list under both constants — the
 weighting change moves the bottom of the list, not the ranking above it.*
+
+*Verified against fix/settings-appearance-crash @ 57ad075de — 2026-08-10
+(task-4023 AC#6: running a query scrolls the Evidence region into view at
+run start and again when results land, so Run visibly does something even
+when the configuration region fills the fold; the rail search box and the
+canvas query box now mirror each other as you type — one query, two
+views of it; the mode button reads "mode: Search ⇄".)*

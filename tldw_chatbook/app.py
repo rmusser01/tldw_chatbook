@@ -5148,7 +5148,22 @@ class TldwCli(
         scope_context: Optional[StudyScopeContext] = None,
         *,
         initial_section: Optional[str] = None,
+        origin: Optional[str] = None,
     ) -> None:
+        """Stage Study handoffs and navigate to the Study screen.
+
+        Args:
+            scope_context: Scoped study context to apply, or None to clear
+                any pending scope.
+            initial_section: Study section to land on, or None to clear any
+                pending section.
+            origin: Where the user is coming FROM (``STUDY_ORIGINS``:
+                "home" or "library"), threaded to StudyScreen so its
+                breadcrumb and Escape target name the actual origin
+                (task-4011). None clears the channel and StudyScreen falls
+                back to its historical Library default (task-2854's one
+                considered origin).
+        """
         if scope_context is None:
             self.pending_handoffs.clear_pending(HandoffChannel.STUDY_SCOPE)
         elif not self._stage_handoff(
@@ -5164,6 +5179,15 @@ class TldwCli(
             HandoffChannel.STUDY_INITIAL_SECTION,
             initial_section,
             recovery="Study section could not be opened. Try again.",
+        ):
+            return
+
+        if origin is None:
+            self.pending_handoffs.clear_pending(HandoffChannel.STUDY_ORIGIN)
+        elif not self._stage_handoff(
+            HandoffChannel.STUDY_ORIGIN,
+            origin,
+            recovery="Study could not be opened. Try again.",
         ):
             return
         self.post_message(NavigateToScreen(TAB_STUDY))
@@ -5460,8 +5484,14 @@ class TldwCli(
         )
 
     def open_home_flashcards_review(self) -> None:
-        """Open the Study screen directly on the flashcards review surface."""
-        self.open_study_screen(initial_section="flashcards")
+        """Open the Study screen directly on the flashcards review surface.
+
+        task-4011: this is the one entry into Study that does NOT come from
+        Library's staging canvas, so it declares its origin -- StudyScreen's
+        breadcrumb reads "Home ▸ Study" and Escape returns to Home instead
+        of a Library canvas the user never visited.
+        """
+        self.open_study_screen(initial_section="flashcards", origin="home")
 
     def _local_flashcards_due_count(self) -> int | None:
         """Count due flashcards for the Home mirror; None when the DB is absent."""

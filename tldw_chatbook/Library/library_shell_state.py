@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+# task-4023 AC#7: no "on the left" -- at ≤100 columns the shell shows one
+# pane at a time (the rail fills the width and this canvas is hidden), so
+# spatial copy was width-dependent nonsense. The copy now holds at every
+# width the layout can take.
 LIBRARY_CANVAS_LANDING_COPY = (
-    "Search everything, pick a section on the left, or add something new."
+    "Search everything, pick a section, or add something new."
 )
 
 LIBRARY_ROW_BROWSE_CONVERSATIONS = "browse-conversations"
@@ -25,6 +29,12 @@ LIBRARY_ROW_BROWSE_SKILLS = "browse-skills"
 LIBRARY_ROW_BROWSE_SEARCH = "browse-search"
 LIBRARY_ROW_BROWSE_COLLECTIONS = "browse-collections"
 LIBRARY_ROW_CREATE_NOTE = "create-note"
+# The three Study staging (handoff) rows -- consumers that need "is this a
+# study handoff row" import these rather than repeating the literals
+# (Qodo PR-1488 #2; the study_rows definitions below are the canonical use).
+LIBRARY_ROW_CREATE_STUDY = "create-study"
+LIBRARY_ROW_CREATE_FLASHCARDS = "create-flashcards"
+LIBRARY_ROW_CREATE_QUIZZES = "create-quizzes"
 # Task 8b D1: "New prompt" -- unlike LIBRARY_ROW_CREATE_NOTE (its own
 # "notes-create" canvas kind, a landing chooser of Blank/template rows),
 # this row's target_id is "prompts" itself: it reuses the SAME canvas kind
@@ -63,6 +73,81 @@ LIBRARY_EXPORT_SELECTED_TOOLTIP = "Export the selected items."
 # same disabled/enabled tooltip pair as "Export selected" above.
 LIBRARY_DELETE_SELECTED_DISABLED_TOOLTIP = "Select one or more items to delete them."
 LIBRARY_DELETE_SELECTED_TOOLTIP = "Move the selected items to trash."
+
+# task-4023 AC#1 (RC-07): disabled state finally joins the product's
+# non-colour vocabulary. Every disabled Library action label carries a
+# leading "○" -- the existing ✓/○ pair's neutral glyph (ingest option
+# toggles, sync status, RAG scope chips), extended rather than a new
+# invention -- so the state survives monochrome rendering, colour-blind
+# users, and low-contrast themes. The colour half of the fix (the 3:1
+# Legible Disabled floor) is app-tier CSS in css/components/
+# _agentic_terminal.tcss; this marker is the structural half.
+LIBRARY_DISABLED_ACTION_MARKER = "○"
+
+# F-018 reason for the list canvases' Select toggle while the rendered
+# list is empty -- previously the only disabled Library action with no
+# reason anywhere at the control ("click does nothing, says nothing",
+# re-critique RC-07).
+LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP = "Nothing here to select yet."
+
+
+def library_disabled_action_label(label: str, disabled: bool) -> str:
+    """Prefix ``label`` with the non-colour disabled marker when disabled.
+
+    Args:
+        label: The action's plain enabled label.
+        disabled: Whether the control renders disabled.
+
+    Returns:
+        ``"○ <label>"`` while disabled, ``label`` unchanged otherwise.
+    """
+    return f"{LIBRARY_DISABLED_ACTION_MARKER} {label}" if disabled else label
+
+
+# task-4023 AC#5: "▸" carried three meanings on one screen -- selected-row
+# prefix ("▸ Media"), collapsed-disclosure suffix ("Details ▸"), AND the
+# silent value-cycler suffix ("type: All ▸"), where it looked like a
+# disclosure but silently advanced a hidden option set. Cyclers now carry
+# their own glyph. Convention after this task: leading "▸ " marks the
+# selected row of a list; a trailing "▸/▾" pair on a section HEADER is
+# disclosure state; a trailing "⇄" is a cycle control (press to advance;
+# the tooltip enumerates the options).
+LIBRARY_CYCLE_MARKER = "⇄"
+
+
+def library_cycle_label(name: str, value: str) -> str:
+    """Build a cycle-control Button label: ``"{name}: {value} ⇄"``.
+
+    One source for every Library cycle control (media type filter, sort,
+    prompt collection, export quality, Search/RAG mode) so the glyph can
+    never fork per canvas again.
+
+    Args:
+        name: The control's lowercase subject (e.g. ``"type"``).
+        value: The currently active option, already display-safe.
+
+    Returns:
+        The cycle Button's label text.
+    """
+    return f"{name}: {value} {LIBRARY_CYCLE_MARKER}"
+
+
+def library_cycle_tooltip(subject: str, options: "tuple[str, ...] | list[str]") -> str:
+    """Build a cycle control's option-enumerating tooltip (AC#5/RC 'cycle
+    buttons hide their option space').
+
+    Args:
+        subject: What is being cycled, e.g. ``"media type"``.
+        options: The full option cycle, in press order.
+
+    Returns:
+        ``"Cycles {subject}: A → B → C."`` (or a generic line when the
+        option set is empty/unknown).
+    """
+    cycle = " → ".join(str(option) for option in options if str(option))
+    if not cycle:
+        return f"Cycles {subject}."
+    return f"Cycles {subject}: {cycle}."
 
 
 @dataclass(frozen=True)
@@ -342,7 +427,7 @@ def build_library_shell_state(
     # press them); the section_id carries the regrouping.
     study_rows = (
         LibraryRailRow(
-            row_id="create-study",
+            row_id=LIBRARY_ROW_CREATE_STUDY,
             section_id="study",
             title="Study decks",
             target_kind="handoff",
@@ -352,7 +437,7 @@ def build_library_shell_state(
             count_loading=state.counts_loading,
         ),
         LibraryRailRow(
-            row_id="create-flashcards",
+            row_id=LIBRARY_ROW_CREATE_FLASHCARDS,
             section_id="study",
             title="Flashcards",
             target_kind="handoff",
@@ -378,7 +463,7 @@ def build_library_shell_state(
             short_title="Cards",
         ),
         LibraryRailRow(
-            row_id="create-quizzes",
+            row_id=LIBRARY_ROW_CREATE_QUIZZES,
             section_id="study",
             title="Quizzes",
             target_kind="handoff",

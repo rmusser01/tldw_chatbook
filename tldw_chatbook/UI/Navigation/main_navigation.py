@@ -329,6 +329,11 @@ class MainNavigationBar(Container):
         # button the instant the bar mounts -- see `_mark_mount_settled`
         # and `on_descendant_focus`.
         self._mount_settled = False
+        # task-4024: armed by `_mark_mount_settled` when it runs before the
+        # screen's automatic focus placement has landed anywhere (the
+        # post-recompose ordering) -- the next `DescendantFocus` is then
+        # consumed as that automatic landing, never recorded as deliberate.
+        self._settle_after_next_focus = False
         self._deliberate_focus_id: str | None = None
 
     def compose(self) -> ComposeResult:
@@ -397,6 +402,44 @@ class MainNavigationBar(Container):
         self.set_timer(0.25, self._refresh_overflow_hint_visibility)
 
     def _mark_mount_settled(self) -> None:
+        """Close the mount-settle window -- but only once the screen's
+        AUTOMATIC focus placement has verifiably landed (task-4024).
+
+        The original marker was purely time-based (this method runs on
+        `on_mount`'s first `call_after_refresh` tick) and relied on the
+        empirical first-mount ordering: `AUTO_FOCUS` lands strictly BEFORE
+        this tick, so any `DescendantFocus` arriving after it must be a
+        genuine user Tab press. A screen-level recompose breaks that
+        ordering: `SettingsScreen.on_mount` -> `_refresh_sync_rows()` sets
+        `recompose=True` reactives that recompose the whole screen and mint
+        a REPLACEMENT bar, and for that bar the screen is already laid out,
+        so this tick fires a few ms BEFORE the post-recompose focus
+        placement (Textual's refocus after the focused widget was removed,
+        or `SettingsScreen._restore_focus_after_sync_rows`) lands on the
+        bar's first button. That automatic landing then got recorded as a
+        DELIBERATE focus, and every later `_recenter_strip` pass recentered
+        on always-visible `nav-home` instead of the active destination --
+        live-observed as Settings' active highlight pinned off-screen at
+        `scroll_x=0` indefinitely, with manual `scroll_to_widget` calls
+        snapped back within one 0.5s interval tick (task-4024).
+
+        So: if nothing on the screen holds focus yet when this tick runs,
+        the automatic placement has NOT landed -- stay unsettled and let
+        `on_descendant_focus` consume the next focus event as that
+        automatic landing, closing the window right after it. If focus HAS
+        landed (first-mount `AUTO_FOCUS`, or a screen that focuses its own
+        content on mount), settle immediately -- identical to the old
+        behavior in every previously-working ordering.
+        """
+        focused = None
+        if self.is_attached:
+            try:
+                focused = self.screen.focused
+            except Exception:
+                focused = None
+        if focused is None:
+            self._settle_after_next_focus = True
+            return
         self._mount_settled = True
 
     def _update_overflow_hints(self) -> None:
@@ -534,6 +577,14 @@ class MainNavigationBar(Container):
             return
         if self._mount_settled and widget.id:
             self._deliberate_focus_id = widget.id
+        elif self._settle_after_next_focus:
+            # task-4024: `_mark_mount_settled` ran before the screen's
+            # automatic focus placement landed (the post-recompose
+            # ordering) -- THIS event is that automatic landing. Consume it
+            # without recording it as deliberate, and close the settle
+            # window so the NEXT focus change is trusted as a user's.
+            self._settle_after_next_focus = False
+            self._mount_settled = True
         self.call_after_refresh(self._scroll_to_focused_then_ghost_check, widget)
 
     def _scroll_to_focused_then_ghost_check(self, widget: "NavigationButton") -> None:

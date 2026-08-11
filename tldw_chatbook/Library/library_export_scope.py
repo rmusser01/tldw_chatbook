@@ -171,8 +171,14 @@ def resolve_export_selections(
 def export_scope_label(scope: ExportScope, counts: Mapping[str, int]) -> str:
     """Build the export form's scope summary line.
 
+    task-4023 AC#7: the widest scope no longer claims "Everything" -- the
+    export machinery covers media, conversations, and notes only (see
+    ``resolve_export_selections``), while the Library also holds prompts,
+    skills, and collections that never enter the bundle. The label names
+    exactly what it covers.
+
     Examples:
-        "Everything: 128 media · 542 conversations · 87 notes"
+        "All media, conversations & notes: 128 media · 542 conversations · 87 notes"
         "Media (type: video) · 12 items"
         "Media · 12 items"
         "Conversations · 542 items"
@@ -182,7 +188,7 @@ def export_scope_label(scope: ExportScope, counts: Mapping[str, int]) -> str:
         return f"Selected {scope.kind} · {counts.get(scope.kind, len(scope.ids))} items"
     if scope.kind == "everything":
         return (
-            f"Everything: {counts.get('media', 0)} media · "
+            f"All media, conversations & notes: {counts.get('media', 0)} media · "
             f"{counts.get('conversations', 0)} conversations · "
             f"{counts.get('notes', 0)} notes"
         )

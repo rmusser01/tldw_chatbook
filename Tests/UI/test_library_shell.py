@@ -634,7 +634,7 @@ async def test_library_shell_renders_rail_sections_and_landing_canvas():
         visible = _visible_text(screen)
         assert "Conversations (2)" in visible
         assert (
-            "Search everything, pick a section on the left, or add something new."
+            "Search everything, pick a section, or add something new."
             in visible
         )
         assert screen.query_one("#library-canvas-landing")
@@ -943,7 +943,7 @@ async def test_rail_rows_are_one_line_by_default_with_meta_only_for_handoffs():
             label = str(row.label)
             if row.id in handoff_ids:
                 assert "\n" in label, f"{row.id} lost its handoff discriminator"
-                assert "opens staging canvas" in label
+                assert "see what carries over" in label
                 assert "opens Study" not in label
                 assert row.styles.height.value == 2
             else:
@@ -1108,43 +1108,103 @@ async def test_rail_subtitles_drop_cleanly_instead_of_partial_noise_at_100x30():
                 assert first_line.endswith("(2)"), first_line
 
 
+async def _wait_for_details_db_sizes(screen, pilot, needle: str) -> str:
+    """Poll the Details DB-sizes line until ``needle`` renders; return it."""
+    for _ in range(300):
+        widgets = list(screen.query("#library-details-db-sizes"))
+        if widgets and needle in str(widgets[0].render()):
+            return str(widgets[0].render())
+        await pilot.pause(0.01)
+    rendered = (
+        str(screen.query_one("#library-details-db-sizes", Static).render())
+        if list(screen.query("#library-details-db-sizes"))
+        else "<line never mounted>"
+    )
+    raise AssertionError(
+        f"Details DB-sizes line never showed {needle!r}; last render: {rendered!r}"
+    )
+
+
 @pytest.mark.asyncio
-async def test_details_shows_db_sizes_from_the_app_cache():
-    """F-014: the relocated DB-size telemetry surfaces in the rail's
-    Details disclosure (fed from the DBStatusManager's app-level cache),
-    not in the footer."""
+async def test_details_recomputes_db_sizes_on_open():
+    """F-014 relocation + task-4023 AC#3 (RC-09): the rail's Details
+    disclosure carries the DB-size telemetry (not the footer), and opening
+    it RECOMPUTES the sizes from disk -- WAL-sidecar-inclusive (task-2859)
+    -- instead of trusting the app-level cache. Mirrors the live evidence
+    pattern: stale cache -> open shows the real on-disk size; close ->
+    grow the WAL on disk -> reopen shows the new size.
+
+    (Rewritten by the whole-branch fix wave: the old pin asserted the
+    retired cache-fed behaviour and went red the moment RC-09 shipped.)
+    """
+    import os
+    import pwd
+
     app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+
+    # Write real DB files (plus a prompts WAL sidecar) at the SAME paths
+    # DBStatusManager.update_db_sizes resolves at call time. Guard first:
+    # the conftest profile isolation must have redirected them out of the
+    # real user home (the live-config trap) before we write anything.
+    prompts_path = app_config.get_prompts_db_path()
+    chachanotes_path = app_config.get_chachanotes_db_path()
+    media_path = app_config.get_media_db_path()
+    real_home = pwd.getpwuid(os.getuid()).pw_dir
+    for db_path in (prompts_path, chachanotes_path, media_path):
+        assert not str(db_path).startswith(real_home + "/"), (
+            f"{db_path} resolves inside the real user profile -- refusing "
+            "to write DB fixtures there."
+        )
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+    prompts_path.write_bytes(b"\0" * 2048)
+    prompts_wal = prompts_path.with_name(prompts_path.name + "-wal")
+    prompts_wal.write_bytes(b"\0" * 1024)  # 2048 + 1024 -> "3.0 KB"
+    chachanotes_path.write_bytes(b"\0" * 4096)  # "4.0 KB"
+    media_path.write_bytes(b"\0" * 5120)  # "5.0 KB"
+
+    # Stale cache: the retired behaviour would render this verbatim.
     app.db_sizes_status = {
         "prompts": "1.0 KB",
-        "chachanotes": "2.0 KB",
-        "media": "3.0 KB",
+        "chachanotes": "1.0 KB",
+        "media": "1.0 KB",
     }
-    _seed_conversations(app, _two_conversations())
-    host = LibraryHarness(app)
 
+    host = LibraryHarness(app)
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
 
+        # Deterministic starting point: details closed, then a real open
+        # through the header toggle (the RC-09 refresh trigger).
+        screen._set_library_rail_section("details", False)
+        await pilot.pause()
         screen.query_one("#console-rail-section-toggle-library-details", Button).press()
-        await pilot.pause()
-        await pilot.pause()
 
-        sizes = screen.query_one("#library-details-db-sizes", Static)
-        text = str(sizes.renderable)
+        text = await _wait_for_details_db_sizes(screen, pilot, "Prompts 3.0KB")
+        assert "Chats/Notes 4.0KB" in text
+        assert "Media 5.0KB" in text
+        assert "1.0KB" not in text  # the stale cache never renders
         # task-2859 item 5: the space between each size's number and its
-        # unit is now dropped entirely, so the rail never wraps mid-unit
+        # unit is dropped entirely, so the rail never wraps mid-unit
         # ("Prompts 144.0 / KB"). A non-breaking space was tried first and
         # does NOT work here -- Rich's word-wrap splitter's `\s` regex
         # matches U+00A0 same as an ordinary space (see
         # `_unbreakable_size_text`'s docstring for the live repro) -- so
         # this asserts the space is GONE, not merely a different kind of
         # space.
-        assert "Prompts 1.0KB" in text
-        assert "Chats/Notes 2.0KB" in text
-        assert "Media 3.0KB" in text
-        assert "1.0 KB" not in text
-        assert "1.0\N{NO-BREAK SPACE}KB" not in text
+        assert "3.0 KB" not in text
+        assert "3.0\N{NO-BREAK SPACE}KB" not in text
+
+        # Close, grow the WAL on disk, reopen: the RC-09 contract is that
+        # REOPENING recomputes -- the line must not keep the old reading.
+        screen.query_one("#console-rail-section-toggle-library-details", Button).press()
+        await pilot.pause()
+        prompts_wal.write_bytes(b"\0" * 6144)  # 2048 + 6144 -> "8.0 KB"
+        screen.query_one("#console-rail-section-toggle-library-details", Button).press()
+
+        text = await _wait_for_details_db_sizes(screen, pilot, "Prompts 8.0KB")
+        assert "Prompts 3.0KB" not in text
 
 
 @pytest.mark.asyncio
@@ -1804,7 +1864,7 @@ async def test_library_shell_search_mode_toggle_cycles_mode():
         await _wait_for_selector(screen, pilot, "#library-rag-mode-toggle")
 
         toggle = screen.query_one("#library-rag-mode-toggle", Button)
-        assert str(toggle.label) == "mode: Search ▸"
+        assert str(toggle.label) == "mode: Search ⇄"
         assert toggle.tooltip == (
             "Cycle Search/RAG mode. Next: RAG Answer — calls a paid provider."
         )
@@ -1813,7 +1873,7 @@ async def test_library_shell_search_mode_toggle_cycles_mode():
         screen.query_one("#library-rag-mode-toggle", Button).press()
         for _ in range(120):
             toggles = list(screen.query("#library-rag-mode-toggle"))
-            if toggles and str(toggles[0].label) == "mode: RAG Answer ▸":
+            if toggles and str(toggles[0].label) == "mode: RAG Answer ⇄":
                 break
             await pilot.pause(0.02)
         else:
@@ -1825,7 +1885,7 @@ async def test_library_shell_search_mode_toggle_cycles_mode():
         screen.query_one("#library-rag-mode-toggle", Button).press()
         for _ in range(120):
             toggles = list(screen.query("#library-rag-mode-toggle"))
-            if toggles and str(toggles[0].label) == "mode: Search ▸":
+            if toggles and str(toggles[0].label) == "mode: Search ⇄":
                 break
             await pilot.pause(0.02)
         else:
@@ -1890,7 +1950,7 @@ async def test_library_shell_search_rag_mode_keeps_run_enabled_without_runtime(
         screen.query_one("#library-rag-mode-toggle", Button).press()
         for _ in range(120):
             toggles = list(screen.query("#library-rag-mode-toggle"))
-            if toggles and str(toggles[0].label) == "mode: RAG Answer ▸":
+            if toggles and str(toggles[0].label) == "mode: RAG Answer ⇄":
                 break
             await pilot.pause(0.02)
         else:
@@ -1933,7 +1993,7 @@ async def test_library_shell_search_rag_mode_blocks_run_without_a_ready_provider
         screen.query_one("#library-rag-mode-toggle", Button).press()
         for _ in range(120):
             toggles = list(screen.query("#library-rag-mode-toggle"))
-            if toggles and str(toggles[0].label) == "mode: RAG Answer ▸":
+            if toggles and str(toggles[0].label) == "mode: RAG Answer ⇄":
                 break
             await pilot.pause(0.02)
         else:
@@ -2000,7 +2060,7 @@ async def test_library_shell_search_rag_mode_blocks_run_when_endpoint_named_but_
         screen.query_one("#library-rag-mode-toggle", Button).press()
         for _ in range(120):
             toggles = list(screen.query("#library-rag-mode-toggle"))
-            if toggles and str(toggles[0].label) == "mode: RAG Answer ▸":
+            if toggles and str(toggles[0].label) == "mode: RAG Answer ⇄":
                 break
             await pilot.pause(0.02)
         else:
@@ -3076,7 +3136,7 @@ async def test_library_shell_browse_media_renders_canvas_with_rows_and_preview()
         assert title == "Media (2)"
 
         filter_button = screen.query_one("#library-media-type-filter", Button)
-        assert str(filter_button.label) == "type: All ▸"
+        assert str(filter_button.label) == "type: All ⇄"
 
         rows = list(screen.query(".library-media-row"))
         assert len(rows) == 2
@@ -3127,7 +3187,7 @@ async def test_library_shell_media_type_filter_narrows_list():
 
         assert screen._library_media_type_filter == "audio"
         filter_button = screen.query_one("#library-media-type-filter", Button)
-        assert str(filter_button.label) == "type: audio ▸"
+        assert str(filter_button.label) == "type: audio ⇄"
         rows = list(screen.query(".library-media-row"))
         assert len(rows) == 1
         assert "Interview Recording" in str(rows[0].label)
@@ -3141,7 +3201,7 @@ async def test_library_shell_media_type_filter_narrows_list():
 
         assert screen._library_media_type_filter == "video"
         filter_button = screen.query_one("#library-media-type-filter", Button)
-        assert str(filter_button.label) == "type: video ▸"
+        assert str(filter_button.label) == "type: video ⇄"
         rows = list(screen.query(".library-media-row"))
         assert len(rows) == 1
         assert "Product Demo Video" in str(rows[0].label)
@@ -3152,7 +3212,7 @@ async def test_library_shell_media_type_filter_narrows_list():
 
         assert screen._library_media_type_filter == "All"
         filter_button = screen.query_one("#library-media-type-filter", Button)
-        assert str(filter_button.label) == "type: All ▸"
+        assert str(filter_button.label) == "type: All ⇄"
         rows = list(screen.query(".library-media-row"))
         assert len(rows) == 2
 
@@ -5827,8 +5887,13 @@ async def test_library_shell_history_manual_expand_survives_unrelated_refresh():
         screen.query_one("#library-rag-run-query", Button).press()
         await _wait_for_selector(screen, pilot, "#library-rag-history-0")
 
-        # Results just landed: the collapsible is force-collapsed.
-        assert screen.query_one("#library-rag-history", Collapsible).collapsed is True
+        # Results just landed: the collapsible is force-collapsed. Assert
+        # the RENDERED class too, not just the reactive -- the AC#6/RC-08
+        # force-collapse bypasses the watcher, so a Textual change to how
+        # `-collapsed` gets applied must turn this pin red (review M-C).
+        collapsible = screen.query_one("#library-rag-history", Collapsible)
+        assert collapsible.collapsed is True
+        assert collapsible.has_class("-collapsed")
 
         # Mirror a user click on the collapsible header.
         screen.query_one("#library-rag-history", Collapsible).collapsed = False
@@ -5837,7 +5902,9 @@ async def test_library_shell_history_manual_expand_survives_unrelated_refresh():
         screen.query_one("#library-rag-query-input", Input).value = "alpha b"
         await _wait_for_library_rag_query_ready(screen, pilot, "alpha b")
 
-        assert screen.query_one("#library-rag-history", Collapsible).collapsed is False
+        collapsible = screen.query_one("#library-rag-history", Collapsible)
+        assert collapsible.collapsed is False
+        assert not collapsible.has_class("-collapsed")
 
 
 @pytest.mark.asyncio
@@ -5877,8 +5944,12 @@ async def test_library_shell_history_manual_expand_survives_scope_toggle_recompo
         screen.query_one("#library-rag-run-query", Button).press()
         await _wait_for_selector(screen, pilot, "#library-rag-history-0")
 
-        # Results just landed: the collapsible is force-collapsed.
-        assert screen.query_one("#library-rag-history", Collapsible).collapsed is True
+        # Results just landed: the collapsible is force-collapsed. Assert
+        # the RENDERED class too (review M-C): the AC#6/RC-08 bypass applies
+        # it via `_update_collapsed`, outside the watcher.
+        collapsible = screen.query_one("#library-rag-history", Collapsible)
+        assert collapsible.collapsed is True
+        assert collapsible.has_class("-collapsed")
 
         # Mirror a user click on the collapsible header.
         screen.query_one("#library-rag-history", Collapsible).collapsed = False
@@ -5896,7 +5967,9 @@ async def test_library_shell_history_manual_expand_survives_scope_toggle_recompo
         screen.query_one("#library-rag-scope-toggle-media", Button).press()
         await _wait_for_selector(screen, pilot, "#library-rag-history-0")
 
-        assert screen.query_one("#library-rag-history", Collapsible).collapsed is False
+        collapsible = screen.query_one("#library-rag-history", Collapsible)
+        assert collapsible.collapsed is False
+        assert not collapsible.has_class("-collapsed")
 
 
 def _never_loads(self) -> None:
@@ -16259,7 +16332,7 @@ async def test_library_shell_restored_media_type_filter_renders_on_first_paint()
 
         assert screen2._library_media_type_filter == active_type
         filter_button = screen2.query_one("#library-media-type-filter", Button)
-        assert str(filter_button.label) == f"type: {active_type} ▸"
+        assert str(filter_button.label) == f"type: {active_type} ⇄"
         rows = list(screen2.query(".library-media-row"))
         assert len(rows) == 1
 
@@ -16410,7 +16483,7 @@ async def test_library_shell_restored_export_canvas_rekicks_counts_worker_on_mou
         await pilot.pause()
 
         scope_line = str(screen.query_one("#library-export-scope-line").renderable)
-        assert scope_line == "Everything: 1 media · 1 conversations · 1 notes"
+        assert scope_line == "All media, conversations & notes: 1 media · 1 conversations · 1 notes"
         # Non-empty scope + counts landed: Export is no longer stuck
         # disabled by a permanent "Counting…" (only the missing
         # destination keeps it disabled now, which is correct).
@@ -16532,7 +16605,7 @@ async def test_library_shell_export_rail_row_opens_everything_scope_and_counts_l
         await pilot.pause()
 
         scope_line = str(screen.query_one("#library-export-scope-line").renderable)
-        assert scope_line == "Everything: 1 media · 1 conversations · 1 notes"
+        assert scope_line == "All media, conversations & notes: 1 media · 1 conversations · 1 notes"
         submit = screen.query_one("#library-export-submit", Button)
         # Counts landed with a positive total, but no destination chosen yet.
         assert submit.disabled is True
@@ -17078,7 +17151,7 @@ async def test_library_shell_export_counts_worker_uses_real_thread_for_file_back
         await pilot.pause()
 
         scope_line = str(screen.query_one("#library-export-scope-line").renderable)
-        assert scope_line == "Everything: 1 media · 1 conversations · 0 notes"
+        assert scope_line == "All media, conversations & notes: 1 media · 1 conversations · 0 notes"
 
 
 class _GatedExportCountMediaDB:
@@ -17167,7 +17240,7 @@ async def test_library_shell_export_counts_landing_preserves_input_focus_and_tex
         assert screen.query_one("#library-export-scope-line", Static) is scope_line
         assert (
             str(scope_line.renderable)
-            == "Everything: 1 media · 1 conversations · 0 notes"
+            == "All media, conversations & notes: 1 media · 1 conversations · 0 notes"
         )
         # Positive total, but still no destination -- Export stays disabled.
         assert screen.query_one("#library-export-submit", Button).disabled is True
@@ -21028,7 +21101,10 @@ async def test_library_note_footer_tracks_editor_states_and_ancillary_contents()
             # ingest arc's shared footer (task-3302, PR #1452, in the dev
             # base) appends a width-adaptive global suffix after " | "
             # ("F1 help · ... · Ctrl+Q quit") to every Library footer.
-            return text.split(" | ")[0]
+            # task-4023 AC#5: the context itself is now " | "-joined
+            # per-key pairs, so strip only the LAST segment (the
+            # "·"-joined global cluster).
+            return text.rsplit(" | ", 1)[0]
 
         async def wait_footer(expected: str) -> None:
             await _wait_for_condition(
@@ -21038,7 +21114,7 @@ async def test_library_note_footer_tracks_editor_states_and_ancillary_contents()
             )
 
         await _open_note_editor(screen, pilot)
-        await wait_footer("Ctrl+S Save · Esc Notes")
+        await wait_footer("ctrl+s save | esc notes")
         footer = screen.query_one(AppFooterStatus)
         footer.update_word_count(12)
         footer.update_token_count("Tokens: 34")
@@ -21055,9 +21131,9 @@ async def test_library_note_footer_tracks_editor_states_and_ancillary_contents()
         assert all(widget.display is False for widget in ancillary)
 
         screen.query_one("#library-note-preview").press()
-        await wait_footer("Pg Scroll · Esc Notes")
+        await wait_footer("pgup/pgdn scroll | esc notes")
         screen.query_one("#library-note-context").press()
-        await wait_footer("Enter Act · Esc Note")
+        await wait_footer("enter run action | esc note")
 
         await pilot.resize_terminal(170, 48)
         await _wait_for_library_notes_compact(screen, pilot, False)
@@ -21074,13 +21150,13 @@ async def test_library_note_footer_tracks_editor_states_and_ancillary_contents()
         await _wait_for_library_notes_compact(screen, pilot, True)
         screen.query_one("#library-note-context-delete").press()
         await _wait_for_display(screen, pilot, "#library-note-delete-confirmation")
-        await wait_footer("Enter Confirm · Esc Cancel")
+        await wait_footer("enter confirm | esc cancel")
         await pilot.press("escape")
-        await wait_footer("Enter Act · Esc Note")
+        await wait_footer("enter run action | esc note")
         await pilot.press("escape")
-        await wait_footer("Pg Scroll · Esc Notes")
+        await wait_footer("pgup/pgdn scroll | esc notes")
         screen.query_one("#library-note-preview").press()
-        await wait_footer("Ctrl+S Save · Esc Notes")
+        await wait_footer("ctrl+s save | esc notes")
 
         body = screen.query_one("#library-note-body", TextArea)
         body.text = "local conflict text"
@@ -21092,7 +21168,7 @@ async def test_library_note_footer_tracks_editor_states_and_ancillary_contents()
             lambda: screen._library_note_session.snapshot.in_conflict,
             message="Ctrl+S did not surface the expected conflict.",
         )
-        await wait_footer("Enter Choose · Esc Locked")
+        await wait_footer("enter choose version")
         await pilot.press("ctrl+s")
         await _wait_for_condition(
             pilot,
@@ -21109,7 +21185,7 @@ async def test_library_note_footer_tracks_editor_states_and_ancillary_contents()
             ),
             message="Reload did not resolve the conflict.",
         )
-        await wait_footer("Ctrl+S Save · Esc Notes")
+        await wait_footer("ctrl+s save | esc notes")
         assert screen._library_note_shortcut_status == ""
 
 
@@ -21132,7 +21208,10 @@ async def test_library_note_footer_covers_navigator_create_sync_and_exit() -> No
             # ingest arc's shared footer (task-3302, PR #1452, in the dev
             # base) appends a width-adaptive global suffix after " | "
             # ("F1 help · ... · Ctrl+Q quit") to every Library footer.
-            return text.split(" | ")[0]
+            # task-4023 AC#5: the context itself is now " | "-joined
+            # per-key pairs, so strip only the LAST segment (the
+            # "·"-joined global cluster).
+            return text.rsplit(" | ", 1)[0]
 
         async def wait_footer(expected: str) -> None:
             await _wait_for_condition(
@@ -21143,33 +21222,33 @@ async def test_library_note_footer_covers_navigator_create_sync_and_exit() -> No
 
         screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_NOTES}").press()
         await _wait_for_selector(screen, pilot, "#library-notes-filter")
-        await wait_footer("Ctrl+N New · / Find · Esc Library")
+        await wait_footer("ctrl+n new | / find | esc rail")
 
         screen.query_one("#library-notes-select-toggle").press()
         await _wait_for_selector(screen, pilot, "#library-notes-selection-actions")
-        await wait_footer("Enter Select · Esc Done")
+        await wait_footer("enter select | esc done")
         await pilot.press("escape")
-        await wait_footer("Ctrl+N New · / Find · Esc Library")
+        await wait_footer("ctrl+n new | / find | esc rail")
 
         screen.query_one("#library-notes-sort").press()
         await _wait_for_selector(screen, pilot, "#library-notes-sort-choices")
-        await wait_footer("Enter Choose · Esc Cancel")
+        await wait_footer("enter choose sort | esc cancel")
         await pilot.press("escape")
-        await wait_footer("Ctrl+N New · / Find · Esc Library")
+        await wait_footer("ctrl+n new | / find | esc rail")
 
         await pilot.press("ctrl+n")
         await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
-        await wait_footer("Enter Create · Esc Notes")
+        await wait_footer("enter create | esc notes")
         await pilot.press("escape")
         await _wait_for_selector(screen, pilot, "#library-notes-sync-open")
-        await wait_footer("Ctrl+N New · / Find · Esc Library")
+        await wait_footer("ctrl+n new | / find | esc rail")
 
         screen.query_one("#library-notes-sync-open").press()
         await _wait_for_selector(screen, pilot, "#library-notes-sync-run")
-        await wait_footer("Enter Act · Esc Notes")
+        await wait_footer("enter act | esc notes")
         await pilot.press("escape")
         await _wait_for_selector(screen, pilot, "#library-notes-filter")
-        await wait_footer("Ctrl+N New · / Find · Esc Library")
+        await wait_footer("ctrl+n new | / find | esc rail")
 
         await pilot.press("escape")
         await _wait_for_condition(
@@ -21189,8 +21268,8 @@ async def test_library_note_footer_covers_navigator_create_sync_and_exit() -> No
             # notes-local help and restore Library-level guidance.
             lambda: (
                 "focus search" in footer_shortcuts()
-                and "Esc Library" not in footer_shortcuts()
-                and "Ctrl+N New" not in footer_shortcuts()
+                and "esc rail" not in footer_shortcuts()
+                and "ctrl+n new" not in footer_shortcuts()
             ),
             message="Library footer guidance did not restore after Notes exit.",
         )

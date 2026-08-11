@@ -497,7 +497,7 @@ async def test_handoff_meta_line_drops_rather_than_ellipsizing_mid_word():
     assert "\n" not in fitted
 
     unfitted = LibraryRail._row_label(row, selected=False, width=0)
-    assert "opens staging canvas" in unfitted
+    assert "see what carries over" in unfitted
 
 
 # -- LIB-17: prefilled search inputs are editable without cursor traps -----

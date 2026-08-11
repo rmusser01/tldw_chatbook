@@ -35,6 +35,11 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
 from textual.widgets import Button, Input, Static, TextArea
 
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_CYCLE_MARKER,
+    library_cycle_label,
+    library_cycle_tooltip,
+)
 from tldw_chatbook.Library.library_skills_state import (
     SkillEditorState,
     SkillEditorSupportingFile,
@@ -474,7 +479,7 @@ def skill_user_invocable_label(value: bool) -> str:
     Returns:
         The toggle Button's label text.
     """
-    return f"User can invoke: {'yes' if value else 'no'} ▸"
+    return f"User can invoke: {'yes' if value else 'no'} {LIBRARY_CYCLE_MARKER}"
 
 
 def skill_disable_model_label(value: bool) -> str:
@@ -492,7 +497,7 @@ def skill_disable_model_label(value: bool) -> str:
     Returns:
         The toggle Button's label text, phrased as "Agent can invoke".
     """
-    return f"Agent can invoke: {'no' if value else 'yes'} ▸"
+    return f"Agent can invoke: {'no' if value else 'yes'} {LIBRARY_CYCLE_MARKER}"
 
 
 def skill_context_toggle_label(context: str) -> str:
@@ -508,7 +513,7 @@ def skill_context_toggle_label(context: str) -> str:
         The cycle Button's label text.
     """
     hint = "this conversation" if context == "inline" else "sub-agent"
-    return f"Runs in: {context} ({hint}) ▸"
+    return f"Runs in: {context} ({hint}) {LIBRARY_CYCLE_MARKER}"
 
 
 def next_skill_context(context: str) -> str:
@@ -752,10 +757,15 @@ class LibrarySkillsListCanvas(VerticalScroll):
         toolbar.styles.height = "auto"
         with toolbar:
             yield Button(
-                f"sort: {_SORT_LABELS.get(self.sort_mode, 'Name')} ▸",
+                library_cycle_label(
+                    "sort", _SORT_LABELS.get(self.sort_mode, "Name")
+                ),
                 id="library-skills-sort",
                 classes="library-canvas-action",
                 compact=True,
+                tooltip=library_cycle_tooltip(
+                    "the sort order", tuple(_SORT_LABELS.values())
+                ),
             )
             yield Button(
                 "Import…",
@@ -988,18 +998,23 @@ class LibrarySkillsListCanvas(VerticalScroll):
             id="library-skill-user-invocable",
             classes="library-canvas-action",
             compact=True,
+            tooltip=library_cycle_tooltip("user invocation", ("yes", "no")),
         )
         yield Button(
             skill_disable_model_label(editor_state.disable_model_invocation),
             id="library-skill-disable-model",
             classes="library-canvas-action",
             compact=True,
+            tooltip=library_cycle_tooltip("agent invocation", ("yes", "no")),
         )
         yield Button(
             skill_context_toggle_label(editor_state.context),
             id="library-skill-context",
             classes="library-canvas-action",
             compact=True,
+            tooltip=library_cycle_tooltip(
+                "the execution context", ("inline", "fork")
+            ),
         )
         yield Static(
             "Model override", classes="library-prompt-field-label", markup=False

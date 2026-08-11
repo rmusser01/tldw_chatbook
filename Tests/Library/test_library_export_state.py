@@ -68,7 +68,7 @@ def test_counts_landed_renders_scope_label():
         destination="/tmp/out.zip",
     )
     assert state.counts_loading is False
-    assert state.scope_line == "Everything: 128 media · 542 conversations · 87 notes"
+    assert state.scope_line == "All media, conversations & notes: 128 media · 542 conversations · 87 notes"
 
 
 def test_media_scoped_label_carries_type_filter():
@@ -275,7 +275,7 @@ def test_next_media_quality_cycles_and_wraps():
 # --- media_quality_helper_copy -------------------------------------------------
 # task-2859 item 3: the helper line used to be ONE fixed sentence describing
 # "original" quality, shown under the quality button no matter which value
-# was actually selected -- so "quality: thumbnail ▸" was captioned with
+# was actually selected -- so "quality: thumbnail ⇄" was captioned with
 # "original copies full media files into the zip". Each option now gets its
 # own honest caption naming its own effect.
 

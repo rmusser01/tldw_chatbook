@@ -27,7 +27,8 @@ class AppFooterStatus(Widget):
     """Per-screen footer: screen hint context + protected global hints.
 
     Layout contract (see the UX critique, UX-006/UX-041):
-    * Every app-global key (F1 help, F6 panes, Ctrl+P palette, Ctrl+Q quit)
+    * Every app-global key (F1 help, F6 next pane, Ctrl+P palette, Ctrl+Q
+      quit)
       is ALWAYS represented somewhere in the footer, but not always by the
       generic global label: a screen's shortcut context renders UNFILTERED,
       and the global cluster then excludes whichever of those four keys the
@@ -62,7 +63,11 @@ class AppFooterStatus(Widget):
     #: only the screen's own (more specific) copy, never both.
     _GLOBAL_HINT_ITEMS_FULL = (
         ("f1", "F1 help"),
-        ("f6", "F6 panes"),
+        # task-4023 AC#5: "next pane" -- the same name the screens' own
+        # context sets use for this key (Library said "F6 next pane" while
+        # this cluster said "F6 panes" on the SAME footer line's other
+        # half, two names for one key).
+        ("f6", "F6 next pane"),
         ("ctrl+p", "Ctrl+P palette"),
         ("ctrl+q", "Ctrl+Q quit"),
     )
@@ -350,7 +355,7 @@ class AppFooterStatus(Widget):
 
         LIB-18: once the right cluster is fully hidden and ``full`` still
         does not fit, the screen's own hints used to drop to a bare
-        ellipsis immediately (``"… F1 help · F6 panes · ..."``) -- at
+        ellipsis immediately (``"… F1 help · F6 next pane · ..."``) -- at
         Library's real ~100-column footer width this meant the screen-
         specific keys (``/ focus search``, ``i import content``, ...) the
         user actually came here to discover vanished behind that leading

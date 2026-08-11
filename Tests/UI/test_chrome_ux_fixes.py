@@ -40,7 +40,7 @@ async def test_footer_defaults_to_global_hints() -> None:
         footer = app.footer
         assert footer.shortcut_text == AppFooterStatus.DEFAULT_SHORTCUT_TEXT
         shown = _shown_text(footer)
-        for hint in ("F1 help", "F6 panes", "Ctrl+P palette", "Ctrl+Q quit"):
+        for hint in ("F1 help", "F6 next pane", "Ctrl+P palette", "Ctrl+Q quit"):
             assert hint in shown
 
 

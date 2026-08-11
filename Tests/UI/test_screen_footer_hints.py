@@ -101,9 +101,11 @@ async def test_production_routes_own_and_preserve_contextual_footer_hints():
                 # Merged footer (AppFooterStatus): task-2860 -- the screen's
                 # own "F6 next pane" entry now renders verbatim (it used to
                 # be silently dropped as a "reserved global key", leaving
-                # only the generic "F6 panes" copy); the global cluster in
-                # turn excludes "F6 panes" since the screen already covers
-                # that key, so F1/Ctrl+P/Ctrl+Q are the only globals left.
+                # only the global cluster's generic copy, then spelled
+                # "F6 panes"); the global cluster in turn excludes its own
+                # F6 entry ("F6 next pane" since task-4023 AC#5) because the
+                # screen already covers that key, so F1/Ctrl+P/Ctrl+Q are
+                # the only globals left.
                 assert (
                     screen.query_one(AppFooterStatus).shortcut_text
                     == "/ focus search | i import content | n new note | "
@@ -131,11 +133,15 @@ async def test_production_routes_own_and_preserve_contextual_footer_hints():
                 # string so a future edit can't silently drop a key.
                 # F-012: `/ focus search` closes the set -- it works on every
                 # canvas, including this one.
+                # task-4023 AC#4 (RC-10): the set now covers F6 itself, so
+                # the screen entry renders "F6 next pane" verbatim and the
+                # global cluster drops its own F6 entry (the task-2860
+                # merge rule, same as the landing assertion above).
                 assert screen_footer.shortcut_text == (
                     "u use Library context in Console | "
                     "enter select evidence | o open evidence | "
-                    "/ focus search | "
-                    f"{AppFooterStatus.GLOBAL_HINTS}"
+                    "/ focus search | F6 next pane | "
+                    "F1 help · Ctrl+P palette · Ctrl+Q quit"
                 )
 
                 footer_before = screen_footer
@@ -156,8 +162,8 @@ async def test_production_routes_own_and_preserve_contextual_footer_hints():
                 assert footer_after.shortcut_text == (
                     "u use Library context in Console | "
                     "enter select evidence | o open evidence | "
-                    "/ focus search | "
-                    f"{AppFooterStatus.GLOBAL_HINTS}"
+                    "/ focus search | F6 next pane | "
+                    "F1 help · Ctrl+P palette · Ctrl+Q quit"
                 )
 
                 await app.handle_screen_navigation(NavigateToScreen("settings"))
@@ -185,11 +191,16 @@ def test_library_shortcuts_advertise_the_evidence_card_keys():
 
     F-012: `/ focus search` closes the set (it works on every canvas), and
     the landing/other-canvas set is pinned alongside it."""
+    # task-4023 AC#4 (RC-10): F6 closes the set -- Search/RAG was the ONLY
+    # per-mode Library set without it, so F1 (fed by this same tuple, the
+    # task-2858 single-source rule) never listed the key even though the
+    # footer's global hint cluster advertised "F6 panes" on that surface.
     assert LibraryScreen.LIBRARY_SHORTCUTS == (
         ("u", "use Library context in Console"),
         ("enter", "select evidence"),
         ("o", "open evidence"),
         ("/", "focus search"),
+        ("F6", "next pane"),
     )
     # task-2237 (R2): the landing set advertises the full keyboard story --
     # the hub next-action accelerators and the pane-cycle key, not just `/`.
@@ -381,20 +392,39 @@ def test_library_note_footer_shortcut_contract_is_exact():
     """Keep screen-owned Notes copy stable without cross-test private imports."""
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
+    # task-4023 AC#5: the Notes workflow joins the shared footer grammar --
+    # per-key (key, label) pairs, lowercase keys, the same action
+    # vocabulary as the sibling canvases -- with a _COMPACT tier that only
+    # compresses labels (same keys/destinations) for the ≤100-col
+    # single-stage footer.
     assert LibraryScreen.LIBRARY_NOTES_NAVIGATOR_SHORTCUTS == (
-        ("Ctrl+N", "New · / Find · Esc Library"),
+        ("ctrl+n", "new note"),
+        ("/", "find note"),
+        ("esc", "focus rail"),
+    )
+    assert LibraryScreen.LIBRARY_NOTES_NAVIGATOR_SHORTCUTS_COMPACT == (
+        ("ctrl+n", "new"),
+        ("/", "find"),
+        ("esc", "rail"),
     )
     assert LibraryScreen.LIBRARY_NOTES_EDITOR_SHORTCUTS == (
-        ("Ctrl+S", "Save · Esc Notes"),
+        ("ctrl+s", "save note"),
+        ("esc", "back to notes"),
+    )
+    assert LibraryScreen.LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT == (
+        ("ctrl+s", "save"),
+        ("esc", "notes"),
     )
     assert LibraryScreen.LIBRARY_NOTES_PREVIEW_SHORTCUTS == (
-        ("Pg", "Scroll · Esc Notes"),
+        ("pgup/pgdn", "scroll"),
+        ("esc", "back to notes"),
     )
     assert LibraryScreen.LIBRARY_NOTES_CONTEXT_SHORTCUTS == (
-        ("Enter", "Act · Esc Note"),
+        ("enter", "run action"),
+        ("esc", "back to note"),
     )
     assert LibraryScreen.LIBRARY_NOTES_CONFLICT_SHORTCUTS == (
-        ("Enter", "Choose · Esc Locked"),
+        ("enter", "choose version"),
     )
 
 

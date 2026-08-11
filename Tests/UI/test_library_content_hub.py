@@ -575,26 +575,21 @@ async def test_library_collections_empty_state_keeps_global_browse_rule_and_bloc
 
         visible = _visible_text(screen)
 
+        # task-4023 AC#7: the empty state is TWO lines now -- the fact and
+        # one purpose+next-action sentence. The old stacked sentences
+        # (separate next-action line, purpose dump, and a meaningless
+        # "No Collection selected." with zero collections) must not return.
         assert "No Collections yet." in visible
         assert (
-            "Create a local Collection record to start reviewing saved content."
-            in visible
+            "Collections gather saved content for reading and review — "
+            "create one below to start." in visible
         )
-        assert "No stored collection items are available locally yet." in visible
-        assert (
-            "Collections are for reading, reviewing, and reusing saved content."
-            in visible
-        )
-        assert "No Collection selected." in visible
+        assert "No stored collection items are available locally yet." not in visible
+        assert "No Collection selected." not in visible
         assert not screen.query("#library-collection-empty-reader")
         assert not screen.query("#library-collection-empty-reader-title")
         assert not screen.query("#library-collection-form-action-state")
         assert not screen.query("#library-collection-form-action-boundary")
-
-        occurrences = visible.count(
-            "No stored collection items are available locally yet."
-        )
-        assert occurrences == 1
 
         form_guidance = screen.query_one(
             "#library-collection-form-guidance", Static

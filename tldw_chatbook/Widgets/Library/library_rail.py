@@ -97,15 +97,26 @@ def _fit_title_no_mid_word_cut(title: str, budget: int) -> str:
     return f"{head}..."
 
 
-def _visible_row_title(title: str) -> str:
-    """Return the rail-safe row title: capped at the rail budget, escaped.
+#: task-4023 AC#7: the CANVAS row-title budget. The content canvases
+#: (media/conversations) used to inherit the RAIL's 20-cell cap, so a
+#: 170-column terminal rendered "Podcast episode 1..." with ~115 blank
+#: columns beside it. The canvas rows are full-width with CSS
+#: ``text-overflow: ellipsis``, so this cap only bounds pathological
+#: titles; real widths ellipsize at the rendered edge.
+_MAX_LIBRARY_CANVAS_ROW_TITLE = 120
+
+
+def _visible_row_title(title: str, budget: int = _MAX_LIBRARY_CANVAS_ROW_TITLE) -> str:
+    """Return the canvas-safe row title: capped at ``budget`` cells, escaped.
 
     Used by the Library content canvases (conversations/media rows),
     which interpolate the result into markup-parsed ``Button`` labels.
     The rail itself builds labels via ``LibraryRail._row_label`` (F-015
-    width-fitting), which truncates raw and escapes at build time.
+    width-fitting), which truncates raw and escapes at build time --
+    the rail's own 20-cell ``_MAX_LIBRARY_ROW_TITLE`` no longer leaks
+    into the (much wider) canvases.
     """
-    return escape_markup(_truncate_row_title(title))
+    return escape_markup(_truncate_row_title(title, budget))
 
 
 class SelectAllOnFocusingClickInput(Input):
@@ -423,7 +434,11 @@ class LibraryRail(RecomposeCaptureGuard, Vertical):
             # canvas ("Continue in Study" lives inside that canvas, one
             # click later, and is the one that actually leaves Library for
             # the Study screen family).
-            meta_text = "opens staging canvas"
+            # task-4023 AC#7: "opens staging canvas" traded the old lie
+            # ("opens Study") for internal jargon, printed three times in
+            # the primary nav. User language: the click shows what will
+            # carry over to Study before anything leaves the Library.
+            meta_text = "see what carries over"
             meta_line = f"\n    {meta_text}"
             # LIB-18: the meta line is the LOWEST-priority element (below
             # even the gloss) -- at width 0 (compose time) it always shows,

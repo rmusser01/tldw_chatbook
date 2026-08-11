@@ -7,6 +7,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Collapsible, Input, Static
 
 from ...Library.library_collections_state import LibraryCollectionsPanelState
+from ...Library.library_shell_state import library_disabled_action_label
 
 
 LIBRARY_COLLECTIONS_STATUS_LINE = (
@@ -58,27 +59,29 @@ class LibraryCollectionsPanel(Vertical):
                 id="library-collection-description-input",
             )
             with Horizontal(id="library-collection-actions"):
-                yield Button(
-                    self.state.create_action.label,
-                    id=self.state.create_action.widget_id,
-                    disabled=not self.state.create_action.enabled,
-                    tooltip=self.state.create_action.tooltip,
-                    classes="library-source-action library-collection-form-action",
-                )
-                yield Button(
-                    self.state.rename_action.label,
-                    id=self.state.rename_action.widget_id,
-                    disabled=not self.state.rename_action.enabled,
-                    tooltip=self.state.rename_action.tooltip,
-                    classes="library-source-action library-collection-form-action",
-                )
-                yield Button(
-                    self.state.delete_action.label,
-                    id=self.state.delete_action.widget_id,
-                    disabled=not self.state.delete_action.enabled,
-                    tooltip=self.state.delete_action.tooltip,
-                    classes="library-source-action library-collection-form-action",
-                )
+                # task-4023 AC#1 (RC-07): these three measured 2.30:1 while
+                # disabled, with colour the only state carrier. The "○"
+                # marker is the non-colour half; the state's F-018 tooltip
+                # (its ``disabled_reason``) and the guidance line above are
+                # the reason at the control. The screen's in-place patcher
+                # (`_refresh_collections_panel_action_state_widgets`)
+                # rebuilds the same marker label when it flips ``disabled``.
+                for action in (
+                    self.state.create_action,
+                    self.state.rename_action,
+                    self.state.delete_action,
+                ):
+                    yield Button(
+                        library_disabled_action_label(
+                            action.label, not action.enabled
+                        ),
+                        id=action.widget_id,
+                        disabled=not action.enabled,
+                        tooltip=action.tooltip,
+                        classes=(
+                            "library-source-action library-collection-form-action"
+                        ),
+                    )
                 if self.delete_pending:
                     yield Button(
                         "Confirm delete",
@@ -106,19 +109,17 @@ class LibraryCollectionsPanel(Vertical):
             return
 
         if self.state.status == "empty":
+            # task-4023 AC#7: the empty state stacked FOUR "nothing here"
+            # sentences (headline, next-action, purpose dump, and a
+            # meaningless "No Collection selected." with zero collections
+            # in existence). Two lines now: the fact, then one sentence
+            # combining purpose + next action (``state.empty_copy``).
             yield Static(
                 "No Collections yet.",
                 id="library-collections-empty-title",
                 classes="destination-section",
             )
-            yield Static(
-                "Create a local Collection record to start reviewing saved content.",
-                id="library-collections-empty-next-action",
-            )
             yield Static(self.state.empty_copy, id="library-collections-empty")
-            yield Static(
-                "No Collection selected.", id="library-collection-selected-empty"
-            )
             yield from self._compose_collection_form()
             return
 
@@ -147,7 +148,14 @@ class LibraryCollectionsPanel(Vertical):
             with Vertical(id="library-collections-list"):
                 yield Static("Collections", classes="destination-section")
                 for index, collection in enumerate(self.state.collections):
-                    label = f"{collection.name} - {collection.item_count_label}"
+                    # task-4023 AC#5: the selected collection was marked by
+                    # colour alone (`is-active`); every other Library list
+                    # (rail, media, conversations) leads its selected row
+                    # with "▸ ". One marker vocabulary.
+                    marker = "▸" if collection.selected else " "
+                    label = (
+                        f"{marker} {collection.name} - {collection.item_count_label}"
+                    )
                     button = Button(
                         label,
                         id=f"library-collection-select-{index}",

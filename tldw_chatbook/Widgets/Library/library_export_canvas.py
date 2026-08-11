@@ -13,10 +13,47 @@ from tldw_chatbook.Library.library_export_state import (
     DESTINATION_PLACEHOLDER_COPY,
     EXPORT_BUTTON_COPY,
     EXPORT_HEADER_COPY,
+    MEDIA_QUALITY_OPTIONS,
     LibraryExportFormState,
     export_button_tooltip,
     media_quality_helper_copy,
 )
+from tldw_chatbook.Library.library_shell_state import (
+    library_cycle_label,
+    library_cycle_tooltip,
+    library_disabled_action_label,
+)
+
+
+def apply_library_export_submit_gate(
+    submit_button: Button, state: LibraryExportFormState
+) -> None:
+    """Apply the Export submit gate: disabled, tooltip, AND marker label.
+
+    task-4023 AC#1 (RC-07): the disabled marker lives in the label, so
+    every code path that flips ``disabled`` must rebuild the label too --
+    ``compose`` below plus the screen's two in-place patchers
+    (``_apply_library_export_counts`` / the completion updater), which
+    deliberately avoid recomposing the canvas. One shared helper keeps
+    the three call sites from drifting (the recompose-discipline rule:
+    any conditional a compose branch owns, the in-place updater must own
+    too).
+
+    Args:
+        submit_button: The mounted ``#library-export-submit`` Button.
+        state: The current export form state.
+
+    Returns:
+        None.
+    """
+    submit_button.disabled = not state.export_enabled
+    submit_button.label = library_disabled_action_label(
+        EXPORT_BUTTON_COPY, submit_button.disabled
+    )
+    # task-2858 AC#3 (LIB-11): F-018 -- the tooltip always explains either
+    # what pressing Export will do or the SAME blocker ``disabled``
+    # reflects.
+    submit_button.tooltip = export_button_tooltip(state)
 
 
 class LibraryExportCanvas(VerticalScroll):
@@ -26,7 +63,7 @@ class LibraryExportCanvas(VerticalScroll):
     canvas clips content past the fold); every child is a stacked, full-
     width Button/Input/Static, mirroring ``LibraryIngestCanvas``. No
     ``Select`` -- the media-quality control is a cycle button (label
-    ``"quality: {value} ▸"``) like the media canvas's type filter,
+    ``"quality: {value} ⇄"``) like the media canvas's type filter,
     since a plain ``Select`` widget did not render reliably in the
     deployed TUI (see ``handle_library_media_type_filter_pressed``).
 
@@ -84,10 +121,13 @@ class LibraryExportCanvas(VerticalScroll):
         )
         if state.show_media_fields:
             yield Button(
-                f"quality: {state.media_quality} ▸",
+                library_cycle_label("quality", state.media_quality),
                 id="library-export-quality",
                 classes="library-canvas-action",
                 compact=True,
+                tooltip=library_cycle_tooltip(
+                    "media quality", MEDIA_QUALITY_OPTIONS
+                ),
             )
             yield Static(
                 media_quality_helper_copy(state.media_quality),
@@ -148,17 +188,17 @@ class LibraryExportCanvas(VerticalScroll):
         )
         last_export_line.display = bool(state.last_export_line)
         yield last_export_line
-        yield Button(
+        submit_button = Button(
             EXPORT_BUTTON_COPY,
             id="library-export-submit",
             classes="library-canvas-action",
             compact=True,
-            disabled=not state.export_enabled,
-            # task-2858 AC#3 (LIB-11): "disabled controls say why" -- the
-            # tooltip always explains either what pressing Export will do
-            # or the SAME blocker ``disabled`` reflects (F-018 idiom).
-            tooltip=export_button_tooltip(state),
         )
+        # Disabled + marker label + F-018 reason tooltip in one place,
+        # shared with the screen's in-place patchers (see
+        # ``apply_library_export_submit_gate``).
+        apply_library_export_submit_gate(submit_button, state)
+        yield submit_button
         cancel_button = Button(
             "Cancel",
             id="library-export-cancel",

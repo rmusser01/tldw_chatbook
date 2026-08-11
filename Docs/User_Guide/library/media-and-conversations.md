@@ -27,7 +27,7 @@ Both list canvases follow the same shape, top to bottom:
   "Conversations (3)" — task-2859: Conversations previously had no
   heading at all, so its top row read as bare "Export…"/"Select" with
   nothing naming the canvas), plus "Export…" and "Select". Media adds a
-  cycling "type: All ▸" filter right after the heading; Conversations
+  cycling "type: All ⇄" filter right after the heading; Conversations
   instead has a "Filter conversations… (Enter)" text box, which now
   renders above the empty-state text (task-2859: it used to sit below
   "No conversations yet.", reading as an afterthought).
@@ -54,6 +54,14 @@ above): "‹ Back to list", the title, metadata lines, then the "Content",
   select mode clears the selection, and leaving with items still checked
   shows a quiet "Selection discarded (N items)" notice so exiting is never a
   silent no-op.
+- **Disabled actions announce themselves.** While nothing is checked,
+  "Export selected"/"Delete selected" read **"○ Export selected"** /
+  **"○ Delete selected"** — the leading **○** is the Library's disabled
+  marker (the same ✓/○ pair the ingest toggles use), so the state never
+  depends on colour alone — and their tooltips say what to do ("Select one
+  or more items…"). The same goes for **"○ Select"** when the list is
+  empty ("Nothing here to select yet."). Checking the first row flips the
+  labels back in place.
 - **"Export…"** (hidden while selecting) exports the whole current scope —
   for Media that means the current type filter — and **"Export selected"**
   exports just the checked rows. Both open the same "Export bundle (.zip)"
@@ -87,7 +95,7 @@ your Library with no way back.
 
 | Control | What it does |
 |---|---|
-| "type: All ▸" | Cycles through All plus each media type present in your Library. While filtered, a status line reads "2 of 5 · type: pdf". |
+| "type: All ⇄" | Cycles through All plus each media type present in your Library (the tooltip lists the full cycle). While filtered, a status line reads "2 of 5 · type: pdf". |
 | "Export…" / "Select" | The shared grammar above; Export… is scoped to the active type filter. |
 | Row press | Selects the row and shows the preview (title, "Type: …", "Updated: …"). |
 | "Open in viewer" | Opens the selected item in the media viewer. |
@@ -158,9 +166,9 @@ conversation rail instead; that one resumes sessions, this one quotes them.
 ## Common tasks
 
 ### Filter media by type
-1. In **Media**, click "type: All ▸" — each press cycles to the next type.
+1. In **Media**, click "type: All ⇄" — each press cycles to the next type.
 2. The list narrows and the status line reads e.g. "2 of 5 · type: pdf".
-   Cycle back around to "type: All ▸" to clear.
+   Cycle back around to "type: All ⇄" to clear.
 
 ### Open a media item and search inside it
 1. Click a row, then "Open in viewer".
@@ -283,3 +291,15 @@ trashed match now restores on re-import instead of silently refusing;
 copy both now say what actually happens instead of promising a Trash view;
 "Delete selected" leaves a "✓ deleted · N items" receipt with Undo/Dismiss
 at the point of action).*
+*Verified against dev @ 642567627 — 2026-08-10 (task-4023 AC#1, RC-07:
+the select-mode bulk buttons and the empty-list Select toggle described
+above rendered at 1.39:1/1.45:1 — legible now (7.25:1 measured live via
+ANSI decode), with the "○" disabled marker and reason tooltips added).*
+*Verified against fix/settings-appearance-crash @ 57ad075de — 2026-08-10
+(task-4023 AC#5/#7: the Media toolbar is one horizontal row (type filter,
+Export…, Select) matching the sibling canvases; cycle buttons use the "⇄"
+glyph with an option-listing tooltip; list titles render in full at wide
+terminals instead of the old 17-character cut; the viewer's metadata says
+"Type: markdown (stored as plaintext)" for items it renders as markdown;
+and Export… now remembers where you came from — Escape on the Export
+canvas returns to this canvas.)*

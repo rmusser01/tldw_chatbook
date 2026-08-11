@@ -79,10 +79,12 @@ from ...Library.library_export_state import (
     LibraryExportFormState,
     build_library_export_form_state,
     default_export_name,
-    export_button_tooltip,
     format_last_export_line,
     next_media_quality,
     normalize_export_destination,
+)
+from ...Widgets.Library.library_export_canvas import (
+    apply_library_export_submit_gate,
 )
 from ...Library.ingest_analysis import resolve_ingest_analysis_provider
 from ...Library.ingest_capabilities import get_capabilities, list_type_groups
@@ -244,14 +246,19 @@ from ...Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_PROMPTS,
     LIBRARY_ROW_BROWSE_SEARCH,
     LIBRARY_ROW_BROWSE_SKILLS,
+    LIBRARY_ROW_CREATE_FLASHCARDS,
     LIBRARY_ROW_CREATE_NOTE,
     LIBRARY_ROW_CREATE_PROMPT,
+    LIBRARY_ROW_CREATE_QUIZZES,
     LIBRARY_ROW_CREATE_SKILL,
+    LIBRARY_ROW_CREATE_STUDY,
     LIBRARY_ROW_INGEST_EXPORT,
     LIBRARY_ROW_INGEST_MEDIA,
     LibraryShellInput,
     LibraryShellState,
     build_library_shell_state,
+    library_cycle_label,
+    library_disabled_action_label,
 )
 from ...Local_Ingestion.parakeet_v2_artifact import (
     run_parakeet_v2_preflight,
@@ -943,8 +950,8 @@ def _active_library_sync_scope(app_instance: Any) -> dict[str, str | None]:
 # treats every row_id identically regardless of target_kind, so nothing
 # about being a handoff row stops it from being a valid nav-context landing
 # spot. ``flashcards``/``quizzes`` stay out: nothing emits those modes yet
-# (Escape always returns to the shared "Study decks" row -- see
-# ``StudyScreen.action_study_back_to_library``), so adding them now would be
+# (a Library-origin Escape always returns to the shared "Study decks" row --
+# see ``StudyScreen.action_study_back``), so adding them now would be
 # speculative, same posture as the other forward-compat-only entries below.
 # Any other mode value, including the retired ``sources``/``workspaces``/
 # ``import-export`` values, degrades quietly, unchanged from before this
@@ -956,8 +963,17 @@ LIBRARY_NAV_MODE_TO_ROW_ID = {
     "prompts": LIBRARY_ROW_BROWSE_PROMPTS,
     "skills": LIBRARY_ROW_BROWSE_SKILLS,
     "media": LIBRARY_ROW_BROWSE_MEDIA,
-    "study": "create-study",
+    "study": LIBRARY_ROW_CREATE_STUDY,
 }
+
+#: task-4023 AC#7: the three Study staging (handoff) rows -- the surfaces
+#: whose Escape returns to the hub landing (they had no back path at all).
+#: Row ids match ``library_shell_state.py``'s study_rows.
+LIBRARY_STUDY_HANDOFF_ROW_IDS = (
+    LIBRARY_ROW_CREATE_STUDY,
+    LIBRARY_ROW_CREATE_FLASHCARDS,
+    LIBRARY_ROW_CREATE_QUIZZES,
+)
 
 
 def _record_value(record: Any, key: str, fallback: Any = "") -> Any:
@@ -1136,6 +1152,31 @@ def _move_library_list_row_focus(focused: Widget | None, key: str) -> bool:
 # argument has no such attribute-lookup step, so a fake missing
 # `query_one`/`app`/etc. correctly falls through to the `except` below and
 # reaches the already-stubbed `screen.refresh(...)` fallback instead.
+def _patch_library_disabled_marker_label(button: Button) -> None:
+    """Rebuild a marker-carrying action label after ``disabled`` flipped.
+
+    task-4023 AC#1 (RC-07): the non-colour "○" disabled marker is part of
+    the Button's label, so every in-place patcher that flips ``disabled``
+    must rebuild the label too (the recompose-discipline rule). The base
+    label is stashed on the button at compose time
+    (``_library_disabled_marker_base``) because rendered labels are not a
+    safe source to reconstruct from (the PR #665 escape lesson) and the
+    notes canvas spells its compact label differently. A missing stash
+    (unexpected widget shape) is a silent no-op -- the label simply keeps
+    its compose-time marker state until the next canvas sync.
+
+    Args:
+        button: The action Button whose ``disabled`` was just updated.
+
+    Returns:
+        None.
+    """
+    base = getattr(button, "_library_disabled_marker_base", None)
+    if base is None:
+        return
+    button.label = library_disabled_action_label(base, button.disabled)
+
+
 def _apply_library_row_toggle(
     screen: "LibraryScreen", kind: str, button: Button, row_id: str
 ) -> None:
@@ -1195,6 +1236,12 @@ def _apply_library_row_toggle(
             if export_button.disabled
             else LIBRARY_EXPORT_SELECTED_TOOLTIP
         )
+        # task-4023 AC#1 (RC-07): the "○" disabled marker lives in the
+        # label, so it must flip here alongside `disabled` (recompose
+        # discipline). Rebuilt from the base label the canvas stashed at
+        # compose time -- notes spells the compact label differently, so
+        # the patcher must not hard-code it.
+        _patch_library_disabled_marker_label(export_button)
         # task-2853: Media is the only canvas with a "Delete selected" bulk
         # action today (conversations/notes are out of this task's scope) --
         # flip it in place too, same reason/action tooltip pair as export.
@@ -1212,6 +1259,7 @@ def _apply_library_row_toggle(
                 if delete_button.disabled
                 else LIBRARY_DELETE_SELECTED_TOOLTIP
             )
+            _patch_library_disabled_marker_label(delete_button)
     except Exception:
         logger.debug(
             f"Library {kind} row toggle in-place update failed; falling back "
@@ -1304,6 +1352,25 @@ def _canonical_shortcut_key(key: str) -> str:
     return "esc" if lowered == "escape" else lowered
 
 
+#: task-4023 AC#4 (RC-10): human names for the F1 panel's surface-qualified
+#: title, keyed by rail-row id. Surface identity only -- the shortcut SET
+#: still comes solely from ``_library_footer_shortcuts_for_current_state``.
+_LIBRARY_HELP_SURFACE_LABELS: dict[str, str] = {
+    LIBRARY_ROW_BROWSE_MEDIA: "Media",
+    LIBRARY_ROW_BROWSE_CONVERSATIONS: "Conversations",
+    LIBRARY_ROW_BROWSE_NOTES: "Notes",
+    LIBRARY_ROW_BROWSE_PROMPTS: "Prompts",
+    LIBRARY_ROW_BROWSE_SKILLS: "Skills",
+    LIBRARY_ROW_BROWSE_COLLECTIONS: "Collections",
+    LIBRARY_ROW_BROWSE_SEARCH: "Search / RAG",
+    LIBRARY_ROW_INGEST_MEDIA: "Import",
+    LIBRARY_ROW_INGEST_EXPORT: "Export",
+    LIBRARY_ROW_CREATE_NOTE: "New note",
+    LIBRARY_ROW_CREATE_PROMPT: "New prompt",
+    LIBRARY_ROW_CREATE_SKILL: "New skill",
+}
+
+
 class _ParakeetV2NoPendingReportError(RuntimeError):
     """Raised when confirmation has no retained preflight report."""
 
@@ -1351,6 +1418,15 @@ class LibraryScreen(BaseAppScreen):
         # to the hub landing; the persisted ingest form survives (the
         # task-2043 persistence rule), so Esc is never destructive.
         ("escape", "library_ingest_back", "Back to Library hub"),
+        # task-4023 AC#7: three surfaces still had an inert Escape (the
+        # re-critique's P2 residue). Same disjoint-gate contract as the
+        # chain above -- each check_action passes only on its own row.
+        # Export goes back to the canvas that opened it ("Export…" from
+        # within Media navigated away with no return path) or to the hub
+        # when entered from the rail; the Study staging canvases had no
+        # back path at all.
+        ("escape", "library_export_back", "Back from Export"),
+        ("escape", "library_handoff_back", "Back to Library hub"),
         # task-3020 AC2: an ARMED bulk-delete confirmation on the Media
         # list is still ``_library_media_view == "list"`` (the toolbar is
         # swapped in place, not a distinct sub-view), so without this the
@@ -1399,6 +1475,12 @@ class LibraryScreen(BaseAppScreen):
     #: viewer is rebuilt on mount, and the detail fetch that reads it fails.
     _library_media_detail_is_remote: bool = False
 
+    #: task-4023 AC#7: which canvas's "Export…" action opened the Export
+    #: canvas ("" = entered from the rail/deep link). Escape returns
+    #: there; a plain rail switch clears it. Class-level default for the
+    #: same restored-session reason as ``_library_media_detail_is_remote``.
+    _library_export_origin_row_id: str = ""
+
     #: Footer hint set while the Search/RAG canvas is active — mirrors the
     #: show=True bindings the retired Textual Footer used to render
     #: (task-264 review: per-screen AppFooterStatus renders registered
@@ -1412,11 +1494,18 @@ class LibraryScreen(BaseAppScreen):
     #: too.
     #: F-012: `/` (focus the rail search box) works on every canvas, so it
     #: closes both sets.
+    #: task-4023 AC#4 (RC-10): F6 closes the set. Search/RAG was the ONLY
+    #: per-mode Library set without it, so F1 (fed by this same tuple)
+    #: omitted the key even though the footer's global cluster advertised
+    #: "F6 panes" on that surface. The footer merge is unharmed: a
+    #: context-covered reserved key renders verbatim in the screen entry
+    #: and drops from the global cluster (the task-2860 rule).
     LIBRARY_SHORTCUTS = (
         ("u", "use Library context in Console"),
         ("enter", "select evidence"),
         ("o", "open evidence"),
         ("/", "focus search"),
+        ("F6", "next pane"),
     )
 
     #: task-2237 (R2): the landing state advertises its full keyboard
@@ -1548,11 +1637,59 @@ class LibraryScreen(BaseAppScreen):
             ("library-hub-action-import", "library-ingest-path"),
         ),
     )
-    LIBRARY_NOTES_NAVIGATOR_SHORTCUTS = (("Ctrl+N", "New · / Find · Esc Library"),)
-    LIBRARY_NOTES_EDITOR_SHORTCUTS = (("Ctrl+S", "Save · Esc Notes"),)
-    LIBRARY_NOTES_PREVIEW_SHORTCUTS = (("Pg", "Scroll · Esc Notes"),)
-    LIBRARY_NOTES_CONTEXT_SHORTCUTS = (("Enter", "Act · Esc Note"),)
-    LIBRARY_NOTES_CONFLICT_SHORTCUTS = (("Enter", "Choose · Esc Locked"),)
+    #: task-4023 AC#5: the Notes workflow's footer sets used to be a second
+    #: dialect -- several keys crammed into ONE ``(key, label)`` pair with
+    #: "·" separators and TitleCase key names ("Ctrl+N", "New · / Find ·
+    #: Esc Library") while every sibling canvas rendered per-key pairs
+    #: ("/ focus search | esc focus rail"). One grammar now: per-key
+    #: pairs, lowercase key names, verb-phrase labels, and the SAME
+    #: action vocabulary as the shared sets ("focus rail", "back to
+    #: notes"). Each set has a ``_COMPACT`` sibling with shortened labels
+    #: for the ≤100-col single-stage presentation -- the same keys and
+    #: destinations, compressed the way the footer's own global cluster
+    #: already compresses ("F1 help" -> "F1") so the context still FITS
+    #: the 60-col displayed footer instead of being dropped whole by the
+    #: responsive ladder ("… F1 …" told a compact user nothing). A state
+    #: whose keys are all locked (create/sync/conflict-resolution
+    #: running) now advertises NOTHING instead of a dead "Esc Locked"
+    #: entry -- the footer falls back to the global cluster, matching the
+    #: honest-footer contract everywhere else on this screen.
+    LIBRARY_NOTES_NAVIGATOR_SHORTCUTS = (
+        ("ctrl+n", "new note"),
+        ("/", "find note"),
+        ("esc", "focus rail"),
+    )
+    LIBRARY_NOTES_NAVIGATOR_SHORTCUTS_COMPACT = (
+        ("ctrl+n", "new"),
+        ("/", "find"),
+        ("esc", "rail"),
+    )
+    LIBRARY_NOTES_EDITOR_SHORTCUTS = (
+        ("ctrl+s", "save note"),
+        ("esc", "back to notes"),
+    )
+    LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT = (
+        ("ctrl+s", "save"),
+        ("esc", "notes"),
+    )
+    LIBRARY_NOTES_PREVIEW_SHORTCUTS = (
+        ("pgup/pgdn", "scroll"),
+        ("esc", "back to notes"),
+    )
+    LIBRARY_NOTES_PREVIEW_SHORTCUTS_COMPACT = (
+        ("pgup/pgdn", "scroll"),
+        ("esc", "notes"),
+    )
+    LIBRARY_NOTES_CONTEXT_SHORTCUTS = (
+        ("enter", "run action"),
+        ("esc", "back to note"),
+    )
+    LIBRARY_NOTES_CONTEXT_SHORTCUTS_COMPACT = (
+        ("enter", "run action"),
+        ("esc", "note"),
+    )
+    LIBRARY_NOTES_CONFLICT_SHORTCUTS = (("enter", "choose version"),)
+    LIBRARY_NOTES_CONFLICT_SHORTCUTS_COMPACT = (("enter", "choose version"),)
 
     # Baseline workbench geometry so the screen renders correctly even without
     # the app stylesheet (e.g. harness tests). The agentic-terminal TCSS uses
@@ -2989,6 +3126,29 @@ class LibraryScreen(BaseAppScreen):
         # gate below (they all require a different row id).
         if self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA:
             return self.LIBRARY_INGEST_SHORTCUTS
+        # task-4023 AC#7: Export and the Study staging canvases advertise
+        # their newly wired Escape. Export's label names the actual
+        # destination -- the canvas whose "Export…" opened it, or the hub.
+        if self._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT:
+            origin_label = _LIBRARY_HELP_SURFACE_LABELS.get(
+                self._library_export_origin_row_id, ""
+            )
+            back_label = f"back to {origin_label}" if origin_label else "back to hub"
+            return (
+                ("/", "focus search"),
+                ("F6", "next pane"),
+                ("esc", back_label),
+            )
+        if self._library_selected_row_id in LIBRARY_STUDY_HANDOFF_ROW_IDS:
+            return (
+                ("/", "focus search"),
+                ("F6", "next pane"),
+                ("esc", "back to hub"),
+            )
+        # task-4023 AC#7: Collections shares the list-canvas Escape
+        # contract (focus hop toward the rail) and its footer set.
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
+            return self.LIBRARY_LIST_SHORTCUTS
         if self._file_notes_active():
             return self.LIBRARY_NOTES_FILES_SHORTCUTS
         if self._library_media_viewer_substate_active():
@@ -4157,6 +4317,20 @@ class LibraryScreen(BaseAppScreen):
         del event
         self._mark_library_notes_user_interaction()
 
+    def _notes_footer_tier(
+        self,
+        wide: tuple[tuple[str, str], ...],
+        compact: tuple[tuple[str, str], ...],
+    ) -> tuple[tuple[str, str], ...]:
+        """Pick the width tier of one Notes footer set (task-4023 AC#5).
+
+        Same keys and destinations in both tiers; the compact tier only
+        compresses labels so the context still fits the ≤100-col displayed
+        footer -- mirroring ``AppFooterStatus``'s own FULL/COMPACT global
+        tiers rather than inventing a second dialect.
+        """
+        return compact if self._library_notes_compact else wide
+
     def _library_notes_footer_shortcuts(self) -> tuple[tuple[str, str], ...]:
         """Return exact one-row local help for the visible Notes state."""
         if not self._library_notes_workflow_active() or (
@@ -4168,33 +4342,63 @@ class LibraryScreen(BaseAppScreen):
             snapshot.in_conflict
             or self._library_note_session.conflict_resolution_running
         ):
-            return self.LIBRARY_NOTES_CONFLICT_SHORTCUTS
+            # A running resolution locks every key -- advertise nothing
+            # (globals only) rather than a dead entry (AC#5 honesty).
+            if self._library_note_session.conflict_resolution_running:
+                return ()
+            return self._notes_footer_tier(
+                self.LIBRARY_NOTES_CONFLICT_SHORTCUTS,
+                self.LIBRARY_NOTES_CONFLICT_SHORTCUTS_COMPACT,
+            )
         if self._library_note_confirming_delete:
-            return (("Enter", "Confirm · Esc Cancel"),)
+            return self._notes_footer_tier(
+                (("enter", "confirm delete"), ("esc", "cancel delete")),
+                (("enter", "confirm"), ("esc", "cancel")),
+            )
         region = self._library_notes_focus_region()
         if region == "navigator":
             if self._library_notes_select_mode:
-                return (("Enter", "Select · Esc Done"),)
+                return self._notes_footer_tier(
+                    (("enter", "select note"), ("esc", "done")),
+                    (("enter", "select"), ("esc", "done")),
+                )
             if self._library_notes_sort_choices_visible:
-                return (("Enter", "Choose · Esc Cancel"),)
-            return self.LIBRARY_NOTES_NAVIGATOR_SHORTCUTS
+                return self._notes_footer_tier(
+                    (("enter", "choose sort"), ("esc", "cancel")),
+                    (("enter", "choose sort"), ("esc", "cancel")),
+                )
+            return self._notes_footer_tier(
+                self.LIBRARY_NOTES_NAVIGATOR_SHORTCUTS,
+                self.LIBRARY_NOTES_NAVIGATOR_SHORTCUTS_COMPACT,
+            )
         if region == "preview":
-            return self.LIBRARY_NOTES_PREVIEW_SHORTCUTS
+            return self._notes_footer_tier(
+                self.LIBRARY_NOTES_PREVIEW_SHORTCUTS,
+                self.LIBRARY_NOTES_PREVIEW_SHORTCUTS_COMPACT,
+            )
         if region == "context":
-            return self.LIBRARY_NOTES_CONTEXT_SHORTCUTS
+            return self._notes_footer_tier(
+                self.LIBRARY_NOTES_CONTEXT_SHORTCUTS,
+                self.LIBRARY_NOTES_CONTEXT_SHORTCUTS_COMPACT,
+            )
         if region == "editor":
-            return self.LIBRARY_NOTES_EDITOR_SHORTCUTS
+            return self._notes_footer_tier(
+                self.LIBRARY_NOTES_EDITOR_SHORTCUTS,
+                self.LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT,
+            )
         if region == "create":
-            return (
-                (("Enter", "Create · Esc Locked"),)
-                if self._library_note_create_running
-                else (("Enter", "Create · Esc Notes"),)
+            if self._library_note_create_running:
+                return ()
+            return self._notes_footer_tier(
+                (("enter", "create note"), ("esc", "back to notes")),
+                (("enter", "create"), ("esc", "notes")),
             )
         if region == "sync":
-            return (
-                (("Enter", "Syncing · Esc Locked"),)
-                if self._library_notes_sync_active_token is not None
-                else (("Enter", "Act · Esc Notes"),)
+            if self._library_notes_sync_active_token is not None:
+                return ()
+            return self._notes_footer_tier(
+                (("enter", "run action"), ("esc", "back to notes")),
+                (("enter", "act"), ("esc", "notes")),
             )
         return self._library_footer_shortcuts_for_current_state()
 
@@ -7895,20 +8099,91 @@ class LibraryScreen(BaseAppScreen):
                 f"Media {counts.get('media', 0)} · "
                 f"Conversations {counts.get('conversations', 0)}"
             )
-        db_sizes = getattr(self.app_instance, "db_sizes_status", None)
-        if isinstance(db_sizes, dict) and db_sizes:
-            prompts_size = _unbreakable_size_text(str(db_sizes.get("prompts", "?")))
-            chachanotes_size = _unbreakable_size_text(
-                str(db_sizes.get("chachanotes", "?"))
-            )
-            media_size = _unbreakable_size_text(str(db_sizes.get("media", "?")))
-            sizes_line = (
-                f"Prompts {prompts_size} · "
-                f"Chats/Notes {chachanotes_size} · "
-                f"Media {media_size}"
-            )
+        sizes_line = self._library_db_sizes_line()
+        if sizes_line is not None:
             return (runtime_value, counts_or_error, sizes_line)
         return (runtime_value, counts_or_error)
+
+    def _library_db_sizes_line(self) -> str | None:
+        """Format the Details DB-sizes value from the app-level cache.
+
+        Single source for the sizes line's format, shared by the rail's
+        compose path (via ``_library_details_lines``) and the
+        Details-open refresh patcher
+        (``_refresh_library_details_db_sizes``) -- the recompose-
+        discipline rule: the in-place updater owns the same conditional
+        the compose branch owns.
+
+        Returns:
+            The formatted line, or ``None`` while the DBStatusManager has
+            never cached a reading (F-014: never an "N/A" triplet).
+        """
+        db_sizes = getattr(self.app_instance, "db_sizes_status", None)
+        if not isinstance(db_sizes, dict) or not db_sizes:
+            return None
+        prompts_size = _unbreakable_size_text(str(db_sizes.get("prompts", "?")))
+        chachanotes_size = _unbreakable_size_text(
+            str(db_sizes.get("chachanotes", "?"))
+        )
+        media_size = _unbreakable_size_text(str(db_sizes.get("media", "?")))
+        return (
+            f"Prompts {prompts_size} · "
+            f"Chats/Notes {chachanotes_size} · "
+            f"Media {media_size}"
+        )
+
+    async def _refresh_library_details_db_sizes(self) -> None:
+        """Recompute the DB sizes and patch the Details line in place.
+
+        task-4023 AC#3 (RC-09): the Details disclosure's sizes line
+        rendered once from the app-level cache and was never refreshed --
+        live, it kept reporting ``Prompts 180.0KB`` while disk (incl.
+        sidecars) held 4.8MB, even after closing and reopening Details.
+        The refresh runs at the point of consumption (opening the
+        disclosure), not on a polling loop: three stat() triples through
+        ``DBStatusManager.update_db_sizes`` (WAL-inclusive, task-2859),
+        then a targeted update of ``#library-details-db-sizes``. When the
+        cache was empty at compose time the line was never mounted, so
+        the patcher mounts it after ``#library-details-body`` -- the same
+        conditional the compose branch owns (``LibraryRail.compose``).
+        """
+        manager = getattr(self.app_instance, "db_status_manager", None)
+        update = getattr(manager, "update_db_sizes", None)
+        if callable(update):
+            try:
+                await update()
+            except Exception:
+                logger.debug(
+                    "Details-open DB size recompute failed; the disclosure "
+                    "keeps its cached reading.",
+                    exc_info=True,
+                )
+        sizes_line = self._library_db_sizes_line()
+        if sizes_line is None:
+            return
+        rendered = library_dim_label_text("DB sizes", sizes_line)
+        existing = list(self.query("#library-details-db-sizes"))
+        if existing:
+            existing[0].update(rendered)
+            return
+        anchors = list(self.query("#library-details-body"))
+        if not anchors:
+            return
+        try:
+            await anchors[0].parent.mount(
+                Static(
+                    rendered,
+                    id="library-details-db-sizes",
+                    classes="library-details-row",
+                ),
+                after=anchors[0],
+            )
+        except Exception:
+            logger.debug(
+                "Mounting the freshly computed DB-sizes line failed; the "
+                "next rail recompose renders it from the updated cache.",
+                exc_info=True,
+            )
 
     def _build_library_conversations_state(self):
         """Build the conversations canvas display state from local records."""
@@ -8009,7 +8284,9 @@ class LibraryScreen(BaseAppScreen):
         label = self._library_prompt_collections_controller.collection_label(
             self._library_prompt_browse_controller.scope.collection_id
         )
-        button.label = f"collection: {escape_markup(label)} ▸"
+        # AC#5: the in-place patcher must build the SAME cycle label the
+        # canvas composes (recompose discipline).
+        button.label = library_cycle_label("collection", escape_markup(label))
 
     def _refresh_library_prompt_after_membership_apply(self) -> None:
         """Invalidate list data and refresh counts after membership Apply.
@@ -8642,6 +8919,11 @@ class LibraryScreen(BaseAppScreen):
         note_flush = await self._flush_library_note_save()
         if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
             return
+        # task-4023 AC#7: remember which canvas opened Export so Escape
+        # (action_library_export_back) can return there -- "Export… from
+        # within Media navigates away with no return path". Recorded
+        # AFTER the flush admits the switch, BEFORE the row id moves.
+        self._library_export_origin_row_id = self._library_selected_row_id
         self._library_selected_row_id = LIBRARY_ROW_INGEST_EXPORT
         self._reset_library_export_transient_state(scope)
         self.refresh(recompose=True)
@@ -8803,9 +9085,10 @@ class LibraryScreen(BaseAppScreen):
             # toolbar's export/delete buttons -- otherwise the compose-
             # time tooltip goes stale the moment counts land and this
             # patcher is the only thing that updates `disabled` here.
+            # task-4023 AC#1: the shared gate helper also rebuilds the
+            # "○"-marker label alongside `disabled` (recompose discipline).
             submit_button = self.query_one("#library-export-submit", Button)
-            submit_button.disabled = not state.export_enabled
-            submit_button.tooltip = export_button_tooltip(state)
+            apply_library_export_submit_gate(submit_button, state)
         except (NoMatches, QueryError):
             pass
 
@@ -9459,8 +9742,9 @@ class LibraryScreen(BaseAppScreen):
             last_export_widget.update(state.last_export_line)
             last_export_widget.display = bool(state.last_export_line)
             submit_button = self.query_one("#library-export-submit", Button)
-            submit_button.disabled = not state.export_enabled
-            submit_button.tooltip = export_button_tooltip(state)
+            # task-4023 AC#1: disabled + "○"-marker label + F-018 tooltip
+            # through the one shared gate helper (recompose discipline).
+            apply_library_export_submit_gate(submit_button, state)
             self.query_one("#library-export-cancel", Button).display = bool(
                 state.running
             )
@@ -11334,6 +11618,18 @@ class LibraryScreen(BaseAppScreen):
             return
         body.display = open_state
         header.sync_open(open_state)
+        if section_id == "details" and open_state:
+            # task-4023 AC#3 (RC-09): opening the disclosure is the
+            # sensible refresh trigger for its DB-sizes reading -- the
+            # display toggle above never recomposes the rail, so without
+            # this the line keeps whatever the cache held at the last
+            # full recompose (measured live: 180.0KB shown against 4.8MB
+            # on disk, unchanged across close/reopen).
+            self.run_worker(
+                self._refresh_library_details_db_sizes(),
+                exclusive=True,
+                group="library_details_db_sizes",
+            )
 
     @work(thread=True)
     def _save_library_rail_preferences(self, serialized: dict[str, bool]) -> None:
@@ -11609,6 +11905,10 @@ class LibraryScreen(BaseAppScreen):
             # failure must not leak into a later fresh Create entry.
             self._library_note_create_status = ""
         self._library_selected_row_id = row_id
+        # task-4023 AC#7: a plain rail switch is a fresh entry -- only
+        # ``_open_library_export_canvas`` (which bypasses this seam) may
+        # arm an Export back-origin.
+        self._library_export_origin_row_id = ""
         # task-420: keep the footer's "u" hint in sync with the row gate.
         self._register_footer_shortcuts()
         self._library_notes_explicit_stage_intent = row_id in {
@@ -14066,12 +14366,14 @@ class LibraryScreen(BaseAppScreen):
 
         Returning ``False`` deactivates the binding entirely, so Escape /
         Ctrl+S behave as if unbound anywhere else on the Library screen.
-        All eight "escape" ``BINDINGS`` entries share the same key --
-        Textual tries them in order and stops at the first whose
-        ``check_action`` passes, so each one returning ``False`` outside
-        its own context is what lets the next fall through untouched
-        (task-3302 added the Ingest-canvas gate and task-3020 added the
-        bulk-delete-confirm cancel to the original six).
+        All of this screen's "escape" ``BINDINGS`` entries share the same
+        key (count them in ``BINDINGS``; a hard-coded number here went
+        stale twice) -- Textual tries them in order and stops at the first
+        whose ``check_action`` passes, so each one returning ``False``
+        outside its own context is what lets the next fall through
+        untouched (task-3302 added the Ingest-canvas gate and task-3020
+        added the bulk-delete-confirm cancel to the original six; task-4023
+        AC#7 added the Export and Study-handoff backs).
 
         task-2858 AC#2 (LIB-09): the three Search/RAG evidence-card
         actions (``u``/``enter``/``o``) had NO gate here before this task
@@ -14126,6 +14428,10 @@ class LibraryScreen(BaseAppScreen):
             return self._library_prompt_editor_active()
         if action == "library_ingest_back":
             return self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
+        if action == "library_export_back":
+            return self._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
+        if action == "library_handoff_back":
+            return self._library_selected_row_id in LIBRARY_STUDY_HANDOFF_ROW_IDS
         if action == "library_media_bulk_delete_cancel":
             # task-3020 AC2: only while the bulk-delete confirmation is
             # genuinely armed -- mirrors the single-item viewer confirm's
@@ -14157,7 +14463,14 @@ class LibraryScreen(BaseAppScreen):
                 ),
             )
         if action == "library_list_focus_rail":
-            return self._library_list_canvas_showing_list()
+            # task-4023 AC#7: Collections joins the list-canvas Escape
+            # contract (it was the one browse canvas where Escape was
+            # inert) -- a plain list surface's Escape is a focus hop
+            # toward the rail, never navigation.
+            return (
+                self._library_list_canvas_showing_list()
+                or self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
+            )
         if action == "library_rag_use_in_console":
             # Mirrors action_library_rag_use_in_console's own gate exactly
             # (that method also accepts no focused card -- "u" stages
@@ -14226,20 +14539,53 @@ class LibraryScreen(BaseAppScreen):
         # comparison kept both and F1 listed the exit twice in Ingest
         # ("esc: back to hub" + "escape: Back to Library hub" -- live,
         # 2026-08-08). Case is folded for the same reason ("F6" vs "f6").
+        # (task-4023 AC#4 / RC-10) The seen-set also GROWS as extras
+        # accumulate: two simultaneously active same-key BINDINGS extras
+        # (this screen's many "escape" entries share one key) previously
+        # had no intra-set dedupe, so a surface whose footer set lacks
+        # "esc" could still list Escape twice with two labels. Keeping the
+        # FIRST active entry matches how Textual resolves same-key
+        # bindings -- declaration order, first passing gate wins -- so the
+        # panel names the action the key would actually run.
         seen_keys = {
             _canonical_shortcut_key(key) for key, _description in footer_shortcuts
         }
-        binding_extras = tuple(
-            pair
-            for pair in self._active_library_binding_shortcuts()
-            if _canonical_shortcut_key(pair[0]) not in seen_keys
-        )
+        binding_extras: list[tuple[str, str]] = []
+        for pair in self._active_library_binding_shortcuts():
+            canonical = _canonical_shortcut_key(pair[0])
+            if canonical in seen_keys:
+                continue
+            seen_keys.add(canonical)
+            binding_extras.append(pair)
+        # (task-4023 AC#4 / RC-10) Name the surface the panel describes --
+        # "Collections' panel says nothing about Collections". The label
+        # comes from the selected rail row (surface identity), not from a
+        # second copy of the shortcut-set decision tree; the SET itself
+        # still has exactly one source (the footer seam above).
+        surface_label = self._library_help_surface_label()
         state = WorkbenchHelpState(
             route_id="library",
-            title="Library Shortcuts",
-            shortcuts=footer_shortcuts + binding_extras,
+            title=(
+                f"Library Shortcuts — {surface_label}"
+                if surface_label
+                else "Library Shortcuts"
+            ),
+            shortcuts=footer_shortcuts + tuple(binding_extras),
         )
         self.app.push_screen(WorkbenchHelpPanel(state))
+
+    def _library_help_surface_label(self) -> str:
+        """Return the current surface's human name for the F1 panel title.
+
+        Derived from the selected rail row -- surface identity, not a fork
+        of the shortcut-set decision tree. An unmapped row id (e.g. the
+        Study staging rows) returns "" and the panel keeps its generic
+        title rather than inventing a name.
+        """
+        row_id = getattr(self, "_library_selected_row_id", "")
+        if not row_id:
+            return "Landing"
+        return _LIBRARY_HELP_SURFACE_LABELS.get(row_id, "")
 
     def _active_library_binding_shortcuts(self) -> tuple[tuple[str, str], ...]:
         """Filter ``BINDINGS`` through ``check_action`` for the F1 panel.
@@ -14375,6 +14721,40 @@ class LibraryScreen(BaseAppScreen):
             # Esc leaves for the hub as before.
             self._disarm_library_ingest_start_confirm()
             self._update_library_ingest_gate(self._build_library_ingest_state())
+            return
+        await self._select_library_rail_row("")
+        if self.is_mounted:
+            self.call_after_refresh(self._focus_library_hub_entry)
+
+    async def action_library_export_back(self) -> None:
+        """Escape: leave the Export canvas (task-4023 AC#7).
+
+        Returns to the canvas whose "Export…" action opened it (Media/
+        Conversations/Notes -- the "navigates away with no return path"
+        finding), or to the hub landing when Export was entered from the
+        rail. A running export keeps running; the canvas's own state
+        (including the durable last-export receipt) survives exactly as a
+        rail switch would leave it.
+        """
+        if self._library_selected_row_id != LIBRARY_ROW_INGEST_EXPORT:
+            return
+        origin = self._library_export_origin_row_id
+        self._library_export_origin_row_id = ""
+        if origin:
+            await self._select_library_rail_row(origin)
+            return
+        await self._select_library_rail_row("")
+        if self.is_mounted:
+            self.call_after_refresh(self._focus_library_hub_entry)
+
+    async def action_library_handoff_back(self) -> None:
+        """Escape: leave a Study staging canvas for the hub (task-4023 AC#7).
+
+        The three handoff canvases had no back path at all -- Escape was
+        inert and nothing on the canvas led anywhere except forward into
+        Study. Mirrors ``action_library_ingest_back``'s hub return.
+        """
+        if self._library_selected_row_id not in LIBRARY_STUDY_HANDOFF_ROW_IDS:
             return
         await self._select_library_rail_row("")
         if self.is_mounted:
@@ -22609,6 +22989,28 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         self._library_rag_query = event.value
+        # task-4023 AC#6 (RC-08): mirror into the Search canvas's query box
+        # when it is mounted, so the two visible inputs can never disagree
+        # (the state is one; the widgets used to drift until a recompose).
+        self._patch_sibling_library_search_input(
+            "#library-rag-query-input", event.value
+        )
+
+    def _patch_sibling_library_search_input(self, selector: str, value: str) -> None:
+        """Keep the OTHER mounted search input showing the same query text.
+
+        The rail box and the Search canvas's query box share one state
+        field (``_library_rag_query``); this keeps the mounted WIDGETS in
+        lockstep as the user types in either. The programmatic assignment
+        fires the sibling's own ``Input.Changed``, whose value-equality
+        guard makes it a no-op -- no feedback loop.
+        """
+        try:
+            sibling = self.query_one(selector, Input)
+        except (NoMatches, QueryError):
+            return
+        if sibling.value != value:
+            sibling.value = value
 
     @on(Input.Submitted, "#library-search-input")
     async def handle_library_search_submitted(self, event: Input.Submitted) -> None:
@@ -22735,6 +23137,13 @@ class LibraryScreen(BaseAppScreen):
             if buttons:
                 buttons[0].disabled = not action.enabled
                 buttons[0].tooltip = action.tooltip
+                # task-4023 AC#1 (RC-07): the "○" disabled marker lives in
+                # the label, so this targeted patcher rebuilds it whenever
+                # it flips `disabled` (recompose discipline; mirrors
+                # `LibraryCollectionsPanel._compose_collection_form`).
+                buttons[0].label = library_disabled_action_label(
+                    action.label, not action.enabled
+                )
 
         await self._sync_collections_form_guidance_widget(panel_state.create_action)
 
@@ -23033,6 +23442,15 @@ class LibraryScreen(BaseAppScreen):
         if event.value == self._library_rag_query:
             return
         self._library_rag_query = event.value
+        # task-4023 AC#6 (RC-08): one query truth at the WIDGET level too.
+        # The STATE was already single-source, but the rail box only
+        # re-seeds on recompose, so typing here left the mounted rail
+        # widget visibly holding the older string (proven live: canvas
+        # "terminals render" beside rail "terminals"). Patch the sibling
+        # in place; its own Changed handler no-ops (value == state).
+        self._patch_sibling_library_search_input(
+            "#library-search-input", event.value
+        )
         self._reset_library_rag_in_flight_status()
         await self._refresh_search_rag_panel_state_widgets(
             include_results_and_history=False
@@ -23169,15 +23587,15 @@ class LibraryScreen(BaseAppScreen):
     def sync_library_rag_history_collapsed(self, event: Collapsible.Toggled) -> None:
         """Track manual expand/collapse so recomposes preserve the user's choice.
 
-        `Collapsible._watch_collapsed` posts this message on every change of
-        the `collapsed` reactive -- both the user clicking the title and the
-        programmatic `collapsible.collapsed = force_collapsed` assignment in
-        `_refresh_library_rag_history_widget` (the results-arrival
-        force-collapse path). The latter is harmless to mirror here: that
-        assignment always uses `panel_state.history_collapsed`, which is
-        itself derived from `_library_rag_history_collapsed` moments after
-        that field was just set at the results-arrival transition, so this
-        handler only ever re-writes the field to the value it already holds.
+        `Collapsible._watch_collapsed` posts this message whenever the
+        `collapsed` reactive changes through the normal watcher path -- in
+        practice the user clicking the title. The results-arrival
+        force-collapse in `_refresh_library_rag_history_widget` deliberately
+        BYPASSES the watcher (`set_reactive` + `_update_collapsed`, task-4023
+        AC#6 / RC-08: the watcher's animated `scroll_visible` sailed past the
+        Evidence region), so it never reaches this handler; that path keeps
+        the field honest itself -- `_apply_library_rag_search_outcome` sets
+        `_library_rag_history_collapsed` at the transition.
         """
         event.stop()
         self._library_rag_history_collapsed = event.collapsible.collapsed
@@ -23266,6 +23684,13 @@ class LibraryScreen(BaseAppScreen):
         # only tolerating the "panel not mounted yet" case it was meant for.
         if self.query("#library-search-rag-panel"):
             await self._refresh_search_rag_panel_state_widgets()
+            # task-4023 AC#6 (RC-08): results used to land ~30 rows below
+            # the fold behind the configuration region -- pressing Run left
+            # the visible half of the canvas pixel-identical. Reveal the
+            # Evidence region the moment a run starts (it already shows the
+            # in-flight "Searching…" line), so the action visibly did
+            # something at the point of action.
+            self.call_after_refresh(self._reveal_library_rag_results)
         self._execute_library_rag_search(request)
 
     @on(Button.Pressed, "#library-create-collection")
@@ -23830,6 +24255,24 @@ class LibraryScreen(BaseAppScreen):
         ):
             return
         await self._refresh_search_rag_panel_state_widgets(force_history_collapse=True)
+        # task-4023 AC#6 (RC-08): the landed evidence must be visible at
+        # the point of action, not below the fold.
+        self.call_after_refresh(self._reveal_library_rag_results)
+
+    def _reveal_library_rag_results(self) -> None:
+        """Scroll the Search/RAG panel so the Evidence region is on screen.
+
+        Mirrors the prompt-history idiom (``scroll_to_widget(..., top=True)``)
+        on the panel's own ``VerticalScroll``. Called after a run starts and
+        after its results land; a missing panel (user navigated away
+        mid-flight) is a silent no-op.
+        """
+        try:
+            panel = self.query_one("#library-search-rag-panel", LibrarySearchRagPanel)
+            heading = self.query_one("#library-rag-results-heading", Static)
+        except (NoMatches, QueryError):
+            return
+        panel.scroll_to_widget(heading, animate=False, top=True)
 
     def _start_library_rag_answer(
         self,
@@ -24450,13 +24893,16 @@ class LibraryScreen(BaseAppScreen):
         `force_collapsed` (D1) is `None` for every caller except the
         results-arrival transition in `_apply_library_rag_search_outcome`:
         `None` leaves the live widget's `collapsed` reactive exactly as the
-        user left it; a `bool` overwrites it. This is safe for full
-        recomposes too (scope toggles, the mode toggle) -- not just in-place
-        refreshes (query edits, evidence selection) -- because
-        `sync_library_rag_history_collapsed` mirrors every live `collapsed`
-        change (manual or programmatic) back into
-        `_library_rag_history_collapsed`, so `compose()` always rebuilds the
-        `Collapsible` from the user's last choice instead of a stale field.
+        user left it; a `bool` applies the collapse below WITHOUT the
+        watcher (task-4023 AC#6 / RC-08 -- see the inline comment). This is
+        safe for full recomposes too (scope toggles, the mode toggle) -- not
+        just in-place refreshes (query edits, evidence selection) -- because
+        both writers keep the state field mirrored: a USER'S title click
+        takes the watcher path and `sync_library_rag_history_collapsed`
+        copies it into `_library_rag_history_collapsed`, while the
+        force-collapse caller already set that same field at the transition,
+        so `compose()` always rebuilds the `Collapsible` from the last
+        choice instead of a stale field.
         """
         async with self._library_rag_history_refresh_lock:
             history_widgets = list(self.query("#library-rag-history"))
@@ -24465,8 +24911,25 @@ class LibraryScreen(BaseAppScreen):
             collapsible = history_widgets[0]
             if not isinstance(collapsible, Collapsible):
                 return
-            if force_collapsed is not None:
-                collapsible.collapsed = force_collapsed
+            if force_collapsed is not None and (
+                collapsible.collapsed != force_collapsed
+            ):
+                # task-4023 AC#6 (RC-08): assigning the reactive here used
+                # to run Textual's ``Collapsible._watch_collapsed``, which
+                # schedules an ANIMATED ``self.scroll_visible()`` -- at
+                # results arrival that animation scrolled the panel to the
+                # Recents strip at the BOTTOM, sailing past the Evidence
+                # region (and overriding `_reveal_library_rag_results`,
+                # found by spying ``panel.scroll_to``). Apply the visual
+                # collapse without the watcher: the state field was already
+                # set by the results-arrival transition, so skipping the
+                # Collapsed/Expanded message loses nothing (the handler
+                # only mirrors the value back into the same field). A
+                # USER'S own title click still takes the normal watcher
+                # path, scroll and all.
+                collapsible.set_reactive(Collapsible.collapsed, force_collapsed)
+                collapsible._update_collapsed(force_collapsed)
+                collapsible.refresh(layout=True)
             try:
                 contents = collapsible.query_one(Collapsible.Contents)
             except (NoMatches, QueryError):
