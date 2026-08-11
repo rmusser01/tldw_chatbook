@@ -484,7 +484,7 @@ def test_local_module_has_no_pending_private_sites() -> None:
 - [ ] **Step 4: Run all Local privacy tests and commit**
 
 ```bash
-../../.venv/bin/python -B -m pytest -q Tests/LLM_Calls/test_summarization_diagnostic_privacy.py -k 'local_' -vv
+../../.venv/bin/python -B -m pytest -q Tests/LLM_Calls/test_summarization_diagnostic_privacy.py -k 'no_pending_local or local_custom or (runtime_sentinel and local) or local_llm or local_core or oobabooga or tabby or vllm or ollama or local_save_summary' -vv
 ../../.venv/bin/python -m ruff format tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py Tests/LLM_Calls/test_summarization_diagnostic_privacy.py
 ../../.venv/bin/python -m ruff check tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py Tests/LLM_Calls/test_summarization_diagnostic_privacy.py
 ../../.venv/bin/python -m ruff format --check tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py Tests/LLM_Calls/test_summarization_diagnostic_privacy.py
