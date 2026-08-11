@@ -479,8 +479,32 @@ def test_route_table_is_exact() -> None:
 @pytest.mark.parametrize(
     "internal_id",
     [
+        "openai_official_pocket-tts-model",
+        "openai_official_kokoro-82m",
+    ],
+)
+def test_resolver_routes_custom_openai_models_by_prefix(
+    internal_id: str,
+) -> None:
+    """Non-catalog OpenAI model ids route to the openai provider.
+
+    Custom OpenAI-compatible endpoints define their own model names
+    (TASK-2260); the resolver must not re-impose the official model
+    list on them (TASK-15420).
+    """
+    route = resolve_legacy_route(internal_id)
+
+    assert route.provider_id == "openai"
+    assert route.internal_model_id == internal_id
+
+
+@pytest.mark.parametrize(
+    "internal_id",
+    [
+        # A bare "openai_official_" prefix names no model at all, so it is
+        # still rejected; ids WITH a model suffix route by prefix instead
+        # (see test_resolver_routes_custom_openai_models_by_prefix).
         "openai_official_",
-        "openai_official_new-model",
         "elevenlabs_custom_unknown",
         "local_kokoro_evil",
         "local_chatterbox_",

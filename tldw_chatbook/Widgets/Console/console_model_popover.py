@@ -17,7 +17,10 @@ from tldw_chatbook.Chat.console_session_settings import (
     build_console_model_options,
     build_console_provider_options,
 )
-from tldw_chatbook.Chat.console_context_policy import ContextCompactionMode
+from tldw_chatbook.Chat.console_context_policy import (
+    ContextCompactionMode,
+    ContextCompactionRepresentation,
+)
 from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.Utils.input_validation import validate_text_input
 from .console_context_controls import (
@@ -249,7 +252,7 @@ class ConsoleModelPopover(
                     markup=False,
                 )
                 yield Static(
-                    "Summarizes older turns. Automatic may add one extra model call.",
+                    self._compaction_help_text(),
                     id="console-popover-compaction-help",
                     markup=False,
                 )
@@ -282,6 +285,16 @@ class ConsoleModelPopover(
                         variant="primary",
                         compact=True,
                     )
+
+    def _compaction_help_text(self) -> str:
+        representation = (
+            self._context_state.resolved_policy.policy.compaction_representation
+        )
+        if representation is ContextCompactionRepresentation.VISUAL_TRANSCRIPT:
+            return "Renders older turns on-device; no summary model call."
+        if representation is ContextCompactionRepresentation.HYBRID:
+            return "Adds local pages to a text summary; Automatic adds one model call."
+        return "Summarizes older turns. Automatic may add one extra model call."
 
     def on_mount(self) -> None:
         """Settle the narrow-height fold affordance after first layout."""

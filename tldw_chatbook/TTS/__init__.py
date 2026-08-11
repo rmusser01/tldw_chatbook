@@ -33,6 +33,9 @@ from tldw_chatbook.TTS.character_request_resolver import (
 )
 from tldw_chatbook.TTS.playground_types import (
     STTSGeneratedAudio,
+    STTSPlaygroundResultProjection,
+    STTSPlaygroundCloneSnapshot,
+    STTSPlaygroundProfilePreview,
     STTSPlaygroundRequest,
     TTSRequestedSelectionSnapshot,
 )
@@ -75,6 +78,7 @@ from tldw_chatbook.TTS.profile_types import (
     canonical_json_options,
 )
 from tldw_chatbook.TTS.TTS_Generation import (
+    AudioCppCloneSetupProjection,
     AudioCppRuntimeObservation,
     TTSService,
     bind_tts_service,
@@ -86,6 +90,7 @@ from tldw_chatbook.TTS.TTS_Generation import (
 __all__ = [
     "AssignedTTSProfileSnapshot",
     "AudioCppDiagnosticLine",
+    "AudioCppCloneSetupProjection",
     "AudioCppProcessAdmissionSnapshot",
     "AudioCppProcessFailure",
     "AudioCppProcessSnapshot",
@@ -119,6 +124,9 @@ __all__ = [
     "ProgressSink",
     "ProviderHealth",
     "STTSGeneratedAudio",
+    "STTSPlaygroundResultProjection",
+    "STTSPlaygroundCloneSnapshot",
+    "STTSPlaygroundProfilePreview",
     "STTSPlaygroundRequest",
     "TTSAudioResponse",
     "TTSConfigMutation",

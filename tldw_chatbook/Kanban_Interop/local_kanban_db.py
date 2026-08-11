@@ -33,7 +33,14 @@ def open_connection(db_path: str | Path) -> sqlite3.Connection:
     conn = connect_private_sqlite("kanban.local", db_path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA journal_mode = WAL")
+    if str(db_path) != ":memory:":
+        conn.execute("PRAGMA journal_mode = WAL")
+    # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
+    # lose the last commit, acceptable for this local Kanban-parity cache)
+    # and avoids an fsync per commit. This DB opens a fresh connection per
+    # operation (`LocalKanbanService.connect`/`transaction`), so synchronous
+    # must be re-applied on every open, not just the first (task-15465).
+    conn.execute("PRAGMA synchronous = NORMAL")
     return conn
 
 

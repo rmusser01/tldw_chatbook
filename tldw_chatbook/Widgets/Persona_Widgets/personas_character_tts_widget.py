@@ -13,10 +13,28 @@ from textual.widgets import Button, Select, Static
 
 from ...TTS import ProfileAvailabilityState
 from ...TTS.profile_service import ProfileRecoveryAction
-from .personas_pane_messages import CharacterTTSActionRequested
+from .personas_pane_messages import CharacterTTSAction, CharacterTTSActionRequested
 
 _GLOBAL_PROFILE_VALUE = "__global__"
 _CONTEXTS = frozenset({"card", "editor"})
+
+
+@dataclass(frozen=True, slots=True)
+class CharacterTTSProfileSuggestion:
+    """Bounded non-authoritative identity offered by a Speech Lab save."""
+
+    profile_id: UUID
+    repository_generation: int
+    profile_revision: int
+
+    def __post_init__(self) -> None:
+        if type(self.profile_id) is not UUID:
+            raise TypeError("profile_id must be a UUID")
+        for name in ("repository_generation", "profile_revision"):
+            value = getattr(self, name)
+            minimum = 1 if name == "profile_revision" else 0
+            if type(value) is not int or value < minimum:
+                raise ValueError(f"{name} is invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +79,7 @@ class CharacterTTSPresentationState:
     status: str
     controls_enabled: bool
     assignment_count: int | None = None
+    suggested_profile_id: UUID | None = None
 
     def __post_init__(self) -> None:
         profiles = tuple(self.profiles)
@@ -70,6 +89,11 @@ class CharacterTTSPresentationState:
             or (
                 self.selected_profile_id is not None
                 and self.selected_profile_id
+                not in {profile.profile_id for profile in profiles}
+            )
+            or (
+                self.suggested_profile_id is not None
+                and self.suggested_profile_id
                 not in {profile.profile_id for profile in profiles}
             )
             or type(self.status) is not str
@@ -212,6 +236,15 @@ class PersonasCharacterTTSWidget(Container):
                     classes="console-action-subdued personas-character-tts-remove",
                     disabled=True,
                 )
+                yield Button(
+                    "Dismiss",
+                    classes=(
+                        "console-action-subdued "
+                        "personas-character-tts-dismiss-suggestion hidden"
+                    ),
+                    disabled=True,
+                    tooltip="Dismiss the saved Voice Profile suggestion.",
+                )
 
     def apply_state(self, state: CharacterTTSPresentationState) -> None:
         """Render one immutable screen-owned presentation snapshot."""
@@ -219,11 +252,19 @@ class PersonasCharacterTTSWidget(Container):
         if type(state) is not CharacterTTSPresentationState:
             raise TypeError("state must be CharacterTTSPresentationState")
         self._state = state
+        has_suggestion = state.suggested_profile_id is not None
         selector = self.query_one(".personas-character-tts-profile", Select)
         options = [("Use global default", _GLOBAL_PROFILE_VALUE)]
         options.extend(
             (
-                f"{profile.display_name} · {_character_tts_option_suffix(profile)}",
+                (
+                    f"{profile.display_name} · {_character_tts_option_suffix(profile)}"
+                    + (
+                        " · Suggested"
+                        if profile.profile_id == state.suggested_profile_id
+                        else ""
+                    )
+                ),
                 str(profile.profile_id),
             )
             for profile in state.profiles
@@ -251,26 +292,48 @@ class PersonasCharacterTTSWidget(Container):
             None,
         )
         broken = selected is not None and selected.availability == "unavailable"
-        self.query_one(
+        preview = self.query_one(
             ".personas-character-tts-preview",
             Button,
-        ).disabled = not (state.controls_enabled and assigned)
-        self.query_one(
+        )
+        preview_visible = assigned and not has_suggestion
+        preview.set_class(not preview_visible, "hidden")
+        preview.display = preview_visible
+        preview.disabled = has_suggestion or not (state.controls_enabled and assigned)
+        create = self.query_one(
             ".personas-character-tts-create",
             Button,
-        ).disabled = not state.controls_enabled
+        )
+        create_visible = not assigned and not has_suggestion
+        create.set_class(not create_visible, "hidden")
+        create.display = create_visible
+        create.disabled = not (create_visible and state.controls_enabled)
         edit = self.query_one(".personas-character-tts-edit", Button)
+        edit_visible = assigned and not has_suggestion
+        edit.set_class(not edit_visible, "hidden")
+        edit.display = edit_visible
         # "Repair" is reserved for a genuinely unavailable profile. An
         # unverified one is not confirmed broken -- it works, this slice just
         # has no catalog check backing that claim yet (task-2450 amendment) --
         # so it keeps the ordinary "Edit" label rather than being presented
         # as needing repair.
         edit.label = "Repair" if broken else "Edit"
-        edit.disabled = not (state.controls_enabled and assigned)
-        self.query_one(
+        edit.disabled = has_suggestion or not (state.controls_enabled and assigned)
+        remove = self.query_one(
             ".personas-character-tts-remove",
             Button,
-        ).disabled = not (state.controls_enabled and assigned)
+        )
+        remove_visible = assigned and not has_suggestion
+        remove.set_class(not remove_visible, "hidden")
+        remove.display = remove_visible
+        remove.disabled = has_suggestion or not (state.controls_enabled and assigned)
+        dismiss = self.query_one(
+            ".personas-character-tts-dismiss-suggestion",
+            Button,
+        )
+        dismiss.set_class(not has_suggestion, "hidden")
+        dismiss.display = has_suggestion
+        dismiss.disabled = not has_suggestion
 
     def _restore_selected_value(self) -> None:
         selector = self.query_one(".personas-character-tts-profile", Select)
@@ -318,11 +381,16 @@ class PersonasCharacterTTSWidget(Container):
         if button.has_class("personas-character-tts-create"):
             self.post_message(CharacterTTSActionRequested("create", None))
             return
+        if button.has_class("personas-character-tts-dismiss-suggestion"):
+            self.post_message(
+                CharacterTTSActionRequested("dismiss_suggestion", None)
+            )
+            return
         profile_id = self._state.selected_profile_id
         if profile_id is None:
             return
         if button.has_class("personas-character-tts-preview"):
-            action = "preview"
+            action: CharacterTTSAction = "preview"
         elif button.has_class("personas-character-tts-edit"):
             action = "edit"
         elif button.has_class("personas-character-tts-remove"):
@@ -333,6 +401,7 @@ class PersonasCharacterTTSWidget(Container):
 
 
 __all__ = [
+    "CharacterTTSProfileSuggestion",
     "CharacterTTSProfileOption",
     "CharacterTTSPresentationState",
     "PersonasCharacterTTSWidget",

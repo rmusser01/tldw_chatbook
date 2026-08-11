@@ -4,6 +4,7 @@ title: 'Dev baseline: 9 failing tests in Tests/Chat mask real regressions'
 status: To Do
 assignee: []
 created_date: '2026-08-10 22:46'
+updated_date: '2026-08-11 02:33'
 labels: []
 dependencies: []
 priority: high
@@ -20,4 +21,5 @@ origin/dev at 59cf35d6e fails 9 tests in Tests/Chat with zero related changes in
 - [ ] #1 Root cause identified for each of the three groups (they may have distinct causes)
 - [ ] #2 All 9 tests pass on a clean origin/dev checkout, or any that encode obsolete behavior are deliberately rewritten with the change documented
 - [ ] #3 Tests/Chat is green on dev across two consecutive runs
+- [ ] #4 Tests/UI/test_css_class_coverage_contract.py::test_registry_entries_are_still_composed also fails on dev (flags console_transcript.py) — verified reproducing on merge-base 762596846, unrelated to any fleet work; include it in the sweep
 <!-- AC:END -->

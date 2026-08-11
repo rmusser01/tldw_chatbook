@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Dict, NamedTuple, Optional
+from uuid import UUID
 
 from loguru import logger
 from rich.markup import escape
@@ -25,11 +26,14 @@ from tldw_chatbook.TTS import (
     OpenAISpeechRequest,
     STTSGeneratedAudio,
     STTSPlaygroundRequest,
+    STTSPlaygroundResultProjection,
+    TTSCloneReference,
     TTSPreferencesSnapshot,
     TTSRequest,
     TTSRequestedSelectionSnapshot,
     get_tts_service,
 )
+from tldw_chatbook.TTS.audio_cpp_contract import validate_pcm16_wav
 from tldw_chatbook.TTS.adapter_types import (
     ProgressSink,
     TTSOperationError,
@@ -40,7 +44,10 @@ from tldw_chatbook.TTS.adapter_types import (
 from tldw_chatbook.TTS.audio_cpp_guided_config import (
     project_audio_cpp_settings_config,
 )
-from tldw_chatbook.TTS.legacy_bridge import legacy_provider_config
+from tldw_chatbook.TTS.legacy_bridge import (
+    legacy_provider_config,
+    openai_internal_model_id,
+)
 from tldw_chatbook.TTS.playground_types import (
     PROFILE_SAVE_BLOCK_PROVIDER_OPTIONS,
     ProfileSaveBlockCode,
@@ -498,7 +505,7 @@ class _STTSPlaygroundState:
     """Read-only handler-owned Playground lifecycle snapshot."""
 
     active_operation_id: str | None
-    artifact: STTSGeneratedAudio | None
+    artifact: STTSPlaygroundResultProjection | None
     generation_active: bool
 
 
@@ -556,9 +563,14 @@ class STTSEventHandler:
 
     def playground_state(self) -> _STTSPlaygroundState:
         """Return immutable handler-owned generation and artifact state."""
+        artifact = self._current_playground_artifact
         return _STTSPlaygroundState(
             active_operation_id=self._active_playground_operation_id,
-            artifact=self._current_playground_artifact,
+            artifact=(
+                STTSPlaygroundResultProjection.from_artifact(artifact)
+                if artifact is not None
+                else None
+            ),
             generation_active=self._is_generating,
         )
 
@@ -701,6 +713,58 @@ class STTSEventHandler:
         ):
             if path in operation_files:
                 self._delete_operation_files(operation_id)
+
+    def lease_playground_result(self, operation_id: str, path: Path) -> bool:
+        """Lease the exact current handler artifact by sanitized identity."""
+
+        artifact = self._current_playground_artifact
+        if (
+            artifact is None
+            or artifact.operation_id != operation_id
+            or artifact.path != Path(path)
+        ):
+            return False
+        return self.lease_playground_artifact(artifact)
+
+    def release_playground_result(self, operation_id: str, path: Path) -> None:
+        """Release a result lease without publishing the private artifact."""
+
+        artifact = self._current_playground_artifact
+        if (
+            artifact is not None
+            and artifact.operation_id == operation_id
+            and artifact.path == Path(path)
+        ):
+            self.release_playground_artifact(artifact)
+            return
+        count = self._playground_file_leases.get(Path(path), 0)
+        if count <= 0:
+            return
+        if count == 1:
+            self._playground_file_leases.pop(Path(path), None)
+        else:
+            self._playground_file_leases[Path(path)] = count - 1
+            return
+        self._delete_operation_files(operation_id)
+
+    async def save_current_playground_profile(
+        self,
+        operation_id: str,
+        display_name: str,
+        profile_service: object,
+    ) -> object:
+        """Save the exact handler-owned result without exposing its artifact."""
+
+        artifact = self._current_playground_artifact
+        if artifact is None or artifact.operation_id != operation_id:
+            raise RuntimeError("The current speech result changed")
+        if artifact.clone_evidence is not None:
+            create = getattr(profile_service, "create_clone_from_artifact", None)
+        else:
+            create = getattr(profile_service, "create_from_artifact", None)
+        if not callable(create):
+            raise RuntimeError("The voice profile store is unavailable")
+        return await create(display_name, artifact)
 
     def _accept_playground_artifact(self, artifact: STTSGeneratedAudio) -> None:
         """Store the new artifact before securely retiring older files."""
@@ -977,14 +1041,62 @@ class STTSEventHandler:
 
         response = None
         effective = None
+        clone_evidence = None
         primary_error: BaseException | None = None
+        profile_reference_resolver = None
+        if snapshot.profile_preview is not None:
+
+            async def resolve_profile_reference(
+                profile_id: UUID,
+                repository_generation: int,
+                profile_revision: int,
+            ) -> TTSCloneReference:
+                loader = getattr(self.app, "_ensure_tts_profile_service", None)
+                if not callable(loader):
+                    raise RuntimeError("TTS profile service is unavailable")
+                profile_service = await loader()
+                if profile_service is None:
+                    raise RuntimeError("TTS profile service is unavailable")
+                loaded = await profile_service.get_profile(profile_id)
+                profile = loaded.profile
+                if (
+                    loaded.repository_generation != repository_generation
+                    or profile.revision != profile_revision
+                    or profile.provider_id != snapshot.provider_id
+                    or profile.model_id != snapshot.model_id
+                    or profile.reference is None
+                ):
+                    raise RuntimeError("TTS profile preview is stale")
+                return await profile_service.get_reference(
+                    profile_id,
+                    expected_generation=repository_generation,
+                    expected_revision=profile_revision,
+                )
+
+            profile_reference_resolver = resolve_profile_reference
         try:
-            response, effective = await self._stts_service.synthesize_effective(
+            synthesize_with_evidence = getattr(
+                self._stts_service,
+                "synthesize_effective_with_evidence",
+                None,
+            )
+            synthesis_kwargs = dict(
                 text=snapshot.text,
                 studio_draft=snapshot.studio_draft,
                 studio_preferences=snapshot.studio_preferences,
+                clone_audition=snapshot.clone_audition,
+                profile_preview=snapshot.profile_preview,
+                profile_reference_resolver=profile_reference_resolver,
                 progress_sink=progress_sink,
             )
+            if callable(synthesize_with_evidence):
+                response, effective, clone_evidence = await synthesize_with_evidence(
+                    **synthesis_kwargs
+                )
+            else:
+                response, effective = await self._stts_service.synthesize_effective(
+                    **synthesis_kwargs
+                )
             chunks = [chunk async for chunk in response.byte_stream]
         except BaseException as error:
             primary_error = error
@@ -1003,9 +1115,12 @@ class STTSEventHandler:
 
         assert response is not None
         assert effective is not None
+        complete_audio = b"".join(chunks)
+        if clone_evidence is not None:
+            validate_pcm16_wav(complete_audio)
         path = Path(
             create_secure_temp_file(
-                b"".join(chunks),
+                complete_audio,
                 suffix=f".{response.audio_format.removeprefix('.')}",
                 prefix="stts_playground_",
             )
@@ -1033,6 +1148,7 @@ class STTSEventHandler:
                 metadata=response.metadata,
                 requested_selection=requested_selection,
                 profile_save_block_code=profile_save_block_code,
+                clone_evidence=clone_evidence,
             )
         except BaseException:
             if secure_delete_file(path) or not path.exists():
@@ -1056,7 +1172,7 @@ class STTSEventHandler:
         provider_id = snapshot.provider_id
         if provider_id == "openai":
             model_id = snapshot.model_id.lower().replace("-", "")
-            return f"openai_official_{model_id}"
+            return openai_internal_model_id(model_id)
         if provider_id == "elevenlabs":
             return f"elevenlabs_{snapshot.model_id}"
         if provider_id == "kokoro":
@@ -1147,6 +1263,11 @@ class STTSEventHandler:
             self._deliver_generation_success(
                 snapshot.operation_id,
                 artifact,
+                accepted_clone_draft_revision=(
+                    snapshot.clone_audition.draft_revision
+                    if snapshot.clone_audition is not None
+                    else None
+                ),
             )
             self.app.notify("TTS generation complete!", severity="information")
         except asyncio.CancelledError:
@@ -1232,6 +1353,8 @@ class STTSEventHandler:
         self,
         operation_id: str,
         artifact: STTSGeneratedAudio,
+        *,
+        accepted_clone_draft_revision: int | None = None,
     ) -> None:
         playground = self._mounted_playground(operation_id)
         if playground is None:
@@ -1242,8 +1365,16 @@ class STTSEventHandler:
                 "[bold green]Generation complete[/bold green]"
             )
             callback = getattr(playground, "_generation_complete", None)
+            if accepted_clone_draft_revision is not None:
+                accept_clone = getattr(
+                    playground,
+                    "_accept_clone_generation_result",
+                    None,
+                )
+                if callable(accept_clone):
+                    accept_clone(operation_id, accepted_clone_draft_revision)
             if callable(callback):
-                callback(artifact)
+                callback(STTSPlaygroundResultProjection.from_artifact(artifact))
                 return
             playground.query_one("#audio-play-btn", Button).disabled = False
             playground.query_one("#audio-export-btn", Button).disabled = False

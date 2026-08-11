@@ -12,7 +12,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.css.query import NoMatches, QueryError
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Select, Static
+from textual.widgets import Button, Input, OptionList, Select, Static
 
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.console_context_policy import (
@@ -22,6 +22,7 @@ from tldw_chatbook.Chat.console_context_policy import (
     ContextBudgetMode,
     ContextCarryForwardMode,
     ContextCompactionMode,
+    ContextCompactionRepresentation,
     ContextPolicyError,
 )
 from tldw_chatbook.Chat.console_roleplay_identity import (
@@ -54,6 +55,7 @@ from tldw_chatbook.Chat.console_session_settings import (
 )
 from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Utils.input_validation import validate_url
+from tldw_chatbook.model_capabilities import is_vision_capable
 from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker
 from .console_context_controls import (
     ConsoleContextControlState,
@@ -820,7 +822,35 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
                                 classes="console-settings-control",
                             )
                         with Horizontal(classes="console-settings-modal-row"):
-                            yield self._modal_label("Summarize at (%)")
+                            yield self._modal_label("Representation")
+                            yield Select(
+                                [
+                                    (
+                                        "Text summary",
+                                        ContextCompactionRepresentation.TEXT_SUMMARY.value,
+                                    ),
+                                    (
+                                        "Visual transcript",
+                                        ContextCompactionRepresentation.VISUAL_TRANSCRIPT.value,
+                                    ),
+                                    (
+                                        "Hybrid",
+                                        ContextCompactionRepresentation.HYBRID.value,
+                                    ),
+                                ],
+                                value=self._context_state.resolved_policy.policy.compaction_representation.value,
+                                id="console-context-compaction-representation",
+                                classes="console-settings-control",
+                                allow_blank=False,
+                            )
+                        yield Static(
+                            "",
+                            id="console-context-representation-status",
+                            classes="console-settings-modal-row",
+                            markup=False,
+                        )
+                        with Horizontal(classes="console-settings-modal-row"):
+                            yield self._modal_label("Compact at (%)")
                             yield ConsoleSettingsInput(
                                 value=self._format_percent(
                                     self._context_state.resolved_policy.policy.trigger_ratio
@@ -846,8 +876,13 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
                                 id="console-context-summary-max",
                                 classes="console-settings-control",
                             )
+                        yield Static(
+                            "Summary response max applies only to Text summary and Hybrid.",
+                            classes="console-settings-modal-row",
+                            markup=False,
+                        )
                         with Horizontal(classes="console-settings-modal-row"):
-                            yield self._modal_label("If summary fails")
+                            yield self._modal_label("If compaction fails")
                             yield Select(
                                 [
                                     (
@@ -864,7 +899,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
                                 classes="console-settings-control",
                             )
                         with Horizontal(classes="console-settings-modal-row"):
-                            yield self._modal_label("Keep after summary")
+                            yield self._modal_label("Keep after compaction")
                             yield Select(
                                 [
                                     (
@@ -988,6 +1023,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
         if self._focus_model:
             self._focus_model_control()
         elif self._active_view == "context":
+            self._sync_visual_representation_availability()
             self.call_after_refresh(self._focus_context_control)
         self.call_after_refresh(self._sync_fold_hint)
 
@@ -1189,6 +1225,9 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
         self.query_one(
             "#console-context-compaction-mode", Select
         ).value = policy.compaction_mode.value
+        self.query_one(
+            "#console-context-compaction-representation", Select
+        ).value = policy.compaction_representation.value
         self.query_one("#console-context-trigger-percent", Input).value = str(
             self._format_percent(policy.trigger_ratio)
         )
@@ -1481,6 +1520,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
         self._sync_base_url_control(provider, base_url)
         self._sync_model_discover_controls(provider)
         self._sync_readiness_display()
+        self._sync_visual_representation_availability()
 
     @on(Select.Changed, "#console-settings-model-select")
     def _model_select_changed(self, event: Select.Changed) -> None:
@@ -1491,6 +1531,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
             "#console-settings-model-picker", ModelSearchPicker
         ).set_model_value(model_id)
         self._sync_readiness_display()
+        self._sync_visual_representation_availability()
 
     @on(Input.Changed, "#console-settings-model-input")
     def _model_input_changed(self, event: Input.Changed) -> None:
@@ -1500,6 +1541,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
         if picker.custom_mode:
             picker.set_custom_value(event.value)
         self._sync_readiness_display()
+        self._sync_visual_representation_availability()
 
     @on(ModelSearchPicker.ModelSelected)
     def _model_picker_selected(self, event: ModelSearchPicker.ModelSelected) -> None:
@@ -1507,6 +1549,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
         self._set_provider_model_draft(self._active_provider, event.model_id)
         self._sync_model_controls(self._active_provider, event.model_id)
         self._sync_readiness_display()
+        self._sync_visual_representation_availability()
 
     @on(ModelSearchPicker.ModelValueChanged)
     def _model_picker_value_changed(
@@ -1514,6 +1557,11 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
     ) -> None:
         self._set_provider_model_draft(self._active_provider, event.model_id)
         self._sync_readiness_display()
+        self._sync_visual_representation_availability()
+
+    @on(Select.Changed, "#console-context-compaction-representation")
+    def _compaction_representation_changed(self, _event: Select.Changed) -> None:
+        self._sync_visual_representation_availability()
 
     @on(Button.Pressed, "#console-settings-model-custom")
     def _model_custom_pressed(self, event: Button.Pressed) -> None:
@@ -2124,6 +2172,13 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
                 self.query_one("#console-context-compaction-mode", Select).value
             )
         )
+        compaction_representation = ContextCompactionRepresentation(
+            self._select_value_text(
+                self.query_one(
+                    "#console-context-compaction-representation", Select
+                ).value
+            )
+        )
         trigger_ratio = self._context_percent_ratio(
             "console-context-trigger-percent", "Trigger"
         )
@@ -2149,6 +2204,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
             budget_mode=budget_mode,
             custom_budget_tokens=custom_budget,
             compaction_mode=compaction_mode,
+            compaction_representation=compaction_representation,
             trigger_ratio=trigger_ratio,
             target_ratio=target_ratio,
             summary_max_tokens=summary_max,
@@ -2167,6 +2223,10 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
             compaction_mode=changed(  # type: ignore[arg-type]
                 compaction_mode, inherited.compaction_mode
             ),
+            compaction_representation=changed(  # type: ignore[arg-type]
+                compaction_representation,
+                inherited.compaction_representation,
+            ),
             trigger_ratio=changed(trigger_ratio, inherited.trigger_ratio),  # type: ignore[arg-type]
             target_ratio=changed(target_ratio, inherited.target_ratio),  # type: ignore[arg-type]
             summary_max_tokens=changed(  # type: ignore[arg-type]
@@ -2179,6 +2239,54 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
                 carry_forward, inherited.carry_forward_mode
             ),
         )
+
+    def _sync_visual_representation_availability(self) -> None:
+        """Disable vision-only choices while preserving the saved intent."""
+
+        try:
+            select = self.query_one(
+                "#console-context-compaction-representation", Select
+            )
+            options = select.query_one(OptionList)
+            status = self.query_one(
+                "#console-context-representation-status", Static
+            )
+        except (NoMatches, QueryError):
+            return
+        model = self._current_model_value() or ""
+        try:
+            available = bool(model) and is_vision_capable(
+                self._active_provider, model
+            )
+        except Exception:
+            available = False
+        for index in (1, 2):
+            if available:
+                options.enable_option_at_index(index)
+            else:
+                options.disable_option_at_index(index)
+        if available:
+            status.update(
+                "Visual pages stay on-device until this request is sent; recent turns "
+                "stay text. Provider image token cost is model-specific and may be estimated."
+            )
+            select.tooltip = "Choose how older conversation turns are compacted."
+            return
+        selected = self._select_value_text(select.value)
+        effective = (
+            " Saved visual intent will use Text summary for this model."
+            if selected
+            in {
+                ContextCompactionRepresentation.VISUAL_TRANSCRIPT.value,
+                ContextCompactionRepresentation.HYBRID.value,
+            }
+            else ""
+        )
+        status.update(
+            "Visual transcript and Hybrid require a vision-capable model."
+            f"{effective}"
+        )
+        select.tooltip = "Vision-only choices are unavailable for the current model."
 
     def _context_percent_ratio(self, input_id: str, label: str) -> float:
         text = self.query_one(f"#{input_id}", Input).value.strip()
@@ -2208,6 +2316,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
             "budget_mode": "budget mode",
             "custom_budget_tokens": "custom tokens",
             "compaction_mode": "compaction",
+            "compaction_representation": "representation",
             "trigger_ratio": "trigger",
             "target_ratio": "target",
             "summary_max_tokens": "summary max",

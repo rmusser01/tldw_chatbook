@@ -56,7 +56,7 @@ Media/Notes/Prompts/Skills already use). Top to bottom:
 | Create Collection | Adds a Collection record. Enabled once a valid, unused name is typed. |
 | Rename Collection | Renames the selected Collection to the typed name. |
 | Delete Collection | First press of the two-press delete: it arms deletion and reveals "Confirm delete". |
-| "Confirm delete" | Second press: actually deletes the selected Collection (tooltip: "Delete the selected local Collection."). |
+| "Confirm delete" | Second press: actually deletes the selected Collection (tooltip: "Delete the selected local Collection. Its items stay in the Library; the deletion cannot be undone from Library."). |
 | Collection rows | Click to select; the detail pane fills in. Row tooltip shows the sync status label. |
 
 Disabled buttons always carry their reason as a tooltip — for example
@@ -137,3 +137,7 @@ plus one create-one-below sentence; the selected Collection row carries
 the shared leading "▸ " marker; Escape on the Collections canvas moves
 focus to the rail search box, matching every other list canvas, and the
 footer advertises "esc focus rail".)*
+*Verified against feat/library-queue-batch @ a899cbf6a — 2026-08-11
+(task-14901 / ADR-055: the "Confirm delete" tooltip now states the
+consequence — member items survive, the Collection itself cannot be
+restored from Library.)*

@@ -1,4 +1,4 @@
-"""V32 -> V33 local Console context policy and memory ownership."""
+"""V32 -> current local Console context policy and memory ownership."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from tldw_chatbook.Chat.console_context_policy import (
     ConsoleContextPolicyOverrides,
     ContextBudgetMode,
     ContextCompactionMode,
+    ContextCompactionRepresentation,
 )
 from tldw_chatbook.Chat.console_context_repository import (
     AuxiliaryAttemptStart,
@@ -64,7 +65,27 @@ def _seed_v32_database(path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[str
     return conversation_id, boundary_id
 
 
-def test_fresh_database_reaches_v33_with_local_tables(tmp_path) -> None:
+def _seed_v33_database(path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+    with monkeypatch.context() as v33_patch:
+        v33_patch.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 33)
+        db = CharactersRAGDB(path, client_id="v33-seed")
+        conversation_id = db.add_conversation({"title": "v33 policy"})
+        db.get_connection().execute(
+            """
+            INSERT INTO console_conversation_context_policy(
+                conversation_id, budget_mode, custom_budget_tokens,
+                compaction_mode, policy_revision
+            ) VALUES (?, 'custom', 12000, 'automatic', 1)
+            """,
+            (conversation_id,),
+        )
+        db.get_connection().commit()
+        assert _version(db) == 33
+        db.close_connection()
+    return conversation_id
+
+
+def test_fresh_database_reaches_current_with_local_tables(tmp_path) -> None:
     db = CharactersRAGDB(tmp_path / "fresh.db", client_id="fresh")
     rows = (
         db.get_connection()
@@ -73,7 +94,7 @@ def test_fresh_database_reaches_v33_with_local_tables(tmp_path) -> None:
     )
     table_names = {str(row[0]) for row in rows}
 
-    assert _version(db) == 33
+    assert _version(db) == 34
     assert EXPECTED_TABLES <= table_names
 
     sync_triggers = (
@@ -109,7 +130,7 @@ def test_migration_preserves_valid_legacy_summary_as_inactive_memory(
         .fetchone()
     )
 
-    assert _version(db) == 33
+    assert _version(db) == 34
     assert row is not None
     assert row["conversation_id"] == conversation_id
     assert row["boundary_message_id"] == boundary_id
@@ -124,6 +145,22 @@ def test_migration_preserves_valid_legacy_summary_as_inactive_memory(
     )
 
 
+def test_v33_policy_migrates_with_inherited_text_representation(
+    tmp_path, monkeypatch
+) -> None:
+    path = tmp_path / "v33-policy.db"
+    conversation_id = _seed_v33_database(path, monkeypatch)
+
+    db = CharactersRAGDB(path, client_id="v34-open")
+    result = ConsoleContextRepository(db).load_policy(conversation_id)
+
+    assert _version(db) == 34
+    assert result.error is None
+    assert result.overrides.custom_budget_tokens == 12_000
+    assert result.overrides.compaction_mode is ContextCompactionMode.AUTOMATIC
+    assert result.overrides.compaction_representation is None
+
+
 def test_policy_repository_round_trip_is_sparse_revisioned_and_local(tmp_path) -> None:
     db = CharactersRAGDB(tmp_path / "policy.db", client_id="policy")
     conversation_id = db.add_conversation({"title": "policy"})
@@ -133,6 +170,7 @@ def test_policy_repository_round_trip_is_sparse_revisioned_and_local(tmp_path) -
         budget_mode=ContextBudgetMode.CUSTOM,
         custom_budget_tokens=24_000,
         compaction_mode=ContextCompactionMode.OFF,
+        compaction_representation=ContextCompactionRepresentation.HYBRID,
     )
 
     first_revision = repository.save_policy(conversation_id, overrides)
@@ -151,6 +189,7 @@ def test_policy_repository_round_trip_is_sparse_revisioned_and_local(tmp_path) -
     assert result.error is None
     assert result.overrides.custom_budget_tokens == 12_000
     assert result.overrides.compaction_mode is None
+    assert result.overrides.compaction_representation is None
     assert db.get_sync_log_entries(since_change_id=sync_before) == []
 
     assert (

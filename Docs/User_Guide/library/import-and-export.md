@@ -116,7 +116,7 @@ In server mode the **Export** rail row is disabled, with the tooltip
 header, a scope line ("All media, conversations & notes: 128 media · 542 conversations · 87
 notes", or "Notes · 87 items" when you arrived scoped; "Counting…" while
 it tallies), the "Export name" and "Description (optional)" fields, a
-"quality: … ⇄" button with a helper line matching whichever option is
+"quality: …" chooser with a helper line matching whichever option is
 actually selected (task-2859: "keeps a small preview image instead of the
 full file" / "shrinks media files before adding them to the zip" /
 "copies full media files into the zip" for thumbnail/compressed/original
@@ -178,7 +178,7 @@ the warnings the whole time.
 | Export control | What it does |
 |---|---|
 | "Export name" | Pre-filled "Library export 2026-07-31" (today's date); becomes the bundle's display name. |
-| "quality: thumbnail ⇄" | Cycles thumbnail → compressed → original; the helper line underneath always describes the option currently showing. Only "original" copies full media files into the zip; the others keep the package small. |
+| "quality: thumbnail" | Press to open a one-row strip of thumbnail / compressed / original (✓ on the active one) right under the button; pick one directly, or press the button again / Escape to close without changing. The helper line underneath always describes the option currently showing. Only "original" copies full media files into the zip; the others keep the package small. |
 | "Choose destination…" | Opens "Choose Export Destination". Whatever you pick is normalized to end in `.zip`; if that file already exists, an "Overwrites <name>" note appears (informational — exporting proceeds and replaces it). |
 | "Export bundle (.zip)" | Enabled once counting has finished, the scope is non-empty, and a destination is chosen. "Nothing to export in this scope." appears when the scope is empty; either way, hovering the button always shows a tooltip naming the same reason it's disabled (or "Write the bundle to the chosen destination." once it's ready) — a disabled press can never look like it silently did nothing. |
 | "Cancel" | Visible only while an export is running; stops it. |
@@ -585,3 +585,11 @@ selection can be imported" for files nothing here can read, "Nothing in
 this selection can be sent to the server" for files that only this
 destination refuses. The refusal is enforced at the submit itself, not
 just on the button, so Enter in the path field cannot route around it.*
+
+*Verified against feat/library-queue-batch @ 0662e09f5 — 2026-08-11
+(task-14902: the quality control converged on the Library chooser-strip
+pattern — pressing "quality: thumbnail" opens a one-row strip of all
+three values under the still-visible button with ✓ on the active one; a
+pick applies directly and updates the helper line, a second press or
+Escape cancels (Escape never leaves the form while the strip is open),
+and the footer/F1 read "enter choose quality / esc cancel" meanwhile.)*

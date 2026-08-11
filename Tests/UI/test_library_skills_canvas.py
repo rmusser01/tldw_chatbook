@@ -657,25 +657,52 @@ def test_build_library_skills_state_tolerates_missing_entry():
     assert state.count == 0
 
 
-def test_handle_library_skills_sort_cycles_name_to_status():
+def test_handle_library_skills_sort_opens_the_choice_strip():
+    """task-14902: the sort press no longer cycles -- it toggles the
+    direct-pick strip open (and closed on a second press)."""
     calls = []
     fake = SimpleNamespace(
         _library_skills_sort="name",
+        _library_skills_sort_choices_visible=False,
         refresh=lambda recompose=False: calls.append(recompose),
+        call_after_refresh=lambda *args, **kwargs: None,
+        _focus_library_control=lambda selector: None,
+        _focus_library_choice_strip_active=lambda selector, active: None,
     )
     event = SimpleNamespace(stop=lambda: None)
     LibraryScreen.handle_library_skills_sort(fake, event)
-    assert fake._library_skills_sort == "status"
-    assert calls == [True]
-
-
-def test_handle_library_skills_sort_cycles_status_back_to_name():
-    fake = SimpleNamespace(
-        _library_skills_sort="status",
-        refresh=lambda recompose=False: None,
-    )
-    LibraryScreen.handle_library_skills_sort(fake, SimpleNamespace(stop=lambda: None))
     assert fake._library_skills_sort == "name"
+    assert fake._library_skills_sort_choices_visible is True
+    assert calls == [True]
+    LibraryScreen.handle_library_skills_sort(fake, event)
+    assert fake._library_skills_sort_choices_visible is False
+
+
+def test_handle_library_skills_sort_choice_applies_exact_value():
+    fake = SimpleNamespace(
+        _library_skills_sort="name",
+        _library_skills_sort_choices_visible=True,
+        refresh=lambda recompose=False: None,
+        call_after_refresh=lambda *args, **kwargs: None,
+        _focus_library_control=lambda selector: None,
+    )
+    event = SimpleNamespace(
+        stop=lambda: None,
+        button=SimpleNamespace(choice_value="status"),
+    )
+    LibraryScreen.handle_library_skills_sort_choice(fake, event)
+    assert fake._library_skills_sort == "status"
+    assert fake._library_skills_sort_choices_visible is False
+    # An unknown payload closes the strip without mutating the sort.
+    fake._library_skills_sort_choices_visible = True
+    LibraryScreen.handle_library_skills_sort_choice(
+        fake,
+        SimpleNamespace(
+            stop=lambda: None, button=SimpleNamespace(choice_value="bogus")
+        ),
+    )
+    assert fake._library_skills_sort == "status"
+    assert fake._library_skills_sort_choices_visible is False
 
 
 def test_handle_library_skills_filter_submitted_sets_filter():
@@ -812,7 +839,9 @@ async def test_library_shell_skills_row_press_selects_row():
 
 
 @pytest.mark.asyncio
-async def test_library_shell_skills_sort_toggle_cycles_and_recomposes():
+async def test_library_shell_skills_sort_strip_picks_and_recomposes():
+    """task-14902: pressing Sort opens the direct-pick strip; picking a
+    value applies it and recomposes (the per-press cycle retired)."""
     app = _build_test_app()
     app.notes_scope_service = StaticLibraryNotesListScopeService([])
     app.media_reading_scope_service = StaticLibraryMediaScopeService([])
@@ -832,6 +861,11 @@ async def test_library_shell_skills_sort_toggle_cycles_and_recomposes():
 
         assert screen._library_skills_sort == "name"
         screen.query_one("#library-skills-sort", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_skills_sort == "name"
+        screen.query_one("#library-skills-sort-status", Button).press()
         await pilot.pause()
         await pilot.pause()
 
@@ -1983,16 +2017,21 @@ def test_skills_empty_state_copy_names_real_paths():
 
 
 def test_skill_toggle_labels_read_as_plain_statements():
-    assert skill_user_invocable_label(True) == "User can invoke: yes ⇄"
-    assert skill_user_invocable_label(False) == "User can invoke: no ⇄"
+    """task-14902: kept one-press toggles carry the FULL option set on the
+    label with the ✓ marker on the active value (AC#1/AC#2)."""
+    assert skill_user_invocable_label(True) == "User can invoke: ✓ yes ⇄ no"
+    assert skill_user_invocable_label(False) == "User can invoke: yes ⇄ ✓ no"
     # Polarity inverted for display: the stored field stays
     # disable_model_invocation, the label answers the user's question.
-    assert skill_disable_model_label(False) == "Agent can invoke: yes ⇄"
-    assert skill_disable_model_label(True) == "Agent can invoke: no ⇄"
+    assert skill_disable_model_label(False) == "Agent can invoke: ✓ yes ⇄ no"
+    assert skill_disable_model_label(True) == "Agent can invoke: yes ⇄ ✓ no"
     assert (
-        skill_context_toggle_label("inline") == "Runs in: inline (this conversation) ⇄"
+        skill_context_toggle_label("inline")
+        == "Runs in: ✓ inline (this conversation) ⇄ fork"
     )
-    assert skill_context_toggle_label("fork") == "Runs in: fork (sub-agent) ⇄"
+    assert (
+        skill_context_toggle_label("fork") == "Runs in: inline ⇄ ✓ fork (sub-agent)"
+    )
 
 
 @pytest.mark.asyncio

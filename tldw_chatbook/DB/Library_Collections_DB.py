@@ -21,6 +21,15 @@ class LibraryCollectionsDB(BaseDB):
     def _get_connection(self) -> sqlite3.Connection:
         conn = super()._get_connection()
         conn.execute("PRAGMA foreign_keys = ON")
+        if not self.is_memory_db:
+            conn.execute("PRAGMA journal_mode = WAL")
+        # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
+        # lose the last commit, acceptable for this local collections cache)
+        # and avoids an fsync per commit. This DB opens a fresh connection
+        # per operation (see `connection`/`transaction` below), so
+        # synchronous -- unlike journal_mode, which is persisted in the file
+        # -- must be re-applied here on every open (task-15465).
+        conn.execute("PRAGMA synchronous = NORMAL")
         return conn
 
     @contextmanager

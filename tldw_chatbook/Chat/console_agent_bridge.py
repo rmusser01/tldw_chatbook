@@ -52,6 +52,7 @@ from tldw_chatbook.Agents.agent_models import (
 )
 from tldw_chatbook.Agents.agent_service import SUBAGENT_SYSTEM_PROMPT, AgentService
 from tldw_chatbook.Agents.agent_stream import StreamGate
+from tldw_chatbook.Agents.fleet_coordinator import FleetHandle
 from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
     SkillToolProvider,
@@ -734,12 +735,116 @@ class SubAgentSummary:
     Attributes:
         text: Rendered summary of the sub-agent's task (live) or its
             recorded ``task`` (historical, resume-derived).
-        status: The sub-agent run's status -- ``"running"`` while the
-            primary's step log has not yet recorded its outcome.
+        status: The sub-agent run's status. PR2b Task 2: on the FLEET
+            path (``[agents] max_live_subagents > 1``, the default) this
+            is rebuilt from ``FleetCoordinator``'s own live status on
+            every snapshot publish (see ``_subagent_summaries_from_fleet``)
+            and reaches a real terminal value (``"done"``/``"error"``/
+            ``"stuck"``/``"cancelled"``) as soon as the child does, DURING
+            the turn -- not the dataclass default forever. On the INLINE
+            path (``max_live_subagents <= 1``, no coordinator ever exists)
+            this stays the ``"running"`` default for the run's whole
+            duration, same as before this task -- unchanged, not (yet)
+            improved.
+        run_id: The sub-agent's own ``AgentRunsDB`` run id. Empty until
+            ``FleetCoordinator.attach_run`` has fired for this handle (or
+            always empty on the inline path, which has no coordinator).
+        handle_id: The ``FleetCoordinator`` handle id backing this row.
+            Empty on the inline path (no coordinator, no handle).
     """
 
     text: str
     status: str = "running"
+    run_id: str = ""
+    handle_id: str = ""
+
+
+def _subagent_summaries_from_fleet(
+    handles: list[FleetHandle], fallback: list[SubAgentSummary]
+) -> tuple[SubAgentSummary, ...]:
+    """Build one snapshot publish's ``subagents`` tuple (PR2b Task 2).
+
+    ``handles`` is ``AgentService.fleet_snapshot()``'s return -- PR2a's
+    ``FleetCoordinator`` is the live authority for a running child's real
+    status (spec Sec 3 invariant 3; the DB is authority only after the
+    fact). It is non-empty as soon as this run's first child is reserved,
+    and (unlike ``self._live``/historical caches) a handle is NEVER
+    dropped from it once reserved -- ``FleetCoordinator.snapshot()`` walks
+    ``self._handles.values()`` (insertion-ordered, terminal handles
+    included), only its private ``_live_ids`` liveness set shrinks on
+    ``finish``. So once non-empty for a run, it stays the source for the
+    rest of that run, and every child's real status/run_id/handle_id is
+    always current.
+
+    ``handles`` non-empty means AT LEAST ONE handle has been reserved for
+    this run -- and once that is true, ``handles`` is used EXCLUSIVELY;
+    ``fallback`` is discarded for this publish (round-2 review: this is
+    deliberate, not a gap left to fix later -- see below). ``handles`` is
+    ALWAYS ``[]`` in the inline path (``[agents] max_live_subagents <=
+    1``: no coordinator ever exists for this run), where ``fallback`` --
+    the STEP_SPAWN-derived list ``on_step`` has been building all along,
+    one ``SubAgentSummary(step.summary or "")`` per spawn, status stuck
+    at its dataclass default ``"running"`` -- is the ONLY source of rows,
+    for the run's entire duration. This function cannot improve on that
+    there: there is no coordinator to read a real status from.
+
+    On a fleet-ON run, there IS a real gap: a child's STEP_SPAWN step is
+    appended to ``fallback`` one ``on_step`` call before that SAME
+    spawn's own ``fleet.reserve()`` runs a few lines later (see
+    ``agent_runtime.py``'s ``add(STEP_SPAWN, ...)`` then
+    ``deps.spawn(...)``, and ``on_step``'s own comment at that append) --
+    so a just-declared child can be missing from ``handles`` for exactly
+    one publish if an EARLIER sibling already has a handle (``handles``
+    non-empty takes this branch, dropping the not-yet-reserved one along
+    with the rest of ``fallback``). This is accepted, not fixed, for two
+    reasons:
+
+    1. It is bounded and effectively unobservable. Every dispatched tool
+       call -- spawn included -- gets an unconditional STEP_TOOL_RESULT
+       step immediately after (``agent_runtime.py:974``, the very next
+       statement after the batch loop's dispatch), and for a fleet spawn
+       ``deps.spawn(...)`` between those two steps is just
+       ``fleet.reserve()`` + ``thread.start()`` -- no I/O, sub-millisecond.
+       The rail polls this snapshot on a ~0.2s (200ms) timer
+       (``chat_screen.py``'s ``_sync_native_console_chat_ui`` tick). A gap
+       many orders of magnitude narrower than one poll interval, that
+       self-corrects on the very next publish, is not something a poll can
+       realistically ever observe.
+    2. PR2b Task 2 round 2 tried to close it anyway, by merging: fleet
+       rows plus whatever ``fallback`` entries fall after
+       ``handles``'s own length. That relies on ``fallback``'s first
+       ``len(handles)`` entries corresponding 1:1, in order, to
+       ``handles`` -- which is FALSE in a reachable, common case:
+       ``AgentService.spawn()`` refuses a call (unknown named agent,
+       ``agent_service.py`` ~:1210; sub-agent budget exhausted, ~:1223)
+       AFTER its STEP_SPAWN step has already been appended to
+       ``fallback`` but BEFORE ``fleet.reserve()`` ever runs -- so that
+       refusal's ``fallback`` entry has no handle counterpart, ever, for
+       the rest of the run. A later, SUCCESSFUL spawn then shifts every
+       position after it out of alignment: e.g. ``fallback = ["task X
+       (unknown agent)", "task Y"]``, ``handles = [handle_for_task_Y]``
+       -- the positional merge renders task Y from ``handles`` (correct)
+       PLUS ``fallback[1:] = ["task Y"]`` again (a second, permanently
+       stale, blank-id duplicate of the SAME child), while task X stays
+       dropped either way. The bounded, self-correcting transient this
+       function accepts is preferable to a permanent, visibly-wrong
+       duplicate row for the entire rest of the run -- an LLM naming an
+       unknown agent is not a rare path. (Task X's row -- a refused
+       spawn producing no row at all on the fleet path -- is a
+       pre-existing, separate gap this function does not address either
+       way.)
+    """
+    if handles:
+        return tuple(
+            SubAgentSummary(
+                text=(f"[{h.agent}] {h.task}" if h.agent else h.task)[:200],
+                status=h.status,
+                run_id=h.run_id or "",
+                handle_id=h.handle_id,
+            )
+            for h in handles
+        )
+    return tuple(fallback)
 
 
 @dataclass(frozen=True)
@@ -1706,6 +1811,62 @@ class ConsoleAgentBridge:
         )
         self._live: dict[str, AgentLiveSnapshot] = {}
         self._historical_cache: dict[str, AgentLiveSnapshot] = {}
+        # PR2b Task 1: published for the DURATION of one `run_reply` call
+        # -- set right before `service.run_turn(...)` is invoked (below),
+        # popped in the same `finally` that already tears that run down.
+        # `AgentService.run_turn` mints (or, at `[agents]
+        # max_live_subagents <= 1`, leaves `None`) a fresh
+        # `FleetCoordinator` on `service._fleet` as literally its first
+        # act, and does not return until every fleet child has settled --
+        # so a reader here always sees either "no coordinator (yet or at
+        # all)" or the real, in-flight one. `fleet_snapshot` delegates to
+        # `AgentService.fleet_snapshot()`, which reads `self._fleet` fresh
+        # on every call rather than caching it, since that attribute is
+        # set once per `run_turn` but this dict entry spans the whole
+        # call.
+        #
+        # Thread-safety: written here on the run's own worker thread,
+        # read from the UI thread by `fleet_snapshot` -- no lock. Same
+        # unguarded-dict convention `self._live`/`self._historical_cache`
+        # just above already use for the identical cross-thread shape (set
+        # on the worker thread inside `run_reply`, read via
+        # `live_snapshot`/`historical_snapshot` from the UI). A single
+        # `dict[key] = value` / `.pop(key, None)` / `.get(key)` is one
+        # atomic bytecode-level dict operation under the GIL -- there is
+        # no window where a reader observes a partially-written entry.
+        # `service._fleet` is likewise a single attribute (also
+        # GIL-atomic), and `FleetCoordinator.snapshot()` is separately
+        # lock-guarded for its own multi-field reads -- so no additional
+        # lock is needed on top of either.
+        #
+        # BUT: unlike `_live`/`_historical_cache`, this dict's `run_reply`
+        # teardown DELETES a key, not just overwrites it -- and that makes
+        # it a genuinely different case, not just "the same pattern with
+        # one more dict". `_live`/`_historical_cache` are overwrite-ONLY:
+        # a stray late write from an orphaned run is at worst transient
+        # staleness that the NEXT write silently corrects. A delete has no
+        # such self-healing write coming -- popping the wrong entry is
+        # permanent until some other run happens to start on that same
+        # conversation id. And "the wrong entry" is concretely reachable
+        # here, not hypothetical: a Stop on a hung run
+        # (`stop_active_run`/`_mark_stream_stopped`) sets the session to
+        # STOPPED, which `console_chat_models.is_send_allowed` immediately
+        # permits a new Send from, while the *hung* run's own
+        # `asyncio.to_thread`-wrapped `run_reply` call (see
+        # `console_chat_controller.py`'s own comments on why a stuck
+        # provider call survives cancellation) can still be sitting in
+        # this exact `finally` block, minutes later, well after a second
+        # run for the SAME conversation id has already published its own
+        # entry here. A blind `.pop(conversation_id, None)` at that point
+        # deletes the SECOND run's live entry, not the first's stale one
+        # -- `fleet_snapshot` then reports `[]` for a conversation with a
+        # genuinely running fleet, permanently (nothing else ever
+        # re-publishes it). The `finally` block's pop is therefore
+        # identity-checked (`is`, not `==`) against the specific `service`
+        # object THIS `run_reply` call published, not a blind pop by key
+        # -- see that `finally` block's own comment and
+        # `test_fleet_teardown_pop_is_identity_checked_not_blind`.
+        self._fleet_services: dict[str, AgentService] = {}
 
     def native_tool_schemas(self) -> list[dict[str, Any]]:
         """Return the native tool schemas available to this bridge.
@@ -2199,10 +2360,18 @@ class ConsoleAgentBridge:
         def on_step(step: AgentStep, agent_kind: str, run_id: str) -> None:
             # PR 2a (task-3): AgentService now attributes every step to its
             # run id so a fleet of concurrent children can be told apart.
-            # This bridge is still single-run-at-a-time -- `run_id` is
-            # accepted here but not yet used; PR 2b routes fleet rows by it
-            # (keying `live_steps`/`self._live` per run_id instead of per
-            # conversation_id).
+            # PR 2b Task 2: still accepted (the `LoopDeps.on_step`
+            # signature this closure must match always passes it) but
+            # still not used -- routing fleet rows turned out not to need
+            # it. `service.fleet_snapshot()` below (the `service` local
+            # this closure closes over, late-bound: `on_step` is only ever
+            # CALLED once `service = AgentService(...)` a little further
+            # down has already run) already returns every live child's
+            # real status/run_id/handle_id, correctly told apart by
+            # `FleetCoordinator` itself -- keying `live_steps`/`self._live`
+            # per run_id here too would be redundant bookkeeping for
+            # nothing this bridge (still single-primary-run-at-a-time)
+            # actually needs.
             live_steps.append(
                 AgentLiveStep(step.kind, self._summarize(step), agent_kind)
             )
@@ -2219,6 +2388,21 @@ class ConsoleAgentBridge:
                 tool_diff = _pair_step_diff(pending_diffs, step.tool_name)
             if agent_kind == AGENT_KIND_PRIMARY:
                 if step.kind == STEP_SPAWN:
+                    # PR2b Task 2: this is this run's ONLY source of rows
+                    # on the inline path (fleet off, `[agents]
+                    # max_live_subagents <= 1`) -- there is no coordinator
+                    # there, ever, so every entry appended here stays live
+                    # for the run's whole duration. On a fleet-ON run it
+                    # is superseded, publish by publish, as soon as ANY
+                    # handle has been reserved (`_subagent_summaries_
+                    # from_fleet` then uses `service.fleet_snapshot()`
+                    # exclusively, not a merge -- see that function's own
+                    # docstring for why a positional merge was tried and
+                    # reverted: it silently duplicated a child's row
+                    # forever whenever an EARLIER spawn in the same run
+                    # had been refused, e.g. an unknown named agent).
+                    # Entries appended here past that point are still
+                    # correct, just unused by that publish.
                     subagents.append(SubAgentSummary(step.summary or ""))
                 # format_agent_step_marker is the single source of truth for
                 # marker text -- shared with resume_marker_messages below --
@@ -2269,7 +2453,13 @@ class ConsoleAgentBridge:
                 status="running",
                 step=len(live_steps),
                 steps=tuple(live_steps[-5:]),
-                subagents=tuple(subagents),
+                # PR2b Task 2: rebuilt from the fleet's REAL live state on
+                # every publish, not appended once and left stuck at the
+                # "running" default -- see
+                # `_subagent_summaries_from_fleet`'s docstring.
+                subagents=_subagent_summaries_from_fleet(
+                    service.fleet_snapshot(), subagents
+                ),
             )
 
         # C1 (probe-verified security regression): thread the composed MCP
@@ -2356,6 +2546,10 @@ class ConsoleAgentBridge:
             # when the CHILD finishes -- never when this turn does.
             child_model_scope=adapter.child_lifeline,
         )
+        # PR2b Task 1: publish BEFORE `run_turn` is called (below) -- see
+        # `self._fleet_services`'s own docstring in `__init__` for the
+        # lifetime/thread-safety contract this relies on.
+        self._fleet_services[conversation_id] = service
 
         supersede_run_id = (
             self._previous_primary_run_id(conversation_id)
@@ -2429,6 +2623,17 @@ class ConsoleAgentBridge:
                 supersede_run_id=supersede_run_id,
             )
         finally:
+            # PR2b Task 1: clear the published service in the SAME
+            # teardown path that already tears this run down -- not a
+            # second one. From this point `fleet_snapshot` reverts to `[]`
+            # for this conversation (unless a newer run has already
+            # published over this one -- see `_teardown_fleet_service`),
+            # even on a raised/cancelled run (this `finally` always runs).
+            # Pinned choice: a completed run's snapshot goes back to `[]`,
+            # not the run's terminal handles (see
+            # `test_fleet_snapshot_reflects_two_live_handles_in_flight_
+            # then_empty_after_run_completes`).
+            self._teardown_fleet_service(conversation_id, service)
             # PR2a Task 6.5: stop the driver thread before closing, and
             # join it (the stop/join/close ordering, and why a wedged
             # thread keeps its loop open, now live in
@@ -2509,7 +2714,22 @@ class ConsoleAgentBridge:
             status=outcome.status,
             step=len(live_steps),
             steps=tuple(live_steps[-5:]),
-            subagents=tuple(subagents),
+            # PR2b Task 2: `service` here -- NOT `self.fleet_snapshot(
+            # conversation_id)` -- deliberately: the `finally` block just
+            # above already ran `self._teardown_fleet_service`, which pops
+            # THIS run's own `self._fleet_services` entry (assuming no
+            # overlapping resend already overwrote it -- see that
+            # method's docstring), so a lookup by conversation_id here
+            # would see `[]` and wipe out every child's final status right
+            # when the run ends. The `service` local variable is
+            # unaffected by that pop -- by this point `_settle_fleet`
+            # (called from inside `run_turn`, before it returned above)
+            # has already joined/abandoned every fleet child, so every
+            # handle `service.fleet_snapshot()` returns here is already
+            # terminal.
+            subagents=_subagent_summaries_from_fleet(
+                service.fleet_snapshot(), subagents
+            ),
         )
         # The run just finished -- drop any stale historical cache entry so
         # a *later* resume (in a future process) always re-derives fresh
@@ -2518,10 +2738,113 @@ class ConsoleAgentBridge:
         self._historical_cache.pop(conversation_id, None)
         return run_id, outcome
 
+    def _teardown_fleet_service(
+        self, conversation_id: str, service: AgentService
+    ) -> None:
+        """Undo the ``self._fleet_services[conversation_id] = service``
+        publish from the top of this ``run_reply`` call -- called from its
+        ``finally`` block, always, on every terminal path.
+
+        Review fix (identity-checked, not a blind pop by key): a run for
+        THIS ``conversation_id`` can start again before this call runs --
+        ``stop_active_run`` -> ``_mark_stream_stopped`` sets the session
+        STOPPED, which ``console_chat_models.is_send_allowed`` immediately
+        permits a new Send from, while this class's own ``asyncio.
+        to_thread``-wrapped ``run_reply`` (see ``console_chat_controller.
+        py``'s own comments on why a hung provider call survives
+        cancellation) can still be sitting here, mid-teardown, well after
+        a second run for the same conversation id has already published
+        its OWN service under this key. A blind ``self._fleet_services.
+        pop(conversation_id, None)`` would then delete THAT second run's
+        live entry instead of this (stale) one, leaving ``fleet_snapshot``
+        permanently reporting ``[]`` for a genuinely running fleet --
+        nothing else ever re-publishes it. Popping only when the stored
+        value IS this call's own ``service`` object (identity, not
+        equality) makes the delete target "the entry THIS call published,"
+        never "whatever happens to be at the key" -- see
+        ``test_fleet_teardown_pop_is_identity_checked_not_blind``.
+
+        Unlike a single blind pop, this is two separate atomic dict
+        operations (``.get`` then, only on a match, ``.pop``) rather than
+        one -- the no-lock reasoning on ``self._fleet_services`` (see its
+        own docstring in ``__init__``) still applies to each operation
+        individually; it does not claim the two together are atomic as a
+        pair. The gap between them is a handful of bytecode instructions
+        with no I/O or function call in between, so closing it fully would
+        need a lock for a window this narrow only a contrived test could
+        ever hit -- not the concretely reachable (stop-then-resend) race
+        this fix targets.
+        """
+        if self._fleet_services.get(conversation_id) is service:
+            self._fleet_services.pop(conversation_id, None)
+
     # -- rail reads -----------------------------------------------------
 
     def live_snapshot(self, conversation_id: str) -> AgentLiveSnapshot:
         return self._live.get(conversation_id, AgentLiveSnapshot())
+
+    def fleet_snapshot(self, conversation_id: str) -> list[FleetHandle]:
+        """Read-only view of the REAL, live fleet for one conversation.
+
+        PR2b Task 1: PR2a's ``FleetCoordinator`` (``Agents/
+        fleet_coordinator.py``) already owns every live child's real
+        status, but until this method it lived only on the ``AgentService``
+        local ``run_reply`` builds and discards -- nothing outside that one
+        call could ever see it, so a UI wanting fleet state had no live
+        source at all (only DB rows, which lag behind an in-flight run
+        exactly as much as ``historical_snapshot`` already does for the
+        primary run).
+
+        Returns ``[]`` -- never raises -- for a conversation id with no run
+        currently published (never run, no run in flight right now, the
+        run's own fleet is off at ``[agents] max_live_subagents <= 1``, or
+        the published run simply hasn't spawned anything yet). Returns
+        copies (``FleetCoordinator.snapshot()``'s own contract, via
+        ``AgentService.fleet_snapshot()``): the coordinator itself is never
+        exposed, so a caller can read but never mutate live fleet state --
+        confirmed by
+        ``test_fleet_snapshot_reflects_two_live_handles_in_flight_then_
+        empty_after_run_completes``, which mutates a returned handle and
+        asserts the change never reaches a second read.
+
+        Review fix: delegates to ``AgentService.fleet_snapshot()`` rather
+        than reading the private ``service._fleet`` attribute directly --
+        that seam is the only thing this method (or any other caller
+        outside ``agent_service.py``) touches on ``AgentService`` for this
+        purpose.
+        """
+        service = self._fleet_services.get(conversation_id)
+        if service is None:
+            return []
+        return service.fleet_snapshot()
+
+    def cancel_subagent(self, conversation_id: str, handle_id: str) -> bool:
+        """Cooperatively cancel ONE live child of this conversation's fleet.
+
+        PR2b Task 5 (per-row cancel): delegates straight to
+        `AgentService.cancel_subagent`, the same seam `fleet_snapshot`
+        above reads through -- no new cancellation mechanism, and no
+        id-resolution here either: a live fleet row's `row_id` IS the
+        `FleetCoordinator` handle id (`_fleet_row_from_handle` in
+        `Console_Modules/agent.py`), so `handle_id` passes straight
+        through to the coordinator's own `_cancel_fleet_handles` ->
+        `_revoke_handle_approvals` path -- PR 2a's guarantee that
+        cancelling a child revokes its pending approval cards.
+
+        Args:
+            conversation_id: The conversation whose fleet to look up.
+            handle_id: The handle to cancel.
+
+        Returns:
+            `False` -- never raises -- when this conversation has no fleet
+            currently published (never run, already finished, or the
+            published run's fleet is off) or `handle_id` is unknown/already
+            terminal; `True` when a live handle was found and cancelled.
+        """
+        service = self._fleet_services.get(conversation_id)
+        if service is None:
+            return False
+        return service.cancel_subagent(handle_id)
 
     def historical_snapshot(self, conversation_id: str) -> AgentLiveSnapshot:
         """Rail summary derived from ``AgentRunsDB`` for a conversation this
@@ -3037,6 +3360,15 @@ class ConsoleAgentBridge:
             SubAgentSummary(
                 text=str(record.get("task") or ""),
                 status=str(record.get("status") or "running"),
+                # PR2b Task 4: the rail's per-row click-through needs a
+                # stable identity to resolve a clicked row back to its own
+                # run (`ConsoleAgentController._console_agent_drilldown_
+                # target_run_id`). Historical rows have no coordinator
+                # handle (there is none, post-restart), but they DO have
+                # their own permanent `AgentRunsDB` id -- populate it here
+                # so a resumed conversation's sub-agent rows are just as
+                # drillable as a live run's.
+                run_id=str(record.get("id") or ""),
             )
             for record in records
             if record["agent_kind"] == AGENT_KIND_SUBAGENT

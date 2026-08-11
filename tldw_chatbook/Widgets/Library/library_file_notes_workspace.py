@@ -93,9 +93,17 @@ from tldw_chatbook.Widgets.Library.library_file_notes_git_panel import (
 )
 
 SaveState = Literal["idle", "dirty", "saving", "saved", "conflict", "error"]
+_SAVE_STATE_COPY: dict[SaveState, str] = {
+    "idle": "Auto-save to local folder: idle",
+    "dirty": "Auto-save pending for local folder",
+    "saving": "Saving to local folder…",
+    "saved": "Saved to local folder",
+    "conflict": "Conflict: draft preserved in editor",
+    "error": "Save failed: draft preserved in editor",
+}
 _UNSET = object()
 _SESSION_GIT_MUTATION_BUSY = (
-    "Session Git mutation in progress; structural actions are busy."
+    "Git operation in progress; structural actions are busy."
 )
 _TreeData = tuple[Literal["file", "folder", "deleted"], str]
 
@@ -119,6 +127,7 @@ class _GitLastAction:
     repository: RepositoryIdentity
     changes: tuple[SequencedSessionChange, ...]
     text: str
+    complete: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -394,6 +403,11 @@ class LibraryFileNotesWorkspace(Vertical):
         overflow: hidden hidden;
     }
 
+    #file-notes-root-status.-warning {
+        color: $warning;
+        text-style: bold;
+    }
+
     /* task-2850: the "no root chosen yet" empty state is a prompt +
        adjacent action, not a status toolbar -- the ``1fr`` above is
        correct once a root is linked (it reserves room for a Details/
@@ -501,8 +515,8 @@ class LibraryFileNotesWorkspace(Vertical):
 
     LibraryFileNotesWorkspace.-stack-editor-actions .file-notes-toolbar {
         layout: grid;
-        grid-size: 3;
-        grid-columns: 1fr 1fr 1fr;
+        grid-size: 2;
+        grid-columns: 1fr 1fr;
         height: auto;
     }
 
@@ -512,10 +526,9 @@ class LibraryFileNotesWorkspace(Vertical):
 
     LibraryFileNotesWorkspace.-stack-editor-actions
     .file-notes-toolbar.-confirm-delete {
-        grid-size: 4;
-        grid-columns: 1fr 1fr 1fr 1fr;
-        grid-rows: 1 1;
-        height: 2;
+        grid-size: 2;
+        grid-columns: 1fr 1fr;
+        height: auto;
     }
 
     LibraryFileNotesWorkspace.-stack-editor-actions
@@ -528,8 +541,17 @@ class LibraryFileNotesWorkspace(Vertical):
         column-span: 2;
     }
 
+    LibraryFileNotesWorkspace.-stack-editor-actions #file-notes-save-copy {
+        column-span: 2;
+    }
+
     LibraryFileNotesWorkspace.-stack-editor-actions #file-notes-editor {
         min-height: 3;
+    }
+
+    #file-notes-delete.-confirm-delete {
+        color: $error;
+        text-style: bold underline;
     }
     """
 
@@ -618,6 +640,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self._navigator_mode_before_git: Literal["files", "search"] = "files"
         self._editor_action_layout_sync_scheduled = False
         self._editor_action_focus_target: str | None = None
+        self._maintenance_expanded = False
         self._git_observed_changes: tuple[SequencedSessionChange, ...] | None = None
         self._git_refresh_timer: Timer | None = None
         self._git_refresh_after_mutation = False
@@ -815,14 +838,14 @@ class LibraryFileNotesWorkspace(Vertical):
                 search_results.display = False
                 yield search_results
                 yield Button(
-                    "Session Git (0)",
+                    "Review session changes (0)",
                     id="file-notes-session-changes",
                     compact=True,
                 )
                 yield self._git_panel_widget
             with Vertical(id="file-notes-editor-pane"):
                 back = Button(
-                    "‹ Navigator",
+                    "Back to navigator",
                     id="file-notes-back",
                     compact=True,
                 )
@@ -833,7 +856,11 @@ class LibraryFileNotesWorkspace(Vertical):
                     id="file-notes-breadcrumb",
                     markup=False,
                 )
-                yield Static("Idle", id="file-notes-save-status", markup=False)
+                yield Static(
+                    _SAVE_STATE_COPY["idle"],
+                    id="file-notes-save-status",
+                    markup=False,
+                )
                 yield Input(
                     placeholder="relative/path.md",
                     id="file-notes-path",
@@ -845,20 +872,25 @@ class LibraryFileNotesWorkspace(Vertical):
                     classes="file-notes-toolbar",
                 ):
                     yield Button("New", id="file-notes-new", compact=True)
-                    yield Button("Move", id="file-notes-move", compact=True)
                     yield Button("Delete", id="file-notes-delete", compact=True)
                     yield Button("Restore", id="file-notes-restore", compact=True)
-                    yield Button("Protect", id="file-notes-protect", compact=True)
+                    yield Button(
+                        "Save draft as copy",
+                        id="file-notes-save-copy",
+                        compact=True,
+                    )
+                    yield Button(
+                        "Maintenance",
+                        id="file-notes-maintenance-toggle",
+                        compact=True,
+                    )
                 with Horizontal(
                     id="file-notes-maintenance-actions",
                     classes="file-notes-toolbar",
                 ):
+                    yield Button("Move", id="file-notes-move", compact=True)
+                    yield Button("Protect", id="file-notes-protect", compact=True)
                     yield Button("Reload", id="file-notes-reload", compact=True)
-                    yield Button(
-                        "Save Copy",
-                        id="file-notes-save-copy",
-                        compact=True,
-                    )
                     yield Button("Refresh", id="file-notes-refresh", compact=True)
                 yield Static("", id="file-notes-action-status", markup=False)
 
@@ -1170,8 +1202,8 @@ class LibraryFileNotesWorkspace(Vertical):
                     self._git_status_task_binding = None
                     if self._active and self.is_mounted:
                         self._git_panel_widget.render_unavailable(
-                            "Selected notes root changed. Reopen Prepare "
-                            "session for commit to check the new root."
+                            "Selected notes root changed. Open Review session "
+                            "changes to check the new root."
                         )
                 service._bind_session_owner(self._session_owner, binding)
                 self._root = root
@@ -1232,8 +1264,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self._entries = {entry.relative_path: entry for entry in result.entries}
         self._deleted_paths = deleted
         self._root_offline = result.offline
-        if result.replica_warning:
-            self._runtime_warning = result.replica_warning
+        self._runtime_warning = result.replica_warning or ""
 
     def _render_projection(
         self,
@@ -1277,8 +1308,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self._entries = new_entries
         self._deleted_paths = deleted
         self._root_offline = result.offline
-        if result.replica_warning:
-            self._runtime_warning = result.replica_warning
+        self._runtime_warning = result.replica_warning or ""
         return self._render_projection(
             offline=result.offline,
             rebuild_tree=navigator_changed,
@@ -1310,12 +1340,14 @@ class LibraryFileNotesWorkspace(Vertical):
             status.tooltip = None
             status.update(self._root_status_summary)
             status.set_class(True, "-empty-root")
+            status.set_class(False, "-warning")
             body.display = False
             details.display = False
             choose.label = "Choose folder…"
             choose.display = True
             return
         status.set_class(False, "-empty-root")
+        status.set_class(bool(self._runtime_warning), "-warning")
         is_offline = self._root_offline if offline is None else offline
         state = (
             "Checking"
@@ -1556,7 +1588,7 @@ class LibraryFileNotesWorkspace(Vertical):
         return None if service is None else cast(_SessionGitService, service)
 
     def _render_session_git_label(self, count: int | None = None) -> None:
-        """Compose the persistent Session Git label from independent state."""
+        """Compose the outcome-led Git entry from independent session state."""
         if not self._active or not self.is_mounted:
             return
         if count is None:
@@ -1568,15 +1600,15 @@ class LibraryFileNotesWorkspace(Vertical):
             )
             count = len(coalesce_session_changes(changes))
         suffix = {
-            "checking": " — Push checking",
-            "pushing": " — Pushing",
-            "needs_attention": " — Push needs attention",
+            "checking": " · Checking push",
+            "pushing": " · Pushing",
+            "needs_attention": " · Push needs attention",
         }.get(self._push_phase, "")
         try:
             entry = self.query_one("#file-notes-session-changes", Button)
         except NoMatches:
             return
-        entry.label = f"Session Git ({count}){suffix}"
+        entry.label = f"Review session changes ({count}){suffix}"
 
     def _clear_push_presentation(self) -> None:
         """Retire visible push state without canceling service-owned work."""
@@ -2710,7 +2742,10 @@ class LibraryFileNotesWorkspace(Vertical):
             if action is None:
                 self._git_panel_widget.clear_last_action()
             else:
-                self._git_panel_widget.set_last_action(action.text)
+                self._git_panel_widget.set_last_action(
+                    action.text,
+                    complete=action.complete,
+                )
         return action is not None
 
     def _git_can_retain_rows(self, binding: SessionBinding) -> bool:
@@ -2940,16 +2975,15 @@ class LibraryFileNotesWorkspace(Vertical):
         }
         recoveries = {
             "unavailable": (
-                "Install or restore Git, then reopen Prepare session for "
-                "commit."
+                "Install or restore Git, then open Review session changes again."
             ),
             "unsupported": (
-                "Resolve Git compatibility outside Chatbook, then reopen "
-                "Prepare session for commit."
+                "Resolve Git compatibility outside Chatbook, then open Review "
+                "session changes again."
             ),
             "unsafe_root": (
-                "Select or fix a safe notes root, then reopen Prepare session "
-                "for commit."
+                "Select or fix a safe notes root, then open Review session "
+                "changes again."
             ),
         }
         reason = (
@@ -2963,7 +2997,7 @@ class LibraryFileNotesWorkspace(Vertical):
             reason += "."
         recovery = recoveries.get(
             discovery.state,
-            "Reopen Prepare session for commit.",
+            "Open Review session changes again.",
         )
         return f"{reason} {recovery}"
 
@@ -2974,7 +3008,7 @@ class LibraryFileNotesWorkspace(Vertical):
             self._clear_git_last_action()
             self._git_panel_widget.render_unavailable(
                 "Git is unavailable for the selected File Notes root. "
-                "Restore Git, then reopen Prepare session for commit."
+                "Restore Git, then open Review session changes again."
             )
             return
         discovery = await service.discover(binding)
@@ -3033,7 +3067,8 @@ class LibraryFileNotesWorkspace(Vertical):
                     )
                     self._git_panel_widget.set_current_status(
                         "Status: TRUST REQUIRED — Repository identity changed; "
-                        "retry Trust and check status."
+                        "retry Trust and check status.",
+                        complete=True,
                     )
                 return
             if not self._session_owner.publish_trust(binding, repository):
@@ -3064,8 +3099,8 @@ class LibraryFileNotesWorkspace(Vertical):
         if binding is None or service is None:
             self._clear_git_last_action()
             self._git_panel_widget.render_unavailable(
-                "Git status is unavailable. Restore Git, then reopen "
-                "Prepare session for commit."
+                "Git status is unavailable. Restore Git, then open Review "
+                "session changes again."
             )
             return
         if self._session_owner.mutation_active(binding):
@@ -3081,7 +3116,7 @@ class LibraryFileNotesWorkspace(Vertical):
             self._clear_git_last_action()
             self._git_panel_widget.render_unavailable(
                 "Repository trust is unavailable. Return to the navigator, "
-                "reopen Prepare session for commit, and trust the repository."
+                "open Review session changes again, and trust the repository."
             )
             return
         self._git_panel_widget.render_checking(
@@ -3134,7 +3169,7 @@ class LibraryFileNotesWorkspace(Vertical):
             self._clear_git_last_action()
             self._git_panel_widget.render_unavailable(
                 "Repository trust changed while checking status. Return to "
-                "the navigator, reopen Prepare session for commit, and trust "
+                "the navigator, open Review session changes again, and trust "
                 "the current repository."
             )
             return
@@ -3164,9 +3199,9 @@ class LibraryFileNotesWorkspace(Vertical):
         self._save_state = state
         self._save_detail = detail
         if self._active and self.is_mounted:
-            label = state.capitalize()
+            label = _SAVE_STATE_COPY[state]
             if detail:
-                label = f"{label} — {detail}"
+                label = f"{label}; {detail}"
             self.query_one("#file-notes-save-status", Static).update(label)
             self._update_controls()
 
@@ -3389,6 +3424,7 @@ class LibraryFileNotesWorkspace(Vertical):
                 "file-notes-reload",
                 "file-notes-save-copy",
                 "file-notes-refresh",
+                "file-notes-maintenance-toggle",
             }
         ):
             self._editor_action_focus_target = focused.id
@@ -3417,6 +3453,9 @@ class LibraryFileNotesWorkspace(Vertical):
         self.query_one("#file-notes-refresh", Button).disabled = (
             self._service is None or not structurally_available
         )
+        self.query_one("#file-notes-maintenance-toggle", Button).disabled = (
+            self._service is None or not structurally_available
+        )
         protect = self.query_one("#file-notes-protect", Button)
         protect_label = (
             "Unprotect"
@@ -3437,7 +3476,7 @@ class LibraryFileNotesWorkspace(Vertical):
             )
         elif mutation_active:
             busy_reason = (
-                "Session Git mutation in progress; editor actions are temporarily "
+                "Git operation in progress; editor actions are temporarily "
                 "unavailable."
             )
         self.query_one("#file-notes-action-status", Static).update(
@@ -3475,12 +3514,33 @@ class LibraryFileNotesWorkspace(Vertical):
             ),
             "file-notes-refresh": has_service,
         }
+        maintenance_ids = {
+            "file-notes-move",
+            "file-notes-protect",
+            "file-notes-reload",
+            "file-notes-refresh",
+        }
+        maintenance_available = any(
+            visibility[action_id] for action_id in maintenance_ids
+        )
+        visibility["file-notes-maintenance-toggle"] = maintenance_available
         focused = self.app.focused
         for action_id, displayed in visibility.items():
+            if action_id in maintenance_ids:
+                displayed = displayed and self._maintenance_expanded
             button = self.query_one(f"#{action_id}", Button)
             if button is focused and not displayed:
                 self._editor_action_focus_target = action_id
             button.display = displayed
+
+        maintenance_toggle = self.query_one(
+            "#file-notes-maintenance-toggle", Button
+        )
+        maintenance_toggle.label = (
+            "Hide actions" if self._maintenance_expanded else "Maintenance"
+        )
+        maintenance = self.query_one("#file-notes-maintenance-actions")
+        maintenance.display = maintenance_available and self._maintenance_expanded
 
         for toolbar in self.query(".file-notes-toolbar"):
             toolbar.set_class(
@@ -3494,6 +3554,7 @@ class LibraryFileNotesWorkspace(Vertical):
                     f"#{self._editor_action_focus_target}",
                     "#file-notes-restore",
                     "#file-notes-new",
+                    "#file-notes-maintenance-toggle",
                     "#file-notes-refresh",
                 )
             ):
@@ -3578,7 +3639,7 @@ class LibraryFileNotesWorkspace(Vertical):
         if expected_binding is not None and root_lease is None:
             if self._session_owner.mutation_active(expected_binding):
                 self._set_action_status(
-                    "Session Git mutation in progress; root change is busy."
+                    "Git operation in progress; root change is busy."
                 )
             return False
         self._root_generation += 1
@@ -5101,7 +5162,8 @@ class LibraryFileNotesWorkspace(Vertical):
                     f"Save the note before {gerund}. Return to the editor."
                 )
             self._git_panel_widget.set_current_status(
-                f"Status: CURRENT · BLOCKED — {detail}"
+                f"Status: CURRENT · BLOCKED — {detail}",
+                complete=True,
             )
             return
         if (
@@ -5113,15 +5175,17 @@ class LibraryFileNotesWorkspace(Vertical):
             self._git_panel_widget.set_current_status(
                 "Status: CURRENT · BLOCKED — File Notes changed before "
                 f"{action.title()}. Return to the editor, finish the save or "
-                "transition, then Refresh."
+                "transition, then Refresh.",
+                complete=True,
             )
             return
         action_key = self._capture_git_action_key(binding)
         if action_key is None:
             self._git_panel_widget.set_current_status(
                 "Status: STALE · BLOCKED — Repository or session authority "
-                "changed before the action. Return to the navigator, reopen "
-                "Prepare session for commit, then Refresh."
+                "changed before the action. Return to the navigator, open "
+                "Review session changes again, then Refresh.",
+                complete=True,
             )
             return
         try:
@@ -5134,7 +5198,8 @@ class LibraryFileNotesWorkspace(Vertical):
             self._git_panel_widget.set_current_status(
                 f"Status: CURRENT · BLOCKED — {action.title()} could not "
                 f"start: {error}. Finish the active File Notes action, then "
-                "Refresh."
+                "Refresh.",
+                complete=True,
             )
             return
         action_key_after_admission = self._capture_git_action_key(binding)
@@ -5185,6 +5250,7 @@ class LibraryFileNotesWorkspace(Vertical):
                 self._git_last_action = replace(
                     action_key,
                     text=f"Last action: FAILED — {detail}",
+                    complete=True,
                 )
                 if self._git_binding_is_current(binding):
                     self._sync_git_last_action()
@@ -5211,6 +5277,7 @@ class LibraryFileNotesWorkspace(Vertical):
                             f"Last action: {self._git_action_label(result)} — "
                             f"{summary}"
                         ),
+                        complete=result.state != "success",
                     )
                     if self._git_binding_is_current(binding):
                         self._sync_git_last_action()
@@ -5232,8 +5299,8 @@ class LibraryFileNotesWorkspace(Vertical):
                         self._git_refresh_after_mutation = True
                         if self._active and self.is_mounted:
                             self._git_panel_widget.mark_stale(
-                                "Git action finished while Prepare session was "
-                                "hidden. Reopen it to Refresh.",
+                                "Git action finished while Review session changes "
+                                "was hidden. Open it again to Refresh.",
                                 retain_rows=self._git_can_retain_rows(binding),
                             )
 
@@ -5428,6 +5495,15 @@ class LibraryFileNotesWorkspace(Vertical):
             destination,
         )
 
+    @on(Button.Pressed, "#file-notes-maintenance-toggle")
+    def _toggle_maintenance_actions(self) -> None:
+        """Reveal or hide secondary file operations without moving focus."""
+        self._maintenance_expanded = not self._maintenance_expanded
+        toggle = self.query_one("#file-notes-maintenance-toggle", Button)
+        self._sync_editor_action_visibility()
+        self._schedule_editor_action_layout()
+        self.call_after_refresh(toggle.focus)
+
     @on(Button.Pressed, "#file-notes-delete")
     async def _delete_file(self, event: Button.Pressed) -> None:
         event.stop()
@@ -5554,12 +5630,12 @@ class LibraryFileNotesWorkspace(Vertical):
         service = self._service
         if service is None or opened is None:
             return
-        destination = self._validated_path_input("Save Copy")
+        destination = self._validated_path_input("Save draft as copy")
         if destination is None:
             return
         body = self.query_one("#file-notes-editor", TextArea).text
         await self._complete_path_action(
-            "Save Copy",
+            "Save draft as copy",
             destination,
             service.save_copy,
             opened,

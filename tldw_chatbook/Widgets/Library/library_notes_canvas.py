@@ -29,6 +29,9 @@ from tldw_chatbook.Library.library_notes_sync_state import (
     sync_conflict_label,
     sync_direction_label,
 )
+from tldw_chatbook.Widgets.Library.library_choice_strip import (
+    compose_library_choice_strip,
+)
 
 _SORT_LABELS = {"newest": "Newest", "oldest": "Oldest", "title": "Title"}
 _COMPACT_SYNC_DIRECTION_LABELS = {
@@ -176,13 +179,15 @@ class LibraryNotesCanvas(Vertical):
         )
         # Database mode persists notes in the Library; Files edits a folder
         # directly, while Sync mirrors a folder into this database.
-        yield Static(
+        database_purpose = Static(
             "These notes live in the Library's own database — for notes "
             "that live in a folder on disk, switch to Files, or use Sync "
             "to mirror one in.",
             id="library-notes-database-purpose",
             markup=False,
         )
+        database_purpose.display = not self.compact
+        yield database_purpose
         with Horizontal(id="library-notes-filter-row"):
             yield Static("Filter", id="library-notes-filter-label", markup=False)
             yield Input(
@@ -308,20 +313,19 @@ class LibraryNotesCanvas(Vertical):
                     ),
                 )
             if list_state.sort_choices_visible:
-                sort_choices = Horizontal(
-                    id="library-notes-sort-choices", classes="ds-toolbar"
+                # task-14902: composed through the ONE shared strip builder
+                # (this control is the pattern's precedent; the media type /
+                # prompts sort / skills sort / export quality strips share
+                # the same mechanism).
+                yield from compose_library_choice_strip(
+                    strip_id="library-notes-sort-choices",
+                    choice_class="library-notes-sort-choice",
+                    options=tuple(
+                        (f"library-notes-sort-{mode}", mode, label)
+                        for mode, label in _SORT_LABELS.items()
+                    ),
+                    active_value=self.sort_mode,
                 )
-                sort_choices.styles.height = "auto"
-                with sort_choices:
-                    for mode, label in _SORT_LABELS.items():
-                        button = Button(
-                            f"{'✓ ' if mode == self.sort_mode else ''}{label}",
-                            id=f"library-notes-sort-{mode}",
-                            classes="library-canvas-action library-notes-sort-choice",
-                            compact=True,
-                        )
-                        button.sort_mode = mode
-                        yield button
             transfer_actions = Horizontal(
                 id="library-notes-transfer-actions", classes="ds-toolbar"
             )
@@ -658,6 +662,9 @@ class LibraryNotesCanvas(Vertical):
         if not self.is_mounted:
             return
         if self.mode == "list" and self.list_state is not None:
+            database_purpose = self.query("#library-notes-database-purpose")
+            if database_purpose:
+                database_purpose.first(Static).display = not compact
             rendered_count = len(self.list_state.rows)
             select_all = self.query("#library-notes-select-all")
             if select_all:

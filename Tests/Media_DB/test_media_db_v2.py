@@ -1083,7 +1083,14 @@ class TestRestoreTrashedIsOptIn:
 
         assert reimported_id is None
         assert reimported_uuid is None
-        assert "already exists" in msg.lower(), msg
+        # Pin rewritten by task-4026: the trashed skip used to reuse the
+        # generic "already exists. Overwrite not enabled." message, whose
+        # advice became a lie once overwrite=True stopped touching trashed
+        # rows -- the skip now names Trash and the actual remedy
+        # (restore_trashed=True). Live-row duplicate skips keep the old
+        # message unchanged.
+        assert "trash" in msg.lower(), msg
+        assert "restore_trashed" in msg, msg
         row = file_db.get_media_by_id(media_id, include_trash=True)
         assert row["is_trash"] == 1, "a non-opted-in caller must not restore the row"
 
@@ -1118,6 +1125,246 @@ class TestRestoreTrashedIsOptIn:
         # No second row was created for the new url either.
         cursor = file_db.execute_query("SELECT COUNT(*) FROM Media")
         assert cursor.fetchone()[0] == 1
+
+
+class TestOverwriteDoesNotTouchTrashedRows:
+    """task-4026: the ``overwrite=True`` trash contract, made explicit.
+
+    A trashed match is NEVER mutated by ``add_media_with_keywords`` unless
+    the caller also passes ``restore_trashed=True`` -- ``overwrite``
+    governs live rows only. ``overwrite=True, restore_trashed=False``
+    against a trashed row is a duplicate-style SKIP (``(None, None,
+    <message naming trash and the restore flag>)``), not a hidden
+    in-place update and not a resurrection. Both flags true =
+    restore-and-overwrite (task-4022's ``restoring_from_trash`` path).
+
+    Before this task the code was internally incoherent: an
+    identical-content ``overwrite=True`` left the row trashed but still
+    mutated its title/keywords/chunks in place (invisible to the user --
+    no Trash surface exists), while a different-content ``overwrite=True``
+    silently RESURRECTED the row via ``_media_payload``'s hardcoded
+    ``is_trash: 0`` with no restore decision anywhere in the chain.
+
+    Real file-backed DB per the programme's DB-layer requirement.
+    """
+
+    @staticmethod
+    def _keywords_for(file_db, media_id: int) -> list:
+        return sorted(
+            r["keyword"]
+            for r in file_db.execute_query(
+                "SELECT k.keyword FROM Keywords k JOIN MediaKeywords mk ON k.id = mk.keyword_id "
+                "WHERE mk.media_id = ? AND k.deleted = 0",
+                (media_id,),
+            ).fetchall()
+        )
+
+    @staticmethod
+    def _chunk_texts(file_db, media_id: int) -> set:
+        return {
+            r["chunk_text"]
+            for r in file_db.execute_query(
+                "SELECT chunk_text FROM UnvectorizedMediaChunks WHERE media_id = ? AND deleted = 0",
+                (media_id,),
+            ).fetchall()
+        }
+
+    def test_overwrite_true_alone_skips_trashed_match_with_different_content(
+        self, file_db
+    ):
+        """The headline bug: different content + ``overwrite=True`` used to
+        resurrect the trashed row (full-update path writes ``is_trash=0``).
+        It must now skip, leaving trash state AND content untouched."""
+        url = "file:///task-4026/different-content.txt"
+        media_id, media_uuid, _ = file_db.add_media_with_keywords(
+            title="original.txt",
+            media_type="document",
+            content="original content",
+            keywords=[],
+            url=url,
+        )
+        assert file_db.mark_as_trash(media_id) is True
+        before = file_db.get_media_by_id(media_id, include_trash=True)
+        assert before["is_trash"] == 1 and before["trash_date"] is not None
+
+        result_id, result_uuid, msg = file_db.add_media_with_keywords(
+            title="rewritten.txt",
+            media_type="document",
+            content="completely different content",
+            keywords=[],
+            url=url,
+            overwrite=True,
+        )
+
+        assert result_id is None, (
+            f"overwrite=True alone must not touch a trashed row, got id={result_id!r} "
+            f"(msg={msg!r})"
+        )
+        assert result_uuid is None
+        assert "trash" in msg.lower(), msg
+        assert "restore_trashed" in msg, msg
+
+        after = file_db.get_media_by_id(media_id, include_trash=True)
+        assert after["is_trash"] == 1, "row must stay trashed"
+        assert after["trash_date"] == before["trash_date"]
+        assert after["content"] == "original content", "content must not change"
+        assert after["title"] == "original.txt"
+        assert after["version"] == before["version"], "no versioned write may occur"
+        cursor = file_db.execute_query(
+            "SELECT COUNT(*) FROM Media WHERE url = ?", (url,)
+        )
+        assert cursor.fetchone()[0] == 1, "no second row may be created"
+
+    def test_overwrite_true_alone_leaves_trashed_metadata_and_keywords_untouched(
+        self, file_db
+    ):
+        """The quieter half of the old incoherence: identical content +
+        ``overwrite=True`` left the row trashed but still rewrote its
+        title/keywords in place. A trashed row is now untouched entirely."""
+        url = "file:///task-4026/identical-content.txt"
+        content = "identical content"
+        media_id, _, _ = file_db.add_media_with_keywords(
+            title="curated.txt",
+            media_type="document",
+            content=content,
+            keywords=["mine", "curated"],
+            url=url,
+        )
+        assert self._keywords_for(file_db, media_id) == ["curated", "mine"]
+        assert file_db.mark_as_trash(media_id) is True
+        before = file_db.get_media_by_id(media_id, include_trash=True)
+
+        result_id, _, msg = file_db.add_media_with_keywords(
+            title="renamed.txt",
+            media_type="document",
+            content=content,
+            keywords=["other"],
+            url=url,
+            overwrite=True,
+        )
+
+        assert result_id is None, msg
+        assert "trash" in msg.lower(), msg
+        after = file_db.get_media_by_id(media_id, include_trash=True)
+        assert after["is_trash"] == 1
+        assert after["title"] == "curated.txt", "metadata must not change"
+        assert after["version"] == before["version"]
+        assert self._keywords_for(file_db, media_id) == ["curated", "mine"], (
+            "keywords must not change on a trashed row"
+        )
+
+    def test_overwrite_true_alone_leaves_trashed_chunks_untouched(self, file_db):
+        """Chunked variant (per this batch's chunked-content requirement):
+        the skip must also leave the trashed row's stored chunk rows alone
+        -- the old code deleted and replaced them via ``_persist_chunks``
+        with ``replace_existing=overwrite``."""
+        url = "file:///task-4026/chunked-skip.txt"
+        media_id, _, _ = file_db.add_media_with_keywords(
+            title="chunked.txt",
+            media_type="document",
+            content="chunked original content",
+            keywords=[],
+            url=url,
+            chunks=[
+                {"text": "old chunk one", "chunk_type": "text"},
+                {"text": "old chunk two", "chunk_type": "text"},
+            ],
+        )
+        assert self._chunk_texts(file_db, media_id) == {
+            "old chunk one",
+            "old chunk two",
+        }
+        assert file_db.mark_as_trash(media_id) is True
+
+        result_id, _, msg = file_db.add_media_with_keywords(
+            title="chunked.txt",
+            media_type="document",
+            content="chunked replacement content",
+            keywords=[],
+            url=url,
+            chunks=[{"text": "new chunk", "chunk_type": "text"}],
+            overwrite=True,
+        )
+
+        assert result_id is None, msg
+        after = file_db.get_media_by_id(media_id, include_trash=True)
+        assert after["is_trash"] == 1
+        assert after["content"] == "chunked original content"
+        assert self._chunk_texts(file_db, media_id) == {
+            "old chunk one",
+            "old chunk two",
+        }, "stored chunks must not be replaced on a trashed skip"
+
+    def test_overwrite_plus_restore_trashed_restores_and_overwrites(self, file_db):
+        """The two flags compose: ``overwrite=True, restore_trashed=True``
+        is an explicit restore-and-overwrite. (Green before and after this
+        task -- pinned so the compose case can't regress while the
+        overwrite-alone case is locked down.)"""
+        url = "file:///task-4026/restore-and-overwrite.txt"
+        media_id, media_uuid, _ = file_db.add_media_with_keywords(
+            title="original.txt",
+            media_type="document",
+            content="original content",
+            keywords=[],
+            url=url,
+        )
+        assert file_db.mark_as_trash(media_id) is True
+
+        result_id, result_uuid, msg = file_db.add_media_with_keywords(
+            title="restored.txt",
+            media_type="document",
+            content="fresh content",
+            keywords=[],
+            url=url,
+            overwrite=True,
+            restore_trashed=True,
+        )
+
+        assert result_id == media_id, msg
+        assert result_uuid == media_uuid
+        assert "restored" in msg.lower(), msg
+        after = file_db.get_media_by_id(media_id, include_trash=True)
+        assert after["is_trash"] == 0
+        assert after["trash_date"] is None
+        assert after["deleted"] == 0
+        assert after["content"] == "fresh content"
+        assert after["title"] == "restored.txt"
+
+    def test_overwrite_plus_restore_trashed_replaces_chunks(self, file_db):
+        """Chunked compose variant: an explicit restore-and-overwrite
+        replaces the stored chunks with the fresh set (no
+        ``UNIQUE(media_id, chunk_index, chunk_type)`` collision)."""
+        url = "file:///task-4026/chunked-restore.txt"
+        media_id, _, _ = file_db.add_media_with_keywords(
+            title="chunked.txt",
+            media_type="document",
+            content="chunked original content",
+            keywords=[],
+            url=url,
+            chunks=[
+                {"text": "old chunk one", "chunk_type": "text"},
+                {"text": "old chunk two", "chunk_type": "text"},
+            ],
+        )
+        assert file_db.mark_as_trash(media_id) is True
+
+        result_id, _, msg = file_db.add_media_with_keywords(
+            title="chunked.txt",
+            media_type="document",
+            content="chunked replacement content",
+            keywords=[],
+            url=url,
+            chunks=[{"text": "new chunk", "chunk_type": "text"}],
+            overwrite=True,
+            restore_trashed=True,
+        )
+
+        assert result_id == media_id, msg
+        assert "restored" in msg.lower(), msg
+        after = file_db.get_media_by_id(media_id, include_trash=True)
+        assert after["is_trash"] == 0
+        assert after["content"] == "chunked replacement content"
+        assert self._chunk_texts(file_db, media_id) == {"new chunk"}
 
 
 class TestReimportAfterTrashChunks:

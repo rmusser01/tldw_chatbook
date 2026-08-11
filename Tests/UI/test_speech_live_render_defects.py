@@ -10,11 +10,10 @@ from __future__ import annotations
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import ProgressBar, Select
+from textual.widgets import ProgressBar
 
 from tldw_chatbook.UI.Speech.speech_playground_model import AXIS_CONTROLS
-from Tests.UI.app_factory import _build_test_app
-from Tests.UI.test_speech_playground_pane import _PaneScreen
+from Tests.UI.test_speech_playground_pane import _PaneScreen, _build_layout_test_app
 from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
 
 BOX_DRAWING = set("▔▁▊▎│─┌┐└┘━╸╺")
@@ -29,7 +28,9 @@ class _Harness(App[None]):
 
 
 @pytest.mark.asyncio
-async def test_the_axis_select_has_no_inner_border_under_the_real_css():
+async def test_the_axis_select_has_no_inner_border_under_the_real_css(
+    monkeypatch: pytest.MonkeyPatch,
+):
     """The defect: `border: none` on a Select does not reach its inner
     SelectCurrent, which keeps its own three-row bordered box. Clipped to
     `height: 1`, every axis painted its TOP BORDER and nothing else -- six
@@ -48,7 +49,7 @@ async def test_the_axis_select_has_no_inner_border_under_the_real_css():
     """
     from textual.widgets._select import SelectCurrent
 
-    app = _build_test_app()
+    app = _build_layout_test_app(monkeypatch)
     async with app.run_test(size=(200, 60)) as pilot:
         screen = _PaneScreen()
         await app.push_screen(screen)

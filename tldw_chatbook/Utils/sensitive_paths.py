@@ -132,6 +132,16 @@ _DB_PATH_ACCESSOR_NAMES = (
     "get_research_db_path",
     "get_writing_db_path",
     "get_scheduled_tasks_db_path",
+    # task-15465 fix round: both honor `[database] *_db_path` overrides via
+    # `_get_custom_database_path` exactly like every accessor above, so an
+    # override that relocates either DB outside `get_user_data_dir()` was
+    # previously invisible to this enumeration (only the RULE below catches
+    # a DB at its *default* location). Were previously missing here even
+    # though `config.py` has carried both accessors since before this file's
+    # own docstring named "eval/RAG-indexing ... DBs" as examples of state
+    # this module means to cover.
+    "get_evals_db_path",
+    "get_rag_indexing_db_path",
 )
 
 #: Suffixes SQLite appends to a database's own filename for its sidecar

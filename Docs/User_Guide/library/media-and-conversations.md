@@ -27,17 +27,27 @@ Both list canvases follow the same shape, top to bottom:
   "Conversations (3)" — task-2859: Conversations previously had no
   heading at all, so its top row read as bare "Export…"/"Select" with
   nothing naming the canvas), plus "Export…" and "Select". Media adds a
-  cycling "type: All ⇄" filter right after the heading; Conversations
-  instead has a "Filter conversations… (Enter)" text box, which now
-  renders above the empty-state text (task-2859: it used to sit below
-  "No conversations yet.", reading as an afterthought).
+  "type: All" chooser right after the heading (press it to open a one-row
+  strip of every type — ✓ marks the active one — and pick directly) and a
+  "Trash" action (the browsable Trash view — see "Media Trash" below);
+  Conversations instead has a "Filter conversations… (Enter)" text box,
+  which now renders above the empty-state text (task-2859: it used to sit
+  below "No conversations yet.", reading as an afterthought).
 - **Row list** — one two-line row per item: the title with a **▸** marker,
   then a dimmer second line (Media: type and age; Conversations:
   "3 messages - 4h"). Hovering a row shows its full title as a tooltip.
-- **Preview block** — appears under the list once a row is selected: a few
-  summary lines plus one action ("Open in viewer" for media, "Open in
-  Console" for conversations). Hidden in Media while Select mode is active
-  (see below) — it never shows an item outside the current selection.
+- **Preview block** — a few summary lines plus one action ("Open in
+  viewer" for media, "Open in Console" for conversations). On a wide
+  terminal the **Media** list shows it **beside** the row list — list on
+  the left, preview on the right, each half scrolling on its own — the
+  same split shape as the Collections workbench; below the Library's one
+  width breakpoint (the same crossing that compacts Notes) it returns to
+  the stacked under-the-list flow. Hidden in Media while Select mode is
+  active (see below) — it never shows an item outside the current
+  selection; in the wide split the right half then says "No preview in
+  Select mode." instead of sitting blank. Conversations keeps the stacked
+  shape at every width, and the Trash view and media viewer are single
+  surfaces that always use the full canvas width.
 
 Opening a media item swaps the list for the **media viewer** (pictured
 above): "‹ Back to list", the title, metadata lines, then the "Content",
@@ -70,8 +80,8 @@ above): "‹ Back to list", the title, metadata lines, then the "Content",
 **Media's "Delete selected"** (Media only — Conversations has no delete;
 see its own row below) is a second bulk action next to "Export selected".
 Pressing it swaps the strip for a confirmation naming the count — "Delete N
-selected items? You can undo right away — there's no Trash view to browse
-later." — with "Delete" / "Cancel", the same in-place armed-button pattern
+selected items? You can undo right away, or restore later from Trash." —
+with "Delete" / "Cancel", the same in-place armed-button pattern
 as the media viewer's own single-item "Delete" (never a popup modal).
 Confirming moves every checked item to trash (the same soft-delete the
 viewer's Delete uses) and updates the list and the rail's "Media N" count
@@ -81,22 +91,50 @@ the confirmation is showing, so the count you confirm is always the count
 that gets deleted.
 
 A successful delete leaves a receipt in the same spot — "✓ deleted · N
-items" with "Undo" and "Dismiss" — until you act on it or start another
-bulk delete. "Undo" restores every item the receipt names (or just the
-ones still outstanding, if a prior undo partially failed); "Dismiss" clears
-the receipt without restoring anything. There is no persistent Trash view
-to browse later — restoring an item you've dismissed, or deleted in an
-earlier session, means re-importing the same file from
-[Import & export](import-and-export.md): it now restores the item instead
-of refusing, whereas before it silently reported the file as already in
-your Library with no way back.
+items · in Trash" with "Undo" and "Dismiss" — until you act on it or start
+another delete. The viewer's single-item "Delete" leaves the same receipt
+("✓ deleted · 1 item · in Trash") in the list it returns you to — single
+and bulk delete share one undo story. "Undo" restores every item the
+receipt names (or just the ones still outstanding, if a prior undo
+partially failed); "Dismiss" clears the receipt without restoring anything.
+"Undo" is the at-point convenience; the durable way back is the **Trash
+view** the receipt points at (see "Media Trash" below), which lists every
+deleted item — including ones from earlier sessions — and restores them
+per item. (Re-importing the same file from
+[Import & export](import-and-export.md) also still restores a trashed
+match instead of refusing.)
+
+### Media Trash
+
+Press **"Trash"** on the Media toolbar to swap the list for the Trash
+view: "‹ Media" (back), a "Trash (N)" heading, and one two-line row per
+deleted item — the title, then a dim "type · trashed 2h" line saying when
+it was deleted, newest first. Press a row to select it (the **▸** marker
+moves), then **"Restore"** to put it back: the row leaves the Trash, the
+rail's "Media N" count goes up in place, a "Restored 'Title'." line
+confirms it, and the item is back in the media list (and in search
+results) exactly as it was — restore never rewrites the item. "‹ Media" or
+Escape returns to the list.
+
+Notes on the edges: with nothing deleted the view says "Trash is empty.
+Items you delete from Media land here." and "Restore" reads "○ Restore"
+with a reason tooltip; if the trash holds more items than one fetch page,
+a status line says "showing X of N" honestly. Entering Trash clears any
+"✓ deleted…" receipt still showing on the list — the Trash view is the
+durable path that receipt pointed at. Trashed items are **excluded from
+search** (Library search and RAG keyword retrieval both skip them) until
+restored.
+There is no permanent-delete or empty-trash action here yet — restoring is
+the only operation, and nothing is ever removed from the Trash except by
+restoring it.
 
 ### Media list
 
 | Control | What it does |
 |---|---|
-| "type: All ⇄" | Cycles through All plus each media type present in your Library (the tooltip lists the full cycle). While filtered, a status line reads "2 of 5 · type: pdf". |
+| "type: All" | Opens a one-row strip of All plus each media type present in your Library, ✓ on the active one — pick a type directly, press Escape (or pick the current one) to cancel. While filtered, a status line reads "2 of 5 · type: pdf". |
 | "Export…" / "Select" | The shared grammar above; Export… is scoped to the active type filter. |
+| "Trash" | Opens the Trash view — every deleted media item, restorable per item (see "Media Trash" above). Hidden while selecting, like "Export…". |
 | Row press | Selects the row and shows the preview (title, "Type: …", "Updated: …"). |
 | "Open in viewer" | Opens the selected item in the media viewer. |
 
@@ -141,7 +179,7 @@ of type 'pdf'."
 | "Use in Console" | Stages this item as context for your next Console message. |
 | "Read it later" ↔ "Remove from read-it-later" | Toggles the item on your read-it-later list. |
 | "Open in Library ▸ Media" | Returns to Library's own Media surface (the separate Media screen was retired). |
-| "Delete" | Two-step: shows "Delete this media? Re-import the same file later to bring it back — there's no Trash view to browse." with "Delete" / "Cancel". Confirming trashes the item, returns to the list, and drops the rail's "Media N" count by one immediately, the same as the list's own "Delete selected". Unlike the list's bulk delete, there's no in-place Undo here — the way back is re-importing the same file. |
+| "Delete" | Two-step: shows "Delete this media? You can undo right away, or restore later from Trash." with "Delete" / "Cancel". Confirming trashes the item, returns to the list, and drops the rail's "Media N" count by one immediately, the same as the list's own "Delete selected". The list you land on shows the same receipt as a bulk delete — "✓ deleted · 1 item · in Trash" with "Undo" / "Dismiss" — "Undo" restores in place, and the Trash view holds the item for later either way. |
 
 ### Conversations
 
@@ -166,9 +204,11 @@ conversation rail instead; that one resumes sessions, this one quotes them.
 ## Common tasks
 
 ### Filter media by type
-1. In **Media**, click "type: All ⇄" — each press cycles to the next type.
-2. The list narrows and the status line reads e.g. "2 of 5 · type: pdf".
-   Cycle back around to "type: All ⇄" to clear.
+1. In **Media**, click "type: All" — a one-row strip of every type appears
+   in place of the toolbar, with ✓ on the active one.
+2. Click the type you want. The list narrows and the status line reads
+   e.g. "2 of 5 · type: pdf". Pick "All" the same way to clear, or press
+   Escape to close the strip without changing anything.
 
 ### Open a media item and search inside it
 1. Click a row, then "Open in viewer".
@@ -193,6 +233,13 @@ conversation rail instead; that one resumes sessions, this one quotes them.
    whole visible list), then "Export selected".
 2. The "Export bundle (.zip)" form opens — name, destination, and options
    are covered in [import & export](import-and-export.md).
+
+### Recover something you deleted last week
+1. In **Media**, click "Trash" on the toolbar.
+2. Find the item ("Trash (N)" lists everything deleted, newest first, each
+   row saying "type · trashed 3d"), press its row, then "Restore".
+3. "Restored 'Title'." confirms it; "‹ Media" (or Escape) takes you back to
+   the list, where the item — and the rail's "Media N" count — are back.
 
 ### Delete selected media items
 1. In **Media**, click "Select", check the rows you want to remove.
@@ -303,3 +350,28 @@ terminals instead of the old 17-character cut; the viewer's metadata says
 "Type: markdown (stored as plaintext)" for items it renders as markdown;
 and Export… now remembers where you came from — Escape on the Export
 canvas returns to this canvas.)*
+*Verified against feat/library-queue-batch @ a899cbf6a — 2026-08-11
+(task-14901 / ADR-055: the viewer's single-item "Delete" now leaves the
+same "✓ deleted · 1 item" receipt with Undo/Dismiss as "Delete selected" —
+single delete is one-item bulk, sharing the bulk path's undo and its
+in-flight interlock — and its confirm copy promises the undo instead of
+pointing at re-import.)*
+*Verified against feat/library-queue-batch @ db733c62b — 2026-08-11
+(task-4025: the browsable Media Trash view described above — the "Trash"
+toolbar action, per-item Restore through the existing restore seam, both
+delete confirm copies and the receipt re-pointed at Trash per ADR-055
+Pattern A, and the explicit search decision: trashed items stay out of
+Library search and RAG retrieval until restored.)*
+*Verified against feat/library-queue-batch @ 345da0422 — 2026-08-11
+(task-14900: the Media list's wide side-by-side list | preview split
+described in the layout tour — live at 170/121 cols, back to the stacked
+flow at 119/100, keyboard traversal, Select mode and the bulk toolbar
+checked in both layouts, "No preview in Select mode." placeholder wide
+only.)*
+*Verified against feat/library-queue-batch @ 0662e09f5 — 2026-08-11
+(task-14902: the type filter converged on the Notes Sort chooser pattern —
+pressing "type: All" swaps the toolbar for a one-row strip of every type
+with ✓ on the active one; a pick applies directly (no more press-to-cycle),
+Escape cancels and refocuses the opener, and the footer/F1 read
+"enter choose type / esc cancel" while the strip is open. Checked live in
+both the wide side-by-side and stacked layouts, mouse and keyboard-only.)*

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 import re
 import unicodedata
 
@@ -16,6 +17,36 @@ from tldw_chatbook.Chat.message_metadata import MessageMetadata
 
 
 CHAT_DISPLAY_NAME_MAX_CELLS = 48
+
+
+class ConsoleTranscriptStyle(str, Enum):
+    """Closed vocabulary for Console transcript role coloring."""
+
+    NEUTRAL = "neutral"
+    ROLE_ACCENTS = "role_accents"
+    IMMERSIVE_RP = "immersive_rp"
+
+
+DEFAULT_CONSOLE_TRANSCRIPT_STYLE = ConsoleTranscriptStyle.ROLE_ACCENTS
+
+
+def normalize_console_transcript_style(value: object) -> ConsoleTranscriptStyle:
+    """Return a supported transcript style with the expressive safe default.
+
+    Args:
+        value: Candidate enum member or string-like transcript style value.
+
+    Returns:
+        The matching transcript style, or the default role-accent style when
+        the candidate is unsupported or blank.
+    """
+
+    if isinstance(value, ConsoleTranscriptStyle):
+        return value
+    try:
+        return ConsoleTranscriptStyle(str(value or "").strip().lower())
+    except ValueError:
+        return DEFAULT_CONSOLE_TRANSCRIPT_STYLE
 
 
 class ChatDisplayNameError(ValueError):
@@ -90,6 +121,7 @@ class ConsolePresentationContext:
     assistant_kind: str | None = "generic"
     character_name: str | None = None
     revision: int = 0
+    transcript_style: ConsoleTranscriptStyle = DEFAULT_CONSOLE_TRANSCRIPT_STYLE
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +131,8 @@ class ConsoleMessagePresentation:
     speaker_label: str
     content: str
     row_class: str | None
+    speaker_tone: str | None
+    transcript_style: ConsoleTranscriptStyle
     revision_token: tuple[object, ...]
 
 
@@ -114,22 +148,30 @@ def resolve_console_message_presentation(
     is_character_session = (
         context.assistant_kind == "character" and bool(character_name)
     )
+    transcript_style = normalize_console_transcript_style(context.transcript_style)
+    role_accents = transcript_style is not ConsoleTranscriptStyle.NEUTRAL
     content = message.variants.current.content if message.variants else message.content
 
     if message.role is ConsoleMessageRole.USER:
         speaker_label = context.user_name
-        row_class = (
-            "console-transcript-message-roleplay-user"
-            if is_character_session
-            else None
-        )
+        speaker_tone = "user"
+        row_class = None
+        if role_accents:
+            row_class = (
+                "console-transcript-message-roleplay-user"
+                if is_character_session
+                else "console-transcript-message-role-user"
+            )
     elif message.role is ConsoleMessageRole.ASSISTANT:
         speaker_label = character_name if is_character_session else "Assistant"
-        row_class = (
-            "console-transcript-message-roleplay-character"
-            if is_character_session
-            else None
-        )
+        speaker_tone = "character" if is_character_session else "assistant"
+        row_class = None
+        if role_accents:
+            row_class = (
+                "console-transcript-message-roleplay-character"
+                if is_character_session
+                else "console-transcript-message-role-assistant"
+            )
         metadata: MessageMetadata | None = message.metadata
         template_source = getattr(metadata, "template_source", "")
         if (
@@ -146,11 +188,21 @@ def resolve_console_message_presentation(
     else:
         speaker_label = message.role.value.title()
         row_class = None
+        speaker_tone = None
 
-    revision_token = (speaker_label, content, row_class, context.revision)
+    revision_token = (
+        speaker_label,
+        content,
+        row_class,
+        speaker_tone,
+        transcript_style.value,
+        context.revision,
+    )
     return ConsoleMessagePresentation(
         speaker_label=speaker_label,
         content=content,
         row_class=row_class,
+        speaker_tone=speaker_tone,
+        transcript_style=transcript_style,
         revision_token=revision_token,
     )

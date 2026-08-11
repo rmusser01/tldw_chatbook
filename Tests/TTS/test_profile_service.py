@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import inspect
+import struct
 import traceback
 from collections.abc import Callable, Coroutine, Iterable, Iterator, Sequence
 from dataclasses import FrozenInstanceError, fields
@@ -21,6 +22,8 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSNativeCapabilitySnapshot,
     TTSProviderCatalog,
     TTSVoiceDiscoveryResult,
+    TTSCloneGenerationEvidence,
+    _TTS_CLONE_GENERATION_EVIDENCE_TOKEN,
 )
 from tldw_chatbook.TTS.playground_types import (
     STTSGeneratedAudio,
@@ -44,6 +47,7 @@ from tldw_chatbook.TTS.profile_service import (
     TTSProfileService,
 )
 from tldw_chatbook.TTS.profile_reference_types import (
+    CanonicalTTSCloneReference,
     TTSCloneReference,
     TTSCloneReferenceSummary,
 )
@@ -447,18 +451,20 @@ def _hostile_capability_snapshot(
 def _artifact(
     *,
     selection: TTSRequestedSelectionSnapshot | None = None,
+    clone_evidence: TTSCloneGenerationEvidence | None = None,
 ) -> STTSGeneratedAudio:
     return STTSGeneratedAudio(
         path=Path("/private/secret/result.wav"),
-        provider_id="legacy-response-provider",
-        model_id="mutable-response-model",
-        voice_id="mutable-response-voice",
+        provider_id=("audio_cpp" if clone_evidence is not None else "legacy-response-provider"),
+        model_id=("selected-model" if clone_evidence is not None else "mutable-response-model"),
+        voice_id=("selected-voice" if clone_evidence is not None else "mutable-response-voice"),
         source_text="private submitted text",
         operation_id="operation",
-        audio_format="mp3",
+        audio_format=("wav" if clone_evidence is not None else "mp3"),
         content_type="secret/content-type",
         metadata={"endpoint": "https://user:credential@example.test"},
         requested_selection=selection,
+        clone_evidence=clone_evidence,
     )
 
 
@@ -479,6 +485,46 @@ def _selection(
         speed=speed,
         options={},
         configuration_revision=configuration_revision,
+    )
+
+
+def _clone_canonical() -> CanonicalTTSCloneReference:
+    frames = 32
+    sample_rate = 16_000
+    pcm = struct.pack("<h", 3) * frames
+    fmt = struct.pack("<HHIIHH", 1, 1, sample_rate, sample_rate * 2, 2, 16)
+    body = (
+        b"WAVE"
+        + b"fmt "
+        + struct.pack("<I", len(fmt))
+        + fmt
+        + b"data"
+        + struct.pack("<I", len(pcm))
+        + pcm
+    )
+    wav = b"RIFF" + struct.pack("<I", len(body)) + body
+    return CanonicalTTSCloneReference(
+        wav_bytes=wav,
+        reference_text="Private reference transcript",
+        sha256=hashlib.sha256(wav).hexdigest(),
+        byte_length=len(wav),
+        duration_ms=2,
+        sample_rate_hz=sample_rate,
+        channels=1,
+        sample_encoding="pcm_s16le",
+    )
+
+
+def _clone_evidence() -> TTSCloneGenerationEvidence:
+    return TTSCloneGenerationEvidence(
+        _TTS_CLONE_GENERATION_EVIDENCE_TOKEN,
+        canonical_reference=_clone_canonical(),
+        model_id="selected-model",
+        recipe_id="pocket_tts",
+        recipe_revision=1,
+        provider_configuration_revision=3,
+        applied_provider_generation=2,
+        process_generation=7,
     )
 
 
@@ -504,6 +550,7 @@ class _FakeRepository:
         self.coordinator_active_at_repository_calls: list[bool] = []
         self.list_result: object = _UNSET
         self.create_result: object = _UNSET
+        self.create_with_reference_result: object = _UNSET
         self.update_result: object = _UNSET
         self.delete_result: object = _UNSET
         self.set_result: object = _UNSET
@@ -567,6 +614,50 @@ class _FakeRepository:
             response_format=draft.response_format,
             speed=draft.speed,
             options=dict(draft.options),
+        )
+        return ProfileStoreResult(generation=self.generation, value=persisted)
+
+    async def create_profile_with_reference(
+        self,
+        draft: TTSProfileDraft,
+        profile_id: UUID,
+        canonical: CanonicalTTSCloneReference,
+        *,
+        expected_generation: int,
+    ) -> ProfileStoreResult[TTSGenerationProfile]:
+        self._record_coordinator_state()
+        self.calls.append(
+            (
+                "create_with_reference",
+                (draft, profile_id, canonical, expected_generation, self.generation),
+            )
+        )
+        if self.create_with_reference_result is not _UNSET:
+            return cast(
+                ProfileStoreResult[TTSGenerationProfile],
+                self.create_with_reference_result,
+            )
+        summary = TTSCloneReferenceSummary(
+            reference_id=UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+            byte_length=canonical.byte_length,
+            duration_ms=canonical.duration_ms,
+            sample_rate_hz=canonical.sample_rate_hz,
+            channels=canonical.channels,
+            sample_encoding=canonical.sample_encoding,
+            created_at=_CREATED_AT,
+            updated_at=_CREATED_AT,
+        )
+        persisted = _profile(
+            profile_id=profile_id,
+            display_name=draft.display_name,
+            provider_id=draft.provider_id,
+            model_id=draft.model_id,
+            voice_id=draft.voice_id,
+            response_format=draft.response_format,
+            speed=draft.speed,
+            options=dict(draft.options),
+            revision=2,
+            reference=summary,
         )
         return ProfileStoreResult(generation=self.generation, value=persisted)
 
@@ -1923,6 +2014,69 @@ async def test_create_from_artifact_uses_only_immutable_requested_selection() ->
     assert loaded.profile.voice_id == "selected-voice"
     assert loaded.profile.provider_id != "legacy-response-provider"
     assert repository.coordinator_active_at_repository_calls == [False]
+
+
+@pytest.mark.asyncio
+async def test_create_clone_from_artifact_uses_exact_success_evidence_atomically() -> None:
+    service, repository, tts_service = _service()
+    selection = _selection()
+    evidence = _clone_evidence()
+    artifact = _artifact(selection=selection, clone_evidence=evidence)
+
+    loaded = await service.create_clone_from_artifact(" Clone voice ", artifact)
+
+    assert tts_service.revision_decisions == [("audio_cpp", 3)]
+    assert len(repository.calls) == 1
+    call_name, call_value = repository.calls[0]
+    assert call_name == "create_with_reference"
+    draft, profile_id, canonical, expected_generation, generation_at_call = call_value  # type: ignore[misc]
+    assert draft == TTSProfileDraft(
+        display_name="Clone voice",
+        provider_id="audio_cpp",
+        model_id="selected-model",
+        voice_id="selected-voice",
+        response_format="wav",
+        speed=1.0,
+        options={},
+    )
+    assert type(profile_id) is UUID
+    assert canonical == evidence.canonical_reference
+    assert expected_generation == 7
+    assert generation_at_call == 7
+    assert loaded.repository_generation == 7
+    assert loaded.profile.revision == 2
+    assert loaded.profile.reference is not None
+
+
+@pytest.mark.asyncio
+async def test_create_clone_from_artifact_rejects_missing_or_mismatched_evidence() -> None:
+    service, repository, tts_service = _service()
+    selection = _selection()
+
+    with pytest.raises(ProfileServiceError) as missing:
+        await service.create_clone_from_artifact(
+            "Clone voice",
+            _artifact(selection=selection),
+        )
+    _assert_safe_service_error(missing.value, "artifact_ineligible")
+
+    mismatched = TTSRequestedSelectionSnapshot(
+        provider_id="audio_cpp",
+        model_id="other-model",
+        voice_id="selected-voice",
+        response_format="wav",
+        speed=1.0,
+        options={},
+        configuration_revision=3,
+    )
+    with pytest.raises(ProfileServiceError) as mismatch:
+        await service.create_clone_from_artifact(
+            "Clone voice",
+            _artifact(selection=mismatched, clone_evidence=_clone_evidence()),
+        )
+    _assert_safe_service_error(mismatch.value, "artifact_ineligible")
+    assert repository.calls == []
+    assert tts_service.revision_decisions == []
 
 
 @pytest.mark.asyncio
@@ -4597,6 +4751,61 @@ def test_preview_preset_copies_only_persisted_selection_and_availability() -> No
     assert tts_service.capability_calls == []
     assert tts_service.revision_decisions == []
     assert not hasattr(tts_service, "synthesis_calls")
+
+
+def test_reference_profile_preview_carries_only_exact_repository_identity() -> None:
+    service, repository, tts_service = _service()
+    reference = _reference()
+    loaded = LoadedTTSProfile(
+        repository_generation=repository.generation,
+        profile=_profile(reference=reference.summary, revision=4),
+    )
+    availability = TTSProfileAvailability(
+        profile_id=loaded.profile.profile_id,
+        state="available",
+        recovery_action="none",
+    )
+
+    preset = service.preview_preset(loaded, availability)
+
+    assert preset.profile_id == loaded.profile.profile_id
+    assert preset.repository_generation == loaded.repository_generation
+    assert preset.profile_revision == loaded.profile.revision
+    assert not hasattr(preset, "reference")
+    assert not hasattr(preset, "wav_bytes")
+    assert not hasattr(preset, "reference_text")
+    assert not hasattr(preset, "source_path")
+    rendered = repr(preset)
+    assert reference.reference_text not in rendered
+    assert reference.sha256 not in rendered
+    assert reference.wav_bytes.decode() not in rendered
+    assert repository.calls == []
+    assert tts_service.capability_calls == []
+
+
+def test_reference_preview_identity_is_all_or_none_and_exactly_typed() -> None:
+    values: dict[str, object] = {
+        "provider_id": "audio_cpp",
+        "model_id": "model-a",
+        "voice_id": None,
+        "response_format": "wav",
+        "speed": 1.0,
+        "options": {},
+        "availability": "available",
+    }
+
+    with pytest.raises(ValueError, match="preview identity"):
+        TTSPlaygroundSelectionPreset(
+            **values,  # type: ignore[arg-type]
+            profile_id=_PROFILE_ID,
+        )
+    with pytest.raises(TypeError, match="repository_generation"):
+        TTSPlaygroundSelectionPreset(
+            **values,  # type: ignore[arg-type]
+            profile_id=_PROFILE_ID,
+            repository_generation=True,  # type: ignore[arg-type]
+            profile_revision=1,
+        )
 
 
 def test_preview_preset_forces_unsupported_profile_unavailable_before_enrichment() -> (

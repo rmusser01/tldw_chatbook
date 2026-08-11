@@ -165,17 +165,23 @@ async def test_console_memory_controls_mount_stage_and_fit_narrow_settings() -> 
 
         trigger = screen.query_one("#settings-console-context-trigger-percent", Input)
         mode = screen.query_one("#settings-console-context-compaction-mode", Select)
+        representation = screen.query_one(
+            "#settings-console-context-compaction-representation", Select
+        )
         assert _static_text(
             trigger.parent.query_one(".settings-input-label", Static)
-        ) == "Summarize at (%)"
+        ) == "Compact at (%)"
         assert _static_text(
             mode.parent.query_one(".settings-input-label", Static)
         ) == "When limit nears"
+        assert _static_text(
+            representation.parent.query_one(".settings-input-label", Static)
+        ) == "Representation"
         advanced_labels = {
             "#settings-console-context-target-percent": "Reduce conversation to (%)",
             "#settings-console-context-summary-max-tokens": "Summary response max",
-            "#settings-console-context-failure-behavior": "If summary fails",
-            "#settings-console-context-carry-forward-mode": "Keep after summary",
+            "#settings-console-context-failure-behavior": "If compaction fails",
+            "#settings-console-context-carry-forward-mode": "Keep after compaction",
         }
         for selector, expected in advanced_labels.items():
             control = screen.query_one(selector)
@@ -184,11 +190,13 @@ async def test_console_memory_controls_mount_stage_and_fit_narrow_settings() -> 
             ) == expected
         trigger.value = "85"
         mode.value = "automatic"
+        representation.value = "hybrid"
         await pilot.pause()
 
         draft = screen._settings_drafts[SettingsCategoryId.CONSOLE_BEHAVIOR]
         assert draft.values["compaction_trigger_ratio"] == 0.85
         assert draft.values["compaction_mode"] == "automatic"
+        assert draft.values["compaction_representation"] == "hybrid"
         safety = screen.query_one("#settings-console-context-safety-copy", Static)
         assert "extra model call" in _static_text(safety)
         assert "remain stored" in _static_text(safety)
@@ -256,6 +264,9 @@ async def test_console_memory_save_routes_normalized_values_to_console_section()
             screen.query_one(
                 "#settings-console-context-compaction-mode", Select
             ).value = "automatic"
+            screen.query_one(
+                "#settings-console-context-compaction-representation", Select
+            ).value = "visual_transcript"
             await pilot.pause()
             screen.action_settings_save_category(allow_text_entry_focus=True)
 
@@ -264,6 +275,7 @@ async def test_console_memory_save_routes_normalized_values_to_console_section()
     assert console_values["conversation_budget_mode"] == "custom"
     assert console_values["conversation_budget_tokens"] == 64000
     assert console_values["compaction_mode"] == "automatic"
+    assert console_values["compaction_representation"] == "visual_transcript"
     assert chat_defaults == {}
 
 

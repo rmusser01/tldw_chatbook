@@ -9,7 +9,34 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
-## A shutdown lease counter can stop seeing work before ownership ends
+## A fix proven at one layer can be unreachable through the product path
+
+**TASK-15420, 2026-08-11.** TASK-2260 (2026-08-04) shipped custom-endpoint
+model/voice passthrough in `OpenAITTSBackend`, pinned by mutation-verified
+backend tests and a real-socket keyless server test, and its user guide was
+live-verified — by varying the *voice*. The Console speak path, however, had
+been rerouted through the request-admission layer (2026-07-26), whose
+`resolve_legacy_route` allowlist rejected every non-official OpenAI *model id*
+before the backend was even constructed. The documented flow (exact custom
+model name) failed on every Console speak for weeks while all ~2,900 TTS-area
+tests stayed green: the tests proved the backend layer, the live check varied
+the one axis the upstream layer did not constrain, and nothing exercised the
+full admitted path with a custom model. Found only by end-to-end UAT driving
+the real TUI against a request-recording mock server.
+
+Sub-trap from the same session: `TTSAudioResponse.byte_stream` is lazy — a
+probe that calls `synthesize_default` and prints the response "succeeding"
+proves nothing, because the HTTP request only fires when the stream is
+consumed. The first counterfactual probe "passed" with zero requests at the
+server; only draining the stream produced the real request.
+
+**What to do.** A regression test for a passthrough/compatibility contract
+must enter at the outermost admitted path (here: `synthesize_default` down to
+the adapter), not the layer that was fixed — any layer added above the fix
+inherits the chance to re-impose the constraint. When live-verifying, vary the
+axis the bug is about (the model, not just the voice). And never trust a
+lazy-stream API's return value as evidence of I/O — consume it and assert at
+the far end (the recording server).
 
 **TASK-13204, 2026-08-10.** A clone-shutdown regression initially asserted
 `TTSAdapterRegistry._total_leases()` while the provider was past its bounded
@@ -205,6 +232,24 @@ and failed until the update called `refresh(layout=True)`.
 rendered region after refresh, not just its value. For dynamic Button labels,
 request a layout refresh and assert that `region.width` can contain the visible
 label; a correct reactive value does not prove that layout was recomputed.
+
+---
+
+## Test embedded panes at their allocated width, not the terminal width
+
+**TASK-13205, 2026-08-11.** The Speech Lab clone-result geometry regression
+mounted the pane in a 134-column Pilot viewport and proved every action was
+inside the split. Live UAT still clipped **Save as Voice Profile**: the real
+screen reserves a catalog rail, leaving the pane about 100 cells. At that width
+the managed provenance wraps onto an extra row and the last action began one
+row below the split. Re-running the same containment assertion at the pane's
+actual allocated width reproduced the failure and justified a one-row minimum
+height correction.
+
+**What to do.** For a pane embedded beside a fixed or responsive rail, test the
+pane at the width its parent actually allocates, including the wrapping-heavy
+state. A terminal-size test can be truthful for a standalone harness and still
+miss clipping caused by the production parent layout.
 
 ---
 
@@ -2605,3 +2650,109 @@ what a suite would do against a live endpoint, do not reason about it: **bind a 
 server on the port and read what it receives.** Recording connects tells you a socket
 opened; recording requests tells you the verb, the path and the body — which is the
 difference between "reads something" and "writes to your server".
+
+---
+
+## A capability decision is only as pinned as the final adapter kwargs (2026-08-11)
+
+**The trap.** Checking a resolved provider/model/endpoint and then attaching a
+provider-specific request feature does not prove that the checked endpoint is the one the
+adapter will call. A lower layer may reload configuration or fall back to its own endpoint
+after the capability decision has already been made.
+
+**What happened.** task-15263 added strict JSON Schema enforcement for the visual
+compaction evaluator's documented OpenAI GPT-4o routes. The initial implementation checked
+`ConsoleProviderResolution.base_url`, but the prepared-request dispatcher did not forward
+OpenAI's resolved base URL; `chat_with_openai` could therefore reload a configured endpoint
+later. The report could have claimed `provider_json_schema` based on the official endpoint
+while the final call went to a custom OpenAI-compatible proxy. Self-review caught the gap
+before the PR. The evaluator-only prepared request now pins the checked endpoint into the
+final adapter kwargs, and a test asserts both the immutable response format and exact
+`api_base_url`. A mutation that removed the endpoint guard made the custom-proxy case fail.
+
+**What to do.** For provider capability gates, test the final dispatched kwargs, not only
+the resolver result or an intermediate request object. If a lower adapter can reload config,
+make the capability-bearing request pin the checked endpoint (without changing unrelated
+callers), and mutation-test the unsupported route so fallback labeling cannot silently
+become an unsupported capability claim.
+
+## A race a live replay cannot trigger is often a STATE you can construct deterministically (TASK-14903, 2026-08-10)
+
+**Incident.** A live click killed the whole app once — `AttributeError:
+'NoneType' object has no attribute 'region'` inside Textual's
+`Screen._forward_event` text-selection begin, ~1s after a terminal resize.
+THREE live replay attempts (same screen, same resize, same click) never
+triggered it again, and the originating task shipped with the crash merely
+noted. Task-14903 reproduced it 100% deterministically on the first attempt —
+not by replaying the timing, but by reading the framework source to name the
+intermediate state the race passes through (widget pruned from the DOM, parent
+already `None`, compositor's cached map not yet reflowed) and then
+constructing that state directly at the seam: `await widget.remove()` with no
+subsequent pause (prune complete, reflow pending), then the MouseDown driven
+through `App.on_event`, the exact call the live crash traversed. The
+"irreproducible" race was a two-line setup once expressed as a state instead
+of a schedule.
+
+**What to do.** When a race defies replay, stop replaying. Read the code that
+crashed until you can name the exact intermediate state the timing window
+produces (here: three facts — `parent is None`, stale compositor map, event
+dispatched between them), then build THAT state through the narrowest public
+seams available and drive the same entry point the production path uses. A
+reproduction that constructs the state is strictly better than one that races
+the clock: it is deterministic, it documents the mechanism in its
+preconditions (each setup line asserts one fact of the attribution), and it
+pins the upstream behavior — if a dependency bump fixes the bug, the
+state-construction test fails loudly and tells you the workaround can be
+retired, which no timing-based replay could ever do.
+## Moving a config read onto the app-config snapshot silently DEFAULTS it in every `_build_test_app` test — including passing ones (TASK-15210, 2026-08-11)
+
+`ChatScreen._maybe_auto_retrieve_for_send` used to read the auto-RAG toggle live via
+`get_cli_setting("chat_defaults", "rag_auto_retrieve_on_send")`. Task-14803 (commit
+`5be9e6a04`) moved that read onto the frozen per-turn `ConsoleTurnExecutionContext`, whose
+`rag_defaults` are built from `app.app_config`. Both sources agree in the shipping app.
+They do not agree in `Tests/UI`.
+
+`Tests/UI/app_factory._build_test_app` patches `tldw_chatbook.app.load_settings` to return
+a synthetic `{"tldw_api": ..., "first_run": ...}` — **no `[chat_defaults]`, no `[console]`**.
+Production then behaves *correctly*: `_provider_readiness_app_config` only re-sources from
+`load_settings()` when the snapshot carries the `general`/`logging` markers only a real
+disk load emits, and this one does not, so it hands back the synthetic dict verbatim. Net
+effect: `save_setting_to_cli_config(...)` still writes the toggle, `get_cli_setting` still
+reads it True, and the code under test sees False.
+
+Measured, not inferred: instrumenting one mounted test printed
+`get_cli_setting=True` / `app_config chat_defaults.rag_auto_retrieve_on_send='MISSING'` /
+`resolved ctx rag_defaults={'auto_retrieve_on_send': False, ...}` in the same run. The live
+app assigns `self.app_config = load_settings()` (app.py), whose result carries both the
+toggle and both markers — so the shipping path was fine and only the harness was blind.
+
+**The part that cost the most.** One test went red and was triaged. Its sibling,
+`test_send_proceeds_when_auto_retrieve_fails`, stayed GREEN — because with retrieval never
+firing, the exploding backend it installs is never called and the test degenerates into
+"an ordinary send works". A moved read does not announce itself by failing; it can just as
+easily hollow out a passing test, and nothing in a green run points at it.
+
+**What to do.** When you move a read from a live settings accessor onto a snapshot,
+grep the tests that *enable* that setting and check they enable it through the new source —
+a `save_setting_to_cli_config` + `_build_test_app` pair no longer reaches the code. Give
+the mounted test the app's real shape (`app.app_config = load_settings()`, exactly what
+`app.py` does) rather than teaching the product to fall back. And any test whose subject is
+"X still works when Y fails" should assert **that Y was actually attempted** — here,
+`exploding_search.await_count == 1` — or it cannot tell "handled" from "never happened".
+
+## Textual component CSS must be proven on the concrete widget class (TASK-1990.1, 2026-08-11)
+
+**Incident.** TASK-1990.1 extended Textual's Markdown block classes through a
+Python mixin and declared the new inline component names on that mixin. Pure
+parser tests passed because the expected component spans were present, and the
+TCSS bundle compiled, but a real compositor test painted narration, speech,
+action, and emphasis identically. Textual's class construction had populated
+the concrete block's internal component registry before the ordinary mixin
+attribute could affect it; type-oriented TCSS also needed a stable class hook
+because the rendered blocks were concrete subclasses.
+
+**What to do.** When adding Textual component styles through subclasses, declare
+`COMPONENT_CLASSES` on every concrete widget class and give the widget a stable
+CSS class selector. Then verify both `get_component_rich_style()` and final
+compositor segments. Span-level or stylesheet-compilation tests alone do not
+prove that Textual registered or painted a component.

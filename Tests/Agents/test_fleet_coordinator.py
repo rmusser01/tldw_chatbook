@@ -106,6 +106,37 @@ def test_concurrent_reserve_never_exceeds_cap():
     assert c.live_count() == 5
 
 
+def test_finish_records_total_tokens():
+    """PR2b Task 5 (cost rollup): a handle's measured token spend is 0
+    until `finish()` records it -- a running child's spend is not final."""
+    c = _coord()
+    h = c.reserve(task="a", agent=None)
+    assert h.total_tokens == 0
+    c.finish(h.handle_id, RUN_DONE, result="answer", total_tokens=250)
+    assert c.get(h.handle_id).total_tokens == 250
+
+
+def test_finish_without_total_tokens_defaults_to_zero():
+    """Every pre-Task-5 caller of `finish()` omits `total_tokens` --
+    byte-identical behavior, not a required migration."""
+    c = _coord()
+    h = c.reserve(task="a", agent=None)
+    c.finish(h.handle_id, RUN_DONE, result="answer")
+    assert c.get(h.handle_id).total_tokens == 0
+
+
+def test_late_finish_does_not_overwrite_total_tokens():
+    """First-writer-wins covers `total_tokens` too -- a late/abandoned
+    finish must not clobber the real recorded spend with a fabricated or
+    stale later figure, mirroring `test_finish_is_idempotent_first_writer_
+    wins`'s own `result` assertion."""
+    c = _coord()
+    h = c.reserve(task="a", agent=None)
+    c.finish(h.handle_id, "cancelled", total_tokens=10)
+    c.finish(h.handle_id, RUN_DONE, result="late answer", total_tokens=999)
+    assert c.get(h.handle_id).total_tokens == 10
+
+
 def test_finish_guard_survives_a_status_outside_the_terminal_vocabulary():
     # The guard must not rely on status vocabulary membership. A handle that
     # finishes with "timeout" (not in TERMINAL_RUN_STATUSES) should reject a

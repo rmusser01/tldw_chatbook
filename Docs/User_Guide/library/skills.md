@@ -29,8 +29,9 @@ The list canvas, top to bottom:
   action button when there is something to do (both hidden while the list
   is empty). The lines and their buttons are listed under Features below.
 - **Filter** — "Filter skills… (Enter)".
-- **Toolbar** — "sort: Name ▸" / "sort: Status ▸" (Status puts
-  needs-review skills first) and "Import…".
+- **Toolbar** — "sort: Name" / "sort: Status" (press to open a one-row
+  strip of Name / Status with ✓ on the active one and pick directly;
+  Status puts needs-review skills first) and "Import…".
 - **Rows** — one per skill: **⚠ name** (blocked — needs review before use)
   or **✓ name** (usable), with a dimmer description line underneath.
 - **Empty state** — "No skills yet — use Create ▸ New skill in the rail,
@@ -83,9 +84,9 @@ SKILL.md file), **Browse folder…** (pick a skill folder), **Import**, and
 | Description | Optional; when blank: "No description set — lists show the skill's first body line automatically. Type here to set your own." |
 | Argument hint | Optional usage hint shown to invokers. |
 | Allowed tools | Input, "Allowed tools (comma-separated)". |
-| "User can invoke: yes/no ▸" | Toggle — whether `$name` works for you. |
-| "Agent can invoke: yes/no ▸" | Toggle — whether the agent may use it as a tool. |
-| "Runs in: inline (this conversation) ▸" / "Runs in: fork (sub-agent) ▸" | Toggle between running in your conversation or a sub-agent. |
+| "User can invoke: ✓ yes ⇄ no" | Toggle — whether `$name` works for you; both options are on the label with ✓ on the active one, one press flips. |
+| "Agent can invoke: ✓ yes ⇄ no" | Toggle — whether the agent may use it as a tool; same one-press shape. |
+| "Runs in: ✓ inline (this conversation) ⇄ fork" | Toggle between running in your conversation or a sub-agent (reads "Runs in: inline ⇄ ✓ fork (sub-agent)" when fork is active). |
 | Model override | Disabled: "Not used when running this skill — kept so saving doesn't lose the value." (task-2859: replaced "Not applied in v1 — shown for SKILL.md round-tripping only.", internal-version talk with no meaning to a user.) |
 | Body | The skill's instructions (the SKILL.md content). |
 | Supporting files | Read-only list ("name (N bytes)"; "No supporting files." when empty). |
@@ -214,3 +215,10 @@ through (Esc also cancels the passphrase dialogs).
 
 —
 *Verified against dev @ bd05a692a — 2026-07-31*
+
+*Verified against feat/library-queue-batch @ 0662e09f5 — 2026-08-11
+(task-14902: the list's sort control converged on the Library
+chooser-strip pattern (press → Name / Status with ✓ on the active one,
+direct pick, Escape cancels); the editor's three two-state switches stay
+one-press toggles with their full option set now on the label —
+"User can invoke: ✓ yes ⇄ no" — so the option space is on screen.)*

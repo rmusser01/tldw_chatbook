@@ -25,7 +25,10 @@ from tldw_chatbook.Chat.console_message_actions import (
     ConsoleSaveDestination,
 )
 from tldw_chatbook.Chat.console_onboarding_state import ConsoleSetupCardState
-from tldw_chatbook.Chat.console_roleplay_identity import ConsolePresentationContext
+from tldw_chatbook.Chat.console_roleplay_identity import (
+    ConsolePresentationContext,
+    ConsoleTranscriptStyle,
+)
 from tldw_chatbook.Widgets.Console.console_save_as_modal import ConsoleSaveAsModal
 from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleMarkdownMessage,
@@ -163,7 +166,7 @@ class StyledRoleplayTranscriptHarness(App):
         yield ConsoleTranscript(id="console-native-transcript")
 
 
-def test_roleplay_plain_text_uses_literal_names_and_generic_rows_stay_neutral():
+def test_roleplay_plain_text_uses_literal_names_and_generic_rows_gain_accents():
     transcript = ConsoleTranscript()
     transcript.set_presentation_context(_roleplay_context())
     transcript.set_messages(
@@ -183,13 +186,31 @@ def test_roleplay_plain_text_uses_literal_names_and_generic_rows_stay_neutral():
     transcript.set_presentation_context(
         ConsolePresentationContext(user_name="Builder", revision=2)
     )
-    generic_rows = transcript._message_widgets()
+    generic_rows = {
+        row.id: row for row in transcript._message_widgets() if row.id is not None
+    }
     assert "Builder" in transcript.to_plain_text(width=80)
     assert "Assistant" in transcript.to_plain_text(width=80)
+    assert "console-transcript-message-role-user" in generic_rows["console-message-u1"].classes
+    assert (
+        "console-transcript-message-role-assistant"
+        in generic_rows["console-message-a1"].classes
+    )
+
+    transcript.set_presentation_context(
+        ConsolePresentationContext(
+            user_name="Builder",
+            revision=3,
+            transcript_style=ConsoleTranscriptStyle.NEUTRAL,
+        )
+    )
+    neutral_rows = [
+        row for row in transcript._message_widgets() if row.id is not None
+    ]
     assert all(
-        "console-transcript-message-roleplay-user" not in row.classes
-        and "console-transcript-message-roleplay-character" not in row.classes
-        for row in generic_rows
+        "console-transcript-message-role-user" not in row.classes
+        and "console-transcript-message-role-assistant" not in row.classes
+        for row in neutral_rows
     )
 
 
@@ -373,6 +394,85 @@ async def test_roleplay_tints_and_selected_precedence_are_compositor_painted(the
         )
         assert "Captain [Rowan]" in painted_text
         assert "Alraune" in painted_text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+@pytest.mark.parametrize(
+    "transcript_style",
+    [ConsoleTranscriptStyle.ROLE_ACCENTS, ConsoleTranscriptStyle.IMMERSIVE_RP],
+)
+async def test_generic_role_accents_and_immersive_prose_are_accessibly_painted(
+    theme, transcript_style
+):
+    app = StyledRoleplayTranscriptHarness()
+    app.app_config = {"chat_defaults": {"assistant_markdown": False}}
+    async with app.run_test(size=(90, 28)) as pilot:
+        app.theme = theme
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_presentation_context(
+            ConsolePresentationContext(
+                user_name="Builder",
+                assistant_kind="generic",
+                transcript_style=transcript_style,
+            )
+        )
+        transcript.set_messages(
+            [
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.USER, content="user prose", id="gu1"
+                ),
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.ASSISTANT,
+                    content="assistant prose",
+                    id="ga1",
+                ),
+            ]
+        )
+        await transcript.refresh_messages()
+        await pilot.pause()
+
+        user_row = transcript.query_one("#console-message-gu1")
+        assistant_row = transcript.query_one("#console-message-ga1")
+        assert "console-transcript-message-role-user" in user_row.classes
+        assert "console-transcript-message-role-assistant" in assistant_row.classes
+        assert _painted_background(app, user_row) != _painted_background(
+            app, assistant_row
+        )
+
+        painted_labels = []
+        for row in (user_row, assistant_row):
+            label = row.query_one(".console-transcript-speaker-label", Static)
+            foreground, background = _painted_foreground_and_background(app, label)
+            assert _contrast(foreground, background) >= MIN_SPEAKER_CONTRAST
+            painted_labels.append(foreground)
+        assert painted_labels[0] != painted_labels[1]
+
+        immersive_class = "console-transcript-message-immersive-"
+        if transcript_style is ConsoleTranscriptStyle.IMMERSIVE_RP:
+            assert any(name.startswith(immersive_class) for name in user_row.classes)
+            assert any(
+                name.startswith(immersive_class) for name in assistant_row.classes
+            )
+            for row, label_foreground in zip(
+                (user_row, assistant_row), painted_labels, strict=True
+            ):
+                body = row.query_one(".console-transcript-message-body", Static)
+                foreground, background = _painted_foreground_and_background(app, body)
+                assert _contrast(foreground, background) >= MIN_SPEAKER_CONTRAST
+                assert foreground == label_foreground
+        else:
+            assert not any(
+                name.startswith(immersive_class)
+                for row in (user_row, assistant_row)
+                for name in row.classes
+            )
+            for row, label_foreground in zip(
+                (user_row, assistant_row), painted_labels, strict=True
+            ):
+                body = row.query_one(".console-transcript-message-body", Static)
+                foreground, _background = _painted_foreground_and_background(app, body)
+                assert foreground != label_foreground
 
 
 def _generation_message(*, variant_count: int, message_id: str = "gen-1"):
@@ -1389,6 +1489,59 @@ async def test_console_mounts_native_transcript_region():
         await _wait_for_selector(console, pilot, "#console-native-transcript")
 
         assert console.query_one("#console-native-transcript", ConsoleTranscript)
+
+
+@pytest.mark.asyncio
+async def test_mounted_console_repaints_when_transcript_style_changes():
+    app = _build_test_app()
+    app.app_config["appearance"] = {"console_transcript_style": "neutral"}
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        user = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="A quiet opening.",
+        )
+        assistant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="An amber reply.",
+        )
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, f"#console-message-{user.id}")
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        user_row = transcript.query_one(f"#console-message-{user.id}")
+        assistant_row = transcript.query_one(f"#console-message-{assistant.id}")
+        assert "console-transcript-message-role-user" not in user_row.classes
+        assert "console-transcript-message-role-assistant" not in assistant_row.classes
+
+        app.app_config["appearance"]["console_transcript_style"] = "role_accents"
+        assert console._console_transcript_style() is ConsoleTranscriptStyle.ROLE_ACCENTS
+        for _ in range(400):
+            if not console._console_sync_in_progress:
+                break
+            await pilot.pause(0.01)
+        assert console.request_console_appearance_refresh(1) is True
+        for _ in range(400):
+            user_row = transcript.query_one(f"#console-message-{user.id}")
+            assistant_row = transcript.query_one(f"#console-message-{assistant.id}")
+            if (
+                "console-transcript-message-role-user" in user_row.classes
+                and "console-transcript-message-role-assistant"
+                in assistant_row.classes
+            ):
+                break
+            await pilot.pause(0.01)
+
+        assert "console-transcript-message-role-user" in user_row.classes
+        assert "console-transcript-message-role-assistant" in assistant_row.classes
+        assert console.request_console_appearance_refresh(1) is False
 
 
 @pytest.mark.asyncio

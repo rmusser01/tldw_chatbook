@@ -14,11 +14,12 @@ from rich_pixels import Pixels
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.content import Content
+from textual.content import Content, Span
 from textual.css.query import NoMatches
 from textual.dom import NoScreen
 from textual.events import Click, Key
 from textual.message_pump import NoActiveAppError
+from textual.style import Style
 from textual.widget import Widget
 from textual.widgets import Button, Markdown, Static
 
@@ -46,6 +47,7 @@ from tldw_chatbook.Chat.console_onboarding_state import (
 from tldw_chatbook.Chat.console_roleplay_identity import (
     ConsoleMessagePresentation,
     ConsolePresentationContext,
+    ConsoleTranscriptStyle,
     resolve_console_message_presentation,
 )
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
@@ -334,6 +336,18 @@ _BOLD_STYLE = "bold #f7d774"
 _SPEECH_STYLE = "#8ecdf7"
 _ACTION_STYLE = "italic #b596d8"
 
+_CONSOLE_RP_SPEECH_COMPONENT = "console-rp-speech"
+_CONSOLE_RP_ACTION_COMPONENT = "console-rp-action"
+_CONSOLE_RP_STRONG_COMPONENT = "console-rp-strong"
+_CONSOLE_RP_COMPONENTS = frozenset(
+    {
+        _CONSOLE_RP_SPEECH_COMPONENT,
+        _CONSOLE_RP_ACTION_COMPONENT,
+        _CONSOLE_RP_STRONG_COMPONENT,
+    }
+)
+_ROLEPLAY_SPEECH_RE = re.compile(r'"[^"\n]+"|“[^”\n]+”')
+
 
 def _inline_markdown_spans(line: str) -> list:
     """Split one line into Content segments, styling inline flavor.
@@ -398,6 +412,184 @@ def _markdown_body_spans(body: str) -> list:
         else:
             segments.extend(_inline_markdown_spans(line))
     return segments
+
+
+def _roleplay_flavor_content(content: Content) -> Content:
+    """Annotate rendered Markdown text with semantic roleplay components.
+
+    Standard Markdown emphasis already supplies ``.em`` and ``.strong``
+    spans after stripping its markers. This projection adds Console-owned
+    component spans for those roles and for closed straight or curly quoted
+    speech. Inline code and links are carved out of speech ranges so their
+    existing operational styling remains authoritative. The raw Markdown
+    source is never rewritten.
+
+    Args:
+        content: Textual's literal inline rendering of one Markdown block.
+
+    Returns:
+        The same text with additional semantic component spans.
+    """
+    protected_ranges: list[tuple[int, int]] = []
+    semantic_ranges: list[tuple[int, int, str]] = []
+    for span in content.spans:
+        if span.style == ".code_inline":
+            protected_ranges.append((span.start, span.end))
+        elif isinstance(span.style, Style) and span.style.meta.get("@click"):
+            protected_ranges.append((span.start, span.end))
+        elif span.style == ".em":
+            semantic_ranges.append(
+                (span.start, span.end, _CONSOLE_RP_ACTION_COMPONENT)
+            )
+        elif span.style == ".strong":
+            semantic_ranges.append(
+                (span.start, span.end, _CONSOLE_RP_STRONG_COMPONENT)
+            )
+
+    def unprotected_ranges(start: int, end: int) -> list[tuple[int, int]]:
+        """Carve code and link spans out of one flavor range."""
+        remaining = [(start, end)]
+        for protected_start, protected_end in protected_ranges:
+            next_ranges: list[tuple[int, int]] = []
+            for range_start, range_end in remaining:
+                if protected_end <= range_start or protected_start >= range_end:
+                    next_ranges.append((range_start, range_end))
+                    continue
+                if range_start < protected_start:
+                    next_ranges.append((range_start, protected_start))
+                if protected_end < range_end:
+                    next_ranges.append((protected_end, range_end))
+            remaining = next_ranges
+        return remaining
+
+    flavor_spans: list[Span] = []
+    for match in _ROLEPLAY_SPEECH_RE.finditer(content.plain):
+        flavor_spans.extend(
+            Span(start, end, f".{_CONSOLE_RP_SPEECH_COMPONENT}")
+            for start, end in unprotected_ranges(match.start(), match.end())
+            if start < end
+        )
+    # Action / emphasis follows speech so nested Markdown emphasis retains its
+    # more specific role instead of inheriting the surrounding dialogue color.
+    for semantic_start, semantic_end, component in semantic_ranges:
+        flavor_spans.extend(
+            Span(start, end, f".{component}")
+            for start, end in unprotected_ranges(semantic_start, semantic_end)
+            if start < end
+        )
+    return content.add_spans(flavor_spans)
+
+
+class ConsoleRoleplayFlavorBlockMixin:
+    """Add roleplay component spans to an inline-capable Markdown block."""
+
+    def _token_to_content(self, token) -> Content:
+        # The compatibility resolver below proves this hook exists before any
+        # flavored block type is built. Textual type selectors match concrete
+        # widget types, so every block also receives a stable public CSS hook.
+        self.add_class("console-roleplay-markdown-block")
+        return _roleplay_flavor_content(super()._token_to_content(token))
+
+
+_ROLEPLAY_BLOCK_KEYS = (
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "paragraph_open",
+    "th_open",
+    "td_open",
+)
+
+
+def _resolve_textual_roleplay_blocks() -> dict[str, type[Widget]] | None:
+    """Resolve the Textual block API required for roleplay annotations.
+
+    Returns:
+        The required block classes when their component registry and inline
+        conversion hook are compatible, otherwise ``None``. Returning
+        ``None`` keeps app startup safe across future Textual upgrades.
+    """
+    try:
+        blocks = {key: Markdown.BLOCKS[key] for key in _ROLEPLAY_BLOCK_KEYS}
+    except (AttributeError, KeyError, TypeError):
+        return None
+    for block_type in blocks.values():
+        component_classes = getattr(block_type, "COMPONENT_CLASSES", None)
+        token_converter = getattr(block_type, "_token_to_content", None)
+        if not isinstance(block_type, type) or not issubclass(block_type, Widget):
+            return None
+        if not isinstance(component_classes, (set, frozenset)):
+            return None
+        if not callable(token_converter):
+            return None
+    return blocks
+
+
+def _make_roleplay_block_type(
+    class_name: str, block_type: type[Widget]
+) -> type[Widget]:
+    """Build one PascalCase Textual block subtype with RP components."""
+    return type(
+        class_name,
+        (ConsoleRoleplayFlavorBlockMixin, block_type),
+        {
+            "__doc__": "Markdown block with Console roleplay inline components.",
+            "__module__": __name__,
+            "COMPONENT_CLASSES": (
+                frozenset(block_type.COMPONENT_CLASSES) | _CONSOLE_RP_COMPONENTS
+            ),
+        },
+    )
+
+
+_resolved_roleplay_blocks = _resolve_textual_roleplay_blocks()
+if _resolved_roleplay_blocks is None:
+    logger.warning(
+        "Console roleplay Markdown flavor is unavailable for this Textual "
+        "version; using the standard Markdown renderer"
+    )
+else:
+    _console_roleplay_blocks = dict(Markdown.BLOCKS)
+    _block_class_names = {
+        "h1": "ConsoleRoleplayMarkdownH1",
+        "h2": "ConsoleRoleplayMarkdownH2",
+        "h3": "ConsoleRoleplayMarkdownH3",
+        "h4": "ConsoleRoleplayMarkdownH4",
+        "h5": "ConsoleRoleplayMarkdownH5",
+        "h6": "ConsoleRoleplayMarkdownH6",
+        "paragraph_open": "ConsoleRoleplayMarkdownParagraph",
+        "th_open": "ConsoleRoleplayMarkdownTH",
+        "td_open": "ConsoleRoleplayMarkdownTD",
+    }
+    _console_roleplay_blocks.update(
+        {
+            key: _make_roleplay_block_type(_block_class_names[key], block_type)
+            for key, block_type in _resolved_roleplay_blocks.items()
+        }
+    )
+
+
+class ConsoleRoleplayMarkdown(Markdown):
+    """Render full Markdown with source-preserving roleplay flavor spans.
+
+    Compatible Textual block APIs receive semantic speech, action, and strong
+    component spans. Incompatible future APIs retain standard Markdown
+    rendering instead of preventing application startup.
+
+    Args:
+        markdown: Initial Markdown source, or ``None`` for an empty widget.
+        name: Optional DOM name inherited from ``Markdown``.
+        id: Optional DOM identifier inherited from ``Markdown``.
+        classes: Optional initial CSS classes.
+        parser_factory: Optional Markdown parser factory.
+        open_links: Whether Textual should open clicked links automatically.
+    """
+
+    if _resolved_roleplay_blocks is not None:
+        BLOCKS = _console_roleplay_blocks
 
 
 def _speaker_label(
@@ -528,8 +720,7 @@ def get_console_assistant_markdown(app_config: Mapping[str, object] | None) -> b
 
     TASK-1990: assistant replies render through Textual's ``Markdown`` widget
     by default. This config switch restores the span-subset renderer
-    (TASK-372) for sessions that prefer its roleplay flavor styling (speech /
-    action colors), which plain markdown does not reproduce.
+    (TASK-372) for sessions that prefer its literal safe-subset presentation.
 
     Args:
         app_config: The loaded application config dict (``app.app_config``).
@@ -609,6 +800,11 @@ _MANAGED_MESSAGE_CLASSES = frozenset(
         "console-transcript-message-failed",
         "console-transcript-message-roleplay-user",
         "console-transcript-message-roleplay-character",
+        "console-transcript-message-role-user",
+        "console-transcript-message-role-assistant",
+        "console-transcript-message-immersive-user",
+        "console-transcript-message-immersive-assistant",
+        "console-transcript-message-immersive-character",
     }
 )
 
@@ -625,6 +821,13 @@ def _message_row_classes(
         classes.append("console-transcript-message-markdown")
     if presentation.row_class:
         classes.append(presentation.row_class)
+    if (
+        presentation.transcript_style is ConsoleTranscriptStyle.IMMERSIVE_RP
+        and presentation.speaker_tone is not None
+    ):
+        classes.append(
+            f"console-transcript-message-immersive-{presentation.speaker_tone}"
+        )
     if message.role is ConsoleMessageRole.TOOL:
         classes.append("console-transcript-message-tool")
     elif message.role is ConsoleMessageRole.SYSTEM:
@@ -638,10 +841,12 @@ def _message_row_classes(
 
 def _speaker_label_classes(presentation: ConsoleMessagePresentation) -> list[str]:
     classes = ["console-transcript-speaker-label"]
-    if presentation.row_class == "console-transcript-message-roleplay-user":
+    if presentation.speaker_tone == "user" and presentation.row_class:
         classes.append("console-transcript-roleplay-user-label")
-    elif presentation.row_class == "console-transcript-message-roleplay-character":
+    elif presentation.speaker_tone == "character" and presentation.row_class:
         classes.append("console-transcript-roleplay-character-label")
+    elif presentation.speaker_tone == "assistant" and presentation.row_class:
+        classes.append("console-transcript-role-assistant-label")
     return classes
 
 
@@ -719,7 +924,11 @@ class ConsoleMarkdownMessage(Vertical):
             ),
             markup=False,
         )
-        yield Markdown(self._body_text, open_links=False)
+        yield ConsoleRoleplayMarkdown(
+            self._body_text,
+            classes="console-markdown-body",
+            open_links=False,
+        )
         footer_content = _assistant_markdown_footer(self._message)
         footer = Static(
             footer_content or "",
@@ -1395,9 +1604,20 @@ class ConsoleTranscript(VerticalScroll):
         # than waiting for the next 0.2s sync tick.
         self.sync_jump_indicator(self._last_run_status)
 
-    def set_presentation_context(self, context: ConsolePresentationContext) -> None:
-        """Apply live display identity without remounting transcript rows."""
-        if context == self._presentation_context:
+    def set_presentation_context(
+        self,
+        context: ConsolePresentationContext,
+        *,
+        force: bool = False,
+    ) -> None:
+        """Apply live display identity without remounting transcript rows.
+
+        Args:
+            context: Presentation values used to resolve every message row.
+            force: Re-resolve mounted rows even if another sync already stored
+                the same context but its deferred repaint has not run yet.
+        """
+        if context == self._presentation_context and not force:
             return
         self._presentation_context = context
         # Every cached signature includes the presentation revision and names.
@@ -2592,16 +2812,18 @@ class ConsoleTranscript(VerticalScroll):
                 message.variants.selected_index,
                 tuple(variant.id for variant in message.variants.variants),
             )
+        presentation = self._message_presentation(message)
         return (
             "message",
             _message_render_text(
                 message,
                 selected=selected,
-                presentation=self._message_presentation(message),
+                presentation=presentation,
             ),
             message.status,
             selected,
             variants_signature,
+            presentation.revision_token,
         )
 
     def _generation_browsed_index(self, message_id: str, variant_count: int) -> int:

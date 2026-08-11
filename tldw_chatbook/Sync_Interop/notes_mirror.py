@@ -24,11 +24,21 @@ class MirrorRecord:
 
 class NotesMirror:
     def __init__(self, db_path: str | Path = ":memory:") -> None:
+        is_memory_db = str(db_path) == ":memory:"
         self._conn = connect_private_sqlite(
             "sync.notes_mirror",
             self._validate_db_path(db_path),
         )
         self._conn.row_factory = sqlite3.Row
+        if not is_memory_db:
+            self._conn.execute("PRAGMA journal_mode = WAL")
+        # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash
+        # can lose the last commit, acceptable for this local Sync v2
+        # per-object mirror -- it is rebuilt from server state, never
+        # authoritative) and avoids an fsync per commit. Held for the
+        # lifetime of this instance, so this is the only site that needs it
+        # (task-15465).
+        self._conn.execute("PRAGMA synchronous = NORMAL")
         with self._conn:
             self._conn.execute(
                 """

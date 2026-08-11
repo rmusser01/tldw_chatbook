@@ -16,9 +16,12 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_TOOLTIP,
     LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP,
-    library_cycle_label,
-    library_cycle_tooltip,
+    library_choice_label,
+    library_choice_tooltip,
     library_disabled_action_label,
+)
+from tldw_chatbook.Widgets.Library.library_choice_strip import (
+    compose_library_choice_strip,
 )
 from tldw_chatbook.Widgets.Library.library_rail import _visible_row_title
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
@@ -38,7 +41,15 @@ class LibraryMediaCanvas(RecomposeCaptureGuard, Vertical):
     ) -> None:
         super().__init__(**kwargs)
         self.canvas = canvas
-        self.styles.width = "13fr"
+        # Fill the (already 13fr) canvas host, not an independent 13fr --
+        # ``LibraryMediaViewer`` documented this trap first: an `fr` width
+        # here resolves against the HOST's content width per fraction, so
+        # 13fr laid this canvas out ~13x wider than visible (measured 1703
+        # cols on a 170-col terminal) and children clipped instead of
+        # ellipsizing. task-14900's side-by-side split needs the panes to
+        # divide the REAL width, so the canvas must be bounded like the
+        # viewer already is.
+        self.styles.width = "1fr"
         self.styles.min_width = 40
 
     def sync_state(self, canvas: LibraryMediaCanvasState) -> None:
@@ -80,15 +91,20 @@ class LibraryMediaCanvas(RecomposeCaptureGuard, Vertical):
         # 1fr sibling.
         toolbar = Horizontal(classes="ds-toolbar")
         toolbar.styles.height = "auto"
+        # task-14902: while the type choice strip is open it REPLACES this
+        # toolbar row (the Notes Sort precedent -- browse actions hide while
+        # the chooser is showing), keeping the vertical budget flat.
+        type_choices_visible = getattr(self.canvas, "type_choices_visible", False)
+        toolbar.display = not type_choices_visible
         with toolbar:
             yield Button(
-                library_cycle_label("type", self.canvas.active_type),
+                # task-14902: a chooser-opener, no longer a cycler -- press
+                # opens the direct-pick strip below instead of advancing.
+                library_choice_label("type", self.canvas.active_type),
                 id="library-media-type-filter",
                 classes="library-canvas-action",
                 compact=True,
-                # AC#5/RC: the cycler's option set was undiscoverable --
-                # enumerate the full cycle at the control.
-                tooltip=library_cycle_tooltip(
+                tooltip=library_choice_tooltip(
                     "media type", tuple(self.canvas.type_options)
                 ),
             )
@@ -100,6 +116,23 @@ class LibraryMediaCanvas(RecomposeCaptureGuard, Vertical):
             )
             export_btn.display = not select_mode
             yield export_btn
+            # task-4025: the browsable Trash surface's entry point -- a
+            # plain navigation action (never a `type:` cycle value: `type:`
+            # cycles CONTENT types derived from the records, and trash is a
+            # STATE). Always enabled: the trash count isn't known until its
+            # view fetches, and an empty Trash shows its honest empty copy
+            # rather than this button lying disabled. Hidden in select mode
+            # like "Export…" -- Select's toolbar is for acting on the
+            # selection, not navigating away from it.
+            trash_btn = Button(
+                "Trash",
+                id="library-media-trash-open",
+                classes="library-canvas-action",
+                compact=True,
+                tooltip="Browse and restore deleted media.",
+            )
+            trash_btn.display = not select_mode
+            yield trash_btn
             # Disable only when there's nothing to select AND we're not
             # already in select mode -- in select mode the button is "Done"
             # and must always be pressable so the user can exit even if the
@@ -120,6 +153,19 @@ class LibraryMediaCanvas(RecomposeCaptureGuard, Vertical):
             if select_disabled:
                 select_btn.tooltip = LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP
             yield select_btn
+        if type_choices_visible:
+            # task-14902 AC#1: the full type option set on screen with a
+            # direct pick; sits ABOVE the task-14900 workbench split, so one
+            # strip serves both the wide side-by-side and stacked layouts.
+            yield from compose_library_choice_strip(
+                strip_id="library-media-type-choices",
+                choice_class="library-media-type-choice",
+                options=tuple(
+                    (f"library-media-type-choice-{index}", value, value)
+                    for index, value in enumerate(self.canvas.type_options)
+                ),
+                active_value=self.canvas.active_type,
+            )
         confirming_bulk_delete = getattr(self.canvas, "confirming_bulk_delete", False)
         if select_mode:
             if confirming_bulk_delete:
@@ -130,18 +176,16 @@ class LibraryMediaCanvas(RecomposeCaptureGuard, Vertical):
                 # confirm copy, the same pattern this mirrors). The short
                 # "N selected" Static below is unaffected -- it is already
                 # proven to render alongside Buttons in this exact row.
-                # task-4022 AC3: honest about what actually happens --
-                # there is no browsable Trash surface anywhere in the
-                # product (not the rail, not the type: filter, not any
-                # canvas), so the copy no longer implies one. What IS true
-                # after this task: Delete's own receipt offers an
-                # immediate Undo, and (independently) re-importing the
-                # same file later restores it instead of refusing.
+                # task-4025 AC3 (ADR-055 Pattern A): the confirm copy names
+                # the durable recovery path -- the Trash view this task
+                # built (the list toolbar's own "Trash" action) -- on top
+                # of the receipt's immediate Undo. Supersedes task-4022
+                # AC3's honest "there's no Trash view" copy, which was
+                # true only until this surface existed.
                 item_word = "item" if self.canvas.selected_count == 1 else "items"
                 yield Static(
                     f"Delete {self.canvas.selected_count} selected {item_word}? "
-                    "You can undo right away — there's no Trash view to "
-                    "browse later.",
+                    "You can undo right away, or restore later from Trash.",
                     id="library-media-bulk-delete-confirm-copy",
                     markup=False,
                 )
@@ -267,7 +311,10 @@ class LibraryMediaCanvas(RecomposeCaptureGuard, Vertical):
             receipt_row.styles.height = "auto"
             with receipt_row:
                 yield Static(
-                    f"✓ deleted · {receipt_count} {receipt_word}",
+                    # task-4025 (ADR-055 Pattern A): the receipt names the
+                    # durable path too -- "· in Trash" points at the Trash
+                    # view that outlives this receipt's Undo/Dismiss.
+                    f"✓ deleted · {receipt_count} {receipt_word} · in Trash",
                     id="library-media-bulk-delete-receipt-copy",
                     classes="library-toolbar-count",
                     markup=False,
@@ -294,38 +341,6 @@ class LibraryMediaCanvas(RecomposeCaptureGuard, Vertical):
         status.display = bool(status_text)
         yield status
 
-        media_list = Vertical(id="library-media-list")
-        media_list.styles.height = "auto"
-        with media_list:
-            for index, row in enumerate(self.canvas.rows):
-                if select_mode:
-                    marker = "☑" if row.checked else "☐"
-                else:
-                    marker = "▸" if row.selected else " "
-                # task-281 (PR #665 review): the in-place toggle needs the
-                # marker-less RAW label to rebuild from -- reading it back
-                # off the mounted Button un-escapes user titles (both
-                # ``.plain`` and Textual 8's ``str(Content)`` return
-                # rendered text), so the raw remainder is stashed here at
-                # the single point of truth.
-                label_rest = f" {_visible_row_title(row.title)}\n    {row.secondary}"
-                button = Button(
-                    f"{marker}{label_rest}",
-                    id=f"library-media-row-{index}",
-                    classes="library-media-row",
-                    compact=True,
-                )
-                button.media_id = row.media_id
-                button._library_row_label_rest = label_rest
-                # Tooltips are rendered as markup too -- escape user titles.
-                button.tooltip = escape_markup(row.title)
-                button.set_class(row.selected, "library-media-row-selected")
-                button.styles.height = 2
-                button.styles.min_height = 2
-                yield button
-
-        preview = Vertical(id="library-media-preview")
-        preview.styles.height = "auto"
         # task-2853 AC4: while Select mode is active, the preview must never
         # show an item outside the current (multi-item) selection context --
         # ``canvas.selected_id``/``preview_lines`` still carry whatever was
@@ -337,24 +352,89 @@ class LibraryMediaCanvas(RecomposeCaptureGuard, Vertical):
             not select_mode
             and bool(self.canvas.selected_id and self.canvas.preview_lines)
         )
-        preview.display = has_preview
-        with preview:
+
+        # task-14900: the list and its preview share a workbench container
+        # (Collections' `#library-collections-workbench` grammar). Above the
+        # screen's one measured width regime it lays them out side by side
+        # (this Horizontal's default); below it, the host's existing
+        # `library-notes-compact` class flips it back to the stacked flow
+        # via CSS -- the conditional lives in the stylesheet keyed off a
+        # class the screen already maintains at compose time AND on every
+        # resize crossing, so no compose branch here can drift from an
+        # in-place updater. Geometry (heights/overflow) moved from inline
+        # styles into the same CSS tiers, because inline styles outrank the
+        # class-flipped rules.
+        workbench = Horizontal(id="library-media-workbench")
+        workbench.set_class(has_preview, "has-preview")
+        with workbench:
+            media_list = Vertical(id="library-media-list")
+            with media_list:
+                for index, row in enumerate(self.canvas.rows):
+                    if select_mode:
+                        marker = "☑" if row.checked else "☐"
+                    else:
+                        marker = "▸" if row.selected else " "
+                    # task-281 (PR #665 review): the in-place toggle needs the
+                    # marker-less RAW label to rebuild from -- reading it back
+                    # off the mounted Button un-escapes user titles (both
+                    # ``.plain`` and Textual 8's ``str(Content)`` return
+                    # rendered text), so the raw remainder is stashed here at
+                    # the single point of truth.
+                    label_rest = (
+                        f" {_visible_row_title(row.title)}\n    {row.secondary}"
+                    )
+                    button = Button(
+                        f"{marker}{label_rest}",
+                        id=f"library-media-row-{index}",
+                        classes="library-media-row",
+                        compact=True,
+                    )
+                    button.media_id = row.media_id
+                    button._library_row_label_rest = label_rest
+                    # Tooltips are rendered as markup too -- escape user titles.
+                    button.tooltip = escape_markup(row.title)
+                    button.set_class(row.selected, "library-media-row-selected")
+                    button.styles.height = 2
+                    button.styles.min_height = 2
+                    yield button
+
+            preview = Vertical(id="library-media-preview")
+            preview.display = has_preview
+            with preview:
+                yield Static(
+                    "\n".join(self.canvas.preview_lines),
+                    id="library-media-preview-lines",
+                    markup=False,
+                )
+                toolbar = Horizontal(classes="ds-toolbar")
+                toolbar.styles.height = "auto"
+                with toolbar:
+                    # Opens the selected item in the IN-LIBRARY media viewer
+                    # (nav stays on Library), distinct from the full viewer's
+                    # own action row (`#library-media-open`, `LibraryMediaViewer`
+                    # -- "Open in Library ▸ Media", task-2857), which posts a
+                    # fresh ``NavigateToScreen`` for the "media" route.
+                    yield Button(
+                        "Open in viewer",
+                        id="library-media-open-viewer",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+
+            # task-14900: the wide split's detail half never sits blank --
+            # when the preview is hidden (Select mode, or an empty list) a
+            # placeholder explains the pane, Collections' own detail-pane
+            # grammar ("No Collection selected."). CSS-only visibility
+            # (never a Python ``display`` write, which would outrank the
+            # compact rule that hides it in the preserved stacked layout):
+            # hidden while the workbench carries ``has-preview``, and hidden
+            # entirely below the breakpoint.
             yield Static(
-                "\n".join(self.canvas.preview_lines),
-                id="library-media-preview-lines",
+                (
+                    "No preview in Select mode."
+                    if select_mode
+                    else "No media item selected."
+                ),
+                id="library-media-detail-empty",
                 markup=False,
             )
-            toolbar = Horizontal(classes="ds-toolbar")
-            toolbar.styles.height = "auto"
-            with toolbar:
-                # Opens the selected item in the IN-LIBRARY media viewer
-                # (nav stays on Library), distinct from the full viewer's
-                # own action row (`#library-media-open`, `LibraryMediaViewer`
-                # -- "Open in Library ▸ Media", task-2857), which posts a
-                # fresh ``NavigateToScreen`` for the "media" route.
-                yield Button(
-                    "Open in viewer",
-                    id="library-media-open-viewer",
-                    classes="library-canvas-action",
-                    compact=True,
-                )

@@ -103,6 +103,19 @@ The general form: **an env var that adds a search path is not isolation.** Befor
 trusting a negative-condition run, confirm the resource is genuinely unreachable — the
 setup should fail the way the real broken environment fails.
 
+**A third incident, same rule (TASK-15482).** A post-run payload-invariant probe
+set a scratch `TLDW_CONFIG_PATH` before importing the visual evaluator. The import
+created the scratch config as intended, but `load_settings()` still logged that it
+ensured `chat_dicts` beneath the normal `~/.local/share/tldw_cli/default_user`
+profile. The directory already existed and before/after fingerprints proved no
+file changed, but the log exposed that the probe was not actually data-isolated.
+
+**What to do.** For an ad hoc run that imports application config, create the
+scratch config before the import and set its `[paths].data_dir` to a scratch
+directory. `TLDW_CONFIG_PATH` controls the config file only; it does not relocate
+data paths selected from that config. Keep before/after fingerprints as the final
+backstop because path isolation and proof of non-mutation are separate claims.
+
 ---
 
 ## A schema bump is a one-way door for every OTHER worktree on this machine (2026-08-04)
@@ -678,3 +691,20 @@ because the close-out self-review greped the live config; repaired by hand.
 (possibly throwaway) pytest test. After ANY non-pytest probe that could have
 driven app behavior, grep the live config for the probe's own inputs before
 declaring the session clean.
+
+## A refusal gate after imports is not a refusal gate (TASK-15262, 2026-08-11)
+
+**Incident.** The first visual-compaction evaluation CLI checked
+`--confirm-billable` before its explicit `load_settings()` call, which looked
+like a safe charge boundary. A dry `--help` run still imported
+`tldw_chatbook.Chat.console_provider_gateway` at module load. Importing the Chat
+package transitively initialized `config.py` and attempted to create or update
+the normal profile before argument parsing; on the verification machine it
+failed against the real profile path. The command made no provider request, but
+its supposed refusal/help path had already crossed the profile boundary.
+
+**Rule.** For confirmation-gated or profile-isolated CLIs, keep every
+application import that can initialize config behind the validated boundary.
+Prove both `--help` and the unconfirmed refusal path in a subprocess whose
+`TLDW_CONFIG_PATH` points to a nonexistent file, then assert that file was not
+created. A guard is only real if importing the command cannot bypass it.

@@ -211,8 +211,9 @@ def compactable_units_after(
     starts = [index for index, message in enumerate(rows) if message.role == "user"]
     if not starts:
         return ()
+    first_complete_start = starts[0]
     active_start = starts[-1]
-    compactable = rows[:active_start]
+    compactable = rows[first_complete_start:active_start]
     units: list[DurableConversationUnit] = []
     current: list[DurableMessageSnapshot] = []
     for message in compactable:

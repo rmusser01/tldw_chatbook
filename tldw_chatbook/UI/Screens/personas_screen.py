@@ -20,7 +20,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import QueryError
 from textual.timer import Timer
 from textual.worker import Worker
-from textual.widgets import Button, Input, ListView, Static, TabbedContent, TextArea
+from textual.widgets import Button, Input, ListView, Select, Static, TabbedContent, TextArea
 
 from ...Character_Chat.Character_Chat_Lib import (
     CharacterCardImportOutcome,
@@ -91,6 +91,7 @@ from ...Widgets.Persona_Widgets.personas_character_editor_widget import (
     PersonasCharacterEditorWidget,
 )
 from ...Widgets.Persona_Widgets.personas_character_tts_widget import (
+    CharacterTTSProfileSuggestion,
     CharacterTTSProfileOption,
     CharacterTTSPresentationState,
     PersonasCharacterTTSWidget,
@@ -729,6 +730,10 @@ class PersonasScreen(BaseAppScreen):
         self._character_tts_request_generation = 0
         self._character_tts_snapshot: _CharacterTTSControlSnapshot | None = None
         self._character_tts_presentation = CharacterTTSPresentationState.disabled()
+        self._character_tts_profile_suggestion: (
+            CharacterTTSProfileSuggestion | None
+        ) = None
+        self._character_tts_suggestion_focus_pending = False
         # Serializes library renders: the pane's update_rows has two
         # suspension points, so interleaved renders could double-mount rows.
         self._render_lock = asyncio.Lock()
@@ -749,6 +754,36 @@ class PersonasScreen(BaseAppScreen):
         self.conversations = PersonasConversationsController(self)
         self.preview = PersonasPreviewController(self)
         setup_ccp_enhancements(self)
+
+    def apply_navigation_context(self, context: Mapping[str, object]) -> None:
+        """Accept one bounded Voice Profile suggestion without assigning it."""
+
+        if not isinstance(context, Mapping) or set(context) != {
+            "view",
+            "voice_profile_suggestion",
+        }:
+            return
+        suggestion = context.get("voice_profile_suggestion")
+        if (
+            context.get("view") != "characters"
+            or type(suggestion) is not CharacterTTSProfileSuggestion
+        ):
+            return
+        self._character_tts_profile_suggestion = suggestion
+        self._character_tts_suggestion_focus_pending = True
+        if self.is_mounted and self.state.active_mode != "characters":
+            self.run_worker(
+                self._apply_mode("characters"),
+                group="personas_voice_profile_handoff",
+                exclusive=True,
+                exit_on_error=False,
+            )
+
+    def _clear_character_tts_profile_suggestion(self) -> None:
+        """Drop only transient handoff guidance, never persisted assignment."""
+
+        self._character_tts_profile_suggestion = None
+        self._character_tts_suggestion_focus_pending = False
 
     # ===== Compose =====
 
@@ -1053,6 +1088,8 @@ class PersonasScreen(BaseAppScreen):
         """
         if self._restored_from_saved_state:
             return
+        if self._character_tts_profile_suggestion is not None:
+            return
         if self.state.selected_entity_id:
             return
         if self.state.active_mode != "characters":
@@ -1205,6 +1242,7 @@ class PersonasScreen(BaseAppScreen):
         self.character_handler.current_character_id = None
         self.character_handler.current_character_data = {}
         self.state.reset_for_runtime_source_change(normalized)
+        self._clear_character_tts_profile_suggestion()
         self._invalidate_character_tts_controls()
         self._set_persona_editor_runtime_source(normalized)
         self._count_cache_key = None
@@ -1229,6 +1267,7 @@ class PersonasScreen(BaseAppScreen):
     async def on_unmount(self) -> None:
         self._character_tts_request_generation += 1
         self._character_tts_snapshot = None
+        self._clear_character_tts_profile_suggestion()
         super().on_unmount()
         self._cancel_search_debounce()
         await self.preview.close_gateway()
@@ -1416,6 +1455,12 @@ class PersonasScreen(BaseAppScreen):
             return
         for control in self.query(PersonasCharacterTTSWidget):
             control.apply_state(state)
+        if (
+            state.suggested_profile_id is not None
+            and self._character_tts_suggestion_focus_pending
+        ):
+            self._character_tts_suggestion_focus_pending = False
+            self.call_after_refresh(self._focus_character_tts_profile_selector)
         try:
             self.query_one(PersonasInspectorPane).set_tts_export_available(
                 self._local_character_actions_allowed()
@@ -1423,6 +1468,18 @@ class PersonasScreen(BaseAppScreen):
             )
         except QueryError:
             pass
+
+    def _focus_character_tts_profile_selector(self) -> None:
+        """Focus the visible explicit assignment control after a valid handoff."""
+
+        try:
+            selector = self.query_one(
+                "#personas-character-card-tts .personas-character-tts-profile",
+                Select,
+            )
+        except QueryError:
+            return
+        selector.focus()
 
     def _disable_character_tts_controls(
         self,
@@ -1693,6 +1750,58 @@ class PersonasScreen(BaseAppScreen):
             for profile in page.profiles
         ]
 
+        suggestion = self._character_tts_profile_suggestion
+        if (
+            suggestion is not None
+            and suggestion.repository_generation != page.repository_generation
+        ):
+            self._clear_character_tts_profile_suggestion()
+            suggestion = None
+        if suggestion is not None and all(
+            loaded.profile.profile_id != suggestion.profile_id
+            for loaded in loaded_profiles
+        ):
+            try:
+                suggested_loaded = await service.get_profile(suggestion.profile_id)
+                if (
+                    type(suggested_loaded) is not LoadedTTSProfile
+                    or suggested_loaded.repository_generation
+                    != page.repository_generation
+                    or suggested_loaded.profile.profile_id != suggestion.profile_id
+                    or suggested_loaded.profile.revision != suggestion.profile_revision
+                ):
+                    self._clear_character_tts_profile_suggestion()
+                else:
+                    suggested_page = TTSProfilePageSnapshot(
+                        repository_generation=page.repository_generation,
+                        profiles=(suggested_loaded.profile,),
+                        total=1,
+                    )
+                    suggested_availability = await service.observe_availability(
+                        suggested_page
+                    )
+                    if (
+                        type(suggested_availability)
+                        is not TTSProfileAvailabilitySnapshot
+                        or suggested_availability.configuration_revision
+                        != page_availability.configuration_revision
+                        or suggested_availability.catalog_revision
+                        != page_availability.catalog_revision
+                    ):
+                        self._clear_character_tts_profile_suggestion()
+                    else:
+                        availability_by_id.update(
+                            self._character_tts_availability_map(
+                                suggested_page,
+                                suggested_availability,
+                            )
+                        )
+                        loaded_profiles.append(suggested_loaded)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                self._clear_character_tts_profile_suggestion()
+
         current = assigned.snapshot
         assignment_count: int | None = None
         if current is not None:
@@ -1785,6 +1894,7 @@ class PersonasScreen(BaseAppScreen):
     @staticmethod
     def _character_tts_presentation_from_snapshot(
         snapshot: _CharacterTTSControlSnapshot,
+        suggested_profile_id: UUID | None = None,
     ) -> CharacterTTSPresentationState:
         availability_by_id = {
             item.profile_id: item for item in snapshot.availability
@@ -1802,10 +1912,22 @@ class PersonasScreen(BaseAppScreen):
         )
         current = snapshot.current
         if current is None:
+            status = "Using the global speech default."
+            if suggested_profile_id is not None:
+                suggested = next(
+                    profile
+                    for profile in profiles
+                    if profile.profile_id == suggested_profile_id
+                )
+                status = (
+                    f"Suggested: {suggested.display_name}. Choose it from Voice "
+                    "Profile to assign it to this character."
+                )
             return CharacterTTSPresentationState(
                 profiles=profiles,
                 selected_profile_id=None,
-                status="Using the global speech default.",
+                suggested_profile_id=suggested_profile_id,
+                status=status,
                 controls_enabled=True,
             )
 
@@ -1842,13 +1964,61 @@ class PersonasScreen(BaseAppScreen):
                 f"{count_copy}. The exact selection is used as-is; the "
                 "assignment is preserved."
             )
+        if suggested_profile_id is not None:
+            suggested = next(
+                profile
+                for profile in profiles
+                if profile.profile_id == suggested_profile_id
+            )
+            status = (
+                f"{status} Suggested: {suggested.display_name}. Choose it from "
+                "Voice Profile to replace this character's assignment."
+            )
         return CharacterTTSPresentationState(
             profiles=profiles,
             selected_profile_id=current.profile.profile_id,
+            suggested_profile_id=suggested_profile_id,
             status=status,
             controls_enabled=True,
             assignment_count=count,
         )
+
+    def _validated_character_tts_suggestion(
+        self,
+        snapshot: _CharacterTTSControlSnapshot,
+    ) -> UUID | None:
+        """Return an exact fresh, assignable suggestion or clear it."""
+
+        suggestion = self._character_tts_profile_suggestion
+        if suggestion is None:
+            return None
+        loaded = next(
+            (
+                item
+                for item in snapshot.loaded_profiles
+                if item.profile.profile_id == suggestion.profile_id
+            ),
+            None,
+        )
+        availability = next(
+            (
+                item
+                for item in snapshot.availability
+                if item.profile_id == suggestion.profile_id
+            ),
+            None,
+        )
+        if (
+            snapshot.repository_generation != suggestion.repository_generation
+            or loaded is None
+            or loaded.repository_generation != suggestion.repository_generation
+            or loaded.profile.revision != suggestion.profile_revision
+            or availability is None
+            or availability.state == "unavailable"
+        ):
+            self._clear_character_tts_profile_suggestion()
+            return None
+        return suggestion.profile_id
 
     async def _character_tts_refresh_worker(
         self,
@@ -1902,7 +2072,10 @@ class PersonasScreen(BaseAppScreen):
             if self._character_tts_snapshot_context_is_current(snapshot):
                 self._character_tts_snapshot = snapshot
                 self._publish_character_tts_presentation(
-                    self._character_tts_presentation_from_snapshot(snapshot)
+                    self._character_tts_presentation_from_snapshot(
+                        snapshot,
+                        self._validated_character_tts_suggestion(snapshot),
+                    )
                 )
             return
 
@@ -2134,6 +2307,20 @@ class PersonasScreen(BaseAppScreen):
         message: CharacterTTSActionRequested,
     ) -> None:
         message.stop()
+        if message.action == "dismiss_suggestion":
+            self._clear_character_tts_profile_suggestion()
+            self._publish_character_tts_presentation(
+                dataclasses.replace(
+                    self._character_tts_presentation,
+                    suggested_profile_id=None,
+                    status=(
+                        "Using the global speech default."
+                        if self._character_tts_presentation.selected_profile_id is None
+                        else self._character_tts_presentation.status
+                    ),
+                )
+            )
+            return
         snapshot = self._character_tts_snapshot
         if snapshot is None or not self._character_tts_snapshot_context_is_current(
             snapshot
@@ -2143,6 +2330,8 @@ class PersonasScreen(BaseAppScreen):
             self._navigate_to_speech()
             return
         if message.action in {"assign", "remove"}:
+            if message.action == "assign":
+                self._clear_character_tts_profile_suggestion()
             self.run_worker(
                 self._character_tts_assignment_worker(
                     message.action,
@@ -3136,6 +3325,8 @@ class PersonasScreen(BaseAppScreen):
         self._sync_personas_rails()
 
     async def _apply_mode(self, mode: str) -> None:
+        if mode != "characters":
+            self._clear_character_tts_profile_suggestion()
         self._cancel_search_debounce()
         self._selected_server_character = None
         # switch_mode resets sort_key/tag_filter/page_offset for a fresh window.

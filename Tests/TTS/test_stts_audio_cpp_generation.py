@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import stat
+import struct
 from collections.abc import AsyncIterator, Mapping
+from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -21,18 +23,24 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
 )
 from tldw_chatbook.TTS import (
     ProviderHealth,
+    STTSPlaygroundCloneSnapshot,
     STTSGeneratedAudio,
+    STTSPlaygroundProfilePreview,
     STTSPlaygroundRequest,
+    STTSPlaygroundResultProjection,
     TTSModelInfo,
     TTSOperationError,
     TTSProviderCatalog,
     TTSProviderDescriptor,
     TTSRequest,
     TTSRequestedSelectionSnapshot,
+    CanonicalTTSCloneReference,
 )
 from tldw_chatbook.TTS.adapter_types import (
+    TTSCloneGenerationEvidence,
     TTSProviderReconfiguringError,
     TTSRegistryClosedError,
+    _TTS_CLONE_GENERATION_EVIDENCE_TOKEN,
 )
 from tldw_chatbook.TTS.effective_settings import (
     TTSSelectionOverrides,
@@ -207,6 +215,7 @@ class _StudioService:
         # `TTSEffectiveSelection` always carries this axis; a fake that omits
         # it invents a shape the real system never produces.
         effective_provider_options: Mapping[str, Any] | None = None,
+        clone_evidence: TTSCloneGenerationEvidence | None = None,
     ) -> None:
         self.response = response
         self.calls: list[dict[str, object]] = []
@@ -219,6 +228,7 @@ class _StudioService:
         self._effective_provider_options = (
             {} if effective_provider_options is None else effective_provider_options
         )
+        self._clone_evidence = clone_evidence
 
     async def synthesize_effective(self, **kwargs: object) -> tuple[object, object]:
         self.calls.append(kwargs)
@@ -234,15 +244,23 @@ class _StudioService:
             ),
         )
 
+    async def synthesize_effective_with_evidence(
+        self,
+        **kwargs: object,
+    ) -> tuple[object, object, TTSCloneGenerationEvidence | None]:
+        response, effective = await self.synthesize_effective(**kwargs)
+        return response, effective, self._clone_evidence
+
 
 class _DeliveryPlayground:
     def __init__(self) -> None:
-        self.completions: list[STTSGeneratedAudio | None] = []
+        self.completions: list[STTSPlaygroundResultProjection | None] = []
         self.log = SimpleNamespace(write=Mock())
         self.progress = SimpleNamespace(update=Mock())
         self.container = SimpleNamespace(remove_class=Mock(), add_class=Mock())
         self.status = SimpleNamespace(update=Mock())
         self.button = SimpleNamespace(disabled=True)
+        self.accepted_clone_results: list[tuple[str, int]] = []
 
     def query_one(self, selector: str, _widget_type: object = None) -> object:
         return {
@@ -259,9 +277,16 @@ class _DeliveryPlayground:
 
     def _generation_complete(
         self,
-        artifact: STTSGeneratedAudio | None,
+        artifact: STTSPlaygroundResultProjection | None,
     ) -> None:
         self.completions.append(artifact)
+
+    def _accept_clone_generation_result(
+        self,
+        operation_id: str,
+        draft_revision: int,
+    ) -> None:
+        self.accepted_clone_results.append((operation_id, draft_revision))
 
 
 class _DeliveryApp:
@@ -531,7 +556,9 @@ async def test_playground_stores_delivered_artifact_not_current_selectors(
         widget._generation_complete(artifact)
         await pilot.pause()
 
-        assert widget.current_audio_artifact is artifact
+        assert type(widget.current_audio_artifact) is STTSPlaygroundResultProjection
+        assert widget.current_audio_artifact.operation_id == artifact.operation_id
+        assert not hasattr(widget.current_audio_artifact, "clone_evidence")
         assert widget.current_audio_file == artifact_path
         assert app.query_one("#audio-play-btn", Button).disabled is False
         assert app.query_one("#audio-export-btn", Button).disabled is False
@@ -574,11 +601,12 @@ async def test_audio_cpp_playground_runs_end_to_end_through_handler(
             await pilot.pause(0.02)
         await pilot.pause()
 
-        artifact = app._stts_handler.playground_state().artifact
-        assert artifact is not None
-        assert artifact.path.read_bytes() == b"RIFFend-to-end"
-        assert widget.current_audio_artifact is artifact
-        assert widget.current_audio_file == artifact.path
+        projection = app._stts_handler.playground_state().artifact
+        assert projection is not None
+        assert projection.path.read_bytes() == b"RIFFend-to-end"
+        assert widget.current_audio_artifact == projection
+        assert type(widget.current_audio_artifact) is STTSPlaygroundResultProjection
+        assert widget.current_audio_file == projection.path
         assert app.query_one("#audio-play-btn", Button).disabled is False
         assert app.query_one("#audio-export-btn", Button).disabled is False
 
@@ -878,7 +906,9 @@ async def test_handler_dispatches_native_generation_and_delivers_artifact() -> N
     try:
         assert artifact is not None
         assert handler._current_audio_file == artifact.path
-        assert playground.completions == [artifact]
+        assert playground.completions == [
+            STTSPlaygroundResultProjection.from_artifact(artifact)
+        ]
         assert app.notifications == [
             ("TTS generation complete!", "information"),
         ]
@@ -886,6 +916,216 @@ async def test_handler_dispatches_native_generation_and_delivers_artifact() -> N
     finally:
         if artifact is not None:
             artifact.path.unlink(missing_ok=True)
+
+
+def test_clone_success_acknowledges_only_the_accepted_draft_revision(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "clone-result.wav"
+    path.write_bytes(b"RIFF")
+    artifact = STTSGeneratedAudio(
+        path=path,
+        provider_id="audio_cpp",
+        model_id="clone-model",
+        voice_id=None,
+        source_text="target text",
+        operation_id="clone-operation",
+        audio_format="wav",
+        content_type="audio/wav",
+    )
+    playground = _DeliveryPlayground()
+    handler = STTSEventHandler(app=_DeliveryApp(playground))
+    handler._active_playground_operation_id = artifact.operation_id
+
+    handler._deliver_generation_success(
+        artifact.operation_id,
+        artifact,
+        accepted_clone_draft_revision=6,
+    )
+
+    assert playground.accepted_clone_results == [(artifact.operation_id, 6)]
+    assert playground.completions == [
+        STTSPlaygroundResultProjection.from_artifact(artifact)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_studio_profile_preview_forwards_only_identity_and_private_resolver() -> (
+    None
+):
+    response = _Response(_CountingStream((b"RIFF", b"audio")))
+    service = _StudioService(response, effective_model_id="clone-model")
+    profile_reference = object()
+    profile_service = SimpleNamespace(
+        get_profile=AsyncMock(
+            return_value=SimpleNamespace(
+                repository_generation=8,
+                profile=SimpleNamespace(
+                    revision=5,
+                    provider_id="audio_cpp",
+                    model_id="clone-model",
+                    reference=object(),
+                ),
+            )
+        ),
+        get_reference=AsyncMock(return_value=profile_reference)
+    )
+    app = SimpleNamespace(
+        _ensure_tts_profile_service=AsyncMock(return_value=profile_service),
+        notify=lambda *_args, **_kwargs: None,
+    )
+    handler = STTSEventHandler(app=app)
+    handler._stts_service = service
+    preview = STTSPlaygroundProfilePreview(
+        profile_id=UUID("77777777-7777-4777-8777-777777777777"),
+        repository_generation=8,
+        profile_revision=5,
+    )
+    preferences = StudioTTSPreferencesSnapshot(revision=3)
+    snapshot = STTSPlaygroundRequest(
+        operation_id="profile-preview-op",
+        provider_id="audio_cpp",
+        model_id="clone-model",
+        text="preview text",
+        voice_id=None,
+        response_format="wav",
+        studio_draft=TTSStudioDraftSelection(
+            selection=TTSSelectionOverrides(
+                provider_id="audio_cpp",
+                model_mode="exact",
+                model_id="clone-model",
+                voice_mode="server_default",
+                response_format="wav",
+                speed=1.0,
+                provider_options={},
+            ),
+            base_revision=3,
+            preview=True,
+        ),
+        studio_preferences=preferences,
+        profile_preview=preview,
+    )
+
+    artifact = await handler._generate_studio_effective(snapshot, None)
+
+    try:
+        assert len(service.calls) == 1
+        call = service.calls[0]
+        assert call["profile_preview"] is preview
+        resolver = call["profile_reference_resolver"]
+        assert callable(resolver)
+        assert profile_reference not in call.values()
+        resolved = await resolver(  # type: ignore[operator]
+            preview.profile_id,
+            preview.repository_generation,
+            preview.profile_revision,
+        )
+        assert resolved is profile_reference
+        profile_service.get_profile.assert_awaited_once_with(preview.profile_id)
+        profile_service.get_reference.assert_awaited_once_with(
+            preview.profile_id,
+            expected_generation=preview.repository_generation,
+            expected_revision=preview.profile_revision,
+        )
+        profile_service.get_profile.return_value.profile.model_id = "other-model"
+        with pytest.raises(RuntimeError, match="profile preview is stale"):
+            await resolver(  # type: ignore[operator]
+                preview.profile_id,
+                preview.repository_generation,
+                preview.profile_revision,
+            )
+        assert profile_service.get_reference.await_count == 1
+    finally:
+        artifact.path.unlink(missing_ok=True)
+
+
+@pytest.mark.asyncio
+async def test_studio_clone_audition_forwards_exact_canonical_snapshot() -> None:
+    frames = 32
+    sample_rate = 16_000
+    pcm = struct.pack("<h", 4) * frames
+    fmt = struct.pack("<HHIIHH", 1, 1, sample_rate, sample_rate * 2, 2, 16)
+    body = (
+        b"WAVE"
+        + b"fmt "
+        + struct.pack("<I", len(fmt))
+        + fmt
+        + b"data"
+        + struct.pack("<I", len(pcm))
+        + pcm
+    )
+    wav = b"RIFF" + struct.pack("<I", len(body)) + body
+    canonical = CanonicalTTSCloneReference(
+        wav_bytes=wav,
+        reference_text="Private transcript",
+        sha256=sha256(wav).hexdigest(),
+        byte_length=len(wav),
+        duration_ms=2,
+        sample_rate_hz=sample_rate,
+        channels=1,
+        sample_encoding="pcm_s16le",
+    )
+    evidence = TTSCloneGenerationEvidence(
+        _TTS_CLONE_GENERATION_EVIDENCE_TOKEN,
+        canonical_reference=canonical,
+        model_id="clone-model",
+        recipe_id="pocket_tts",
+        recipe_revision=1,
+        provider_configuration_revision=9,
+        applied_provider_generation=2,
+        process_generation=7,
+    )
+    response = _Response(_CountingStream((wav,)))
+    service = _StudioService(
+        response,
+        effective_model_id="clone-model",
+        clone_evidence=evidence,
+    )
+    handler = _handler(service)
+    clone = STTSPlaygroundCloneSnapshot(
+        draft_revision=6,
+        canonical_reference=canonical,
+    )
+    preferences = StudioTTSPreferencesSnapshot(revision=3)
+    snapshot = STTSPlaygroundRequest(
+        operation_id="clone-audition-op",
+        provider_id="audio_cpp",
+        model_id="clone-model",
+        text="preview text",
+        voice_id=None,
+        response_format="wav",
+        studio_draft=TTSStudioDraftSelection(
+            selection=TTSSelectionOverrides(
+                provider_id="audio_cpp",
+                model_mode="exact",
+                model_id="clone-model",
+                voice_mode="server_default",
+                response_format="wav",
+                speed=1.0,
+                provider_options={},
+            ),
+            base_revision=3,
+        ),
+        studio_preferences=preferences,
+        clone_audition=clone,
+    )
+
+    artifact = await handler._generate_studio_effective(snapshot, None)
+
+    try:
+        assert service.calls[0]["clone_audition"] is clone
+        assert "profile_reference_resolver" in service.calls[0]
+        assert service.calls[0]["profile_reference_resolver"] is None
+        assert artifact.clone_evidence is evidence
+        assert "Private transcript" not in repr(artifact)
+        projection = STTSPlaygroundResultProjection.from_artifact(artifact)
+        assert projection.clone_profile_save_eligible is True
+        assert not hasattr(projection, "clone_evidence")
+        assert not hasattr(projection, "source_text")
+        assert "Private transcript" not in repr(projection)
+        assert canonical.sha256 not in repr(projection)
+    finally:
+        artifact.path.unlink(missing_ok=True)
 
 
 @pytest.mark.asyncio
@@ -1638,7 +1878,7 @@ async def test_retiring_only_generation_preserves_completed_artifact() -> None:
     await asyncio.gather(generation_task, return_exceptions=True)
 
     state = handler.playground_state()
-    assert state.artifact is completed
+    assert state.artifact == completed
     assert completed.path.exists()
     assert handler._current_audio_file == completed.path
 

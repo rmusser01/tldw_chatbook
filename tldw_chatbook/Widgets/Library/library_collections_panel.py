@@ -83,10 +83,19 @@ class LibraryCollectionsPanel(Vertical):
                         ),
                     )
                 if self.delete_pending:
+                    # task-14901 (ADR-055): the confirm affordance states
+                    # the consequence -- members survive, the Collection
+                    # itself has no recovery surface. Keep in lockstep with
+                    # the in-place patcher in ``library_screen.py``
+                    # (``_refresh_collections_panel_action_state_widgets``).
                     yield Button(
                         "Confirm delete",
                         id="library-confirm-delete-collection",
-                        tooltip="Delete the selected local Collection.",
+                        tooltip=(
+                            "Delete the selected local Collection. Its items "
+                            "stay in the Library; the deletion cannot be "
+                            "undone from Library."
+                        ),
                         classes="library-source-action library-collection-form-action",
                     )
 

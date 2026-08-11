@@ -1495,6 +1495,10 @@ async def test_commit_footer_keeps_disclosure_edit_cancel_confirm_order_and_geom
     panel.styles.display = "block"
     app = _PanelHarness(panel)
     async with app.run_test(size=size) as pilot:
+        # Let Textual's initial screen focus settle before exercising the
+        # feature-owned review transition. Otherwise the screen's one-time
+        # autofocus may race the review callback and focus the scroll owner.
+        await pilot.pause()
         panel.render_commit_review(_commit_review_projection())
         await pilot.pause()
 
@@ -1525,6 +1529,28 @@ async def test_commit_footer_keeps_disclosure_edit_cancel_confirm_order_and_geom
             assert confirm.region.right == footer.content_region.right
         else:
             assert edit.region.y == cancel.region.y == confirm.region.y
+
+
+@pytest.mark.asyncio
+async def test_medium_commit_review_transition_reliably_focuses_edit() -> None:
+    """Stress the mounted form-to-review focus handoff at medium width."""
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    app = _PanelHarness(panel)
+    draft = _commit_draft_projection(subject="Stable focus")
+    review = _commit_review_projection()
+
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.pause()
+        for _iteration in range(25):
+            panel.render_commit_form(draft)
+            await pilot.pause()
+            panel.render_commit_review(review)
+            await pilot.pause()
+            assert panel.query_one(
+                "#file-notes-git-commit-edit",
+                Button,
+            ).has_focus
 
 
 @pytest.mark.asyncio
@@ -1861,7 +1887,7 @@ async def test_panel_renders_repository_scope_and_complete_file_state() -> None:
 
         assert (
             _text(panel.query_one("#file-notes-git-title", Static))
-            == "Prepare session for commit"
+            == "Review session changes"
         )
         assert "/canonical/repository" in _text(
             panel.query_one("#file-notes-git-repository", Static)
@@ -1871,10 +1897,10 @@ async def test_panel_renders_repository_scope_and_complete_file_state() -> None:
         )
         assert (
             _text(panel.query_one("#file-notes-git-scope", Static))
-            == "Session paths only · stages complete file state"
+            == "Review and commit only notes changed during this Chatbook session."
         )
         assert _text(panel.query_one("#file-notes-git-guide", Static)) == (
-            "Up/Down Select | Tab Actions | Enter Run | Esc Back"
+            "Up/Down select · Tab actions · Enter run · Esc back"
         )
         assert _text(panel.query_one("#file-notes-git-status", Static)).startswith(
             "Status: CURRENT · READY"
@@ -2205,10 +2231,10 @@ async def test_prepare_session_fixed_regions_remain_visible_at_40_by_20() -> Non
     async with _PanelHarness(panel).run_test(size=(40, 20)) as pilot:
         panel.render_status(status)
         panel.set_current_status(
-            "Status: STALE · ERROR — " + long_reason + "Retry Refresh."
+            "Status: CHECKING — Checking current session notes."
         )
         panel.set_last_action(
-            "Last action: FAILED — " + long_reason + "retry the action, then Refresh"
+            "Last action: STAGED — 1 session note; unrelated changes untouched."
         )
         await pilot.pause()
         await pilot.pause()
@@ -2281,11 +2307,13 @@ async def test_prepare_session_fixed_regions_remain_visible_at_40_by_20() -> Non
         assert unavailable_text == "BLOCKED · Restore Git first; Refresh"
         assert cell_len(unavailable_text) <= unavailable.content_region.width
 
-        assert _text(panel.query_one("#file-notes-git-status", Static)).endswith(
-            "Retry Refresh."
-        )
-        assert _text(panel.query_one("#file-notes-git-action-status", Static)).endswith(
-            "then Refresh"
+        assert _flat_text(
+            panel.query_one("#file-notes-git-status", Static)
+        ) == "Status: CHECKING — Checking current session notes."
+        assert _flat_text(
+            panel.query_one("#file-notes-git-action-status", Static)
+        ) == (
+            "Last action: STAGED — 1 session note; unrelated changes untouched."
         )
 
         repository_rendered = _rendered_text(
@@ -2301,20 +2329,22 @@ async def test_prepare_session_fixed_regions_remain_visible_at_40_by_20() -> Non
         status_rendered = _rendered_text(
             panel.query_one("#file-notes-git-status", Static)
         )
-        assert status_rendered.startswith("Status: STALE · ERROR")
-        assert status_rendered.endswith("Retry Refresh.")
+        assert status_rendered.startswith("Status: CHECKING")
+        assert status_rendered.endswith("current session notes.")
 
         action_rendered = _rendered_text(
             panel.query_one("#file-notes-git-action-status", Static)
         )
-        assert action_rendered.startswith("Last action: FAILED")
-        assert action_rendered.endswith("then Refresh")
+        assert action_rendered.startswith("Last action: STAGED")
+        assert action_rendered.endswith("unrelated changes untouched.")
 
         panel.set_current_status(
-            "Status: STALE · ERROR\nstatus detail\nRetry Refresh."
+            "Status: STALE · ERROR\nstatus detail\nRetry Refresh.",
+            complete=True,
         )
         panel.set_last_action(
-            "Last action: FAILED\naction detail\nthen Refresh"
+            "Last action: FAILED\naction detail\nthen Refresh",
+            complete=True,
         )
         await pilot.pause()
         multiline_status = _rendered_text(
@@ -2322,14 +2352,14 @@ async def test_prepare_session_fixed_regions_remain_visible_at_40_by_20() -> Non
         )
         assert multiline_status.startswith("Status: STALE · ERROR")
         assert multiline_status.endswith("Retry Refresh.")
-        assert len(multiline_status.splitlines()) <= 2
+        assert len(multiline_status.splitlines()) >= 3
 
         multiline_action = _rendered_text(
             panel.query_one("#file-notes-git-action-status", Static)
         )
         assert multiline_action.startswith("Last action: FAILED")
         assert multiline_action.endswith("then Refresh")
-        assert len(multiline_action.splitlines()) <= 2
+        assert len(multiline_action.splitlines()) >= 3
 
         await _assert_visible_panel_buttons_fit(panel, pilot)
 
@@ -2917,7 +2947,7 @@ async def test_workspace_retains_files_search_and_git_modes_with_back_focus(
             LibraryFileNotesGitPanel,
         )
         entry = workspace.query_one("#file-notes-session-changes", Button)
-        assert str(entry.label) == "Session Git (2)"
+        assert str(entry.label) == "Review session changes (2)"
         assert entry.can_focus
 
         search.value = "needle"
@@ -3007,7 +3037,7 @@ async def test_thousand_unrelated_notes_send_only_three_session_groups_and_resto
             node.data for node in files_tree.root.children
         )
         entry = workspace.query_one("#file-notes-session-changes", Button)
-        assert str(entry.label) == "Session Git (3)"
+        assert str(entry.label) == "Review session changes (3)"
 
         entry.press()
         await _wait_until(
@@ -3442,6 +3472,12 @@ async def test_hidden_action_summary_is_presented_after_reopen(
             pilot,
             lambda: not owner.mutation_active(binding),
             "hidden Stage did not settle",
+        )
+        assert _text(
+            workspace.query_one("#file-notes-git-status", Static)
+        ) == (
+            "Status: STALE — Git action finished while Review session changes "
+            "was hidden. Open it again to Refresh."
         )
         assert len(git_service.status_calls) == 1
 
@@ -4295,8 +4331,8 @@ def test_action_summary_contract_matrix(tmp_path: Path) -> None:
                 message="Git is not installed",
             ),
             "Status: UNAVAILABLE — Git is not installed. Install or restore "
-            "Git, then reopen Prepare session for commit.",
-            "Install or restore Git, then reopen Prepare session for commit.",
+            "Git, then open Review session changes again.",
+            "Install or restore Git, then open Review session changes again.",
         ),
         (
             DiscoveryResult(
@@ -4549,7 +4585,7 @@ async def test_mutation_blocks_root_and_path_while_path_lease_blocks_mutation(
         assert workspace.root == root.resolve()
         assert (
             _text(workspace.query_one("#file-notes-action-status", Static))
-            == "Session Git mutation in progress; structural actions are busy."
+            == "Git operation in progress; structural actions are busy."
         )
 
         workspace._set_action_status("")
@@ -4559,14 +4595,14 @@ async def test_mutation_blocks_root_and_path_while_path_lease_blocks_mutation(
         assert workspace._opened.relative_path == "two.md"
         assert (
             _text(workspace.query_one("#file-notes-action-status", Static))
-            == "Session Git mutation in progress; structural actions are busy."
+            == "Git operation in progress; structural actions are busy."
         )
 
         workspace._set_action_status("")
         assert not await workspace.open_path("two.md")
         assert (
             _text(workspace.query_one("#file-notes-action-status", Static))
-            == "Session Git mutation in progress; structural actions are busy."
+            == "Git operation in progress; structural actions are busy."
         )
         assert workspace.query_one("#file-notes-choose-root", Button).disabled
         assert workspace.query_one("#file-notes-save-copy", Button).disabled
@@ -4952,6 +4988,50 @@ async def test_40x20_actionless_prepare_surface_is_keyboard_scrollable(
 
 
 @pytest.mark.asyncio
+async def test_review_session_entry_explains_scope_and_keeps_recovery_copy_complete(
+    tmp_path: Path,
+) -> None:
+    _root, owner, _binding, replica, git_service, workspace = _workspace_fixture(
+        tmp_path
+    )
+    workspace.styles.height = 14
+
+    async with _WorkspaceHarness(workspace).run_test(size=(40, 20)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        entry = workspace.query_one("#file-notes-session-changes", Button)
+        assert str(entry.label) == "Review session changes (2)"
+        entry.press()
+        await _wait_until(
+            pilot,
+            lambda: len(git_service.status_calls) == 1,
+            "Review session changes did not request current status",
+        )
+
+        panel = workspace._git_panel_widget
+        assert _text(panel.query_one("#file-notes-git-title", Static)) == (
+            "Review session changes"
+        )
+        assert _text(panel.query_one("#file-notes-git-scope", Static)) == (
+            "Review and commit only notes changed during this Chatbook session."
+        )
+
+        recovery = (
+            "Status: CURRENT · BLOCKED: The local note changed before staging. "
+            "Return to the editor, finish saving to the local folder, then Refresh."
+        )
+        panel.set_current_status(recovery, complete=True)
+        await pilot.pause()
+        status = panel.query_one("#file-notes-git-status", Static)
+        assert _text(status) == recovery
+        assert status.has_class("-complete-copy")
+        assert status.content_region.height >= 3
+
+    await workspace.shutdown()
+    owner.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
 async def test_wide_prepare_session_quiets_and_restores_editor_toolbars_without_remount(
     tmp_path: Path,
 ) -> None:
@@ -4964,9 +5044,13 @@ async def test_wide_prepare_session_quiets_and_restores_editor_toolbars_without_
         editor = workspace.query_one("#file-notes-editor", TextArea)
         editor.cursor_location = (0, 3)
         editor.selection = editor.selection.__class__((0, 1), (0, 5))
-        toolbars = tuple(workspace.query(".file-notes-toolbar"))
-        assert len(toolbars) == 2
-        assert all(toolbar.display for toolbar in toolbars)
+        file_toolbar = workspace.query_one("#file-notes-file-actions")
+        maintenance_toolbar = workspace.query_one(
+            "#file-notes-maintenance-actions"
+        )
+        toolbars = (file_toolbar, maintenance_toolbar)
+        assert file_toolbar.display
+        assert not maintenance_toolbar.display
 
         entry = workspace.query_one("#file-notes-session-changes", Button)
         entry.focus()
@@ -5011,8 +5095,8 @@ async def test_wide_prepare_session_quiets_and_restores_editor_toolbars_without_
         workspace.query_one("#file-notes-git-back", Button).press()
         await _wait_until(
             pilot,
-            lambda: all(toolbar.display for toolbar in toolbars),
-            "Back did not restore both editor toolbars",
+            lambda: file_toolbar.display and not maintenance_toolbar.display,
+            "Back did not restore the primary editor toolbar",
         )
 
         assert workspace.query_one("#file-notes-editor", TextArea) is editor
@@ -5154,7 +5238,10 @@ async def test_narrow_editor_actions_keep_complete_labels_at_40_by_20(
         assert await workspace.open_path("folder/one.md")
         await pilot.pause()
         _assert_visible_editor_actions_fit(workspace)
+        workspace.query_one("#file-notes-maintenance-toggle", Button).press()
+        await pilot.pause()
         protect = workspace.query_one("#file-notes-protect", Button)
+        assert protect.display
         assert str(protect.label) == "Protect"
         protect.press()
         await _wait_until(

@@ -51,6 +51,16 @@ class FleetHandle:
         error: Error message on failure (empty until finish).
         started_at: Timestamp when handle was created.
         finished_at: Timestamp when handle reached terminal status.
+        total_tokens: PR2b Task 5 (cost rollup). This child's measured
+            cumulative prompt+completion token spend, from its own
+            ``RunOutcome.total_tokens`` -- 0 until ``finish()`` records it
+            (a running child's spend is not final, so it is never reported
+            mid-flight rather than showing a partial/misleading number).
+            This is the ONLY place per-child spend is threaded to the
+            live rail today -- it is not persisted to the ``agent_runs``
+            DB row, so a resumed/historical fleet row (no live coordinator
+            in THIS process) shows no token figure; see
+            ``Console_Modules/agent.py``'s row builders for the consumer.
     """
 
     handle_id: str
@@ -62,6 +72,7 @@ class FleetHandle:
     error: str = ""
     started_at: float = 0.0
     finished_at: float | None = None
+    total_tokens: int = 0
 
 
 class FleetCoordinator:
@@ -148,7 +159,12 @@ class FleetCoordinator:
                 self._handles[handle_id].run_id = run_id
 
     def finish(
-        self, handle_id: str, status: str, result: str = "", error: str = ""
+        self,
+        handle_id: str,
+        status: str,
+        result: str = "",
+        error: str = "",
+        total_tokens: int = 0,
     ) -> None:
         """Mark a handle as finished with terminal status.
 
@@ -163,6 +179,12 @@ class FleetCoordinator:
             status: Terminal status to record.
             result: Result string (ignored if already terminal).
             error: Error message (ignored if already terminal).
+            total_tokens: PR2b Task 5 -- this child's measured cumulative
+                token spend (``RunOutcome.total_tokens``), recorded onto the
+                handle for the rail's cost rollup. Ignored if already
+                terminal, like ``result``/``error``. Defaults to 0 for
+                every pre-existing caller (abandonment, thread-start
+                failure) that has no outcome to report a real figure from.
         """
         with self._lock:
             if handle_id not in self._handles:
@@ -184,6 +206,7 @@ class FleetCoordinator:
             handle.result = result
             handle.error = error
             handle.finished_at = finished_at
+            handle.total_tokens = total_tokens
             self._live_ids.discard(handle_id)
 
             # Emit event with current run_id and agent

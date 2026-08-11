@@ -445,31 +445,52 @@ async def test_generate_image_modal_returns_the_composed_command():
 
 
 def _fake_controller_with(messages):
-    """Build a controller stub whose transcript is ``messages``."""
-    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
-    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    """Build a controller stub whose transcript is ``messages``.
 
-    class _Msg:
-        def __init__(self, role, content, status="ok"):
-            self.role = role
-            self.content = content
-            self.status = status
+    The stub bypasses ``__init__`` deliberately (it supplies only a store),
+    so every controller collaborator the subject reaches has to be wired
+    here by hand. task-14803 (commit 5be9e6a04) made ``impersonate_user_reply``
+    resolve its provider selection through
+    ``resolve_turn_execution_context`` -> ``_turn_context_provider``, which
+    this stub then lacked entirely; the screen wires that seam in production,
+    so wire the same production seam here rather than reaching past it.
+    """
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleChatMessage,
+        ConsoleMessageRole,
+        ConsoleProviderSelection,
+    )
+    from tldw_chatbook.Chat.console_turn_context import ConsoleTurnExecutionContext
 
     class _Store:
         def messages_for_session(self, session_id):
+            # The REAL transcript row type, not a three-attribute stand-in:
+            # the hand-rolled one drifted twice (`metadata`, read by
+            # `_context_content_for` since commit c2038dfe3, was the second),
+            # and a stand-in for a dataclass whose fields all have defaults
+            # buys nothing but drift.
             return [
-                _Msg(
-                    ConsoleMessageRole.USER
-                    if r == "user"
-                    else ConsoleMessageRole.ASSISTANT,
-                    c,
-                    s,
+                ConsoleChatMessage(
+                    role=(
+                        ConsoleMessageRole.USER
+                        if r == "user"
+                        else ConsoleMessageRole.ASSISTANT
+                    ),
+                    content=c,
+                    status=s,
                 )
                 for r, c, s in messages
             ]
 
     controller = ConsoleChatController.__new__(ConsoleChatController)
     controller.store = _Store()
+    controller._turn_context_provider = lambda session_id: (
+        ConsoleTurnExecutionContext.capture(
+            session_id=session_id,
+            provider_selection=ConsoleProviderSelection(provider="test-provider"),
+        )
+    )
     return controller
 
 
@@ -482,7 +503,6 @@ async def test_impersonate_payload_obeys_the_provider_contract():
     providers reject (task-427); a completed turn leaves the transcript
     ending on an assistant row, which user-final providers reject.
     """
-    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 
     captured: dict[str, list] = {}
@@ -509,9 +529,12 @@ async def test_impersonate_payload_obeys_the_provider_contract():
     controller.provider_gateway = type(
         "_G", (), {"resolve_for_send": staticmethod(_resolve)}
     )()
-    controller._provider_selection = lambda: None
     controller._collect_summary_completion = _collect
-    controller._seeded_greeting_text = ConsoleChatController._seeded_greeting_text
+    # `_seeded_greeting_text` used to be a @staticmethod(session_messages),
+    # which is why it was re-bound onto the instance here; commit c2038dfe3
+    # (roleplay identity) made it an ordinary method taking (session_id,
+    # session_messages), so the re-bind dropped `self` and the real method on
+    # the class is now the right -- and only correct -- way to reach it.
 
     result = await controller.impersonate_user_reply("s1")
     assert result.text == "drafted reply"

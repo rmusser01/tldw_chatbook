@@ -643,20 +643,44 @@ def test_select_toggle_on_does_not_notify():
     assert fake._notified == []
 
 
-def test_type_filter_cycle_exits_select_mode_and_notifies_discard():
-    """The type-filter cycle also silently reset select mode before
-    task-2853 -- it now goes through the same shared exit path, so it
-    cannot strand ``confirming_bulk_delete`` either."""
+def test_type_filter_change_exits_select_mode_and_notifies_discard():
+    """The type-filter change also silently reset select mode before
+    task-2853 -- it goes through the same shared exit path, so it cannot
+    strand ``confirming_bulk_delete`` either.
+
+    (rebase note: task-14902 retired the per-press cycle -- the chooser
+    press now only opens the choice strip and is inert while the
+    bulk-delete confirmation is armed (task-2853 AC3), and the actual
+    filter change moved to the strip's pick handler. The pinned outcome
+    is unchanged; it is asserted at the pick seam, the one place the
+    filter can change now.)"""
     fake = _media_fake(select_mode=True, confirming_bulk_delete=True)
     fake.refresh = lambda **k: setattr(fake, "_refreshed", fake._refreshed + 1)
+    fake.call_after_refresh = lambda *a, **k: None
+    fake._focus_library_control = lambda *a, **k: None
     fake._library_media_row_selection.select_all(["9"])
     fake._library_media_type_filter = "All"
+    fake._library_media_type_choices_visible = False
     fake._build_library_media_state = lambda: SimpleNamespace(
         type_options=("All", "video")
     )
-    event = SimpleNamespace(stop=lambda: None)
-    LibraryScreen.handle_library_media_type_filter_pressed(fake, event)
+    # Pressing the chooser under an armed confirm is inert: no strip, no
+    # filter drift, the confirmation stays exactly as armed.
+    press = SimpleNamespace(stop=lambda: None)
+    LibraryScreen.handle_library_media_type_filter_pressed(fake, press)
+    assert fake._library_media_type_choices_visible is False
+    assert fake._library_media_type_filter == "All"
+    assert fake._library_media_confirming_bulk_delete is True
+    # A strip pick applies the value and routes through the shared exit
+    # helper -- the original task-2853 pin, one seam over.
+    fake._library_media_type_choices_visible = True
+    pick = SimpleNamespace(
+        stop=lambda: None,
+        button=SimpleNamespace(choice_value="video"),
+    )
+    LibraryScreen.handle_library_media_type_choice(fake, pick)
     assert fake._library_media_type_filter == "video"
+    assert fake._library_media_type_choices_visible is False
     assert fake._library_media_select_mode is False
     assert fake._library_media_confirming_bulk_delete is False
     assert fake._library_media_row_selection.count == 0
@@ -1363,5 +1387,247 @@ async def test_single_item_delete_also_arms_entry_focus_on_success(tmp_path):
     assert fake._entry_focus_arm_calls == [True]
     # task-3020 AC5: rail count decremented in place, like the bulk path.
     assert fake._local_source_counts["media"] == 0
+
+    db.close_connection()
+
+
+# ---------------------------------------------------------------------------
+# task-14901 (ADR-055): single media delete is one-item bulk. It adopts the
+# SAME receipt/Undo seam as "Delete selected" -- the shared
+# ``_library_media_bulk_delete_in_flight`` flag, the shared exclusive worker
+# group, ``_library_media_delete_receipt_ids``, and
+# ``_undo_library_media_bulk_delete`` -- instead of confirm-then-silence.
+# No second undo path is forked.
+# ---------------------------------------------------------------------------
+
+
+async def _noop_delete_item(media_id):
+    """Stand-in for ``_delete_library_media_item`` -- mirrors ``_noop_undo``'s
+    role for the handler-level tests (the coroutine body is covered by the
+    real-DB tests below)."""
+    return None
+
+
+def _single_delete_confirm_fake(
+    *, selected_media_id="7", in_flight=False, receipt_ids=()
+):
+    """Handler-level fake for the single-item viewer delete-confirm button."""
+    fake = SimpleNamespace(
+        _selected_media_id=selected_media_id,
+        _library_media_confirming_delete=True,
+        _library_media_bulk_delete_in_flight=in_flight,
+        _library_media_delete_receipt_ids=receipt_ids,
+        _delete_library_media_item=_noop_delete_item,
+        refresh=lambda **k: None,
+    )
+    return fake
+
+
+def test_single_delete_confirm_claims_shared_flag_and_group():
+    """The confirm press claims the SAME in-flight flag and exclusive worker
+    group as the bulk delete/Undo pair -- one interlock across all three
+    mutators of the shared list/count/receipt state."""
+    fake = _single_delete_confirm_fake()
+    worker_calls = []
+    fake.run_worker = lambda coro, **k: worker_calls.append((coro, k))
+
+    LibraryScreen.handle_library_media_delete_confirm(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
+
+    assert len(worker_calls) == 1
+    coro, kwargs = worker_calls[0]
+    assert kwargs.get("exclusive") is True
+    assert kwargs.get("group") == "library_media_bulk_delete"
+    assert fake._library_media_bulk_delete_in_flight is True
+    coro.close()
+
+
+def test_single_delete_confirm_refused_while_bulk_or_undo_in_flight():
+    """A single-item confirm while a bulk delete OR an Undo is still running
+    is refused outright (PR-1473's one-flag rule): no second worker, and the
+    receipt it would eventually overwrite is never touched."""
+    fake = _single_delete_confirm_fake(in_flight=True, receipt_ids=("1", "2"))
+    worker_calls = []
+    fake.run_worker = lambda coro, **k: worker_calls.append((coro, k))
+
+    LibraryScreen.handle_library_media_delete_confirm(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
+
+    assert worker_calls == []
+    assert fake._library_media_delete_receipt_ids == ("1", "2")
+
+
+def test_single_delete_confirm_empty_id_does_not_claim_flag():
+    """The no-selected-id early-out never claims the shared flag -- a later
+    legitimate delete/Undo must not find it stuck True."""
+    fake = _single_delete_confirm_fake(selected_media_id="")
+    worker_calls = []
+    fake.run_worker = lambda coro, **k: worker_calls.append((coro, k))
+
+    LibraryScreen.handle_library_media_delete_confirm(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
+
+    assert worker_calls == []
+    assert fake._library_media_bulk_delete_in_flight is False
+    assert fake._library_media_confirming_delete is False
+
+
+def test_single_delete_arm_supersedes_stale_receipt():
+    """Arming the viewer confirm clears any receipt still showing from an
+    earlier delete -- mirroring ``handle_library_media_delete_selected``'s
+    arm-time clear, so a completed receipt always reflects only what just
+    happened."""
+    fake = SimpleNamespace(
+        _library_media_confirming_delete=False,
+        _library_media_delete_receipt_ids=("9",),
+        refresh=lambda **k: None,
+    )
+
+    LibraryScreen.handle_library_media_delete(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
+
+    assert fake._library_media_confirming_delete is True
+    assert fake._library_media_delete_receipt_ids == ()
+
+
+def _single_delete_worker_fake(*, db, records, counts, selected_media_id):
+    """Real-DB fake for ``_delete_library_media_item`` -- the single-item
+    sibling of ``_bulk_delete_fake``, seeded with the viewer state the
+    method resets on success."""
+    local_service = LocalMediaReadingService(db)
+    scope_service = MediaReadingScopeService(local_service, None)
+    notified = []
+    refresh_calls = []
+    entry_focus_arm_calls = []
+    fake = SimpleNamespace(
+        app_instance=SimpleNamespace(
+            media_reading_scope_service=scope_service,
+            notify=lambda msg, **k: notified.append((msg, k)),
+        ),
+        _notified=notified,
+        _refresh_calls=refresh_calls,
+        _entry_focus_arm_calls=entry_focus_arm_calls,
+        _local_source_records={"media": tuple(records)},
+        _local_source_counts=dict(counts),
+        _library_media_view="viewer",
+        _library_media_detail={"id": selected_media_id},
+        _library_media_highlights=[],
+        _library_media_editing_analysis=False,
+        _library_media_content_query="",
+        _library_media_content_match_index=0,
+        _selected_media_id=selected_media_id,
+        _library_media_confirming_delete=True,
+        # The real confirm handler sets the shared flag BEFORE scheduling
+        # this coroutine -- start True so the ``finally`` clear is provable.
+        _library_media_bulk_delete_in_flight=True,
+        # The real arm handler already cleared any stale receipt.
+        _library_media_delete_receipt_ids=(),
+        is_mounted=True,
+        refresh=lambda **k: refresh_calls.append(k),
+        _arm_library_list_entry_focus=lambda: entry_focus_arm_calls.append(True),
+        _run_library_service_call=LibraryScreen._run_library_service_call,
+        _source_record_id=LibraryScreen._source_record_id,
+    )
+    fake._notify_library_media_delete_warning = types.MethodType(
+        LibraryScreen._notify_library_media_delete_warning, fake
+    )
+    return fake
+
+
+@pytest.mark.asyncio
+async def test_single_delete_leaves_receipt_and_undo_restores_via_bulk_seam(
+    tmp_path,
+):
+    """Full cycle against the REAL DB: a confirmed single delete trashes the
+    item and leaves a one-id receipt (rendered as "✓ deleted · 1 item" with
+    Undo/Dismiss), and pressing Undo restores it through the EXACT same
+    ``_undo_library_media_bulk_delete`` coroutine the bulk receipt uses --
+    record back in the list, rail count back up, receipt cleared. The item
+    carries ``chunks`` so the restore path is proven against a chunked row
+    (the task-4022 Critical was invisible because every test omitted them).
+    """
+    db = MediaDatabase(
+        db_path=str(tmp_path / "media.db"), client_id="task-14901-single-receipt"
+    )
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Solo",
+        content="solo body",
+        media_type="article",
+        keywords=[],
+        chunks=[{"text": "solo body", "chunk_type": "text"}],
+    )
+    fake = _single_delete_worker_fake(
+        db=db,
+        records=({"id": str(media_id), "title": "Solo"},),
+        counts={"media": 1},
+        selected_media_id=str(media_id),
+    )
+
+    await LibraryScreen._delete_library_media_item(fake, str(media_id))
+
+    assert db.get_media_by_id(media_id, include_trash=True)["is_trash"] in {1, True}
+    assert fake._library_media_view == "list"
+    assert fake._local_source_records["media"] == ()
+    assert fake._local_source_counts["media"] == 0
+    # task-14901: the receipt names exactly the one deleted id, ready for
+    # the existing Undo/Dismiss handlers -- no silence, no second seam.
+    assert fake._library_media_delete_receipt_ids == (str(media_id),)
+    assert fake._library_media_bulk_delete_in_flight is False
+    assert fake._notified == []
+
+    # Undo exactly as the receipt row's button would: handler claims the
+    # shared flag, then the SAME bulk-undo coroutine runs (the interlock
+    # test's capture-then-await pattern).
+    fake._undo_library_media_bulk_delete = types.MethodType(
+        LibraryScreen._undo_library_media_bulk_delete, fake
+    )
+    worker_calls = []
+    fake.run_worker = lambda coro, **k: worker_calls.append((coro, k))
+    LibraryScreen.handle_library_media_bulk_delete_undo(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
+    assert len(worker_calls) == 1
+    assert fake._library_media_bulk_delete_in_flight is True
+    undo_coro, undo_kwargs = worker_calls[0]
+    assert undo_kwargs.get("group") == "library_media_bulk_delete"
+    await undo_coro
+
+    assert not db.get_media_by_id(media_id, include_trash=True)["is_trash"]
+    restored_ids = {str(r["id"]) for r in fake._local_source_records["media"]}
+    assert restored_ids == {str(media_id)}
+    assert fake._local_source_counts["media"] == 1
+    assert fake._library_media_delete_receipt_ids == ()
+    assert fake._library_media_bulk_delete_in_flight is False
+    assert fake._notified == []
+
+    db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_single_delete_failure_leaves_no_receipt_and_clears_flag(tmp_path):
+    """A failed single delete (id not in the real DB) must warn quietly,
+    leave NO receipt (nothing succeeded), and still clear the shared flag so
+    a follow-up delete/Undo is never permanently blocked."""
+    db = MediaDatabase(
+        db_path=str(tmp_path / "media.db"), client_id="task-14901-single-fail"
+    )
+    fake = _single_delete_worker_fake(
+        db=db,
+        records=({"id": "424242", "title": "Ghost"},),
+        counts={"media": 1},
+        selected_media_id="424242",
+    )
+
+    await LibraryScreen._delete_library_media_item(fake, "424242")
+
+    assert fake._library_media_delete_receipt_ids == ()
+    assert fake._library_media_bulk_delete_in_flight is False
+    assert fake._library_media_view == "viewer"
+    assert len(fake._notified) == 1
+    assert fake._notified[0][1].get("severity") == "warning"
 
     db.close_connection()

@@ -17,6 +17,7 @@ def test_load_appearance_defaults_uses_safe_defaults():
     assert defaults.density == "normal"
     assert defaults.animations_enabled is True
     assert defaults.smooth_scrolling is True
+    assert defaults.console_transcript_style == "role_accents"
 
 
 def test_load_appearance_defaults_reads_general_web_and_appearance_sections():
@@ -33,6 +34,7 @@ def test_load_appearance_defaults_reads_general_web_and_appearance_sections():
                 "density": "comfortable",
                 "animations_enabled": "false",
                 "smooth_scrolling": "yes",
+                "console_transcript_style": "immersive_rp",
             },
         }
     )
@@ -44,6 +46,7 @@ def test_load_appearance_defaults_reads_general_web_and_appearance_sections():
         density="comfortable",
         animations_enabled=False,
         smooth_scrolling=True,
+        console_transcript_style="immersive_rp",
     )
 
 
@@ -116,6 +119,7 @@ def test_validate_appearance_defaults_rejects_invalid_values():
         ({"smooth_scrolling": "yes"}, "Smooth scrolling"),
         ({"reduce_motion": "yes"}, "Reduce motion"),
         ({"ascii_glyphs": "yes"}, "ASCII glyphs"),
+        ({"console_transcript_style": "rainbow"}, "Transcript style"),
     )
 
     for overrides, expected_message in invalid_values:
@@ -165,6 +169,7 @@ def test_build_appearance_save_sections_preserves_unrelated_config():
             "smooth_scrolling": False,
             "reduce_motion": False,
             "ascii_glyphs": False,
+            "console_transcript_style": "role_accents",
         },
     }
 

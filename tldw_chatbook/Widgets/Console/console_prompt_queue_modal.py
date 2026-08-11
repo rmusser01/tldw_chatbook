@@ -292,13 +292,7 @@ class ConsolePromptQueueModal(ModalScreen[None]):
         use_current.disabled = review.disabled or self._reviewed_context_epoch is None
         listing.remove_children()
         for entry in snapshot.entries:
-            row = Horizontal(classes="console-prompt-queue-entry-row")
-            row.set_class(
-                entry.entry_id == self._selected_entry_id,
-                "-selected",
-            )
-            listing.mount(row)
-            row.mount(
+            row = Horizontal(
                 Button(
                     f"{entry.position}. {entry.preview}",
                     id=f"console-prompt-queue-entry-{entry.entry_id}",
@@ -310,7 +304,13 @@ class ConsolePromptQueueModal(ModalScreen[None]):
                     else "Waiting",
                     classes="console-prompt-queue-entry-phase",
                 ),
+                classes="console-prompt-queue-entry-row",
             )
+            row.set_class(
+                entry.entry_id == self._selected_entry_id,
+                "-selected",
+            )
+            listing.mount(row)
         self.call_after_refresh(self._restore_selection_focus)
 
     def _restore_selection_focus(self) -> None:

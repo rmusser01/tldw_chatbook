@@ -163,7 +163,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 33  # Local Console context policy, branch memory, and content-free auxiliary attempts (TASK-14811.1).
+    _CURRENT_SCHEMA_VERSION = 34  # Deterministic visual-compaction representation policy (TASK-14914).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -2765,6 +2765,13 @@ UPDATE db_schema_version
                 conn.row_factory = sqlite3.Row
                 if not self.is_memory_db:
                     conn.execute("PRAGMA journal_mode=WAL;")
+                # NORMAL is safe under WAL (app-crash-safe; only an OS/power
+                # crash can lose the last commit or two, acceptable for this
+                # local cache) and avoids an fsync on every commit -- the
+                # default FULL was fsyncing the WAL on every commit despite
+                # WAL already being enabled. See Library_Ingest_Jobs_DB.py:
+                # 57-61 for the original template (task-15465).
+                conn.execute("PRAGMA synchronous=NORMAL;")
 
                 conn.execute("PRAGMA foreign_keys = ON;")
                 self._local.conn = conn
@@ -4787,6 +4794,44 @@ UPDATE db_schema_version
                 f"Migration from V32 to V33 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
+    def _migrate_from_v33_to_v34(self, conn: sqlite3.Connection) -> None:
+        """Add the sparse Console compaction-representation preference."""
+        if self._get_db_version(conn) != 33:
+            raise SchemaError(
+                f"[{self._SCHEMA_NAME} V33→V34] Migration requires schema version 33"
+            )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v33_to_v34_visual_compaction_policy.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                pending = ""
+                for line in migration_path.read_text(encoding="utf-8").splitlines(
+                    keepends=True
+                ):
+                    pending += line
+                    if sqlite3.complete_statement(pending):
+                        cursor.execute(pending)
+                        pending = ""
+                if pending.strip():
+                    raise SchemaError(
+                        "Visual-compaction policy migration contains incomplete SQL"
+                    )
+                row = cursor.execute(
+                    "SELECT version FROM db_schema_version WHERE schema_name = ?",
+                    (self._SCHEMA_NAME,),
+                ).fetchone()
+                if row is None or row["version"] != 34:
+                    raise SchemaError(
+                        "Visual-compaction policy schema version verification failed"
+                    )
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration from V33 to V34 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -4950,6 +4995,7 @@ UPDATE db_schema_version
                     30: self._migrate_from_v30_to_v31,
                     31: self._migrate_from_v31_to_v32,
                     32: self._migrate_from_v32_to_v33,
+                    33: self._migrate_from_v33_to_v34,
                 }
 
                 if current_db_version == 0:

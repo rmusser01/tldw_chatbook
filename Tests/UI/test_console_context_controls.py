@@ -6,12 +6,13 @@ from pathlib import Path
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Select, Static
+from textual.widgets import Button, OptionList, Select, Static
 
 from tldw_chatbook.Chat.console_context_policy import (
     ConsoleContextPolicyOverrides,
     ContextBudgetMode,
     ContextCompactionMode,
+    ContextCompactionRepresentation,
 )
 from tldw_chatbook.Chat.console_context_repository import ConsoleMemoryRecord
 from tldw_chatbook.Chat.console_session_settings import (
@@ -187,16 +188,28 @@ async def test_full_modal_has_stable_views_and_saves_conversation_policy() -> No
         assert "F9 Settings > Console behavior" in scope
         context_labels = {
             "#console-context-custom-budget": "Conversation max tokens",
-            "#console-context-trigger-percent": "Summarize at (%)",
+            "#console-context-trigger-percent": "Compact at (%)",
             "#console-context-target-percent": "Reduce conversation to (%)",
             "#console-context-summary-max": "Summary response max",
-            "#console-context-failure-behavior": "If summary fails",
-            "#console-context-carry-forward": "Keep after summary",
+            "#console-context-failure-behavior": "If compaction fails",
+            "#console-context-carry-forward": "Keep after compaction",
+            "#console-context-compaction-representation": "Representation",
         }
         for selector, expected in context_labels.items():
             control = app.screen.query_one(selector)
             label = control.parent.query_one(".console-settings-modal-label", Static)
             assert str(label.renderable) == expected
+        representation = app.screen.query_one(
+            "#console-context-compaction-representation", Select
+        )
+        representation_options = representation.query_one(OptionList)
+        assert representation_options.get_option_at_index(1).disabled
+        assert representation_options.get_option_at_index(2).disabled
+        assert "vision-capable" in str(
+            app.screen.query_one(
+                "#console-context-representation-status", Static
+            ).renderable
+        )
 
         app.screen.query_one(
             "#console-context-budget-mode", Select
@@ -214,6 +227,51 @@ async def test_full_modal_has_stable_views_and_saves_conversation_policy() -> No
         is ContextCompactionMode.AUTOMATIC
     )
     assert app.result.context_policy_overrides.custom_budget_tokens == 70_000
+
+
+@pytest.mark.asyncio
+async def test_visual_representation_choices_enable_for_vision_model() -> None:
+    app = _ContextHarness()
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="gpt-4o",
+        max_tokens=4_000,
+    )
+    async with app.run_test(size=(120, 42)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config={"api_settings": {"llama_cpp": {}}},
+                providers_models={"llama_cpp": ["gpt-4o"]},
+                context_estimate=ConsoleSettingsContextEstimate(
+                    42_000, 100_000, "42,000 / 100,000 tokens"
+                ),
+                context_state=build_console_context_control_state(
+                    settings=settings,
+                    estimate=ConsoleSettingsContextEstimate(
+                        42_000, 100_000, "42,000 / 100,000 tokens"
+                    ),
+                ),
+                can_save=True,
+                focus_context=True,
+            ),
+            callback=app.capture,
+        )
+        representation = app.screen.query_one(
+            "#console-context-compaction-representation", Select
+        )
+        options = representation.query_one(OptionList)
+        assert not options.get_option_at_index(1).disabled
+        assert not options.get_option_at_index(2).disabled
+        representation.value = ContextCompactionRepresentation.HYBRID.value
+        await pilot.click("#console-settings-save")
+        await pilot.pause()
+
+    assert isinstance(app.result, ConsoleSettingsResult)
+    assert (
+        app.result.context_policy_overrides.compaction_representation
+        is ContextCompactionRepresentation.HYBRID
+    )
 
 
 @pytest.mark.asyncio

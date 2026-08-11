@@ -51,9 +51,12 @@ from ...Chat.console_context_policy import (
     ContextBudgetMode,
     ContextCarryForwardMode,
     ContextCompactionMode,
+    ContextCompactionRepresentation,
 )
 from ...Chat.console_roleplay_identity import (
     ChatDisplayNameError,
+    DEFAULT_CONSOLE_TRANSCRIPT_STYLE,
+    ConsoleTranscriptStyle,
     normalize_chat_display_name,
 )
 from ...Widgets.glyph_fallback import set_ascii_glyph_mode
@@ -953,8 +956,12 @@ def _build_field_search_index() -> None:
                 ("settings-console-context-budget-tokens", "Conversation max tokens"),
                 ("settings-console-context-compaction-mode", "When limit nears"),
                 (
+                    "settings-console-context-compaction-representation",
+                    "Compaction representation",
+                ),
+                (
                     "settings-console-context-trigger-percent",
-                    "Summarize at percent",
+                    "Compact at percent",
                 ),
                 (
                     "settings-console-context-target-percent",
@@ -966,15 +973,19 @@ def _build_field_search_index() -> None:
                 ),
                 (
                     "settings-console-context-failure-behavior",
-                    "If summary fails",
+                    "If compaction fails",
                 ),
-                ("settings-console-context-carry-forward-mode", "Keep after summary"),
+                (
+                    "settings-console-context-carry-forward-mode",
+                    "Keep after compaction",
+                ),
             ),
             SettingsCategoryId.APPEARANCE: (
                 ("settings-appearance-theme", "Theme"),
                 ("settings-appearance-palette-theme-limit", "Palette limit (themes)"),
                 ("settings-appearance-font-size", "Web font size (px)"),
                 ("settings-appearance-density", "Density"),
+                ("settings-appearance-transcript-style", "Console transcript"),
                 ("settings-appearance-animations-enabled", "Animations"),
                 ("settings-appearance-smooth-scrolling", "Smooth scrolling"),
             ),
@@ -5314,6 +5325,8 @@ class SettingsScreen(BaseAppScreen):
             return "font_size"
         if message.startswith("Density"):
             return "density"
+        if message.startswith("Transcript style"):
+            return "console_transcript_style"
         if message.startswith("Animations"):
             return "animations_enabled"
         if message.startswith("Reduce motion"):
@@ -5330,6 +5343,7 @@ class SettingsScreen(BaseAppScreen):
             "palette_theme_limit": "#settings-appearance-palette-theme-limit",
             "font_size": "#settings-appearance-font-size",
             "density": "#settings-appearance-density",
+            "console_transcript_style": "#settings-appearance-transcript-style",
             "animations_enabled": "#settings-appearance-animations-enabled",
             "smooth_scrolling": "#settings-appearance-smooth-scrolling",
             "reduce_motion": "#settings-appearance-reduce-motion",
@@ -5343,6 +5357,7 @@ class SettingsScreen(BaseAppScreen):
             "palette_theme_limit",
             "font_size",
             "density",
+            "console_transcript_style",
             "animations_enabled",
             "smooth_scrolling",
             "reduce_motion",
@@ -5415,6 +5430,7 @@ class SettingsScreen(BaseAppScreen):
         values = self._appearance_setting_values()
         return (
             f"Theme {values['default_theme']} | Density {values['density']} | "
+            f"Transcript {str(values['console_transcript_style']).replace('_', ' ')} | "
             f"Font {values['font_size']} | Palette limit {values['palette_theme_limit']}"
         )
 
@@ -9739,6 +9755,19 @@ class SettingsScreen(BaseAppScreen):
                 ("Saved as", "appearance.density"),
                 ("Validation", "compact, normal, or comfortable"),
             )
+        if field_id == "settings-appearance-transcript-style":
+            return (
+                ("Focused setting", "Console transcript"),
+                (
+                    "Purpose",
+                    "Controls semantic speaker color and optional roleplay prose accents.",
+                ),
+                ("Saved as", "appearance.console_transcript_style"),
+                (
+                    "Validation",
+                    "neutral, role accents, or immersive RP",
+                ),
+            )
         if field_id == "settings-appearance-animations-enabled":
             return (
                 ("Focused setting", "Animations"),
@@ -10869,8 +10898,39 @@ class SettingsScreen(BaseAppScreen):
                     allow_blank=False,
                     compact=True,
                 )
+            with Horizontal(classes="settings-input-row settings-select-row"):
+                yield Static("Representation", classes="settings-input-label")
+                yield Select(
+                    [
+                        (
+                            "Text summary",
+                            ContextCompactionRepresentation.TEXT_SUMMARY.value,
+                        ),
+                        (
+                            "Visual transcript",
+                            ContextCompactionRepresentation.VISUAL_TRANSCRIPT.value,
+                        ),
+                        (
+                            "Hybrid",
+                            ContextCompactionRepresentation.HYBRID.value,
+                        ),
+                    ],
+                    value=str(
+                        self._console_behavior_value("compaction_representation")
+                    ),
+                    id="settings-console-context-compaction-representation",
+                    classes="settings-compact-select",
+                    allow_blank=False,
+                    compact=True,
+                )
+            yield Static(
+                "Visual and Hybrid apply only to vision-capable sessions; unsupported "
+                "models safely use Text summary without overwriting this default.",
+                id="settings-console-context-representation-help",
+                classes="settings-detail-row",
+            )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Summarize at (%)", classes="settings-input-label")
+                yield Static("Compact at (%)", classes="settings-input-label")
                 yield Input(
                     value=format_ratio_percent(
                         self._console_behavior_value("compaction_trigger_ratio")
@@ -10900,8 +10960,13 @@ class SettingsScreen(BaseAppScreen):
                     placeholder="1024 tokens",
                     restrict=r"^[0-9]*$",
                 )
+            yield Static(
+                "Summary response max applies only to Text summary and Hybrid.",
+                id="settings-console-context-summary-max-help",
+                classes="settings-detail-row",
+            )
             with Horizontal(classes="settings-input-row settings-select-row"):
-                yield Static("If summary fails", classes="settings-input-label")
+                yield Static("If compaction fails", classes="settings-input-label")
                 yield Select(
                     [
                         ("Stop and ask", CompactionFailureBehavior.STOP_AND_ASK.value),
@@ -10919,7 +10984,7 @@ class SettingsScreen(BaseAppScreen):
                     compact=True,
                 )
             with Horizontal(classes="settings-input-row settings-select-row"):
-                yield Static("Keep after summary", classes="settings-input-label")
+                yield Static("Keep after compaction", classes="settings-input-label")
                 yield Select(
                     [
                         (
@@ -10945,9 +11010,11 @@ class SettingsScreen(BaseAppScreen):
                 tooltip="Open the existing Internal Prompts editor filtered to the Console summary prompt.",
             )
             yield Static(
-                "Compaction makes one extra model call and stores generated memory with "
-                "provenance; original transcript messages remain stored. Off disables "
-                "optional compaction only—mandatory provider safety trimming still applies.",
+                "Text summary and Hybrid make one extra model call and store generated "
+                "memory with provenance. Visual pages are rendered on-device for one "
+                "request and never persisted. Original transcript messages remain stored. "
+                "Off disables optional compaction only—mandatory provider safety trimming "
+                "still applies.",
                 id="settings-console-context-safety-copy",
                 classes="settings-detail-row",
             )
@@ -13000,6 +13067,23 @@ class SettingsScreen(BaseAppScreen):
                         allow_blank=False,
                         compact=True,
                     )
+                with Horizontal(classes="settings-input-row settings-select-row"):
+                    yield Static("Console transcript", classes="settings-input-label")
+                    yield Select(
+                        [
+                            ("Neutral", ConsoleTranscriptStyle.NEUTRAL.value),
+                            (
+                                "Role accents",
+                                ConsoleTranscriptStyle.ROLE_ACCENTS.value,
+                            ),
+                            ("Immersive RP", ConsoleTranscriptStyle.IMMERSIVE_RP.value),
+                        ],
+                        value=str(values["console_transcript_style"]),
+                        id="settings-appearance-transcript-style",
+                        classes="settings-compact-select",
+                        allow_blank=False,
+                        compact=True,
+                    )
                 yield Static("Motion and scrolling", classes="destination-section")
                 with Horizontal(classes="settings-input-row"):
                     yield Static("Animations", classes="settings-input-label")
@@ -14328,6 +14412,7 @@ class SettingsScreen(BaseAppScreen):
                 "settings-appearance-palette-theme-limit",
                 "settings-appearance-font-size",
                 "settings-appearance-density",
+                "settings-appearance-transcript-style",
                 "settings-appearance-animations-enabled",
                 "settings-appearance-smooth-scrolling",
             }
@@ -14669,6 +14754,19 @@ class SettingsScreen(BaseAppScreen):
         if self._syncing_appearance_defaults:
             return
         self._stage_appearance_value("density", str(event.value or "normal"))
+        self._mark_appearance_settings_staged()
+
+    @on(Select.Changed, "#settings-appearance-transcript-style")
+    def handle_appearance_transcript_style_changed(
+        self, event: Select.Changed
+    ) -> None:
+        event.stop()
+        if self._syncing_appearance_defaults:
+            return
+        self._stage_appearance_value(
+            "console_transcript_style",
+            str(event.value or DEFAULT_CONSOLE_TRANSCRIPT_STYLE.value),
+        )
         self._mark_appearance_settings_staged()
 
     @on(Checkbox.Changed, "#settings-appearance-animations-enabled")
@@ -15330,6 +15428,7 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Select.Changed, "#settings-console-context-budget-mode")
     @on(Select.Changed, "#settings-console-context-compaction-mode")
+    @on(Select.Changed, "#settings-console-context-compaction-representation")
     @on(Select.Changed, "#settings-console-context-failure-behavior")
     @on(Select.Changed, "#settings-console-context-carry-forward-mode")
     def handle_console_context_select_changed(self, event: Select.Changed) -> None:
@@ -15339,6 +15438,9 @@ class SettingsScreen(BaseAppScreen):
         key_by_id = {
             "settings-console-context-budget-mode": "conversation_budget_mode",
             "settings-console-context-compaction-mode": "compaction_mode",
+            "settings-console-context-compaction-representation": (
+                "compaction_representation"
+            ),
             "settings-console-context-failure-behavior": "compaction_failure_behavior",
             "settings-console-context-carry-forward-mode": "compaction_carry_forward_mode",
         }
@@ -17994,6 +18096,41 @@ class SettingsScreen(BaseAppScreen):
                             type(exc).__name__,
                         )
 
+    def _signal_console_appearance_refresh(self) -> None:
+        """Publish saved transcript styling to every live Console screen."""
+
+        generation = (
+            int(
+                getattr(
+                    self.app_instance,
+                    "_console_appearance_refresh_generation",
+                    0,
+                )
+                or 0
+            )
+            + 1
+        )
+        self.app_instance._console_appearance_refresh_generation = generation
+        signalled: set[int] = set()
+        for app in (self.app, self.app_instance):
+            for screen in tuple(getattr(app, "screen_stack", ()) or ()):
+                screen_key = id(screen)
+                if screen_key in signalled:
+                    continue
+                signalled.add(screen_key)
+                refresh = getattr(screen, "request_console_appearance_refresh", None)
+                if callable(refresh):
+                    try:
+                        refresh(generation)
+                    except Exception as exc:
+                        logger.warning(
+                            "Console appearance refresh failed after settings save "
+                            "(screen_type=%s, generation=%s, error_type=%s).",
+                            type(screen).__name__,
+                            generation,
+                            type(exc).__name__,
+                        )
+
     def _apply_appearance_save_result(
         self,
         saved: bool,
@@ -18001,6 +18138,7 @@ class SettingsScreen(BaseAppScreen):
     ) -> None:
         if saved:
             self._app_config_update_target().update(copy.deepcopy(dict(section_values)))
+            self._signal_console_appearance_refresh()
             self._settings_drafts.pop(SettingsCategoryId.APPEARANCE, None)
             self._appearance_result = "Appearance defaults saved."
             self._set_static_text(
@@ -18446,6 +18584,9 @@ class SettingsScreen(BaseAppScreen):
             context_selects = {
                 "#settings-console-context-budget-mode": "conversation_budget_mode",
                 "#settings-console-context-compaction-mode": "compaction_mode",
+                "#settings-console-context-compaction-representation": (
+                    "compaction_representation"
+                ),
                 "#settings-console-context-failure-behavior": (
                     "compaction_failure_behavior"
                 ),
@@ -18620,6 +18761,12 @@ class SettingsScreen(BaseAppScreen):
                 self.query_one("#settings-appearance-density", Select).value = str(
                     values["density"]
                 )
+            except QueryError:
+                pass
+            try:
+                self.query_one(
+                    "#settings-appearance-transcript-style", Select
+                ).value = str(values["console_transcript_style"])
             except QueryError:
                 pass
             try:

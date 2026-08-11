@@ -33,6 +33,12 @@ class ContextCompactionMode(str, Enum):
     OFF = "off"
 
 
+class ContextCompactionRepresentation(str, Enum):
+    TEXT_SUMMARY = "text_summary"
+    VISUAL_TRANSCRIPT = "visual_transcript"
+    HYBRID = "hybrid"
+
+
 class CompactionFailureBehavior(str, Enum):
     STOP_AND_ASK = "stop_and_ask"
     OMIT_OLDER_CONTEXT = "omit_older_context"
@@ -50,6 +56,9 @@ class ConsoleContextPolicyDefaults:
     budget_mode: ContextBudgetMode = ContextBudgetMode.AUTOMATIC
     custom_budget_tokens: int | None = None
     compaction_mode: ContextCompactionMode = ContextCompactionMode.ASK
+    compaction_representation: ContextCompactionRepresentation = (
+        ContextCompactionRepresentation.TEXT_SUMMARY
+    )
     trigger_ratio: float = DEFAULT_COMPACTION_TRIGGER_RATIO
     target_ratio: float = DEFAULT_COMPACTION_TARGET_RATIO
     summary_max_tokens: int = DEFAULT_SUMMARY_MAX_TOKENS
@@ -76,6 +85,7 @@ class ConsoleContextPolicyOverrides:
     budget_mode: ContextBudgetMode | None = None
     custom_budget_tokens: int | None = None
     compaction_mode: ContextCompactionMode | None = None
+    compaction_representation: ContextCompactionRepresentation | None = None
     trigger_ratio: float | None = None
     target_ratio: float | None = None
     summary_max_tokens: int | None = None
@@ -86,6 +96,11 @@ class ConsoleContextPolicyOverrides:
         _validate_optional_enum("budget_mode", self.budget_mode, ContextBudgetMode)
         _validate_optional_enum(
             "compaction_mode", self.compaction_mode, ContextCompactionMode
+        )
+        _validate_optional_enum(
+            "compaction_representation",
+            self.compaction_representation,
+            ContextCompactionRepresentation,
         )
         _validate_optional_enum(
             "failure_behavior", self.failure_behavior, CompactionFailureBehavior
@@ -134,6 +149,11 @@ class ConsoleContextPolicyOverrides:
             custom_budget_tokens=_optional_int(source, "custom_budget_tokens"),
             compaction_mode=_optional_enum(
                 source, "compaction_mode", ContextCompactionMode
+            ),
+            compaction_representation=_optional_enum(
+                source,
+                "compaction_representation",
+                ContextCompactionRepresentation,
             ),
             trigger_ratio=_optional_float(source, "trigger_ratio"),
             target_ratio=_optional_float(source, "target_ratio"),
@@ -211,6 +231,7 @@ def context_policy_overrides_from_console_config(
         "budget_mode": source.get("conversation_budget_mode"),
         "custom_budget_tokens": source.get("conversation_budget_tokens"),
         "compaction_mode": source.get("compaction_mode"),
+        "compaction_representation": source.get("compaction_representation"),
         "trigger_ratio": source.get("compaction_trigger_ratio"),
         "target_ratio": source.get("compaction_target_ratio"),
         "summary_max_tokens": source.get("compaction_summary_max_tokens"),
@@ -246,6 +267,7 @@ def merge_context_policy(
         budget_mode=selected("budget_mode"),  # type: ignore[arg-type]
         custom_budget_tokens=selected("custom_budget_tokens"),  # type: ignore[arg-type]
         compaction_mode=selected("compaction_mode"),  # type: ignore[arg-type]
+        compaction_representation=selected("compaction_representation"),  # type: ignore[arg-type]
         trigger_ratio=selected("trigger_ratio"),  # type: ignore[arg-type]
         target_ratio=selected("target_ratio"),  # type: ignore[arg-type]
         summary_max_tokens=selected("summary_max_tokens"),  # type: ignore[arg-type]
@@ -350,6 +372,11 @@ def _validate_complete_policy(policy: ConsoleContextPolicyDefaults) -> None:
     _validate_enum("budget_mode", policy.budget_mode, ContextBudgetMode)
     _validate_enum(
         "compaction_mode", policy.compaction_mode, ContextCompactionMode
+    )
+    _validate_enum(
+        "compaction_representation",
+        policy.compaction_representation,
+        ContextCompactionRepresentation,
     )
     _validate_enum(
         "failure_behavior", policy.failure_behavior, CompactionFailureBehavior

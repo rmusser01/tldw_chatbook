@@ -29,6 +29,7 @@ LIBRARY_ROW_BROWSE_SKILLS = "browse-skills"
 LIBRARY_ROW_BROWSE_SEARCH = "browse-search"
 LIBRARY_ROW_BROWSE_COLLECTIONS = "browse-collections"
 LIBRARY_ROW_CREATE_NOTE = "create-note"
+LIBRARY_CANVAS_KIND_NOTES_CREATE = "notes-create"
 # The three Study staging (handoff) rows -- consumers that need "is this a
 # study handoff row" import these rather than repeating the literals
 # (Qodo PR-1488 #2; the study_rows definitions below are the canonical use).
@@ -107,47 +108,93 @@ def library_disabled_action_label(label: str, disabled: bool) -> str:
 # task-4023 AC#5: "▸" carried three meanings on one screen -- selected-row
 # prefix ("▸ Media"), collapsed-disclosure suffix ("Details ▸"), AND the
 # silent value-cycler suffix ("type: All ▸"), where it looked like a
-# disclosure but silently advanced a hidden option set. Cyclers now carry
-# their own glyph. Convention after this task: leading "▸ " marks the
-# selected row of a list; a trailing "▸/▾" pair on a section HEADER is
-# disclosure state; a trailing "⇄" is a cycle control (press to advance;
-# the tooltip enumerates the options).
+# disclosure but silently advanced a hidden option set. Convention after
+# that task, extended by task-14902: leading "▸ " marks the selected row
+# of a list; a trailing "▸/▾" pair on a section HEADER is disclosure
+# state; "⇄" is a cycle control (press to advance -- since task-14902 the
+# only surviving cyclers are genuine two-option TOGGLES, and the glyph
+# sits BETWEEN the two options with the "✓" marker on the active one:
+# "mode: ✓ Search ⇄ RAG Answer"); a plain "name: value" Button with no
+# glyph is a CHOOSER-OPENER (the Notes Sort precedent -- press swaps in a
+# one-row choice strip, "✓ " prefixing the active option, Escape/second
+# press cancels).
 LIBRARY_CYCLE_MARKER = "⇄"
 
+#: The non-colour active-option marker shared by every choice strip and
+#: kept toggle (extends the product's existing ``✓/○`` vocabulary -- the
+#: Notes Sort strip and the sync panel's direction/conflict groups used
+#: it first; task-14902 makes it the one marker for "this option is the
+#: active one").
+LIBRARY_CHOICE_ACTIVE_MARKER = "✓"
 
-def library_cycle_label(name: str, value: str) -> str:
-    """Build a cycle-control Button label: ``"{name}: {value} ⇄"``.
 
-    One source for every Library cycle control (media type filter, sort,
-    prompt collection, export quality, Search/RAG mode) so the glyph can
-    never fork per canvas again.
+def library_choice_label(name: str, value: str) -> str:
+    """Build a chooser-opener Button label: ``"{name}: {value}"``.
+
+    task-14902: one source for every Library control whose press OPENS a
+    direct-pick surface (the choice strips on media type / prompts sort /
+    skills sort / export quality, and the prompt-collection manager
+    modal). Deliberately glyph-free: ``⇄`` means "press to advance", and
+    these controls no longer advance.
 
     Args:
-        name: The control's lowercase subject (e.g. ``"type"``).
+        name: The control's subject (e.g. ``"type"``).
         value: The currently active option, already display-safe.
 
     Returns:
-        The cycle Button's label text.
+        The chooser Button's label text.
     """
-    return f"{name}: {value} {LIBRARY_CYCLE_MARKER}"
+    return f"{name}: {value}"
 
 
-def library_cycle_tooltip(subject: str, options: "tuple[str, ...] | list[str]") -> str:
-    """Build a cycle control's option-enumerating tooltip (AC#5/RC 'cycle
-    buttons hide their option space').
+def library_choice_tooltip(subject: str, options: "tuple[str, ...] | list[str]") -> str:
+    """Build a chooser-opener's tooltip naming the pick interaction.
+
+    Replaces ``library_cycle_tooltip``'s "Cycles ..." copy on the
+    converged controls -- a press shows the options to pick from, it does
+    not cycle, so the tooltip must not claim it does.
 
     Args:
-        subject: What is being cycled, e.g. ``"media type"``.
-        options: The full option cycle, in press order.
+        subject: What is being picked, e.g. ``"media type"``.
+        options: The full option set, in display order.
 
     Returns:
-        ``"Cycles {subject}: A → B → C."`` (or a generic line when the
-        option set is empty/unknown).
+        ``"Press to pick {subject}: A · B · C."`` (or the generic line
+        when the option set is empty/dynamic).
     """
-    cycle = " → ".join(str(option) for option in options if str(option))
-    if not cycle:
-        return f"Cycles {subject}."
-    return f"Cycles {subject}: {cycle}."
+    listing = " · ".join(str(option) for option in options if str(option))
+    if not listing:
+        return f"Press to pick {subject}."
+    return f"Press to pick {subject}: {listing}."
+
+
+def library_toggle_label(
+    name: str, options: "tuple[str, str]", active_index: int
+) -> str:
+    """Build a kept one-press toggle's label with the FULL option set.
+
+    task-14902 AC#1: the surviving cyclers are genuine two-option toggles
+    (Search/RAG mode, the skill editor's yes/no + inline/fork switches) --
+    a choice strip would add a press to the most common action for zero
+    information, so instead the whole option space moves onto the label:
+    both options in stable order, ``✓`` on the active one, ``⇄`` between
+    them keeping its press-advances meaning. One press IS a direct pick
+    of the only other option.
+
+    Args:
+        name: The control's subject (e.g. ``"mode"``).
+        options: Both options in canonical order (never reordered by
+            activation, so the label stays spatially stable).
+        active_index: Index (0 or 1) of the currently active option.
+
+    Returns:
+        e.g. ``"mode: ✓ Search ⇄ RAG Answer"``.
+    """
+    rendered = tuple(
+        f"{LIBRARY_CHOICE_ACTIVE_MARKER} {option}" if index == active_index else option
+        for index, option in enumerate(options)
+    )
+    return f"{name}: {rendered[0]} {LIBRARY_CYCLE_MARKER} {rendered[1]}"
 
 
 @dataclass(frozen=True)
@@ -395,7 +442,7 @@ def build_library_shell_state(
             section_id="create",
             title="New note",
             target_kind="canvas",
-            target_id="notes-create",
+            target_id=LIBRARY_CANVAS_KIND_NOTES_CREATE,
             count=None,
             count_known=True,
         ),

@@ -105,6 +105,52 @@ def test_single_preamble_serialization_keeps_original_and_tagged_memory_owned() 
     assert [row["role"] for row in prepared.messages_payload] == ["user"]
 
 
+def test_response_format_is_frozen_and_dispatched_only_when_present() -> None:
+    semantic = build_console_request([{"role": "user", "content": "now"}])
+    source = {
+        "type": "json_schema",
+        "json_schema": {"required": ["answer"]},
+    }
+    prepared = prepare_provider_request(
+        semantic,
+        wire_style="single_preamble",
+        model="gpt-5.6-terra",
+        provider="openai",
+        capacity=_capacity(None),
+        count_fn=_word_count,
+        response_format=source,
+    )
+    source["json_schema"]["required"].append("mutated")
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="https://api.openai.com/v1",
+        model="gpt-5.6-terra",
+        ready=True,
+        execution_key="openai",
+        api_key="k",
+        streaming=False,
+    )
+
+    assert prepared.response_format is not None
+    assert prepared.response_format["json_schema"]["required"] == ("answer",)
+    kwargs = ConsoleProviderGateway._chat_api_kwargs_from_prepared(resolution, prepared)
+    assert kwargs["response_format"]["json_schema"]["required"] == ["answer"]
+    assert kwargs["api_base_url"] == "https://api.openai.com/v1"
+
+    plain = prepare_provider_request(
+        semantic,
+        wire_style="single_preamble",
+        model="gpt-5.6-terra",
+        provider="openai",
+        capacity=_capacity(None),
+        count_fn=_word_count,
+    )
+    plain_kwargs = ConsoleProviderGateway._chat_api_kwargs_from_prepared(
+        resolution, plain
+    )
+    assert "response_format" not in plain_kwargs
+
+
 def test_distinct_role_serialization_keeps_system_and_memory_rows_separate() -> None:
     original = "original"
     memory = tagged_memory_message("Earlier facts")

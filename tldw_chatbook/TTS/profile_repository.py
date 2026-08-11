@@ -1719,6 +1719,47 @@ class TTSProfileRepository:
             expected_generation=validated_generation,
         )
 
+    async def create_profile_with_reference(
+        self,
+        draft: TTSProfileDraft,
+        profile_id: UUID,
+        canonical: CanonicalTTSCloneReference,
+        *,
+        expected_generation: int,
+    ) -> ProfileStoreResult[TTSGenerationProfile]:
+        """Atomically create one profile and its canonical clone reference.
+
+        Args:
+            draft: Exact validated generation-profile draft.
+            profile_id: Exact caller-selected UUID for the new profile.
+            canonical: Fully validated source-independent clone reference.
+            expected_generation: Exact active repository generation.
+
+        Returns:
+            The active generation and committed revision-2 profile summary.
+
+        Raises:
+            ProfileRepositoryError: If validation, freshness, uniqueness,
+                quota, persistence, or round-trip verification fails.
+            BaseException: A caller control-flow signal preserved by the
+                serialized operation lane.
+        """
+
+        validated_draft = _validate_draft(draft)
+        validated_profile_id = _validate_exact_profile_id(profile_id)
+        validated_reference = _validate_canonical_reference(canonical)
+        validated_generation = _validate_expected_generation(expected_generation)
+        return await self._submit_operation(
+            lambda connection: self._worker_create_profile_with_reference(
+                connection,
+                validated_draft,
+                validated_profile_id,
+                validated_reference,
+                validated_generation,
+            ),
+            expected_generation=validated_generation,
+        )
+
     async def create_profile_with_assignment(
         self,
         draft: TTSProfileDraft,
@@ -3249,6 +3290,44 @@ class TTSProfileRepository:
             raise
         return self._worker_require_round_trip(connection, persisted_id, profile)
 
+    def _worker_create_profile_with_reference(
+        self,
+        connection: sqlite3.Connection,
+        draft: TTSProfileDraft,
+        profile_id: UUID,
+        canonical: CanonicalTTSCloneReference,
+        expected_generation: int,
+    ) -> TTSGenerationProfile:
+        evidence = _IntegrityEvidence(
+            profile_id=profile_id,
+            normalized_name=draft.normalized_name,
+        )
+
+        def create_with_reference() -> TTSGenerationProfile:
+            self._worker_require_generation(expected_generation)
+            profile = self._worker_insert_profile(
+                connection,
+                draft,
+                profile_id,
+                evidence,
+            )
+            return self._worker_put_reference(
+                connection,
+                profile.profile_id,
+                canonical,
+                profile.revision,
+            )
+
+        created = self._worker_transaction(
+            connection,
+            create_with_reference,
+            operation_kind="create",
+            immediate=True,
+            integrity_evidence=evidence,
+        )
+        self._discard_reference_damage_marker(profile_id)
+        return created
+
     def _worker_create_profile_with_assignment(
         self,
         connection: sqlite3.Connection,
@@ -3528,6 +3607,97 @@ class TTSProfileRepository:
         if profile.revision != expected_revision + 1:
             raise _repository_error("corrupt_data")
         return profile
+
+    def _worker_put_reference(
+        self,
+        connection: sqlite3.Connection,
+        profile_id: UUID,
+        canonical: CanonicalTTSCloneReference,
+        expected_revision: int,
+    ) -> TTSGenerationProfile:
+        """Insert a first reference inside the caller-owned transaction."""
+
+        profile = self._worker_get_base_profile(connection, profile_id)
+        if profile.revision != expected_revision:
+            raise _repository_error("conflict")
+        encoded_profile_id = encode_uuid(profile_id)
+        existing = connection.execute(
+            f"SELECT 1 FROM {REFERENCE_TABLE} WHERE profile_id = ?",
+            (encoded_profile_id,),
+        ).fetchone()
+        if existing is not None:
+            raise _repository_error("conflict")
+        quota = connection.execute(
+            f"SELECT COUNT(*), COALESCE(SUM(byte_length), 0) FROM {REFERENCE_TABLE}"
+        ).fetchone()
+        if (
+            quota is None
+            or len(quota) != 2
+            or type(quota[0]) is not int
+            or type(quota[1]) is not int
+            or quota[0] < 0
+            or quota[1] < 0
+        ):
+            raise _repository_error("corrupt_data")
+        if (
+            cast(int, quota[0]) + 1 > MAX_REFERENCE_COUNT
+            or cast(int, quota[1]) + canonical.byte_length
+            > MAX_REFERENCE_TOTAL_BYTES
+        ):
+            raise _repository_error("reference_quota")
+
+        reference_id = self._worker_new_uuid()
+        timestamp = self._clock()
+        cursor = connection.execute(
+            f"""
+            INSERT INTO {REFERENCE_TABLE} (
+                profile_id, reference_id, wav_bytes, reference_text, sha256,
+                byte_length, duration_ms, sample_rate_hz, channels,
+                sample_encoding, created_at, updated_at
+            ) VALUES (?, ?, zeroblob(?), ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                encoded_profile_id,
+                encode_uuid(reference_id),
+                canonical.byte_length,
+                canonical.reference_text,
+                canonical.sha256,
+                canonical.byte_length,
+                canonical.duration_ms,
+                canonical.sample_rate_hz,
+                canonical.channels,
+                canonical.sample_encoding,
+                encode_utc_datetime(timestamp),
+                encode_utc_datetime(timestamp),
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise _repository_error("operation_failed")
+        rowid_row = connection.execute(
+            f"SELECT rowid FROM {REFERENCE_TABLE} WHERE profile_id = ?",
+            (encoded_profile_id,),
+        ).fetchone()
+        if (
+            rowid_row is None
+            or len(rowid_row) != 1
+            or type(rowid_row[0]) is not int
+            or rowid_row[0] <= 0
+        ):
+            raise _repository_error("corrupt_data")
+        write_reference_blob(connection, cast(int, rowid_row[0]), canonical.wav_bytes)
+        updated = self._worker_bump_reference_revision(
+            connection,
+            profile_id,
+            expected_revision,
+            timestamp,
+        )
+        if (
+            updated.reference is None
+            or updated.reference.reference_id != reference_id
+            or updated.reference.byte_length != canonical.byte_length
+        ):
+            raise _repository_error("corrupt_data")
+        return updated
 
     def _worker_set_reference(
         self,

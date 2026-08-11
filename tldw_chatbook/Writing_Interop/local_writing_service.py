@@ -61,9 +61,20 @@ class LocalWritingService:
                     self.db_path,
                 )
                 self._memory_conn.row_factory = sqlite3.Row
+                # synchronous is harmless (and a no-op performance-wise) on an
+                # in-memory database; set for uniformity with the file-backed
+                # branch below (task-15465).
+                self._memory_conn.execute("PRAGMA synchronous = NORMAL")
             return self._memory_conn
         conn = connect_private_sqlite("writing.local", self.db_path)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode = WAL")
+        # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
+        # lose the last commit, acceptable for this local writing-suite
+        # store) and avoids an fsync per commit. This DB opens a fresh
+        # connection per operation, so synchronous must be re-applied on
+        # every open, not just the first (task-15465).
+        conn.execute("PRAGMA synchronous = NORMAL")
         return conn
 
     def close(self) -> None:

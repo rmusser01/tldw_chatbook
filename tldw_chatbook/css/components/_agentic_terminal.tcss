@@ -1085,7 +1085,11 @@ ConsoleRunLogModal {
     text-style: bold underline;
 }
 
-.library-media-row {
+/* task-4025: the Trash view's rows share the media list's row contract
+   verbatim (one comma-joined rule, not a forked copy) -- the trash rows
+   keep their OWN class only so `_focus_library_list_entry`'s
+   `.library-media-row` query can never grab a trash row. */
+.library-media-row, .library-media-trash-row {
     width: 100%;
     min-width: 0;
     height: 2;
@@ -1114,7 +1118,7 @@ ConsoleRunLogModal {
    ``.library-media-row-selected`` above already uses; `outline: none`
    suppresses the generic fallback so this is the only cue (never
    `outline: heavy`, which eats a compact row's label -- round-3 lesson). */
-.library-media-row:focus {
+.library-media-row:focus, .library-media-trash-row:focus {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
@@ -2250,6 +2254,69 @@ with stray left-edge border fragments), and padding 0 1 so the full
     margin: 0 0 1 0;
 }
 
+/* task-14900: Media list|preview side by side above the screen's one
+   measured width regime. The workbench Horizontal (Collections'
+   `#library-collections-workbench` grammar) splits its panes 1fr|1fr by
+   default; the `library-notes-compact` class -- which the Library screen
+   already maintains on `#library-canvas` at compose time and on every
+   measured `on_resize` crossing of LIBRARY_NOTES_COMPACT_BREAKPOINT --
+   flips it back to today's stacked flow. In the wide split each pane owns
+   its own vertical scroll, which is the point: no more scrolling the whole
+   canvas between list and preview while the right half sits blank. */
+#library-media-workbench {
+    width: 100%;
+    height: 1fr;
+    min-height: 0;
+}
+
+#library-media-list,
+#library-media-preview,
+#library-media-detail-empty {
+    width: 1fr;
+    min-width: 0;
+    height: 100%;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+#library-media-preview,
+#library-media-detail-empty {
+    margin: 0 0 0 1;
+    padding: 0 1;
+}
+
+/* The detail half's placeholder (Collections' "No Collection selected."
+   grammar): muted, and hidden the moment the preview owns the pane. */
+#library-media-detail-empty {
+    color: $ds-text-muted;
+}
+
+#library-media-workbench.has-preview #library-media-detail-empty {
+    display: none;
+}
+
+/* Below the breakpoint: the preserved stacked layout, byte-equivalent to
+   the pre-task-14900 geometry (auto heights, full width, no pane scroll
+   owners, no placeholder). */
+#library-canvas.library-notes-compact #library-media-workbench {
+    layout: vertical;
+    height: auto;
+}
+
+#library-canvas.library-notes-compact #library-media-list,
+#library-canvas.library-notes-compact #library-media-preview {
+    width: 100%;
+    height: auto;
+    margin: 0;
+    padding: 0;
+    overflow-y: hidden;
+}
+
+#library-canvas.library-notes-compact #library-media-detail-empty {
+    display: none;
+}
+
 /* Title: brightest + bold so it anchors the viewer; metadata recedes (muted)
    so the two read as distinct tiers instead of one wall of text. */
 #library-media-viewer-title {
@@ -3126,12 +3193,17 @@ with stray left-edge border fragments), and padding 0 1 so the full
     color: $ds-text-primary;
 }
 
-.console-agent-section-steps,
-.console-agent-section-subagents {
+.console-agent-section-steps {
     height: auto;
     color: $ds-text-muted;
     text-style: dim;
 }
+
+/* PR2b Task 4: `.console-agent-section-subagents` retired -- the plain
+   Static this class styled at `#console-agent-section-subagents` was
+   replaced by a `ConsoleInspectorSection` (styled entirely by its own
+   `.console-inspector-section*` rules above); nothing composes this class
+   anymore. */
 
 .console-agent-section-fleet-summary {
     height: auto;
@@ -3182,6 +3254,116 @@ with stray left-edge border fragments), and padding 0 1 so the full
 .console-inspector-disabled-reason {
     height: 0;
     min-height: 0;
+}
+
+/* PR2b Task 3: the reusable Inspector-style section component (header +
+   optional chevron + optional right-aligned summary, row body, optional
+   "View all" tail). Ships the grammar once -- Agents (Task 4) is the first
+   consumer; Changes/Sources/Workspace sections follow later against these
+   same classes (spec section 7). */
+.console-inspector-section {
+    height: auto;
+    min-height: 0;
+    margin: 0 0 1 0;
+}
+
+.console-inspector-section-header {
+    height: 1;
+    min-height: 1;
+    layout: horizontal;
+    align: left middle;
+}
+
+.console-inspector-section-title {
+    width: 1fr;
+    min-width: 0;
+    height: 1;
+    text-style: bold;
+    color: $ds-text-primary;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+.console-inspector-section-summary {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    color: $ds-text-muted;
+    text-align: right;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+.console-inspector-section-toggle {
+    width: 3;
+    min-width: 3;
+    height: 1;
+    text-style: bold;
+}
+
+.console-inspector-section-toggle:focus {
+    background: $ds-action-focus 30%;
+    text-style: underline bold;
+}
+
+.console-inspector-section-body {
+    height: auto;
+    min-height: 0;
+    padding: 0 0 0 1;
+}
+
+.console-inspector-section-row {
+    height: auto;
+    min-height: 2;
+    padding: 0 1;
+}
+
+.console-inspector-section-row:focus {
+    background: $ds-action-focus 20%;
+}
+
+.console-inspector-section-row-primary {
+    height: 1;
+    color: $ds-text-primary;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+.console-inspector-section-row-secondary {
+    height: 1;
+    color: $ds-text-muted;
+    text-style: dim;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+/* Status-colored variants of the row's PRIMARY line only -- the secondary
+   (dimmed detail) line stays muted regardless of status. Class names are
+   built via f-string interpolation in console_inspector_section.py, which
+   is out of scope for test_css_class_coverage_contract.py by design (its
+   docstring: "f-strings ... are out of scope"); these rules are shipped
+   for real styling, not to satisfy that contract. */
+.console-inspector-section-row-running > .console-inspector-section-row-primary {
+    color: $ds-status-running;
+}
+
+.console-inspector-section-row-done > .console-inspector-section-row-primary {
+    color: $ds-status-ready;
+}
+
+.console-inspector-section-row-error > .console-inspector-section-row-primary {
+    color: $ds-status-error;
+}
+
+.console-inspector-section-row-blocked > .console-inspector-section-row-primary {
+    color: $ds-status-blocked;
+}
+
+.console-inspector-section-view-all {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    margin: 1 0 0 0;
 }
 
 .console-live-work-source-readiness {
@@ -3593,12 +3775,14 @@ with stray left-edge border fragments), and padding 0 1 so the full
     color: $ds-text-primary;
 }
 
-.console-transcript-message-roleplay-user {
+.console-transcript-message-roleplay-user,
+.console-transcript-message-role-user {
     background: $primary 8%;
 }
 
-.console-transcript-message-roleplay-character {
-    background: $secondary 8%;
+.console-transcript-message-roleplay-character,
+.console-transcript-message-role-assistant {
+    background: $accent 8%;
 }
 
 .console-transcript-speaker-label,
@@ -3612,12 +3796,110 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 .console-transcript-roleplay-user-label {
-    color: $text-primary;
+    color: $ds-chat-user-accent;
     text-style: bold;
 }
 
 .console-transcript-roleplay-character-label {
-    color: $text-primary;
+    color: $ds-chat-user-accent;
+    text-style: bold;
+}
+
+.console-transcript-role-assistant-label {
+    color: $ds-chat-user-accent;
+    text-style: bold;
+}
+
+.-dark-mode .console-transcript-roleplay-user-label {
+    color: $ds-chat-user-accent-dark;
+}
+
+.-light-mode .console-transcript-roleplay-user-label {
+    color: $ds-chat-user-accent-light;
+}
+
+.-dark-mode .console-transcript-roleplay-character-label,
+.-dark-mode .console-transcript-role-assistant-label {
+    color: $ds-chat-assistant-accent-dark;
+}
+
+.-light-mode .console-transcript-roleplay-character-label,
+.-light-mode .console-transcript-role-assistant-label {
+    color: $ds-chat-assistant-accent-light;
+}
+
+/* Immersive RP is opt-in: prose follows the semantic speaker accent while
+   Markdown's own code/link nodes retain their more specific readable styles. */
+.console-transcript-message-immersive-user > .console-transcript-message-body,
+.console-transcript-message-immersive-user > .console-markdown-body {
+    color: $ds-chat-user-accent;
+}
+
+.-dark-mode .console-transcript-message-immersive-user > .console-transcript-message-body,
+.-dark-mode .console-transcript-message-immersive-user > .console-markdown-body {
+    color: $ds-chat-user-accent-dark;
+}
+
+.-light-mode .console-transcript-message-immersive-user > .console-transcript-message-body,
+.-light-mode .console-transcript-message-immersive-user > .console-markdown-body {
+    color: $ds-chat-user-accent-light;
+}
+
+.console-transcript-message-immersive-assistant > .console-transcript-message-body,
+.console-transcript-message-immersive-assistant > .console-markdown-body,
+.console-transcript-message-immersive-character > .console-transcript-message-body,
+.console-transcript-message-immersive-character > .console-markdown-body {
+    color: $ds-chat-user-accent;
+}
+
+.-dark-mode .console-transcript-message-immersive-assistant > .console-transcript-message-body,
+.-dark-mode .console-transcript-message-immersive-assistant > .console-markdown-body,
+.-dark-mode .console-transcript-message-immersive-character > .console-transcript-message-body,
+.-dark-mode .console-transcript-message-immersive-character > .console-markdown-body {
+    color: $ds-chat-assistant-accent-dark;
+}
+
+.-light-mode .console-transcript-message-immersive-assistant > .console-transcript-message-body,
+.-light-mode .console-transcript-message-immersive-assistant > .console-markdown-body,
+.-light-mode .console-transcript-message-immersive-character > .console-transcript-message-body,
+.-light-mode .console-transcript-message-immersive-character > .console-markdown-body {
+    color: $ds-chat-assistant-accent-light;
+}
+
+/* TASK-1990.1: flavor assistant / character prose without rewriting Markdown.
+   Quoted speech, emphasis-as-action, and strong emphasis are Content component
+   spans; labels and Markdown structure continue to carry meaning without color. */
+.-dark-mode .console-transcript-message-immersive-assistant .console-roleplay-markdown-block > .console-rp-speech,
+.-dark-mode .console-transcript-message-immersive-character .console-roleplay-markdown-block > .console-rp-speech {
+    color: $ds-chat-rp-speech-dark;
+}
+
+.-light-mode .console-transcript-message-immersive-assistant .console-roleplay-markdown-block > .console-rp-speech,
+.-light-mode .console-transcript-message-immersive-character .console-roleplay-markdown-block > .console-rp-speech {
+    color: $ds-chat-rp-speech-light;
+}
+
+.-dark-mode .console-transcript-message-immersive-assistant .console-roleplay-markdown-block > .console-rp-action,
+.-dark-mode .console-transcript-message-immersive-character .console-roleplay-markdown-block > .console-rp-action {
+    color: $ds-chat-rp-action-dark;
+    text-style: italic;
+}
+
+.-light-mode .console-transcript-message-immersive-assistant .console-roleplay-markdown-block > .console-rp-action,
+.-light-mode .console-transcript-message-immersive-character .console-roleplay-markdown-block > .console-rp-action {
+    color: $ds-chat-rp-action-light;
+    text-style: italic;
+}
+
+.-dark-mode .console-transcript-message-immersive-assistant .console-roleplay-markdown-block > .console-rp-strong,
+.-dark-mode .console-transcript-message-immersive-character .console-roleplay-markdown-block > .console-rp-strong {
+    color: $ds-chat-rp-strong-dark;
+    text-style: bold;
+}
+
+.-light-mode .console-transcript-message-immersive-assistant .console-roleplay-markdown-block > .console-rp-strong,
+.-light-mode .console-transcript-message-immersive-character .console-roleplay-markdown-block > .console-rp-strong {
+    color: $ds-chat-rp-strong-light;
     text-style: bold;
 }
 
@@ -3632,6 +3914,17 @@ with stray left-edge border fragments), and padding 0 1 so the full
     color: $ds-status-error-readable;
 }
 
+.console-transcript-message-failed > .console-transcript-message-body,
+.console-transcript-message-failed > .console-markdown-body {
+    color: $ds-text-primary;
+}
+
+.console-transcript-message-failed.console-transcript-message-markdown .console-roleplay-markdown-block > .console-rp-speech,
+.console-transcript-message-failed.console-transcript-message-markdown .console-roleplay-markdown-block > .console-rp-action,
+.console-transcript-message-failed.console-transcript-message-markdown .console-roleplay-markdown-block > .console-rp-strong {
+    color: $ds-text-primary;
+}
+
 .console-transcript-message-selected {
     min-height: 2;
     background: $ds-focus-bg;
@@ -3641,6 +3934,19 @@ with stray left-edge border fragments), and padding 0 1 so the full
 
 .console-transcript-message-selected > .console-transcript-speaker-label {
     background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+
+.console-transcript-message-selected > .console-transcript-message-body,
+.console-transcript-message-selected > .console-markdown-body {
+    color: $ds-focus-fg;
+}
+
+.console-transcript-message-selected.console-transcript-message-markdown .console-roleplay-markdown-block > .console-rp-speech,
+.console-transcript-message-selected.console-transcript-message-markdown .console-roleplay-markdown-block > .console-rp-action,
+.console-transcript-message-selected.console-transcript-message-markdown .console-roleplay-markdown-block > .console-rp-strong {
     color: $ds-focus-fg;
     text-style: bold underline;
 }

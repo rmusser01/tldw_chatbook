@@ -10,9 +10,17 @@ from textual.app import App
 from textual.widgets import Button, Select, Static
 
 from Tests.UI.speech_playground_fixtures import FakeTTSService, _resolved
-from tldw_chatbook.TTS import STTSGeneratedAudio, TTSPlaygroundSelectionPreset
+from tldw_chatbook.TTS import (
+    STTSGeneratedAudio,
+    STTSPlaygroundResultProjection,
+    TTSPlaygroundSelectionPreset,
+)
+from tldw_chatbook.UI.STTS_Window import VoiceProfilePickerModal
 from tldw_chatbook.UI.Screens.stts_screen import STTSScreen
-from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
+from tldw_chatbook.UI.Speech.speech_playground_pane import (
+    OpenVoiceProfilesRequested,
+    SpeechPlaygroundPane,
+)
 from tldw_chatbook.UI.Speech.speech_settings_contracts import (
     SpeechTTSNavigationIntent,
 )
@@ -187,7 +195,8 @@ async def test_exact_preset_preserves_existing_playground_audio(tmp_path) -> Non
         )
 
         assert retire.call_count == 0
-        assert playground.current_audio_artifact is artifact
+        assert type(playground.current_audio_artifact) is STTSPlaygroundResultProjection
+        assert playground.current_audio_artifact.operation_id == artifact.operation_id
         assert playground.current_audio_file == artifact.path
         assert playground.query_one("#audio-play-btn", Button).disabled is False
         assert playground.query_one("#audio-export-btn", Button).disabled is False
@@ -195,6 +204,31 @@ async def test_exact_preset_preserves_existing_playground_audio(tmp_path) -> Non
             str(playground.query_one("#audio-player-status", Static).renderable)
             == "Ready · WAV"
         )
+
+
+@pytest.mark.asyncio
+async def test_voice_profile_handoff_keeps_mounted_clone_draft_until_cancel() -> None:
+    """Browsing the existing library must not unmount or clear setup state."""
+
+    app = _SpeechHost()
+    screen = app.screen_under_test
+    retained_draft = object()
+
+    async with app.run_test(size=(150, 55)) as pilot:
+        await _wait_until(pilot, lambda: _playground_ready(screen))
+        playground = screen.query_one(SpeechPlaygroundPane)
+        playground._clone_setup_canonical = retained_draft
+
+        playground.post_message(OpenVoiceProfilesRequested())
+        await _wait_until(pilot, lambda: isinstance(app.screen, VoiceProfilePickerModal))
+
+        assert screen.query_one(SpeechPlaygroundPane) is playground
+        assert playground._clone_setup_canonical is retained_draft
+        app.screen.query_one("#speech-voice-profile-picker-cancel", Button).press()
+        await _wait_until(pilot, lambda: app.screen is screen)
+
+        assert screen.query_one(SpeechPlaygroundPane) is playground
+        assert playground._clone_setup_canonical is retained_draft
 
 
 @pytest.mark.asyncio
@@ -241,6 +275,7 @@ async def test_bounded_lab_navigation_restores_provider_and_focus_without_action
     focused_id: str,
 ) -> None:
     service = FakeTTSService()
+
     catalog_calls: list[bool] = []
     original_load = SpeechPlaygroundPane._load_provider_catalog
     generate = Mock()
@@ -294,6 +329,11 @@ async def test_test_connection_and_refresh_are_distinct_explicit_actions(
     monkeypatch,
 ) -> None:
     service = FakeTTSService()
+
+    async def start_and_test_audio_cpp() -> object:
+        return await service.get_catalog("audio_cpp", refresh=True)
+
+    service.start_and_test_audio_cpp = start_and_test_audio_cpp  # type: ignore[attr-defined]
     monkeypatch.setattr(
         SpeechPlaygroundPane,
         "_tts_service_factory",
@@ -333,7 +373,9 @@ async def test_test_connection_and_refresh_are_distinct_explicit_actions(
             ),
         )
 
-        screen.query_one("#tts-refresh-catalog-btn", Button).press()
+        refresh_button = screen.query_one("#tts-refresh-catalog-btn", Button)
+        await _wait_until(pilot, lambda: not refresh_button.disabled)
+        refresh_button.press()
         await _wait_until(
             pilot,
             lambda: (
@@ -342,7 +384,7 @@ async def test_test_connection_and_refresh_are_distinct_explicit_actions(
             ),
         )
 
-    assert service.catalog_calls[-2:] == [
+    assert [call for call in service.catalog_calls if call[1]][-2:] == [
         ("audio_cpp", True),
         ("audio_cpp", True),
     ]

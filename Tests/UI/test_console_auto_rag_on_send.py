@@ -27,9 +27,11 @@ from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Chat.rag_scope import EffectiveScope, scope_empty_notice
-from tldw_chatbook.config import save_setting_to_cli_config
+from tldw_chatbook.Chat.console_turn_context import ConsoleTurnExecutionContext
+from tldw_chatbook.config import load_settings, save_setting_to_cli_config
 from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
     LocalRagContextResult,
 )
@@ -74,6 +76,28 @@ def _reset_auto_retrieve_toggle():
 
 def _enable_auto_retrieve() -> None:
     save_setting_to_cli_config("chat_defaults", "rag_auto_retrieve_on_send", True)
+
+
+def _use_disk_config(app):
+    """Source the app's config snapshot from disk, exactly as `app.py` does.
+
+    `_build_test_app` hands `TldwCli` a synthetic three-key `app_config`
+    with no `[chat_defaults]` at all, and production correctly refuses to
+    "refresh" a snapshot that never came from `load_settings()`
+    (`ChatScreen._console_config_snapshot_is_disk_loaded`). That was
+    harmless while `_maybe_auto_retrieve_for_send` read the toggle live via
+    `get_cli_setting`; task-14803 (commit 5be9e6a04) moved the read onto the
+    frozen per-turn `ConsoleTurnExecutionContext`, which
+    `ConsoleSessionController._build_console_turn_execution_context` builds
+    from that app config -- so on THIS harness, and only on this harness,
+    `_enable_auto_retrieve()` stopped reaching the code under test. The
+    shipping app assigns `self.app_config = load_settings()` (app.py), whose
+    result does carry the persisted toggle; do the same here so these two
+    mounted tests exercise the real read path instead of a snapshot no real
+    user has.
+    """
+    app.app_config = load_settings()
+    return app
 
 
 class _RecordingRagService:
@@ -509,7 +533,7 @@ async def test_happy_path_stages_then_send_consumes(monkeypatch):
     """Auto-retrieval stages a bundle the SAME send consumes and prompts."""
     _enable_auto_retrieve()
     _patch_scope(monkeypatch)
-    app = _build_test_app()
+    app = _use_disk_config(_build_test_app())
     service = _RecordingRagService(_rows(2))
     app.library_rag_search_service = service
     context = "[S1] MEDIA — Source 1\nBody 1"
@@ -559,11 +583,10 @@ async def test_send_proceeds_when_auto_retrieve_fails(monkeypatch):
     """Retrieval failure is never a send blocker."""
     _enable_auto_retrieve()
     _patch_scope(monkeypatch)
-    app = _build_test_app()
+    app = _use_disk_config(_build_test_app())
+    exploding_search = AsyncMock(side_effect=RuntimeError("backend exploded"))
     monkeypatch.setattr(
-        chat_screen_module,
-        "run_library_rag_search",
-        AsyncMock(side_effect=RuntimeError("backend exploded")),
+        chat_screen_module, "run_library_rag_search", exploding_search
     )
 
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
@@ -577,6 +600,11 @@ async def test_send_proceeds_when_auto_retrieve_fails(monkeypatch):
         result = await controller.submit_draft("what changed in the notes")
         await pilot.pause()
 
+        # Retrieval was actually attempted. Without this the test passes for
+        # the wrong reason whenever the toggle fails to reach the hook -- it
+        # did exactly that between task-14803 and task-15210, silently
+        # asserting only that an ordinary send works.
+        assert exploding_search.await_count == 1
         assert result.accepted is True
         assert screen._pending_console_launch_context is None
         assert _final_user_content(gateway.captured) == "what changed in the notes"
@@ -602,8 +630,19 @@ async def test_capture_seam_calls_the_hook_before_consuming(monkeypatch):
     longer pick up.
     """
     order: list[str] = []
+    seen_contexts: list = []
+    turn_context = ConsoleTurnExecutionContext.capture(
+        session_id="s1",
+        provider_selection=ConsoleProviderSelection(provider="test-provider"),
+    )
 
-    async def _hook(_draft):
+    async def _hook(_draft, turn_context=None):
+        # Production signature since task-14803 (commit 5be9e6a04), which
+        # threads the turn's frozen context to the hook. The one-argument
+        # stub this replaced made the seam's call raise `TypeError`, which
+        # the seam's deliberate `except Exception` swallowed -- so the hook
+        # never ran and only the ordering assertion below noticed.
+        seen_contexts.append(turn_context)
         order.append("auto-retrieve")
 
     def _consume():
@@ -625,9 +664,12 @@ async def test_capture_seam_calls_the_hook_before_consuming(monkeypatch):
         ),
     )
 
-    await ChatScreen._capture_console_staged_rag(screen, "question")
+    await ChatScreen._capture_console_staged_rag(screen, "question", turn_context)
 
     assert order == ["clear-notice", "auto-retrieve", "consume"]
+    # ...and the hook retrieves for THIS turn's captured configuration, not
+    # for whatever the live settings happen to say by the time it runs.
+    assert seen_contexts == [turn_context]
 
 
 @pytest.mark.asyncio

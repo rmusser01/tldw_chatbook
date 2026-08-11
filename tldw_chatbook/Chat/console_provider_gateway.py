@@ -41,6 +41,7 @@ from tldw_chatbook.Chat.console_prepared_request import (
     resolve_request_capacity,
     thaw_json,
 )
+from tldw_chatbook.Chat.console_history_budget import DEFAULT_PER_IMAGE_TOKENS
 from tldw_chatbook.Chat.console_provider_support import (
     resolve_console_provider_identity,
 )
@@ -828,6 +829,7 @@ class ConsoleProviderGateway:
         tools: list[Mapping[str, Any]] | None = None,
         context_window_override_tokens: int | None = None,
         apply_safety_window: bool = True,
+        response_format: Mapping[str, Any] | None = None,
     ) -> PreparedProviderRequest:
         """Prepare the one immutable payload later consumed by dispatch.
 
@@ -888,7 +890,12 @@ class ConsoleProviderGateway:
             model=resolution.model or "",
             provider=resolution.provider,
             capacity=capacity,
+            per_image_tokens=(
+                positive_cap("image_input_tokens", "image_tokens", "per_image_tokens")
+                or DEFAULT_PER_IMAGE_TOKENS
+            ),
             apply_safety_window=apply_safety_window,
+            response_format=response_format,
         )
 
     @staticmethod
@@ -1924,9 +1931,21 @@ class ConsoleProviderGateway:
             "thinking_effort": resolution.thinking_effort,
             "thinking_budget_tokens": resolution.thinking_budget_tokens,
             "tools": thaw_json(request.tools) if request.tools else None,
+            "response_format": (
+                thaw_json(request.response_format)
+                if request.response_format is not None
+                else None
+            ),
             "prompt_caching": resolution.prompt_caching,
         }
         if resolution.execution_key == "anthropic":
+            kwargs["api_base_url"] = resolution.base_url or None
+        elif (
+            resolution.execution_key == "openai" and request.response_format is not None
+        ):
+            # Evaluator-only structured-output requests pin the endpoint that
+            # was resolved and capability-checked. Ordinary Console sends have
+            # no response_format and retain their existing adapter behavior.
             kwargs["api_base_url"] = resolution.base_url or None
         return {key: value for key, value in kwargs.items() if value is not None}
 
