@@ -109,6 +109,29 @@ normalization and case folding. A saved edit must use the revision originally
 loaded, so a concurrent change is reported as a conflict instead of being
 silently overwritten.
 
+#### Private clone-reference storage boundary
+
+The profile database can now retain one canonical reference recording and its
+transcript for a profile. The source path is never persisted. Reference audio
+and transcript are local plaintext protected by owner-only filesystem access;
+this is not encryption. Profile database backups contain the same sensitive
+reference audio and transcript, so protect and share those backups accordingly.
+Removal is best-effort deletion, not forensic erasure: copies may remain in
+backups, filesystem snapshots, SQLite recovery data, or storage media. The
+Windows privacy posture remains unverified until TASK-13208.
+
+This storage slice does not yet enable clone generation, a clone-reference
+setup control, or voice-bundle portability. Ordinary profile/card portability
+remains wire version 1 and omits reference metadata, audio, transcript, digest,
+and source paths. Do not treat an ordinary profile export as a reference backup.
+
+When Chatbook first opens a version 2 profile store, it creates and validates a
+retained v2 pre-migration backup before migrating to version 3. Older Chatbook
+builds refuse the version 3 database. To downgrade, fully close Chatbook,
+restore the retained v2 pre-migration backup, and then start the older build.
+Downgrade requires accepting loss of post-migration profile changes, including
+newer profile edits, assignments, and all stored references.
+
 **Database Tools → Backup All Databases** includes the profile store when its
 repository is available. Chatbook creates that entry with SQLite's online
 backup mechanism rather than copying an open database file. Each database

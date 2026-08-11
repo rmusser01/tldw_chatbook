@@ -7,7 +7,7 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
-from typing import Literal, cast
+from typing import Final, Literal, cast
 from uuid import UUID
 
 from tldw_chatbook.TTS.profile_errors import ProfileValidationError
@@ -21,7 +21,7 @@ MAX_REFERENCE_COUNT = 256
 MAX_REFERENCE_TOTAL_BYTES = 512 * 1024 * 1024
 MIN_REFERENCE_SAMPLE_RATE_HZ = 8_000
 MAX_REFERENCE_SAMPLE_RATE_HZ = 96_000
-REFERENCE_SAMPLE_ENCODING = "pcm_s16le"
+REFERENCE_SAMPLE_ENCODING: Final[Literal["pcm_s16le"]] = "pcm_s16le"
 
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 _ALLOWED_TRANSCRIPT_CONTROLS = frozenset({"\t", "\n"})
@@ -71,10 +71,14 @@ def validate_reference_text(value: object) -> str:
         or any(_is_unsafe_transcript_character(character) for character in text)
     ):
         raise _validation_error("reference_text")
+    encoding_error = False
     try:
         encoded = text.encode("utf-8", errors="strict")
     except UnicodeError:
-        raise _validation_error("reference_text") from None
+        encoding_error = True
+        encoded = b""
+    if encoding_error:
+        raise _validation_error("reference_text")
     if len(encoded) > MAX_REFERENCE_TEXT_UTF8_BYTES:
         raise _validation_error("reference_text")
     return text

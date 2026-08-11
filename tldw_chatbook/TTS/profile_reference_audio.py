@@ -78,6 +78,7 @@ def _canonical_wave(
 
 
 def _parse_wave(payload: bytes) -> _ParsedWave:
+    parse_error: BaseException | None = None
     try:
         if (
             type(payload) is not bytes
@@ -160,10 +161,14 @@ def _parse_wave(payload: bytes) -> _ParsedWave:
             sample_encoding="pcm_s16le",
         )
         return _ParsedWave(metadata=metadata, canonical_bytes=canonical)
-    except ProfileValidationError:
-        raise
-    except Exception:
-        raise _invalid() from None
+    except BaseException as error:
+        parse_error = error
+    assert parse_error is not None
+    if not isinstance(parse_error, Exception):
+        raise parse_error
+    if isinstance(parse_error, ProfileValidationError):
+        raise ProfileValidationError(parse_error.code)
+    raise _invalid()
 
 
 def _read_canonical_stream(stream: BinaryIO) -> bytes:

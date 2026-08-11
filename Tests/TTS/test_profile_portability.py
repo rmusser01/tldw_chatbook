@@ -125,6 +125,48 @@ def test_standalone_json_is_deterministic_and_contains_only_wire_fields() -> Non
         assert forbidden not in encoded.casefold()
 
 
+def test_private_reference_storage_does_not_change_ordinary_wire_v1() -> None:
+    portability = _portability_module()
+    portable = portability.PortableTTSProfile(
+        profile_id=UUID("00000000-0000-4000-8000-000000000000"),
+        draft=TTSProfileDraft(
+            display_name="Character voice",
+            provider_id="audio_cpp",
+            model_id="supertonic-3",
+            voice_id="M1",
+            response_format="wav",
+            speed=1.0,
+            options={},
+        ),
+    )
+
+    payload = portability.portable_profile_payload(portable)
+    encoded = portability.portable_profile_json(portable)
+
+    assert tuple(payload) == (
+        "schema_version",
+        "profile_id",
+        "name",
+        "provider_id",
+        "model_id",
+        "voice_id",
+        "response_format",
+        "speed",
+        "options",
+    )
+    assert payload["schema_version"] == 1
+    for forbidden in (
+        "reference",
+        "reference_id",
+        "reference_text",
+        "wav_bytes",
+        "sha256",
+        "source_path",
+    ):
+        assert forbidden not in payload
+        assert forbidden not in encoded
+
+
 def test_valid_payload_decodes_to_an_exact_profile_selection() -> None:
     portability = _portability_module()
 

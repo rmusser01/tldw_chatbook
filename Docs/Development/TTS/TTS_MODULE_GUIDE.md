@@ -47,9 +47,14 @@ tldw_chatbook/TTS/
 ├── request_admission.py     # Atomic preference/revision/lease admission
 ├── profile_errors.py        # Value-independent profile/store failures
 ├── profile_types.py         # Immutable profiles, assignments, and receipts
+├── profile_reference_types.py # Private clone-reference values and quotas
+├── profile_reference_audio.py # Bounded WAV admission/canonicalization
+├── profile_reference_storage.py # Metadata projections and streamed BLOB I/O
 ├── profile_schema.py        # Dedicated SQLite validation and codecs
 ├── migrations/
-│   └── v0_to_v1.py         # Versioned profile-store schema migration
+│   ├── v0_to_v1.py         # Initial profile-store schema migration
+│   ├── v1_to_v2.py         # Version-two profile-store migration
+│   └── v2_to_v3.py         # Private clone-reference table migration
 ├── profile_store_lock.py    # Cooperative shared/exclusive process locking
 ├── profile_repository.py    # Serialized CRUD, backup, and restore lifecycle
 ├── profile_service.py       # Native profile validation and capability overlay
@@ -109,9 +114,10 @@ tts_profiles_db_path = "/absolute/path/to/tts-profiles.db"
 ```
 
 The store is local-only and separate from character cards, provider
-configuration, and conversation storage. Schema version 1 holds complete,
-immutable profile snapshots and authority-scoped assignment records. Profile
-display names are trimmed and have a unique key derived as
+configuration, and conversation storage. Current schema version 3 retains the
+complete, immutable profile snapshots and authority-scoped assignment records
+introduced by earlier versions and adds an optional profile-owned clone
+reference row. Profile display names are trimmed and have a unique key derived as
 `NFKC(display_name).casefold()`. Creates begin at revision 1; updates require
 the exact revision read by the editor and increment it atomically. A stale
 revision or normalized-name collision reports a conflict without overwriting
@@ -161,6 +167,38 @@ boundaries so the exclusive lease is released promptly on expiry.
 An individual kernel call such as `fsync`, `replace`, `stat`, `read`, or
 `write` cannot be interrupted after it starts, so one such in-flight call may
 finish just beyond the requested timeout before cleanup releases ownership.
+
+#### Profile v3 private clone-reference storage
+
+Schema v3 can store one canonical clone reference per generation profile: a
+bounded PCM16 WAV BLOB, bounded reference transcript, digest, validated audio
+metadata, immutable reference UUID, and timestamps. The source path is never
+persisted. Ordinary profile reads project only the reference metadata summary;
+the WAV, transcript, and digest are streamed and revalidated only for an exact
+reference read, mutation, backup qualification, or restore qualification.
+
+Reference audio and transcript are local plaintext. Owner-only filesystem
+controls protect the profile database, retained migration backup, recovery
+copies, and temporary backup files, but that protection is not encryption.
+Profile database backups contain the same sensitive reference audio and
+transcript. Deletion and SQLite/WAL cleanup are best-effort deletion, not
+forensic erasure, especially on copy-on-write filesystems, backups, and storage
+media. The Windows privacy posture remains unverified until TASK-13208; do not
+infer a Windows ACL guarantee from the POSIX owner-private implementation.
+
+Opening a v2 store eagerly creates and validates a retained v2 pre-migration
+backup before the transactional v3 migration. Older builds refuse schema v3.
+To downgrade, close Chatbook completely, restore that retained v2
+pre-migration backup as the profile database, and only then start the older
+build. This necessarily accepts loss of post-migration profile changes,
+including all clone references and later profile or assignment edits.
+
+TASK-13203 provides storage and repository lifecycle only. It does not yet
+enable clone generation, reference setup in Speech Lab, typed adapter request
+materialization, or voice-bundle portability. Ordinary portable profile wire
+version 1 remains unchanged and contains no reference summary, bytes,
+transcript, digest, or source path. Explicit sensitive voice bundles are a
+separate later workstream.
 
 Profiles persist generation selections, not connection or process
 configuration. Provider origins, credentials, API keys, custom headers, binary
