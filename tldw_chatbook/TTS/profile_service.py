@@ -484,12 +484,13 @@ def _canonicalize_exact_reference(value: object) -> TTSCloneReference:
         raise ProfileValidationError("reference_invalid")
     reference = cast(TTSCloneReference, value)
     try:
+        summary = _canonicalize_exact_reference_summary(reference.summary)
         canonical = TTSCloneReference(
-            summary=_canonicalize_exact_reference_summary(reference.summary),
+            summary=summary,
             reference_text=reference.reference_text,
             sha256=reference.sha256,
             wav_bytes=reference.wav_bytes,
-            recipe_requirement=reference.recipe_requirement,
+            recipe_requirement=summary.recipe_requirement,
         )
     except Exception:
         raise ProfileValidationError("reference_invalid") from None

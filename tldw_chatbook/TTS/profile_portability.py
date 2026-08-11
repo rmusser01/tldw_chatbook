@@ -182,11 +182,14 @@ def _decode_selection(
     payload: dict[str, object],
     *,
     skip_unsupported_provider: bool,
+    require_canonical_profile_id: bool,
 ) -> PortableTTSProfile | PortableProfileDecodeResult:
     profile_id_value = payload["profile_id"]
     if type(profile_id_value) is not str:
         raise ValueError
     profile_id = UUID(profile_id_value)
+    if require_canonical_profile_id and str(profile_id) != profile_id_value:
+        raise ValueError
     try:
         draft = TTSProfileDraft(
             display_name=payload["name"],
@@ -277,6 +280,7 @@ def decode_portable_profile(payload: object) -> PortableProfileDecodeResult:
             selection = _decode_selection(
                 payload,
                 skip_unsupported_provider=True,
+                require_canonical_profile_id=False,
             )
             if type(selection) is PortableProfileDecodeResult:
                 return selection
@@ -289,7 +293,11 @@ def decode_portable_profile(payload: object) -> PortableProfileDecodeResult:
             raise ValueError
         if payload["reference"] != {"status": "omitted"}:
             raise ValueError
-        selection = _decode_selection(payload, skip_unsupported_provider=False)
+        selection = _decode_selection(
+            payload,
+            skip_unsupported_provider=False,
+            require_canonical_profile_id=True,
+        )
         if type(selection) is PortableProfileDecodeResult:
             raise ValueError
         return _reference_omitted_result()

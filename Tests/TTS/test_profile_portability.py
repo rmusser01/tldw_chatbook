@@ -237,6 +237,24 @@ def test_v2_omission_decode_is_skip_without_profile() -> None:
     assert result.warning_code == "reference_omitted"
 
 
+@pytest.mark.parametrize(
+    "profile_id",
+    [
+        "{00000000-0000-4000-8000-000000000000}",
+        "A0000000-0000-4000-8000-000000000000",
+    ],
+)
+def test_v2_rejects_noncanonical_profile_id_text(profile_id: str) -> None:
+    portability = _portability_module()
+
+    result = portability.decode_portable_profile(
+        _valid_v2_payload(profile_id=profile_id)
+    )
+
+    assert result.status is portability.PortableProfileDecodeStatus.INVALID
+    assert result.profile is None
+
+
 @pytest.mark.parametrize("missing_field", tuple(_valid_v2_payload()))
 def test_v2_rejects_every_missing_field(missing_field: str) -> None:
     portability = _portability_module()

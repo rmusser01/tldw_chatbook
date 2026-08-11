@@ -159,7 +159,14 @@ def test_reference_canonicalizers_reconstruct_exact_recipe_provenance() -> None:
     canonical_summary = profile_service._canonicalize_exact_reference_summary(summary)
     assert canonical_summary == summary
     assert canonical_summary.recipe_requirement is not requirement
-    assert profile_service._canonicalize_exact_reference(reference) == reference
+    canonical_reference = profile_service._canonicalize_exact_reference(reference)
+    assert canonical_reference == reference
+    assert canonical_reference.summary.recipe_requirement is not requirement
+    assert canonical_reference.recipe_requirement is not requirement
+    assert (
+        canonical_reference.summary.recipe_requirement
+        is canonical_reference.recipe_requirement
+    )
     assert _profile(model_id="model-a", reference=summary).reference == summary
     with pytest.raises(ProfileValidationError, match=r"reference_invalid"):
         _profile(model_id="model-b", reference=summary)
