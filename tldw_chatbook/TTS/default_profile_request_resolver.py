@@ -66,10 +66,19 @@ from tldw_chatbook.TTS.profile_errors import (
     ProfileValidationError,
 )
 from tldw_chatbook.TTS.profile_service import LoadedTTSProfile
+from tldw_chatbook.TTS.profile_reference_types import TTSCloneReference
 
 
 class _DefaultProfileService(Protocol):
     async def get_profile(self, profile_id: UUID) -> LoadedTTSProfile: ...
+
+    async def get_reference(
+        self,
+        profile_id: UUID,
+        *,
+        expected_revision: int,
+        expected_generation: int,
+    ) -> TTSCloneReference: ...
 
 
 def _log_default_profile_resolution_failure(
@@ -168,6 +177,41 @@ async def resolve_default_profile(
         if type(loaded) is not LoadedTTSProfile:
             raise TypeError
         profile = loaded.profile
+        reference: TTSCloneReference | None = None
+        if profile.reference is not None:
+            try:
+                reference = await profile_service.get_reference(
+                    profile.profile_id,
+                    expected_revision=profile.revision,
+                    expected_generation=loaded.repository_generation,
+                )
+            except asyncio.CancelledError:
+                raise
+            except (
+                ProfileRepositoryError,
+                ProfileServiceError,
+                ProfileValidationError,
+            ) as error:
+                _log_default_profile_resolution_failure(
+                    "default_profile_store_unavailable",
+                    error,
+                )
+                raise CharacterTTSResolutionError(
+                    "default_profile_store_unavailable"
+                ) from None
+            except Exception as error:
+                _log_default_profile_resolution_failure(
+                    "default_profile_store_unavailable",
+                    error,
+                )
+                raise CharacterTTSResolutionError(
+                    "default_profile_store_unavailable"
+                ) from None
+            if (
+                type(reference) is not TTSCloneReference
+                or reference.summary != profile.reference
+            ):
+                raise ValueError
         request = TTSRequest(
             provider_id=profile.provider_id,
             model_id=profile.model_id,
@@ -183,6 +227,7 @@ async def resolve_default_profile(
             repository_generation=loaded.repository_generation,
             profile_id=profile.profile_id,
             profile_revision=profile.revision,
+            reference=reference,
         )
     except CharacterTTSResolutionError:
         raise

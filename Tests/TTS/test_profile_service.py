@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import traceback
 from collections.abc import Callable, Coroutine, Iterable, Iterator, Sequence
@@ -42,6 +43,10 @@ from tldw_chatbook.TTS.profile_service import (
     TTSProfilePageSnapshot,
     TTSProfileService,
 )
+from tldw_chatbook.TTS.profile_reference_types import (
+    TTSCloneReference,
+    TTSCloneReferenceSummary,
+)
 from tldw_chatbook.TTS.profile_types import (
     AssignedTTSProfileSnapshot,
     CharacterRef,
@@ -72,6 +77,7 @@ def _profile(
     speed: float = 1.0,
     options: dict[str, Any] | None = None,
     revision: int = 1,
+    reference: TTSCloneReferenceSummary | None = None,
 ) -> TTSGenerationProfile:
     draft = TTSProfileDraft(
         display_name=display_name,
@@ -95,6 +101,26 @@ def _profile(
         revision=revision,
         created_at=_CREATED_AT,
         updated_at=_CREATED_AT,
+        reference=reference,
+    )
+
+
+def _reference() -> TTSCloneReference:
+    wav_bytes = b"canonical-private-reference"
+    return TTSCloneReference(
+        summary=TTSCloneReferenceSummary(
+            reference_id=UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+            byte_length=len(wav_bytes),
+            duration_ms=250,
+            sample_rate_hz=24_000,
+            channels=1,
+            sample_encoding="pcm_s16le",
+            created_at=_CREATED_AT,
+            updated_at=_CREATED_AT,
+        ),
+        reference_text="Private transcript",
+        sha256=hashlib.sha256(wav_bytes).hexdigest(),
+        wav_bytes=wav_bytes,
     )
 
 
@@ -470,6 +496,7 @@ class _FakeRepository:
         self.remove_error: BaseException | None = None
         self.get_assignment_error: BaseException | None = None
         self.get_profile_error: BaseException | None = None
+        self.get_reference_error: BaseException | None = None
         self.count_value = 0
         self.count_generation: int | None = None
         self.advance_generation_during_count = False
@@ -483,6 +510,7 @@ class _FakeRepository:
         self.remove_result: object = _UNSET
         self.get_assignment_result: object = _UNSET
         self.get_profile_result: object = _UNSET
+        self.get_reference_result: object = _UNSET
         self.count_result: object = _UNSET
         self.collision_result = TTSProfileCollisionSnapshot(None, None)
         self.collision_reads = 0
@@ -790,6 +818,29 @@ class _FakeRepository:
         if self.advance_generation_after_get_profile:
             self.generation += 1
         return result
+
+    async def get_reference(
+        self,
+        profile_id: UUID,
+        *,
+        expected_revision: int,
+        expected_generation: int,
+    ) -> ProfileStoreResult[TTSCloneReference]:
+        self._record_coordinator_state()
+        self.calls.append(
+            (
+                "get_reference",
+                (profile_id, expected_revision, expected_generation),
+            )
+        )
+        if self.get_reference_error is not None:
+            raise self.get_reference_error
+        if self.get_reference_result is not _UNSET:
+            return cast(
+                ProfileStoreResult[TTSCloneReference],
+                self.get_reference_result,
+            )
+        return ProfileStoreResult(generation=self.generation, value=_reference())
 
 
 class _AsyncBoundary:
@@ -3229,6 +3280,86 @@ async def test_get_profile_returns_one_exact_immutable_loaded_profile() -> None:
     assert forwarded_id == _PROFILE_ID
     assert forwarded_id is not _PROFILE_ID
     assert tts_service.capability_calls == []
+
+
+@pytest.mark.asyncio
+async def test_get_profile_preserves_exact_reference_summary() -> None:
+    service, repository, _tts_service = _service()
+    reference = _reference()
+    persisted = _profile(reference=reference.summary)
+    repository.get_profile_result = ProfileStoreResult(
+        generation=repository.generation,
+        value=persisted,
+    )
+
+    loaded = await service.get_profile(_PROFILE_ID)
+
+    assert loaded.profile.reference == reference.summary
+    assert loaded.profile.reference is not reference.summary
+
+
+@pytest.mark.asyncio
+async def test_get_reference_returns_one_exact_private_snapshot_under_fences() -> None:
+    service, repository, tts_service = _service()
+    persisted = _reference()
+    repository.get_reference_result = ProfileStoreResult(
+        generation=repository.generation,
+        value=persisted,
+    )
+
+    loaded = await service.get_reference(
+        _PROFILE_ID,
+        expected_revision=6,
+        expected_generation=repository.generation,
+    )
+
+    assert loaded == persisted
+    assert loaded is not persisted
+    assert loaded.summary is not persisted.summary
+    assert repository.calls == [
+        ("get_reference", (_PROFILE_ID, 6, repository.generation))
+    ]
+    assert "Private transcript" not in repr(loaded)
+    assert tts_service.capability_calls == []
+
+
+@pytest.mark.asyncio
+async def test_get_reference_rejects_repository_generation_change() -> None:
+    service, repository, _tts_service = _service()
+    expected_generation = repository.generation
+    repository.generation += 1
+    repository.get_reference_result = ProfileStoreResult(
+        generation=repository.generation,
+        value=_reference(),
+    )
+
+    with pytest.raises(ProfileRepositoryError) as caught:
+        await service.get_reference(
+            _PROFILE_ID,
+            expected_revision=6,
+            expected_generation=expected_generation,
+        )
+
+    assert caught.value.code == "stale"
+
+
+@pytest.mark.asyncio
+async def test_get_reference_rejects_malformed_private_result_without_detail() -> None:
+    service, repository, _tts_service = _service()
+    repository.get_reference_result = ProfileStoreResult(
+        generation=repository.generation,
+        value=object(),
+    )
+
+    with pytest.raises(ProfileServiceError) as caught:
+        await service.get_reference(
+            _PROFILE_ID,
+            expected_revision=6,
+            expected_generation=repository.generation,
+        )
+
+    assert caught.value.code == "operation_failed"
+    assert "object" not in str(caught.value)
 
 
 @pytest.mark.asyncio

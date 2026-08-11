@@ -4,6 +4,7 @@ import asyncio
 import threading
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import Any
+from uuid import UUID
 
 import pytest
 
@@ -750,6 +751,7 @@ async def test_effective_admission_retains_character_profile_sources_and_revisio
         ),
         repository_generation=13,
         profile_revision=8,
+        profile_id=UUID("11111111-1111-4111-8111-111111111111"),
     )
     response: TTSAudioResponse | None = None
 

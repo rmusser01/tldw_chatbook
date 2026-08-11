@@ -8,6 +8,7 @@ import struct
 from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 import httpx
 import pytest
@@ -1028,6 +1029,7 @@ async def test_console_and_roleplay_admission_apply_stage_before_read_gate(
         ),
         repository_generation=1,
         profile_revision=1,
+        profile_id=UUID("11111111-1111-4111-8111-111111111111"),
     )
 
     try:
