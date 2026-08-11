@@ -20,6 +20,7 @@ references:
 documentation:
   - Docs/superpowers/specs/2026-08-09-audio-cpp-guided-model-setup-design.md
   - Docs/superpowers/specs/2026-08-11-audio-cpp-clone-voice-bundle-portability-design.md
+  - Docs/superpowers/plans/2026-08-11-task-13206-clone-voice-bundle-portability.md
 priority: high
 ---
 
@@ -44,3 +45,22 @@ Add explicit warning-gated export and hostile-input-safe import for portable clo
 - [ ] #11 Import/export/migration work is retained and joined across cancellation and shutdown, performs no adapter acquisition, audio.cpp launch, network, or Settings mutation during inspection, fails closed without verified owner-private containment, and exposes bounded accessible recovery without leaking private archive/reference values.
 - [ ] #12 Provenance-bearing profile edits preserve exact recipe/model invariants, bundle export never overwrites an existing destination, and inactive blockers plus provenance-unavailable advisories expose truthful immutable action projections across the profile library and assignment consumers.
 <!-- AC:END -->
+
+## Implementation Plan
+
+ADR required: no new ADR
+
+ADR path: `backlog/decisions/028-character-tts-generation-profile-ownership.md`, `backlog/decisions/029-local-private-data-boundary.md`, `backlog/decisions/051-private-tts-clone-reference-assets.md`
+
+Reason: ADR-051 already owns clone-reference storage, migration, privacy, runtime admission, and portability and has been amended for this protocol. ADR-028 keeps assignment explicit and ADR-029 governs owner-private local data.
+
+1. Preserve ordinary wire v1 while adding strict sanitized omission wire v2 and immutable recipe provenance.
+2. Migrate isolated profile stores to v4 through private candidates, retained backups, and recoverable non-cancellable publication.
+3. Require provenance for new reference writes and add one atomic repository-lane exact-reuse/create/copy decision.
+4. Implement the deterministic four-entry codec and hostile archive rejection without general extraction.
+5. Add the app-owned retained inspection/export service and close it before the repository.
+6. Derive pure dependency truth and enforce pre-provider, adapter-preflight, and post-ready generation gates.
+7. Extend the existing Voice Profile library and reuse inactive/advisory action truth in Personas assignment.
+8. Complete privacy/lifecycle testing, static/full verification, two-launch isolated UAT, docs, review, and closeout.
+
+Detailed test-first steps, file ownership, commands, review checkpoints, and commit boundaries are in `Docs/superpowers/plans/2026-08-11-task-13206-clone-voice-bundle-portability.md`.

@@ -1,6 +1,6 @@
 # audio.cpp Clone Voice Bundle Portability Design
 
-**Status:** Proposed
+**Status:** Approved
 
 **Date:** 2026-08-11
 
