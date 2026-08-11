@@ -246,6 +246,13 @@ conversation-context synthesis, or an LLM. All other backends retain the existin
 generic preparation path unchanged. This ordering prevents a request that H3 will
 refuse from causing prompt-transformation or LLM network activity first.
 
+Unlike the existing generic image command, the H3 branch does not clear the command
+draft at dispatch. It captures the exact draft string and leaves it editable while
+the operation runs. After durable success it clears the draft only if the current
+draft still equals the captured string; a changed or replacement draft remains.
+Failure and cancellation never clear the captured draft. This removes the
+clear-then-restore race across Stop, navigation, and user edits.
+
 | Invocation/input | Result |
 | --- | --- |
 | `:comfyui <instruction>` with one staged image | Accepted; one raw instruction and one PNG |
@@ -297,6 +304,14 @@ reference providers remain `supported=True, required=False`; ComfyUI resolves to
 case after backend resolution and before adapter construction or egress, so
 non-Console callers cannot bypass it.
 
+The H3 preparation branch converts the initiating `PendingAttachment` to a
+`ResolvedReferenceImage` from its already-processed in-memory `data` only. It sets
+`file_id` to the opaque runtime attachment ID, `filename=None`, and threads the
+validated MIME, dimensions, byte length, and content. Missing in-memory bytes are a
+validation refusal. The edit path never reopens `file_path`, so a staged source
+cannot be replaced between validation and upload and no local path reaches the
+adapter.
+
 ### 6.4 Success, failure, and Regenerate
 
 `ImageGenResult` gains one backward-compatible field,
@@ -338,6 +353,27 @@ logged through the sanitized cleanup phase, but it does not roll back, reoffer, 
 misreport the already committed edited image; the still-staged source remains under
 the user's control.
 
+Console navigation currently copies pending attachments into an app-owned stash
+and reconstructs a fresh screen/store later. A success that settles after unmount
+therefore also writes a small app-owned completion-cleanup record containing only
+session ID, operation generation, persisted generation-message ID, attachment ID,
+and captured draft text—never image bytes or paths. Completion immediately filters
+the exact attachment ID from the app stash.
+
+After state restoration, every newly mounted Console applies the record to its
+restored store. If the recorded generation message is not already present, it
+rehydrates that exact persisted message, PNG attachment, and aligned generation
+metadata through the existing persistence read boundary and merges it idempotently
+by message ID. It then removes only the matching pending attachment and clears only
+a draft still equal to the captured command. The record is acknowledged and
+removed only after the message is present and composer cleanup has been applied. If
+success settles after the new screen already adopted the stash, the operation
+schedules the same rehydrate-and-cleanup path against that mounted screen. Session
+deletion discards the small record; no other message, attachment, or draft is
+modified. Focused tests cover success before and after store restoration/stash
+adoption, including exact-once message hydration, so neither the source nor the
+durable result can disappear or duplicate across navigation.
+
 Validation, transport, generation, output, or persistence failure leaves the
 source staged for retry.
 
@@ -355,7 +391,7 @@ The settings include:
 
 - base URL, defaulting to `http://127.0.0.1:8188`;
 - request/connect timeout;
-- history poll interval; and
+- history poll interval;
 - total generation deadline;
 - optional default seed (`None` means use the packaged graph value, `-1` means
   resolve a fresh seed once);
@@ -366,6 +402,13 @@ Cleared fields are omitted from persisted TOML and display “Use packaged workf
 rather than importing/loading the graph into Settings. Supplied defaults pass
 through the same request and `/object_info` validation as programmatic values; they
 are never silently clamped or replaced.
+
+`comfyui` is added to the Image Generation backend catalog and canonical Settings
+enablement controls, but it is not added to the default `enabled_backends` list and
+does not replace the existing default backend. Enabling it is an explicit opt-in
+shown beside the server-retention/transmission disclosure. Catalog configuration
+checks are local only: a syntactically valid base URL and available packaged
+resource make the backend configurable, but listing never probes the server.
 
 There is no custom workflow path or model selector in this task. Userinfo, query,
 and fragment components are forbidden in the base URL.
@@ -414,7 +457,8 @@ No object-info response body is logged.
 The adapter uses the configured origin for the full exchange:
 
 1. Upload the source with multipart `/upload/image` using a random, opaque,
-   request-scoped filename. Never forward the attachment's original filename.
+   request-scoped filename. Its extension is derived only from the validated MIME
+   (`.png`, `.jpg`, or `.webp`); the original filename is never forwarded.
 2. Inject the returned safe upload reference into node 114.
 3. Submit the prepared graph to `/prompt` and validate the returned prompt ID.
 4. Poll `/history/{prompt_id}` with a monotonic deadline, bounded intervals, and
@@ -437,6 +481,14 @@ The adapter uses the configured origin for the full exchange:
 Redirects are disabled for upload, object info, prompt submission, polling, and
 download. Every request passes the existing trusted-origin egress policy.
 
+Every ComfyUI JSON response is bounded before parsing. The adapter-local transport
+uses `COMFYUI_MAX_JSON_BYTES = 32 * 1024 * 1024`, rejects an oversized declared
+`Content-Length`, streams with an actual-byte running cap, and only then calls
+`json.loads`. The cap covers `/object_info`, `/upload/image`, `/prompt`, every
+`/history/{prompt_id}` response, and `/queue` deletion responses (which may also be
+empty). No ComfyUI JSON endpoint uses the existing eager unbounded `fetch_json`
+path. The PNG response retains its stricter attachment-storage cap.
+
 ### 9.1 Cancellation and timeout
 
 `ImageGenRequest` gains an optional `cancel_event: threading.Event`, defaulting to
@@ -447,13 +499,23 @@ unmount set it. The adapter checks it before every network phase and waits betwe
 history polls with `cancel_event.wait(interval)` so cancellation is responsive
 without a second polling mechanism.
 
-The Console owns a per-session H3 image-edit cancellation registry parallel to the
-existing video-generation registry. While an H3 edit is active, the existing
-composer Stop affordance is active and sets that session's event. Screen unmount
-sets every owned event, marks the operation generation terminal for UI purposes,
-and drains the corresponding operation tasks without allowing stale screen updates.
-Removing an event from the registry occurs in `finally` after the operation task
-settles, so Stop cannot target a later operation accidentally.
+The app instance, not an individual `ChatScreen`, owns an H3 image-edit operation
+registry keyed by session ID. Each entry carries an opaque operation generation,
+the initiating attachment ID, captured draft, cancel event, and owned async task.
+The registry is the single duplicate-operation gate and remains visible to a newly
+mounted Console.
+
+While an H3 edit is active, the existing composer Stop affordance is active and
+sets that session's event. Screen unmount sets the event and marks that screen's UI
+generation terminal, but it does not synchronously wait for a potentially blocked
+HTTP request. The app-owned task remains registered until it settles, preserving
+the result/persistence contract without blocking navigation. A newly mounted screen
+shows the still-active or stopping state and cannot start a duplicate edit.
+Registry removal occurs in the operation task's `finally` only if both session ID
+and operation generation still match, so an old completion cannot remove a later
+operation. A success may leave only the bounded completion-cleanup record described
+in §6.4 until a current or future Console acknowledges the identity-gated composer
+cleanup; it does not retain the generated or source bytes.
 
 Before prompt submission, an observed cancellation ends the operation without a
 queue deletion. After a prompt ID exists, an observed cancellation or monotonic
@@ -480,6 +542,14 @@ exactly once before cancellation escapes, while a cancellation that won produces
 no local card. Attachment consumption follows the durable append inside the same
 success path. Later UI synchronization is outside the shield, remains cancellable,
 and runs only for the originating live screen/operation generation.
+
+The image-generation exception module gains a typed
+`ImageGenerationCancelled(ImageGenerationError)`. The H3 adapter raises it when
+cancellation wins. `run_generation_batch()` catches and re-raises this type before
+its ordinary per-variant `Exception` collection, so Stop cannot be converted into a
+zero-success batch or user-visible backend failure. The H3 operation handles it as
+an expected terminal outcome: no card, no source consumption, no error log, and no
+draft clearing. Timeout remains a sanitized failure, not cancellation.
 
 ## 10. Retention and Privacy
 
@@ -550,23 +620,27 @@ Focused coverage includes:
    and no upload on local or remote-preflight failure.
 5. **Transport** — opaque upload naming, redirect/origin confinement, safe
    descriptors, pending previews, terminal failures, monotonic timeout,
-   prompt-specific pending cancellation, bounded streaming, PNG validation, and
-   exact node-165 selection.
+   prompt-specific pending cancellation, bounded JSON and PNG streaming, MIME-based
+   opaque extensions, and exact node-165 selection.
 6. **Config/registry/Settings** — independent settings and optional control
-   defaults, precedence, successful-save reset, one worker-owned adapter snapshot,
-   and no video dependency.
+   defaults, explicit opt-in without default-backend takeover, local-only listing,
+   precedence, successful-save reset, one worker-owned adapter snapshot, and no
+   video dependency.
 7. **Console/persistence** — backend-before-prompt preparation, no LLM/style work
    for refused H3 input, staging rules, one-count enforcement, failure retention,
-   one durable attachment/metadata result, UUID-gated exact consumption, real Stop
-   and unmount cancellation wiring, success/cancel linearization, commit-wins
-   cleanup containment, and Regenerate refusal.
+   in-memory-only reference construction, unchanged-draft preservation, one durable
+   attachment/metadata result, UUID-gated exact consumption, app-owned duplicate
+   gating/drain across remount, pre-/post-restore exact message rehydration and
+   stash cleanup, typed cancellation propagation, success/cancel linearization,
+   commit-wins cleanup containment, and Regenerate refusal.
 8. **Privacy** — sentinel prompt/path/filename/descriptor/server-body values are
    absent from all captured logs, user copy, tracked fixtures, and reports.
 
 Tests use strict RED-to-GREEN development and focused mutations for the load-bearing
 guards: pre-upload validation, output-node filtering, same-origin enforcement,
-bounded download, identity-gated source consumption, durable persistence, and
-sanitized error reporting.
+bounded JSON/download paths, cancellation re-raise, app-owned operation lifetime,
+identity-gated source/draft consumption, durable persistence, and sanitized error
+reporting.
 
 ### 12.2 Live UAT
 

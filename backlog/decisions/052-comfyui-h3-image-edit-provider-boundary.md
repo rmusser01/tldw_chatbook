@@ -87,6 +87,15 @@ or video-specific behavior.
   operation; it is not persisted as generation provenance.
 - H3 prompt preparation resolves the backend before generic style/context logic,
   and success-versus-cancellation is linearized before a shielded durable append.
+- H3 operation lifetime is app-owned across Console unmount/remount. Cancellation
+  is a typed result that the batch helper must re-raise, not collect as a failed
+  variant.
+- A byte-free app-owned completion record carries the persisted message ID and
+  prevents either the durable result from disappearing or the exact source
+  attachment/unchanged command draft from resurrecting through Console's unmount
+  stash and fresh-store restoration path.
+- The ComfyUI image backend is explicit opt-in, and every server JSON response is
+  byte-bounded before parsing.
 - Source images and edited outputs may persist on the configured ComfyUI server;
   operator cleanup policy governs them.
 - Settings changes reset the Image Generation registry only after successful
