@@ -978,28 +978,43 @@ def _canonical_sha256(value: object) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _non_owned_inventory_projection(
+def _normalized_inventory_projection(
     inventory: dict[str, object], owned_paths: set[str]
 ) -> dict[str, object]:
+    normalized = copy.deepcopy(inventory)
+    summary = normalized["summary"]
+    assert isinstance(summary, dict)
+    owners = normalized["owners"]
+    assert isinstance(owners, list)
+    for owner in owners:
+        assert isinstance(owner, dict)
+        if owner.get("path") in owned_paths:
+            owner["call_count"] = "<task-3796-owned-call-count>"
+            owner["diagnostic_digest"] = "<task-3796-owned-diagnostic-digest>"
+    summary["task_492_calls"] = "<derived-task-492-call-count>"
+    return normalized
+
+
+def _assert_task_492_summary(
+    inventory: dict[str, object], *, inventory_name: str
+) -> None:
     summary = inventory["summary"]
     assert isinstance(summary, dict)
     owners = inventory["owners"]
     assert isinstance(owners, list)
-    return {
-        "schema_version": inventory["schema_version"],
-        "scope": inventory["scope"],
-        "classification_rules": inventory["classification_rules"],
-        "reviewed_exclusions": inventory["reviewed_exclusions"],
-        # TASK-492's total is derived from the two intentionally changed counts.
-        "summary": {
-            key: value for key, value in summary.items() if key != "task_492_calls"
-        },
-        "owners": [
-            owner
-            for owner in owners
-            if isinstance(owner, dict) and owner.get("path") not in owned_paths
-        ],
-    }
+    task_492_call_counts = []
+    for owner in owners:
+        assert isinstance(owner, dict)
+        if owner.get("owner") != "TASK-492":
+            continue
+        call_count = owner.get("call_count")
+        assert type(call_count) is int
+        task_492_call_counts.append(call_count)
+    task_492_calls = summary.get("task_492_calls")
+    assert type(task_492_calls) is int
+    assert task_492_calls == sum(task_492_call_counts), (
+        f"{inventory_name} TASK-492 summary does not equal its owner call counts"
+    )
 
 
 def _starting_projection(
@@ -2169,20 +2184,21 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
     }
     owner_maps: dict[str, dict[str, dict[str, object]]] = {}
     for name, inventory in inventories.items():
+        _assert_task_492_summary(inventory, inventory_name=name)
         assert (
-            _canonical_sha256(_non_owned_inventory_projection(inventory, owned_paths))
-            == boundary["non_owned_inventory_sha256"]
+            _canonical_sha256(_normalized_inventory_projection(inventory, owned_paths))
+            == boundary["normalized_inventory_sha256"]
         ), f"{name} inventory changed outside the two summarization owners"
-        assert (
-            _canonical_sha256(inventory["persistent_sink_topology"])
-            == boundary["persistent_sink_topology_sha256"]
-        ), f"{name} persistent-sink topology changed"
 
         owners = inventory["owners"]
         assert isinstance(owners, list)
-        owner_map = {
-            owner["path"]: owner for owner in owners if isinstance(owner, dict)
-        }
+        owner_map: dict[str, dict[str, object]] = {}
+        for owner in owners:
+            assert isinstance(owner, dict)
+            path = owner.get("path")
+            assert isinstance(path, str)
+            assert path not in owner_map, f"duplicate diagnostic owner path: {path}"
+            owner_map[path] = owner
         owner_maps[name] = owner_map
         owned_entries = [
             {key: owner_map[path][key] for key in ("path", "owner", "reason")}
@@ -2197,6 +2213,16 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
                 "call_count",
                 "diagnostic_digest",
             }
+            call_count = owner_map[path]["call_count"]
+            assert type(call_count) is int and call_count >= 0
+            diagnostic_digest = owner_map[path]["diagnostic_digest"]
+            assert (
+                isinstance(diagnostic_digest, str)
+                and len(diagnostic_digest) == 20
+                and all(
+                    character in "0123456789abcdef" for character in diagnostic_digest
+                )
+            ), f"{name} owned diagnostic digest has invalid schema"
 
     mutable_fields = {"call_count", "diagnostic_digest"}
     for path in owned_paths:
@@ -2208,17 +2234,6 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
             if checked_owner.get(key) != generated_owner.get(key)
         }
         assert changed_fields <= mutable_fields
-
-    checked_summary = checked_inventory["summary"]
-    generated_summary = generated_inventory["summary"]
-    checked_task_492_calls = checked_summary["task_492_calls"]
-    generated_task_492_calls = generated_summary["task_492_calls"]
-    owned_count_delta = sum(
-        owner_maps["generated"][path]["call_count"]
-        - owner_maps["checked"][path]["call_count"]
-        for path in owned_paths
-    )
-    assert generated_task_492_calls - checked_task_492_calls == owned_count_delta
 
     sites = _ledger_sites()
     deleted_by_module = Counter(
@@ -2236,6 +2251,57 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
     assert checked_inventory == generated_inventory, (
         "the checked manifest must be regenerated by the canonical inventory checker"
     )
+
+
+def _run_manifest_boundary_mutant(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    inventory: dict[str, object],
+) -> None:
+    inventory_path = tmp_path / "production-diagnostic-inventory.json"
+    inventory_path.write_text(json.dumps(inventory), encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "INVENTORY_PATH", inventory_path)
+    monkeypatch.setattr(
+        diagnostic_inventory,
+        "build_inventory",
+        lambda: copy.deepcopy(inventory),
+    )
+    test_manifest_boundary_changes_only_summarization_owner_diagnostics()
+
+
+def test_manifest_boundary_rejects_unknown_top_level_sections(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    inventory = json.loads(INVENTORY_PATH.read_text(encoding="utf-8"))
+    inventory["unreviewed_section"] = {"private_value": "must-not-be-ignored"}
+
+    with pytest.raises(AssertionError, match="outside the two summarization owners"):
+        _run_manifest_boundary_mutant(monkeypatch, tmp_path, inventory)
+
+
+def test_manifest_boundary_rejects_forged_task_492_summary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    inventory = json.loads(INVENTORY_PATH.read_text(encoding="utf-8"))
+    inventory["summary"]["task_492_calls"] = 999_999
+
+    with pytest.raises(AssertionError, match="TASK-492 summary"):
+        _run_manifest_boundary_mutant(monkeypatch, tmp_path, inventory)
+
+
+def test_manifest_boundary_rejects_owned_digest_schema_changes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    inventory = json.loads(INVENTORY_PATH.read_text(encoding="utf-8"))
+    owned_entry = next(
+        owner
+        for owner in inventory["owners"]
+        if owner["path"] == "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py"
+    )
+    owned_entry["diagnostic_digest"] = 123
+
+    with pytest.raises(AssertionError, match="diagnostic digest"):
+        _run_manifest_boundary_mutant(monkeypatch, tmp_path, inventory)
 
 
 def test_ledger_retains_all_523_starting_sites() -> None:
