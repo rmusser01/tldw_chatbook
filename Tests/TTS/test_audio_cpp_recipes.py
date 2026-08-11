@@ -105,6 +105,7 @@ def _api():
         AudioCppReferenceRequirement,
         AudioCppRecipeRegistry,
         AudioCppRecipeSupportState,
+        AudioCppVoiceReferencePolicy,
     )
 
     return locals()
@@ -222,6 +223,7 @@ def test_recipe_has_exact_reviewed_layout_and_safe_projection(
 def test_tasks_and_pocket_language_options_follow_the_pinned_specs() -> None:
     registry = _api()["AUDIO_CPP_RECIPE_REGISTRY"]
     reference_requirement = _api()["AudioCppReferenceRequirement"]
+    voice_reference_policy = _api()["AudioCppVoiceReferencePolicy"]
 
     for recipe in registry.recipes:
         if recipe.family == "supertonic":
@@ -229,6 +231,7 @@ def test_tasks_and_pocket_language_options_follow_the_pinned_specs() -> None:
             assert recipe.projection.load_options == ()
             assert recipe.projection.session_options == ()
             assert recipe.reference_requirement is reference_requirement.NONE
+            assert recipe.voice_reference_policy is voice_reference_policy.NATIVE_ONLY
             continue
         assert recipe.family == "pocket_tts"
         assert recipe.capabilities == ("tts", "clone")
@@ -242,8 +245,101 @@ def test_tasks_and_pocket_language_options_follow_the_pinned_specs() -> None:
         if recipe.package_format.value == "gguf":
             assert recipe.recipe_revision == 2
             assert recipe.reference_requirement is reference_requirement.REQUIRED
+            assert (
+                recipe.voice_reference_policy
+                is voice_reference_policy.REFERENCE_ONLY
+            )
         else:
             assert recipe.reference_requirement is reference_requirement.OPTIONAL
+            assert recipe.voice_reference_policy is voice_reference_policy.EITHER
+
+
+@pytest.mark.parametrize(
+    ("package_variant", "voice", "has_reference", "accepted"),
+    (
+        ("supertonic_3_orig", None, False, True),
+        ("supertonic_3_orig", "narrator", False, True),
+        ("supertonic_3_orig", None, True, False),
+        ("pocket_tts_english_q8_0", None, True, True),
+        ("pocket_tts_english_q8_0", "alba", True, False),
+        ("pocket_tts_english_q8_0", None, False, False),
+        ("pocket_tts_english_safetensors", None, False, True),
+        ("pocket_tts_english_safetensors", "alba", False, True),
+        ("pocket_tts_english_safetensors", None, True, True),
+        ("pocket_tts_english_safetensors", "alba", True, False),
+    ),
+)
+def test_recipe_policy_admits_only_declared_voice_reference_combinations(
+    package_variant: str,
+    voice: str | None,
+    has_reference: bool,
+    accepted: bool,
+) -> None:
+    recipe = _api()["AUDIO_CPP_RECIPE_REGISTRY"].for_package(package_variant)
+
+    assert recipe.admits_voice_reference(
+        has_voice=voice is not None,
+        has_reference=has_reference,
+    ) is accepted
+
+
+def test_reserved_combined_policy_requires_and_emits_both_fields() -> None:
+    api = _api()
+    recipe = api["AUDIO_CPP_RECIPE_REGISTRY"].for_package(
+        "pocket_tts_english_q8_0"
+    )
+    combined = replace(
+        recipe,
+        voice_reference_policy=(
+            api["AudioCppVoiceReferencePolicy"].BOTH_REQUIRED_COMBINED
+        ),
+    )
+
+    assert combined.admits_voice_reference(
+        has_voice=True,
+        has_reference=True,
+    )
+    assert not combined.admits_voice_reference(
+        has_voice=False,
+        has_reference=True,
+    )
+    assert not combined.admits_voice_reference(
+        has_voice=True,
+        has_reference=False,
+    )
+
+
+def test_recipe_policy_rejects_contradictory_clone_contracts() -> None:
+    api = _api()
+    registry = api["AUDIO_CPP_RECIPE_REGISTRY"]
+    policies = api["AudioCppVoiceReferencePolicy"]
+    requirements = api["AudioCppReferenceRequirement"]
+    supertonic = registry.for_package("supertonic_3_orig")
+    pocket_gguf = registry.for_package("pocket_tts_english_q8_0")
+
+    with pytest.raises(ValueError, match="voice reference policy"):
+        replace(supertonic, voice_reference_policy=policies.REFERENCE_ONLY)
+    with pytest.raises(ValueError, match="voice reference policy"):
+        replace(pocket_gguf, voice_reference_policy=policies.NATIVE_ONLY)
+    with pytest.raises(ValueError, match="voice reference policy"):
+        replace(
+            pocket_gguf,
+            reference_requirement=requirements.OPTIONAL,
+        )
+    with pytest.raises(TypeError, match="boolean"):
+        pocket_gguf.admits_voice_reference(
+            has_voice=1,  # type: ignore[arg-type]
+            has_reference=True,
+        )
+
+
+def test_every_production_recipe_rejects_undeclared_both_fields() -> None:
+    registry = _api()["AUDIO_CPP_RECIPE_REGISTRY"]
+
+    assert all(
+        not recipe.admits_voice_reference(has_voice=True, has_reference=True)
+        for recipe in registry.recipes
+    )
 
 
 def test_recipe_records_are_frozen_and_reject_path_or_extension_attacks() -> None:

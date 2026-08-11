@@ -25,6 +25,7 @@ from tldw_chatbook.TTS.audio_cpp_supervisor import (
     AudioCppReadyEndpoint,
     AudioCppTTSCapability,
 )
+from tldw_chatbook.TTS.audio_cpp_recipes import AudioCppVoiceReferencePolicy
 from tldw_chatbook.TTS.character_request_resolver import (
     CharacterTTSRequestResolution,
     CharacterTTSRequestResolver,
@@ -93,6 +94,7 @@ __all__ = [
     "AudioCppReadyEndpoint",
     "AudioCppRuntimeObservation",
     "AudioCppTTSCapability",
+    "AudioCppVoiceReferencePolicy",
     "CapabilitySnapshotState",
     "CanonicalTTSCloneReference",
     "CharacterRef",
