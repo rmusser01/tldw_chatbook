@@ -28,13 +28,25 @@ from collections import Counter
 
 import pytest
 
+from Tests.Agents.test_agent_service import (
+    SUBAGENT_PROMPT_PREFIX,
+    FleetChat,
+    ScriptedChat,
+    fence,
+)
+from tldw_chatbook.Agents import agent_service
 from tldw_chatbook.Agents.agent_models import (
+    CHECK_AGENTS_TOOL_NAME,
+    FENCE_TOOL_RESULT_PREFIX,
     RUN_CANCELLED,
     RUN_DONE,
     RUN_ERROR,
     RUN_RUNNING,
+    RUN_SKILL_SCRIPT_TOOL_NAME,
+    RUNTIME_TOOL_NAMES,
     SPAWN_TOOL_NAME,
     TERMINAL_RUN_STATUSES,
+    WAIT_AGENTS_TOOL_NAME,
     AgentConfig,
     AgentDefinition,
     RunBudget,
@@ -42,14 +54,6 @@ from tldw_chatbook.Agents.agent_models import (
     ToolResult,
     ToolSchema,
 )
-from tldw_chatbook.Agents.agent_models import (
-    CHECK_AGENTS_TOOL_NAME,
-    FENCE_TOOL_RESULT_PREFIX,
-    RUN_SKILL_SCRIPT_TOOL_NAME,
-    RUNTIME_TOOL_NAMES,
-    WAIT_AGENTS_TOOL_NAME,
-)
-from tldw_chatbook.Agents import agent_service
 from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator
 from tldw_chatbook.Agents.local_tool_provider import (
@@ -74,13 +78,6 @@ from Tests.Agents.conftest import (
     pin_max_live_subagents,
     pin_turn_scoped_children,
 )
-from Tests.Agents.test_agent_service import (
-    SUBAGENT_PROMPT_PREFIX,
-    FleetChat,
-    ScriptedChat,
-    fence,
-)
-
 _JOIN_TIMEOUT = 5.0
 
 
@@ -469,7 +466,23 @@ def test_parent_and_fleet_child_share_todo_store_for_concurrent_creates(db, tmp_
     parent_results = _tool_results(db.get_run(run_id), "todo_create")
     child_results = _tool_results(child, "todo_create")
     assert len(parent_results) == len(child_results) == 1
-    created = [json.loads(parent_results[0]), json.loads(child_results[0])]
+    parent_record = json.loads(parent_results[0])
+    child_record = json.loads(child_results[0])
+    assert parent_record == {
+        "id": parent_record["id"],
+        "version": 1,
+        "content": "Parent task",
+        "status": "pending",
+    }
+    assert child_record == {
+        "id": child_record["id"],
+        "version": 1,
+        "content": "Child task",
+        "status": "pending",
+    }
+    assert store.get(parent_record["id"]) == parent_record
+    assert store.get(child_record["id"]) == child_record
+    created = [parent_record, child_record]
     assert {record["id"] for record in created} == {"1", "2"}
     assert {record["content"] for record in created} == {
         "Parent task",
