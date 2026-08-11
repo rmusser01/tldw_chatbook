@@ -33,6 +33,7 @@ from tldw_chatbook.TTS.profile_types import (
     _freeze_options,
     canonical_json_options,
 )
+from tldw_chatbook.TTS.profile_reference_types import TTSCloneReferenceSummary
 
 
 def _draft(**overrides: object) -> TTSProfileDraft:
@@ -68,6 +69,27 @@ def _profile(**overrides: object) -> TTSGenerationProfile:
     }
     values.update(overrides)
     return TTSGenerationProfile(**values)  # type: ignore[arg-type]
+
+
+def test_profile_may_carry_only_a_metadata_reference_summary() -> None:
+    now = datetime(2026, 7, 26, tzinfo=UTC)
+    summary = TTSCloneReferenceSummary(
+        reference_id=uuid4(),
+        byte_length=48_044,
+        duration_ms=1_000,
+        sample_rate_hz=24_000,
+        channels=1,
+        sample_encoding="pcm_s16le",
+        created_at=now,
+        updated_at=now,
+    )
+
+    profile = _profile(reference=summary)
+
+    assert profile.reference is summary
+    assert "wav_bytes" not in repr(profile)
+    assert "reference_text" not in repr(profile)
+    assert "sha256" not in repr(profile)
 
 
 def test_profile_name_uses_nfkc_casefold_uniqueness() -> None:

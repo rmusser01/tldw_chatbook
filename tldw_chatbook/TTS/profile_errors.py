@@ -25,6 +25,9 @@ _VALIDATION_CODES = frozenset(
         "profile_count",
         "provider_id",
         "recovery_action",
+        "reference_id",
+        "reference_invalid",
+        "reference_text",
         "profiles",
         "response_format",
         "revision",
@@ -35,6 +38,11 @@ _VALIDATION_CODES = frozenset(
         "total",
         "updated_at",
         "voice_id",
+        "byte_length",
+        "duration_ms",
+        "sample_rate_hz",
+        "channels",
+        "sample_encoding",
     }
 )
 _REPOSITORY_CODES = frozenset(

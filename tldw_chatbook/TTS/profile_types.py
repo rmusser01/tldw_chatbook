@@ -15,6 +15,7 @@ from typing import Generic, Literal, TypeAlias, TypeVar, cast
 from uuid import UUID
 
 from tldw_chatbook.TTS.profile_errors import ProfileValidationError
+from tldw_chatbook.TTS.profile_reference_types import TTSCloneReferenceSummary
 
 # JSON boundaries deliberately admit only exact built-in scalar types. Caller
 # arrays are mutable lists; validated arrays are immutable tuples.
@@ -379,6 +380,7 @@ class TTSGenerationProfile:
     revision: int
     created_at: datetime
     updated_at: datetime
+    reference: TTSCloneReferenceSummary | None = None
 
     def __post_init__(self) -> None:
         profile_id = _validate_uuid(self.profile_id, "profile_id")
@@ -405,6 +407,11 @@ class TTSGenerationProfile:
         updated_at = _validate_utc_timestamp(self.updated_at, "updated_at")
         if created_at > updated_at:
             raise ProfileValidationError("timestamps")
+        if (
+            self.reference is not None
+            and type(self.reference) is not TTSCloneReferenceSummary
+        ):
+            raise ProfileValidationError("reference_invalid")
         object.__setattr__(self, "profile_id", profile_id)
         object.__setattr__(self, "display_name", display_name)
         object.__setattr__(self, "normalized_name", expected_normalized_name)
