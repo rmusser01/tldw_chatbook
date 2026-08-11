@@ -864,6 +864,277 @@ async def test_resolve_for_send_reads_config_provider_at_resolution_time() -> No
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "selected_base_url",
+    [
+        "https://workspace.example.test/compatible-mode/v1",
+        "https://workspace.example.test/compatible-mode/v1/responses",
+        "https://workspace.example.test/compatible-mode/v1/chat/completions/",
+    ],
+)
+async def test_qwencloud_resolution_pins_normalized_mode_and_base(
+    selected_base_url: str,
+) -> None:
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {
+                "qwencloud": {
+                    "api_key": "qwen-test-key",
+                    "api_mode": "  ReSpOnSeS  ",
+                    "api_base_url": (
+                        "https://workspace.example.test/compatible-mode/v1"
+                    ),
+                    "model": "qwen3.8-max",
+                }
+            }
+        },
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="QwenCloud",
+            base_url=selected_base_url,
+        )
+    )
+
+    assert resolved.ready is True
+    assert resolved.execution_key == "qwencloud"
+    assert resolved.api_mode == "responses"
+    assert resolved.base_url == "https://workspace.example.test/compatible-mode/v1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("settings", "setting_copy"),
+    [
+        (
+            {
+                "api_mode": "response",
+                "api_base_url": ("https://workspace.example.test/compatible-mode/v1"),
+            },
+            "API mode",
+        ),
+        (
+            {
+                "api_mode": "responses",
+                "api_base_url": (
+                    "https://workspace.example.test/compatible-mode/v1?token="
+                    "ENDPOINT-PAYLOAD-CANARY"
+                ),
+            },
+            "API base URL",
+        ),
+    ],
+)
+async def test_qwencloud_resolution_rejects_invalid_mode_before_dispatch(
+    settings: dict[str, str],
+    setting_copy: str,
+) -> None:
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {
+                "qwencloud": {
+                    **settings,
+                    "api_key": "QWENCLOUD-KEY-CANARY",
+                    "model": "PAYLOAD-MODEL-CANARY",
+                }
+            }
+        },
+        environ={},
+        chat_api_call_fn=lambda **_kwargs: pytest.fail(
+            "invalid QwenCloud settings must fail before dispatch"
+        ),
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="QwenCloud")
+    )
+
+    assert resolved.ready is False
+    assert "QwenCloud" in resolved.visible_copy
+    assert setting_copy in resolved.visible_copy
+    assert "QWENCLOUD-KEY-CANARY" not in resolved.visible_copy
+    assert "PAYLOAD-MODEL-CANARY" not in resolved.visible_copy
+    assert "ENDPOINT-PAYLOAD-CANARY" not in resolved.visible_copy
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "model", "settings"),
+    [
+        ("openai", "gpt-4.1", {"api_key": "openai-key"}),
+        ("deepseek", "deepseek-chat", {"api_key": "deepseek-key"}),
+        ("anthropic", "claude-sonnet-4-6", {"api_key": "anthropic-key"}),
+    ],
+)
+async def test_non_qwen_resolutions_omit_api_mode(
+    provider: str,
+    model: str,
+    settings: dict[str, str],
+) -> None:
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {provider: {**settings, "model": model}}
+        },
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider=provider)
+    )
+
+    assert resolved.ready is True
+    assert resolved.api_mode is None
+
+
+@pytest.mark.asyncio
+async def test_all_qwencloud_kwargs_paths_forward_pinned_mode_and_base() -> None:
+    pinned_base = "https://workspace-a.example.test/compatible-mode/v1"
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {
+                "qwencloud": {
+                    "api_key": "qwen-test-key",
+                    "api_mode": "responses",
+                    "api_base_url": f"{pinned_base}/responses",
+                    "model": "qwen3.8-max",
+                }
+            }
+        },
+        environ={},
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="QwenCloud")
+    )
+    messages = [
+        {"role": "system", "content": "Be concise."},
+        {"role": "user", "content": "Hello."},
+    ]
+    prepared = gateway.prepare_chat_request(resolution, messages)
+    auxiliary = AuxiliaryCompletionRequest(
+        resolution=resolution,
+        messages=tuple(messages),
+        response_format=None,
+        max_output_tokens=64,
+    )
+
+    kwargs_paths = (
+        gateway._chat_api_kwargs_from_prepared(resolution, prepared),
+        gateway._chat_api_kwargs(resolution, messages),
+        gateway._auxiliary_chat_api_kwargs(auxiliary, resolution),
+    )
+
+    for kwargs in kwargs_paths:
+        assert kwargs["api_mode"] == "responses"
+        assert kwargs["api_base_url"] == pinned_base
+
+    for provider, base_url in (
+        ("openai", "https://api.openai.com/v1"),
+        ("deepseek", "https://api.deepseek.com"),
+        ("anthropic", "https://api.anthropic.com/v1"),
+    ):
+        other = dataclasses.replace(
+            resolution,
+            provider=provider,
+            readiness_key=provider,
+            execution_key=provider,
+            base_url=base_url,
+            api_mode=None,
+        )
+        other_prepared = gateway.prepare_chat_request(other, messages)
+        other_auxiliary = AuxiliaryCompletionRequest(
+            resolution=other,
+            messages=tuple(messages),
+            response_format=None,
+            max_output_tokens=64,
+        )
+        primary_kwargs = gateway._chat_api_kwargs(other, messages)
+        prepared_kwargs = gateway._chat_api_kwargs_from_prepared(
+            other,
+            other_prepared,
+        )
+        auxiliary_kwargs = gateway._auxiliary_chat_api_kwargs(
+            other_auxiliary,
+            other,
+        )
+
+        assert "api_mode" not in primary_kwargs
+        assert "api_mode" not in prepared_kwargs
+        assert "api_mode" not in auxiliary_kwargs
+        if provider == "anthropic":
+            assert primary_kwargs["api_base_url"] == base_url
+            assert prepared_kwargs["api_base_url"] == base_url
+        else:
+            assert "api_base_url" not in primary_kwargs
+            assert "api_base_url" not in prepared_kwargs
+        assert auxiliary_kwargs["api_base_url"] == base_url
+
+
+@pytest.mark.asyncio
+async def test_qwencloud_run_ignores_midrun_config_mutation() -> None:
+    base_a = "https://workspace-a.example.test/compatible-mode/v1"
+    config: dict[str, object] = {
+        "api_settings": {
+            "qwencloud": {
+                "api_key": "qwen-test-key",
+                "api_mode": "responses",
+                "api_base_url": base_a,
+                "model": "qwen3.8-max",
+            }
+        }
+    }
+    calls: list[dict[str, object]] = []
+
+    def fake_chat_api_call(**kwargs: object) -> dict[str, object]:
+        calls.append(dict(kwargs))
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: config,
+        environ={},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="QwenCloud", streaming=False)
+    )
+    config["api_settings"] = {
+        "qwencloud": {
+            "api_key": "mutated-key",
+            "api_mode": "chat_completions",
+            "api_base_url": (
+                "https://workspace-b.example.test/compatible-mode/v1/chat/completions"
+            ),
+            "model": "mutated-model",
+        }
+    }
+
+    for content in ("turn one", "turn two"):
+        assert [
+            chunk
+            async for chunk in gateway.stream_chat(
+                resolution,
+                [{"role": "user", "content": content}],
+            )
+        ] == ["ok"]
+
+    auxiliary = AuxiliaryCompletionRequest(
+        resolution=resolution,
+        messages=({"role": "user", "content": "auxiliary"},),
+        response_format=None,
+        max_output_tokens=64,
+    )
+    assert (await gateway.complete_auxiliary(auxiliary)).text == "ok"
+
+    assert len(calls) == 3
+    for call in calls:
+        assert call["api_mode"] == "responses"
+        assert call["api_base_url"] == base_a
+        assert call["api_key"] == "qwen-test-key"
+        assert call["model"] == "qwen3.8-max"
+
+
+@pytest.mark.asyncio
 async def test_llamacpp_stream_chat_yields_content_chunks():
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/v1/chat/completions"
@@ -2380,9 +2651,9 @@ def test_concurrent_live_loops_never_close_each_others_client():
 
     assert errors == [], f"unexpected errors from worker threads: {errors!r}"
     assert "a" in obtained and "b" in obtained, "both loops must obtain a client"
-    assert (
-        obtained["a"] is not obtained["b"]
-    ), "two live loops must never share the same owned http client"
+    assert obtained["a"] is not obtained["b"], (
+        "two live loops must never share the same owned http client"
+    )
     assert obtained["a"].is_closed is False, (
         "loop A's client was closed while loop B was concurrently alive and "
         "touching the shared gateway -- a live loop must never close "
@@ -2776,6 +3047,94 @@ def test_tool_call_accumulator_preserves_extra_fragment_keys() -> None:
     assert call["google_thought_signature"] == ""
     assert "arbitrary_extra" not in call
     assert "none_extra" not in call
+
+
+class _CloseTrackingIterator:
+    def __init__(
+        self,
+        items: list[object],
+        *,
+        failure: BaseException | None = None,
+        close_failure: Exception | None = None,
+    ) -> None:
+        self._items = iter(items)
+        self._failure = failure
+        self._close_failure = close_failure
+        self.close_calls = 0
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        try:
+            return next(self._items)
+        except StopIteration:
+            if self._failure is not None:
+                failure, self._failure = self._failure, None
+                raise failure
+            raise
+
+    def close(self) -> None:
+        self.close_calls += 1
+        if self._close_failure is not None:
+            raise self._close_failure
+
+
+def test_tee_tool_calls_closes_underlying_iterator_once() -> None:
+    payload = {
+        "choices": [
+            {
+                "delta": {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "call-1",
+                            "type": "function",
+                            "function": {"name": "lookup", "arguments": "{}"},
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+
+    exhausted = _CloseTrackingIterator([payload])
+    exhausted_accumulator = gateway_module._ToolCallAccumulator()
+    exhausted_tee = gateway_module._tee_tool_calls(
+        exhausted,
+        exhausted_accumulator,
+    )
+    assert list(exhausted_tee) == [payload]
+    assert exhausted_accumulator.calls()[0]["id"] == "call-1"
+    assert exhausted.close_calls == 1
+    exhausted_tee.close()
+    assert exhausted.close_calls == 1
+
+    provider_failure = RuntimeError("provider-primary-error")
+    failed = _CloseTrackingIterator(
+        [],
+        failure=provider_failure,
+        close_failure=RuntimeError("close-secondary-error"),
+    )
+    failed_tee = gateway_module._tee_tool_calls(
+        failed,
+        gateway_module._ToolCallAccumulator(),
+    )
+    with pytest.raises(RuntimeError, match="provider-primary-error"):
+        next(failed_tee)
+    assert failed.close_calls == 1
+    failed_tee.close()
+    assert failed.close_calls == 1
+
+    caller_closed = _CloseTrackingIterator([payload, payload])
+    caller_closed_tee = gateway_module._tee_tool_calls(
+        caller_closed,
+        gateway_module._ToolCallAccumulator(),
+    )
+    assert next(caller_closed_tee) == payload
+    caller_closed_tee.close()
+    caller_closed_tee.close()
+    assert caller_closed.close_calls == 1
 
 
 @pytest.mark.asyncio
@@ -3371,6 +3730,164 @@ async def test_non_streaming_mapping_response_records_usage() -> None:
     ]
     assert chunks == ["hello"]
     assert signals.usage_payloads() == [{"prompt_tokens": 10, "completion_tokens": 2}]
+
+
+@pytest.mark.asyncio
+async def test_qwencloud_responses_terminal_usage_reaches_console_signals_without_copy() -> (
+    None
+):
+    usage = {
+        "input_tokens": 9,
+        "input_tokens_details": {"cached_tokens": 2},
+        "output_tokens": 3,
+        "output_tokens_details": {"reasoning_tokens": 1},
+        "total_tokens": 12,
+    }
+    terminal = {
+        "choices": [{"delta": {"content": ""}, "finish_reason": "stop"}],
+        "usage": usage,
+    }
+
+    def fake_chat_api_call(**_kwargs):
+        return iter(
+            (
+                {"choices": [{"delta": {"content": "answer"}}]},
+                terminal,
+            )
+        )
+
+    gateway = ConsoleProviderGateway(chat_api_call_fn=fake_chat_api_call)
+    resolution = ConsoleProviderResolution(
+        provider="QwenCloud",
+        base_url="https://workspace.example.test/compatible-mode/v1",
+        model="qwen3.8-max",
+        ready=True,
+        readiness_key="qwencloud",
+        execution_key="qwencloud",
+        api_key="qwen-test-key",
+        streaming=True,
+        api_mode="responses",
+    )
+    signals = ConsoleProviderStreamSignals()
+
+    chunks = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution,
+            [{"role": "user", "content": "hi"}],
+            signals=signals,
+        )
+    ]
+
+    assert chunks == ["answer"]
+    assert signals.synthetic_fallback_emitted is False
+    assert signals.usage_payloads() == [usage]
+    normalized = ProviderUsage.from_provider_payload(
+        signals.usage_payloads()[0],
+        provider="qwencloud",
+        model="qwen3.8-max",
+    )
+    assert normalized is not None
+    assert normalized.uncached_input == 7
+    assert normalized.cache_read == 2
+    assert normalized.output == 3
+
+
+class _BlockingCloseTrackingIterator:
+    def __init__(self) -> None:
+        self._first = True
+        self.blocked = threading.Event()
+        self.released = threading.Event()
+        self.closed = threading.Event()
+        self._close_lock = threading.Lock()
+        self.close_calls = 0
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self._first:
+            self._first = False
+            return {"choices": [{"delta": {"content": "partial"}}]}
+        self.blocked.set()
+        self.released.wait(timeout=5)
+        raise StopIteration
+
+    def close(self) -> None:
+        with self._close_lock:
+            self.close_calls += 1
+        self.closed.set()
+        self.released.set()
+
+
+@pytest.mark.asyncio
+async def test_gateway_cancellation_closes_qwencloud_iterator() -> None:
+    provider_iterator = _BlockingCloseTrackingIterator()
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=lambda **_kwargs: provider_iterator
+    )
+    resolution = ConsoleProviderResolution(
+        provider="QwenCloud",
+        base_url="https://workspace.example.test/compatible-mode/v1",
+        model="qwen3.8-max",
+        ready=True,
+        readiness_key="qwencloud",
+        execution_key="qwencloud",
+        api_key="qwen-test-key",
+        streaming=True,
+        api_mode="responses",
+    )
+    stream = gateway.stream_chat(
+        resolution,
+        [{"role": "user", "content": "hi"}],
+    )
+
+    pending: asyncio.Task[object] | None = None
+    try:
+        assert await anext(stream) == "partial"
+        for _ in range(100):
+            if provider_iterator.blocked.is_set():
+                break
+            await asyncio.sleep(0.01)
+        assert provider_iterator.blocked.is_set()
+
+        pending = asyncio.create_task(anext(stream))
+        await asyncio.sleep(0)
+        pending.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+
+        for _ in range(100):
+            if provider_iterator.closed.is_set():
+                break
+            await asyncio.sleep(0.01)
+        assert provider_iterator.closed.is_set()
+        assert provider_iterator.close_calls == 1
+
+        await stream.aclose()
+        assert provider_iterator.close_calls == 1
+    finally:
+        if pending is not None and not pending.done():
+            pending.cancel()
+        provider_iterator.released.set()
+        await stream.aclose()
+
+
+def test_qwencloud_total_tokens_reaches_agent_usage_counter() -> None:
+    from tldw_chatbook.Agents.agent_service import _usage_total_tokens
+
+    terminal = {
+        "choices": [{"delta": {"content": ""}, "finish_reason": "stop"}],
+        "usage": {
+            "input_tokens": 9,
+            "input_tokens_details": {"cached_tokens": 2},
+            "output_tokens": 3,
+            "output_tokens_details": {"reasoning_tokens": 1},
+            "total_tokens": 12,
+        },
+    }
+
+    assert _usage_total_tokens(terminal) == 12
 
 
 @pytest.mark.asyncio

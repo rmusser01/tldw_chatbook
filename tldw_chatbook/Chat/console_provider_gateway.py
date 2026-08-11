@@ -29,6 +29,7 @@ from tldw_chatbook.Chat.Chat_Deps import (
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_provider_endpoints import (
     effective_provider_endpoint,
+    first_configured_endpoint,
     generic_endpoint_differs,
     provider_uses_endpoint,
     unsaved_endpoint_copy,
@@ -50,6 +51,10 @@ from tldw_chatbook.Chat.provider_readiness import (
     provider_config_key,
 )
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
+from tldw_chatbook.LLM_Calls.qwencloud import (
+    normalize_qwencloud_api_mode,
+    normalize_qwencloud_base_url,
+)
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.sensitive_llm_logging import (
     is_sensitive_llm_request,
@@ -319,6 +324,7 @@ class ConsoleProviderResolution:
             breakpoint. Set only for Anthropic resolutions (and only when
             ``[caching] anthropic_enabled`` is on); ``None`` everywhere else,
             which drops the kwarg entirely in ``_chat_api_kwargs``.
+        api_mode: Pinned QwenCloud wire mode; ``None`` for every other provider.
     """
 
     provider: str
@@ -345,6 +351,7 @@ class ConsoleProviderResolution:
     thinking_budget_tokens: int | None = None
     streaming: bool = True
     prompt_caching: bool | None = None
+    api_mode: str | None = None
 
 
 def _freeze_auxiliary_value(value: Any) -> Any:
@@ -608,12 +615,31 @@ def _tee_tool_calls(response: Any, accumulator: _ToolCallAccumulator) -> Any:
     if not _is_iterable_response(response):
         return response
 
-    def generator():
-        for item in response:
-            accumulator.feed_payload(_decode_stream_item(item))
-            yield item
+    class _ToolCallTee(Iterator[Any]):
+        def __init__(self) -> None:
+            self._close_lock = threading.Lock()
+            self._closed = False
 
-    return generator()
+        def __next__(self) -> Any:
+            try:
+                item = next(response)
+            except BaseException:
+                self.close()
+                raise
+            accumulator.feed_payload(_decode_stream_item(item))
+            return item
+
+        def close(self) -> None:
+            with self._close_lock:
+                if self._closed:
+                    return
+                self._closed = True
+            close = getattr(response, "close", None)
+            if callable(close):
+                with contextlib.suppress(Exception):
+                    close()
+
+    return _ToolCallTee()
 
 
 def build_llamacpp_chat_payload(
@@ -1242,9 +1268,66 @@ class ConsoleProviderGateway:
                 execution_key=identity.execution_key,
             )
 
-        if provider_uses_endpoint(
-            identity.readiness_key, provider_settings
-        ) and generic_endpoint_differs(selection.base_url, provider_settings):
+        api_mode: str | None = None
+        qwencloud_configured_base_url: str | None = None
+        effective_base_url = effective_provider_endpoint(
+            identity.readiness_key,
+            selection.base_url,
+            provider_settings,
+        )
+        if identity.execution_key == "qwencloud":
+            try:
+                api_mode = normalize_qwencloud_api_mode(
+                    None,
+                    provider_settings=provider_settings,
+                )
+            except ChatConfigurationError:
+                return self._blocked_resolution(
+                    selection,
+                    provider=selection.provider,
+                    model=model,
+                    visible_copy=(
+                        "QwenCloud blocked: invalid API mode setting. Choose "
+                        "'responses' or 'chat_completions' in Settings."
+                    ),
+                    readiness_key=identity.readiness_key,
+                    execution_key=identity.execution_key,
+                )
+            try:
+                effective_base_url = normalize_qwencloud_base_url(effective_base_url)
+                configured_base_url = first_configured_endpoint(provider_settings)
+                if configured_base_url is not None:
+                    qwencloud_configured_base_url = normalize_qwencloud_base_url(
+                        configured_base_url
+                    )
+            except ChatConfigurationError:
+                return self._blocked_resolution(
+                    selection,
+                    provider=selection.provider,
+                    model=model,
+                    visible_copy=(
+                        "QwenCloud blocked: invalid API base URL setting. Enter an "
+                        "absolute HTTP(S) compatible-mode base URL in Settings."
+                    ),
+                    readiness_key=identity.readiness_key,
+                    execution_key=identity.execution_key,
+                )
+
+        endpoint_differs = generic_endpoint_differs(
+            selection.base_url, provider_settings
+        )
+        if identity.execution_key == "qwencloud" and (
+            isinstance(selection.base_url, str) and selection.base_url.strip()
+        ):
+            endpoint_differs = (
+                qwencloud_configured_base_url is None
+                or effective_base_url != qwencloud_configured_base_url
+            )
+
+        if (
+            provider_uses_endpoint(identity.readiness_key, provider_settings)
+            and endpoint_differs
+        ):
             return self._blocked_resolution(
                 selection,
                 provider=selection.provider,
@@ -1295,12 +1378,7 @@ class ConsoleProviderGateway:
 
         return ConsoleProviderResolution(
             provider=selection.provider,
-            base_url=effective_provider_endpoint(
-                identity.readiness_key,
-                selection.base_url,
-                provider_settings,
-            )
-            or "",
+            base_url=effective_base_url or "",
             model=model,
             ready=True,
             readiness_key=identity.readiness_key,
@@ -1308,6 +1386,7 @@ class ConsoleProviderGateway:
             api_key=readiness.api_key,
             api_key_source=readiness.api_key_source,
             prompt_caching=prompt_caching,
+            api_mode=api_mode,
             temperature=selection.temperature,
             top_p=selection.top_p,
             min_p=selection.min_p,
@@ -1657,6 +1736,9 @@ class ConsoleProviderGateway:
                 else None
             ),
         }
+        if resolution.execution_key == "qwencloud":
+            kwargs["api_mode"] = resolution.api_mode
+            kwargs["api_base_url"] = resolution.base_url or None
         return {key: value for key, value in kwargs.items() if value is not None}
 
     async def stream_chat(
@@ -1770,6 +1852,25 @@ class ConsoleProviderGateway:
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[_QueueItem] = asyncio.Queue()
         stop_event = threading.Event()
+        response_lock = threading.Lock()
+        retained_response: Any = None
+        response_close_attempted = False
+
+        def retain_response(response: Any) -> None:
+            nonlocal retained_response
+            with response_lock:
+                retained_response = response
+
+        def close_response() -> None:
+            nonlocal response_close_attempted
+            with response_lock:
+                if response_close_attempted or retained_response is None:
+                    return
+                response_close_attempted = True
+                close = getattr(retained_response, "close", None)
+            if callable(close):
+                with contextlib.suppress(Exception):
+                    close()
 
         def enqueue(item: _QueueItem) -> None:
             if stop_event.is_set():
@@ -1784,6 +1885,7 @@ class ConsoleProviderGateway:
                 accumulator = _ToolCallAccumulator() if request.tools else None
                 if accumulator is not None:
                     response = _tee_tool_calls(response, accumulator)
+                retain_response(response)
                 emitted_content = False
                 # tools= runs: fallback UI copy must never leak into agent
                 # history, so it is suppressed at GENERATION (not filtered
@@ -1838,6 +1940,7 @@ class ConsoleProviderGateway:
                     )
                 )
             finally:
+                close_response()
                 enqueue(_QueueItem.done())
 
         worker_task = asyncio.create_task(asyncio.to_thread(worker))
@@ -1867,6 +1970,7 @@ class ConsoleProviderGateway:
                     yield item.text
         finally:
             stop_event.set()
+            close_response()
             if not worker_task.done():
                 worker_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
@@ -1977,7 +2081,10 @@ class ConsoleProviderGateway:
             ),
             "prompt_caching": resolution.prompt_caching,
         }
-        if resolution.execution_key == "anthropic":
+        if resolution.execution_key == "qwencloud":
+            kwargs["api_mode"] = resolution.api_mode
+            kwargs["api_base_url"] = resolution.base_url or None
+        elif resolution.execution_key == "anthropic":
             kwargs["api_base_url"] = resolution.base_url or None
         elif (
             resolution.execution_key == "openai" and request.response_format is not None
@@ -2046,7 +2153,10 @@ class ConsoleProviderGateway:
             # for byte what they were before prompt caching existed.
             "prompt_caching": resolution.prompt_caching,
         }
-        if resolution.execution_key == "anthropic":
+        if resolution.execution_key == "qwencloud":
+            kwargs["api_mode"] = resolution.api_mode
+            kwargs["api_base_url"] = resolution.base_url or None
+        elif resolution.execution_key == "anthropic":
             # task-2114: `resolve_for_send` already resolves the effective
             # endpoint (configured `[api_settings.anthropic].api_base_url`,
             # or the built-in default when unset -- see
