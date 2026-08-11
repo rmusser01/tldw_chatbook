@@ -10,6 +10,7 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_roleplay_identity import (
     ChatDisplayNameError,
     ConsolePresentationContext,
+    ConsoleTranscriptStyle,
     effective_user_display_name,
     expand_character_template,
     normalize_chat_display_name,
@@ -119,16 +120,16 @@ def test_non_character_assistant_label_stays_assistant(assistant_kind):
         assistant_message("Hello"), context
     )
     assert presentation.speaker_label == "Assistant"
-    assert presentation.row_class is None
+    assert presentation.row_class == "console-transcript-message-role-assistant"
 
 
-def test_generic_user_rows_use_custom_name_without_roleplay_tint():
+def test_generic_user_rows_use_custom_name_with_role_accent():
     context = ConsolePresentationContext(
         user_name="Rowan", assistant_kind="generic", character_name=None
     )
     presentation = resolve_console_message_presentation(user_message("Hi"), context)
     assert presentation.speaker_label == "Rowan"
-    assert presentation.row_class is None
+    assert presentation.row_class == "console-transcript-message-role-user"
 
 
 def test_character_session_without_name_falls_back_to_neutral_assistant():
@@ -139,7 +140,24 @@ def test_character_session_without_name_falls_back_to_neutral_assistant():
         assistant_message("Hello"), context
     )
     assert presentation.speaker_label == "Assistant"
-    assert presentation.row_class is None
+    assert presentation.row_class == "console-transcript-message-role-assistant"
+
+
+def test_neutral_style_removes_role_classes_without_changing_speaker_identity():
+    context = ConsolePresentationContext(
+        user_name="Rowan",
+        assistant_kind="character",
+        character_name="Alraune",
+        transcript_style=ConsoleTranscriptStyle.NEUTRAL,
+    )
+
+    user = resolve_console_message_presentation(user_message("Hi"), context)
+    assistant = resolve_console_message_presentation(
+        assistant_message("Hello"), context
+    )
+
+    assert (user.speaker_label, user.row_class) == ("Rowan", None)
+    assert (assistant.speaker_label, assistant.row_class) == ("Alraune", None)
 
 
 def test_resolver_expands_only_trusted_seeded_character_greetings():

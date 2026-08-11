@@ -27,6 +27,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunState,
     ConsoleRunStatus,
 )
+from tldw_chatbook.Chat.console_chat_controller import ConsoleSubmitResult
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
 DUMMY_OPENAI_API_KEY = "DUMMY_OPENAI_API_KEY"
@@ -88,6 +89,44 @@ async def test_console_enter_snapshots_draft_before_late_keystrokes(monkeypatch)
         # The late keystrokes belong to the NEXT draft — and the
         # accepted-submit clear must not eat them either.
         assert composer.draft_text() == "line two"
+
+
+@pytest.mark.asyncio
+async def test_mouse_send_completion_preserves_text_typed_after_acceptance(monkeypatch):
+    """A late mouse-send cleanup must not erase the user's next draft."""
+
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        session = store.ensure_session()
+        store.switch_session(session.id)
+        console._session._sync_console_session_draft()
+        composer.load_draft("original mouse draft")
+        store.set_session_draft(session.id, composer.draft_text())
+
+        async def accepted_then_user_types(draft, *, session_id=None):
+            assert draft == "original mouse draft"
+            assert session_id == session.id
+            assert controller.on_submission_accepted is not None
+            controller.on_submission_accepted()
+            composer.insert_text("newer draft")
+            store.set_session_draft(session.id, composer.draft_text())
+            return ConsoleSubmitResult(accepted=True, should_clear_draft=True)
+
+        monkeypatch.setattr(controller, "run_prompt_chain", accepted_then_user_types)
+
+        await console._submit_console_native_draft(
+            "original mouse draft", session.id
+        )
+
+        assert composer.draft_text() == "newer draft"
+        assert store.session_draft(session.id) == "newer draft"
 
 
 @pytest.mark.asyncio

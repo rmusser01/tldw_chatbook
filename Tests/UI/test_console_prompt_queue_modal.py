@@ -253,6 +253,8 @@ async def test_remove_and_clear_require_explicit_destructive_confirmation() -> N
         await pilot.pause()
         assert facade.snapshot("pinned-session").total_count == 1
 
+        # Textual buttons deliberately debounce rapid repeated activations.
+        await pilot.pause(0.3)
         await pilot.click("#console-prompt-queue-clear")
         await pilot.click("#cancel-btn")
         await pilot.pause()

@@ -1148,6 +1148,7 @@ async def test_settings_appearance_renders_guided_defaults_and_validates(monkeyp
     app.app_config["web_server"] = {"font_size": 12}
     app.app_config["appearance"] = {
         "density": "normal",
+        "console_transcript_style": "role_accents",
         "animations_enabled": True,
         "smooth_scrolling": True,
     }
@@ -1183,6 +1184,10 @@ async def test_settings_appearance_renders_guided_defaults_and_validates(monkeyp
         assert (
             screen.query_one("#settings-appearance-density", Select).value == "normal"
         )
+        transcript_style = screen.query_one(
+            "#settings-appearance-transcript-style", Select
+        )
+        assert transcript_style.value == "role_accents"
         assert (
             screen.query_one("#settings-appearance-animations-enabled", Checkbox).value
             is True
@@ -1204,6 +1209,10 @@ async def test_settings_appearance_renders_guided_defaults_and_validates(monkeyp
         palette_limit.value = "5"
         screen.handle_appearance_palette_theme_limit_changed(
             Input.Changed(palette_limit, palette_limit.value)
+        )
+        transcript_style.value = "immersive_rp"
+        screen.handle_appearance_transcript_style_changed(
+            Select.Changed(transcript_style, transcript_style.value)
         )
 
         assert screen.query_one("#settings-save-category", Button).disabled is False
@@ -1233,6 +1242,48 @@ async def test_settings_appearance_renders_guided_defaults_and_validates(monkeyp
     assert saved[-1]["general"]["palette_theme_limit"] == 5
     assert saved[-1]["web_server"]["font_size"] == 14
     assert saved[-1]["appearance"]["density"] == "normal"
+    assert saved[-1]["appearance"]["console_transcript_style"] == "immersive_rp"
+
+
+@pytest.mark.asyncio
+async def test_settings_appearance_save_signals_live_console_refresh(monkeypatch):
+    app = _build_test_app()
+    app.app_config["appearance"] = {"console_transcript_style": "neutral"}
+    saved = []
+
+    class FakeAdapter:
+        def save_sections(self, section_values):
+            saved.append(section_values)
+            return True
+
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-appearance")
+        screen = _active_destination_screen(host)
+        refresh_signals = []
+
+        def broken_refresh(generation):
+            refresh_signals.append(generation)
+            raise RuntimeError("broken Console refresh hook")
+
+        monkeypatch.setattr(
+            screen,
+            "request_console_appearance_refresh",
+            broken_refresh,
+            raising=False,
+        )
+        screen._apply_appearance_save_result(
+            True,
+            {"appearance": {"console_transcript_style": "role_accents"}},
+        )
+        await pilot.pause()
+
+    assert saved == []
+    assert app.app_config["appearance"]["console_transcript_style"] == "role_accents"
+    assert app._console_appearance_refresh_generation == 1
+    assert refresh_signals == [1]
 
 
 @pytest.mark.asyncio

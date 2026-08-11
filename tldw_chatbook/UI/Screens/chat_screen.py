@@ -93,7 +93,9 @@ from ...Chat.console_roleplay_identity import (
     ChatDisplayNameError,
     ConsoleMessagePresentation,
     ConsolePresentationContext,
+    ConsoleTranscriptStyle,
     normalize_chat_display_name,
+    normalize_console_transcript_style,
     resolve_console_message_presentation,
 )
 from ...Chat.prompt_history import PromptHistory
@@ -2083,6 +2085,22 @@ class ChatScreen(BaseAppScreen):
         except ChatDisplayNameError:
             return "User"
 
+    def _console_transcript_style(self) -> ConsoleTranscriptStyle:
+        """Return the live global Console transcript appearance preference."""
+
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        appearance = (
+            app_config.get("appearance", {})
+            if isinstance(app_config, Mapping)
+            else {}
+        )
+        raw_value = (
+            appearance.get("console_transcript_style", "role_accents")
+            if isinstance(appearance, Mapping)
+            else "role_accents"
+        )
+        return normalize_console_transcript_style(raw_value)
+
     def _console_message_presentation(
         self, message: ConsoleChatMessage
     ) -> ConsoleMessagePresentation:
@@ -2096,10 +2114,14 @@ class ChatScreen(BaseAppScreen):
         session = self._session._active_native_console_session()
         if session is None:
             return ConsolePresentationContext(
-                user_name=self._global_chat_display_name()
+                user_name=self._global_chat_display_name(),
+                transcript_style=self._console_transcript_style(),
             )
         store = self._ensure_console_chat_store()
-        return store.presentation_context(session.id, self._global_chat_display_name())
+        return replace(
+            store.presentation_context(session.id, self._global_chat_display_name()),
+            transcript_style=self._console_transcript_style(),
+        )
 
     def _sync_console_identity_surfaces(self) -> None:
         """Refresh mounted surfaces derived from active chat presentation."""
@@ -2484,6 +2506,40 @@ class ChatScreen(BaseAppScreen):
         self._console_identity_refresh_generation = generation
         self._last_console_roleplay_refresh_key = None
         return self._dispatch_active_console_roleplay_refresh()
+
+    def request_console_appearance_refresh(self, generation: int | None = None) -> bool:
+        """Refresh mounted transcript rows immediately after an Appearance save."""
+
+        observed = self._console_appearance_refresh_generation
+        if generation is None:
+            generation = int(
+                getattr(
+                    self.app_instance,
+                    "_console_appearance_refresh_generation",
+                    0,
+                )
+                or 0
+            )
+        if generation <= observed:
+            return False
+        self._console_appearance_refresh_generation = generation
+        self._last_native_transcript_refresh_key = None
+        if self.is_mounted:
+            try:
+                transcript = self.query_one(
+                    "#console-native-transcript", ConsoleTranscript
+                )
+            except QueryError:
+                transcript = None
+            if transcript is not None:
+                # Appearance only changes message presentation. Updating the
+                # transcript context avoids queueing behind the much broader
+                # Console sync worker during a busy mount or active turn.
+                transcript.set_presentation_context(
+                    self._console_presentation_context(),
+                    force=True,
+                )
+        return True
 
     def _consume_pending_console_identity_refresh(self) -> bool:
         """Consume an identity generation missed while Console was inactive."""
@@ -3136,6 +3192,7 @@ class ChatScreen(BaseAppScreen):
             ConsoleRoleplayProjectionPersistencePlan | None
         ) = None
         self._console_identity_refresh_generation = 0
+        self._console_appearance_refresh_generation = 0
         # task-9: cache of persisted-conversation RAG retrieval scopes,
         # keyed by conversation id -- populated off-loop at resume time and
         # by the scope picker's modal-open/after-save reads (never during
@@ -14846,6 +14903,7 @@ class ChatScreen(BaseAppScreen):
             presentation_context.user_name,
             presentation_context.assistant_kind,
             presentation_context.character_name,
+            presentation_context.transcript_style.value,
             presentation_context.revision,
         )
         message_signatures = []
@@ -15277,6 +15335,16 @@ class ChatScreen(BaseAppScreen):
         # behavior for the (overwhelmingly common) single-session case.
         if session_id is None:
             session_id = controller.store.active_session_id or ""
+        dispatch_composer = self._console_composer_or_none()
+        dispatch_draft_revision = (
+            (
+                dispatch_composer.edit_serial,
+                dispatch_composer.capture_draft_snapshot().generation,
+            )
+            if dispatch_composer is not None
+            and self._console_visible_draft_session_id == session_id
+            else None
+        )
         task = asyncio.current_task()
         if task is not None:
             # See `_on_console_submission_accepted`: it fires synchronously
@@ -15371,6 +15439,14 @@ class ChatScreen(BaseAppScreen):
             result.should_clear_draft
             and composer_visible_for_session
             and inflight_stash is None
+            and (
+                dispatch_draft_revision is None
+                or (
+                    composer.edit_serial,
+                    composer.capture_draft_snapshot().generation,
+                )
+                == dispatch_draft_revision
+            )
         ):
             # Stashed sends were cleared at the keypress — clearing again
             # here would eat keystrokes typed after Enter (the next draft).

@@ -46,6 +46,7 @@ from tldw_chatbook.Chat.console_onboarding_state import (
 from tldw_chatbook.Chat.console_roleplay_identity import (
     ConsoleMessagePresentation,
     ConsolePresentationContext,
+    ConsoleTranscriptStyle,
     resolve_console_message_presentation,
 )
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
@@ -609,6 +610,11 @@ _MANAGED_MESSAGE_CLASSES = frozenset(
         "console-transcript-message-failed",
         "console-transcript-message-roleplay-user",
         "console-transcript-message-roleplay-character",
+        "console-transcript-message-role-user",
+        "console-transcript-message-role-assistant",
+        "console-transcript-message-immersive-user",
+        "console-transcript-message-immersive-assistant",
+        "console-transcript-message-immersive-character",
     }
 )
 
@@ -625,6 +631,13 @@ def _message_row_classes(
         classes.append("console-transcript-message-markdown")
     if presentation.row_class:
         classes.append(presentation.row_class)
+    if (
+        presentation.transcript_style is ConsoleTranscriptStyle.IMMERSIVE_RP
+        and presentation.speaker_tone is not None
+    ):
+        classes.append(
+            f"console-transcript-message-immersive-{presentation.speaker_tone}"
+        )
     if message.role is ConsoleMessageRole.TOOL:
         classes.append("console-transcript-message-tool")
     elif message.role is ConsoleMessageRole.SYSTEM:
@@ -638,10 +651,12 @@ def _message_row_classes(
 
 def _speaker_label_classes(presentation: ConsoleMessagePresentation) -> list[str]:
     classes = ["console-transcript-speaker-label"]
-    if presentation.row_class == "console-transcript-message-roleplay-user":
+    if presentation.speaker_tone == "user" and presentation.row_class:
         classes.append("console-transcript-roleplay-user-label")
-    elif presentation.row_class == "console-transcript-message-roleplay-character":
+    elif presentation.speaker_tone == "character" and presentation.row_class:
         classes.append("console-transcript-roleplay-character-label")
+    elif presentation.speaker_tone == "assistant" and presentation.row_class:
+        classes.append("console-transcript-role-assistant-label")
     return classes
 
 
@@ -1395,9 +1410,20 @@ class ConsoleTranscript(VerticalScroll):
         # than waiting for the next 0.2s sync tick.
         self.sync_jump_indicator(self._last_run_status)
 
-    def set_presentation_context(self, context: ConsolePresentationContext) -> None:
-        """Apply live display identity without remounting transcript rows."""
-        if context == self._presentation_context:
+    def set_presentation_context(
+        self,
+        context: ConsolePresentationContext,
+        *,
+        force: bool = False,
+    ) -> None:
+        """Apply live display identity without remounting transcript rows.
+
+        Args:
+            context: Presentation values used to resolve every message row.
+            force: Re-resolve mounted rows even if another sync already stored
+                the same context but its deferred repaint has not run yet.
+        """
+        if context == self._presentation_context and not force:
             return
         self._presentation_context = context
         # Every cached signature includes the presentation revision and names.
@@ -2592,16 +2618,18 @@ class ConsoleTranscript(VerticalScroll):
                 message.variants.selected_index,
                 tuple(variant.id for variant in message.variants.variants),
             )
+        presentation = self._message_presentation(message)
         return (
             "message",
             _message_render_text(
                 message,
                 selected=selected,
-                presentation=self._message_presentation(message),
+                presentation=presentation,
             ),
             message.status,
             selected,
             variants_signature,
+            presentation.revision_token,
         )
 
     def _generation_browsed_index(self, message_id: str, variant_count: int) -> int:

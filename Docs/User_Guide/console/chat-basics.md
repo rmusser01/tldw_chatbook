@@ -52,6 +52,22 @@ in that category, and **Revert** discards every pending edit there, not just the
 rail-label choice. A failed save keeps the draft and leaves the active rail
 style unchanged.
 
+### Transcript role accents
+
+Open **Settings > Appearance > Console transcript** to choose how speaker
+roles are flavored. Saving the setting refreshes open Console transcripts;
+you do not need to restart the app.
+
+- **Neutral** keeps role labels but removes role-specific row and prose color.
+- **Role accents** (the default) gives user and assistant or character rows
+  distinct, restrained backgrounds and speaker-label accents.
+- **Immersive RP** keeps those role cues and also accents the prose for a more
+  character-chat-forward presentation.
+
+The colors adapt to light and dark themes. Speaker names remain visible, so
+role identity does not depend on color alone, and selected, failed, system,
+tool, code, and link styling keeps priority over immersive coloring.
+
 ## Features & controls
 
 ### Composer
@@ -216,6 +232,9 @@ Transcript:
 
 ## Related settings & docs
 
+- `[appearance].console_transcript_style` in config.toml: `neutral`,
+  `role_accents` (default), or `immersive_rp` — also editable in
+  **Settings > Appearance > Console transcript**.
 - `[console]` in config.toml: `stack_collapsed_rail_labels` (default `false`),
   `collapse_large_pastes` (default `true`), and `paste_collapse_threshold`
   (default `50` characters) — also editable in **Settings > Console

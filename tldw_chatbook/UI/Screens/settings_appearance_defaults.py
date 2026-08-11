@@ -7,6 +7,12 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
+from tldw_chatbook.Chat.console_roleplay_identity import (
+    DEFAULT_CONSOLE_TRANSCRIPT_STYLE,
+    ConsoleTranscriptStyle,
+    normalize_console_transcript_style,
+)
+
 from .settings_config_models import SettingsValidationResult
 
 
@@ -20,7 +26,11 @@ DEFAULT_SMOOTH_SCROLLING = True
 DEFAULT_REDUCE_MOTION = False
 # TASK-2154.19 (AC-01): ASCII-safe status markers for narrow-font terminals.
 DEFAULT_ASCII_GLYPHS = False
+DEFAULT_CONSOLE_TRANSCRIPT_STYLE_VALUE = DEFAULT_CONSOLE_TRANSCRIPT_STYLE.value
 SUPPORTED_DENSITIES = frozenset({"compact", "normal", "comfortable"})
+SUPPORTED_CONSOLE_TRANSCRIPT_STYLES = frozenset(
+    style.value for style in ConsoleTranscriptStyle
+)
 MIN_PALETTE_THEME_LIMIT = 0
 MAX_PALETTE_THEME_LIMIT = 100
 MIN_FONT_SIZE = 6
@@ -40,6 +50,7 @@ class SettingsAppearanceDefaults:
     smooth_scrolling: bool = DEFAULT_SMOOTH_SCROLLING
     reduce_motion: bool = DEFAULT_REDUCE_MOTION
     ascii_glyphs: bool = DEFAULT_ASCII_GLYPHS
+    console_transcript_style: str = DEFAULT_CONSOLE_TRANSCRIPT_STYLE_VALUE
 
 
 def _mapping_child(parent: Mapping[str, Any], key: str) -> Mapping[str, Any]:
@@ -149,6 +160,12 @@ def load_appearance_defaults(
             appearance.get("ascii_glyphs", DEFAULT_ASCII_GLYPHS),
             DEFAULT_ASCII_GLYPHS,
         ),
+        console_transcript_style=normalize_console_transcript_style(
+            appearance.get(
+                "console_transcript_style",
+                DEFAULT_CONSOLE_TRANSCRIPT_STYLE_VALUE,
+            )
+        ).value,
     )
 
 
@@ -212,6 +229,11 @@ def validate_appearance_defaults(
             False,
             "ASCII glyphs must be enabled or disabled.",
         )
+    if str(values.console_transcript_style) not in SUPPORTED_CONSOLE_TRANSCRIPT_STYLES:
+        return SettingsValidationResult(
+            False,
+            "Transcript style must be neutral, role accents, or immersive RP.",
+        )
     return SettingsValidationResult(True, "Appearance defaults are valid.")
 
 
@@ -246,6 +268,7 @@ def build_appearance_save_sections(
             "smooth_scrolling": bool(values.smooth_scrolling),
             "reduce_motion": bool(values.reduce_motion),
             "ascii_glyphs": bool(values.ascii_glyphs),
+            "console_transcript_style": str(values.console_transcript_style),
         }
     )
 
