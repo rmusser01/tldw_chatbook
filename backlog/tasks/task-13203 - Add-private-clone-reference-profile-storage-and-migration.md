@@ -1,9 +1,11 @@
 ---
 id: TASK-13203
 title: Add private clone-reference profile storage and migration
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-08-09 17:39'
+updated_date: '2026-08-11 00:50'
 labels:
   - tts
   - audio-cpp
@@ -37,3 +39,22 @@ Extend TTS profiles with canonical private clone-reference assets, safe migratio
 - [ ] #7 Storage, errors, diagnostics, logs, and tests expose no source path, transcript, audio bytes, digest-derived identity, or raw database detail; user-facing copy truthfully states local plaintext, filesystem-not-encryption, backup/export sensitivity, and best-effort deletion.
 - [ ] #8 Migration, quota, canonicalization, concurrency, backup/restore, damage-isolation, downgrade-refusal, privacy, and unchanged v2-profile behavior are covered using isolated temporary repositories only.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add typed private clone-reference domain values and bounded transcript/audio admission.
+2. Add a bounded PCM16 WAV canonicalizer with no-follow source identity checks.
+3. Advance the profile store to v3 with exact reference schema validation and a guarded v2 migration.
+4. Retain and validate an owner-private v2 pre-migration backup under the repository exclusive lifecycle.
+5. Add atomic optimistic reference create/replace/delete/read operations with streamed SQLite BLOB I/O and transactional quotas.
+6. Extend backup/restore qualification and live-store damage isolation without loading BLOBs on ordinary list/open paths.
+7. Add privacy/downgrade documentation, inventory updates, mutation guards, and scoped verification.
+8. Complete task evidence and Definition of Done.
+
+ADR required: no new ADR
+ADR path: backlog/decisions/051-private-tts-clone-reference-assets.md
+Reason: ADR-051 already defines the profile-v3, privacy, migration, backup/restore, and damage-isolation boundary implemented by this task.
+
+Detailed plan: Docs/superpowers/plans/2026-08-10-task-13203-private-clone-reference-storage.md
+<!-- SECTION:PLAN:END -->
