@@ -557,12 +557,12 @@ _TASK_15103_DISPOSITIONS = {
 TASK_15103_EXPECTED_DISPOSITION_COUNTS = {
     "reviewed-safe": 45,
     "metadata-repair": 40,
-    "justified-deletion": 6,
+    "justified-deletion": 12,
 }
 TASK_15103_EXPECTED_ATOM_MULTIPLICITY = {
     "tldw_chatbook/Agents/agent_service.py": (9, 9),
     "tldw_chatbook/Chat/console_agent_bridge.py": (0, 1),
-    "tldw_chatbook/Chat/console_chat_controller.py": (8, 8),
+    "tldw_chatbook/Chat/console_chat_controller.py": (10, 8),
     "tldw_chatbook/Chat/console_chat_store.py": (4, 4),
     "tldw_chatbook/Chat/console_context_compaction.py": (2, 2),
     "tldw_chatbook/Chat/console_provider_gateway.py": (1, 1),
@@ -570,8 +570,8 @@ TASK_15103_EXPECTED_ATOM_MULTIPLICITY = {
     "tldw_chatbook/MCP/local_server_tools.py": (1, 1),
     "tldw_chatbook/MCP/prompts.py": (5, 1),
     "tldw_chatbook/MCP/server.py": (4, 2),
-    "tldw_chatbook/RAG_Search/fusion.py": (4, 3),
-    "tldw_chatbook/RAG_Search/simplified/rag_service.py": (2, 5),
+    "tldw_chatbook/RAG_Search/fusion.py": (6, 3),
+    "tldw_chatbook/RAG_Search/simplified/rag_service.py": (4, 5),
     "tldw_chatbook/RAG_Search/simplified/search_service.py": (1, 1),
     "tldw_chatbook/UI/Console_Modules/session.py": (1, 1),
     "tldw_chatbook/UI/Screens/chat_screen.py": (0, 0),
@@ -713,7 +713,7 @@ def _task_15103_validate_checkpoint_evidence(value: Any, *, location: str) -> No
             location=f"{location}.owners[{index}].evidence",
         )
     assert set(checkpoint_paths) == set(TASK_15103_OWNER_STARTING), (
-        f"{location}.owners must contain the exact 17-owner path set"
+        f"{location}.owners must contain the exact 18-owner path set"
     )
     assert len(checkpoint_paths) == len(set(checkpoint_paths)), (
         f"{location}.owners contains duplicate paths"
@@ -772,7 +772,7 @@ def _task_15103_validate_review_ledger(ledger: Any) -> None:
                 location=f"owners[{index}].reviewed_final",
             )
     assert set(owner_paths) == set(TASK_15103_OWNER_STARTING), (
-        "owners must contain the exact 17-owner path set"
+        "owners must contain the exact 18-owner path set"
     )
     assert len(owner_paths) == len(set(owner_paths)), "owners contains duplicate paths"
 
@@ -805,7 +805,7 @@ def _task_15103_validate_review_ledger(ledger: Any) -> None:
         ), f"{location}.id must be a stable TASK-15103-GNNN identifier"
         group_ids.append(group_id)
         assert group_record["owner_path"] in TASK_15103_OWNER_STARTING, (
-            f"{location}.owner_path is outside the approved 17-owner set"
+            f"{location}.owner_path is outside the approved 18-owner set"
         )
         _task_15103_validate_provenance(
             group_record["provenance"], location=f"{location}.provenance"
@@ -897,32 +897,84 @@ def _task_15103_semantic_digest(contract: dict[str, Any]) -> str:
     return hashlib.sha256(compact.encode("utf-8")).hexdigest()
 
 
-@lru_cache(maxsize=None)
+_TASK_15103_SPEC_BLOBS: dict[tuple[str, str], str | None] = {}
+_TASK_15103_BLOB_SOURCES: dict[str, str] = {}
+_TASK_15103_BLOB_CALLS: dict[str, tuple[DiagnosticCall, ...]] = {}
+_TASK_15103_BLOB_MANIFEST_PAIRS: dict[str, tuple[int, str]] = {}
+
+
+def _task_15103_preload_git_sources(revision_paths: list[tuple[str, str]]) -> None:
+    pending = list(dict.fromkeys(revision_paths))
+    pending = [pair for pair in pending if pair not in _TASK_15103_SPEC_BLOBS]
+    if not pending:
+        return
+    specs = [f"{revision}:{path}" for revision, path in pending]
+    resolved = subprocess.run(
+        ["git", "cat-file", "--batch-check"],
+        cwd=REPO_ROOT,
+        input="\n".join(specs) + "\n",
+        capture_output=True,
+        check=True,
+        text=True,
+    ).stdout.splitlines()
+    assert len(resolved) == len(pending), "Git batch-check result count mismatch"
+    for pair, line in zip(pending, resolved, strict=True):
+        fields = line.split()
+        _TASK_15103_SPEC_BLOBS[pair] = (
+            fields[0] if len(fields) == 3 and fields[1] == "blob" else None
+        )
+
+    missing_blobs = list(
+        dict.fromkeys(
+            blob
+            for pair in pending
+            if (blob := _TASK_15103_SPEC_BLOBS[pair]) is not None
+            and blob not in _TASK_15103_BLOB_SOURCES
+        )
+    )
+    if not missing_blobs:
+        return
+    output = subprocess.run(
+        ["git", "cat-file", "--batch"],
+        cwd=REPO_ROOT,
+        input=("\n".join(missing_blobs) + "\n").encode(),
+        capture_output=True,
+        check=True,
+    ).stdout
+    offset = 0
+    for expected_blob in missing_blobs:
+        newline = output.index(b"\n", offset)
+        header = output[offset:newline].decode().split()
+        assert len(header) == 3 and header[0] == expected_blob and header[1] == "blob"
+        size = int(header[2])
+        start = newline + 1
+        end = start + size
+        assert output[end : end + 1] == b"\n"
+        _TASK_15103_BLOB_SOURCES[expected_blob] = output[start:end].decode("utf-8")
+        offset = end + 1
+    assert offset == len(output), "Git batch output contains trailing data"
+
+
+def _task_15103_blob_at(revision: str, path: str) -> str | None:
+    pair = (revision, path)
+    _task_15103_preload_git_sources([pair])
+    return _TASK_15103_SPEC_BLOBS[pair]
+
+
 def _task_15103_git_source(revision: str, path: str) -> str | None:
-    commit = subprocess.run(
-        ["git", "cat-file", "-e", f"{revision}^{{commit}}"],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        check=False,
-        text=True,
-    )
-    assert commit.returncode == 0, f"missing Git revision {revision}: {commit.stderr}"
-    result = subprocess.run(
-        ["git", "show", f"{revision}:{path}"],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        check=False,
-        text=True,
-    )
-    return result.stdout if result.returncode == 0 else None
+    blob = _task_15103_blob_at(revision, path)
+    return _TASK_15103_BLOB_SOURCES[blob] if blob is not None else None
 
 
-@lru_cache(maxsize=None)
 def _task_15103_calls_at(revision: str, path: str) -> tuple[DiagnosticCall, ...]:
-    source = _task_15103_git_source(revision, path)
-    if source is None:
+    blob = _task_15103_blob_at(revision, path)
+    if blob is None:
         return ()
-    return tuple(discover_diagnostic_calls(source, module=path))
+    if blob not in _TASK_15103_BLOB_CALLS:
+        _TASK_15103_BLOB_CALLS[blob] = tuple(
+            discover_diagnostic_calls(_TASK_15103_BLOB_SOURCES[blob], module=path)
+        )
+    return _TASK_15103_BLOB_CALLS[blob]
 
 
 def _task_15103_population(
@@ -955,41 +1007,177 @@ def _task_15103_population_and_details_at(
     return Counter(dict(population)), dict(details)
 
 
-@lru_cache(maxsize=None)
-def _task_15103_recorded_revision(
-    planning_base: str, path: str, call_count: int, diagnostic_digest: str
-) -> str:
-    history = subprocess.run(
-        [
-            "git",
-            "log",
-            "--follow",
-            "--format=%H",
-            planning_base,
-            "--",
-            path,
-        ],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        check=False,
-        text=True,
-    )
-    assert history.returncode == 0, history.stderr
-    for revision in history.stdout.splitlines():
-        source = _task_15103_git_source(revision, path)
-        if source is None:
-            continue
-        diagnostics, _sinks = diagnostic_inventory.scan_source(
-            source, filename=f"{revision}:{path}"
+def _task_15103_manifest_pair_at(revision: str, path: str) -> tuple[int, str]:
+    blob = _task_15103_blob_at(revision, path)
+    if blob is None:
+        return 0, diagnostic_inventory.diagnostic_digest([])
+    if blob not in _TASK_15103_BLOB_MANIFEST_PAIRS:
+        source = _TASK_15103_BLOB_SOURCES[blob]
+        tree = ast.parse(source, filename=f"{revision}:{path}")
+        logger_symbols = diagnostic_inventory._logger_symbols(tree)
+        source_lines = ast._splitlines_no_ff(source)
+        diagnostics: list[dict[str, str]] = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not (
+                diagnostic_inventory._is_diagnostic_call(node, logger_symbols)
+            ):
+                continue
+            start_line = node.lineno - 1
+            end_line = node.end_lineno - 1
+            if start_line == end_line:
+                segment = (
+                    source_lines[start_line]
+                    .encode()[node.col_offset : node.end_col_offset]
+                    .decode()
+                )
+            else:
+                first = source_lines[start_line].encode()[node.col_offset :].decode()
+                last = source_lines[end_line].encode()[: node.end_col_offset].decode()
+                middle = source_lines[start_line + 1 : end_line]
+                segment = "".join((first, *middle, last))
+            diagnostics.append(
+                {
+                    "method": (
+                        node.func.attr
+                        if isinstance(node.func, ast.Attribute)
+                        else node.func.id
+                        if isinstance(node.func, ast.Name)
+                        else "call"
+                    ),
+                    "digest": hashlib.sha256(segment.encode("utf-8")).hexdigest()[:16],
+                }
+            )
+        _TASK_15103_BLOB_MANIFEST_PAIRS[blob] = (
+            len(diagnostics),
+            diagnostic_inventory.diagnostic_digest(diagnostics),
         )
-        if (
-            len(diagnostics) == call_count
-            and diagnostic_inventory.diagnostic_digest(diagnostics) == diagnostic_digest
-        ):
-            return revision
-    raise AssertionError(
-        f"could not reconstruct stored diagnostic population for {path}"
+    return _TASK_15103_BLOB_MANIFEST_PAIRS[blob]
+
+
+@lru_cache(maxsize=1)
+def _task_15103_complete_history(planning_base: str) -> dict[str, Any]:
+    """Reconstruct every owner transition independently of ledger provenance."""
+    stored_inventory = json.loads(
+        diagnostic_inventory.INVENTORY_PATH.read_text(encoding="utf-8")
     )
+    stored_rows = {row["path"]: row for row in stored_inventory["owners"]}
+    histories: dict[str, list[tuple[str, str]]] = {}
+    for path in TASK_15103_OWNER_STARTING:
+        result = subprocess.run(
+            [
+                "git",
+                "log",
+                "--follow",
+                "--format=%H%x00%P",
+                planning_base,
+                "--",
+                path,
+            ],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            check=True,
+            text=True,
+        )
+        entries: list[tuple[str, str]] = []
+        for line in result.stdout.splitlines():
+            commit, parents = line.split("\0", 1)
+            entries.append((commit, parents.split()[0] if parents else ""))
+        assert entries, f"no Git history found for approved owner {path}"
+        histories[path] = entries
+
+    stored_matches: dict[str, tuple[str, int]] = {}
+    chunk_size = 16
+    max_history = max(len(history) for history in histories.values())
+    empty_pair = (0, diagnostic_inventory.diagnostic_digest([]))
+    for offset in range(0, max_history, chunk_size):
+        unresolved = [
+            path for path in TASK_15103_OWNER_STARTING if path not in stored_matches
+        ]
+        if not unresolved:
+            break
+        pending = [
+            (revision, path)
+            for path in unresolved
+            for revision, _parent in histories[path][offset : offset + chunk_size]
+        ]
+        _task_15103_preload_git_sources(pending)
+        for path in unresolved:
+            row = stored_rows.get(path)
+            expected = (
+                (row["call_count"], row["diagnostic_digest"])
+                if row is not None
+                else empty_pair
+            )
+            upper = min(offset + chunk_size, len(histories[path]))
+            for index in range(offset, upper):
+                revision = histories[path][index][0]
+                if _task_15103_manifest_pair_at(revision, path) == expected:
+                    stored_matches[path] = (revision, index)
+                    break
+
+    for path, history in histories.items():
+        if path in stored_matches:
+            continue
+        oldest_parent = history[-1][1]
+        assert oldest_parent, f"could not reconstruct stored population for {path}"
+        _task_15103_preload_git_sources([(oldest_parent, path)])
+        row = stored_rows.get(path)
+        expected = (
+            (row["call_count"], row["diagnostic_digest"])
+            if row is not None
+            else empty_pair
+        )
+        assert _task_15103_manifest_pair_at(oldest_parent, path) == expected, (
+            f"could not reconstruct stored diagnostic population for {path}"
+        )
+        stored_matches[path] = (oldest_parent, len(history))
+
+    transition_specs = [
+        (revision, path)
+        for path, history in histories.items()
+        for revision, _parent in history[: stored_matches[path][1]]
+    ] + [
+        (parent, path)
+        for path, history in histories.items()
+        for _revision, parent in history[: stored_matches[path][1]]
+        if parent
+    ]
+    transition_specs.extend((planning_base, path) for path in TASK_15103_OWNER_STARTING)
+    _task_15103_preload_git_sources(transition_specs)
+
+    transitions: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
+    denominator: Counter[tuple[str, str, str, str]] = Counter()
+    for path, history in histories.items():
+        for revision, parent in reversed(history[: stored_matches[path][1]]):
+            assert parent, f"path transition {revision} for {path} has no parent"
+            before, before_details = _task_15103_population_and_details_at(parent, path)
+            after, after_details = _task_15103_population_and_details_at(revision, path)
+            introduced = after - before
+            removed = before - after
+            if not introduced and not removed:
+                continue
+            transition = {
+                "commit": revision,
+                "parent": parent,
+                "introduced": introduced,
+                "removed": removed,
+                "before_details": before_details,
+                "after_details": after_details,
+            }
+            transitions[path].append(transition)
+            for direction, population in (
+                ("introduced", introduced),
+                ("removed", removed),
+            ):
+                for digest, multiplicity in population.items():
+                    denominator[(path, revision, direction, digest)] += multiplicity
+    return {
+        "recorded_revisions": {
+            path: revision for path, (revision, _index) in stored_matches.items()
+        },
+        "transitions": dict(transitions),
+        "denominator": denominator,
+    }
 
 
 @lru_cache(maxsize=1)
@@ -1175,7 +1363,7 @@ def _task_15103_assert_group_contract(
         assert not group["proposed_surviving"]
         assert not group["permitted_fields"]
         digest = group["removed"][0]["semantic_digest"]
-        call = before_details[digest]
+        call = before_details.get(digest) or after_details[digest]
         assert group["fixed_event"] == call.event
         assert group["severity"] == _task_15103_severity(call.method)
         return
@@ -1215,6 +1403,7 @@ def _task_15103_assert_group_provenance(
     dict[str, DiagnosticCall],
     dict[str, DiagnosticCall],
     str,
+    tuple[str, ...],
 ]:
     provenance = group["provenance"]
     path = group["owner_path"]
@@ -1244,9 +1433,17 @@ def _task_15103_assert_group_provenance(
         multiplicity = atom["multiplicity_delta"]
         introduced_count = introduced[digest]
         removed_count = removed[digest]
-        if disposition == "metadata-repair" and introduced_count >= multiplicity:
+        if disposition in {"metadata-repair", "justified-deletion"} and (
+            introduced_count >= multiplicity
+        ):
+            assert atom["method"] == after_details[digest].method, (
+                f"{group['id']} removed atom method mismatch for {digest}"
+            )
             actual_positive[digest] += multiplicity
         elif removed_count >= multiplicity:
+            assert atom["method"] == before_details[digest].method, (
+                f"{group['id']} removed atom method mismatch for {digest}"
+            )
             actual_negative[digest] += multiplicity
         elif introduced_count or removed_count:
             raise AssertionError(
@@ -1261,6 +1458,9 @@ def _task_15103_assert_group_provenance(
         digest = atom["semantic_digest"]
         multiplicity = atom["multiplicity_delta"]
         if introduced[digest] >= multiplicity:
+            assert atom["method"] == after_details[digest].method, (
+                f"{group['id']} proposed atom method mismatch for {digest}"
+            )
             actual_positive[digest] += multiplicity
         elif introduced[digest]:
             raise AssertionError(
@@ -1275,7 +1475,14 @@ def _task_15103_assert_group_provenance(
         f"{group['id']} provenance does not introduce or remove its owned atom(s)"
     )
     if "verified_range" not in provenance:
-        return actual_positive, actual_negative, before_details, after_details, end
+        return (
+            actual_positive,
+            actual_negative,
+            before_details,
+            after_details,
+            end,
+            (end,),
+        )
     revisions = subprocess.run(
         ["git", "rev-list", "--ancestry-path", "--reverse", f"{start}..{end}"],
         cwd=REPO_ROOT,
@@ -1300,7 +1507,50 @@ def _task_15103_assert_group_provenance(
             relevant.append(revision)
     assert relevant and relevant[-1] == end
     assert len(relevant) > 1, f"{group['id']} verified range is non-minimal"
-    return actual_positive, actual_negative, before_details, after_details, end
+    return (
+        actual_positive,
+        actual_negative,
+        before_details,
+        after_details,
+        end,
+        tuple(revisions),
+    )
+
+
+def _task_15103_claim_group_transitions(
+    group: dict[str, Any],
+    positive: Counter[str],
+    negative: Counter[str],
+    revisions: tuple[str, ...],
+    transitions: list[dict[str, Any]],
+) -> Counter[tuple[str, str, str, str]]:
+    claims: Counter[tuple[str, str, str, str]] = Counter()
+    allowed = set(revisions)
+    for direction, population in (("introduced", positive), ("removed", negative)):
+        for digest, multiplicity in population.items():
+            remaining = multiplicity
+            for transition in transitions:
+                if transition["commit"] not in allowed:
+                    continue
+                available = transition[direction][digest]
+                consumed = min(remaining, available)
+                if not consumed:
+                    continue
+                claims[
+                    (
+                        group["owner_path"],
+                        transition["commit"],
+                        direction,
+                        digest,
+                    )
+                ] += consumed
+                remaining -= consumed
+                if not remaining:
+                    break
+            assert not remaining, (
+                f"{group['id']} cannot bind atom {digest} to complete Git history"
+            )
+    return claims
 
 
 def _task_15103_validate_canonical_reconciliation(ledger: Any) -> None:
@@ -1325,11 +1575,13 @@ def _task_15103_validate_canonical_reconciliation(ledger: Any) -> None:
     assert changed_paths == set(TASK_15103_OWNER_STARTING), (
         "canonical inventory delta must contain the exact 18-owner path set"
     )
+    history = _task_15103_complete_history(planning_base)
 
     groups_by_owner: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
     for group in ledger["change_groups"]:
         groups_by_owner[group["owner_path"]].append(group)
 
+    claimed_transitions: Counter[tuple[str, str, str, str]] = Counter()
     for owner in ledger["owners"]:
         path = owner["path"]
         source = _task_15103_git_source(planning_base, path)
@@ -1337,23 +1589,14 @@ def _task_15103_validate_canonical_reconciliation(ledger: Any) -> None:
         current, _current_details = _task_15103_population_and_details_at(
             planning_base, path
         )
-        assert (
-            len(_task_15103_calls_at(planning_base, path))
-            == (owner["starting"]["call_count"])
+        assert _task_15103_manifest_pair_at(planning_base, path) == (
+            owner["starting"]["call_count"],
+            owner["starting"]["diagnostic_digest"],
+        ), f"{path} starting evidence must match immutable planning-base source"
+        recorded_revision = history["recorded_revisions"][path]
+        recorded, _recorded_details = _task_15103_population_and_details_at(
+            recorded_revision, path
         )
-        stored_row = stored_rows.get(path)
-        if stored_row is None:
-            recorded: Counter[str] = Counter()
-        else:
-            recorded_revision = _task_15103_recorded_revision(
-                planning_base,
-                path,
-                stored_row["call_count"],
-                stored_row["diagnostic_digest"],
-            )
-            recorded, _recorded_details = _task_15103_population_and_details_at(
-                recorded_revision, path
-            )
         added = current - recorded
         removed = recorded - current
         groups = groups_by_owner[path]
@@ -1366,6 +1609,7 @@ def _task_15103_validate_canonical_reconciliation(ledger: Any) -> None:
                 before_details,
                 after_details,
                 provenance_end,
+                provenance_revisions,
             ) = _task_15103_assert_group_provenance(group)
             provenance_source = _task_15103_git_source(provenance_end, path)
             assert provenance_source is not None
@@ -1377,11 +1621,26 @@ def _task_15103_validate_canonical_reconciliation(ledger: Any) -> None:
                 after_details=after_details,
                 source=provenance_source,
             )
+            claimed_transitions.update(
+                _task_15103_claim_group_transitions(
+                    group,
+                    group_positive,
+                    group_negative,
+                    provenance_revisions,
+                    history["transitions"].get(path, []),
+                )
+            )
             actual_positive.update(group_positive)
             actual_negative.update(group_negative)
         assert (actual_positive - actual_negative) == added and (
             actual_negative - actual_positive
         ) == removed, f"{path} semantic multiset reconciliation failed"
+    denominator = history["denominator"]
+    assert claimed_transitions == denominator, (
+        "complete Git history transition multiset mismatch: "
+        f"missing={denominator - claimed_transitions!r}, "
+        f"extra={claimed_transitions - denominator!r}"
+    )
 
 
 def _task_15103_synthetic_planned_ledger() -> dict[str, Any]:
@@ -1454,8 +1713,26 @@ def _task_15103_checkpoint_evidence(seed: str) -> dict[str, Any]:
     }
 
 
-def test_task_15103_review_ledger_canonical_planned_schema_and_arithmetic() -> None:
+def test_task_15103_review_ledger_canonical_planned_schema_and_arithmetic(
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+) -> None:
     ledger = json.loads(TASK_15103_REVIEW_PATH.read_text(encoding="utf-8"))
+    repaired_candidate = copy.deepcopy(diagnostic_inventory.build_inventory())
+    repaired_owner = next(
+        owner
+        for owner in repaired_candidate["owners"]
+        if owner["path"] == "tldw_chatbook/Agents/agent_service.py"
+    )
+    repaired_owner["call_count"] -= 1
+    repaired_owner["diagnostic_digest"] = "f" * 20
+    monkeypatch.setattr(
+        diagnostic_inventory,
+        "build_inventory",
+        lambda: copy.deepcopy(repaired_candidate),
+    )
+    _task_15103_current_inventory.cache_clear()
+    request.addfinalizer(_task_15103_current_inventory.cache_clear)
 
     _task_15103_validate_canonical_reconciliation(ledger)
 
@@ -1468,21 +1745,11 @@ def test_task_15103_review_ledger_canonical_planned_schema_and_arithmetic() -> N
         for owner in ledger["owners"]
     }
     assert starting == TASK_15103_OWNER_STARTING
-    current_inventory = diagnostic_inventory.build_inventory()
-    current_by_path = {owner["path"]: owner for owner in current_inventory["owners"]}
-    current_starting = {
-        path: (
-            current_by_path[path]["call_count"],
-            current_by_path[path]["diagnostic_digest"],
-        )
-        for path in TASK_15103_OWNER_STARTING
-    }
-    assert current_starting == TASK_15103_OWNER_STARTING
     disposition_counts = Counter(
         group["disposition"] for group in ledger["change_groups"]
     )
     assert disposition_counts == TASK_15103_EXPECTED_DISPOSITION_COUNTS
-    assert len(ledger["change_groups"]) == 91
+    assert len(ledger["change_groups"]) == 97
     atom_multiplicity: defaultdict[str, Counter[str]] = defaultdict(Counter)
     for group in ledger["change_groups"]:
         owner_path = group["owner_path"]
@@ -1498,7 +1765,7 @@ def test_task_15103_review_ledger_canonical_planned_schema_and_arithmetic() -> N
         for path in TASK_15103_OWNER_STARTING
     }
     assert reconciled == TASK_15103_EXPECTED_ATOM_MULTIPLICITY
-    assert sum(pair[0] for pair in reconciled.values()) == 66
+    assert sum(pair[0] for pair in reconciled.values()) == 72
     assert sum(pair[1] for pair in reconciled.values()) == 87
 
 
@@ -1637,7 +1904,7 @@ def test_task_15103_review_ledger_requires_exact_owner_path_set(
     if extra_path:
         ledger["owners"].append(
             {
-                "path": "tldw_chatbook/eighteenth_owner.py",
+                "path": "tldw_chatbook/nineteenth_owner.py",
                 "starting": {
                     "call_count": 1,
                     "diagnostic_digest": "a" * 20,
@@ -1647,7 +1914,7 @@ def test_task_15103_review_ledger_requires_exact_owner_path_set(
     else:
         ledger["owners"].pop()
 
-    with pytest.raises(AssertionError, match="exact 17-owner path set"):
+    with pytest.raises(AssertionError, match="exact 18-owner path set"):
         _task_15103_validate_review_ledger(ledger)
 
 
@@ -1821,6 +2088,68 @@ def test_task_15103_review_ledger_rejects_valid_but_wrong_semantic_digest() -> N
     ledger["change_groups"][0]["proposed_surviving"][0]["semantic_digest"] = "f" * 64
 
     with pytest.raises(AssertionError, match="semantic contract digest mismatch"):
+        _task_15103_validate_canonical_reconciliation(ledger)
+
+
+def test_task_15103_review_ledger_rejects_omitted_transient_history_atom() -> None:
+    ledger = json.loads(TASK_15103_REVIEW_PATH.read_text(encoding="utf-8"))
+    intermediate = next(
+        group for group in ledger["change_groups"] if group["id"] == "TASK-15103-G091"
+    )
+    successor = next(
+        group for group in ledger["change_groups"] if group["id"] == "TASK-15103-G062"
+    )
+    split = next(
+        group for group in ledger["change_groups"] if group["id"] == "TASK-15103-G089"
+    )
+    intermediate_parent = subprocess.run(
+        ["git", "rev-parse", f"{intermediate['provenance']['exact_commit']}^"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        check=True,
+        text=True,
+    ).stdout.strip()
+    intermediate["provenance"] = {
+        "verified_range": {
+            "start_exclusive": intermediate_parent,
+            "end_inclusive": successor["provenance"]["exact_commit"],
+        }
+    }
+    for field in (
+        "fixed_event",
+        "severity",
+        "permitted_fields",
+        "captures_exception",
+        "proposed_surviving",
+        "rationale",
+    ):
+        intermediate[field] = copy.deepcopy(successor[field])
+    intermediate["disposition"] = "reviewed-safe"
+    ledger["change_groups"].remove(successor)
+
+    second_removed = split["removed"].pop()
+    split["proposed_surviving"][0]["multiplicity_delta"] = 1
+    replacement = copy.deepcopy(split)
+    replacement["id"] = "TASK-15103-G062"
+    replacement["removed"] = [second_removed]
+    ledger["change_groups"].append(replacement)
+    assert len(ledger["change_groups"]) == 97
+    assert Counter(group["disposition"] for group in ledger["change_groups"]) == (
+        TASK_15103_EXPECTED_DISPOSITION_COUNTS
+    )
+
+    with pytest.raises(AssertionError, match="complete Git history transition"):
+        _task_15103_validate_canonical_reconciliation(ledger)
+
+
+def test_task_15103_review_ledger_binds_removed_atom_method_to_history() -> None:
+    ledger = json.loads(TASK_15103_REVIEW_PATH.read_text(encoding="utf-8"))
+    group = next(
+        group for group in ledger["change_groups"] if group["id"] == "TASK-15103-G001"
+    )
+    group["removed"][0]["method"] = "critical"
+
+    with pytest.raises(AssertionError, match="removed atom method mismatch"):
         _task_15103_validate_canonical_reconciliation(ledger)
 
 

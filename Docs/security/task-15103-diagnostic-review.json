@@ -2481,6 +2481,138 @@
         }
       ],
       "severity": "error"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "justified-deletion",
+      "fixed_event": "revoked  pending approval round(s) for cancelled run ",
+      "id": "TASK-15103-G092",
+      "owner_path": "tldw_chatbook/Chat/console_chat_controller.py",
+      "permitted_fields": [],
+      "proposed_surviving": [],
+      "provenance": {
+        "exact_commit": "545d935c99af6f9b577bc219ae11dc5e232466ce"
+      },
+      "rationale": "This exact transition introduced a transient diagnostic containing the private run identifier. The call is absent at the planning base and its final justified-deletion disposition forbids restoring it.",
+      "removed": [
+        {
+          "method": "info",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleChatController.revoke_approval_rounds_for_run",
+          "semantic_digest": "31dd94634a0fb2f183f17f538ead7f0551433b0c464befded1355257821c587a"
+        }
+      ],
+      "severity": "info"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "justified-deletion",
+      "fixed_event": "revoked  pending approval round(s) for cancelled run ",
+      "id": "TASK-15103-G093",
+      "owner_path": "tldw_chatbook/Chat/console_chat_controller.py",
+      "permitted_fields": [],
+      "proposed_surviving": [],
+      "provenance": {
+        "exact_commit": "c2bc5058fae060eff7e79b28642949fdf5e372b5"
+      },
+      "rationale": "This exact transition removed the transient private run-identifier diagnostic. Restoring it would reintroduce prohibited identifier content without an operational need.",
+      "removed": [
+        {
+          "method": "info",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleChatController.revoke_approval_rounds_for_run",
+          "semantic_digest": "31dd94634a0fb2f183f17f538ead7f0551433b0c464befded1355257821c587a"
+        }
+      ],
+      "severity": "info"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "justified-deletion",
+      "fixed_event": "Could not read rrf_k from active profile: ",
+      "id": "TASK-15103-G094",
+      "owner_path": "tldw_chatbook/RAG_Search/fusion.py",
+      "permitted_fields": [],
+      "proposed_surviving": [],
+      "provenance": {
+        "exact_commit": "c6909e8bf94250abb949f17fe6163e692998ad55"
+      },
+      "rationale": "This exact transition introduced a transient diagnostic containing an exception message. The call is absent at the planning base and its final justified-deletion disposition forbids restoring it.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "resolve_rrf_k",
+          "semantic_digest": "04b7876a6740b49c146d81d660f0bb90f6286d1e99592c591268d94c8e4f13fa"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "justified-deletion",
+      "fixed_event": "Could not read rrf_k from active profile: ",
+      "id": "TASK-15103-G095",
+      "owner_path": "tldw_chatbook/RAG_Search/fusion.py",
+      "permitted_fields": [],
+      "proposed_surviving": [],
+      "provenance": {
+        "exact_commit": "336399433138f24485b1c0ff98c507e180d0f8aa"
+      },
+      "rationale": "This exact transition removed the transient exception-message diagnostic. Restoring it would reintroduce prohibited exception detail without an operational need.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "resolve_rrf_k",
+          "semantic_digest": "04b7876a6740b49c146d81d660f0bb90f6286d1e99592c591268d94c8e4f13fa"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "justified-deletion",
+      "fixed_event": "Invalid hybrid_pool_multiplier ; falling back to ",
+      "id": "TASK-15103-G096",
+      "owner_path": "tldw_chatbook/RAG_Search/simplified/rag_service.py",
+      "permitted_fields": [],
+      "proposed_surviving": [],
+      "provenance": {
+        "exact_commit": "f74fca8800db93ca35b35831398abf40fb93370e"
+      },
+      "rationale": "This exact transition introduced a transient diagnostic containing raw configuration data. The call is absent at the planning base and its final justified-deletion disposition forbids restoring it.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_resolve_hybrid_pool_multiplier",
+          "semantic_digest": "6ef97f09b5a521f09081133e137d803b76729b0b8a244a8f157969013f250c4d"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "justified-deletion",
+      "fixed_event": "Invalid hybrid_pool_multiplier ; falling back to ",
+      "id": "TASK-15103-G097",
+      "owner_path": "tldw_chatbook/RAG_Search/simplified/rag_service.py",
+      "permitted_fields": [],
+      "proposed_surviving": [],
+      "provenance": {
+        "exact_commit": "c6909e8bf94250abb949f17fe6163e692998ad55"
+      },
+      "rationale": "This exact transition removed the transient raw-configuration diagnostic. Restoring it would reintroduce prohibited configuration content without an operational need.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_resolve_hybrid_pool_multiplier",
+          "semantic_digest": "6ef97f09b5a521f09081133e137d803b76729b0b8a244a8f157969013f250c4d"
+        }
+      ],
+      "severity": "warning"
     }
   ],
   "incident": {
