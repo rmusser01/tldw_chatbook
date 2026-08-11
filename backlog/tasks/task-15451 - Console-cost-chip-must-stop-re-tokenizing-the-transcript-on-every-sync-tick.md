@@ -1,11 +1,11 @@
 ---
 id: TASK-15451
 title: Console cost chip must stop re-tokenizing the transcript on every sync tick
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-11 12:05'
-updated_date: '2026-08-11 22:36'
+updated_date: '2026-08-11 22:37'
 labels:
   - perf
   - console
