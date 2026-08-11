@@ -531,6 +531,9 @@ markers = [
     "requires_display: tests that require a display (may fail in CI)",
     "requires_cleanup: tests that need a gc pass immediately after running",
     "real_audio_device: opts out of the autouse _no_real_audio_device guard (Tests/conftest.py) to exercise a real sounddevice OutputStream",
+    "allow_network: opts out of the autouse _no_network_io guard (Tests/conftest.py) to open a real socket; justify it in the test's docstring",
+    "local_server_probe: opts out of the autouse _no_local_server_probes guard (Tests/conftest.py) to exercise the real /v1/models probe against an injected httpx.MockTransport client",
+    "owned_http_client: opts out of the autouse _console_gateway_http_client_is_offline guard (Tests/conftest.py) for tests that are ABOUT the gateway's real owned httpx client",
     "live: marks tests that call real paid external APIs (require key files + TLDW_LIVE_SEARCH_TESTS=1 + --run-live)",
 ]
 

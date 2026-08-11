@@ -23,6 +23,12 @@ from tldw_chatbook.Model_Artifacts.service import ModelArtifactService
 
 from Tests.Model_Artifacts.fixture_http import FixtureArtifactServer
 
+# Network opt-in (task-15111): this module fetches artifacts from an in-
+# process HTTP server on an ephemeral loopback port.
+# The autouse guard in Tests/conftest.py denies egress by default; every address
+# these tests reach is a port this process itself is listening on.
+pytestmark = pytest.mark.allow_network
+
 
 _EXPECTED_ROOTS = {
     ("nemo-parakeet-tdt-0.6b-v2", "int8"): {

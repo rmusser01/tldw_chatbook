@@ -47,6 +47,13 @@ from tldw_chatbook.Model_Artifacts.service import (
 )
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_json
 
+# Network opt-in (task-15111): this module fetches from
+# `FixtureArtifactServer`, an in-process HTTP server on an ephemeral
+# loopback port.
+# The autouse guard in Tests/conftest.py denies egress by default; every address
+# these tests reach is a port this process itself is listening on.
+pytestmark = pytest.mark.allow_network
+
 
 def _make_two_file_descriptor(source_url: str) -> ArtifactDescriptor:
     """A 2-file descriptor -- ``make_descriptor`` only ever builds one file.

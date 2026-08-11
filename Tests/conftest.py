@@ -75,6 +75,16 @@ PROJECT_ROOT = Path(__file__).parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+# Network egress is denied for the whole session from this point on (task-15111).
+# Installed at conftest IMPORT time, not from a fixture, so module import,
+# collection, fixture teardown and worker threads that outlive a test are all
+# covered. Opt in per test with @pytest.mark.allow_network; see
+# Tests/network_guard.py for the incident that motivated it.
+from Tests import network_guard  # noqa: E402
+
+network_guard.install()
+
+
 # Hypothesis: no per-example deadline (TASK-1260).
 #
 # Several property tests do real work per example -- `test_safe_paths_always_validate`
@@ -466,6 +476,139 @@ def _no_real_audio_device(request: pytest.FixtureRequest, monkeypatch: pytest.Mo
     import tldw_chatbook.Audio.streaming_sink as streaming_sink
 
     monkeypatch.setattr(streaming_sink, "_import_sounddevice", lambda: None)
+
+
+@pytest.fixture(autouse=True)
+def _no_network_io(request: pytest.FixtureRequest) -> Iterator[None]:
+    """No test reaches a live endpoint unless it explicitly opts in (task-15111).
+
+    The socket patch itself is installed once at conftest import time and is
+    denied by default; this fixture only (a) lifts the denial for a test that
+    opted in, and (b) turns a *swallowed* block into a failure.
+
+    (b) is the load-bearing half. `BlockedNetworkAccess` is an `OSError`, so
+    `local_server_discovery._get_models_payload`'s `except Exception` absorbs
+    it and discovery simply reports "no models endpoint" -- exactly what a
+    green run looks like today with nothing listening. Without the recorded
+    attempts a future regression would reintroduce the escape silently, which
+    is the whole defect. Failing on a non-empty record makes the guard
+    unswallowable.
+
+    Opt in with `@pytest.mark.allow_network`. `live` (real paid external APIs,
+    already gated behind `--run-live`) counts as an implicit opt-in.
+
+    Yields:
+        None. The blocked-attempt record is asserted empty at teardown.
+    """
+    opted_in = bool(
+        request.node.get_closest_marker("allow_network")
+        or request.node.get_closest_marker("live")
+    )
+    network_guard.drain_blocked_attempts()
+    network_guard.set_allowed(opted_in)
+    try:
+        yield
+    finally:
+        network_guard.set_allowed(False)
+        attempts = network_guard.drain_blocked_attempts()
+    if attempts:
+        detail = ", ".join(f"{call} -> {address}" for call, address in attempts)
+        raise AssertionError(
+            "test attempted network egress (blocked): "
+            + detail
+            + " — stub the client seam, or mark the test "
+            "@pytest.mark.allow_network if it genuinely needs a socket."
+        )
+
+
+@pytest.fixture(autouse=True)
+def _no_local_server_probes(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Neutralize the local-server discovery probe's one network chokepoint.
+
+    The mechanism behind task-15111: mounting the Console chat screen with an
+    unconfigured provider blocks the setup card, which starts
+    `_maybe_start_console_local_discovery` -> `discover_local_servers`. That
+    candidate list ALWAYS leads with `http://127.0.0.1:8080` and
+    `http://127.0.0.1:11434` regardless of config, and `probe_models_endpoint`
+    builds a real `httpx.AsyncClient` when none is injected -- so every such
+    test made two live TCP connections, and on a machine with a server on 8080
+    the setup card grew a "detected server" affordance CI never sees.
+
+    `_get_models_payload` is the single chokepoint: all three production
+    import sites (`chat_screen`, `FirstRunSetupWizard`, `console_settings_modal`)
+    funnel through `probe_models_endpoint`, which resolves it as a module
+    global at call time, so patching it here covers callers that imported
+    `probe_models_endpoint`/`discover_local_servers` by name. Returning the
+    ordinary "no models endpoint" failure drives the already-tested
+    nothing-listening path, so no test's LOGICAL coverage changes -- only its
+    network access. `Tests/network_guard.py` is the backstop that proves it.
+
+    A test that exercises the real probe implementation against an injected
+    `httpx.MockTransport` client marks itself `@pytest.mark.local_server_probe`
+    to opt out (see `Tests/Chat/test_local_server_discovery.py`).
+    """
+    if request.node.get_closest_marker("local_server_probe"):
+        return
+    from tldw_chatbook.Chat import local_server_discovery
+
+    async def _no_endpoint(http_client, url, timeout, display):
+        return None, f"No models endpoint at {display}."
+
+    monkeypatch.setattr(local_server_discovery, "_get_models_payload", _no_endpoint)
+
+
+@pytest.fixture(autouse=True)
+def _console_gateway_http_client_is_offline(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The Console provider gateway never owns a network-capable client in tests.
+
+    Sharper half of task-15111. `Tests/UI`'s send-path tests configure a
+    "ready" llama.cpp Console at `http://127.0.0.1:9099`
+    (`_configure_native_ready_console`) and then drive a REAL send through
+    `ConsoleProviderGateway`. On CI nothing listens there, `_is_reachable`'s
+    GET `/health` fails, and the send stops. Measured against a stand-in
+    server bound to 9099,
+    `test_console_command_popup::test_enter_with_popup_closed_sends_normally`
+    went on to send **two POSTs to `/v1/chat/completions`** (streaming, then
+    the non-streaming fallback) carrying the test's prompt. So the escape was
+    never merely a stray GET: with a llama.cpp on that port a test run would
+    have driven real inference on the developer's server.
+
+    `_new_owned_http_client` is the single construction site for every client
+    the gateway owns (`__init__` and the per-loop cache both call it), and
+    injected clients set `_owns_http_client = False` and are left alone -- so
+    MockTransport-based gateway tests are unaffected. Substituting a transport
+    that raises `httpx.ConnectError` reproduces the CI "nothing is listening"
+    outcome deterministically, on every machine, with no socket: `_is_reachable`
+    and `resolve_llamacpp` already catch `httpx.HTTPError`.
+
+    A test that is ABOUT the owned client itself (its timeouts, its per-loop
+    cache) marks itself `@pytest.mark.owned_http_client` to opt out;
+    `allow_network` implies the same, since a test allowed a real socket
+    plainly wants a real client.
+    """
+    if request.node.get_closest_marker("owned_http_client") or request.node.get_closest_marker(
+        "allow_network"
+    ):
+        return
+    import httpx
+
+    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
+
+    def _refuse(http_request: "httpx.Request") -> "httpx.Response":
+        raise httpx.ConnectError(
+            "network access blocked in tests (Tests/conftest.py, task-15111)",
+            request=http_request,
+        )
+
+    monkeypatch.setattr(
+        ConsoleProviderGateway,
+        "_new_owned_http_client",
+        staticmethod(lambda: httpx.AsyncClient(transport=httpx.MockTransport(_refuse))),
+    )
 
 
 # ========== Async Cleanup Fixtures ==========

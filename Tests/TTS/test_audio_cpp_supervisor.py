@@ -32,6 +32,12 @@ from tldw_chatbook.TTS.audio_cpp_supervisor import (
     _OwnedAudioCppProcess,
 )
 
+# Network opt-in (task-15111): this module talks to `fake_audiocpp_server`,
+# an in-process HTTP server on an ephemeral loopback port.
+# The autouse guard in Tests/conftest.py denies egress by default; every address
+# these tests reach is a port this process itself is listening on.
+pytestmark = pytest.mark.allow_network
+
 
 class _FakeReader:
     def __init__(self) -> None:

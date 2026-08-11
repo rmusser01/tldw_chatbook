@@ -16,6 +16,13 @@ from tldw_chatbook.Chat.local_server_discovery import (
 )
 
 
+# These ARE the tests of the probe implementation, so they opt out of the
+# autouse `_no_local_server_probes` guard (Tests/conftest.py, task-15111).
+# They never touch the network: every client below is an injected
+# httpx.MockTransport, which the socket guard independently confirms.
+pytestmark = pytest.mark.local_server_probe
+
+
 def _client(handler) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.MockTransport(handler))
 

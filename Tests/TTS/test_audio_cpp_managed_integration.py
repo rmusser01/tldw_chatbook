@@ -69,6 +69,12 @@ from tldw_chatbook.TTS.TTS_Generation import (
     TTSSettingsPersistenceOutcome,
 )
 
+# Network opt-in (task-15111): this module talks to `fake_audiocpp_server`,
+# an in-process HTTP server on an ephemeral loopback port.
+# The autouse guard in Tests/conftest.py denies egress by default; every address
+# these tests reach is a port this process itself is listening on.
+pytestmark = pytest.mark.allow_network
+
 
 def _wav() -> bytes:
     data = b"\x00\x00\x00\x00"

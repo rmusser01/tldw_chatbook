@@ -2767,11 +2767,23 @@ async def test_console_composer_stop_is_subdued_when_idle():
         await _wait_for_text(console, pilot, "partial")
 
         # TASK-2154.6: a blocked Send is now genuinely disabled, not just
-        # class-subdued -- the classes below keep their old contract.
+        # class-subdued.
+        # TASK-15121 (contract change, not a rename): since TASK-14808 /
+        # ADR-046 an ACCEPTED live turn no longer blocks Send -- it re-labels
+        # it to "Queue" and admits the draft as a FIFO follow-up turn. So
+        # `console-send-blocked` is no longer reachable here; it now covers
+        # only the states that genuinely refuse a draft (Preparing before
+        # acceptance, Queue full, setup/attachment blocks -- see
+        # `derive_prompt_queue_presentation`). The original claim of this
+        # assertion block is kept where it is still true: with the draft
+        # consumed by the send, Send is genuinely disabled and non-primary --
+        # it just fails the empty-draft gate now, not the run gate.
         assert send_button.disabled is True
         assert send_button.has_class("console-action-disabled")
-        assert send_button.has_class("console-send-blocked")
+        assert send_button.has_class("console-send-inactive")
+        assert not send_button.has_class("console-send-blocked")
         assert not send_button.has_class("console-action-primary")
+        assert send_button.label.plain == "Queue"
         assert stop_button.disabled is False
         assert stop_button.has_class("console-stop-active")
         assert not stop_button.has_class("console-action-disabled")
@@ -2806,14 +2818,35 @@ async def test_console_duplicate_send_during_stream_does_not_break_stop_control(
         # TASK-2154.6: genuinely disabled while the run blocks sends; the
         # direct handler dispatch below (not `press()`, which no-ops on a
         # disabled control) is exactly how the Enter hotkey still reaches it.
-        assert send_button.disabled is True
-        assert send_button.has_class("console-send-blocked")
+        # TASK-15121: superseded by TASK-14808 / ADR-046 -- "once accepted,
+        # the normal Send action becomes Queue; Enter and the button both
+        # enqueue the exact canonical text draft". A second draft mid-stream
+        # is therefore no longer REFUSED, so the disabled/`console-send-blocked`
+        # pin below is gone. What this test is named for is unchanged and is
+        # asserted harder below: the duplicate send must not start a second
+        # run, must not be silently eaten, and must not break Stop.
+        assert send_button.disabled is False
+        assert not send_button.has_class("console-send-blocked")
+        assert send_button.label.plain == "Queue"
+        controller = console._ensure_console_chat_controller()
+        session_id = controller.store.active_session_id
+        assert (
+            controller.prompt_queue_registry.snapshot(session_id).total_count == 0
+        )
+
         await console.handle_console_send_message(Button.Pressed(send_button))
         await pilot.pause(0.1)
+        # The live turn is untouched -- one run, still streaming, never a
+        # second concurrent generation.
         assert (
             console._ensure_console_chat_controller().run_state.status.value
             == "streaming"
         )
+        # ...and the duplicate landed in the bounded queue rather than being
+        # dropped: admission (not an attempted enqueue) is what clears the
+        # draft, so an empty composer here is evidence the text was accepted.
+        assert controller.prompt_queue_registry.snapshot(session_id).total_count == 1
+        assert composer.draft_text() == ""
 
         console.query_one("#console-stop-generation", Button).press()
         await _wait_for_text(console, pilot, "stopped")

@@ -1833,6 +1833,10 @@ def test_aclose_does_not_let_a_later_loop_adopt_a_previously_claimed_client():
     asyncio.run(gateway.aclose())
 
 
+# About the gateway's REAL owned client, so it opts out of the autouse
+# offline-client guard (Tests/conftest.py, task-15111). Constructs a client;
+# never connects.
+@pytest.mark.owned_http_client
 @pytest.mark.asyncio
 async def test_owned_http_client_uses_generous_generation_read_timeout():
     """The owned client must not cap slow local generations at the old 30s."""
@@ -1959,6 +1963,12 @@ def local_http_server():
         thread.join(timeout=2)
 
 
+# Real owned client AND a real socket: the whole point is httpx's per-loop
+# connection-pool binding against a server this test starts itself
+# (`local_http_server`, ephemeral loopback port). Opts out of both autouse
+# guards (Tests/conftest.py, task-15111).
+@pytest.mark.owned_http_client
+@pytest.mark.allow_network
 def test_owned_http_client_survives_agent_bridge_style_loop_swap(local_http_server):
     """Regression (Task 8 live gate): every agent turn crashed against a real
     llama.cpp server with ``RuntimeError: <asyncio.locks.Event ...> is bound
@@ -2217,6 +2227,9 @@ def test_aclose_closes_current_loop_client_and_schedules_others(monkeypatch):
         other_loop.close()
 
 
+# Same as above: real owned client + this test's own `local_http_server`.
+@pytest.mark.owned_http_client
+@pytest.mark.allow_network
 def test_active_http_client_concurrent_swap_never_leaves_client_bound_to_wrong_loop(
     local_http_server,
     monkeypatch,
