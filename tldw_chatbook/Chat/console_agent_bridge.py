@@ -776,37 +776,47 @@ def _subagent_summaries_from_fleet(
     rest of that run, and every child's real status/run_id/handle_id is
     always current.
 
-    ``handles`` is ALWAYS ``[]`` in two cases this function cannot tell
-    apart by itself, both handled by falling back to ``fallback``:
-      - The inline path (``[agents] max_live_subagents <= 1``): no
-        coordinator ever exists for this run, so this is the ONLY source
-        of rows, for the run's entire duration.
-      - The brief instant on a fleet-ON run between a STEP_SPAWN step
-        firing (this bridge's ``on_step`` appends to ``fallback`` before
-        returning control) and ``fleet.reserve()`` actually registering
-        the handle a few lines later, in the very same synchronous call
-        (see ``agent_runtime.py``'s ``add(STEP_SPAWN, ...)`` then
-        ``deps.spawn(...)``) -- self-correcting on the very next publish,
-        which is always at most one step later (every tool call, spawn
-        included, gets its own STEP_TOOL_RESULT immediately after).
+    ``handles`` is ALWAYS ``[]`` in the inline path (``[agents]
+    max_live_subagents <= 1``: no coordinator ever exists for this run, so
+    ``fallback`` -- the STEP_SPAWN-derived list ``on_step`` has been
+    building all along, one ``SubAgentSummary(step.summary or "")`` per
+    spawn, status stuck at its dataclass default ``"running"`` -- is the
+    ONLY source of rows, for the run's entire duration. This function
+    cannot improve on that there: there is no coordinator to read a real
+    status from.
 
-    ``fallback`` is the STEP_SPAWN-derived list ``on_step`` has been
-    building all along: one ``SubAgentSummary(step.summary or "")`` per
-    spawn, status stuck at its dataclass default ``"running"`` (this
-    function does not, and cannot, improve on that for the inline path --
-    there is no coordinator to read a real status from).
+    On a fleet-ON run, ``handles`` and ``fallback`` are MERGED, not
+    replace-on-non-empty (review fix, PR2b Task 2 round 2): a naive "use
+    handles whenever non-empty" made a just-spawned child's row VANISH for
+    exactly one publish. Every reserved handle's STEP_SPAWN step is
+    appended to ``fallback`` immediately before that SAME spawn's own
+    ``fleet.reserve()`` call a few lines later, in the very same
+    synchronous call (see ``agent_runtime.py``'s ``add(STEP_SPAWN, ...)``
+    then ``deps.spawn(...)``, and ``on_step``'s own comment at that
+    append) -- and spawn calls within one tool-call batch are processed
+    strictly one at a time on the primary's own thread, never
+    interleaved. So ``fallback``'s first ``len(handles)`` entries always
+    correspond, in the same order, to ``handles`` itself; any FURTHER
+    ``fallback`` entries are children whose STEP_SPAWN step has fired but
+    whose handle does not exist yet (reservation pending -- the same
+    brief, self-correcting window as before, now rendered honestly
+    instead of dropped: ``running``, empty ``run_id``/``handle_id``,
+    since they have no coordinator identity yet). Appending that surplus
+    after the fleet rows keeps the tuple append-only and order-stable
+    across publishes -- no vanish/reappear churn for a UI panel keying
+    rows off position (Task 3/4 build on exactly that).
     """
-    if handles:
-        return tuple(
-            SubAgentSummary(
-                text=(f"[{h.agent}] {h.task}" if h.agent else h.task)[:200],
-                status=h.status,
-                run_id=h.run_id or "",
-                handle_id=h.handle_id,
-            )
-            for h in handles
+    fleet_rows = tuple(
+        SubAgentSummary(
+            text=(f"[{h.agent}] {h.task}" if h.agent else h.task)[:200],
+            status=h.status,
+            run_id=h.run_id or "",
+            handle_id=h.handle_id,
         )
-    return tuple(fallback)
+        for h in handles
+    )
+    surplus = tuple(fallback[len(fleet_rows) :])
+    return fleet_rows + surplus
 
 
 @dataclass(frozen=True)
@@ -2182,13 +2192,23 @@ class ConsoleAgentBridge:
                 tool_diff = _pair_step_diff(pending_diffs, step.tool_name)
             if agent_kind == AGENT_KIND_PRIMARY:
                 if step.kind == STEP_SPAWN:
-                    # PR2b Task 2: kept as the INLINE-path (fleet off)
-                    # fallback `_subagent_summaries_from_fleet` reads below
-                    # -- on a fleet-ON run this list is superseded by the
-                    # coordinator's own real per-child state as soon as
-                    # `service.fleet_snapshot()` is non-empty (see that
-                    # function's docstring), so entries appended here past
-                    # that point are dead weight, not wrong.
+                    # PR2b Task 2: the sole source of rows on the INLINE
+                    # path (fleet off) -- AND, on a fleet-ON run, still
+                    # the ONLY source for a child whose STEP_SPAWN step
+                    # has fired here but whose `fleet.reserve()` call (a
+                    # few lines below this, back in agent_runtime.py, in
+                    # the SAME synchronous spawn-processing step) has not
+                    # run yet. Round-2 review fix: an earlier version of
+                    # this comment called entries appended past that
+                    # point "dead weight" and dropped them outright in
+                    # `_subagent_summaries_from_fleet` whenever ANY handle
+                    # existed -- which made every child but the first
+                    # VANISH from the live rail for exactly one publish
+                    # (reproduced and fixed; see that function's own
+                    # docstring). Do not re-derive "dead weight" from this
+                    # comment and re-break it -- `_subagent_summaries_
+                    # from_fleet` MERGES this list with the fleet's real
+                    # handles, it does not just fall back to it.
                     subagents.append(SubAgentSummary(step.summary or ""))
                 # format_agent_step_marker is the single source of truth for
                 # marker text -- shared with resume_marker_messages below --
