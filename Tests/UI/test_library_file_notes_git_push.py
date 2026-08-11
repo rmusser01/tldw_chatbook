@@ -30,6 +30,9 @@ from Tests.UI.test_library_file_notes_git import (  # noqa: E402
     _status,
     _text,
 )
+from tldw_chatbook.Library.library_shell_state import (  # noqa: E402
+    library_disabled_action_label,
+)
 from tldw_chatbook.Notes.file_notes_git_push import (  # noqa: E402
     PushAuthorizationProjection,
     PushCandidateProjection,
@@ -1084,7 +1087,10 @@ async def test_push_panel_compact_review_and_result_matrix_is_keyboard_safe(
             lambda: back.has_focus,
             "compact push Back did not receive focus",
         )
-        assert str(primary.label) == primary_label
+        assert str(primary.label) == library_disabled_action_label(
+            primary_label,
+            not action_enabled,
+        )
         assert primary.region.width >= len(primary_label) + 2
         assert body.region.x == footer.region.x == panel.content_region.x
         assert body.region.width == footer.region.width == panel.content_region.width

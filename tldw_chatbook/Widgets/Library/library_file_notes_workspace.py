@@ -30,6 +30,10 @@ from tldw_chatbook.config import (
     get_cli_setting,
     get_user_data_dir,
 )
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_DISABLED_ACTION_MARKER,
+    library_disabled_action_label,
+)
 from tldw_chatbook.Notes.file_notes_git_service import (
     DiscoveryResult,
     GitActionResult,
@@ -3624,16 +3628,17 @@ class LibraryFileNotesWorkspace(Vertical):
         if transitioning:
             busy_reason = (
                 "File operation in progress; editor actions are temporarily "
-                "unavailable."
+                "unavailable. Wait for it to finish."
             )
         elif mutation_active:
             busy_reason = (
                 "Git operation in progress; editor actions are temporarily "
-                "unavailable."
+                "unavailable. Wait for it to finish."
             )
         self.query_one("#file-notes-action-status", Static).update(
             busy_reason or self._action_detail
         )
+        self._sync_editor_action_disabled_presentation()
         self._schedule_editor_action_layout()
         self.query_one("#file-notes-search", Input).disabled = transitioning
         self.query_one("#file-notes-path", Input).disabled = (
@@ -3647,6 +3652,19 @@ class LibraryFileNotesWorkspace(Vertical):
         )
         self._sync_editor_read_only()
         self._git_panel_widget.set_mutating(mutation_active)
+
+    def _sync_editor_action_disabled_presentation(self) -> None:
+        """Keep every disabled editor action readable and visibly inert."""
+        prefix = f"{LIBRARY_DISABLED_ACTION_MARKER} "
+        for button in self.query(".file-notes-toolbar Button"):
+            label = str(button.label)
+            base_label = label.removeprefix(prefix)
+            rendered_label = library_disabled_action_label(
+                base_label,
+                button.disabled,
+            )
+            if label != rendered_label:
+                button.label = rendered_label
 
     def _sync_editor_action_visibility(self) -> None:
         """Disclose only editor actions relevant to the retained state."""

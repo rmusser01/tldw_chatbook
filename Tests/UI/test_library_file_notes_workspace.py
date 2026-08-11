@@ -22,7 +22,9 @@ from textual.widgets import Button, Input, TextArea, Tree
 import Tests.UI._optional_module_stubs  # noqa: F401
 import tldw_chatbook.Widgets.Library.library_file_notes_workspace as workspace_module  # noqa: E402
 from tldw_chatbook.config import ConfigMutationResult  # noqa: E402
+from tldw_chatbook.css.Themes.themes import ALL_THEMES  # noqa: E402
 from tldw_chatbook.Library.library_shell_state import (  # noqa: E402
+    LIBRARY_DISABLED_ACTION_MARKER,
     LIBRARY_ROW_BROWSE_MEDIA,
     LIBRARY_ROW_BROWSE_NOTES,
 )
@@ -39,6 +41,10 @@ from tldw_chatbook.Notes.file_notes_service import (  # noqa: E402
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen  # noqa: E402
 from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (  # noqa: E402
     LibraryFileNotesWorkspace,
+)
+from tldw_chatbook.Widgets.Library.library_file_notes_git_panel import (  # noqa: E402
+    LibraryFileNotesGitPanel,
+    PushPanelResultProjection,
 )
 from Tests.UI.test_library_shell import (  # noqa: E402
     LIBRARY_TEST_SIZE,
@@ -59,6 +65,21 @@ class _WorkspaceHarness(App[None]):
 
     def compose(self) -> ComposeResult:
         yield self.workspace
+
+
+class _CssTrueWorkspaceHarness(_WorkspaceHarness):
+    """Mount File Notes with the production bundle and shipped themes."""
+
+    CSS_PATH = str(
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "css"
+        / "tldw_cli_modular.tcss"
+    )
+
+    def on_mount(self) -> None:
+        for theme in ALL_THEMES:
+            self.register_theme(theme)
 
 
 class _TwoWorkspaceHarness(App[None]):
@@ -231,6 +252,91 @@ def _static_text(workspace: LibraryFileNotesWorkspace, selector: str) -> str:
     widget = workspace.query_one(selector)
     renderable = widget.label if isinstance(widget, Button) else widget.renderable
     return getattr(renderable, "plain", str(renderable))
+
+
+def _relative_luminance(color) -> float:
+    """Return WCAG relative luminance for a Rich color."""
+    triplet = color.get_truecolor()
+
+    def channel(value: int) -> float:
+        srgb = value / 255
+        return srgb / 12.92 if srgb <= 0.04045 else ((srgb + 0.055) / 1.055) ** 2.4
+
+    return (
+        0.2126 * channel(triplet.red)
+        + 0.7152 * channel(triplet.green)
+        + 0.0722 * channel(triplet.blue)
+    )
+
+
+def _contrast_ratio(first, second) -> float:
+    """Return WCAG contrast for two Rich colors."""
+    lighter, darker = sorted(
+        (_relative_luminance(first), _relative_luminance(second)),
+        reverse=True,
+    )
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def _painted_style_of_text(app: App, region, needle: str):
+    """Return the compositor style that actually paints ``needle``."""
+    strips = list(app.screen._compositor.render_strips())
+    for y in range(region.y, region.y + region.height):
+        if y >= len(strips):
+            break
+        segments = list(strips[y]._segments)
+        row_text = "".join(segment.text for segment in segments)
+        index = row_text.find(needle)
+        if index == -1:
+            continue
+        x = 0
+        for segment in segments:
+            if x + len(segment.text) > index:
+                return segment.style
+            x += len(segment.text)
+    return None
+
+
+def _assert_legible_painted_text(
+    app: App,
+    widget,
+    needle: str,
+    *,
+    theme_name: str,
+) -> None:
+    style = _painted_style_of_text(app, widget.region, needle)
+    assert style is not None and style.color is not None
+    assert style.bgcolor is not None
+    ratio = _contrast_ratio(style.color, style.bgcolor)
+    assert ratio >= 3.0, (
+        f"{theme_name}: {needle!r} paints at {ratio:.2f}:1, below 3:1"
+    )
+
+
+def _show_disabled_git_result(
+    workspace: LibraryFileNotesWorkspace,
+) -> tuple[LibraryFileNotesGitPanel, Button]:
+    """Project a visible unavailable Git action with an explicit recovery."""
+    workspace._navigator_mode = "git"
+    workspace._narrow_view = "navigator"
+    workspace._apply_responsive_layout(workspace.size.width)
+    panel = workspace.query_one(
+        "#file-notes-git-panel",
+        LibraryFileNotesGitPanel,
+    )
+    panel.render_push_result(
+        PushPanelResultProjection(
+            title="Remote state could not be confirmed",
+            message="The reviewed commit may or may not have reached the remote.",
+            action="check_remote_again",
+            action_enabled=False,
+            disabled_reason=(
+                "Restore network access, then activate Check remote again."
+            ),
+        ),
+        operation_id=1,
+    )
+    return panel, panel.query_one("#file-notes-git-push-check-remote", Button)
 
 
 def _tree_labels(tree: Tree) -> list[str]:
@@ -3336,6 +3442,209 @@ async def test_file_notes_discloses_actions_by_editor_state_and_redirects_focus(
                 workspace,
                 "#file-notes-action-status",
             ).lower()
+
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_disabled_file_notes_actions_carry_marker_and_visible_recovery(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "state.md").write_text("saved\n", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        autosave_delay=10,
+        poll_interval=10,
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        assert await workspace.open_path("state.md")
+
+        with workspace._hold_path_transition() as transition:
+            assert transition is not None
+            await pilot.pause()
+            new_button = workspace.query_one("#file-notes-new", Button)
+            assert new_button.disabled and new_button.display
+            assert str(new_button.label).startswith(
+                f"{LIBRARY_DISABLED_ACTION_MARKER} "
+            )
+            busy_reason = _static_text(workspace, "#file-notes-action-status")
+            assert "temporarily unavailable" in busy_reason.lower()
+            assert "wait" in busy_reason.lower()
+
+        panel, check_remote = _show_disabled_git_result(workspace)
+        await pilot.pause()
+        assert panel.display
+        assert check_remote.display and check_remote.disabled
+        assert str(check_remote.label).startswith(
+            f"{LIBRARY_DISABLED_ACTION_MARKER} "
+        )
+        reason = panel.query_one("#file-notes-git-push-result-reason")
+        assert reason.display
+        assert "Restore network access" in str(reason.renderable)
+        assert "Check remote again" in str(reason.renderable)
+
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_disabled_file_notes_actions_meet_contrast_in_every_shipped_theme(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "contrast.md").write_text("saved\n", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        autosave_delay=10,
+        poll_interval=10,
+    )
+    theme_names = tuple(
+        dict.fromkeys(
+            ("textual-dark", "textual-light", *(theme.name for theme in ALL_THEMES))
+        )
+    )
+
+    async with _production_workspace_context(workspace, size=(120, 40)) as pilot:
+        assert await workspace.open_path("contrast.md")
+        with workspace._hold_path_transition() as transition:
+            assert transition is not None
+            panel, git_button = _show_disabled_git_result(workspace)
+            await pilot.pause()
+            workspace_button = workspace.query_one("#file-notes-new", Button)
+            workspace_reason = workspace.query_one("#file-notes-action-status")
+            git_reason = panel.query_one("#file-notes-git-push-result-reason")
+
+            for theme_name in theme_names:
+                pilot.app.theme = theme_name
+                workspace._navigator_mode = "files"
+                workspace._narrow_view = "editor"
+                workspace._apply_responsive_layout(workspace.size.width)
+                await pilot.pause()
+                await pilot.pause()
+                assert workspace_button.disabled and workspace_button.display
+                assert workspace_button.styles.opacity == 1.0
+                workspace_label = str(workspace_button.label)
+                assert workspace_label.startswith(
+                    f"{LIBRARY_DISABLED_ACTION_MARKER} "
+                )
+                _assert_legible_painted_text(
+                    pilot.app,
+                    workspace_button,
+                    workspace_label,
+                    theme_name=theme_name,
+                )
+                _assert_legible_painted_text(
+                    pilot.app,
+                    workspace_reason,
+                    "File operation in progress",
+                    theme_name=theme_name,
+                )
+
+                workspace._navigator_mode = "git"
+                workspace._narrow_view = "navigator"
+                workspace._apply_responsive_layout(workspace.size.width)
+                await pilot.pause()
+                assert git_button.disabled and git_button.display
+                assert git_button.styles.opacity == 1.0
+                git_label = str(git_button.label)
+                assert git_label.startswith(f"{LIBRARY_DISABLED_ACTION_MARKER} ")
+                _assert_legible_painted_text(
+                    pilot.app,
+                    git_button,
+                    f"{LIBRARY_DISABLED_ACTION_MARKER} Check",
+                    theme_name=theme_name,
+                )
+                _assert_legible_painted_text(
+                    pilot.app,
+                    git_reason,
+                    "Restore network access",
+                    theme_name=theme_name,
+                )
+
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_disabled_file_notes_actions_keep_legibility_at_40_columns(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "compact.md").write_text("saved\n", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        autosave_delay=10,
+        poll_interval=10,
+    )
+
+    async with _CssTrueWorkspaceHarness(workspace).run_test(
+        size=(40, 20)
+    ) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        assert await workspace.open_path("compact.md")
+        with workspace._hold_path_transition() as transition:
+            assert transition is not None
+            workspace._narrow_view = "editor"
+            workspace._apply_responsive_layout(workspace.size.width)
+            await pilot.pause()
+            workspace_button = workspace.query_one("#file-notes-new", Button)
+            workspace_reason = workspace.query_one("#file-notes-action-status")
+
+            for theme_name in (
+                "textual-dark",
+                "textual-light",
+                "high_contrast_yellow_black",
+            ):
+                pilot.app.theme = theme_name
+                await pilot.pause()
+                label = str(workspace_button.label)
+                _assert_legible_painted_text(
+                    pilot.app,
+                    workspace_button,
+                    label,
+                    theme_name=theme_name,
+                )
+                _assert_legible_painted_text(
+                    pilot.app,
+                    workspace_reason,
+                    "File operation in progress",
+                    theme_name=theme_name,
+                )
+
+            panel, git_button = _show_disabled_git_result(workspace)
+            git_reason = panel.query_one("#file-notes-git-push-result-reason")
+            git_reason.scroll_visible(animate=False)
+            await pilot.pause()
+            for theme_name in (
+                "textual-dark",
+                "textual-light",
+                "high_contrast_yellow_black",
+            ):
+                pilot.app.theme = theme_name
+                await pilot.pause()
+                label = str(git_button.label)
+                _assert_legible_painted_text(
+                    pilot.app,
+                    git_button,
+                    f"{LIBRARY_DISABLED_ACTION_MARKER} Check",
+                    theme_name=theme_name,
+                )
+                _assert_legible_painted_text(
+                    pilot.app,
+                    git_reason,
+                    "Restore network access",
+                    theme_name=theme_name,
+                )
 
     replica.close()
 

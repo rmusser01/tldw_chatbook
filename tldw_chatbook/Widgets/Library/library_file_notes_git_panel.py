@@ -21,6 +21,10 @@ from textual.screen import ModalScreen
 from textual.widget import Widget
 from textual.widgets import Button, Input, Label, ListItem, ListView, Static, TextArea
 
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_DISABLED_ACTION_MARKER,
+    library_disabled_action_label,
+)
 from tldw_chatbook.Notes.file_notes_git_commit import (
     CommitIncludedNote,
     CommitOutcome,
@@ -1742,6 +1746,7 @@ class LibraryFileNotesGitPanel(Vertical):
         button.disabled = not show_action
         button.display = show_action
         zero.display = available and count == 0
+        self._sync_disabled_action_presentation()
         self._sync_action_layout(self.content_region.width)
         if focused is button and not show_action:
             self.screen.set_focus(
@@ -1771,6 +1776,7 @@ class LibraryFileNotesGitPanel(Vertical):
         show_action = available and not self._mutating
         button.display = show_action
         button.disabled = not show_action
+        self._sync_disabled_action_presentation()
         self._sync_action_layout(self.content_region.width)
         if focused is button and not show_action:
             self.screen.set_focus(
@@ -2004,6 +2010,7 @@ class LibraryFileNotesGitPanel(Vertical):
             self.query_one(f"#{action_id}", Button).disabled = (
                 not self._push_result.action_enabled
             )
+        self._sync_disabled_action_presentation()
         self._sync_push_footer_layout(self.size.width)
 
     def _sync_workflow_surfaces(self) -> None:
@@ -2437,6 +2444,7 @@ class LibraryFileNotesGitPanel(Vertical):
                 "#file-notes-git-commit-check-again",
                 Button,
             ).disabled = recovery is None
+        self._sync_disabled_action_presentation()
 
     def _focus_commit_control(self, selector: str) -> None:
         self.call_after_refresh(
@@ -2654,8 +2662,11 @@ class LibraryFileNotesGitPanel(Vertical):
         """Render transient mutation state without owning its lifecycle."""
         self._mutating = active
         if active:
+            status = "Status: UPDATING INDEX"
+            if detail:
+                status += f" · {detail}"
             self.set_current_status(
-                "Status: UPDATING INDEX" + (f" — {detail}" if detail else "")
+                status + ". Actions are unavailable until this operation finishes."
             )
         elif detail:
             self.set_current_status(detail)
@@ -2989,8 +3000,22 @@ class LibraryFileNotesGitPanel(Vertical):
         unstage_all.display = bulk_actions.display and unstage_count > 0
         stage_all.disabled = not (can_mutate and stage_count > 0)
         unstage_all.disabled = not (can_mutate and unstage_count > 0)
+        self._sync_disabled_action_presentation()
         self._sync_action_layout(self.content_region.width)
         self._repair_hidden_focus(focused, back, trust, refresh)
+
+    def _sync_disabled_action_presentation(self) -> None:
+        """Mark disabled Session Git actions without relying on color alone."""
+        prefix = f"{LIBRARY_DISABLED_ACTION_MARKER} "
+        for button in self.query(Button):
+            label = str(button.label)
+            base_label = label.removeprefix(prefix)
+            rendered_label = library_disabled_action_label(
+                base_label,
+                button.disabled,
+            )
+            if label != rendered_label:
+                button.label = rendered_label
 
     def _settle_action_focus(self, target: Button) -> None:
         """Finish action focus repair without stealing focus outside the panel."""
