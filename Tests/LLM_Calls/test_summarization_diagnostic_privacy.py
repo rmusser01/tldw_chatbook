@@ -21,6 +21,7 @@ from typing import Any, Callable, Iterator
 import pytest
 from loguru import logger as loguru_logger
 
+from scripts import check_persistent_diagnostic_inventory as diagnostic_inventory
 from tldw_chatbook.LLM_Calls import Local_Summarization_Lib as local_summarization
 from tldw_chatbook.LLM_Calls import (
     Summarization_General_Lib as general_summarization,
@@ -29,6 +30,7 @@ from tldw_chatbook.LLM_Calls import (
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 LEDGER_PATH = REPO_ROOT / "Tests/fixtures/summarization_diagnostic_review.json"
+INVENTORY_PATH = REPO_ROOT / "Docs/security/production-diagnostic-inventory.json"
 STARTING_PROJECTION_SHA256 = (
     "a4c9ba5f999199f02fd1c6186d1d88120f6d5f696071127ee192dff2c3503047"
 )
@@ -956,10 +958,48 @@ def _single_call(source: str):
     return calls[0]
 
 
-def _ledger_sites() -> list[dict[str, object]]:
+def _review_fixture() -> dict[str, object]:
     ledger = json.loads(LEDGER_PATH.read_text(encoding="utf-8"))
     assert ledger["schema_version"] == 1
+    return ledger
+
+
+def _ledger_sites() -> list[dict[str, object]]:
+    ledger = _review_fixture()
     return ledger["sites"]
+
+
+def _canonical_sha256(value: object) -> str:
+    encoded = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _non_owned_inventory_projection(
+    inventory: dict[str, object], owned_paths: set[str]
+) -> dict[str, object]:
+    summary = inventory["summary"]
+    assert isinstance(summary, dict)
+    owners = inventory["owners"]
+    assert isinstance(owners, list)
+    return {
+        "schema_version": inventory["schema_version"],
+        "scope": inventory["scope"],
+        "classification_rules": inventory["classification_rules"],
+        "reviewed_exclusions": inventory["reviewed_exclusions"],
+        # TASK-492's total is derived from the two intentionally changed counts.
+        "summary": {
+            key: value for key, value in summary.items() if key != "task_492_calls"
+        },
+        "owners": [
+            owner
+            for owner in owners
+            if isinstance(owner, dict) and owner.get("path") not in owned_paths
+        ],
+    }
 
 
 def _starting_projection(
@@ -2108,6 +2148,94 @@ logger.error("ordinary failure", exc_info=False, stack_info=None)
             AssertionError, match="must not capture exception or traceback"
         ):
             _guard().assert_review_outcome(calls[0], calls[0], outcome=outcome)
+
+
+def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> None:
+    fixture = _review_fixture()
+    boundary = fixture["manifest_boundary"]
+    assert isinstance(boundary, dict)
+    expected_owned_entries = boundary["owned_entries"]
+    assert isinstance(expected_owned_entries, list)
+    owned_paths = {
+        entry["path"] for entry in expected_owned_entries if isinstance(entry, dict)
+    }
+    assert owned_paths == set(MODULE_COUNTS)
+
+    checked_inventory = json.loads(INVENTORY_PATH.read_text(encoding="utf-8"))
+    generated_inventory = diagnostic_inventory.build_inventory()
+    inventories = {
+        "checked": checked_inventory,
+        "generated": generated_inventory,
+    }
+    owner_maps: dict[str, dict[str, dict[str, object]]] = {}
+    for name, inventory in inventories.items():
+        assert (
+            _canonical_sha256(_non_owned_inventory_projection(inventory, owned_paths))
+            == boundary["non_owned_inventory_sha256"]
+        ), f"{name} inventory changed outside the two summarization owners"
+        assert (
+            _canonical_sha256(inventory["persistent_sink_topology"])
+            == boundary["persistent_sink_topology_sha256"]
+        ), f"{name} persistent-sink topology changed"
+
+        owners = inventory["owners"]
+        assert isinstance(owners, list)
+        owner_map = {
+            owner["path"]: owner for owner in owners if isinstance(owner, dict)
+        }
+        owner_maps[name] = owner_map
+        owned_entries = [
+            {key: owner_map[path][key] for key in ("path", "owner", "reason")}
+            for path in sorted(owned_paths)
+        ]
+        assert owned_entries == expected_owned_entries
+        for path in owned_paths:
+            assert set(owner_map[path]) == {
+                "path",
+                "owner",
+                "reason",
+                "call_count",
+                "diagnostic_digest",
+            }
+
+    mutable_fields = {"call_count", "diagnostic_digest"}
+    for path in owned_paths:
+        checked_owner = owner_maps["checked"][path]
+        generated_owner = owner_maps["generated"][path]
+        changed_fields = {
+            key
+            for key in checked_owner.keys() | generated_owner.keys()
+            if checked_owner.get(key) != generated_owner.get(key)
+        }
+        assert changed_fields <= mutable_fields
+
+    checked_summary = checked_inventory["summary"]
+    generated_summary = generated_inventory["summary"]
+    checked_task_492_calls = checked_summary["task_492_calls"]
+    generated_task_492_calls = generated_summary["task_492_calls"]
+    owned_count_delta = sum(
+        owner_maps["generated"][path]["call_count"]
+        - owner_maps["checked"][path]["call_count"]
+        for path in owned_paths
+    )
+    assert generated_task_492_calls - checked_task_492_calls == owned_count_delta
+
+    sites = _ledger_sites()
+    deleted_by_module = Counter(
+        site["module"] for site in sites if site["outcome"] == "deleted"
+    )
+    assert deleted_by_module == {
+        "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py": 13,
+        "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py": 10,
+    }
+    for path, starting_count in MODULE_COUNTS.items():
+        assert owner_maps["generated"][path]["call_count"] == (
+            starting_count - deleted_by_module[path]
+        )
+
+    assert checked_inventory == generated_inventory, (
+        "the checked manifest must be regenerated by the canonical inventory checker"
+    )
 
 
 def test_ledger_retains_all_523_starting_sites() -> None:

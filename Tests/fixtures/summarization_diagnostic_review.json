@@ -1,5 +1,21 @@
 {
   "schema_version": 1,
+  "manifest_boundary": {
+    "non_owned_inventory_sha256": "0ba6382ea19d982b3af668e281a8d49316eb00b2353e81705f2a9a9fbcab6106",
+    "persistent_sink_topology_sha256": "b200fed24eb91b60f65ddef2da0934eb386a117396802bc96f6b63dac5c35ffa",
+    "owned_entries": [
+      {
+        "path": "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py",
+        "owner": "TASK-492",
+        "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+      },
+      {
+        "path": "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py",
+        "owner": "TASK-492",
+        "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+      }
+    ]
+  },
   "sites": [
     {"site_id": "local-a97c10521101e903", "module": "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py", "qualname": "summarize_with_local_llm", "group": "local_core", "starting_classification": "reviewed_safe", "safe_reason": "fixed operational message", "starting": {"method": "debug", "event": "openai: Using provided string data for summarization", "occurrence": 1, "message_shape": "Constant(value='openai: Using provided string data for summarization')", "expressions": [], "captures_exception": false}, "outcome": "frozen", "current": {"method": "debug", "event": "openai: Using provided string data for summarization", "occurrence": 1, "message_shape": "Constant(value='openai: Using provided string data for summarization')", "expressions": [], "captures_exception": false}, "navigation_line": 45},
     {"site_id": "local-1c40ada90a59a543", "module": "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py", "qualname": "summarize_with_local_llm", "group": "local_core", "starting_classification": "private", "category": "raw/processed/extracted input", "starting": {"method": "debug", "event": "Local LLM: Loaded data: ", "occurrence": 1, "message_shape": "JoinedStr(values=[Constant(value='Local LLM: Loaded data: '), FormattedValue(value=Name(id='data', ctx=Load()), conversion=-1)])", "expressions": ["data"], "captures_exception": false}, "outcome": "deleted", "current": null, "navigation_line": 48, "deletion_reason": "Redundant input-value dump removed; adjacent input/type lifecycle diagnostics remain."},

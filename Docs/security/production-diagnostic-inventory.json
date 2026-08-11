@@ -831,15 +831,15 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 242,
-      "diagnostic_digest": "57a407b4a573f4d946bf",
+      "call_count": 229,
+      "diagnostic_digest": "1ccaf200dcf244f3effc",
       "owner": "TASK-492",
       "path": "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 281,
-      "diagnostic_digest": "ce012f70f7dd05c403ef",
+      "call_count": 271,
+      "diagnostic_digest": "ef765a9c0027df240b11",
       "owner": "TASK-492",
       "path": "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -3582,7 +3582,7 @@
   "summary": {
     "owner_files": 485,
     "persistent_sink_files": 6,
-    "task_492_calls": 1167,
+    "task_492_calls": 1144,
     "task_494_calls": 6962
   }
 }
