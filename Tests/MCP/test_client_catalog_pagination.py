@@ -314,6 +314,102 @@ async def test_connect_cancellation_forces_hung_cleanup_and_removes_state(
     assert client.servers == {}
 
 
+@pytest.mark.parametrize(
+    ("failure_stage", "expected_message", "expected_wait_calls", "expected_kills"),
+    [
+        pytest.param(
+            "stdin-close",
+            "Failed to close MCP subprocess stdin during forced cleanup",
+            1,
+            0,
+            id="stdin-close",
+        ),
+        pytest.param(
+            "initial-wait",
+            "Failed to wait for MCP subprocess termination during forced cleanup",
+            2,
+            1,
+            id="initial-wait",
+        ),
+        pytest.param(
+            "final-reap",
+            "Failed to reap MCP subprocess after forced cleanup",
+            2,
+            1,
+            id="final-reap",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_forced_cleanup_reports_failures_and_finalizes_registry(
+    failure_stage: str,
+    expected_message: str,
+    expected_wait_calls: int,
+    expected_kills: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinel = "private-cleanup-payload"
+    logged: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    class FailingStdin(_Stdin):
+        def close(self) -> None:
+            self.closed = True
+            if failure_stage == "stdin-close":
+                raise RuntimeError(sentinel)
+
+    class FailingProcess(_Process):
+        def __init__(self) -> None:
+            super().__init__()
+            self.stdin = FailingStdin()
+
+        def terminate(self) -> None:
+            self.terminate_calls += 1
+            if failure_stage == "stdin-close":
+                self.returncode = 0
+
+        async def wait(self) -> int:
+            self.wait_calls += 1
+            if failure_stage == "initial-wait" and self.wait_calls == 1:
+                raise RuntimeError(sentinel)
+            if failure_stage == "final-reap":
+                if self.wait_calls == 1:
+                    await asyncio.Future()
+                raise RuntimeError(sentinel)
+            return self.returncode or 0
+
+    process = FailingProcess()
+
+    class Session:
+        def __init__(self) -> None:
+            self.process = process
+
+        async def close(self) -> None:
+            await asyncio.Future()
+
+    session = Session()
+    client = client_module.MCPClient(name="forced-cleanup-client")
+    client.sessions["server"] = session  # type: ignore[assignment]
+    client.servers["server"] = {"command": "fake"}
+    monkeypatch.setattr(client_module, "CLEANUP_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(client_module, "_TERMINATE_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(
+        client_module.logger,
+        "warning",
+        lambda *args, **kwargs: logged.append((args, kwargs)),
+    )
+
+    await asyncio.wait_for(client._bounded_teardown_connection("server"), timeout=1)
+
+    assert logged == [((expected_message,), {})]
+    assert sentinel not in repr(logged)
+    assert process.stdin.closed
+    assert process.terminate_calls == 1
+    assert process.wait_calls == expected_wait_calls
+    assert process.kill_calls == expected_kills
+    assert client.sessions == {}
+    assert client.servers == {}
+
+
 @pytest.mark.asyncio
 async def test_connect_deeply_detaches_server_metadata_cache(
     monkeypatch: pytest.MonkeyPatch,

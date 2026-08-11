@@ -1213,26 +1213,34 @@ class MCPClient:
             try:
                 stdin.close()
             except Exception:
-                pass
+                logger.warning(
+                    "Failed to close MCP subprocess stdin during forced cleanup"
+                )
         if process is None or getattr(process, "returncode", None) is not None:
             return
         try:
             process.terminate()
         except Exception:
-            pass
+            logger.warning("Failed to terminate MCP subprocess during forced cleanup")
         try:
             await asyncio.wait_for(process.wait(), timeout=_TERMINATE_TIMEOUT_SECONDS)
             return
+        except asyncio.TimeoutError:
+            logger.debug("MCP subprocess did not terminate before forced cleanup")
         except Exception:
-            pass
+            logger.warning(
+                "Failed to wait for MCP subprocess termination during forced cleanup"
+            )
         try:
             process.kill()
         except Exception:
             return
         try:
             await asyncio.wait_for(process.wait(), timeout=_TERMINATE_TIMEOUT_SECONDS)
+        except asyncio.TimeoutError:
+            logger.warning("Timed out reaping MCP subprocess after forced cleanup")
         except Exception:
-            pass
+            logger.warning("Failed to reap MCP subprocess after forced cleanup")
 
     async def _finish_connection_cleanup(
         self,
