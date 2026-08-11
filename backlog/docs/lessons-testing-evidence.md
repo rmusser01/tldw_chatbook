@@ -28,10 +28,14 @@ already teaches a version of this lesson ("the tests asserted the things a
 test naturally reaches for ... none of which is what was wrong").
 
 **What to do.** When the defect is "the user cannot SEE something," the
-oracle must be the rendered frame (`export_screenshot`/`export_text`, or the
-tmux capture live), not computed styles: `styles.border`, `styles.height`,
-and `region` all report the widget's own properties and are blind to
-anything painted over it — outlines, overlays, tooltips, sibling z-order.
+oracle must be the rendered frame, not computed styles: in run_test that
+means `app.export_screenshot()` (the SVG carries every glyph as text, so a
+plain `in` assertion works) or the compositor strips the existing UI tests
+use — NOT `App.export_text()`, which does not exist in this repo's Textual
+(8.2.7; the probe that first tried it died on AttributeError) — and live it
+means the tmux `capture-pane` text. `styles.border`, `styles.height`, and
+`region` all report the widget's own properties and are blind to anything
+painted over it — outlines, overlays, tooltips, sibling z-order.
 Before declaring a live-vs-harness divergence, confirm both sides were asked
 the SAME question at the same oracle level; here the "divergence" was one
 side being read at the style level and the other at the pixel level.
