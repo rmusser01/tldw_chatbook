@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
-import sys
 import threading
-import types
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -20,9 +18,7 @@ from textual.containers import Vertical
 from textual.css.query import NoMatches
 from textual.widgets import Button, Input, TextArea, Tree
 
-# Avoid importing the unrelated optional MLX stack during focused UI tests.
-sys.modules.setdefault("parakeet_mlx", types.ModuleType("parakeet_mlx"))
-
+import Tests.UI._optional_module_stubs  # noqa: F401
 import tldw_chatbook.Widgets.Library.library_file_notes_workspace as workspace_module  # noqa: E402
 from tldw_chatbook.config import ConfigMutationResult  # noqa: E402
 from tldw_chatbook.Library.library_shell_state import (  # noqa: E402
@@ -2564,7 +2560,19 @@ async def test_file_notes_discloses_actions_by_editor_state_and_redirects_focus(
             "file-notes-refresh",
         }
 
+        delete = workspace.query_one("#file-notes-delete", Button)
         editor = workspace.query_one("#file-notes-editor", TextArea)
+        delete.focus()
+        await pilot.pause()
+        assert delete.has_focus
+        with workspace._hold_path_transition() as transition:
+            assert transition is not None
+            editor.focus()
+            await pilot.pause()
+            assert editor.has_focus
+        await pilot.pause()
+        assert editor.has_focus
+
         _replace_editor_text(editor, "dirty recovery")
         await _wait_until(
             pilot,
@@ -2582,7 +2590,6 @@ async def test_file_notes_discloses_actions_by_editor_state_and_redirects_focus(
         }
 
         assert await workspace.flush_pending_work()
-        delete = workspace.query_one("#file-notes-delete", Button)
         delete.focus()
         delete.press()
         await _wait_until(

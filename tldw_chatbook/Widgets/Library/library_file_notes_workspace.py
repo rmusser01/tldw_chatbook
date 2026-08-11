@@ -3491,7 +3491,12 @@ class LibraryFileNotesWorkspace(Vertical):
             ):
                 candidate = self.query_one(selector, Button)
                 if candidate.display and not candidate.disabled:
-                    candidate.focus()
+                    focused = self.app.focused
+                    if (
+                        focused is None
+                        or focused.id == self._editor_action_focus_target
+                    ):
+                        candidate.focus()
                     self._editor_action_focus_target = None
                     break
 

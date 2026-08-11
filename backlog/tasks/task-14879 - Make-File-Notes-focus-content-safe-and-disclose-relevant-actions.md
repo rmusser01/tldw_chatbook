@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-09 23:20'
-updated_date: '2026-08-10 17:35'
+updated_date: '2026-08-10 18:27'
 labels:
   - notes
   - library
@@ -49,5 +49,6 @@ Reason: this is a scoped focus, hierarchy, and action-disclosure refinement with
 - Projected editor actions from retained state: New/Refresh form the baseline, active files reveal Move/Delete/Protect/Reload, Save Copy appears only for recovery states, and tombstones reveal Restore. Structural operations preserve the visible set, disable it with an explicit reason, and restore keyboard focus when an action disappears.
 - Kept the retained compose tree and every file operation intact. Added targeted intrinsic relayout for Confirm delete and Protect/Unprotect so labels remain complete without forcing the compact grid when the distilled set already fits.
 - Updated mounted regressions for production focus styles, empty/active/recovery/tombstone disclosure, focus repair, busy reasons, 160x45/120x40/64x28 geometry, and existing 40x20 Session Git/editor interactions.
+- Qodo follow-up guards busy-start action focus restoration so it runs only when focus was actually lost or stayed on the original action, preserves an intentional focus move while work is in progress, and keeps the optional-MLX test shim behind a contiguous local import. The mounted regression covers focus movement into the editor across a busy transition and fails when unconditional restoration is reintroduced.
 - Verification: `Tests/UI/test_library_file_notes_workspace.py` 41 passed; selected compact/Session Git regressions 3 passed; `test_non_obscuring_focus_contract.py` 100 passed; `test_css_build_integrity.py` 9 passed; targeted Ruff, Python compilation, CSS regeneration, and scoped `git diff --check` passed. Pytest reported only pre-existing configuration/deprecation/privacy warnings.
 - ADR required: no. The change conforms to ADR-011 and ADR-029 and does not alter storage, synchronization, ownership, or guarded Git behavior.
