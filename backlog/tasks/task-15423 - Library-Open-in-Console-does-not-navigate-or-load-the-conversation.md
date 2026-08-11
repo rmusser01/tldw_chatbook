@@ -49,3 +49,46 @@ button (and the search asymmetry) misleads.
 - [ ] Activating "Open in Console" on a conversation either opens it in Console or surfaces a visible, accurate reason it cannot
 - [ ] Console's conversation search finds DB conversations that Library finds, or the two surfaces' differing scopes are made explicit in the UI
 <!-- AC:END -->
+
+## Investigation Notes (2026-08-11, follow-up session)
+
+<!-- SECTION:NOTES:BEGIN -->
+Root-caused live; the original "silently does nothing" framing was WRONG in
+one respect and right in a sharper one:
+
+- **It is not silent.** The button's handler
+  (`library_screen.py` `_open_selected_conversation_handoff`) posts a
+  warning toast on every guard; the original UAT captures (~4-5s after the
+  click) missed the transient toast. Caught live this session: "Copy or
+  link blocked Library sources into the active workspace before using them
+  in Console."
+- **The real defect candidate is the all-or-nothing gate.**
+  `build_library_workspace_depth_state` (`Workspaces/display_state.py`)
+  computes `handoff_enabled = bool(rows) and blocked_count == 0` — ONE
+  workspace-ineligible row anywhere in the visible Library disables
+  "Open in Console" for EVERY conversation, including fully eligible ones.
+  Reproduced deterministically: a Console-created conversation handed off
+  fine (navigated to Console, staged as source context, auto-sent); after
+  seeding ONE foreign-client conversation into the DB, the SAME action on
+  ANY conversation is blocked. Per-item eligibility already exists
+  (`row.active_context_eligible`), and the handoff label itself renders
+  "N eligible, M blocked" — the UI acknowledges mixed states while the
+  gate does not. The media handoff shares the same aggregate gate by
+  documented intent ("identical workspace-staging policy"), so relaxing it
+  to per-item gating is a workspace-policy decision for the owner, not a
+  unilateral fix.
+- The toast copy compounds it: a user clicking on an ELIGIBLE conversation
+  is told about "blocked Library sources" collectively, with no hint their
+  selected item is fine and some OTHER row is the blocker.
+- "Open in Console" also does not open the transcript — it stages the
+  conversation as SOURCE CONTEXT into a Console session and auto-sends a
+  "Use this conversation as source context" turn. Whether that matches the
+  label's promise is a second, smaller copy question.
+- The Console-rail search asymmetry from the original report (Console's
+  "Search conversations" found 0 for a conversation Library sees) remains
+  unverified-in-mechanism and stays open.
+
+Recommended AC revision for the implementing task, pending owner ruling:
+gate the single-item action on the SELECTED row's eligibility, keep the
+aggregate gate for bulk staging, and name the blocking row in the toast.
+<!-- SECTION:NOTES:END -->
