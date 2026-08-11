@@ -150,6 +150,13 @@ async def test_persisted_run_state_reaches_the_mounted_agent_rail_statics(tmp_pa
         assert "summarize docs" in subagents_text
 
         console._sync_console_agent_section()
+        # The fleet mini-section goes from 0 rows (nothing set up yet at
+        # initial compose) to 2 -- a structural change, so `sync_state`
+        # schedules a `refresh(recompose=True)` rather than patching in
+        # place (`ConsoleInspectorSection.sync_state`'s own discipline,
+        # Task 3). The row Statics queried below don't exist until that
+        # recompose actually runs.
+        await pilot.pause()
 
         assert _static_text(console, "#console-agent-section-status") == "Agent: done"
         assert "final answer" in _static_text(console, "#console-agent-section-steps")
@@ -164,6 +171,24 @@ async def test_persisted_run_state_reaches_the_mounted_agent_rail_statics(tmp_pa
         )
         assert "research pricing" in painted_subagents
         assert "summarize docs" in painted_subagents
+        # Review round 2 (Task 4 approval, one Medium finding): the check
+        # above reads `InspectorSectionRow` value objects -- plain Python
+        # attributes the controller built, not what the compositor actually
+        # painted. Blanking every row's rendered Static content left this
+        # test green (the reviewer proved it; mutation-verified again
+        # below). This IS the historical/resumed path (nothing live has
+        # ever run in this process -- see the docstring), the one path
+        # whose real DOM rendering was otherwise unguarded anywhere in the
+        # suite: `test_state_2_expanded_rows_render_two_painted_lines_per_
+        # child` (`Tests/UI/test_console_fleet_panel.py`) only exercises the
+        # LIVE-handle row builder. Read the REAL mounted row Statics too.
+        painted_row_statics = " ".join(
+            f"{_static_text(console, f'#console-inspector-section-agent-fleet-row-{i}-primary')} "
+            f"{_static_text(console, f'#console-inspector-section-agent-fleet-row-{i}-secondary')}"
+            for i in range(len(fleet_section.rows))
+        )
+        assert "research pricing" in painted_row_statics
+        assert "summarize docs" in painted_row_statics
 
 
 @pytest.mark.asyncio
