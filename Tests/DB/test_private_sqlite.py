@@ -55,7 +55,10 @@ COPY_BACKUP_OWNER_IDS = (
     "settings.single_backup",
     "tts.profile_restore_stage",
 )
-OPEN_CONNECTION_BACKUP_OWNER_IDS = ("tts.profile_backup",)
+OPEN_CONNECTION_BACKUP_OWNER_IDS = (
+    "tts.profile_backup",
+    "tts.profile_migration_backup",
+)
 RESTORE_BACKUP_OWNER_IDS = (
     "settings.pre_restore_backup",
     "settings.restore",
