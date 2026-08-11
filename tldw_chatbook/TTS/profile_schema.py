@@ -47,6 +47,13 @@ from tldw_chatbook.TTS.migrations.v2_to_v3 import (
     REFERENCE_TABLE_DDL as _REFERENCE_TABLE_DDL,
 )
 from tldw_chatbook.TTS.migrations.v2_to_v3 import migrate as _migrate_v2_to_v3
+from tldw_chatbook.TTS.migrations.v3_to_v4 import (
+    REFERENCE_ID_INDEX_DDL as _V4_REFERENCE_ID_INDEX_DDL,
+)
+from tldw_chatbook.TTS.migrations.v3_to_v4 import (
+    REFERENCE_TABLE_DDL as _V4_REFERENCE_TABLE_DDL,
+)
+from tldw_chatbook.TTS.migrations.v3_to_v4 import migrate as _migrate_v3_to_v4
 from tldw_chatbook.TTS.profile_types import (
     AssignedTTSProfileSnapshot,
     CharacterRef,
@@ -58,7 +65,7 @@ from tldw_chatbook.TTS.profile_types import (
     canonical_json_options,
 )
 
-CURRENT_PROFILE_SCHEMA_VERSION = 3
+CURRENT_PROFILE_SCHEMA_VERSION = 4
 BUSY_TIMEOUT_MS = 5_000
 _DEADLINE_PROGRESS_OPCODE_INTERVAL = 1_000
 _MAX_PERSISTED_DISPLAY_NAME_CHARACTERS = 128
@@ -381,6 +388,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     0: _migrate_v0_to_v1,
     1: _migrate_v1_to_v2,
     2: _migrate_v2_to_v3,
+    3: _migrate_v3_to_v4,
 }
 
 
@@ -441,10 +449,14 @@ def _validate_owned_schema_sql(
             _ASSIGNMENT_PROFILE_INDEX_DDL
         ),
     }
-    if schema_version == 3:
-        expected[("table", _REFERENCE_TABLE)] = _normalized_ddl(_REFERENCE_TABLE_DDL)
+    if schema_version in (3, 4):
+        expected[("table", _REFERENCE_TABLE)] = _normalized_ddl(
+            _REFERENCE_TABLE_DDL if schema_version == 3 else _V4_REFERENCE_TABLE_DDL
+        )
         expected[("index", _REFERENCE_ID_INDEX)] = _normalized_ddl(
             _REFERENCE_ID_INDEX_DDL
+            if schema_version == 3
+            else _V4_REFERENCE_ID_INDEX_DDL
         )
     actual: dict[tuple[str, str], str] = {}
     for row in connection.execute(
@@ -588,7 +600,7 @@ def _validate_schema(
             if expected_version is None
             else expected_version
         )
-        if type(version) is not int or version not in (1, 2, 3):
+        if type(version) is not int or version not in (1, 2, 3, 4):
             raise ValueError
         _run_with_deadline_progress(
             connection,
@@ -612,7 +624,7 @@ def _validate_schema_body(
         if connection.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
             raise ValueError
         expected_tables = {PROFILE_TABLE, ASSIGNMENT_TABLE}
-        if schema_version == 3:
+        if schema_version in (3, 4):
             expected_tables.add(_REFERENCE_TABLE)
         if _user_tables(connection) != expected_tables:
             raise ValueError
@@ -700,12 +712,12 @@ def _validate_schema_body(
         ) != (PROFILE_TABLE, "profile_id", "profile_id", "RESTRICT"):
             raise ValueError
 
-        if schema_version == 3:
+        if schema_version in (3, 4):
             quoted_reference_table = _validated_quoted_identifier(
                 _REFERENCE_TABLE,
                 "table name",
             )
-            if _table_xinfo_manifest(connection, _REFERENCE_TABLE) != [
+            expected_reference_manifest = [
                 (0, "profile_id", "TEXT", 0, None, 1, 0),
                 (1, "reference_id", "TEXT", 1, None, 0, 0),
                 (2, "wav_bytes", "BLOB", 1, None, 0, 0),
@@ -718,7 +730,18 @@ def _validate_schema_body(
                 (9, "sample_encoding", "TEXT", 1, None, 0, 0),
                 (10, "created_at", "TEXT", 1, None, 0, 0),
                 (11, "updated_at", "TEXT", 1, None, 0, 0),
-            ]:
+            ]
+            if schema_version == 4:
+                expected_reference_manifest.extend(
+                    [
+                        (12, "recipe_id", "TEXT", 0, None, 0, 0),
+                        (13, "recipe_revision", "INTEGER", 0, None, 0, 0),
+                    ]
+                )
+            if (
+                _table_xinfo_manifest(connection, _REFERENCE_TABLE)
+                != expected_reference_manifest
+            ):
                 raise ValueError
             if not _has_exact_primary_key_index(
                 connection, _REFERENCE_TABLE, ("profile_id",)
@@ -805,6 +828,100 @@ def _migration_domain_snapshot(
     return profiles, assignments
 
 
+def _migration_reference_snapshot(
+    connection: sqlite3.Connection,
+) -> tuple[tuple[object, ...], ...]:
+    """Capture every schema-v3 reference field in deterministic order."""
+
+    return tuple(
+        tuple(row)
+        for row in connection.execute(
+            f"""
+            SELECT profile_id, reference_id, wav_bytes, reference_text, sha256,
+                   byte_length, duration_ms, sample_rate_hz, channels,
+                   sample_encoding, created_at, updated_at
+            FROM {_REFERENCE_TABLE}
+            ORDER BY profile_id
+            """
+        )
+    )
+
+
+def _validate_migration_reference_rows(
+    connection: sqlite3.Connection,
+    *,
+    schema_version: int,
+) -> None:
+    """Fully decode references at either side of the v3-to-v4 boundary."""
+
+    from tldw_chatbook.TTS.profile_reference_audio import (
+        validate_canonical_reference_wav,
+    )
+    from tldw_chatbook.TTS.profile_reference_storage import (
+        decode_reference_payload,
+        read_reference_blob,
+        validate_reference_rows,
+    )
+    from tldw_chatbook.TTS.profile_reference_types import (
+        MAX_REFERENCE_COUNT,
+        MAX_REFERENCE_TOTAL_BYTES,
+    )
+
+    if schema_version == 4:
+        validate_reference_rows(connection)
+        return
+    quota = connection.execute(
+        f"SELECT COUNT(*), COALESCE(SUM(byte_length), 0) FROM {_REFERENCE_TABLE}"
+    ).fetchone()
+    if (
+        quota is None
+        or type(quota[0]) is not int
+        or type(quota[1]) is not int
+        or not 0 <= quota[0] <= MAX_REFERENCE_COUNT
+        or not 0 <= quota[1] <= MAX_REFERENCE_TOTAL_BYTES
+    ):
+        raise ValueError
+    seen = 0
+    for row in connection.execute(
+        f"""
+        SELECT r.rowid AS reference_rowid,
+               r.reference_id AS reference_reference_id,
+               r.reference_text, r.sha256,
+               r.byte_length AS reference_byte_length,
+               r.duration_ms AS reference_duration_ms,
+               r.sample_rate_hz AS reference_sample_rate_hz,
+               r.channels AS reference_channels,
+               r.sample_encoding AS reference_sample_encoding,
+               r.created_at AS reference_created_at,
+               r.updated_at AS reference_updated_at,
+               NULL AS reference_recipe_id,
+               NULL AS reference_recipe_revision,
+               p.model_id AS reference_model_id
+        FROM {_REFERENCE_TABLE} AS r
+        JOIN {PROFILE_TABLE} AS p ON p.profile_id = r.profile_id
+        ORDER BY r.profile_id
+        """
+    ):
+        payload = read_reference_blob(
+            connection,
+            row["reference_rowid"],
+            row["reference_byte_length"],
+        )
+        reference = decode_reference_payload(row, payload)
+        metadata = validate_canonical_reference_wav(payload)
+        if (
+            metadata.byte_length != reference.summary.byte_length
+            or metadata.duration_ms != reference.summary.duration_ms
+            or metadata.sample_rate_hz != reference.summary.sample_rate_hz
+            or metadata.channels != reference.summary.channels
+            or metadata.sample_encoding != reference.summary.sample_encoding
+        ):
+            raise ValueError
+        seen += 1
+    if seen != quota[0]:
+        raise ValueError
+
+
 class _CleanupState:
     """Run all cleanup actions while preserving the first control-flow signal."""
 
@@ -844,13 +961,16 @@ def _run_migrations(connection: sqlite3.Connection, from_version: int) -> None:
     try:
         connection.execute("BEGIN IMMEDIATE")
         version = from_version
-        v2_domain_snapshot: (
-            tuple[tuple[tuple[object, ...], ...], tuple[tuple[object, ...], ...]] | None
-        ) = None
+        domain_snapshot = (
+            ((), ()) if from_version == 0 else _migration_domain_snapshot(connection)
+        )
+        reference_snapshot: tuple[tuple[object, ...], ...] = ()
+        if from_version >= 3:
+            _validate_migration_reference_rows(connection, schema_version=from_version)
+            reference_snapshot = _migration_reference_snapshot(connection)
         while version < CURRENT_PROFILE_SCHEMA_VERSION:
             if version == 2:
                 validate_profile_store_rows(connection)
-                v2_domain_snapshot = _migration_domain_snapshot(connection)
             migration = MIGRATIONS.get(version)
             if migration is None:
                 raise RuntimeError
@@ -864,18 +984,25 @@ def _run_migrations(connection: sqlite3.Connection, from_version: int) -> None:
                 or version_row[0] != version
             ):
                 raise RuntimeError
-        if v2_domain_snapshot is None:
-            raise RuntimeError
         _validate_full_integrity(connection)
-        _validate_schema_body(connection, schema_version=3)
+        _validate_schema_body(connection, schema_version=CURRENT_PROFILE_SCHEMA_VERSION)
         if (
-            connection.execute(f"SELECT count(*) FROM {_REFERENCE_TABLE}").fetchone()[0]
+            connection.execute(
+                f"SELECT count(*) FROM {_REFERENCE_TABLE} "
+                "WHERE recipe_id IS NOT NULL OR recipe_revision IS NOT NULL"
+            ).fetchone()[0]
             != 0
         ):
             raise RuntimeError
-        if _migration_domain_snapshot(connection) != v2_domain_snapshot:
+        if _migration_domain_snapshot(connection) != domain_snapshot:
+            raise RuntimeError
+        if _migration_reference_snapshot(connection) != reference_snapshot:
             raise RuntimeError
         validate_profile_store_rows(connection)
+        _validate_migration_reference_rows(
+            connection,
+            schema_version=CURRENT_PROFILE_SCHEMA_VERSION,
+        )
         connection.commit()
     except BaseException as error:
         body_error = error

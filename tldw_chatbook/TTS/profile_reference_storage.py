@@ -16,6 +16,7 @@ from tldw_chatbook.TTS.profile_reference_types import (
     MAX_REFERENCE_COUNT,
     MAX_REFERENCE_TOTAL_BYTES,
     TTSCloneReference,
+    TTSCloneRecipeRequirement,
     TTSCloneReferenceSummary,
 )
 from tldw_chatbook.TTS.profile_schema import decode_utc_datetime, decode_uuid
@@ -33,6 +34,8 @@ REFERENCE_SUMMARY_ALIASES = (
     "reference_sample_encoding",
     "reference_created_at",
     "reference_updated_at",
+    "reference_recipe_id",
+    "reference_recipe_revision",
 )
 
 PROFILE_WITH_REFERENCE_SELECT = f"""
@@ -56,7 +59,10 @@ SELECT
     r.channels AS reference_channels,
     r.sample_encoding AS reference_sample_encoding,
     r.created_at AS reference_created_at,
-    r.updated_at AS reference_updated_at
+    r.updated_at AS reference_updated_at,
+    r.recipe_id AS reference_recipe_id,
+    r.recipe_revision AS reference_recipe_revision,
+    p.model_id AS reference_model_id
 FROM tts_generation_profiles AS p
 LEFT JOIN {REFERENCE_TABLE} AS r ON r.profile_id = p.profile_id
 """
@@ -88,7 +94,10 @@ SELECT
     r.channels AS reference_channels,
     r.sample_encoding AS reference_sample_encoding,
     r.created_at AS reference_created_at,
-    r.updated_at AS reference_updated_at
+    r.updated_at AS reference_updated_at,
+    r.recipe_id AS reference_recipe_id,
+    r.recipe_revision AS reference_recipe_revision,
+    p.model_id AS reference_model_id
 FROM character_tts_assignments AS a
 LEFT JOIN tts_generation_profiles AS p ON p.profile_id = a.profile_id
 LEFT JOIN {REFERENCE_TABLE} AS r ON r.profile_id = p.profile_id
@@ -106,7 +115,11 @@ SELECT
     channels AS reference_channels,
     sample_encoding AS reference_sample_encoding,
     created_at AS reference_created_at,
-    updated_at AS reference_updated_at
+    updated_at AS reference_updated_at,
+    recipe_id AS reference_recipe_id,
+    recipe_revision AS reference_recipe_revision,
+    (SELECT p.model_id FROM tts_generation_profiles AS p
+     WHERE p.profile_id = {REFERENCE_TABLE}.profile_id) AS reference_model_id
 FROM {REFERENCE_TABLE}
 """
 
@@ -122,9 +135,12 @@ def decode_reference_summary(row: RowLike) -> TTSCloneReferenceSummary | None:
     failed = False
     try:
         values = [row[column] for column in REFERENCE_SUMMARY_ALIASES]
-        if all(value is None for value in values):
+        persisted_summary = values[:8]
+        if all(value is None for value in persisted_summary):
+            if any(value is not None for value in values[8:]):
+                raise ValueError
             return None
-        if any(value is None for value in values):
+        if any(value is None for value in persisted_summary):
             raise ValueError
         byte_length, duration_ms, sample_rate_hz, channels = values[1:5]
         sample_encoding = values[5]
@@ -136,6 +152,16 @@ def decode_reference_summary(row: RowLike) -> TTSCloneReferenceSummary | None:
             or type(sample_encoding) is not str
         ):
             raise ValueError
+        recipe_id, recipe_revision = values[8:10]
+        if (recipe_id is None) != (recipe_revision is None):
+            raise ValueError
+        requirement = None
+        if recipe_id is not None:
+            requirement = TTSCloneRecipeRequirement(
+                recipe_id=cast(str, recipe_id),
+                recipe_revision=cast(int, recipe_revision),
+                model_id=cast(str, row["reference_model_id"]),
+            )
         summary = TTSCloneReferenceSummary(
             reference_id=decode_uuid(values[0]),
             byte_length=byte_length,
@@ -145,6 +171,7 @@ def decode_reference_summary(row: RowLike) -> TTSCloneReferenceSummary | None:
             sample_encoding=cast(Literal["pcm_s16le"], sample_encoding),
             created_at=decode_utc_datetime(values[6]),
             updated_at=decode_utc_datetime(values[7]),
+            recipe_requirement=requirement,
         )
     except Exception:
         failed = True
@@ -171,6 +198,7 @@ def decode_reference_payload(row: RowLike, wav_bytes: bytes) -> TTSCloneReferenc
             reference_text=reference_text,
             sha256=digest,
             wav_bytes=wav_bytes,
+            recipe_requirement=summary.recipe_requirement,
         )
     except Exception:
         raise ProfileRepositoryError("reference_unavailable") from None

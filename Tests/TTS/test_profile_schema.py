@@ -203,14 +203,14 @@ def test_empty_store_migrates_transactionally_and_is_configured(tmp_path: Path) 
         assert (
             connection.execute("PRAGMA user_version").fetchone()[0]
             == CURRENT_PROFILE_SCHEMA_VERSION
-            == 3
+            == 4
         )
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert (
             connection.execute("PRAGMA busy_timeout").fetchone()[0] == BUSY_TIMEOUT_MS
         )
-        assert set(MIGRATIONS) == {0, 1, 2}
+        assert set(MIGRATIONS) == {0, 1, 2, 3}
         tables = {
             row[0]
             for row in connection.execute(
@@ -230,14 +230,16 @@ def test_profile_schema_ddl_lives_in_versioned_migration_module() -> None:
 
     assert "CREATE TABLE tts_generation_profiles" not in schema_source
 
-    from tldw_chatbook.TTS.migrations import v0_to_v1, v1_to_v2, v2_to_v3
+    from tldw_chatbook.TTS.migrations import v0_to_v1, v1_to_v2, v2_to_v3, v3_to_v4
 
     assert v0_to_v1.TARGET_VERSION == 1
     assert v1_to_v2.TARGET_VERSION == 2
-    assert v2_to_v3.TARGET_VERSION == CURRENT_PROFILE_SCHEMA_VERSION == 3
+    assert v2_to_v3.TARGET_VERSION == 3
+    assert v3_to_v4.TARGET_VERSION == CURRENT_PROFILE_SCHEMA_VERSION == 4
     assert MIGRATIONS[0] is v0_to_v1.migrate
     assert MIGRATIONS[1] is v1_to_v2.migrate
     assert MIGRATIONS[2] is v2_to_v3.migrate
+    assert MIGRATIONS[3] is v3_to_v4.migrate
 
 
 @pytest.mark.parametrize(
@@ -497,14 +499,14 @@ def test_newer_schema_is_rejected_without_mutation(tmp_path: Path) -> None:
     assert path.read_bytes() == before
 
 
-def test_populated_v1_store_upgrades_in_place_to_v3(tmp_path: Path) -> None:
+def test_populated_v1_store_upgrades_in_place_to_v4(tmp_path: Path) -> None:
     db_path = tmp_path / "profiles.sqlite3"
     _build_populated_v1_store(db_path)
 
     connection = open_profile_store(db_path)
     try:
         version = connection.execute("PRAGMA user_version").fetchone()[0]
-        assert version == CURRENT_PROFILE_SCHEMA_VERSION == 3
+        assert version == CURRENT_PROFILE_SCHEMA_VERSION == 4
         rows = connection.execute(
             "SELECT COUNT(*) FROM tts_generation_profiles"
         ).fetchone()[0]
@@ -523,7 +525,7 @@ def test_future_version_store_still_fails_closed(tmp_path: Path) -> None:
     db_path = tmp_path / "profiles.sqlite3"
     _build_populated_v1_store(db_path)
     raw = sqlite3.connect(db_path)
-    raw.execute("PRAGMA user_version = 4")
+    raw.execute(f"PRAGMA user_version = {CURRENT_PROFILE_SCHEMA_VERSION + 1}")
     raw.close()
     before = db_path.read_bytes()
 

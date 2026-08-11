@@ -401,7 +401,7 @@ async def test_v2_migration_retains_private_online_backup_before_migration(
         backup.close()
     migrated = sqlite3.connect(database_path)
     try:
-        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 4
     finally:
         migrated.close()
 
