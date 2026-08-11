@@ -94,7 +94,11 @@ In server mode the **Export** rail row is disabled, with the tooltip
   server)". "Unsupported by the server" is not "unreadable": an image
   imports fine on this machine, it simply has no place in the server's
   import API, so switching the target back to this machine changes the
-  number.
+  number. An empty (0 B) file is counted as a failure on both targets,
+  and on both targets that is this app's own doing: a server import
+  refuses a 0-byte file here rather than uploading it ("empty.txt is
+  empty; there was nothing to send."), so the count never depends on
+  what a server would have made of an empty upload.
 - **Queue** — the "Queue" heading, a per-state count line while jobs
   exist ("This queue: 1 parsing · 2 queued · 1 done" — task-2859: the
   "This queue:" prefix replaced a trailing "— in queue" suffix that
@@ -144,7 +148,7 @@ the rest of the session.
 | "Chunk content" | Governs every type: off means no retrieval chunks are stored at all; on chunks plain text / documents / HTML too (not just PDF/e-book/audio), using "Chunk size" and "Chunk overlap" — both measured in words. |
 | "Encoding" | How plain text and HTML files are decoded: "Auto-detect (UTF-8 first)" (strict UTF-8, then detection) or an explicit UTF-8 / UTF-16 / "Latin-1 (ISO-8859-1)" / "Windows-1252 (Western)". A wrong explicit choice shows up as replacement characters rather than failing the import. |
 | "Install verified Parakeet v2 INT8 (630.6 MiB)…" | In the Audio & video fold, enabled when the provider is parakeet-onnx (under any other provider the button is inert and its label ends "— needs the parakeet-onnx provider"). Opens a consent dialog listing Source, Revision, License, Download size, and Destination, ending "All four files are checked against pinned sizes and SHA-256 digests before the bundle becomes usable." Buttons: "Cancel" / "Install". |
-| "Start import" | Queues everything the pre-check found. If "⚠" tooling warnings are outstanding, the first press doesn't submit — the line beside Start turns into "⚠ Press Start again to import anyway — N files will fail without more tooling." (or "… N files may fail." when the missing package is only an optional enhancement) and a second press (or a second Enter in the path field) starts the import. See "Consent for risky imports" below. Start is unavailable, with the reason stated at the button, when the selection has nothing importable: "This folder is empty — there's nothing to import. Choose a folder with files, or a single file." for a folder that really is empty, "Nothing in this folder could be scanned — 2 entries were skipped: folder imports pass over hidden files, links, and folders they can't read. Import a file directly, or choose another folder." for a folder whose entries the scan passed over, and "Nothing in this selection can be imported — N unsupported files." when nothing in it has a handler. None of these leaves a failed row behind: the import never starts. |
+| "Start import" | Queues everything the pre-check found. If "⚠" tooling warnings are outstanding, the first press doesn't submit — the line beside Start turns into "⚠ Press Start again to import anyway — N files will fail without more tooling." (or "… N files may fail." when the missing package is only an optional enhancement) and a second press (or a second Enter in the path field) starts the import. See "Consent for risky imports" below. Start is unavailable, with the reason stated at the button, when the selection has nothing importable: "This folder is empty — there's nothing to import. Choose a folder with files, or a single file." for a folder that really is empty, "Nothing in this folder could be scanned — 2 entries were skipped: folder imports pass over hidden files, links, and folders they can't read. Import a file directly, or choose another folder." for a folder whose entries the scan passed over, and "Nothing in this selection can be imported — N unsupported files." when nothing in it has a handler. Importing on the server adds one more: a selection this machine reads perfectly well but that backend will not take at all (a folder of nothing but images) gates Start with "Nothing in this selection can be sent to the server — 3 files unsupported by the server. Switch to importing on this machine, or choose video, audio, document, PDF or e-book files." — a different sentence from the one above, because the files are fine and the destination is the problem. None of these leaves a failed row behind: the import never starts. |
 | Queue rows | "● queued / parsing / writing · name" while working, "✓ done · name · 4s" on success, "✗ failed · name · reason" (plus " · retry 1" after a retry) on failure, "⊘ cancelled · name" when stopped on purpose. Server jobs carry an " · on server" suffix. |
 | Row actions | "Open in Library" (done, local) jumps to the new media item; "View on server" (done, server); "Show details" shows the full error; "Retry" re-queues a failed job; "Cancel" stops an in-flight server job; "Dismiss" removes a failed row. |
 | "Show details" | Opens inline under the row: a plain-language reason ("Reason: No text could be extracted." / "The file couldn't be read." / "The file is empty." / "The Library couldn't be written to."), the full message when it says more than the row line, the underlying tool output once (never repeated between the message and the chain), and — only when a retry could actually change the outcome — one line of advice derived from that same reason. A deterministic failure whose text actually named a remedy says so ("Retrying now will fail the same way — install the tooling named above first, then Retry."); when nothing on screen named one, the advice states the determinism without inventing a remedy ("Retrying now will fail the same way — this file's content, or the tooling for it, has to change first."); a named missing package is named ("Missing dependency: pymupdf. Install it, then Retry."); and a cause we can't classify says nothing rather than encouraging a retry that would repeat itself. |
@@ -557,3 +561,27 @@ so it no longer claims "Everything"; the quality control is a "⇄" cycle
 button whose tooltip lists thumbnail → compressed → original; Escape on
 the Export canvas returns to the canvas whose Export… opened it, or to
 the hub when you came from the rail.)*
+*Verified against fix/ui-background-signal-bounds — 2026-08-10
+(task-14910): a 0-byte file is no longer uploaded to the server. The
+forecast has always counted one as a certain failure, which was true
+locally (the parse chain refuses an empty source before any write) and
+merely assumed on the server, where the app sent the file and only the
+server decided. The client now refuses it with the reason it already
+knows — the row reads "✗ failed · empty.txt · empty.txt is empty; there
+was nothing to send." — so the forecast's count is a statement about
+this app's own behaviour on both targets, and no round trip is spent on
+a file that is almost certainly a mistake.*
+
+*Verified against fix/ui-background-signal-bounds — 2026-08-10
+(task-14911): the Start gate now asks the backend the import is aimed at.
+A folder of nothing but images used to forecast "0 will be sent to the
+server · 3 will fail (unsupported by the server)" with **Start import**
+still live, and pressing it queued three rows that could only land as
+permanent failures — the guaranteed-failure submit the gate already
+prevented on this machine, one backend over. The gate reads the same
+forecast the commit line does, so the two cannot state different
+numbers, and it keeps its two vocabularies apart: "Nothing in this
+selection can be imported" for files nothing here can read, "Nothing in
+this selection can be sent to the server" for files that only this
+destination refuses. The refusal is enforced at the submit itself, not
+just on the button, so Enter in the path field cannot route around it.*

@@ -1728,3 +1728,95 @@ class TestWriteStageFailureCategory:
             )
             == ""
         )
+
+
+class TestServerSubmitRefusesZeroByteSources:
+    """(task-14910) A 0-byte file never leaves this machine.
+
+    The forecast counts every 0-byte staged file as a certain failure on
+    both backends. On the server path that used to be an unearned claim:
+    ``_submit_server_ingest_job`` built kwargs for the empty file and sent
+    it, so only the server -- which this process cannot inspect -- decided
+    its fate. The client now refuses it with the reason it already knows,
+    which is what makes the forecast true rather than lucky.
+    """
+
+    @staticmethod
+    def _server_app() -> TldwCli:
+        app = _minimal_app(media_db="present")
+        app._sent = []  # type: ignore[attr-defined]
+        app._send_server_ingest_job = (  # type: ignore[method-assign]
+            lambda job_id, kwargs: app._sent.append((job_id, kwargs))
+        )
+        return app
+
+    def test_a_zero_byte_file_fails_locally_and_is_never_sent(
+        self, tmp_path
+    ) -> None:
+        from tldw_chatbook.Library.server_ingest_request import (
+            server_ingest_refusal,
+        )
+
+        empty = tmp_path / "empty.txt"
+        empty.write_text("")
+        app = self._server_app()
+
+        job = app._submit_server_ingest_job(
+            source_path=str(empty),
+            ingest_options={},
+            title="",
+            author="",
+            keywords=(),
+            perform_analysis=False,
+        )
+
+        assert job.state is IngestJobState.FAILED
+        assert job.error == server_ingest_refusal(str(empty))
+        assert "empty.txt" in job.error
+        assert app._sent == [], (
+            "a 0-byte file reached the wire, so the forecast's "
+            "'will fail' was a claim about someone else's machine"
+        )
+
+    def test_the_refusal_is_permanent_because_a_retry_cannot_change_it(
+        self, tmp_path
+    ) -> None:
+        """A 0-byte file fails identically on every attempt -- the same
+        reason the LOCAL path raises a ``PermanentIngestError`` for one, so
+        the queue row withholds Retry on both backends."""
+        empty = tmp_path / "empty.md"
+        empty.write_text("")
+        app = self._server_app()
+
+        job = app._submit_server_ingest_job(
+            source_path=str(empty),
+            ingest_options={},
+            title="",
+            author="",
+            keywords=(),
+            perform_analysis=False,
+        )
+
+        assert job.state is IngestJobState.FAILED
+        assert job.permanent is True
+
+    def test_a_file_with_content_still_reaches_the_wire(self, tmp_path) -> None:
+        """Guard: the refusal must not become a general server-submit
+        block."""
+        real = tmp_path / "notes.txt"
+        real.write_text("Tides are driven by the moon.")
+        app = self._server_app()
+
+        job = app._submit_server_ingest_job(
+            source_path=str(real),
+            ingest_options={},
+            title="",
+            author="",
+            keywords=(),
+            perform_analysis=False,
+        )
+
+        assert job.state is IngestJobState.QUEUED
+        assert [kwargs["file_paths"] for _job_id, kwargs in app._sent] == [
+            [str(real)]
+        ]

@@ -14,6 +14,7 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Checkbox, Input, Static, TextArea
 
+from Tests.UI.background_signals import wait_for_background_signal, wait_for_signal
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 from tldw_chatbook.Chat.console_provider_gateway import (
     AuxiliaryCompletionRequest,
@@ -605,7 +606,9 @@ async def test_late_source_completion_is_rejected() -> None:
         await pilot.pause()
         modal._list_page = list_page
         late_local = asyncio.create_task(modal.reload_browse())
-        await local_started.wait()
+        await wait_for_background_signal(
+            local_started, late_local, what="the late local browse reload"
+        )
         await modal.switch_source("server")
         release_local.set()
         await late_local
@@ -1119,7 +1122,9 @@ async def test_late_local_detail_cannot_open_after_switching_to_server() -> None
         modal._detail = detail
 
         late_open = asyncio.create_task(modal.open_artifact("late-local"))
-        await local_started.wait()
+        await wait_for_background_signal(
+            local_started, late_open, what="the late local detail open"
+        )
         await modal.switch_source("server")
         release_local.set()
         await late_open
@@ -1154,7 +1159,9 @@ async def test_late_first_detail_cannot_replace_newer_selection() -> None:
         modal._detail = detail
 
         first_open = asyncio.create_task(modal.open_artifact("prompt-a"))
-        await first_started.wait()
+        await wait_for_background_signal(
+            first_started, first_open, what="the first detail open"
+        )
         await modal.open_artifact("prompt-b")
         release_first.set()
         await first_open
@@ -1196,7 +1203,9 @@ async def test_source_switch_clears_foreign_rows_before_unavailable_result() -> 
         assert modal.query("#console-prompts-result-local-only")
 
         switch = asyncio.create_task(modal.switch_source("server"))
-        await server_started.wait()
+        await wait_for_background_signal(
+            server_started, switch, what="the server source switch"
+        )
         foreign_rows_visible_while_loading = bool(
             modal.query("#console-prompts-result-local-only")
         )
@@ -1701,7 +1710,7 @@ async def test_recipe_editor_keeps_analysis_disclosure_bound_through_edits_and_f
         assert modal.state.dirty is True
 
         modal.query_one("#console-prompts-recipe-fill", Button).press()
-        await started.wait()
+        await wait_for_signal(started, what="the recipe-fill improvement starting")
         await pilot.pause()
 
         assert (
@@ -1844,7 +1853,7 @@ async def test_held_improve_activation_navigation_cancels_and_ignores_late_resol
         modal = app.screen
         improve = modal.query_one("#console-prompts-improve", Button)
         improve.press()
-        await started.wait()
+        await wait_for_signal(started, what="the held improvement activation starting")
         await asyncio.sleep(0.05)
 
         if navigation == "close":
@@ -1890,7 +1899,7 @@ async def test_held_improve_activation_disables_duplicate_resolution() -> None:
         modal = app.screen
         improve = modal.query_one("#console-prompts-improve", Button)
         improve.press()
-        await started.wait()
+        await wait_for_signal(started, what="the held improvement activation starting")
         await asyncio.sleep(0.05)
 
         disabled_while_held = improve.disabled
@@ -1936,7 +1945,9 @@ async def test_invalidated_activation_token_ignores_late_resolution() -> None:
         activation = asyncio.create_task(
             modal._run_improvement_activation(activation_id)
         )
-        await started.wait()
+        await wait_for_background_signal(
+            started, activation, what="the improvement activation"
+        )
 
         modal._active_activation_id = None
         release.set()
@@ -2033,7 +2044,7 @@ async def test_active_improvement_disables_duplicate_model_launches() -> None:
         auto = app.screen.query_one("#console-prompts-auto-improve", Button)
         review = app.screen.query_one("#console-prompts-review-improve", Button)
         auto.press()
-        await started.wait()
+        await wait_for_signal(started, what="the auto-improvement starting")
         await pilot.pause()
 
         assert auto.disabled is True
@@ -2191,7 +2202,7 @@ async def test_cancel_invalidates_request_and_ignores_late_completion() -> None:
         await pilot.pause()
         await app.screen.enter_mode("improve")
         app.screen.query_one("#console-prompts-auto-improve", Button).press()
-        await started.wait()
+        await wait_for_signal(started, what="the auto-improvement starting")
         app.screen.query_one("#console-prompts-improvement-cancel", Button).press()
         await pilot.pause()
         assert (
@@ -2239,7 +2250,7 @@ async def test_back_and_escape_cancel_active_improvement_before_navigation(
         await pilot.pause()
         await app.screen.enter_mode("improve")
         app.screen.query_one("#console-prompts-auto-improve", Button).press()
-        await started.wait()
+        await wait_for_signal(started, what="the auto-improvement starting")
 
         if navigation == "back":
             app.screen.query_one("#console-prompts-back", Button).press()

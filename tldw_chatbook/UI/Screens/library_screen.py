@@ -20328,6 +20328,11 @@ class LibraryScreen(BaseAppScreen):
         # outcome that was predictable before the click. Enforced HERE,
         # not only on the Button's disabled flag, so no entry point
         # (Enter, accelerator, a future caller) can route around it.
+        # (task-14911) The same flag now also covers a selection the
+        # TARGETED SERVER refuses entirely -- a folder of images, which
+        # this machine imports happily -- so this one refusal serves both
+        # backends and the reason it quotes is the gate's own, whichever
+        # of the two it is.
         gate_state = self._build_library_ingest_state()
         if gate_state.selection_has_nothing_importable is True:
             reason = gate_state.start_quiet_line

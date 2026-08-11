@@ -55,6 +55,7 @@ from textual.widgets import (
     TextArea,
 )
 
+from Tests.UI.background_signals import wait_for_signal
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSEventHandler,
     STTSPlaygroundGenerateEvent,
@@ -2027,7 +2028,7 @@ async def test_catalog_result_is_discarded_when_configuration_revision_changes(
     app = _PaneHost()
 
     async with app.run_test(size=(180, 70)) as pilot:
-        await service.catalog_started.wait()
+        await wait_for_signal(service.catalog_started, what="the catalog worker start")
         service.revisions["audio_cpp"] = 2
         service.allow_catalog.set()
         await app.workers.wait_for_complete()
@@ -2051,7 +2052,7 @@ async def test_exact_profile_revision_invalidated_catalog_projects_but_stays_blo
     app = _PaneHost(preset=_profile_preset())
 
     async with app.run_test(size=(180, 70)) as pilot:
-        await service.catalog_started.wait()
+        await wait_for_signal(service.catalog_started, what="the catalog worker start")
         service.revisions["audio_cpp"] = 2
         service.allow_catalog.set()
         await app.workers.wait_for_complete()
@@ -2118,7 +2119,7 @@ async def test_superseded_catalog_failure_cannot_overwrite_newer_success(
         monkeypatch.setattr(service, "get_catalog", get_catalog)
 
         pane._load_provider_catalog("audio_cpp", refresh=True)
-        await first_started.wait()
+        await wait_for_signal(first_started, what="the first catalog worker start")
         pane._load_provider_catalog("audio_cpp", refresh=True)
         await _wait_until(
             pilot,
@@ -2181,7 +2182,7 @@ async def test_superseded_catalog_success_cannot_invalidate_newer_success(
         monkeypatch.setattr(service, "get_catalog", get_catalog)
 
         pane._load_provider_catalog("audio_cpp", refresh=True)
-        await first_started.wait()
+        await wait_for_signal(first_started, what="the first catalog worker start")
         pane._load_provider_catalog("audio_cpp", refresh=True)
         await _wait_until(
             pilot,
@@ -2254,7 +2255,7 @@ async def test_superseded_same_model_voice_result_cannot_overwrite_newer_success
             catalog_revision,
             refresh=True,
         )
-        await first_started.wait()
+        await wait_for_signal(first_started, what="the first voice worker start")
         pane._load_provider_voices(
             "audio_cpp",
             model_id,
@@ -2329,14 +2330,17 @@ async def test_catalog_generation_is_reserved_before_exclusive_worker_cancellati
         monkeypatch.setattr(service, "get_catalog", get_catalog)
 
         pane._load_provider_catalog("audio_cpp", refresh=True)
-        await first_started.wait()
+        await wait_for_signal(first_started, what="the first catalog worker start")
         first_generation = pane._catalog_request_generations["audio_cpp"]
 
         pane._load_provider_catalog("audio_cpp", refresh=True)
 
         assert pane._catalog_request_generations["audio_cpp"] == (first_generation + 1)
-        await first_returned_on_cancel.wait()
-        await second_started.wait()
+        await wait_for_signal(
+            first_returned_on_cancel,
+            what="the cancelled first catalog worker returning",
+        )
+        await wait_for_signal(second_started, what="the second catalog worker start")
         await pilot.pause()
         assert pane._catalogs["audio_cpp"] is baseline_catalog
 
@@ -2395,7 +2399,7 @@ async def test_voice_generation_is_reserved_before_exclusive_worker_cancellation
             catalog_revision,
             refresh=True,
         )
-        await first_started.wait()
+        await wait_for_signal(first_started, what="the first voice worker start")
         first_generation = pane._voice_request_generations[request_key]
 
         pane._load_provider_voices(
@@ -2406,8 +2410,11 @@ async def test_voice_generation_is_reserved_before_exclusive_worker_cancellation
         )
 
         assert pane._voice_request_generations[request_key] == first_generation + 1
-        await first_returned_on_cancel.wait()
-        await second_started.wait()
+        await wait_for_signal(
+            first_returned_on_cancel,
+            what="the cancelled first voice worker returning",
+        )
+        await wait_for_signal(second_started, what="the second voice worker start")
         await pilot.pause()
         assert pane._discovered_voices[request_key] == baseline_voices
 
@@ -2431,7 +2438,7 @@ async def test_voice_discovery_does_not_cancel_inflight_catalog_refresh(
         pane = app.query_one(SpeechPlaygroundPane)
 
         pane._load_provider_catalog("audio_cpp", refresh=True)
-        await service.catalog_started.wait()
+        await wait_for_signal(service.catalog_started, what="the catalog worker start")
         app.query_one("#tts-model-select", Select).value = "second-model"
         await _wait_until(
             pilot,
@@ -2473,7 +2480,7 @@ async def test_catalog_revision_invalidates_old_voices_before_rediscovery(
         pane = app.query_one(SpeechPlaygroundPane)
         notices_before = list(app.notices)
         pane._load_provider_catalog("audio_cpp", refresh=True)
-        await service.voice_started.wait()
+        await wait_for_signal(service.voice_started, what="the voice worker start")
         await pilot.pause()
 
         assert _option_values(voice_select) == (
@@ -2523,7 +2530,7 @@ async def test_catalog_revision_preserves_exact_voice_removed_by_refresh(
         notices_before = list(app.notices)
         pane = app.query_one(SpeechPlaygroundPane)
         pane._load_provider_catalog("audio_cpp", refresh=True)
-        await service.voice_started.wait()
+        await wait_for_signal(service.voice_started, what="the voice worker start")
         await pilot.pause()
 
         assert app.notices == notices_before
@@ -3635,7 +3642,7 @@ async def test_exact_profile_cannot_generate_while_voice_validation_is_pending(
     app = _PaneHost(preset=preset)
 
     async with app.run_test(size=(180, 70)) as pilot:
-        await service.voice_started.wait()
+        await wait_for_signal(service.voice_started, what="the voice worker start")
         await pilot.pause()
         pane = app.query_one(SpeechPlaygroundPane)
 
@@ -4180,7 +4187,7 @@ async def test_provider_edit_during_initial_profile_catalog_load_ends_preset(
     app = _PaneHost(preset=_profile_preset())
 
     async with app.run_test(size=(180, 70)) as pilot:
-        await service.catalog_started.wait()
+        await wait_for_signal(service.catalog_started, what="the catalog worker start")
         pane = app.query_one(SpeechPlaygroundPane)
         provider = app.query_one("#tts-provider-select", Select)
         assert pane._profile_controls_applied is True

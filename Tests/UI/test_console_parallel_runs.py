@@ -13,6 +13,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     _visible_text,
 )
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.background_signals import wait_for_signal
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
 from tldw_chatbook.Chat.console_agent_bridge import (
     AgentLiveSnapshot,
@@ -122,13 +123,13 @@ async def test_second_session_send_does_not_cancel_first_sessions_worker() -> No
             exclusive=True,
             group=f"console-run-{session_a}",
         )
-        await started_a.wait()
+        await wait_for_signal(started_a, what="session A's run worker starting")
         worker_b = console.run_worker(
             fake_run(session_b, started_b),
             exclusive=True,
             group=f"console-run-{session_b}",
         )
-        await started_b.wait()
+        await wait_for_signal(started_b, what="session B's run worker starting")
         await pilot.pause(0.1)
 
         # If the groups collided, starting worker_b would have cancelled
@@ -212,8 +213,8 @@ async def test_stop_visible_action_only_cancels_viewed_session_background_comple
             exclusive=True,
             group=f"console-run-{session_b}",
         )
-        await started_a.wait()
-        await started_b.wait()
+        await wait_for_signal(started_a, what="session A's run worker starting")
+        await wait_for_signal(started_b, what="session B's run worker starting")
         await pilot.pause(0.1)
         assert controller.in_flight_run_count() == 2  # truly concurrent
 

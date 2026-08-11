@@ -24,6 +24,7 @@ from tldw_chatbook.Widgets.Library.library_prompts_canvas import (
 )
 
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.background_signals import wait_for_background_signal, wait_for_signal
 from Tests.UI.test_library_prompts_canvas import (
     _open_prompt_editor,
     _painted_contrast,
@@ -576,7 +577,9 @@ def test_controller_rejects_late_membership_label_hydration_after_identity_switc
 
     async def exercise() -> None:
         task = asyncio.create_task(controller.load_memberships())
-        await detail_started.wait()
+        await wait_for_background_signal(
+            detail_started, task, what="the membership load"
+        )
         prompt_id[0] = 42
         detail_release.set()
         await task
@@ -1428,7 +1431,9 @@ async def test_manager_create_is_single_flight_under_rapid_double_submit():
         modal = app.screen
         modal.query_one("#prompt-collection-manager-new-name", Input).value = "One"
         first = asyncio.create_task(modal._run_mutation("create", None, "One"))
-        await app.started.wait()
+        await wait_for_background_signal(
+            app.started, first, what="the first create mutation"
+        )
         second = asyncio.create_task(modal._run_mutation("create", None, "One"))
         await pilot.pause()
 
@@ -1452,7 +1457,7 @@ async def test_manager_create_is_single_flight_under_rapid_double_submit():
 async def test_older_catalog_load_cannot_overwrite_completed_mutation():
     app = _CatalogMutationRaceHost()
     async with app.run_test(size=(80, 24)) as pilot:
-        await app.load_started.wait()
+        await wait_for_signal(app.load_started, what="the modal's on-mount catalog load")
         modal = app.screen
         await modal._run_mutation("create", None, "Created authoritative")
         await pilot.pause()

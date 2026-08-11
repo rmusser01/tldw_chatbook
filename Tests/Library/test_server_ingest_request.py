@@ -288,3 +288,112 @@ class TestServerIngestRefusal:
         )
 
         assert server_ingest_refusal("   ") is not None
+
+
+class TestZeroByteSourcesAreRefusedBeforeTheyAreSent:
+    """(task-14910) The one claim the SERVER forecast had not earned.
+
+    ``build_ingest_forecast`` counts every 0-byte staged file as a certain
+    failure on BOTH backends. Locally that is verified -- the parse chain
+    raises ``EmptySourceIngestError`` before any write. On the server path
+    nothing verified it: ``build_server_ingest_kwargs`` happily built
+    kwargs for a 0-byte file and the app SENT it, handing the outcome to a
+    server this process cannot inspect. The forecast was asserting
+    knowledge it did not have, one line above copy that says outright
+    "server tooling isn't checked from here".
+
+    The resolution is a client-side refusal, which is knowable by
+    construction: a 0-byte file is refused here, with the reason, and
+    never leaves the machine.
+    """
+
+    def test_a_zero_byte_file_is_refused(self, tmp_path) -> None:
+        from tldw_chatbook.Library.server_ingest_request import (
+            server_ingest_refusal,
+        )
+
+        empty = tmp_path / "empty.txt"
+        empty.write_text("")
+        reason = server_ingest_refusal(str(empty))
+        assert reason is not None
+        assert "empty.txt" in reason
+        assert "empty" in reason
+
+    def test_the_submit_seam_refuses_it_with_the_same_reason(
+        self, tmp_path
+    ) -> None:
+        """The predicate the FORECAST reads and the builder the SUBMIT
+        path calls must state the same thing about the same file -- a
+        forecast that promises a refusal the submit path does not perform
+        is the divergence this task exists to remove."""
+        from tldw_chatbook.Library.server_ingest_request import (
+            server_ingest_refusal,
+        )
+
+        empty = tmp_path / "empty.txt"
+        empty.write_text("")
+        with pytest.raises(ServerIngestUnsupported) as excinfo:
+            build_server_ingest_kwargs(str(empty), options={})
+        assert str(excinfo.value) == server_ingest_refusal(str(empty))
+
+    def test_a_zero_byte_file_of_a_mapped_type_is_refused_too(
+        self, tmp_path
+    ) -> None:
+        """The refusal is about the file's CONTENT, not its extension: a
+        0-byte .mp3 maps to ``audio`` perfectly well and is still nothing
+        to send."""
+        from tldw_chatbook.Library.server_ingest_request import (
+            server_ingest_refusal,
+            server_media_type_for,
+        )
+
+        empty = tmp_path / "silence.mp3"
+        empty.write_bytes(b"")
+        assert server_media_type_for(str(empty)) == "audio"
+        assert server_ingest_refusal(str(empty)) is not None
+
+    def test_a_file_with_content_is_still_sent(self, tmp_path) -> None:
+        """Guard: the refusal is 0 bytes exactly, not "small"."""
+        from tldw_chatbook.Library.server_ingest_request import (
+            server_ingest_refusal,
+        )
+
+        one_byte = tmp_path / "tiny.txt"
+        one_byte.write_bytes(b" ")
+        assert server_ingest_refusal(str(one_byte)) is None
+        assert build_server_ingest_kwargs(str(one_byte), options={})[
+            "file_paths"
+        ] == [str(one_byte)]
+
+    def test_a_url_is_never_called_empty(self) -> None:
+        """Guard: a URL has no local size to measure -- claiming one is
+        the same class of fabrication (task-3305, MI-19: "1 file - 0 B"
+        for a URL)."""
+        from tldw_chatbook.Library.server_ingest_request import (
+            server_ingest_refusal,
+        )
+
+        assert server_ingest_refusal("https://example.com/talk.mp3") is None
+
+    def test_an_unstatable_path_is_not_called_empty(self) -> None:
+        """Guard: a path that does not exist is not a 0-byte file. The
+        pre-flight makes the same distinction (``_statted_size`` returns
+        ``None`` rather than 0 on ``OSError``), and the existing refusal
+        tests all use paths that were never created."""
+        from tldw_chatbook.Library.server_ingest_request import (
+            server_ingest_refusal,
+        )
+
+        assert server_ingest_refusal("/tmp/does-not-exist-14910.txt") is None
+
+    def test_a_directory_is_not_called_an_empty_source(self, tmp_path) -> None:
+        """Guard: a directory can stat at 0 bytes on some filesystems, and
+        "this folder is empty" is a different diagnosis with a different
+        recovery -- the ingest Start gate owns that one."""
+        from tldw_chatbook.Library.server_ingest_request import (
+            empty_source_refusal,
+        )
+
+        folder = tmp_path / "nothing"
+        folder.mkdir()
+        assert empty_source_refusal(str(folder)) is None

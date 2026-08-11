@@ -1105,93 +1105,16 @@ async def test_navigation_keypress_during_splash_is_safely_ignored():
 from Tests.UI.app_factory import _build_test_app  # noqa: F401,E402
 
 
-# task-3316: several tests below drive a screen/app coroutine as a background
-# `asyncio.create_task` and then wait on an `asyncio.Event` that only that
-# coroutine can set. A bare `await event.wait()` is UNBOUNDED, so any product
-# change that makes the coroutine return early -- or raise, which a
-# fire-and-forget task swallows silently -- turns the test into a permanent
-# hang. Under this repo's `timeout_method = thread` a hung test cannot be
-# cancelled: pytest-timeout dumps stacks and kills the ENTIRE pytest process,
-# so every test after it in the file is silently never run (the task-1466
-# lesson class). Bound the wait at its source and surface the background
-# task's real failure instead.
-_BACKGROUND_SIGNAL_TIMEOUT_SECONDS = 10.0
-
-
-async def _wait_for_background_signal(
-    signal: asyncio.Event,
-    task: asyncio.Task,
-    *,
-    what: str,
-    timeout: float = _BACKGROUND_SIGNAL_TIMEOUT_SECONDS,
-) -> None:
-    """Await ``signal``, bounded, reporting why ``task`` never set it.
-
-    Returns as soon as ``signal`` is set. If ``task`` finishes first the
-    signal can never arrive, so its exception is re-raised (or its silent
-    early return reported) rather than waited on forever.
-
-    Args:
-        signal: Event the background task is expected to set.
-        task: The background task that owns the signal.
-        what: Human-readable description used in failure messages.
-        timeout: Seconds to wait before failing the test.
-
-    Raises:
-        AssertionError: If the task returned without signalling, or neither
-            the signal nor the task settled within ``timeout``.
-    """
-    waiter = asyncio.ensure_future(signal.wait())
-    try:
-        await asyncio.wait(
-            {waiter, task},
-            timeout=timeout,
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-    finally:
-        if not waiter.done():
-            waiter.cancel()
-    if signal.is_set():
-        return
-    if task.done():
-        # Re-raises whatever the fire-and-forget task swallowed; a task that
-        # raised or returned early can never set the signal.
-        task.result()
-        raise AssertionError(
-            f"{what} finished without signalling -- the awaited path returned "
-            "early instead of reaching the signalling step"
-        )
-    raise AssertionError(
-        f"timed out after {timeout}s waiting for {what}; the task is still "
-        "running and the signal was never set"
-    )
-
-
-async def _await_background_task(
-    task: asyncio.Task,
-    *,
-    what: str,
-    timeout: float = _BACKGROUND_SIGNAL_TIMEOUT_SECONDS,
-):
-    """Await a background task with a bound so a stall fails instead of hangs.
-
-    Args:
-        task: The background task to await.
-        what: Human-readable description used in the failure message.
-        timeout: Seconds to wait before cancelling and failing.
-
-    Returns:
-        The task's result.
-
-    Raises:
-        AssertionError: If the task does not finish within ``timeout``.
-    """
-    try:
-        return await asyncio.wait_for(task, timeout=timeout)
-    except asyncio.TimeoutError:
-        raise AssertionError(
-            f"timed out after {timeout}s awaiting {what}"
-        ) from None
+# task-3316 introduced `_wait_for_background_signal` / `_await_background_task`
+# here; task-14912 moved them to Tests/UI/background_signals.py so every UI test
+# gets the bound by default rather than only this file. Read that module's
+# header for the incident and the rules. Re-exported under the original private
+# names so in-flight branches that import them from this module keep working.
+from Tests.UI.background_signals import (  # noqa: E402
+    BACKGROUND_SIGNAL_TIMEOUT_SECONDS as _BACKGROUND_SIGNAL_TIMEOUT_SECONDS,  # noqa: F401
+    await_background_task as _await_background_task,  # noqa: F401
+    wait_for_background_signal as _wait_for_background_signal,  # noqa: F401
+)
 
 
 def test_local_watchlists_service_db_factory_resolves_the_same_path_as_the_eager_subscriptions_db():

@@ -3855,3 +3855,197 @@ def test_local_mode_keeps_the_tooling_wall():
     assert state.warning_lines
     assert state.warning_commands == ('pip install -e ".[audio]"',)
     assert state.advisory_lines == ()
+
+
+# ===========================================================================
+# task-14911: the Start gate must ask the backend the run is aimed at
+# ===========================================================================
+
+
+def _images_only_preflight(count: int = 3) -> PreflightResult:
+    """A folder the LOCAL pipeline can import and the SERVER cannot.
+
+    Images are a real local capability (the ``image`` group, OCR) that
+    task-3307 deliberately left server-unmapped, so this is the selection
+    on which the two backends' verdicts diverge completely.
+    """
+    files = [f"/tmp/shots/photo{i}.png" for i in range(count)]
+    return PreflightResult(
+        type_groups={"image": files},
+        warnings=[],
+        errors=[],
+        total_size=count * 2048,
+        truncated=False,
+        total_files=count,
+    )
+
+
+def _server_gate_state(preflight: PreflightResult):
+    return build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp/shots", preflight=preflight),
+        runtime_source="server",
+        ingest_backend="server",
+        server_ingest_available=True,
+    )
+
+
+def test_server_mode_gates_start_when_the_server_refuses_everything():
+    """(task-14911 AC#1) task-14823's gate asked a LOCAL question -- "did
+    the pre-flight find a supported type group" -- so a folder of nothing
+    but images forecast "0 will be sent to the server · 3 will fail
+    (unsupported by the server)" with Start still ENABLED: the guaranteed
+    failure submit that gate exists to prevent, one backend over."""
+    state = _server_gate_state(_images_only_preflight())
+
+    assert state.ingest_backend == "server"
+    assert state.forecast is not None
+    assert (state.forecast.will_import, state.forecast.will_fail_refused) == (
+        0,
+        3,
+    )
+    assert state.start_enabled is False, (
+        "Start stayed live for a selection the server refuses entirely: "
+        f"{state.commit_summary_line!r}"
+    )
+    assert state.selection_has_nothing_importable is True
+    assert state.start_quiet_line, "the gate closed without stating why"
+
+
+def test_the_server_gate_names_the_backend_that_is_refusing():
+    """(task-14911 AC#1) A file nothing can read and a file this server
+    won't take need different sentences: the image imports fine on this
+    machine. The arc already settled the vocabulary for the second case
+    ("unsupported by the server"), and the recovery differs too -- switch
+    the target, or stage something the server accepts."""
+    from tldw_chatbook.Library.library_ingest_state import (
+        INGEST_SERVER_REFUSED_COPY,
+    )
+
+    line = _server_gate_state(_images_only_preflight()).start_quiet_line
+
+    assert "sent to the server" in line, line
+    assert INGEST_SERVER_REFUSED_COPY in line, line
+    assert "can be imported" not in line, (
+        "the local gate sentence claims nothing can read these files; they "
+        f"import fine on this machine: {line!r}"
+    )
+    assert "on this machine" in line, (
+        f"the gate stated no way forward: {line!r}"
+    )
+
+
+def test_the_same_selection_is_untouched_in_local_mode():
+    """(task-14911 AC#2) The images import on this machine, so nothing
+    about this selection is doomed locally -- the gate must stay open."""
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(
+            path="/tmp/shots", preflight=_images_only_preflight()
+        ),
+    )
+
+    assert state.ingest_backend == "local"
+    assert state.start_enabled is True
+    assert state.selection_has_nothing_importable is False
+    assert state.start_quiet_line == "", state.start_quiet_line
+
+
+def test_the_server_gate_counts_come_from_the_forecast():
+    """(task-14911 AC#3) The gate reads the existing ``IngestForecast``
+    rather than deriving a second notion of what is importable -- the
+    same "one computation" move task-14820 made for the commit and
+    consent lines. If it re-derived, the two lines could disagree on
+    screen, which is the defect that arc exists to remove."""
+    state = _server_gate_state(_images_only_preflight(count=7))
+
+    assert state.forecast is not None
+    assert f"{state.forecast.will_fail_refused} files" in (
+        state.start_quiet_line
+    ), state.start_quiet_line
+    assert f"{state.forecast.will_fail}" in state.commit_summary_line
+
+
+def test_the_server_gate_names_empty_files_separately():
+    """A 0-byte file is not "unsupported by the server" (task-14910: the
+    client refuses it before sending), so a selection blocked by both
+    states both reasons."""
+    preflight = PreflightResult(
+        type_groups={"image": ["/tmp/shots/photo0.png"]},
+        warnings=[],
+        errors=[],
+        total_size=2048,
+        truncated=False,
+        total_files=2,
+        empty_files=("/tmp/shots/blank.txt",),
+    )
+    state = _server_gate_state(preflight)
+
+    assert state.start_enabled is False
+    line = state.start_quiet_line
+    assert "1 file unsupported by the server" in line, line
+    assert "1 empty file" in line, line
+
+
+def test_a_server_selection_with_one_sendable_file_is_not_gated():
+    """Guard: the gate is "the server will take NOTHING here", not "the
+    server will refuse something here" -- a mixed folder still starts."""
+    preflight = PreflightResult(
+        type_groups={
+            "generic": ["/tmp/shots/notes.txt"],
+            "image": ["/tmp/shots/photo0.png"],
+        },
+        warnings=[],
+        errors=[],
+        total_size=4096,
+        truncated=False,
+        total_files=2,
+    )
+    state = _server_gate_state(preflight)
+
+    assert state.forecast is not None
+    assert state.forecast.will_import == 1
+    assert state.start_enabled is True
+    assert state.selection_has_nothing_importable is False
+
+
+def test_a_server_selection_that_is_all_duplicates_still_starts():
+    """Guard (task-2223 ruling, preserved): zero imports plus predicted
+    matches keeps Start ENABLED -- the duplicate probe is capped
+    best-effort, never a blocker -- so the new gate must key off "the
+    backend accepts nothing", not "will_import == 0"."""
+    preflight = PreflightResult(
+        type_groups={"generic": [f"/tmp/dupes/n{i}.txt" for i in range(3)]},
+        warnings=[],
+        errors=[],
+        total_size=3 * 128,
+        truncated=False,
+        total_files=3,
+        already_in_library=3,
+    )
+    state = _server_gate_state(preflight)
+
+    assert state.forecast is not None
+    assert (state.forecast.will_import, state.forecast.will_match) == (0, 3)
+    assert state.start_enabled is True
+    assert state.selection_has_nothing_importable is False
+
+
+def test_an_all_unsupported_folder_keeps_the_local_sentence_on_both_backends():
+    """Guard: a file nothing can read is diagnosed the same way whichever
+    target is selected -- switching to the server would not help, so the
+    server's own vocabulary would be misleading here."""
+    preflight = PreflightResult(
+        type_groups={"unsupported": ["/tmp/junk/a.xyz", "/tmp/junk/b.xyz"]},
+        warnings=[],
+        errors=[],
+        total_size=64,
+        truncated=False,
+        total_files=2,
+    )
+    state = _server_gate_state(preflight)
+
+    assert state.start_enabled is False
+    assert state.start_quiet_line == (
+        "Nothing in this selection can be imported — 2 unsupported files."
+    ), state.start_quiet_line

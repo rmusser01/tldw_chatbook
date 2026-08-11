@@ -15,6 +15,7 @@ from textual.app import App
 from textual.content import Content
 from textual.widgets import Button, Checkbox, Input, Static, TextArea
 
+from Tests.UI.background_signals import wait_for_background_signal, wait_for_signal
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -721,7 +722,10 @@ async def test_auto_improvement_live_drift_is_reviewable_and_never_partially_app
         modal.query_one("#console-prompts-improve", Button).press()
         await pilot.pause()
         modal.query_one("#console-prompts-auto-improve", Button).press()
-        await gateway.started.wait()
+        await wait_for_signal(
+            gateway.started,
+            what="the auto-improvement gateway call starting",
+        )
 
         if drift == "session":
             store.create_session(settings=original_settings)
@@ -1018,7 +1022,11 @@ async def test_saved_recipe_source_is_not_redirected_by_late_colliding_detail() 
         await pilot.pause()
 
         late_local = asyncio.create_task(modal.open_artifact("shared-recipe"))
-        await service.local_detail_started.wait()
+        await wait_for_background_signal(
+            service.local_detail_started,
+            late_local,
+            what="the late local detail open",
+        )
         await modal.switch_source("server")
         await modal.open_artifact("shared-recipe")
         service.release_late_local_detail.set()
@@ -3194,7 +3202,11 @@ async def test_console_workspace_switch_refresh_is_not_dropped_during_inflight_s
 
         console._sync_console_native_session_tabs = blocking_sync_tabs
         first_sync_task = asyncio.create_task(console._sync_native_console_chat_ui())
-        await first_sync_blocked.wait()
+        await wait_for_background_signal(
+            first_sync_blocked,
+            first_sync_task,
+            what="the first native-console UI sync",
+        )
 
         console.query_one("#console-change-workspace", Button).press()
         modal_screen = await _wait_for_workspace_switcher_modal(host, pilot)
@@ -4749,7 +4761,11 @@ async def test_server_authenticated_context_change_during_card_fetch_aborts_sess
             ),
         )
     )
-    await card_fetch_started.wait()
+    await wait_for_background_signal(
+        card_fetch_started,
+        handoff,
+        what="the character-card fetch",
+    )
 
     runtime.authority_context_state["current"] = SimpleNamespace(account="B")
     if authenticated_transition == "a_to_b_to_a":
