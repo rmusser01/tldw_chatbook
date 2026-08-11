@@ -24,6 +24,13 @@ from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
 _FINAL_SENTINEL = "QWENCLOUD-NATIVE-FINAL-SENTINEL"
+_CANCEL_CHECKPOINT = "cancel-checkpoint"
+# StreamGate keeps a fence-sized suffix; extra visible text lets the complete
+# checkpoint reach the real store before the still-open response is cancelled.
+_CANCEL_STREAM_TEXT = f"{_CANCEL_CHECKPOINT}-visible-stream-padding"
+# Exceed requests' 8 KiB read size with valid SSE comments while withholding
+# the terminal HTTP chunk, ensuring parser consumption precedes client closure.
+_STREAM_HOLD_PADDING = b": hold-open\n\n" * 1024
 
 
 def _sse(events: list[dict[str, Any]], *, done: bool = True) -> bytes:
@@ -263,14 +270,12 @@ class _JoinedQwenServer(ThreadingHTTPServer):
         bodies: Sequence[_ScriptedBody],
         *,
         validators: list[_RequestValidator] | None = None,
-        on_request: Callable[[int], None] | None = None,
     ) -> None:
         super().__init__(("127.0.0.1", 0), _JoinedQwenHandler)
         self.bodies = list(bodies)
         self.validators = list(validators or [])
         self.requests: list[dict[str, Any]] = []
         self.validation_errors: list[str] = []
-        self.on_request = on_request
         self.stall_started = threading.Event()
         self.stall_timed_out = threading.Event()
         self._lock = threading.Lock()
@@ -280,8 +285,6 @@ class _JoinedQwenServer(ThreadingHTTPServer):
     ) -> _ScriptedBody | _ValidationFailure:
         with self._lock:
             self.requests.append({"path": path, "payload": payload})
-            if self.on_request is not None:
-                self.on_request(len(self.requests))
             assert self.bodies, "provider script exhausted"
             if self.validators:
                 try:
@@ -354,12 +357,10 @@ def _joined_qwen_server(
     bodies: Sequence[_ScriptedBody],
     *,
     validators: list[_RequestValidator] | None = None,
-    on_request: Callable[[int], None] | None = None,
 ) -> Iterator[_JoinedQwenServer]:
     server = _JoinedQwenServer(
         bodies,
         validators=validators,
-        on_request=on_request,
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -769,7 +770,7 @@ def _responses_partial_call_then_text() -> bytes:
                 "output_index": 1,
                 "item_id": "msg_cancel",
                 "content_index": 0,
-                "delta": "cancel-checkpoint",
+                "delta": _CANCEL_STREAM_TEXT,
                 "logprobs": [],
             },
         ],
@@ -787,7 +788,7 @@ def _chat_partial_call_then_text() -> bytes:
                         "index": 0,
                         "delta": {
                             "role": "assistant",
-                            "content": "cancel-checkpoint",
+                            "content": _CANCEL_STREAM_TEXT,
                             "tool_calls": [
                                 {
                                     "index": 0,
@@ -809,6 +810,70 @@ def _chat_partial_call_then_text() -> bytes:
     )
 
 
+def _assert_partial_call_precedes_checkpoint(api_mode: str, body: bytes) -> str:
+    """Validate the cancellation fixture cannot degrade to ordinary text."""
+    events = [
+        json.loads(record.removeprefix(b"data: "))
+        for record in body.split(b"\n\n")
+        if record.startswith(b"data: {")
+    ]
+    if api_mode == "responses":
+        partial_item_indexes = [
+            index
+            for index, event in enumerate(events)
+            if event.get("type") == "response.output_item.added"
+            and event.get("item", {}).get("type") == "function_call"
+            and event.get("item", {}).get("status") == "in_progress"
+        ]
+        partial_delta_indexes = [
+            index
+            for index, event in enumerate(events)
+            if event.get("type") == "response.function_call_arguments.delta"
+            and event.get("delta") == '{"expression":'
+        ]
+        checkpoint_indexes = [
+            index
+            for index, event in enumerate(events)
+            if event.get("type") == "response.output_text.delta"
+            and event.get("delta") == _CANCEL_STREAM_TEXT
+        ]
+        assert partial_item_indexes
+        assert partial_delta_indexes
+        assert checkpoint_indexes
+        assert partial_item_indexes[0] < checkpoint_indexes[0]
+        assert partial_delta_indexes[0] < checkpoint_indexes[0]
+        return "response.function_call_arguments.delta"
+
+    checkpoint_events = []
+    for event in events:
+        choices = event.get("choices")
+        if not isinstance(choices, list) or not choices:
+            continue
+        if choices[0].get("delta", {}).get("content") == _CANCEL_STREAM_TEXT:
+            checkpoint_events.append(event)
+    assert checkpoint_events
+    tool_calls = checkpoint_events[0]["choices"][0]["delta"].get("tool_calls")
+    assert isinstance(tool_calls, list) and len(tool_calls) == 1
+    assert tool_calls[0]["function"] == {
+        "name": "calculator",
+        "arguments": '{"expression":',
+    }
+    return "chat.delta.tool_calls"
+
+
+@pytest.mark.parametrize("api_mode", ["responses", "chat_completions"])
+def test_partial_call_cancellation_fixture_rejects_text_only_mutation(
+    api_mode: str,
+) -> None:
+    text_only = (
+        _responses_final_turn(_CANCEL_STREAM_TEXT)
+        if api_mode == "responses"
+        else _chat_final_turn(_CANCEL_STREAM_TEXT)
+    )
+    with pytest.raises(AssertionError):
+        _assert_partial_call_precedes_checkpoint(api_mode, text_only)
+
+
 @pytest.mark.parametrize("api_mode", ["responses", "chat_completions"])
 @pytest.mark.allow_network
 def test_qwencloud_partial_call_cancellation_never_executes(
@@ -827,18 +892,36 @@ def test_qwencloud_partial_call_cancellation_never_executes(
 
     monkeypatch.setattr(CalculatorTool, "execute", recording_execute)
     cancelled = threading.Event()
+    checkpoint_observed = threading.Event()
     body = (
         _responses_partial_call_then_text()
         if api_mode == "responses"
         else _chat_partial_call_then_text()
     )
+    partial_event = _assert_partial_call_precedes_checkpoint(api_mode, body)
     close_calls: list[int] = []
     client_close_started = threading.Event()
     real_response_close = requests.Response.close
+    real_append_stream_chunk = ConsoleChatStore.append_stream_chunk
+
+    def recording_stream_chunk(
+        store: ConsoleChatStore, message_id: str, chunk: str
+    ) -> Any:
+        message = real_append_stream_chunk(store, message_id, chunk)
+        if _CANCEL_CHECKPOINT in chunk:
+            checkpoint_observed.set()
+            cancelled.set()
+        return message
+
+    monkeypatch.setattr(
+        ConsoleChatStore,
+        "append_stream_chunk",
+        recording_stream_chunk,
+    )
+    assert not cancelled.is_set()
 
     with _joined_qwen_server(
-        [_StalledSSE(body, client_close_started)],
-        on_request=lambda _request_count: cancelled.set(),
+        [_StalledSSE(body + _STREAM_HOLD_PADDING, client_close_started)]
     ) as server:
         address = server.server_address
         assert isinstance(address, tuple)
@@ -862,6 +945,12 @@ def test_qwencloud_partial_call_cancellation_never_executes(
         )
 
     assert outcome.status == "cancelled"
+    assert checkpoint_observed.is_set()
+    assert partial_event == (
+        "response.function_call_arguments.delta"
+        if api_mode == "responses"
+        else "chat.delta.tool_calls"
+    )
     assert len(server.requests) == 1
     assert server.stall_started.is_set()
     assert not server.stall_timed_out.is_set()
