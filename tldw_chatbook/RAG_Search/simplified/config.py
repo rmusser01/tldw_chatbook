@@ -51,10 +51,12 @@ DEFAULT_HYBRID_POOL_MULTIPLIER = 2
 # The shipped RRF constant for chatbook's hybrid fusion (TASK-4110, Task 5).
 #
 # DELIBERATELY NOT `fusion.DEFAULT_RRF_K` (60). That constant is the
-# tldw_server-parity value and remains the no-config fallback everywhere
-# (`reciprocal_rank_fusion`'s own signature default, `resolve_rrf_k`'s
-# last-resort branch, `_fuse_hybrid_results`' pre-parameter default); this
-# one is the value a chatbook profile actually ships with.
+# tldw_server-parity value and survives only as a PURE-LIBRARY no-config
+# fallback (`reciprocal_rank_fusion`'s own signature default and its
+# negative-k sanitization, plus `_fuse_hybrid_results`' pre-parameter
+# default); this one is the value a chatbook profile actually ships with,
+# and it is what EVERY fallback in `fusion.resolve_rrf_k` -- the app-config
+# resolver both live fusion paths go through -- now returns.
 #
 # Measured, not asserted (the full matrix is in the TASK-4110 PR): the
 # server calibrates k for candidate pools of thousands, while chatbook's
@@ -370,8 +372,8 @@ class SearchConfig:
     # validation -- see `hybrid_alpha` above); resolved at USE time via
     # `fusion.resolve_rrf_k`, exactly like `hybrid_alpha` is resolved via
     # `resolve_hybrid_alpha` at its call site -- an invalid/negative value
-    # falls back to `fusion.DEFAULT_RRF_K` with a warning rather than
-    # distorting or crashing the fusion math.
+    # falls back to `DEFAULT_HYBRID_RRF_K` (this field's own default, 5)
+    # with a warning rather than distorting or crashing the fusion math.
     rrf_k: int = DEFAULT_HYBRID_RRF_K
     # Hybrid leg over-fetch multiplier: `_hybrid_search` asks each of its
     # two legs (semantic, keyword) for `top_k * hybrid_pool_multiplier`

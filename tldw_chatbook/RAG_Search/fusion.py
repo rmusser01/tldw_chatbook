@@ -302,22 +302,28 @@ def resolve_rrf_k(value: Optional[Any] = None) -> int:
     """Resolve the RRF constant k from an untrusted (config) value.
 
     Precedence: explicit value -> the active profile's ``search.rrf_k``
-    (via ``resolve_active_rag_config``) -> ``DEFAULT_RRF_K`` (60, server
-    parity). Mirrors ``resolve_hybrid_alpha``'s precedence exactly (TASK-4110
+    (via ``resolve_active_rag_config``) -> the shipped default
+    (``_shipped_rrf_k()``, i.e. ``config.DEFAULT_HYBRID_RRF_K`` = 5).
+    Mirrors ``resolve_hybrid_alpha``'s precedence exactly (TASK-4110
     review): the two live fusion call sites --
     ``RAGService._fuse_hybrid_results`` (Library hybrid) and
     ``pipeline_builder_simple._rrf_merge_parallel_results`` (Chat RAG
     hybrid) -- must resolve k the same way they already resolve alpha, or a
     default change moves one live path and silently strands the other.
 
-    THIS IS NOW LOAD-BEARING (TASK-4110 Task 5): the shipped default moved
-    to ``SearchConfig.rrf_k = DEFAULT_HYBRID_RRF_K`` (5, measured for
+    THIS IS LOAD-BEARING (TASK-4110 Task 5): the shipped default moved to
+    ``SearchConfig.rrf_k = DEFAULT_HYBRID_RRF_K`` (5, measured for
     chatbook's ~20-row candidate window), so the profile fallback is what
     carries the measured value into the legacy pipeline path as well --
-    **both live fusion paths moved together**. ``DEFAULT_RRF_K`` below stays
-    60: it is the no-config fallback for a caller with no profile at all,
-    not the shipped default. Unifying or consciously diverging the two paths
-    belongs to TASK-3501.
+    **both live fusion paths moved together**. Unifying or consciously
+    diverging the two paths belongs to TASK-3501.
+
+    ``DEFAULT_RRF_K`` (60) is NOT part of this resolver's fallback chain --
+    see ``_shipped_rrf_k`` for why. It survives only as
+    ``reciprocal_rank_fusion``'s own signature default and that function's
+    negative-``rrf_k`` sanitization: a pure-library invariant for a caller
+    who supplied nothing, unreachable from the live call sites, which
+    always resolve through here first.
 
     Args:
         value: Caller/config-supplied k, if any (e.g. a TOML pipeline's

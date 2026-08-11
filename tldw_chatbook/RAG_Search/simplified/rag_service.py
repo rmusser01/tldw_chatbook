@@ -1798,12 +1798,14 @@ class RAGService:
                 `config.search.rrf_k`, whose shipped default is 5
                 (`config.DEFAULT_HYBRID_RRF_K`, TASK-4110). Validated via
                 fusion.resolve_rrf_k, the same use-time pattern as `alpha`:
-                out-of-range/invalid config values fall back to
-                DEFAULT_RRF_K with a warning rather than distorting or
-                crashing the fusion math. The signature default stays
-                DEFAULT_RRF_K (60, server parity) for every caller that
-                predates this parameter -- it is a no-config fallback, not
-                the shipped default.
+                out-of-range/invalid config values fall back to that
+                shipped default (5) with a warning rather than distorting
+                or crashing the fusion math -- every fallback in the
+                app-config resolver is the shipped value. The SIGNATURE
+                default here stays DEFAULT_RRF_K (60, server parity) for
+                every caller that predates this parameter: a pure no-config
+                fallback, not the shipped default, and never reached by the
+                live caller.
             include_citations: Whether results carry citations to merge.
 
         Returns:
