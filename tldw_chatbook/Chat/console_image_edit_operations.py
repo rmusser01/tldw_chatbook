@@ -1,8 +1,8 @@
 """App-lifetime ownership for Console H3 image-edit operations.
 
 This module deliberately has no Textual, attachment, or persistence imports.
-It owns only cancellation/task identity and bounded, byte-free completion
-cleanup records so a fresh Console screen can reconcile durable success.
+It owns only cancellation/task identity and bounded, byte-free outcome records
+so a fresh Console screen can reconcile durable success or failure guidance.
 """
 
 from __future__ import annotations
@@ -65,12 +65,27 @@ class ImageEditCompletion:
             raise TypeError("captured_draft must be a string")
 
 
+@dataclass(frozen=True)
+class ImageEditFailureNotice:
+    """Byte-free durable failure guidance awaiting Console hydration."""
+
+    session_id: str
+    generation: str
+    message_id: str
+
+    def __post_init__(self) -> None:
+        _required_text(self.session_id, "session_id")
+        _required_text(self.generation, "generation")
+        _required_text(self.message_id, "message_id")
+
+
 class ImageEditOperationRegistry:
-    """Single app-owned duplicate gate and completion-cleanup ledger."""
+    """Single app-owned duplicate gate and durable-outcome ledger."""
 
     def __init__(self) -> None:
         self._active: dict[str, ActiveImageEditOperation] = {}
         self._completions: dict[str, ImageEditCompletion] = {}
+        self._failure_notices: dict[str, ImageEditFailureNotice] = {}
         self._discarded_generations: set[str] = set()
 
     def start(
@@ -166,6 +181,32 @@ class ImageEditOperationRegistry:
         del self._completions[session_id]
         return True
 
+    def publish_failure_notice(self, notice: ImageEditFailureNotice) -> bool:
+        """Retain one durable failure-message identity for the session."""
+        if notice.generation in self._discarded_generations:
+            return False
+        active = self._active.get(notice.session_id)
+        if active is not None and active.generation != notice.generation:
+            return False
+        self._failure_notices[notice.session_id] = notice
+        return True
+
+    def failure_notice(self, session_id: str) -> ImageEditFailureNotice | None:
+        """Return pending durable failure guidance for ``session_id``."""
+        return self._failure_notices.get(session_id)
+
+    def failure_notices(self) -> tuple[ImageEditFailureNotice, ...]:
+        """Return an immutable snapshot of pending failure guidance."""
+        return tuple(self._failure_notices.values())
+
+    def ack_failure_notice(self, session_id: str, generation: str) -> bool:
+        """Acknowledge only the matching generation's hydrated guidance."""
+        notice = self._failure_notices.get(session_id)
+        if notice is None or notice.generation != generation:
+            return False
+        del self._failure_notices[session_id]
+        return True
+
     def drop_session(self, session_id: str) -> None:
         """Cancel and forget all operation state for a deleted session."""
         operation = self._active.pop(session_id, None)
@@ -173,3 +214,4 @@ class ImageEditOperationRegistry:
             self._discarded_generations.add(operation.generation)
             operation.cancel_event.set()
         self._completions.pop(session_id, None)
+        self._failure_notices.pop(session_id, None)

@@ -19,6 +19,7 @@ from tldw_chatbook.Chat.console_command_grammar import CommandParse
 from tldw_chatbook.Chat.console_generate_image import BatchResult
 from tldw_chatbook.Chat.console_image_edit_operations import (
     ImageEditCompletion,
+    ImageEditFailureNotice,
     ImageEditOperationRegistry,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
@@ -187,11 +188,35 @@ async def test_operation_registry_is_app_owned_generation_checked_and_byte_free(
     assert not registry.ack_completion("session-a", first.generation)
     assert registry.ack_completion("session-a", second.generation)
 
+    failure_notice = ImageEditFailureNotice(
+        session_id="session-a",
+        generation=second.generation,
+        message_id="persisted-system-message",
+    )
+    assert {field.name for field in fields(failure_notice)} == {
+        "session_id",
+        "generation",
+        "message_id",
+    }
+    with pytest.raises(TypeError):
+        ImageEditFailureNotice(  # type: ignore[call-arg]
+            session_id="session-a",
+            generation=second.generation,
+            message_id="persisted-system-message",
+            source_path="/private/forbidden.png",
+        )
+    assert registry.publish_failure_notice(failure_notice)
+    assert registry.failure_notice("session-a") == failure_notice
+    assert not registry.ack_failure_notice("session-a", first.generation)
+    assert registry.ack_failure_notice("session-a", second.generation)
+
     assert registry.publish_completion(completion)
+    assert registry.publish_failure_notice(failure_notice)
     registry.drop_session("session-a")
     assert second.cancel_event.is_set()
     assert registry.active("session-a") is None
     assert registry.completion("session-a") is None
+    assert registry.failure_notice("session-a") is None
     release_second.set()
     await second.task
 
@@ -700,6 +725,9 @@ async def test_failure_guidance_persistence_error_falls_back_without_masking_pri
     )
     assert store.pending_attachments(session.id) == [pending]
     assert composer.draft_text().endswith("preserve  internal   spacing")
+    assert screen.app_instance.console_image_edit_operations.failure_notice(
+        session.id
+    ) is None
     assert privacy_logger.bindings == [
         {
             "component": "image_edit",

@@ -28,7 +28,6 @@ from Tests.UI.test_console_native_chat_flow import (
     _select_llamacpp_console,
 )
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
-from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
@@ -39,6 +38,7 @@ from tldw_chatbook.Chat.console_command_grammar import CommandParse
 from tldw_chatbook.Chat.console_generate_image import BatchResult
 from tldw_chatbook.Chat.console_image_edit_operations import (
     ImageEditCompletion,
+    ImageEditFailureNotice,
     ImageEditOperationRegistry,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -576,7 +576,7 @@ async def test_batch_failure_after_actual_unmount_never_syncs_stale_screen(
         ),
     ),
 )
-async def test_unmounted_h3_failure_guidance_is_durable_once_across_real_reload(
+async def test_late_first_persisted_h3_failure_reconciles_through_normal_restore(
     monkeypatch,
     tmp_path,
     failure_kind,
@@ -602,22 +602,26 @@ async def test_unmounted_h3_failure_guidance_is_durable_once_across_real_reload(
         async with host.run_test(size=(160, 48)) as pilot:
             old = host.screen_stack[-1]
             await _wait_for_selector(old, pilot, "#console-native-composer")
-            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
-            old._console_chat_store = store
-            session = store.create_session(title="Durable H3 failure")
-            store.append_message(
-                session.id,
-                role=ConsoleMessageRole.USER,
-                content="existing durable turn",
-                persist=True,
-            )
-            conversation_id = session.persisted_conversation_id
-            assert conversation_id is not None
+            old_store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            old._console_chat_store = old_store
+            session = old_store.create_session(title="Durable H3 failure")
+            assert session.persisted_conversation_id is None
             source = _real_image_pending(
                 "source.png", attachment_id="durable-failure-source"
             )
-            store.add_pending_attachment(session.id, source)
-            store.set_session_draft(session.id, "preserved failure draft")
+            other = PendingAttachment(
+                file_path="/private/sentinel/context.txt",
+                display_name="context.txt",
+                file_type="text",
+                insert_mode="attachment",
+                data=b"preserved context",
+                mime_type="text/plain",
+                original_size=len(b"preserved context"),
+                processed_size=len(b"preserved context"),
+                attachment_id="preserved-other-source",
+            )
+            old_store.add_pending_attachment(session.id, source)
+            old_store.set_session_draft(session.id, "preserved failure draft")
             old.query_one("#console-native-composer").load_draft(
                 "preserved failure draft"
             )
@@ -631,6 +635,11 @@ async def test_unmounted_h3_failure_guidance_is_durable_once_across_real_reload(
                 )
             )
             assert await asyncio.to_thread(started.wait, 2)
+            assert old_store.add_pending_attachment(session.id, other)
+            operation = app.console_image_edit_operations.active(session.id)
+            assert operation is not None
+            saved_state = old.save_state()
+            assert session.persisted_conversation_id is None
             await asyncio.wait_for(host.pop_screen(), timeout=0.5)
 
             async def _stale_sync_tripwire():
@@ -638,57 +647,61 @@ async def test_unmounted_h3_failure_guidance_is_durable_once_across_real_reload(
 
             old._sync_native_console_chat_ui = _stale_sync_tripwire
             old._message._sync_native_console_chat_ui_fn = _stale_sync_tripwire
-            release.set()
-            await caller
 
-            assert store.pending_attachments(session.id) == [source]
-            assert store.session_draft(session.id) == "preserved failure draft"
-
-            def _build_reloaded_screen():
-                fresh = ChatScreen(app)
-                tree = ChatConversationService(db).get_conversation_tree(
-                    conversation_id, depth_cap=10_000, root_limit=10_000
-                )
-                all_nodes = fresh._console_messages_from_conversation_tree(tree)
-                fresh_store = ConsoleChatStore(
-                    persistence=ChatPersistenceService(db)
-                )
-                fresh._console_chat_store = fresh_store
-                restored = fresh_store.restore_persisted_session(
-                    title="Durable H3 failure",
-                    workspace_id=None,
-                    persisted_conversation_id=conversation_id,
-                    all_nodes=all_nodes,
-                    active_leaf_persisted_id=db.get_conversation_active_leaf(
-                        conversation_id
-                    ),
-                )
-                fresh._reconcile_h3_image_edit_completions(fresh_store)
-                fresh._reconcile_h3_image_edit_completions(fresh_store)
-                return fresh, fresh_store, restored.id
-
-            def _guidance(fresh_store, restored_session_id) -> list[str]:
-                return [
-                    message.content
-                    for message in fresh_store.messages_for_session(
-                        restored_session_id
-                    )
-                    if message.role is ConsoleMessageRole.SYSTEM
-                ]
-
-            fresh, fresh_store, restored_id = _build_reloaded_screen()
+            fresh = ChatScreen(app)
+            fresh.restore_state(saved_state)
             await host.push_screen(fresh)
             await _wait_for_selector(fresh, pilot, "#console-native-composer")
-            assert _guidance(fresh_store, restored_id) == [expected_copy]
-            await asyncio.wait_for(host.pop_screen(), timeout=0.5)
+            fresh_store = fresh._ensure_console_chat_store()
+            restored = next(
+                item for item in fresh_store.sessions() if item.id == session.id
+            )
+            assert restored.persisted_conversation_id is None
+            assert fresh_store.pending_attachments(session.id) == [source, other]
+            assert fresh_store.session_draft(session.id) == "preserved failure draft"
 
-            remounted, remounted_store, remounted_id = _build_reloaded_screen()
+            release.set()
+            await caller
+            for _ in range(10):
+                await pilot.pause()
+                if app.console_image_edit_operations.failure_notice(session.id) is None:
+                    break
+
+            messages = fresh_store.messages_for_session(session.id)
+            guidance = [
+                message
+                for message in messages
+                if message.role is ConsoleMessageRole.SYSTEM
+            ]
+            assert len(guidance) == 1
+            assert guidance[0].content == expected_copy
+            assert guidance[0].persisted_message_id
+            persisted_guidance_id = guidance[0].persisted_message_id
+            assert restored.persisted_conversation_id is not None
+            assert fresh_store.pending_attachments(session.id) == [source, other]
+            assert fresh_store.session_draft(session.id) == "preserved failure draft"
+            assert app.console_image_edit_operations.failure_notice(session.id) is None
+
+            second_state = fresh.save_state()
+            await asyncio.wait_for(host.pop_screen(), timeout=0.5)
+            remounted = ChatScreen(app)
+            remounted.restore_state(second_state)
             await host.push_screen(remounted)
             await _wait_for_selector(remounted, pilot, "#console-native-composer")
-            assert _guidance(remounted_store, remounted_id) == [expected_copy]
-            assert "sentinel" not in repr(
-                _guidance(remounted_store, remounted_id)
+            remounted_store = remounted._ensure_console_chat_store()
+            remounted_guidance = [
+                message
+                for message in remounted_store.messages_for_session(session.id)
+                if message.role is ConsoleMessageRole.SYSTEM
+            ]
+            assert len(remounted_guidance) == 1
+            assert remounted_guidance[0].content == expected_copy
+            assert remounted_guidance[0].persisted_message_id == persisted_guidance_id
+            assert remounted_store.pending_attachments(session.id) == [source, other]
+            assert remounted_store.session_draft(session.id) == (
+                "preserved failure draft"
             )
+            assert "sentinel" not in repr(remounted_guidance)
     finally:
         db.close_connection()
 
@@ -858,6 +871,13 @@ async def test_confirmed_session_delete_drops_active_and_completion():
                 captured_draft="doomed draft",
             )
         )
+        assert registry.publish_failure_notice(
+            ImageEditFailureNotice(
+                session_id=doomed.id,
+                generation=operation.generation,
+                message_id="doomed-system-message",
+            )
+        )
         await console._sync_native_console_chat_ui()
         close_selector = f"#console-close-session-tab-{doomed.id}"
         await _wait_for_selector(console, pilot, close_selector)
@@ -871,5 +891,6 @@ async def test_confirmed_session_delete_drops_active_and_completion():
         assert operation.cancel_event.is_set()
         assert registry.active(doomed.id) is None
         assert registry.completion(doomed.id) is None
+        assert registry.failure_notice(doomed.id) is None
         release.set()
         await operation.task

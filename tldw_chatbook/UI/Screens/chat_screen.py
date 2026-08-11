@@ -190,6 +190,7 @@ from ...Chat.console_generate_image import (
 )
 from ...Chat.console_image_edit_operations import (
     ImageEditCompletion,
+    ImageEditFailureNotice,
     ImageEditOperationRegistry,
 )
 from ...Chat.console_generate_video import (
@@ -16695,6 +16696,14 @@ class ChatScreen(BaseAppScreen):
             self.app_instance.console_image_edit_operations = registry
         return registry
 
+    _H3_FAILURE_GUIDANCE_COPY = frozenset(
+        {
+            "The source image could not be uploaded. Please try again.",
+            "The image-edit operation did not complete. Please try again.",
+            "The edited image could not be saved locally. The source remains staged.",
+        }
+    )
+
     @staticmethod
     def _h3_reference_from_pending(pending: Any):
         """Build one memory-only source reference without reopening its path."""
@@ -16854,7 +16863,7 @@ class ChatScreen(BaseAppScreen):
     def _reconcile_h3_image_edit_completions(
         self, store: ConsoleChatStore | None = None
     ) -> None:
-        """Adopt byte-free durable completions into a current Console store."""
+        """Adopt byte-free durable H3 outcomes into a current Console store."""
         registry = self._h3_image_edit_registry()
         store = store or self._console_chat_store
         if store is None:
@@ -16869,9 +16878,115 @@ class ChatScreen(BaseAppScreen):
                 registry.ack_completion(
                     completion.session_id, completion.generation
                 )
+        for notice in registry.failure_notices():
+            if notice.session_id not in live_session_ids:
+                continue
+            if self._merge_h3_failure_notice_in_store(store, notice):
+                registry.ack_failure_notice(notice.session_id, notice.generation)
+
+    def _merge_h3_failure_notice_in_store(
+        self,
+        store: ConsoleChatStore,
+        notice: ImageEditFailureNotice,
+    ) -> bool:
+        """Idempotently hydrate one exact privacy-safe durable system row."""
+        session = next(
+            (
+                candidate
+                for candidate in store.sessions()
+                if candidate.id == notice.session_id
+            ),
+            None,
+        )
+        if session is None:
+            return False
+        try:
+            existing = next(
+                (
+                    message
+                    for message in store.messages_for_session(notice.session_id)
+                    if message.persisted_message_id == notice.message_id
+                ),
+                None,
+            )
+        except KeyError:
+            return False
+        if existing is not None:
+            return (
+                existing.role is ConsoleMessageRole.SYSTEM
+                and existing.content in self._H3_FAILURE_GUIDANCE_COPY
+            )
+        if store.persistence is None:
+            return False
+        db = getattr(store.persistence, "db", None)
+        read_message = getattr(db, "get_message_by_id", None)
+        if not callable(read_message):
+            return False
+        try:
+            row = read_message(notice.message_id)
+        except Exception:  # noqa: BLE001 - retain notice for a later retry
+            return False
+        if not isinstance(row, Mapping):
+            return False
+        conversation_id = row.get("conversation_id")
+        content = row.get("content")
+        if (
+            row.get("id") != notice.message_id
+            or row.get("sender") != ConsoleMessageRole.SYSTEM.value
+            or str(row.get("role") or ConsoleMessageRole.SYSTEM.value)
+            != ConsoleMessageRole.SYSTEM.value
+            or type(content) is not str
+            or content not in self._H3_FAILURE_GUIDANCE_COPY
+            or row.get("image_data") is not None
+            or row.get("image_mime_type") not in {None, ""}
+            or type(conversation_id) is not str
+            or not conversation_id
+        ):
+            return False
+        if (
+            session.persisted_conversation_id is not None
+            and session.persisted_conversation_id != conversation_id
+        ):
+            return False
+        recovered_conversation_id = session.persisted_conversation_id is None
+        if recovered_conversation_id:
+            session.persisted_conversation_id = conversation_id
+        try:
+            nodes = store._nodes_by_session[notice.session_id]
+            if notice.message_id in nodes:
+                raise ValueError("native message identity collision")
+            message = ConsoleChatMessage(
+                id=notice.message_id,
+                persisted_message_id=notice.message_id,
+                parent_message_id=row.get("parent_message_id"),
+                role=ConsoleMessageRole.SYSTEM,
+                content=content,
+                status="complete",
+            )
+            parent_native_id = next(
+                (
+                    node.id
+                    for node in nodes.values()
+                    if node.persisted_message_id == message.parent_message_id
+                ),
+                None,
+            )
+            store._register_tree_node(
+                notice.session_id,
+                message,
+                parent_native_id=parent_native_id,
+            )
+            store._active_leaf_by_session[notice.session_id] = message.id
+            store._recompute_active_path(notice.session_id)
+            store._bump_payload_revision(notice.session_id)
+        except Exception:  # noqa: BLE001 - retain notice for a later retry
+            if recovered_conversation_id:
+                session.persisted_conversation_id = None
+            return False
+        return True
 
     def _schedule_current_h3_completion_reconciliation(self) -> None:
-        """Ask the currently mounted Console, if any, to reconcile."""
+        """Ask the currently mounted Console, if any, to reconcile outcomes."""
         current = getattr(
             self.app_instance, "_console_h3_image_edit_screen", None
         )
@@ -16897,13 +17012,19 @@ class ChatScreen(BaseAppScreen):
         store = self._console_chat_store
         if store is None:
             return
+        persisted_message_id: str | None = None
         try:
-            store.append_message(
+            message = store.append_message(
                 session_id,
                 role=ConsoleMessageRole.SYSTEM,
                 content=copy,
                 persist=True,
             )
+            if (
+                type(message.persisted_message_id) is str
+                and message.persisted_message_id
+            ):
+                persisted_message_id = message.persisted_message_id
         except KeyError:
             return
         except Exception as exc:  # noqa: BLE001 - preserve the primary failure
@@ -16926,6 +17047,17 @@ class ChatScreen(BaseAppScreen):
                     )
             except Exception:  # noqa: BLE001 - best-effort in-memory fallback
                 return
+        if persisted_message_id is not None:
+            notice = ImageEditFailureNotice(
+                session_id=session_id,
+                generation=generation,
+                message_id=persisted_message_id,
+            )
+            if self._h3_image_edit_registry().publish_failure_notice(notice):
+                if self._h3_origin_screen_is_live(generation):
+                    self._reconcile_h3_image_edit_completions(store)
+                else:
+                    self._schedule_current_h3_completion_reconciliation()
         ui_generations = getattr(self, "_console_h3_ui_generations", {})
         if (
             ui_generations.get(session_id) == generation
