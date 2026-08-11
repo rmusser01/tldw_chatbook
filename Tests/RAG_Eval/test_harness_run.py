@@ -158,6 +158,78 @@ def test_three_mode_eval_run_over_the_real_fixtures(tmp_path, capsys):
     )
 
 
+def test_the_vector_blind_fixture_is_still_vector_blind(tmp_path, capsys):
+    """TASK-4110 AC#5: semantic mode must still MISS `note-saltmarsh-hide`.
+
+    The whole fusion-weighting arc rests on one property of the corpus:
+    `kw-plant-maintenance-record` is a query the vector leg cannot answer
+    ("plant maintenance record" reads as plant-and-equipment upkeep; the
+    target note is about a saltmarsh bird hide), so hybrid returning it is
+    evidence that FUSION rescued a keyword-only document rather than that
+    the vector leg happened to find it anyway.
+
+    That property is not self-maintaining. A future embedding-model bump, a
+    corpus edit, or a baseline re-stamp could quietly make semantic mode
+    return the target — at which point every hybrid number in this arc would
+    still be green while measuring nothing, because the corpus could no
+    longer tell coverage apart from noise. This test fails loudly at that
+    moment.
+
+    Deliberately ONE query in ONE mode rather than a full `run_eval`: the
+    expensive part is the runtime (real writers, real embeddings), and a
+    second three-mode pass would buy nothing this asserts.
+    """
+    from Tests.RAG_Eval.harness.fusion_sweep import RESCUE_QUERY_ID, RESCUE_TARGET_SLUG
+    from Tests.RAG_Eval.harness.goldenset import load_fixtures
+    from Tests.RAG_Eval.harness.ingest import build_eval_runtime
+    from Tests.RAG_Eval.harness.runner import run_eval
+
+    corpus, golden = load_fixtures()
+    query = next((q for q in golden if q.id == RESCUE_QUERY_ID), None)
+    assert query is not None, (
+        f"the golden set no longer contains {RESCUE_QUERY_ID!r} — the fixture "
+        "this arc measures against is gone, not merely unasserted"
+    )
+    assert RESCUE_TARGET_SLUG in query.relevant_slugs, (
+        f"{RESCUE_QUERY_ID!r} no longer expects {RESCUE_TARGET_SLUG!r}"
+    )
+
+    runtime = build_eval_runtime(corpus, tmp_path)
+    try:
+        report = run_eval(runtime, [query], k=K, modes=("semantic",))
+    finally:
+        try:
+            runtime.close()
+        except Exception as exc:  # pragma: no cover - reported, not raised
+            print(f"NOTE: runtime.close() failed after the run: {exc!r}")
+
+    semantic = report.modes["semantic"]
+    assert not semantic.errors, (
+        f"the semantic probe erred, so its miss proves nothing: {semantic.errors}"
+    )
+    assert semantic.runtime_backends == (EXPECTED_BACKEND["semantic"],), (
+        f"the probe did not route to the vector path: {semantic.runtime_backends}"
+    )
+
+    outcome = semantic.queries[0]
+    # A retrieval that returned nothing at all would "miss" the target for
+    # the wrong reason and make this assertion vacuous.
+    assert outcome.rows_returned > 0, (
+        "semantic mode returned no rows at all; the miss below is vacuous"
+    )
+    with capsys.disabled():
+        print(
+            f"\nAC#5 probe: semantic@{K} for {query.query!r} returned "
+            f"{outcome.rows_returned} rows: {list(outcome.retrieved_doc_ids)}"
+        )
+    assert RESCUE_TARGET_SLUG not in outcome.retrieved_doc_ids, (
+        f"semantic mode now returns {RESCUE_TARGET_SLUG!r} for "
+        f"{RESCUE_QUERY_ID!r}. The corpus can no longer distinguish a fusion "
+        "rescue from ordinary vector coverage, so every hybrid claim in "
+        "TASK-4110 is unfalsifiable until the fixture is repaired."
+    )
+
+
 def test_the_committed_baselines_still_hold(tmp_path, capsys):
     """The fail-on-regression gate itself.
 

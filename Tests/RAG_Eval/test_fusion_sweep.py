@@ -72,8 +72,8 @@ def test_the_fusion_strategy_matrix_over_the_real_fixtures(tmp_path, capsys):
     )
     assert len(set(names)) == len(names), f"duplicate strategy rows: {names}"
     assert report.control().strategy == CONTROL, (
-        "the control row must be the shipped defaults, or every delta in the "
-        "table is measured against the wrong thing"
+        "the control row must be the pre-decision baseline (`CONTROL`), or "
+        "every delta in the table is measured against the wrong thing"
     )
     assert report.control_name == CONTROL_NAME
 

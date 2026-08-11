@@ -32,7 +32,7 @@ import pytest
 from loguru import logger
 
 from tldw_chatbook.RAG_Search.fusion import DEFAULT_RRF_K
-from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
+from tldw_chatbook.RAG_Search.simplified.config import DEFAULT_HYBRID_RRF_K, RAGConfig
 from tldw_chatbook.RAG_Search.simplified.rag_service import (
     RAGService,
     SEARCH_RESULT_MULTIPLIER,
@@ -251,24 +251,39 @@ def test_invalid_rrf_k_falls_back_to_default_with_warning(warnings_captured):
     )
 
 
-# --- Test 5: defaults unchanged (protected-oracle insurance) ---------------
+# --- Test 5: the SHIPPED defaults (oracle updated in Task 5) ---------------
 
 
-def test_defaults_unchanged(monkeypatch):
-    """A fresh config's fused-row arithmetic is byte-identical to pre-branch.
+def test_shipped_defaults(monkeypatch):
+    """What a fresh config actually ships (TASK-4110 Task 5 changed one).
 
-    Both new fields must default to the values that were previously
-    hard-coded (``rrf_k=60`` == the old ``DEFAULT_RRF_K`` literal;
-    ``hybrid_pool_multiplier=2`` == the old shared ``SEARCH_RESULT_MULTIPLIER``),
-    so a caller that never touches either knob sees no behavior change at
-    all -- not in the fused score, not in how many candidates each leg
-    fetches.
+    ORACLE UPDATE, disclosed: this test was ``test_defaults_unchanged`` and
+    pinned ``rrf_k == 60 == DEFAULT_RRF_K`` -- the value T3 preserved so that
+    config-threading alone changed no behavior. Task 5's measurement then
+    moved the SHIPPED default to ``DEFAULT_HYBRID_RRF_K`` (5); at 60 an
+    FTS-only row could never enter hybrid's fused top-k over a ~20-row
+    candidate window (`Tests/RAG_Search/test_fusion_rescue_pin.py`). So the
+    pin moves with it, deliberately, rather than being deleted.
+
+    ``fusion.DEFAULT_RRF_K`` stays 60 and is still asserted here as the
+    no-config fallback: a caller of ``_fuse_hybrid_results`` that predates
+    the ``rrf_k`` parameter is unaffected by the shipped-profile change.
+    ``hybrid_pool_multiplier`` is genuinely unchanged (2) -- the pool lever
+    was measured and declined.
     """
     cfg = RAGConfig()
-    assert cfg.search.rrf_k == 60 == DEFAULT_RRF_K
+    assert cfg.search.rrf_k == 5 == DEFAULT_HYBRID_RRF_K
+    assert DEFAULT_RRF_K == 60, "the server-parity fallback must not move"
     assert cfg.search.hybrid_pool_multiplier == 2 == SEARCH_RESULT_MULTIPLIER
 
-    # Fusion arithmetic: identical to the pre-branch hard-coded DEFAULT_RRF_K.
+    # The service reads the config knob, so a default-config hybrid search
+    # fuses at 5.
+    service_default_k = _make_service().config.search.rrf_k
+    assert service_default_k == DEFAULT_HYBRID_RRF_K
+
+    # The static method's own signature default is the no-config fallback and
+    # is still DEFAULT_RRF_K -- unchanged arithmetic for a caller that passes
+    # no k at all.
     fused = RAGService._fuse_hybrid_results(
         keyword_results=[_result("m1", 0.001), _result("m2", 0.001)],
         semantic_results=[_result("m2", 0.83), _result("m3", 0.41)],
@@ -277,9 +292,9 @@ def test_defaults_unchanged(monkeypatch):
         include_citations=False,
     )
     row = {r.id: r for r in fused}["m2"]
-    assert row.metadata["hybrid_fusion"]["rrf_k"] == 60
-    expected_fts_rrf = 1.0 / (60 + 2)
-    expected_vector_rrf = 1.0 / (60 + 1)
+    assert row.metadata["hybrid_fusion"]["rrf_k"] == DEFAULT_RRF_K
+    expected_fts_rrf = 1.0 / (DEFAULT_RRF_K + 2)
+    expected_vector_rrf = 1.0 / (DEFAULT_RRF_K + 1)
     assert row.metadata["hybrid_fusion"]["fts_rrf"] == pytest.approx(expected_fts_rrf)
     assert row.metadata["hybrid_fusion"]["vector_rrf"] == pytest.approx(
         expected_vector_rrf

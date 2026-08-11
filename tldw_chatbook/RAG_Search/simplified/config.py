@@ -20,9 +20,10 @@ from tldw_chatbook.config import (
 )
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 
-# Server-parity hybrid fusion defaults (alpha weights the vector leg; k is
-# the RRF constant)
-from ..fusion import DEFAULT_HYBRID_ALPHA, DEFAULT_RRF_K
+# Hybrid fusion defaults. `hybrid_alpha` keeps tldw_server's 0.7 (it weights
+# the vector leg); the RRF constant k does NOT keep the server's 60 -- see
+# `DEFAULT_HYBRID_RRF_K` below.
+from ..fusion import DEFAULT_HYBRID_ALPHA
 
 
 # Canonical vector store type values used by the selection logic below.
@@ -46,6 +47,35 @@ VECTOR_STORE_TYPE_MEMORY = "memory"
 # set `search_result_multiplier = 4` gets the hybrid legs back to 2 until
 # they set `hybrid_pool_multiplier` explicitly.
 DEFAULT_HYBRID_POOL_MULTIPLIER = 2
+
+# The shipped RRF constant for chatbook's hybrid fusion (TASK-4110, Task 5).
+#
+# DELIBERATELY NOT `fusion.DEFAULT_RRF_K` (60). That constant is the
+# tldw_server-parity value and remains the no-config fallback everywhere
+# (`reciprocal_rank_fusion`'s own signature default, `resolve_rrf_k`'s
+# last-resort branch, `_fuse_hybrid_results`' pre-parameter default); this
+# one is the value a chatbook profile actually ships with.
+#
+# Measured, not asserted (the full matrix is in the TASK-4110 PR): the
+# server calibrates k for candidate pools of thousands, while chatbook's
+# `_hybrid_search` only ever fuses `top_k * hybrid_pool_multiplier` rows per
+# leg -- ~20. Over a 20-row window the k=60 RRF curve is nearly flat, so an
+# FTS-only row at keyword rank 1 (score `(1-alpha)/(60+1)` = 0.00492) is
+# beaten by every vector-only row down to rank ~83 and can never enter the
+# fused top-k: hybrid could not rescue a document the vector leg missed. At
+# k=5 an FTS-only rank-1 row strictly outranks vector-only rows from rank 10
+# (and takes rank 9 on the documented `(-score, fts_rank, vector_rank)`
+# tie-break), which is inside the window fusion actually sees.
+#
+# On the 49-document eval corpus this moved keyword recall@10 0.938 -> 1.000
+# and keyword NDCG 0.938 -> 0.957 with no per-category cell regressing.
+# That safety half is BOUNDED TO THAT CORPUS -- k=5 makes rank position
+# matter more within each leg, which is good for a well-ordered vector leg
+# and bad for a noisy one. `hybrid_alpha` (0.7) and
+# `hybrid_pool_multiplier` (2) were measured alongside it and deliberately
+# left alone: pool widening bought +0.005 on one metric family by re-ranking
+# a document k=5 had already rescued, for a permanent +50% retrieval width.
+DEFAULT_HYBRID_RRF_K = 5
 
 # Cached result of the embeddings_rag installed-probe. Availability cannot
 # change without a restart, so probe at most once per process.
@@ -331,14 +361,16 @@ class SearchConfig:
     # [AppRAGSearchConfig.rag.retriever] hybrid_alpha
     hybrid_alpha: float = DEFAULT_HYBRID_ALPHA
     # Hybrid fusion RRF constant k: the rank-fusion denominator
-    # (1 / (k + rank)). Default 60 matches tldw_server. Not range-checked
-    # here (this dataclass has no active load-time validation -- see
-    # `hybrid_alpha` above); resolved at USE time via
+    # (1 / (k + rank)). Default 5 -- measured for chatbook's ~20-row
+    # candidate window, NOT tldw_server's 60 (see
+    # `DEFAULT_HYBRID_RRF_K` above for the measurement and the divergence).
+    # Not range-checked here (this dataclass has no active load-time
+    # validation -- see `hybrid_alpha` above); resolved at USE time via
     # `fusion.resolve_rrf_k`, exactly like `hybrid_alpha` is resolved via
     # `resolve_hybrid_alpha` at its call site -- an invalid/negative value
-    # falls back to the default with a warning rather than distorting or
-    # crashing the fusion math.
-    rrf_k: int = DEFAULT_RRF_K
+    # falls back to `fusion.DEFAULT_RRF_K` with a warning rather than
+    # distorting or crashing the fusion math.
+    rrf_k: int = DEFAULT_HYBRID_RRF_K
     # Hybrid leg over-fetch multiplier: `_hybrid_search` asks each of its
     # two legs (semantic, keyword) for `top_k * hybrid_pool_multiplier`
     # candidates before RRF narrows back down to `top_k` -- a wider pool

@@ -215,7 +215,12 @@ class Strategy:
         )
 
 
-#: The shipped defaults (ADR-005's server-parity constants) — the control.
+#: The control: ADR-005's server-parity constants, which were the SHIPPED
+#: defaults when this sweep was run. Task 5 then shipped the winner, so
+#: `rrf_k=60` is now the pre-decision baseline rather than the live default
+#: (`config.DEFAULT_HYBRID_RRF_K` = 5). It stays 60 deliberately — a control
+#: re-pointed at the value the experiment chose would compare the winner to
+#: itself and every delta in the table would read +0.000.
 CONTROL = Strategy(CONTROL_NAME, rrf_k=60, hybrid_pool_multiplier=2, hybrid_alpha=0.7)
 
 #: The spec's matrix, phase 1: control, the rrf_k sweep at the shipped pool

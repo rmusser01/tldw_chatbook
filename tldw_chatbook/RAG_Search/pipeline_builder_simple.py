@@ -321,9 +321,9 @@ def _rrf_merge_parallel_results(
 
     The FTS5 source lists (media, conversations, notes) are interleaved
     rank-fairly into a single FTS leg; ``search_semantic`` results form the
-    vector leg. The two legs are fused with Reciprocal Rank Fusion (k=60 by
-    default) and an alpha-weighted blend where alpha weights the vector leg
-    (0 = FTS only, 1 = vector only).
+    vector leg. The two legs are fused with Reciprocal Rank Fusion and an
+    alpha-weighted blend where alpha weights the vector leg (0 = FTS only,
+    1 = vector only).
 
     Alpha precedence: step ``config.alpha`` -> ``hybrid_alpha`` runtime
     param -> ``[AppRAGSearchConfig.rag.retriever] hybrid_alpha`` -> 0.7.
@@ -331,10 +331,18 @@ def _rrf_merge_parallel_results(
     k precedence (TASK-4110 review, mirrors alpha's): step
     ``config.rrf_k`` -> the active profile's ``search.rrf_k`` -> 60
     (``resolve_rrf_k``'s own fallback chain). Before this, ``rrf_k`` had NO
-    profile fallback while ``alpha`` did, so a future default change here
-    would move this (Chat RAG) hybrid path without moving
+    profile fallback while ``alpha`` did, so a default change would move
+    this (Chat RAG) hybrid path without moving
     ``RAGService._fuse_hybrid_results`` (Library hybrid), or vice versa --
     the two live fusion call sites disagreeing on a value measured on one.
+
+    DISCLOSURE (TASK-4110 Task 5): the shipped ``SearchConfig.rrf_k``
+    default is now 5, measured on the Library hybrid path, and this path
+    picks it up through that profile fallback -- so in practice **this merge
+    now fuses at k=5 too**, without ever having been measured here. That is
+    deliberate (one value, not two silently divergent ones) but it is a
+    carried assumption: TASK-3501, which owns this legacy blend, should
+    unify or consciously diverge the two paths when it lands.
 
     Args:
         func_names: Retrieval function name per results list, same order.

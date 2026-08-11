@@ -1709,7 +1709,9 @@ class RAGService:
         Perform hybrid search combining semantic (vector) and keyword (FTS5) legs.
 
         The legs run in parallel and are fused with Reciprocal Rank Fusion
-        (default k=60) plus an alpha-weighted blend of the per-leg RRF
+        (default k=5, measured for this window -- see
+        ``config.DEFAULT_HYBRID_RRF_K``; the server's 60 starves FTS-only
+        rows here) plus an alpha-weighted blend of the per-leg RRF
         scores, matching the tldw_server reference design. Alpha comes from
         ``config.search.hybrid_alpha`` (0 = FTS only, 1 = vector only) and k
         from ``config.search.rrf_k``. Each leg over-fetches
@@ -1792,12 +1794,16 @@ class RAGService:
                 Validated via resolve_hybrid_alpha: out-of-range/invalid
                 config values fall back to the 0.7 default, matching the
                 pipeline path.
-            rrf_k: RRF constant (typically 60). Validated via
+            rrf_k: RRF constant. The live caller (`_hybrid_search`) passes
+                `config.search.rrf_k`, whose shipped default is 5
+                (`config.DEFAULT_HYBRID_RRF_K`, TASK-4110). Validated via
                 fusion.resolve_rrf_k, the same use-time pattern as `alpha`:
                 out-of-range/invalid config values fall back to
                 DEFAULT_RRF_K with a warning rather than distorting or
-                crashing the fusion math. Defaults to DEFAULT_RRF_K for
-                every caller that predates this parameter.
+                crashing the fusion math. The signature default stays
+                DEFAULT_RRF_K (60, server parity) for every caller that
+                predates this parameter -- it is a no-config fallback, not
+                the shipped default.
             include_citations: Whether results carry citations to merge.
 
         Returns:

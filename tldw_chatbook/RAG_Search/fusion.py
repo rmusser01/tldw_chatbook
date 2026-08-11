@@ -271,10 +271,16 @@ def resolve_rrf_k(value: Optional[Any] = None) -> int:
     ``RAGService._fuse_hybrid_results`` (Library hybrid) and
     ``pipeline_builder_simple._rrf_merge_parallel_results`` (Chat RAG
     hybrid) -- must resolve k the same way they already resolve alpha, or a
-    future default change (e.g. Task 5 shipping a new k) moves one live path
-    and silently strands the other at 60. At today's defaults both paths
-    still resolve to 60, so this is byte-unchanged now; it only starts
-    mattering once something other than the default is active.
+    default change moves one live path and silently strands the other.
+
+    THIS IS NOW LOAD-BEARING (TASK-4110 Task 5): the shipped default moved
+    to ``SearchConfig.rrf_k = DEFAULT_HYBRID_RRF_K`` (5, measured for
+    chatbook's ~20-row candidate window), so the profile fallback is what
+    carries the measured value into the legacy pipeline path as well --
+    **both live fusion paths moved together**. ``DEFAULT_RRF_K`` below stays
+    60: it is the no-config fallback for a caller with no profile at all,
+    not the shipped default. Unifying or consciously diverging the two paths
+    belongs to TASK-3501.
 
     Args:
         value: Caller/config-supplied k, if any (e.g. a TOML pipeline's

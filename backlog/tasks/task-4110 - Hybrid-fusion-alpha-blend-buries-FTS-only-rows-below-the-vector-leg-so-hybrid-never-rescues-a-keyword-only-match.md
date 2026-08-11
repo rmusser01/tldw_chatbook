@@ -23,11 +23,11 @@ Found closing the TASK-3994/3995/3996 fusion cluster (plan Task 6), by the fixtu
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A document that only the keyword leg finds can appear in hybrid's top-k when the vector leg returns k or more distinct documents (the case that is structurally impossible today - a thin vector leg already lets keyword-only rows through and is not evidence)
-- [ ] #2 The chosen weighting is justified against a measurement, not asserted: the before/after numbers for the affected golden queries appear in the PR
+- [x] #1 A document that only the keyword leg finds can appear in hybrid's top-k when the vector leg returns k or more distinct documents (the case that is structurally impossible today - a thin vector leg already lets keyword-only rows through and is not evidence)
+- [x] #2 The chosen weighting is justified against a measurement, not asserted: the before/after numbers for the affected golden queries appear in the PR
 - [ ] #3 Tests/RAG_Eval baselines are re-stamped in the same PR, and the hybrid cell for kw-plant-maintenance-record moves from miss to hit
-- [ ] #4 A regression test pins that an FTS-only row outranks at least one vector-only row under the shipped default alpha and rrf_k
-- [ ] #5 A test asserts the vector-blind fixture is STILL vector-blind - semantic mode does not return note-saltmarsh-hide for kw-plant-maintenance-record - so a future model bump or re-stamp cannot silently return the corpus to the state where it cannot distinguish coverage from noise
+- [x] #4 A regression test pins that an FTS-only row outranks at least one vector-only row under the shipped default alpha and rrf_k
+- [x] #5 A test asserts the vector-blind fixture is STILL vector-blind - semantic mode does not return note-saltmarsh-hide for kw-plant-maintenance-record - so a future model bump or re-stamp cannot silently return the corpus to the state where it cannot distinguish coverage from noise
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -35,3 +35,23 @@ Found closing the TASK-3994/3995/3996 fusion cluster (plan Task 6), by the fixtu
 <!-- SECTION:PLAN:BEGIN -->
 See Docs/superpowers/plans/2026-08-10-rag-fusion-weighting.md (Task 4 sweep + Task 5 ship-the-winner) and Docs/superpowers/specs/2026-08-10-rag-fusion-weighting-design.md (decision rule + two rescue senses) for the measured fix.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes (Task 5 — shipping the winner)
+
+<!-- SECTION:NOTES:BEGIN -->
+**Shipped `rrf_k = 5`** at one authoritative site: `SearchConfig.rrf_k` now defaults to the new `DEFAULT_HYBRID_RRF_K` in `RAG_Search/simplified/config.py`. `hybrid_pool_multiplier` (2) and `hybrid_alpha` (0.7) are untouched. AC #3 (baseline re-stamp) is the closing task's; everything else is done.
+
+**The measurement (Task 4's sweep, `RAG_EVAL=1 pytest Tests/RAG_Eval/test_fusion_sweep.py -s`).** Six strategies over 45 golden queries (38 scored), hybrid mode: keyword recall@10 **0.938 → 1.000**, keyword NDCG **0.938 → 0.957**, overall recall **0.974 → 1.000**, and the vector-blind fixture (`kw-plant-maintenance-record` → `note-saltmarsh-hide`) goes from **absent to rank 8**, rescued `fts-only` — by the weighting, not by the pool. No per-category cell regressed (worst gated delta +0.000). Re-run under the shipped default, the harness gate reports PASSED with every hybrid cell up and semantic/plain byte-identical.
+
+**Why 5 and not the server's 60.** The server calibrates k for candidate pools of thousands; `_hybrid_search` fuses `top_k * hybrid_pool_multiplier` ≈ 20 rows per leg. At k=60 an FTS-only rank-1 row scores 0.3/61 and only outranks vector-only rows from rank ~83 — outside the window fusion ever sees, which is the structural starvation this task describes. At k=5 it strictly outranks vector-only rows from rank **10** (0.0500 > 0.04667) and takes rank 9 on the documented `(-score, fts_rank, vector_rank)` tie-break — two different mechanisms, pinned as two separate tests.
+
+**Scale bound, stated rather than buried.** "Nothing regressed" is bounded to a 49-document corpus where every scored query except the fixture was already at rank 1 — there was almost nothing left to damage. A 12× reduction in k re-weights the whole tail: vector ranks 9-20 stop being reachable by an FTS-only row's rank alone. On this corpus those slots hold irrelevant rows; at production scale they may not. The *structural* guarantee does survive scale (the ~20-row window is corpus-size-independent); the reassurance does not. Task 6's live check on a real library owns that question.
+
+**Considered and declined: `hybrid_pool_multiplier = 3`.** `k5+pool3` beat `k5` by +0.005 on keyword MRR/NDCG — which, re-counted, is the *already-rescued* fixture moving rank 8 → 5, not a second document found (recall is already 1.000 under `k5` and does not move). The cost is a permanent +50% retrieval width on every hybrid query, compounding on the semantic leg via `SEARCH_RESULT_MULTIPLIER`. Declined: it has not earned it, which is also what the decision rule concluded mechanically.
+
+**Both live fusion paths moved together.** Task 3 gave `resolve_rrf_k` an active-profile fallback, so `pipeline_builder_simple`'s legacy TASK-3501 blend now fuses at 5 as well, though it was never measured. Deliberate (two paths must not disagree on one measured number), disclosed on TASK-3501's file, and pinned by a new test. `fusion.DEFAULT_RRF_K` stays **60**: it is the no-config fallback (invalid values, callers with no profile), not the shipped default.
+
+**Oracle updates, all disclosed:** `test_defaults_unchanged` → `test_shipped_defaults` (pinned `rrf_k == 60`, now pins 5 plus the unchanged fallback), and four `TestPipelineRrfMerge` cases in `Tests/RAG/test_fusion.py` that hand-computed `1/(60+rank)` on the profile-resolved path (now `PROFILE_K`). Nothing else moved: `local_citation_capture` fixtures record k per row and were unaffected; `Tests/RAG_Eval` baselines are NOT re-stamped here.
+
+**Files:** `RAG_Search/simplified/config.py` (the default + its justification), `RAG_Search/fusion.py`, `RAG_Search/simplified/rag_service.py`, `RAG_Search/pipeline_builder_simple.py`, `Library/library_rag_score_kinds.py`, `Library/library_rag_state.py`, `UI/Views/RAGSearch/search_handoff.py`, `Event_Handlers/Chat_Events/chat_rag_events.py` (docstrings that asserted k=60 or the ~0.016 fused ceiling), `Docs/Development/RAG/RAG-Documentation.md`, `backlog/decisions/005-*` (addendum), new `Tests/RAG_Search/test_fusion_rescue_pin.py`, plus `Tests/RAG_Eval/test_harness_run.py` (AC#5 gated guard).
+<!-- SECTION:NOTES:END -->

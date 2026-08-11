@@ -29,6 +29,10 @@ The tldw_server invariants to mirror, per the audit's divergence table:
 | Honest FTS-only + server-routed RAG Answer | Requires a running tldw_server and network access for any semantic retrieval; the chatbook is frequently used standalone/offline. |
 | Keep the current state (semantic UI over an empty store) | Dishonest UX; the audit exists precisely because this misleads users and reviewers. |
 
+## Addendum
+
+**2026-08-10 (TASK-4110, branch `fix/rag-fusion-weighting`):** the *design* above is unchanged — hybrid still fuses via RRF + an alpha-weighted blend at alpha 0.7 — but one **constant** is now refined by measurement rather than copied: the shipped RRF `k` is **5**, not the server's 60 (`RAG_Search/simplified/config.py`'s `DEFAULT_HYBRID_RRF_K`; `fusion.DEFAULT_RRF_K` stays 60 as the no-config fallback). The server calibrates `k` for candidate pools of thousands; chatbook's `_hybrid_search` fuses only `top_k * hybrid_pool_multiplier` (~20) rows per leg, and over that window `k = 60` flattened the RRF curve enough that a document only the keyword leg found could never enter the fused top-k. Measured over the eval corpus (45 golden queries, 38 scored): keyword recall@10 0.938 → 1.000, keyword NDCG 0.938 → 0.957, no per-category cell regressing. Parity with the server is a starting point here, not an invariant to preserve against evidence.
+
 ## Consequences
 
 Backlog tasks 246 → 247 (foundations), then 248, 249, 250, 256 proceed as sequenced in the audit. Cleanup tasks 251–255 proceed independently; removal of the legacy manual-embeddings UI (task-253) stands, since indexing moves to ingestion time and any future manual surface must be rebuilt Console-parity. The `embeddings_rag` optional-dependency boundary stays: without the extra, the app remains FTS-only and must say so honestly (task-250).

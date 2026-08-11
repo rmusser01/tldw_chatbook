@@ -242,9 +242,11 @@ async def perform_hybrid_rag_search(
 ) -> Tuple[List[Dict[str, Any]], str]:
     """Perform a hybrid RAG search using the pipeline system.
 
-    The FTS5 and semantic legs are fused via Reciprocal Rank Fusion (k=60)
-    plus an alpha-weighted blend, matching the tldw_server design. Alpha
-    weights the vector leg: 0 = FTS only, 1 = vector only.
+    The FTS5 and semantic legs are fused via Reciprocal Rank Fusion plus an
+    alpha-weighted blend, matching the tldw_server design. Alpha weights the
+    vector leg: 0 = FTS only, 1 = vector only. The RRF constant k resolves
+    through ``fusion.resolve_rrf_k`` (step config -> active profile ->
+    60); the shipped profile default is 5 (TASK-4110).
 
     Alpha precedence: ``hybrid_alpha`` argument -> legacy ``bm25_weight`` /
     ``vector_weight`` (mapped to ``vector / (bm25 + vector)``) ->
