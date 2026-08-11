@@ -16,6 +16,8 @@ TodoChangeCallback = Callable[[list[TodoRecord]], None]
 
 _MISSING = object()
 _EXHAUSTED_NEXT_ID = MAX_TODO_NUMBER + 1
+_MAX_TODO_ID_TEXT = str(MAX_TODO_NUMBER)
+_MAX_TODO_ID_LENGTH = len(_MAX_TODO_ID_TEXT)
 _CALLBACK_MUTATION_ERROR = "task mutation is not allowed from an on_change callback"
 _LOG = logging.getLogger(__name__)
 
@@ -39,12 +41,15 @@ def _validate_text(value: object, *, field: str, allow_blank: bool) -> str:
 
 
 def _validate_task_id(task_id: object) -> str:
+    if type(task_id) is not str or not task_id:
+        raise TodoStoreError("invalid task id")
+    if len(task_id) > _MAX_TODO_ID_LENGTH:
+        raise TodoStoreError("invalid task id")
     if (
-        type(task_id) is not str
-        or not task_id
-        or not task_id.isascii()
+        not task_id.isascii()
         or not task_id.isdecimal()
         or task_id[0] == "0"
+        or (len(task_id) == _MAX_TODO_ID_LENGTH and task_id > _MAX_TODO_ID_TEXT)
     ):
         raise TodoStoreError("invalid task id")
     return task_id
@@ -350,8 +355,6 @@ class SessionTodoStore:
             if task_id in restored_tasks:
                 raise TodoStoreError("duplicate task id")
             task_id_number = _task_id_number(task_id)
-            if task_id_number > MAX_TODO_NUMBER:
-                raise TodoStoreError("invalid snapshot task id")
             if task_id_number <= max_task_id:
                 raise TodoStoreError("task ids out of order")
             version = task["version"]

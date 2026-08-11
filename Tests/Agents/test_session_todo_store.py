@@ -177,22 +177,31 @@ def _run_spawned_target(
     context = multiprocessing.get_context("spawn")
     result_queue = context.Queue()
     process = context.Process(target=target, args=(result_queue, *args))
-    process.start()
+    started = False
     try:
+        process.start()
+        started = True
         process.join(timeout)
         if process.is_alive():
             raise _SpawnProcessTimeout(process.pid)
         assert process.exitcode == 0
         return result_queue.get(timeout=2)
     finally:
-        if process.is_alive():
-            process.terminate()
-            process.join(2)
-        if process.is_alive():
-            process.kill()
-            process.join(2)
-        result_queue.close()
-        result_queue.join_thread()
+        try:
+            if started and process.is_alive():
+                process.terminate()
+                process.join(2)
+            if started and process.is_alive():
+                process.kill()
+                process.join(2)
+            close_process = getattr(process, "close", None)
+            if callable(close_process):
+                close_process()
+        finally:
+            try:
+                result_queue.close()
+            finally:
+                result_queue.join_thread()
 
 
 def _callback_read_process(result_queue: Any) -> None:
@@ -470,7 +479,7 @@ def test_get_uses_a_fixed_not_found_error() -> None:
         store.get("1")
     store.create(content="Task")
     with pytest.raises(TodoStoreError) as second_error:
-        store.get("999999999999999999999999")
+        store.get("999999")
 
     assert str(first_error.value) == "task not found"
     assert str(second_error.value) == "task not found"
@@ -922,6 +931,57 @@ def test_snapshot_accepts_maximum_task_numbers_and_exhausted_next_id() -> None:
     restored = SessionTodoStore.from_snapshot(payload)
 
     assert restored.export_snapshot() == payload
+    assert restored.get(str(maximum)) == payload["tasks"][0]
+
+
+@pytest.mark.parametrize(
+    "task_id",
+    [
+        lambda: str(todo_store_module.MAX_TODO_NUMBER + 1),
+        lambda: "9" * 100_000,
+    ],
+    ids=["one-over", "one-hundred-thousand-digits"],
+)
+def test_get_rejects_oversized_task_id_with_fixed_validation_error(
+    task_id: Callable[[], str],
+) -> None:
+    store = SessionTodoStore()
+
+    with pytest.raises(TodoStoreError, match="^invalid task id$"):
+        store.get(task_id())
+
+
+@pytest.mark.parametrize(
+    "task_id",
+    [
+        lambda: str(todo_store_module.MAX_TODO_NUMBER + 1),
+        lambda: "9" * 100_000,
+    ],
+    ids=["one-over", "one-hundred-thousand-digits"],
+)
+def test_snapshot_rejects_oversized_task_id_before_numeric_conversion(
+    task_id: Callable[[], str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbidden_conversion(value: str) -> int:
+        raise AssertionError("oversized task ID reached numeric conversion")
+
+    monkeypatch.setattr(todo_store_module, "_task_id_number", forbidden_conversion)
+
+    with pytest.raises(TodoStoreError, match="^invalid task id$"):
+        SessionTodoStore.from_snapshot(
+            {
+                "next_id": 1,
+                "tasks": [
+                    {
+                        "id": task_id(),
+                        "version": 1,
+                        "content": "Oversized ID",
+                        "status": "pending",
+                    }
+                ],
+            }
+        )
 
 
 @pytest.mark.parametrize(
@@ -1412,6 +1472,59 @@ def test_spawn_regression_cleanup_reaps_a_stuck_child() -> None:
     assert error.value.pid not in {
         child.pid for child in multiprocessing.active_children()
     }
+
+
+def test_spawn_start_failure_closes_queue_and_process_handle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+
+    class FakeQueue:
+        def close(self) -> None:
+            events.append("queue.close")
+
+        def join_thread(self) -> None:
+            events.append("queue.join_thread")
+
+    class FakeProcess:
+        pid = None
+
+        def start(self) -> None:
+            events.append("process.start")
+            raise RuntimeError("start failed")
+
+        def is_alive(self) -> bool:
+            raise AssertionError("unstarted process lifecycle was queried")
+
+        def close(self) -> None:
+            events.append("process.close")
+
+    queue = FakeQueue()
+    process = FakeProcess()
+
+    class FakeContext:
+        def Queue(self) -> FakeQueue:  # noqa: N802
+            return queue
+
+        def Process(self, **kwargs: object) -> FakeProcess:  # noqa: N802
+            assert kwargs["target"] is _callback_read_process
+            return process
+
+    monkeypatch.setattr(
+        multiprocessing,
+        "get_context",
+        lambda method: FakeContext(),
+    )
+
+    with pytest.raises(RuntimeError, match="^start failed$"):
+        _run_spawned_target(_callback_read_process)
+
+    assert events == [
+        "process.start",
+        "process.close",
+        "queue.close",
+        "queue.join_thread",
+    ]
 
 
 def test_concurrent_creates_allocate_distinct_present_tasks() -> None:
