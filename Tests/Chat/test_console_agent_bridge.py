@@ -4,10 +4,12 @@ import asyncio
 import contextlib
 import json
 import threading
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tldw_chatbook.Chat import console_agent_bridge
 from tldw_chatbook.Chat.console_agent_bridge import (
     CONSOLE_AGENT_OPERATING_PROMPT,
     FIND_LOAD_DISCOVERY_HINT,
@@ -666,9 +668,9 @@ def test_multi_turn_run_reuses_one_event_loop_across_chat_call_turns(tmp_path):
     )
 
 
-def test_a_concurrent_child_can_use_the_runs_shared_event_loop(tmp_path):
+def test_a_concurrent_child_runs_alongside_the_parent_on_its_own_loop(tmp_path):
     """PR2a Task 6.5: a fleet child's turn must survive overlapping the
-    parent's on the run's ONE shared event loop.
+    parent's. PR3a-1 Task 1: on a lifeline of its OWN, not the turn's.
 
     Found by probe when the fleet default was flipped, and it failed every
     overlapping child: `chat_call` drove the shared loop with
@@ -685,17 +687,24 @@ def test_a_concurrent_child_can_use_the_runs_shared_event_loop(tmp_path):
     are in flight together (a turn that yields without awaiting can slip
     through the window); the child additionally blocks until the parent has
     entered its own next turn, so the overlap is pinned rather than raced
-    for. PR #629 Fix 1(c) is re-asserted here too: it is still ONE loop.
+    for. PR #629 Fix 1(c) is re-asserted here too, now scoped to the agent
+    it was always about: the PRIMARY agent still runs every turn of the run
+    on ONE loop, so the gateway's per-loop client is swapped at most once
+    per run. The child's own loop is the price PR3a-1 pays for a child that
+    can outlive its turn -- measured in that task's report.
     """
     parent_in_flight = threading.Event()
-    seen_loops = []
+    parent_loops = []
+    child_loops = []
 
     class _OverlappingGateway(_FleetChunkGateway):
         async def stream_chat(self, resolution, messages, tools=None, **kwargs):
             system = str(messages[0].get("content", "")) if messages else ""
-            if not system.startswith(SUBAGENT_PROMPT_PREFIX):
+            if system.startswith(SUBAGENT_PROMPT_PREFIX):
+                child_loops.append(asyncio.get_running_loop())
+            else:
                 parent_in_flight.set()
-            seen_loops.append(asyncio.get_running_loop())
+                parent_loops.append(asyncio.get_running_loop())
             # Yield control so the other agent's coroutine can be scheduled
             # onto this same loop while this one is still open.
             await asyncio.sleep(0.01)
@@ -740,10 +749,146 @@ def test_a_concurrent_child_can_use_the_runs_shared_event_loop(tmp_path):
     assert child_runs[0]["result"] == "child answer"
     # ... and its answer really reached the parent, through wait_agents.
     assert "child answer" in str(outcome.steps)
-    # Still ONE loop for the whole run tree, children included (Fix 1(c)).
-    assert len(seen_loops) == 4  # 3 parent turns + 1 child turn
-    assert all(loop is seen_loops[0] for loop in seen_loops)
-    assert seen_loops[0].is_closed()
+    # PR3a-1 Task 1: the PRIMARY agent still runs every one of its turns on
+    # the ONE per-turn loop (Fix 1(c) -- at most one httpx client swap per
+    # run), and that loop is still closed when the turn returns.
+    assert len(parent_loops) == 3
+    assert len({id(loop) for loop in parent_loops}) == 1
+    assert parent_loops[0].is_closed()
+    # The child no longer shares it. It owns a lifeline of its own from
+    # birth -- so the turn's teardown cannot kill a call it has in flight
+    # (see `test_a_fleet_child_completes_its_model_call_after_the_turn_
+    # loop_is_gone`) -- and that lifeline is torn down when the CHILD
+    # finishes, which by here it has.
+    assert len(child_loops) == 1
+    assert child_loops[0] is not parent_loops[0]
+    assert child_loops[0].is_closed()
+
+
+async def _await_event(event: threading.Event, timeout: float) -> bool:
+    """Await a threading.Event without blocking the loop it is awaited on.
+
+    A bare ``event.wait()`` inside an async gateway double would block that
+    coroutine's whole event loop, which would mask the very cross-loop
+    behaviour these tests pin (on the pre-fix code the parent and the child
+    share one loop, and a blocked loop is indistinguishable from a dead one).
+    """
+    deadline = time.monotonic() + timeout
+    while not event.is_set():
+        if time.monotonic() >= deadline:
+            return False
+        await asyncio.sleep(0.01)
+    return True
+
+
+class _CrossTurnGateway:
+    """Parent answers WITHOUT collecting; the child's turn outlives it.
+
+    The parent's final-answer turn waits until the child is actually inside
+    a ``stream_chat`` call, and the child's turn then waits until the test
+    says the spawning turn has fully returned -- so the child's model call
+    is guaranteed to be completed after ``run_reply``'s own loop is closed.
+    """
+
+    def __init__(self, turn_over: threading.Event):
+        self._turn_over = turn_over
+        self.child_in_flight = threading.Event()
+        self._parent_turns = [
+            [_fence("spawn_subagent", {"task": "outlive the turn"})],
+            ["parent final"],
+        ]
+        self._lock = threading.Lock()
+        self.parent_loops = []
+        self.child_loops = []
+
+    async def stream_chat(self, resolution, messages, tools=None, **kwargs):
+        system = str(messages[0].get("content", "")) if messages else ""
+        loop = asyncio.get_running_loop()
+        if system.startswith(SUBAGENT_PROMPT_PREFIX):
+            self.child_loops.append(loop)
+            self.child_in_flight.set()
+            assert await _await_event(self._turn_over, 30.0), (
+                "the spawning turn never returned"
+            )
+            yield "child answer after the turn"
+            return
+        with self._lock:
+            chunks = self._parent_turns.pop(0)
+            is_final_turn = not self._parent_turns
+        self.parent_loops.append(loop)
+        if is_final_turn:
+            # Pin the interleave: the parent may not finish its turn until
+            # the child is demonstrably mid-model-call.
+            assert await _await_event(self.child_in_flight, 30.0), (
+                "the child never reached the gateway"
+            )
+        for chunk in chunks:
+            yield chunk
+
+
+def test_a_fleet_child_completes_its_model_call_after_the_turn_loop_is_gone(
+    tmp_path, monkeypatch
+):
+    """PR3a-1 Task 1: a fleet child must own its model-call lifeline.
+
+    Before this task every agent of a run -- primary and children alike --
+    bridged to the provider through the ONE loop `run_reply` builds per
+    invocation, which `run_reply`'s `finally` stops, joins and CLOSES. The
+    teardown comment stated the invariant that made that safe: "by this
+    point `run_turn` has already settled every fleet child ... so nothing
+    should still be submitting." PR 3a makes children outlive their
+    spawning turn, so that sentence stops being true and the dependency is
+    actively DESTROYED under a live child: its `run_coroutine_threadsafe`
+    future is never scheduled again and its turn can never complete.
+
+    The fix is not a transfer at settle time; a child owns its own loop and
+    driver thread FROM BIRTH, torn down when the child finishes. This test
+    asserts the observable consequence -- the child's persisted run row
+    reaches a terminal status with its real answer -- with the turn's loop
+    verified closed before the child's model call is even released.
+    """
+    turn_over = threading.Event()
+    gateway = _CrossTurnGateway(turn_over)
+    # Task 1 proves only that a child CAN survive; end-of-turn settling
+    # (which cancels and then abandons stragglers) is Task 2's to change,
+    # so it is bypassed HERE, in the test, and not in production code.
+    monkeypatch.setattr(AgentService, "_settle_fleet", lambda self, *a, **k: None)
+    # Bound the failure mode. Without a per-child lifeline the child's
+    # future is submitted onto the turn's loop and is never completed once
+    # that loop closes, so the production `_CHAT_CALL_TIMEOUT_SECONDS`
+    # backstop of an hour would turn a regression into a CI hang. The
+    # fixed path needs milliseconds, so 30s can never pre-empt it.
+    monkeypatch.setattr(console_agent_bridge, "_CHAT_CALL_TIMEOUT_SECONDS", 30.0)
+    bridge, db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+
+    try:
+        outcome = _run(
+            bridge, store, session, aid, conversation_id="conv-cross-turn"
+        )
+
+        assert outcome.status == "done"
+        assert outcome.final_text == "parent final"
+        # The turn is over and its loop really is gone ...
+        assert gateway.parent_loops, "the parent never reached the gateway"
+        assert gateway.parent_loops[0].is_closed()
+        # ... while the child is still mid-call on a lifeline of its own.
+        assert gateway.child_loops, "the child never reached the gateway"
+        assert gateway.child_loops[0] is not gateway.parent_loops[0]
+        assert not gateway.child_loops[0].is_closed()
+        # Release the child: from here it has to finish a model call with
+        # the spawning turn's loop already closed.
+        turn_over.set()
+        _join_fleet_threads(timeout=30.0)
+    finally:
+        # Never leave a wedged child blocking the whole suite's teardown.
+        turn_over.set()
+
+    child_runs = [
+        r for r in db.list_runs("conv-cross-turn") if r["agent_kind"] == "subagent"
+    ]
+    assert len(child_runs) == 1
+    assert child_runs[0]["status"] == RUN_DONE
+    assert child_runs[0]["result"] == "child answer after the turn"
 
 
 def test_provider_stream_signal_survives_primary_tool_and_final_turns(tmp_path):

@@ -767,6 +767,73 @@ class AgentLiveSnapshot:
     subagents: tuple[SubAgentSummary, ...] = ()
 
 
+class _ModelCallLifeline:
+    """An event loop plus the one thread that drives it: a model-call transport.
+
+    ``_StreamingModelAdapter.chat_call`` is called from ordinary (blocking)
+    agent threads and has to reach async gateway code, which it does by
+    submitting to a loop with ``run_coroutine_threadsafe``. That loop must
+    be alive for as long as anything might still submit to it, and only one
+    thread may ever drive it -- so the loop and its driver thread are one
+    object with one lifetime, and *whoever owns that lifetime* decides how
+    long calls through it stay possible.
+
+    Two owners exist:
+
+    * ``run_reply`` owns one per turn for the PRIMARY agent, torn down when
+      the turn returns (PR #629 Fix 1(c): one loop, and therefore at most
+      one ``httpx`` client swap, per run -- see ``ConsoleProviderGateway.
+      _active_http_client``).
+    * Each fleet CHILD owns one of its own from birth (PR3a-1 Task 1),
+      entered on the child's own thread and torn down when the child
+      finishes. A child never borrows the turn's loop, so there is nothing
+      to transfer when the turn ends and nothing dies underneath a child
+      that outlives it.
+
+    Construction and ``start`` are deliberately separate: a raise between
+    them would otherwise leave a daemon thread spinning ``run_forever``
+    with nothing left to stop it. Start it as the FIRST statement of the
+    try/finally that owns its ``shutdown``.
+    """
+
+    __slots__ = ("loop", "_thread", "_name")
+
+    def __init__(self, name: str) -> None:
+        self._name = name
+        self.loop = asyncio.new_event_loop()
+        self._thread = threading.Thread(
+            target=self.loop.run_forever, name=name, daemon=True
+        )
+
+    def start(self) -> None:
+        """Start the driver thread. Raises only on thread exhaustion."""
+        self._thread.start()
+
+    def shutdown(self) -> None:
+        """Stop the driver thread, join it, then close the loop.
+
+        ``close()`` on a still-running loop raises, and a loop closed out
+        from under its own thread is undefined -- hence stop, then join,
+        then close. ``ident`` is ``None`` only when ``start()`` itself never
+        succeeded (thread exhaustion): ``join()`` would raise RuntimeError
+        and skip the close below, leaking the loop's fd, and nothing was
+        ever scheduled anyway, so close it directly. A thread still alive
+        after the bounded join keeps its loop OPEN: a leaked loop is
+        survivable, a segfaulting one is not, and the thread is a daemon so
+        it dies with the process either way.
+        """
+        if self._thread.ident is not None:
+            self.loop.call_soon_threadsafe(self.loop.stop)
+            self._thread.join(timeout=_LOOP_THREAD_JOIN_SECONDS)
+        if self._thread.is_alive():
+            logger.warning(
+                f"model-call loop '{self._name}' did not stop within "
+                f"{_LOOP_THREAD_JOIN_SECONDS}s; leaving it to the daemon thread"
+            )
+        else:
+            self.loop.close()
+
+
 class _StreamingModelAdapter:
     """chat_call-compatible adapter that streams every PRIMARY turn live.
 
@@ -846,6 +913,72 @@ class _StreamingModelAdapter:
         self._should_cancel = should_cancel
         self._loop = loop
         self._provider_stream_signals = provider_stream_signals
+        # PR3a-1 Task 1: per-THREAD lifeline override. A fleet child runs on
+        # its own thread and enters `child_lifeline()` there before its run
+        # begins, which parks that child's private loop here; every
+        # `chat_call` made on that thread -- the child's, and only the
+        # child's -- resolves to it. Threading it through a thread-local
+        # rather than a constructor argument is what keeps the one
+        # `chat_call` callable AgentService holds correct for both the
+        # primary agent and every child, without the adapter having to
+        # guess which agent is calling (`_is_subagent`'s prompt-prefix
+        # sniff answers a different question -- what to do with the
+        # STREAMED TEXT -- and would be the wrong authority for lifetime).
+        self._thread_loop = threading.local()
+
+    @property
+    def _submit_loop(self) -> asyncio.AbstractEventLoop:
+        """The loop THIS thread submits model calls to.
+
+        A fleet child's own lifeline when one is active on this thread,
+        else the turn's loop (the primary agent, and any inline sub-agent
+        it runs on its own thread, where turn-scoped is exactly right).
+        """
+        child_loop = getattr(self._thread_loop, "loop", None)
+        return self._loop if child_loop is None else child_loop
+
+    @contextlib.contextmanager
+    def child_lifeline(self):
+        """Own a private model-call lifeline for ONE fleet child's run.
+
+        Entered on the child's own thread, before its run starts, and
+        exited when that run ends -- so the loop the child calls the model
+        through lives exactly as long as the child does, whether that is
+        shorter or LONGER than the turn that spawned it. Wired into
+        ``AgentService(child_model_scope=...)`` by ``run_reply``.
+
+        A child is one agent on one thread, so the override is a plain
+        set/restore rather than a stack: nothing nests here (a child never
+        spawns -- ``clamp_child_budget`` zeroes its ``max_subagents``). The
+        previous value is restored anyway so a future nested caller cannot
+        silently lose its own lifeline.
+
+        Raises:
+            RuntimeError: If the process cannot start the driver thread
+                (thread exhaustion). Deliberately propagated rather than
+                degraded to the turn's loop: a child that quietly ran on a
+                loop due to die at end of turn would make survival
+                unpredictable from the user's side. The spawning
+                ``run_child`` catches it and the child's run row persists a
+                terminal status with the reason.
+        """
+        lifeline = _ModelCallLifeline(
+            f"fleet-loop-{threading.current_thread().name}"
+        )
+        try:
+            lifeline.start()
+        except BaseException:
+            # Nothing was ever scheduled; close the loop directly so a
+            # failed start never leaks its fd.
+            lifeline.shutdown()
+            raise
+        previous = getattr(self._thread_loop, "loop", None)
+        self._thread_loop.loop = lifeline.loop
+        try:
+            yield
+        finally:
+            self._thread_loop.loop = previous
+            lifeline.shutdown()
 
     def chat_call(
         self,
@@ -917,7 +1050,13 @@ class _StreamingModelAdapter:
         # provider connection and any locks it owns for the life of the
         # session. Timing out turns that into an ordinary turn failure the
         # run loop already knows how to report.
-        future = asyncio.run_coroutine_threadsafe(_consume(), self._loop)
+        #
+        # PR3a-1 Task 1: `_submit_loop`, not `self._loop`. A fleet child
+        # submits to the lifeline IT owns (parked on this thread by
+        # `child_lifeline`), so `run_reply`'s end-of-turn teardown of the
+        # TURN's loop can no longer strand a child mid-call -- the case the
+        # timeout above was the last line of defence against.
+        future = asyncio.run_coroutine_threadsafe(_consume(), self._submit_loop)
         try:
             future.result(timeout=_CHAT_CALL_TIMEOUT_SECONDS)
         except FuturesTimeoutError:
@@ -2004,19 +2143,20 @@ class ConsoleAgentBridge:
         # would otherwise leave a daemon thread spinning `run_forever`
         # forever with nothing to stop it. Same ordering rule -- and the
         # same failure -- as `AgentService`'s own `thread.start()` guard.
-        run_loop = asyncio.new_event_loop()
-        loop_thread = threading.Thread(
-            target=run_loop.run_forever,
-            name="console-agent-loop",
-            daemon=True,
-        )
+        #
+        # PR3a-1 Task 1: the loop+thread pair is now a `_ModelCallLifeline`
+        # (identical construction, start ordering and teardown -- see its
+        # docstring), because a fleet CHILD now owns one of its own from
+        # birth via `adapter.child_lifeline`. This one stays exactly what
+        # it always was: the PRIMARY agent's, turn-scoped.
+        turn_lifeline = _ModelCallLifeline("console-agent-loop")
         adapter = _StreamingModelAdapter(
             store=self._store,
             provider_gateway=self._gateway,
             resolution=resolution,
             assistant_message_id=assistant_message_id,
             should_cancel=should_cancel,
-            loop=run_loop,
+            loop=turn_lifeline.loop,
             provider_stream_signals=provider_stream_signals,
         )
 
@@ -2183,6 +2323,10 @@ class ConsoleAgentBridge:
             install_skill_tool=install_skill_tool,
             run_skill_script_tool=run_skill_script_tool,
             revoke_approvals=revoke_approvals,
+            # PR3a-1 Task 1: every fleet child gets its own model-call
+            # lifeline, entered on the child's own thread and torn down
+            # when the CHILD finishes -- never when this turn does.
+            child_model_scope=adapter.child_lifeline,
         )
 
         supersede_run_id = (
@@ -2223,7 +2367,7 @@ class ConsoleAgentBridge:
             # finally still runs and still closes the loop; `is_alive()`
             # is False for a never-started thread, so the close branch is
             # the one taken and no fd leaks.
-            loop_thread.start()
+            turn_lifeline.start()
             run_id, outcome = service.run_turn(
                 conversation_id=conversation_id,
                 messages=run_messages,
@@ -2258,34 +2402,20 @@ class ConsoleAgentBridge:
             )
         finally:
             # PR2a Task 6.5: stop the driver thread before closing, and
-            # join it -- `close()` on a still-running loop raises, and a
-            # loop closed out from under its own thread is undefined. By
-            # this point `run_turn` has already settled every fleet child
-            # (`AgentService._settle_fleet` joins/abandons them before it
-            # returns), so nothing should still be submitting; the join is
-            # bounded anyway so an abandoned straggler can never wedge the
-            # Console. The thread is a daemon, so even a wedged one dies
-            # with the process rather than holding it open.
+            # join it (the stop/join/close ordering, and why a wedged
+            # thread keeps its loop open, now live in
+            # `_ModelCallLifeline.shutdown`).
             #
-            # `ident` is None only if `start()` itself never succeeded
-            # (thread exhaustion): `join()` on a never-started thread
-            # raises RuntimeError, which would escape this finally and
-            # skip the close below -- leaking the loop's fd. Nothing was
-            # ever scheduled in that case, so close it directly.
-            if loop_thread.ident is not None:
-                run_loop.call_soon_threadsafe(run_loop.stop)
-                loop_thread.join(timeout=_LOOP_THREAD_JOIN_SECONDS)
-            if loop_thread.is_alive():
-                # Leave it (and its loop) rather than closing a loop its
-                # own thread is still inside -- a leaked loop is survivable,
-                # a segfaulting one is not.
-                logger.warning(
-                    "console agent run loop did not stop within "
-                    f"{_LOOP_THREAD_JOIN_SECONDS}s; leaving it to the "
-                    "daemon thread"
-                )
-            else:
-                run_loop.close()
+            # PR3a-1 Task 1: this tears down the PRIMARY agent's loop and
+            # nothing else. It used to be the whole run tree's -- and the
+            # comment here used to argue that was safe because "run_turn
+            # has already settled every fleet child ... so nothing should
+            # still be submitting", an invariant PR 3a deliberately
+            # breaks. A fleet child submits to a lifeline it owns itself
+            # (see `_StreamingModelAdapter.child_lifeline`), so a child
+            # still running when this line executes keeps a live transport
+            # to the model rather than losing one out from under it.
+            turn_lifeline.shutdown()
             # TASK-1971: E snapshot on EVERY terminal path -- completed,
             # failed, cancelled, or crashed. A run that died halfway through
             # editing is when review matters most. `run_id` is unbound when

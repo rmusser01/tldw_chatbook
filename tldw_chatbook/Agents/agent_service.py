@@ -381,6 +381,8 @@ class AgentService:
         # a `Callable[[str], None]` annotation would make that a type error
         # at the wiring site.
         revoke_approvals: Callable[[str], object] | None = None,
+        child_model_scope: Callable[[], "contextlib.AbstractContextManager"]
+        | None = None,
     ) -> None:
         self.db = db
         self.registry = registry
@@ -501,6 +503,33 @@ class AgentService:
         # before. Never load-bearing for the run itself: a raise here is
         # logged and swallowed (see `_revoke_run_approvals`).
         self._revoke_approvals = revoke_approvals
+        # PR3a-1 Task 1 -- THE CHILD'S MODEL-CALL LIFETIME.
+        #
+        # A zero-argument callable returning a context manager, entered ON
+        # A FLEET CHILD'S OWN THREAD before its run starts and exited when
+        # that run ends. It exists because `chat_call` is not a pure
+        # function of its arguments: the Console's adapter bridges into
+        # async provider code through an event loop, and *which* loop it
+        # submits to decides how long that child can still reach the model.
+        # Before this seam the only loop was the one the spawning turn
+        # built and tore down, so a child could not outlive its turn even
+        # in principle -- its transport was destroyed, not merely stale.
+        #
+        # This service stays agnostic to what the scope does (exactly like
+        # `review_state_scope`): the Console bridge wires
+        # `_StreamingModelAdapter.child_lifeline`, which gives the child
+        # its own loop and driver thread. `None` -- every caller before
+        # this task, and every headless/test caller -- means a child gets
+        # whatever transport the injected `chat_call` already had, i.e.
+        # byte-identical behaviour.
+        #
+        # Deliberately NOT applied to the INLINE spawn path (`[agents]
+        # max_live_subagents == 1`, the fleet kill switch), which runs the
+        # child synchronously on the parent's own thread inside the
+        # parent's own turn: an inline child cannot outlive that turn by
+        # construction, and a second loop would only cost a second HTTP
+        # client for no reachable benefit.
+        self._child_model_scope = child_model_scope or contextlib.nullcontext
         # Per-TURN fleet state, all owned by the primary run's thread (a
         # child never spawns -- clamp_child_budget zeroes max_subagents),
         # so no lock is needed on these three. Reset at the top of every
@@ -1414,13 +1443,20 @@ class AgentService:
                 result_text = ""
                 error_text = ""
                 try:
-                    _child_id, child_outcome = self._run_one(
-                        should_cancel=child_should_cancel,
-                        on_run_id=(
-                            lambda rid: fleet.attach_run(handle.handle_id, rid)
-                        ),
-                        **child_kwargs,
-                    )
+                    # PR3a-1 Task 1: this child's own model-call lifeline,
+                    # entered HERE -- on the child's thread, before its run
+                    # starts -- and exited when the run ends, so it lives
+                    # exactly as long as the child does rather than as long
+                    # as the turn that spawned it. See
+                    # `self._child_model_scope`.
+                    with self._child_model_scope():
+                        _child_id, child_outcome = self._run_one(
+                            should_cancel=child_should_cancel,
+                            on_run_id=(
+                                lambda rid: fleet.attach_run(handle.handle_id, rid)
+                            ),
+                            **child_kwargs,
+                        )
                     status = child_outcome.status
                     result_text = child_outcome.final_text
                     if status != RUN_DONE:
