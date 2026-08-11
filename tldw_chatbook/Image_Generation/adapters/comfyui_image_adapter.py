@@ -341,16 +341,29 @@ def _read_bounded_json(
     response: httpx.Response,
     *,
     allow_empty: bool = False,
+    cancel_event: Any = None,
+    deadline: float | None = None,
+    phase: ComfyUIImageEditPhase = "remote_schema_preflight",
 ) -> Any:
     """Bound declared and streamed JSON bytes before parsing."""
+    _check_stream_control(cancel_event, deadline, phase)
     declared = _declared_length(response)
     if declared is not None and declared > COMFYUI_MAX_JSON_BYTES:
         raise ValueError("JSON response exceeds limit")
     collected = bytearray()
-    for chunk in response.iter_bytes():
+    chunks = iter(response.iter_bytes())
+    while True:
+        _check_stream_control(cancel_event, deadline, phase)
+        try:
+            chunk = next(chunks)
+        except StopIteration:
+            _check_stream_control(cancel_event, deadline, phase)
+            break
+        _check_stream_control(cancel_event, deadline, phase)
         collected.extend(chunk)
         if len(collected) > COMFYUI_MAX_JSON_BYTES:
             raise ValueError("JSON response exceeds limit")
+        _check_stream_control(cancel_event, deadline, phase)
     if not collected and allow_empty:
         return {}
     if not collected:
@@ -399,12 +412,36 @@ def _validate_literal_against_schema(value: Any, input_schema: Any) -> None:
         raise ValueError
 
 
+def _validate_load_image_upload_schema(input_schema: Any) -> None:
+    if not isinstance(input_schema, list) or len(input_schema) < 2:
+        raise ValueError
+    choices, metadata = input_schema[0], input_schema[1]
+    if (
+        not isinstance(choices, list)
+        or any(not isinstance(choice, str) for choice in choices)
+        or not isinstance(metadata, dict)
+        or metadata.get("image_upload") is not True
+    ):
+        raise ValueError
+
+
+def _concrete_input_type(input_schema: Any) -> str:
+    if (
+        not isinstance(input_schema, list)
+        or not input_schema
+        or not isinstance(input_schema[0], str)
+        or not input_schema[0]
+    ):
+        raise ValueError
+    return input_schema[0]
+
+
 def _validate_object_info(prepared: _PreparedWorkflow, schema: Any) -> None:
-    """Require every packaged class/input/literal and built-in PNG output."""
+    """Require exact input availability, link types, literals, and PNG output."""
     try:
         if not isinstance(schema, dict):
             raise ValueError
-        for node in prepared.graph.values():
+        for node_id, node in prepared.graph.items():
             class_type = node["class_type"]
             class_schema = schema.get(class_type)
             if not isinstance(class_schema, dict):
@@ -413,8 +450,26 @@ def _validate_object_info(prepared: _PreparedWorkflow, schema: Any) -> None:
             for input_name, value in node["inputs"].items():
                 if input_name not in accepted_inputs:
                     raise ValueError
-                if not _is_link(value):
-                    _validate_literal_against_schema(value, accepted_inputs[input_name])
+                input_schema = accepted_inputs[input_name]
+                if _is_link(value):
+                    source_id, output_index = value
+                    source_class = prepared.graph[source_id]["class_type"]
+                    source_schema = schema.get(source_class)
+                    if not isinstance(source_schema, dict):
+                        raise ValueError
+                    output_types = source_schema.get("output")
+                    if (
+                        not isinstance(output_types, list)
+                        or output_index < 0
+                        or output_index >= len(output_types)
+                        or output_types[output_index]
+                        != _concrete_input_type(input_schema)
+                    ):
+                        raise ValueError
+                elif node_id == "114" and input_name == "image":
+                    _validate_load_image_upload_schema(input_schema)
+                else:
+                    _validate_literal_against_schema(value, input_schema)
         save_schema = schema["SaveImage"]
         save_inputs = _schema_inputs(save_schema)
         if (
@@ -475,8 +530,27 @@ def _select_output_descriptor(history: Any, prompt_id: str) -> dict[str, str]:
         raise ComfyUIImageEditError("output_descriptor_validation") from None
 
 
-def _stream_png(response: httpx.Response, *, max_bytes: int) -> bytes:
+def _check_stream_control(
+    cancel_event: Any,
+    deadline: float | None,
+    phase: ComfyUIImageEditPhase,
+) -> None:
+    if cancel_event is not None and cancel_event.is_set():
+        raise ImageGenerationCancelled()
+    if deadline is not None and time.monotonic() >= deadline:
+        raise _DeadlineExpired(phase)
+
+
+def _stream_png(
+    response: httpx.Response,
+    *,
+    max_bytes: int,
+    cancel_event: Any = None,
+    deadline: float | None = None,
+    phase: ComfyUIImageEditPhase = "output_download",
+) -> bytes:
     """Read one PNG with declared and actual byte bounds."""
+    _check_stream_control(cancel_event, deadline, phase)
     if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes <= 0:
         raise ValueError("invalid PNG limit")
     declared = _declared_length(response)
@@ -486,10 +560,19 @@ def _stream_png(response: httpx.Response, *, max_bytes: int) -> bytes:
     if content_type != "image/png":
         raise ValueError("invalid PNG content type")
     collected = bytearray()
-    for chunk in response.iter_bytes():
+    chunks = iter(response.iter_bytes())
+    while True:
+        _check_stream_control(cancel_event, deadline, phase)
+        try:
+            chunk = next(chunks)
+        except StopIteration:
+            _check_stream_control(cancel_event, deadline, phase)
+            break
+        _check_stream_control(cancel_event, deadline, phase)
         collected.extend(chunk)
         if len(collected) > max_bytes:
             raise ValueError("PNG response exceeds limit")
+        _check_stream_control(cancel_event, deadline, phase)
     data = bytes(collected)
     if not data.startswith(_PNG_SIGNATURE):
         raise ValueError("invalid PNG signature")
@@ -600,7 +683,13 @@ class ComfyUIImageAdapter:
             ignore_cancel=ignore_cancel,
         )
         try:
-            return _read_bounded_json(response, allow_empty=allow_empty)
+            return _read_bounded_json(
+                response,
+                allow_empty=allow_empty,
+                cancel_event=None if ignore_cancel else cancel_event,
+                deadline=deadline,
+                phase=phase,
+            )
         finally:
             response.close()
 
@@ -734,7 +823,13 @@ class ComfyUIImageAdapter:
             params=descriptor,
         )
         try:
-            data = _stream_png(response, max_bytes=int(self.config.inline_max_bytes))
+            data = _stream_png(
+                response,
+                max_bytes=int(self.config.inline_max_bytes),
+                cancel_event=request.cancel_event,
+                deadline=deadline,
+                phase="output_download",
+            )
         finally:
             response.close()
         try:

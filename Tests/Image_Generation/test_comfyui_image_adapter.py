@@ -40,6 +40,28 @@ class ChunkStream(httpx.SyncByteStream):
         yield from self.chunks
 
 
+class ControlledChunkStream(httpx.SyncByteStream):
+    def __init__(self, chunks: list[bytes], on_chunk) -> None:
+        self.chunks = chunks
+        self.on_chunk = on_chunk
+
+    def __iter__(self):
+        for index, chunk in enumerate(self.chunks):
+            self.on_chunk(index)
+            yield chunk
+
+
+class AdvancingClock:
+    def __init__(self) -> None:
+        self.value = 0.0
+
+    def monotonic(self) -> float:
+        return self.value
+
+    def advance(self, seconds: float) -> None:
+        self.value += seconds
+
+
 class TrackingEvent:
     def __init__(self, *, cancel_on_wait: bool = False) -> None:
         self.cancel_on_wait = cancel_on_wait
@@ -114,16 +136,89 @@ def _config(**updates: Any):
     return replace(get_image_generation_config(), **values)
 
 
-def _input_spec(value: Any) -> list[Any]:
-    if isinstance(value, list):
-        return ["LINK"]
-    if isinstance(value, bool):
+_INPUT_TYPES = {
+    "LoadImage": {"image": "IMAGE_UPLOAD"},
+    "VAELoader": {"vae_name": "STRING"},
+    "VAEDecode": {"samples": "LATENT", "vae": "VAE"},
+    "KSamplerSelect": {"sampler_name": "STRING"},
+    "BasicScheduler": {
+        "denoise": "FLOAT",
+        "model": "MODEL",
+        "scheduler": "STRING",
+        "steps": "INT",
+    },
+    "SamplerCustomAdvanced": {
+        "guider": "GUIDER",
+        "latent_image": "LATENT",
+        "noise": "NOISE",
+        "sampler": "SAMPLER",
+        "sigmas": "SIGMAS",
+    },
+    "BasicGuider": {"conditioning": "CONDITIONING", "model": "MODEL"},
+    "UNETLoader": {"unet_name": "STRING", "weight_dtype": "STRING"},
+    "CLIPLoader": {"clip_name": "STRING", "device": "STRING", "type": "STRING"},
+    "RandomNoise": {"noise_seed": "INT"},
+    "MiniMaxH3ImageToVideo": {
+        "clip": "CLIP",
+        "first_frame": "IMAGE",
+        "height": "INT",
+        "length": "INT",
+        "prompt": "STRING",
+        "vae": "VAE",
+        "width": "INT",
+    },
+    "PrimitiveInt": {"value": "INT"},
+    "GetImageSize": {"image": "IMAGE"},
+    "ImageScaleToTotalPixels": {
+        "image": "IMAGE",
+        "megapixels": "FLOAT",
+        "resolution_steps": "INT",
+        "upscale_method": "STRING",
+    },
+    "ImageFromBatch": {"batch_index": "INT", "image": "IMAGE", "length": "INT"},
+    "ResizeImageMaskNode": {
+        "input": "IMAGE",
+        "resize_type": "STRING",
+        "resize_type.crop": "STRING",
+        "resize_type.height": "INT",
+        "resize_type.width": "INT",
+        "scale_method": "STRING",
+    },
+    "SaveImage": {"filename_prefix": "STRING", "images": "IMAGE"},
+}
+
+_OUTPUT_TYPES = {
+    "LoadImage": ["IMAGE", "MASK"],
+    "VAELoader": ["VAE"],
+    "VAEDecode": ["IMAGE"],
+    "KSamplerSelect": ["SAMPLER"],
+    "BasicScheduler": ["SIGMAS"],
+    "SamplerCustomAdvanced": ["LATENT", "LATENT"],
+    "BasicGuider": ["GUIDER"],
+    "UNETLoader": ["MODEL"],
+    "CLIPLoader": ["CLIP"],
+    "RandomNoise": ["NOISE"],
+    "MiniMaxH3ImageToVideo": ["CONDITIONING", "LATENT"],
+    "PrimitiveInt": ["INT"],
+    "GetImageSize": ["INT", "INT"],
+    "ImageScaleToTotalPixels": ["IMAGE"],
+    "ImageFromBatch": ["IMAGE"],
+    "ResizeImageMaskNode": ["IMAGE", "MASK"],
+    "SaveImage": [],
+}
+
+
+def _input_spec(class_type: str, input_name: str) -> list[Any]:
+    expected_type = _INPUT_TYPES[class_type][input_name]
+    if expected_type == "IMAGE_UPLOAD":
+        return [["existing-server-file.png"], {"image_upload": True}]
+    if expected_type == "BOOLEAN":
         return ["BOOLEAN"]
-    if isinstance(value, int):
+    if expected_type == "INT":
         return ["INT", {"min": 0, "max": 2**64 - 1}]
-    if isinstance(value, float):
+    if expected_type == "FLOAT":
         return ["FLOAT"]
-    return ["STRING"]
+    return [expected_type]
 
 
 def _object_info(graph: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -134,11 +229,16 @@ def _object_info(graph: dict[str, Any] | None = None) -> dict[str, Any]:
         if class_type in result:
             continue
         required = {
-            name: _input_spec(value) for name, value in node["inputs"].items()
+            name: _input_spec(class_type, name) for name in node["inputs"]
         }
         result[class_type] = {
             "input": {"required": required},
+            "input_order": {"required": list(required)},
+            "output": list(_OUTPUT_TYPES[class_type]),
             "output_node": class_type == "SaveImage",
+            "name": class_type,
+            "display_name": class_type,
+            "category": "test/real-object-info-shape",
         }
 
     choice_inputs = {
@@ -421,6 +521,73 @@ def test_object_info_preflight_precedes_upload_and_validates_choices() -> None:
     assert calls == ["/object_info"]
 
 
+def test_object_info_accepts_real_load_image_upload_schema_without_placeholder_choice() -> None:
+    prepared = adapter_module._prepare_workflow(_request(), config=_config())
+    schema = _object_info(prepared.graph)
+
+    assert prepared.graph["114"]["inputs"]["image"] not in schema["LoadImage"][
+        "input"
+    ]["required"]["image"][0]
+    adapter_module._validate_object_info(prepared, schema)
+
+
+@pytest.mark.parametrize(
+    "upload_schema",
+    [
+        [["existing.png"]],
+        [["existing.png"], {}],
+        [["existing.png"], {"image_upload": False}],
+        ["IMAGE", {"image_upload": True}],
+    ],
+    ids=["missing-metadata", "missing-flag", "false-flag", "not-a-choice-list"],
+)
+def test_object_info_rejects_malformed_load_image_upload_schema_before_upload(
+    upload_schema: list[Any],
+) -> None:
+    schema = _object_info()
+    schema["LoadImage"]["input"]["required"]["image"] = upload_schema
+    calls: list[str] = []
+
+    def script(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        return _json_response(schema)
+
+    with pytest.raises(ComfyUIImageEditError) as exc:
+        _make_adapter(script).generate(_request())
+
+    _assert_phase(exc, "remote_schema_preflight")
+    assert calls == ["/object_info"]
+
+
+@pytest.mark.parametrize(
+    "damage",
+    ["missing-output", "output-index", "source-type", "target-type"],
+)
+def test_object_info_rejects_direct_link_output_schema_mismatches_before_upload(
+    damage: str,
+) -> None:
+    schema = _object_info()
+    if damage == "missing-output":
+        schema["UNETLoader"].pop("output")
+    elif damage == "output-index":
+        schema["MiniMaxH3ImageToVideo"]["output"] = ["CONDITIONING"]
+    elif damage == "source-type":
+        schema["VAELoader"]["output"][0] = "IMAGE"
+    else:
+        schema["VAEDecode"]["input"]["required"]["samples"] = ["IMAGE"]
+    calls: list[str] = []
+
+    def script(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        return _json_response(schema)
+
+    with pytest.raises(ComfyUIImageEditError) as exc:
+        _make_adapter(script).generate(_request())
+
+    _assert_phase(exc, "remote_schema_preflight")
+    assert calls == ["/object_info"]
+
+
 @pytest.mark.parametrize("damage", ["class", "input", "loader", "save-image"])
 def test_object_info_rejects_missing_classes_inputs_loader_choices_and_png_output(damage) -> None:
     graph = adapter_module._load_packaged_workflow()
@@ -465,6 +632,82 @@ def test_bounded_json_rejects_declared_and_streamed_overflow_before_loads(monkey
         adapter_module._read_bounded_json(streamed)
 
     assert loads_calls == []
+
+
+def test_json_drip_stream_hits_absolute_deadline_before_prompt_without_delete(
+    monkeypatch,
+) -> None:
+    clock = AdvancingClock()
+    monkeypatch.setattr(adapter_module.time, "monotonic", clock.monotonic)
+    body = json.dumps(_object_info(), separators=(",", ":")).encode()
+    size = len(body) // 4
+    chunks = [body[:size], body[size : size * 2], body[size * 2 : size * 3], body[size * 3 :]]
+    yielded: list[int] = []
+    calls: list[str] = []
+
+    def advance(index: int) -> None:
+        yielded.append(index)
+        clock.advance(0.4)
+
+    def script(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        assert request.url.path == "/object_info"
+        return httpx.Response(200, stream=ControlledChunkStream(chunks, advance))
+
+    with pytest.raises(ComfyUIImageEditError) as exc:
+        _make_adapter(
+            script,
+            config=_config(
+                comfyui_image_request_timeout_seconds=0.5,
+                comfyui_image_total_deadline_seconds=1.0,
+            ),
+        ).generate(_request())
+
+    _assert_phase(exc, "remote_schema_preflight")
+    assert yielded == [0, 1, 2]
+    assert calls == ["/object_info"]
+    assert "/queue" not in calls
+
+
+def test_json_stream_cancellation_after_prompt_stops_and_deletes_once() -> None:
+    event = threading.Event()
+    yielded: list[int] = []
+    calls: list[str] = []
+    history = {
+        "opaque-prompt-id": {
+            "status": {"completed": False, "status_str": "running"},
+            "private_detail": "sentinel-private-stream-detail",
+        }
+    }
+    body = json.dumps(history, separators=(",", ":")).encode()
+    size = len(body) // 4
+    chunks = [body[:size], body[size : size * 2], body[size * 2 : size * 3], body[size * 3 :]]
+
+    def cancel(index: int) -> None:
+        yielded.append(index)
+        if index == 1:
+            event.set()
+
+    def script(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        if request.url.path == "/object_info":
+            return _json_response(_object_info())
+        if request.url.path == "/upload/image":
+            return _json_response({"name": "opaque.png", "subfolder": "", "type": "input"})
+        if request.url.path == "/prompt":
+            return _json_response({"prompt_id": "opaque-prompt-id"})
+        if request.url.path == "/history/opaque-prompt-id":
+            return httpx.Response(200, stream=ControlledChunkStream(chunks, cancel))
+        if request.url.path == "/queue":
+            return _json_response({})
+        raise AssertionError("unexpected request")
+
+    with pytest.raises(ImageGenerationCancelled) as exc:
+        _make_adapter(script).generate(_request(cancel_event=event))
+
+    assert "sentinel-private-stream-detail" not in str(exc.value)
+    assert yielded == [0, 1]
+    assert calls.count("/queue") == 1
 
 
 def test_success_uses_opaque_mime_extension_exact_origin_node165_and_effective_params(monkeypatch) -> None:
@@ -637,6 +880,87 @@ def test_png_download_is_bounded_and_validated(kind) -> None:
     _assert_phase(exc, "output_download")
 
 
+def test_png_drip_stream_hits_absolute_deadline_and_deletes_prompt_once(
+    monkeypatch,
+) -> None:
+    clock = AdvancingClock()
+    monkeypatch.setattr(adapter_module.time, "monotonic", clock.monotonic)
+    output = _png()
+    size = len(output) // 4
+    chunks = [
+        output[:size],
+        output[size : size * 2],
+        output[size * 2 : size * 3],
+        output[size * 3 :],
+    ]
+    yielded: list[int] = []
+    base = SuccessfulScript()
+
+    def advance(index: int) -> None:
+        yielded.append(index)
+        clock.advance(0.4)
+
+    def script(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/view":
+            base.calls.append((request.method, request.url.path))
+            base.requests.append(request)
+            return httpx.Response(
+                200,
+                stream=ControlledChunkStream(chunks, advance),
+                headers={"content-type": "image/png"},
+            )
+        return base(request)
+
+    with pytest.raises(ComfyUIImageEditError) as exc:
+        _make_adapter(
+            script,
+            config=_config(
+                comfyui_image_request_timeout_seconds=0.5,
+                comfyui_image_total_deadline_seconds=1.0,
+            ),
+        ).generate(_request())
+
+    _assert_phase(exc, "output_download")
+    assert yielded == [0, 1, 2]
+    assert base.calls.count(("POST", "/queue")) == 1
+
+
+def test_png_stream_cancellation_stops_and_deletes_prompt_once() -> None:
+    event = threading.Event()
+    output = _png()
+    size = len(output) // 4
+    chunks = [
+        output[:size],
+        output[size : size * 2],
+        output[size * 2 : size * 3],
+        output[size * 3 :],
+    ]
+    yielded: list[int] = []
+    base = SuccessfulScript()
+
+    def cancel(index: int) -> None:
+        yielded.append(index)
+        if index == 1:
+            event.set()
+
+    def script(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/view":
+            base.calls.append((request.method, request.url.path))
+            base.requests.append(request)
+            return httpx.Response(
+                200,
+                stream=ControlledChunkStream(chunks, cancel),
+                headers={"content-type": "image/png"},
+            )
+        return base(request)
+
+    with pytest.raises(ImageGenerationCancelled):
+        _make_adapter(script).generate(_request(cancel_event=event))
+
+    assert yielded == [0, 1]
+    assert base.calls.count(("POST", "/queue")) == 1
+
+
 def test_cancel_before_prompt_id_never_deletes_queue() -> None:
     event = threading.Event()
     event.set()
@@ -657,7 +981,7 @@ def test_cancel_before_prompt_id_never_deletes_queue() -> None:
     [
         ("/object_info", "/upload/image", 0),
         ("/upload/image", "/prompt", 0),
-        ("/prompt", "/history/opaque-prompt-id", 1),
+        ("/prompt", "/history/opaque-prompt-id", 0),
         ("/history/opaque-prompt-id", "/view", 1),
     ],
 )
@@ -732,8 +1056,8 @@ def test_queue_delete_failure_cannot_mask_cancellation() -> None:
 
 
 def test_timeout_uses_monotonic_remaining_time_and_deletes_once(monkeypatch) -> None:
-    ticks = iter([0.0, 0.0, 0.2, 0.5, 0.8, 1.1, 1.2, 1.3, 1.4, 1.5])
-    monkeypatch.setattr(adapter_module.time, "monotonic", lambda: next(ticks))
+    clock = AdvancingClock()
+    monkeypatch.setattr(adapter_module.time, "monotonic", clock.monotonic)
     calls: list[httpx.Request] = []
 
     def script(request: httpx.Request) -> httpx.Response:
@@ -745,6 +1069,7 @@ def test_timeout_uses_monotonic_remaining_time_and_deletes_once(monkeypatch) -> 
         if request.url.path == "/prompt":
             return _json_response({"prompt_id": "opaque-prompt-id"})
         if request.url.path == "/history/opaque-prompt-id":
+            clock.value = 1.1
             return _json_response({})
         if request.url.path == "/queue":
             raise httpx.ConnectError("sentinel-timeout-delete-detail")
