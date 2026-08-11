@@ -40,8 +40,10 @@ or video-specific behavior.
    `ImageGenResult` contract.
 2. The adapter is bound to one packaged, sanitized H3 workflow. Arbitrary workflow
    paths are not exposed.
-3. Image Generation owns separate ComfyUI base URL, trusted-origin, polling, and
-   timeout settings. Video Generation settings are never read.
+3. Image Generation owns separate ComfyUI base URL, polling, and timeout settings.
+   Successfully saving the normalized base URL establishes user intent to trust
+   that exact host for self-built endpoints; Video Generation settings are never
+   read and response data cannot extend trust.
 4. `worker.run_generation()` remains the single validation choke point, including
    a backward-compatible capability that marks the reference image as required.
 5. Successful output uses the existing image attachment and variant-metadata path.
@@ -76,6 +78,10 @@ or video-specific behavior.
 - The first ComfyUI image backend is edit-only, single-input, single-output, and
   PNG-only. Unsupported request values fail explicitly.
 - Users must explicitly configure and trust non-loopback ComfyUI origins.
+- Image Generation result metadata grows by one backward-compatible allowlisted
+  effective-parameter mapping, and the request contract grows by one optional
+  `threading.Event` cancellation seam. Existing adapters keep their current
+  behavior when both are absent.
 - Source images and edited outputs may persist on the configured ComfyUI server;
   operator cleanup policy governs them.
 - Settings changes reset the Image Generation registry only after successful

@@ -106,7 +106,11 @@ export inside the repository. The committed graph:
 - has a new repository-owned filename and stable package key;
 - removes nodes `154` and `166` completely;
 - retains node `165` as the only output node;
+- replaces node 114's source-image placeholder with the repository-owned neutral
+  value `h3_edit_input.png`;
 - uses a newly authored neutral filler instruction, `Apply the requested image edit.`;
+- replaces node 165's filename prefix with the repository-owned neutral value
+  `h3_edit`;
 - contains none of the source workflow's embedded prompt text; and
 - contains no original source path, source filename, export hash, or provenance
   label.
@@ -114,24 +118,86 @@ export inside the repository. The committed graph:
 Loader and model widget values needed to execute the graph are operational graph
 configuration, not provenance. They must not be copied into logs or reports.
 
+The source-to-sanitized transformation allowlist is exactly:
+
+1. delete top-level nodes `154` and `166`;
+2. replace `/114/inputs/image` with `h3_edit_input.png`;
+3. replace `/133/inputs/prompt` with `Apply the requested image edit.`; and
+4. replace `/165/inputs/filename_prefix` with `h3_edit`.
+
+Every other node, class, input name, direct link, and operational literal remains
+unchanged. Sanitization verification compares the external source and sanitized
+copy only in a private temporary workspace; it emits only a pass/fail allowlist
+result and never records either raw graph, source identity, hash, or changed source
+literal.
+
 ### 5.2 Exact topology
 
 The packaged graph is a versioned contract identified primarily by node ID,
 `class_type`, input name, and direct links. Titles may be asserted for diagnostic
 quality but never select an injection target.
 
-The required control and output nodes include:
+The normative sanitized node inventory is:
 
-| Node | Role | Required class |
+| Node | Required class | Role |
 | --- | --- | --- |
-| `114` | uploaded source image | `LoadImage` |
-| `125` | sampler | `KSamplerSelect` |
-| `126` | scheduler and steps | `BasicScheduler` |
-| `131` | seed/noise | `RandomNoise` |
-| `133` | H3 edit instruction and source conditioning | `MiniMaxH3ImageToVideo` |
-| `165` | canonical edited PNG | `SaveImage` |
+| `114` | `LoadImage` | uploaded source image |
+| `121` | `VAELoader` | VAE loader |
+| `124` | `VAEDecode` | sampled latent decode |
+| `125` | `KSamplerSelect` | sampler control |
+| `126` | `BasicScheduler` | scheduler and steps control |
+| `127` | `SamplerCustomAdvanced` | sampler execution |
+| `128` | `BasicGuider` | conditioning guider |
+| `129` | `UNETLoader` | H3 model loader |
+| `130` | `CLIPLoader` | text encoder loader |
+| `131` | `RandomNoise` | seed/noise control |
+| `133` | `MiniMaxH3ImageToVideo` | H3 instruction and source conditioning |
+| `139` | `PrimitiveInt` | graph-owned frame-length control |
+| `140` | `GetImageSize` | scaled processing dimensions |
+| `141` | `ImageScaleToTotalPixels` | bounded processing resize |
+| `144` | `ImageFromBatch` | one edited frame selection |
+| `149` | `ResizeImageMaskNode` | restore source dimensions |
+| `150` | `GetImageSize` | original source dimensions |
+| `165` | `SaveImage` | sole canonical edited PNG output |
 
-The complete expected node-ID-to-class map and direct-link map are captured in an
+No other node ID is permitted. In particular, `154` and `166` are absent.
+
+The normative direct-link inventory is:
+
+| Destination input | Required source |
+| --- | --- |
+| `124.samples` | `127[0]` |
+| `124.vae` | `121[0]` |
+| `126.model` | `129[0]` |
+| `127.guider` | `128[0]` |
+| `127.latent_image` | `133[1]` |
+| `127.noise` | `131[0]` |
+| `127.sampler` | `125[0]` |
+| `127.sigmas` | `126[0]` |
+| `128.conditioning` | `133[0]` |
+| `128.model` | `129[0]` |
+| `133.clip` | `130[0]` |
+| `133.first_frame` | `114[0]` |
+| `133.height` | `140[1]` |
+| `133.length` | `139[0]` |
+| `133.vae` | `121[0]` |
+| `133.width` | `140[0]` |
+| `140.image` | `141[0]` |
+| `141.image` | `114[0]` |
+| `144.image` | `124[0]` |
+| `149.input` | `144[0]` |
+| `149.resize_type.height` | `150[1]` |
+| `149.resize_type.width` | `150[0]` |
+| `150.image` | `114[0]` |
+| `165.images` | `149[0]` |
+
+The controlled literal inputs are exactly `114.image`, `125.sampler_name`,
+`126.steps`, `131.noise_seed`, `133.prompt`, and `165.filename_prefix`. Request
+preparation changes only the first five request-scoped values; node 165 retains the
+neutral packaged prefix. All other literal inputs remain graph-owned and must pass
+remote `/object_info` validation before upload.
+
+The node-ID-to-class and direct-link tables above are captured independently in an
 asset test. Duplicate expected controls, wrong-class nodes at expected IDs,
 unexpected output nodes, missing direct links, or title/class decoys fail closed.
 
@@ -162,9 +228,24 @@ as one string. Positive and negative style transformations are both bypassed. No
 separate negative-prompt channel is supported; users express exclusions in the
 same instruction.
 
-The global image batch default is normalized to one for this backend. An explicit
-batch request other than one is rejected. The command parser retains whether batch
-was explicitly supplied so the distinction is testable.
+The current command grammar gains no batch syntax. The global image batch default
+is ignored for this edit-only backend and the Console dispatches `count=1`.
+Programmatic calls to the batch helper for backend `comfyui` require `count == 1`;
+every other count is rejected before request construction.
+
+An explicit `@style` token is rejected for this backend, because style expansion
+would change the user's instruction or introduce unsupported controls. An empty
+instruction is also rejected rather than falling back to conversation-context
+prompt synthesis.
+
+| Invocation/input | Result |
+| --- | --- |
+| `:comfyui <instruction>` with one staged image | Accepted; one raw instruction and one PNG |
+| `:comfyui @style <instruction>` | Refused before request construction |
+| `:comfyui` without an instruction | Refused; conversation fallback is not used |
+| `comfyui` batch helper with `count=1` | Accepted |
+| `comfyui` batch helper with any other count | Refused before adapter dispatch |
+| Any invocation with zero, multiple, or non-image attachments | Refused before adapter/network activity |
 
 ### 6.2 Supported controls
 
@@ -201,12 +282,26 @@ and enforced by `worker.run_generation()` so non-Console callers cannot bypass i
 
 ### 6.4 Success, failure, and Regenerate
 
+`ImageGenResult` gains one backward-compatible field,
+`effective_params: Mapping[str, JSONScalar] | None = None`, where `JSONScalar` is
+`str | int | float | bool | None`. Existing adapters therefore need no constructor
+change. The H3 adapter returns only these allowlisted keys:
+`operation`, `workflow_key`, `width`, `height`, `steps`, `sampler`, and `format`.
+`resolved_seed` continues to use its existing dedicated result field.
+
+The Console batch mapper copies only those allowlisted scalar keys into
+`GenerationVariantMeta.params`; it derives `content_type` from the already
+validated `ImageGenResult.content_type` rather than accepting adapter metadata for
+it. Unknown keys or nonscalar values are rejected and never persisted. Existing
+adapters returning no `effective_params` keep `params={}` and retain current
+behavior.
+
 On successful output validation, the normal Console image path persists one PNG
-attachment and aligned `GenerationVariantMeta`. Metadata records the backend,
-`operation="edit"`, packaged workflow key, user instruction, resolved seed, steps,
-sampler, effective source/output dimensions, and PNG MIME. It records no source
-path, source filename, upload name, ComfyUI descriptor, history payload, or server
-response body.
+attachment and aligned `GenerationVariantMeta`. Metadata therefore records the
+backend, `operation="edit"`, packaged workflow key, user instruction, resolved
+seed, steps, sampler, effective source/output dimensions, format, and validated PNG
+MIME. It records no source path, source filename, upload name, ComfyUI descriptor,
+history payload, or server response body.
 
 Only after durable persistence succeeds may the composer remove the exact staged
 attachment that initiated the edit. Removal is gated by an opaque runtime
@@ -229,15 +324,22 @@ read `[video_generation.comfyui]` or inherit video defaults.
 The settings include:
 
 - base URL, defaulting to `http://127.0.0.1:8188`;
-- explicit trusted-origin configuration for non-loopback servers;
 - request/connect timeout;
 - history poll interval; and
 - total generation deadline.
 
 There is no custom workflow path or model selector in this task. Userinfo, query,
-and fragment components are forbidden in the base URL. Remote addresses must be
-explicitly configured and trusted; the live-UAT LAN server is never committed as a
-default or named in tracked evidence.
+and fragment components are forbidden in the base URL.
+
+There is no second allowlist or trust boolean. Successfully saving `base_url` in
+the canonical F9 Settings screen is the user's explicit consent to contact that
+exact normalized scheme/host/port. For self-built ComfyUI endpoints, the adapter
+passes only that normalized hostname to the existing `trusted_origins` egress
+parameter, permitting an explicitly configured private-network host while cloud
+metadata destinations remain blocked. Response data cannot extend trust: redirects
+are disabled, descriptor fields never become URLs, and every endpoint must remain
+same-origin with the configured base URL. The live-UAT LAN server is never
+committed as a default or named in tracked evidence.
 
 Only the canonical F9 Settings surface exposes the fields. Help text states that
 the source image and instruction are transmitted to the configured ComfyUI server
@@ -293,13 +395,27 @@ download. Every request passes the existing trusted-origin egress policy.
 
 ### 9.1 Cancellation and timeout
 
-Before prompt submission, cancellation ends the operation normally. After a prompt
-ID exists, the adapter may best-effort remove that exact prompt if it is still
-pending. It never calls ComfyUI's global interrupt endpoint because the server may
-be shared.
+`ImageGenRequest` gains an optional `cancel_event: threading.Event`, defaulting to
+`None` for existing callers and adapters. `build_request`, `run_generation_batch`,
+and the Console H3 dispatch thread the same event object without wrapping or
+replacing it. The H3 Console operation owns the event; user cancellation and screen
+unmount set it. The adapter checks it before every network phase and waits between
+history polls with `cancel_event.wait(interval)` so cancellation is responsive
+without a second polling mechanism.
+
+Before prompt submission, an observed cancellation ends the operation without a
+queue deletion. After a prompt ID exists, an observed cancellation or monotonic
+deadline expiry must attempt exactly one prompt-scoped `POST /queue` with
+`{"delete": [prompt_id]}`. A response that says the prompt is already running or
+absent, or a sanitized transport failure during this best-effort deletion, does not
+mask the original cancellation/timeout. The adapter never calls ComfyUI's global
+interrupt endpoint because the server may be shared.
 
 A running prompt can finish server-side after local cancellation or timeout. This
-is an accepted and documented server-retention consequence. Once a successful
+is an accepted and documented server-retention consequence. The Console shields
+only validated-result attachment/metadata persistence once adapter success has
+been accepted; it does not shield remote polling or later UI synchronization.
+Cancellation before adapter success produces no local result. Once a successful
 result crosses the local durable-persistence boundary, cancellation cannot erase
 the committed attachment or metadata. Subsequent UI synchronization remains
 cancellable and runs only for the originating live screen/operation generation.
