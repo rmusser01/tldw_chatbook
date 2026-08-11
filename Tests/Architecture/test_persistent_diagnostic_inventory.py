@@ -492,7 +492,7 @@ def test_inventory_counts_chained_logger_diagnostic_calls() -> None:
 
 TASK_15103_REVIEW_PATH = REPO_ROOT / "Docs/security/task-15103-diagnostic-review.json"
 TASK_15103_RECORDED_BASE = "6d72f15f8332b6469a5d644d409b80914634a8dd"
-TASK_15103_PLANNING_BASE = "6af8c96da6e9f959c1322b8a7ba7473aeabd9f9a"
+TASK_15103_PLANNING_BASE = "85863257dd7a30b16451f8f32e0c7142dd1d5273"
 TASK_15103_OWNER_STARTING = {
     "tldw_chatbook/Agents/agent_service.py": (9, "578de6bb91649fc9fc87"),
     "tldw_chatbook/Chat/console_agent_bridge.py": (

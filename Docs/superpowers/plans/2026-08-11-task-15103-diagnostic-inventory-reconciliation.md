@@ -9,9 +9,9 @@
 repair every unsafe diagnostic without unrelated behavior changes, and accept
 only the reviewed manifest delta while preserving the six-file sink topology.
 
-**Architecture:** Persist one canonical change-group ledger, reuse the existing
-alias-aware diagnostic extractor, and make both source review and manifest
-normalization fail closed. Production repairs stay at their existing call sites.
+**Architecture:** Persist one canonical change-group ledger, reuse and harden
+the existing alias-aware diagnostic extractor, and make both source review and
+manifest normalization fail closed. Production repairs stay at their existing call sites.
 Tests invoke real production functions or source scanners only; they never
 construct a Textual application, test application, reduced application, or
 simplified substitute.
@@ -52,7 +52,10 @@ metadata policy.
 ## Verified planning baseline
 
 - Planning base: exact `origin/dev`
-  `484d25b5e9ec1c63aeaa0d79f8b41f7f795569a4`.
+  `85863257dd7a30b16451f8f32e0c7142dd1d5273`. The intervening
+  visual-evaluation change touches the approved provider-gateway owner but
+  preserves its exact diagnostic population and sink set, and introduces no
+  additional diagnostic owner.
 - Focused architecture baseline:
 
   ```bash
@@ -299,6 +302,13 @@ start from the superseded boundary.
 
   Each test must assert the invariant-specific failure text; a different red
   assertion does not count.
+
+  Also add focused alias/scoping mutations for aliases introduced or mutated
+  within `try`, `for`, `while`, `with`, and `match`. Require conservative
+  control-flow joins, prove shadowing and reassignment clear stale logger
+  identity, and cover both missed-call and false-positive directions. This is
+  a proven extractor gap owned by Task 2; do not defer it to a production
+  repair batch or weaken the ledger oracle around it.
 
 - [ ] **Step 3: Confirm RED against the current shallow guard**
 

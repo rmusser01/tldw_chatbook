@@ -12,8 +12,12 @@ behavior changes, and the six-file persistent-sink topology remains unchanged.
 
 ## Current verified state
 
-The approved design was revalidated at the pre-implementation stop gate on
-exact `origin/dev` `484d25b5e9ec1c63aeaa0d79f8b41f7f795569a4`.
+The approved design was revalidated at the implementation stop gate on exact
+`origin/dev` `85863257dd7a30b16451f8f32e0c7142dd1d5273`. The intervening
+visual-evaluation change touches `console_provider_gateway.py` but leaves its
+two-call digest `747b675587167a1bec60` and empty sink set unchanged; its other
+changed production files introduce no diagnostic owner or sink. The approved
+18-owner population and the evidence below are therefore unchanged.
 
 - The stored inventory contains 485 owner files, 1,144 TASK-492 calls, 6,962
   TASK-494 calls, and six persistent-sink files.
@@ -193,10 +197,14 @@ current reviewed map; TASK-15103 policy data lives only in
 surviving reviewed calls from that artifact instead of duplicating their
 labels, fields, and provenance in a second constant.
 
-The guard reuses the already mutation-hardened, alias-aware diagnostic-call
-extractor in `Tests/LLM_Calls/summarization_diagnostic_guard.py`; it does not
-grow a second shallow parser for dynamic message forms, logger aliases,
-`.bind()`, `.opt()`, or exception capture. Each TASK-15103 ledger entry
+The guard reuses the alias-aware diagnostic-call extractor in
+`Tests/LLM_Calls/summarization_diagnostic_guard.py`; it does not grow a second
+shallow parser for dynamic message forms, logger aliases, `.bind()`, `.opt()`,
+or exception capture. Task 2 also closes the proven extractor gap for aliases
+introduced or mutated in `try`, `for`, `while`, `with`, and `match`: joins must
+be conservative across control-flow paths, shadowing and reassignment must not
+retain stale logger identity, and focused mutation tests must own each case.
+Each TASK-15103 ledger entry
 identifies a fixed diagnostic label, exact permitted dynamic expressions, and
 the provenance that makes each value ADR-029 metadata rather than private
 content. An expression named `status`, `provider`, `operation`, or similar is
