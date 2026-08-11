@@ -22,6 +22,9 @@ import pytest
 from loguru import logger as loguru_logger
 
 from tldw_chatbook.LLM_Calls import Local_Summarization_Lib as local_summarization
+from tldw_chatbook.LLM_Calls import (
+    Summarization_General_Lib as general_summarization,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -113,6 +116,7 @@ class _FakeResponse:
         self._lines = lines
         self.text = text
         self.iter_lines_started = False
+        self.closed = False
 
     def json(self) -> object:
         if isinstance(self._json_data, BaseException):
@@ -125,6 +129,9 @@ class _FakeResponse:
 
     def raise_for_status(self) -> None:
         return None
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class _FakeSession:
@@ -330,6 +337,19 @@ CUSTOM_OPENAI_RESPONSE_CANARY = "CUSTOM_OPENAI_RESPONSE_CANARY_3796"
 CUSTOM_OPENAI_STREAM_CANARY = "CUSTOM_OPENAI_STREAM_CANARY_3796"
 CUSTOM_OPENAI_EXCEPTION_CANARY = "CUSTOM_OPENAI_EXCEPTION_CANARY_3796"
 CUSTOM_OPENAI_FILE_PATH_CANARY = "CUSTOM_OPENAI_FILE_PATH_CANARY_3796"
+GENERAL_INPUT_CANARY = "GENERAL_INPUT_CANARY_3796"
+GENERAL_PROMPT_CANARY = "GENERAL_PROMPT_CANARY_3796"
+GENERAL_CREDENTIAL_CANARY = "G3N3R"
+GENERAL_PATH_CANARY = "GENERAL_PATH_CANARY_3796"
+GENERAL_RESPONSE_CANARY = "GENERAL_RESPONSE_CANARY_3796"
+GENERAL_EXCEPTION_CANARY = "GENERAL_EXCEPTION_CANARY_3796"
+GENERAL_ANALYZE_STREAM_EXCEPTION_CANARY = "GENERAL_ANALYZE_STREAM_EXCEPTION_CANARY_3796"
+GENERAL_OPENAI_ENDPOINT_CANARY = "http://GENERAL_OPENAI_ENDPOINT_CANARY_3796.invalid/v1"
+GENERAL_OPENAI_STREAM_CANARY = "GENERAL_OPENAI_STREAM_CANARY_3796"
+GENERAL_OPENAI_EXCEPTION_CANARY = "GENERAL_OPENAI_EXCEPTION_CANARY_3796"
+GENERAL_ANTHROPIC_RESPONSE_CANARY = "GENERAL_ANTHROPIC_RESPONSE_CANARY_3796"
+GENERAL_ANTHROPIC_STREAM_CANARY = "GENERAL_ANTHROPIC_STREAM_CANARY_3796"
+GENERAL_ANTHROPIC_EXCEPTION_CANARY = "GENERAL_ANTHROPIC_EXCEPTION_CANARY_3796"
 
 
 @dataclass(frozen=True)
@@ -531,6 +551,263 @@ RUNTIME_SENTINEL_CASES = (
         _invoke_local_exception,
         _assert_local_exception_contract,
         "Local LLM: Processing failed; exception_type=RuntimeError",
+    ),
+)
+
+
+def _install_signature_bound_general_settings(
+    monkeypatch: pytest.MonkeyPatch,
+    values: dict[tuple[str, str], object],
+) -> list[tuple[tuple[object, ...], dict[str, object]]]:
+    real_get_cli_setting = general_summarization.get_cli_setting
+    signature = inspect.signature(real_get_cli_setting)
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def fake_get_cli_setting(*args: object, **kwargs: object) -> object:
+        bound = signature.bind(*args, **kwargs)
+        calls.append((args, kwargs))
+        key = (bound.arguments["section"], bound.arguments.get("key"))
+        if key in values:
+            return values[key]
+        return bound.arguments.get("default")
+
+    monkeypatch.setattr(
+        general_summarization,
+        "get_cli_setting",
+        fake_get_cli_setting,
+    )
+    return calls
+
+
+def _install_signature_bound_general_session_post(
+    monkeypatch: pytest.MonkeyPatch,
+    result: _FakeResponse | BaseException,
+) -> list[tuple[tuple[object, ...], dict[str, object]]]:
+    real_post = general_summarization.requests.Session.post
+    signature = inspect.signature(real_post)
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def fake_post(session: object, *args: object, **kwargs: object) -> _FakeResponse:
+        signature.bind(session, *args, **kwargs)
+        calls.append((args, kwargs))
+        if isinstance(result, BaseException):
+            raise result
+        return result
+
+    monkeypatch.setattr(general_summarization.requests.Session, "post", fake_post)
+    return calls
+
+
+def _install_signature_bound_general_requests_post(
+    monkeypatch: pytest.MonkeyPatch,
+    result: _FakeResponse | BaseException,
+) -> list[tuple[tuple[object, ...], dict[str, object]]]:
+    real_post = general_summarization.requests.post
+    signature = inspect.signature(real_post)
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def fake_post(*args: object, **kwargs: object) -> _FakeResponse:
+        signature.bind(*args, **kwargs)
+        calls.append((args, kwargs))
+        if isinstance(result, BaseException):
+            raise result
+        return result
+
+    monkeypatch.setattr(general_summarization.requests, "post", fake_post)
+    return calls
+
+
+def _general_provider_settings(
+    *,
+    openai_key: str = "fixed-general-openai-key",
+    openai_endpoint: str = "http://openai.invalid/v1",
+) -> dict[tuple[str, str], object]:
+    return {
+        ("openai_api", "api_key"): openai_key,
+        ("openai_api", "model"): "fixed-general-openai-model",
+        ("openai_api", "api_retries"): 0,
+        ("openai_api", "api_retry_delay"): 0,
+        ("openai_api", "api_timeout"): 5,
+        ("openai_api", "api_base_url"): openai_endpoint,
+        ("anthropic_api", "api_key"): "fixed-general-anthropic-key",
+        ("anthropic_api", "model"): "fixed-general-anthropic-model",
+        ("anthropic_api", "api_retries"): 0,
+        ("anthropic_api", "api_retry_delay"): 0,
+    }
+
+
+def _invoke_general_input(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> object:
+    del monkeypatch, tmp_path
+    return general_summarization.extract_text_from_segments(
+        [{"Text": GENERAL_INPUT_CANARY}, {"missing": GENERAL_INPUT_CANARY}]
+    )
+
+
+def _invoke_general_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> object:
+    del tmp_path
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_provider_settings(),
+    )
+    _install_signature_bound_general_session_post(
+        monkeypatch,
+        _FakeResponse(
+            json_data={"choices": [{"message": {"content": "  fixed openai  "}}]}
+        ),
+    )
+    return general_summarization.summarize_with_openai(
+        "fixed-general-openai-key",
+        "fixed input",
+        GENERAL_PROMPT_CANARY,
+        system_message=f"system-{GENERAL_PROMPT_CANARY}",
+    )
+
+
+def _invoke_general_credential(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> object:
+    del monkeypatch, tmp_path
+    return general_summarization.summarize_with_anthropic(
+        GENERAL_CREDENTIAL_CANARY,
+        {"summary": "fixed existing anthropic summary"},
+        "fixed prompt",
+    )
+
+
+def _invoke_general_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> object:
+    del monkeypatch
+    private_path = tmp_path / f"{GENERAL_PATH_CANARY}.txt"
+    private_path.write_text("  fixed file contents  ", encoding="utf-8")
+    return general_summarization.extract_text_from_input(str(private_path))
+
+
+def _invoke_general_response(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> object:
+    del tmp_path
+    real_dispatch = general_summarization._dispatch_to_api
+    signature = inspect.signature(real_dispatch)
+
+    def fake_dispatch(*args: object, **kwargs: object) -> Iterator[str]:
+        signature.bind(*args, **kwargs)
+
+        def response_stream() -> Iterator[str]:
+            yield GENERAL_RESPONSE_CANARY
+
+        return response_stream()
+
+    monkeypatch.setattr(general_summarization, "_dispatch_to_api", fake_dispatch)
+    return general_summarization.analyze(
+        "openai",
+        "fixed input",
+        "fixed prompt",
+    )
+
+
+def _invoke_general_exception(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> object:
+    del monkeypatch, tmp_path
+
+    def raise_private_exception(text: str) -> str:
+        assert text == "fixed chunk"
+        raise RuntimeError(GENERAL_EXCEPTION_CANARY)
+
+    return general_summarization.recursive_summarize_chunks(
+        ["fixed chunk"],
+        raise_private_exception,
+    )
+
+
+def _assert_general_input_contract(result: object) -> None:
+    assert result == GENERAL_INPUT_CANARY
+
+
+def _assert_general_prompt_contract(result: object) -> None:
+    assert result == "fixed openai"
+
+
+def _assert_general_credential_contract(result: object) -> None:
+    assert result == "fixed existing anthropic summary"
+
+
+def _assert_general_path_contract(result: object) -> None:
+    assert result == "fixed file contents"
+
+
+def _assert_general_response_contract(result: object) -> None:
+    assert result == GENERAL_RESPONSE_CANARY
+
+
+def _assert_general_exception_contract(result: object) -> None:
+    assert result == (
+        f"Error: Unexpected failure during recursive step 1: {GENERAL_EXCEPTION_CANARY}"
+    )
+
+
+@dataclass(frozen=True)
+class GeneralRuntimeSentinelCase:
+    category: str
+    canary: str
+    invoke: Callable[[pytest.MonkeyPatch, Path], object]
+    assert_contract: Callable[[object], None]
+    expected_event: str
+
+
+GENERAL_RUNTIME_SENTINEL_CASES = (
+    GeneralRuntimeSentinelCase(
+        "input",
+        GENERAL_INPUT_CANARY,
+        _invoke_general_input,
+        _assert_general_input_contract,
+        "Skipping segment due to missing text key or wrong type",
+    ),
+    GeneralRuntimeSentinelCase(
+        "prompt",
+        GENERAL_PROMPT_CANARY,
+        _invoke_general_prompt,
+        _assert_general_prompt_contract,
+        "OpenAI: Request options prepared",
+    ),
+    GeneralRuntimeSentinelCase(
+        "credential",
+        GENERAL_CREDENTIAL_CANARY,
+        _invoke_general_credential,
+        _assert_general_credential_contract,
+        "Anthropic: Using API key provided as parameter",
+    ),
+    GeneralRuntimeSentinelCase(
+        "path",
+        GENERAL_PATH_CANARY,
+        _invoke_general_path,
+        _assert_general_path_contract,
+        "Input resolved as file path",
+    ),
+    GeneralRuntimeSentinelCase(
+        "response",
+        GENERAL_RESPONSE_CANARY,
+        _invoke_general_response,
+        _assert_general_response_contract,
+        "Summarization completed successfully. Final Length:",
+    ),
+    GeneralRuntimeSentinelCase(
+        "exception",
+        GENERAL_EXCEPTION_CANARY,
+        _invoke_general_exception,
+        _assert_general_exception_contract,
+        "Unexpected error calling summarize_func; step=1 exception_type=RuntimeError",
     ),
 )
 
@@ -3271,3 +3548,520 @@ def test_local_save_summary_to_file_does_not_report_success_before_write_complet
     assert CUSTOM_OPENAI_EXCEPTION_CANARY not in captured.text
     assert CUSTOM_OPENAI_FILE_PATH_CANARY not in captured.text
     assert "Summary saved to file" not in captured.text
+
+
+def test_no_pending_general_core_sites() -> None:
+    pending = [
+        site
+        for site in _ledger_sites()
+        if site["group"] == "general_core"
+        and site["starting_classification"] == "private"
+        and site["outcome"] == "pending"
+    ]
+
+    assert not pending, (
+        f"general_core has {len(pending)} pending private diagnostics: "
+        f"{[site['site_id'] for site in pending]}"
+    )
+
+
+@pytest.mark.parametrize(
+    "case",
+    GENERAL_RUNTIME_SENTINEL_CASES,
+    ids=lambda case: f"general-{case.category}",
+)
+def test_general_core_six_category_matrix_hides_private_value(
+    case: GeneralRuntimeSentinelCase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = case.invoke(monkeypatch, tmp_path)
+
+    case.assert_contract(result)
+    assert case.canary not in captured.text
+    assert case.expected_event in captured.text
+
+
+def test_analyze_nested_generator_exception_is_consumed_without_private_diagnostic(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    real_dispatch = general_summarization._dispatch_to_api
+    signature = inspect.signature(real_dispatch)
+    stream_finished = False
+
+    def fake_dispatch(*args: object, **kwargs: object) -> Iterator[str]:
+        signature.bind(*args, **kwargs)
+
+        def failing_stream() -> Iterator[str]:
+            nonlocal stream_finished
+            yield "fixed partial"
+            stream_finished = True
+            raise RuntimeError(GENERAL_ANALYZE_STREAM_EXCEPTION_CANARY)
+
+        return failing_stream()
+
+    monkeypatch.setattr(general_summarization, "_dispatch_to_api", fake_dispatch)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.analyze(
+            "openai",
+            "fixed input",
+            "fixed prompt",
+        )
+
+    assert result == (
+        f"Error consuming stream: {GENERAL_ANALYZE_STREAM_EXCEPTION_CANARY}"
+    )
+    assert stream_finished is True
+    assert GENERAL_ANALYZE_STREAM_EXCEPTION_CANARY not in captured.text
+    assert "Error consuming generator; exception_type=RuntimeError" in captured.text
+    assert not [record for record in captured.caplog.records if record.exc_info]
+
+
+def test_analyze_chunk_failure_preserves_placeholder_without_logging_private_output(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    real_chunker = general_summarization.improved_chunking_process
+    chunker_signature = inspect.signature(real_chunker)
+    real_dispatch = general_summarization._dispatch_to_api
+    dispatch_signature = inspect.signature(real_dispatch)
+
+    def fake_chunker(*args: object, **kwargs: object) -> list[dict[str, str]]:
+        chunker_signature.bind(*args, **kwargs)
+        return [{"text": "fixed chunk"}]
+
+    def fake_dispatch(*args: object, **kwargs: object) -> str:
+        dispatch_signature.bind(*args, **kwargs)
+        return f"Error: {GENERAL_RESPONSE_CANARY}"
+
+    monkeypatch.setattr(general_summarization, "CHUNKER_AVAILABLE", True)
+    monkeypatch.setattr(
+        general_summarization,
+        "improved_chunking_process",
+        fake_chunker,
+    )
+    monkeypatch.setattr(general_summarization, "_dispatch_to_api", fake_dispatch)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.analyze(
+            "openai",
+            "fixed input",
+            "fixed prompt",
+            chunked_summarization=True,
+        )
+
+    assert result == (f"[Error summarizing chunk 1: Error: {GENERAL_RESPONSE_CANARY}]")
+    assert GENERAL_RESPONSE_CANARY not in captured.text
+    assert "Failed to summarize chunk; chunk=1" in captured.text
+
+
+def test_analyze_critical_exception_preserves_error_contract_without_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    real_extract = general_summarization.extract_text_from_input
+    signature = inspect.signature(real_extract)
+
+    def fake_extract(*args: object, **kwargs: object) -> str:
+        signature.bind(*args, **kwargs)
+        raise RuntimeError(GENERAL_EXCEPTION_CANARY)
+
+    monkeypatch.setattr(general_summarization, "extract_text_from_input", fake_extract)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.analyze(
+            "openai",
+            "fixed input",
+            "fixed prompt",
+        )
+
+    assert result == (
+        "Error: An unexpected error occurred during summarization: "
+        f"{GENERAL_EXCEPTION_CANARY}"
+    )
+    assert GENERAL_EXCEPTION_CANARY not in captured.text
+    assert "Critical error in summarize function; exception_type=RuntimeError" in (
+        captured.text
+    )
+    assert not [record for record in captured.caplog.records if record.exc_info]
+
+
+def test_general_core_dispatch_exception_preserves_in_band_error_without_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    real_openai = general_summarization.summarize_with_openai
+    signature = inspect.signature(real_openai)
+
+    def failing_openai(*args: object, **kwargs: object) -> str:
+        signature.bind(*args, **kwargs)
+        raise RuntimeError(GENERAL_EXCEPTION_CANARY)
+
+    monkeypatch.setattr(
+        general_summarization,
+        "summarize_with_openai",
+        failing_openai,
+    )
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization._dispatch_to_api(
+            "fixed input",
+            "fixed prompt",
+            "openai",
+            "fixed key",
+            0.2,
+            "fixed system",
+            streaming=False,
+        )
+
+    assert result == f"Error calling API openai: {GENERAL_EXCEPTION_CANARY}"
+    assert GENERAL_EXCEPTION_CANARY not in captured.text
+    assert (
+        "Error during dispatch to API; provider=openai exception_type=RuntimeError"
+        in captured.text
+    )
+    assert not [record for record in captured.caplog.records if record.exc_info]
+
+
+def test_general_openai_config_credential_and_endpoint_are_not_logged(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings_calls = _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_provider_settings(
+            openai_key=GENERAL_CREDENTIAL_CANARY,
+            openai_endpoint=GENERAL_OPENAI_ENDPOINT_CANARY,
+        ),
+    )
+    post_calls = _install_signature_bound_general_session_post(
+        monkeypatch,
+        _FakeResponse(
+            json_data={"choices": [{"message": {"content": "fixed summary"}}]}
+        ),
+    )
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_openai(
+            "",
+            "fixed input",
+            "fixed prompt",
+        )
+
+    assert result == "fixed summary"
+    assert settings_calls
+    assert post_calls[0][0][0] == (f"{GENERAL_OPENAI_ENDPOINT_CANARY}/chat/completions")
+    assert GENERAL_CREDENTIAL_CANARY not in captured.text
+    assert GENERAL_OPENAI_ENDPOINT_CANARY not in captured.text
+    assert "OpenAI Summarize: Config credential lookup completed" in captured.text
+    assert "OpenAI: Endpoint configured" in captured.text
+
+
+def test_general_openai_missing_config_credential_preserves_error_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_provider_settings(openai_key=""),
+    )
+    post_calls = _install_signature_bound_general_session_post(
+        monkeypatch,
+        AssertionError("transport must not run without a credential"),
+    )
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_openai(
+            "",
+            "fixed input",
+            "fixed prompt",
+        )
+
+    assert result == "Error: OpenAI API Key Not Provided/Found or is empty."
+    assert post_calls == []
+    assert "OpenAI Summarize: Config credential lookup completed" in captured.text
+    assert "OpenAI: Credential configured" not in captured.text
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        f"data: {{{GENERAL_OPENAI_STREAM_CANARY}".encode(),
+        f"data: {json.dumps({'choices': [], 'private': GENERAL_OPENAI_STREAM_CANARY})}".encode(),
+    ],
+    ids=["invalid-json", "unexpected-shape"],
+)
+def test_general_openai_malformed_stream_is_fully_consumed_without_private_diagnostic(
+    line: bytes,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_provider_settings(),
+    )
+    response = _FakeResponse(lines=(line, b"data: [DONE]"))
+    _install_signature_bound_general_session_post(monkeypatch, response)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        stream = general_summarization.summarize_with_openai(
+            "fixed-general-openai-key",
+            "fixed input",
+            "fixed prompt",
+            streaming=True,
+        )
+        chunks = list(stream)
+
+    assert chunks == []
+    assert response.iter_lines_started is True
+    assert response.closed is True
+    assert GENERAL_OPENAI_STREAM_CANARY not in captured.text
+    assert "OpenAI Stream: Response event rejected" in captured.text
+
+
+def test_general_openai_missing_summary_shape_hides_response_body(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_provider_settings(),
+    )
+    _install_signature_bound_general_session_post(
+        monkeypatch,
+        _FakeResponse(json_data={"private": GENERAL_RESPONSE_CANARY}),
+    )
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_openai(
+            "fixed-general-openai-key",
+            "fixed input",
+            "fixed prompt",
+        )
+
+    assert result == "Error: OpenAI Summary not found in response."
+    assert GENERAL_RESPONSE_CANARY not in captured.text
+    assert "OpenAI: Summary not found in response" in captured.text
+
+
+def test_general_openai_request_exception_hides_message_and_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_provider_settings(),
+    )
+    _install_signature_bound_general_session_post(
+        monkeypatch,
+        general_summarization.requests.exceptions.RequestException(
+            GENERAL_OPENAI_EXCEPTION_CANARY
+        ),
+    )
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_openai(
+            "fixed-general-openai-key",
+            "fixed input",
+            "fixed prompt",
+        )
+
+    assert result == (
+        f"Error: OpenAI API request failed: {GENERAL_OPENAI_EXCEPTION_CANARY}"
+    )
+    assert GENERAL_OPENAI_EXCEPTION_CANARY not in captured.text
+    assert "OpenAI: API request failed; exception_type=RequestException" in (
+        captured.text
+    )
+    assert not [record for record in captured.caplog.records if record.exc_info]
+
+
+def test_anthropic_success_hides_prompt_credential_and_response(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_provider_settings(),
+    )
+    post_calls = _install_signature_bound_general_requests_post(
+        monkeypatch,
+        _FakeResponse(
+            json_data={
+                "content": [{"type": "text", "text": GENERAL_ANTHROPIC_RESPONSE_CANARY}]
+            }
+        ),
+    )
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_anthropic(
+            GENERAL_CREDENTIAL_CANARY,
+            "fixed input",
+            GENERAL_PROMPT_CANARY,
+            max_retries=1,
+            retry_delay=0,
+        )
+
+    assert result == GENERAL_ANTHROPIC_RESPONSE_CANARY
+    assert len(post_calls) == 1
+    assert GENERAL_CREDENTIAL_CANARY not in captured.text
+    assert GENERAL_PROMPT_CANARY not in captured.text
+    assert GENERAL_ANTHROPIC_RESPONSE_CANARY not in captured.text
+    assert "Anthropic: Prompt prepared" in captured.text
+    assert "Anthropic: Summarization successful" in captured.text
+
+
+def test_anthropic_malformed_stream_is_fully_consumed_without_private_diagnostic(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_provider_settings(),
+    )
+    response = _FakeResponse(
+        lines=(
+            b"event: content_block_delta",
+            f"data: {{{GENERAL_ANTHROPIC_STREAM_CANARY}".encode(),
+        )
+    )
+    _install_signature_bound_general_requests_post(monkeypatch, response)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        stream = general_summarization.summarize_with_anthropic(
+            "fixed-general-anthropic-key",
+            "fixed input",
+            "fixed prompt",
+            streaming=True,
+            max_retries=1,
+            retry_delay=0,
+        )
+        chunks = list(stream)
+
+    assert chunks == []
+    assert response.iter_lines_started is True
+    assert GENERAL_ANTHROPIC_STREAM_CANARY not in captured.text
+    assert "Anthropic: Stream JSON decode failed" in captured.text
+
+
+def test_anthropic_unexpected_response_shape_hides_response_text(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_provider_settings(),
+    )
+    _install_signature_bound_general_requests_post(
+        monkeypatch,
+        _FakeResponse(json_data=[], text=GENERAL_ANTHROPIC_RESPONSE_CANARY),
+    )
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_anthropic(
+            "fixed-general-anthropic-key",
+            "fixed input",
+            "fixed prompt",
+            max_retries=1,
+            retry_delay=0,
+        )
+
+    assert result is None
+    assert GENERAL_ANTHROPIC_RESPONSE_CANARY not in captured.text
+    assert "Unexpected response format from Anthropic API" in captured.text
+
+
+def test_anthropic_non_success_hides_response_body_and_preserves_status_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_provider_settings(),
+    )
+    _install_signature_bound_general_requests_post(
+        monkeypatch,
+        _FakeResponse(
+            status_code=429,
+            text=GENERAL_ANTHROPIC_RESPONSE_CANARY,
+        ),
+    )
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_anthropic(
+            "fixed-general-anthropic-key",
+            "fixed input",
+            "fixed prompt",
+            max_retries=1,
+            retry_delay=0,
+        )
+
+    assert result is None
+    assert GENERAL_ANTHROPIC_RESPONSE_CANARY not in captured.text
+    assert "Failed to process summary; status_code=429" in captured.text
+
+
+def test_anthropic_request_exception_hides_message_and_preserves_retry_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_provider_settings(),
+    )
+    post_calls = _install_signature_bound_general_requests_post(
+        monkeypatch,
+        general_summarization.requests.RequestException(
+            GENERAL_ANTHROPIC_EXCEPTION_CANARY
+        ),
+    )
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_anthropic(
+            "fixed-general-anthropic-key",
+            "fixed input",
+            "fixed prompt",
+            max_retries=1,
+            retry_delay=0,
+        )
+
+    assert result == (f"Anthropic: Network error: {GENERAL_ANTHROPIC_EXCEPTION_CANARY}")
+    assert len(post_calls) == 1
+    assert GENERAL_ANTHROPIC_EXCEPTION_CANARY not in captured.text
+    assert (
+        "Anthropic: Network error during attempt; attempt=1 retry_count=1 "
+        "exception_type=RequestException"
+    ) in captured.text
+
+
+def test_anthropic_file_error_hides_path_and_preserves_in_band_error(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    real_log_debug_data = general_summarization.log_debug_data
+    signature = inspect.signature(real_log_debug_data)
+
+    def failing_log_debug_data(*args: object, **kwargs: object) -> None:
+        signature.bind(*args, **kwargs)
+        raise FileNotFoundError
+
+    monkeypatch.setattr(
+        general_summarization,
+        "log_debug_data",
+        failing_log_debug_data,
+    )
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_anthropic(
+            "fixed-general-anthropic-key",
+            GENERAL_PATH_CANARY,
+            "fixed prompt",
+        )
+
+    assert result == f"Anthropic: File not found: {GENERAL_PATH_CANARY}"
+    assert GENERAL_PATH_CANARY not in captured.text
+    assert "Anthropic: File not found" in captured.text

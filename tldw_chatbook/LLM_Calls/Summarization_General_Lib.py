@@ -45,6 +45,7 @@ from tldw_chatbook.LLM_Calls.Local_Summarization_Lib import (
 from tldw_chatbook.Logging_Config import logging
 from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
+from tldw_chatbook.Utils.persistent_diagnostics import safe_metadata_token
 
 try:
     from tldw_chatbook.Chunking.Chunk_Lib import improved_chunking_process
@@ -80,7 +81,8 @@ def log_debug_data(data: Any, source_name: str) -> None:
         source_name: The name of the API/source (e.g., "AnthropicAI", "Cohere", etc.)
     """
     logging.debug(
-        f"{source_name}: Loaded data: {str(data)[:500]}...(snipped to first 500 chars)"
+        "Summarization input loaded; source=%s",
+        safe_metadata_token(source_name),
     )
     logging.debug(f"{source_name}: Type of data: {type(data)}")
 
@@ -88,7 +90,7 @@ def log_debug_data(data: Any, source_name: str) -> None:
 # --- Keep existing helper functions ---
 def extract_text_from_segments(segments: List[Dict]) -> str:
     # (Keep existing implementation)
-    logging.debug(f"Segments received: {segments}")
+    logging.debug("Segments received")
     logging.debug(f"Type of segments: {type(segments)}")
     text = ""
     if isinstance(segments, list):
@@ -103,7 +105,7 @@ def extract_text_from_segments(segments: List[Dict]) -> str:
                 text += segment["text"] + " "
             else:
                 logging.warning(
-                    f"Skipping segment due to missing 'Text' key or wrong type: {segment}"
+                    "Skipping segment due to missing text key or wrong type"
                 )
     elif isinstance(segments, str):  # Allow passing a pre-joined string
         logging.debug("Segments received as a single string.")
@@ -172,7 +174,7 @@ def recursive_summarize_chunks(
 
             # Check if the processing function indicated an error
             if isinstance(step_result, str) and step_result.startswith("Error:"):
-                logging.error(f"Error during recursive step {i + 1}: {step_result}")
+                logging.error("Error during recursive step; step=%s", i + 1)
                 return step_result  # Propagate the error immediately
 
             if not isinstance(step_result, str):
@@ -188,9 +190,10 @@ def recursive_summarize_chunks(
             )
 
         except Exception as e:
-            logging.exception(
-                f"Unexpected error calling summarize_func during recursive step {i + 1}: {e}",
-                exc_info=True,
+            logging.error(
+                "Unexpected error calling summarize_func; step=%s exception_type=%s",
+                i + 1,
+                safe_metadata_token(type(e).__name__),
             )
             return f"Error: Unexpected failure during recursive step {i + 1}: {e}"
 
@@ -204,7 +207,7 @@ def extract_text_from_input(input_data: Any) -> str:
     if isinstance(input_data, str):
         # Check if it's a file path
         if os.path.isfile(input_data):
-            logging.debug(f"Input is a file path: {input_data}")
+            logging.debug("Input resolved as file path")
             try:
                 with open(input_data, "r", encoding="utf-8") as f:
                     content = f.read()
@@ -217,7 +220,10 @@ def extract_text_from_input(input_data: Any) -> str:
                     logging.debug("File content is not JSON, returning raw text.")
                     return content.strip()
             except Exception as e:
-                logging.error(f"Error reading file {input_data}: {e}")
+                logging.error(
+                    "Error reading input file; exception_type=%s",
+                    safe_metadata_token(type(e).__name__),
+                )
                 return ""
         # Check if it's a JSON string
         elif input_data.strip().startswith("{") or input_data.strip().startswith("["):
@@ -496,7 +502,9 @@ def _dispatch_to_api(
 
     except Exception as e:
         logging.error(
-            f"Error during dispatch to API '{api_name}': {str(e)}", exc_info=True
+            "Error during dispatch to API; provider=%s exception_type=%s",
+            safe_metadata_token(api_name),
+            safe_metadata_token(type(e).__name__),
         )
         return f"Error calling API {api_name}: {str(e)}"
 
@@ -562,9 +570,6 @@ def analyze(
             logging.error("Could not extract text content from input data.")
             return "Error: Could not extract text content."
         logging.info(f"Extracted text content length: {len(text_content)} characters.")
-        logging.debug(
-            f"Extracted text content (first 500 chars): {text_content[:500]}..."
-        )
 
         # --- Define helper to consume potential generators ---
         def consume_generator(gen):
@@ -583,7 +588,10 @@ def analyze(
                     logging.debug("Generator consumed.")
                     return final_string
                 except Exception as e:
-                    logging.error(f"Error consuming generator: {e}", exc_info=True)
+                    logging.error(
+                        "Error consuming generator; exception_type=%s",
+                        safe_metadata_token(type(e).__name__),
+                    )
                     return f"Error consuming stream: {e}"
             return gen  # Return as is if not a generator
 
@@ -719,7 +727,8 @@ def analyze(
                             else "Unknown error"
                         )
                         logging.warning(
-                            f"Failed to summarize chunk {i + 1}: {error_detail}"
+                            "Failed to summarize chunk; chunk=%s",
+                            i + 1,
                         )
                         chunk_summaries.append(
                             f"[Error summarizing chunk {i + 1}: {error_detail}]"
@@ -770,14 +779,11 @@ def analyze(
             elif isinstance(
                 final_string_summary, str
             ) and final_string_summary.startswith("Error:"):
-                logging.error(f"Summarization failed: {final_string_summary}")
+                logging.error("Summarization failed")
                 return final_string_summary
             elif isinstance(final_string_summary, str):
                 logging.info(
                     f"Summarization completed successfully. Final Length: {len(final_string_summary)}"
-                )
-                logging.debug(
-                    f"Final Summary (first 500 chars): {final_string_summary[:500]}..."
                 )
                 return final_string_summary
             else:
@@ -788,7 +794,10 @@ def analyze(
                 return f"Error: Unexpected result type {type(final_string_summary)}"
 
     except Exception as e:
-        logging.error(f"Critical error in summarize function: {str(e)}", exc_info=True)
+        logging.error(
+            "Critical error in summarize function; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Error: An unexpected error occurred during summarization: {str(e)}"
 
 
@@ -816,9 +825,7 @@ def summarize_with_openai(
             logging.info("OpenAI Summarize: API key not provided as parameter")
             logging.info("OpenAI Summarize: Attempting to use API key from config file")
             api_key = get_cli_setting("openai_api", "api_key", "")
-            logging.debug(
-                f"OpenAI Summarize: Using API key from config file: {api_key[:5]}...{api_key[-5:]}"
-            )
+            logging.debug("OpenAI Summarize: Config credential lookup completed")
 
         if not api_key or not api_key.strip():
             logging.error(
@@ -836,9 +843,10 @@ def summarize_with_openai(
         text = str(input_data)  # Ensure it's a string
 
         logging.debug(f"OpenAI: Received text length: {len(text)}")
-        logging.debug(f"OpenAI: Custom prompt: {custom_prompt_arg}")
+        logging.debug("OpenAI: Custom prompt configured")
         logging.debug(
-            f"OpenAI: Temperature: {temp}, System Message: {system_message}, Streaming: {streaming}"
+            "OpenAI: Request options prepared; streaming=%s",
+            streaming,
         )
 
         headers = {
@@ -846,9 +854,7 @@ def summarize_with_openai(
             "Content-Type": "application/json",
         }
 
-        logging.debug(
-            f"OpenAI API Key: {api_key[:5]}...{api_key[-5:] if api_key else None}"
-        )
+        logging.debug("OpenAI: Credential configured")
         logging.debug("openai: Preparing data + prompt for submittal")
         openai_prompt = f"{text} \n\n\n\n{custom_prompt_arg}"
         if temp is None:
@@ -893,7 +899,7 @@ def summarize_with_openai(
             + "/chat/completions"
         )
 
-        logging.debug(f"OpenAI: Posting request to {api_url}")
+        logging.debug("OpenAI: Endpoint configured")
         response = session.post(
             api_url,
             headers=headers,
@@ -923,19 +929,15 @@ def summarize_with_openai(
                                 )
                                 yield chunk
                             except json.JSONDecodeError:
-                                logging.error(
-                                    f"OpenAI Stream: Error decoding JSON: {data_str}"
-                                )
+                                logging.error("OpenAI Stream: Response event rejected")
                                 continue
-                            except (KeyError, IndexError) as e:
-                                logging.error(
-                                    f"OpenAI Stream: Unexpected structure: {data_str} - Error: {e}"
-                                )
+                            except (KeyError, IndexError):
+                                logging.error("OpenAI Stream: Response event rejected")
                                 continue
                 except Exception as stream_error:
                     logging.error(
-                        f"OpenAI Stream: Error during streaming: {stream_error}",
-                        exc_info=True,
+                        "OpenAI Stream: Streaming failed; exception_type=%s",
+                        safe_metadata_token(type(stream_error).__name__),
                     )
                     yield f"Error during streaming: {stream_error}"  # Yield error in stream
                 finally:
@@ -955,16 +957,20 @@ def summarize_with_openai(
                 logging.debug("OpenAI: Summarization successful (non-streaming).")
                 return summary
             else:
-                logging.warning(
-                    f"OpenAI: Summary not found in response: {response_data}"
-                )
+                logging.warning("OpenAI: Summary not found in response")
                 return "Error: OpenAI Summary not found in response."
 
     except requests.exceptions.RequestException as e:
-        logging.error(f"OpenAI: API request failed: {str(e)}", exc_info=True)
+        logging.error(
+            "OpenAI: API request failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Error: OpenAI API request failed: {str(e)}"
     except Exception as e:
-        logging.error(f"OpenAI: Unexpected error: {str(e)}", exc_info=True)
+        logging.error(
+            "OpenAI: Unexpected error; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Error: OpenAI unexpected error: {str(e)}"
 
 
@@ -997,10 +1003,6 @@ def summarize_with_anthropic(
         if not anthropic_api_key or not anthropic_api_key.strip():
             logging.error("Anthropic: No valid API key available")
             return "Anthropic: API Key Not Provided/Found in Config file or is empty"
-
-        logging.debug(
-            f"Anthropic: Using API Key: {anthropic_api_key[:5]}...{anthropic_api_key[-5:]}"
-        )
 
         logging.debug("AnthropicAI: Using provided string data for summarization")
         data = input_data
@@ -1038,7 +1040,7 @@ def summarize_with_anthropic(
         }
 
         anthropic_prompt = custom_prompt_arg
-        logging.debug(f"Anthropic: Prompt is {anthropic_prompt}")
+        logging.debug("Anthropic: Prompt prepared")
         user_message = {"role": "user", "content": f"{text} \n\n\n\n{anthropic_prompt}"}
 
         model = get_cli_setting("anthropic_api", "model", "claude-3-haiku-20240307")
@@ -1120,7 +1122,7 @@ def summarize_with_anthropic(
                                             yield text_delta
                                     except json.JSONDecodeError:
                                         logging.error(
-                                            f"Anthropic: Error decoding JSON from line: {line}"
+                                            "Anthropic: Stream JSON decode failed"
                                         )
                                         continue
                             # Optionally, return the full collected text at the end
@@ -1141,13 +1143,14 @@ def summarize_with_anthropic(
                             summary = summary.strip()
                             logging.debug("Anthropic: Summarization successful")
                             logging.debug(
-                                f"Anthropic: Summary (first 500 chars): {summary[:500]}..."
+                                "Anthropic: Summary prepared; character_count=%s",
+                                len(summary),
                             )
                             return summary
                         except Exception:
                             logging.debug("Anthropic: Unexpected data in response")
                             logging.error(
-                                f"Unexpected response format from Anthropic API: {response.text}"
+                                "Unexpected response format from Anthropic API"
                             )
                             return None
                 elif (
@@ -1159,30 +1162,35 @@ def summarize_with_anthropic(
                     )
                     time.sleep(retry_delay)
                 else:
-                    logging.debug(
-                        f"Anthropic: Failed to summarize, status code {response.status_code}: {response.text}"
-                    )
                     logging.error(
-                        f"Failed to process summary, status code {response.status_code}: {response.text}"
+                        "Failed to process summary; status_code=%s",
+                        response.status_code,
                     )
                     return None
 
             except requests.RequestException as e:
                 logging.error(
-                    f"Anthropic: Network error during attempt {attempt + 1}/{max_retries}: {str(e)}"
+                    "Anthropic: Network error during attempt; attempt=%s "
+                    "retry_count=%s exception_type=%s",
+                    attempt + 1,
+                    max_retries,
+                    safe_metadata_token(type(e).__name__),
                 )
                 if attempt < max_retries - 1:
                     time.sleep(retry_delay)
                 else:
                     return f"Anthropic: Network error: {str(e)}"
     except FileNotFoundError:
-        logging.error(f"Anthropic: File not found: {input_data}")
+        logging.error("Anthropic: File not found")
         return f"Anthropic: File not found: {input_data}"
     except json.JSONDecodeError:
-        logging.error(f"Anthropic: Invalid JSON format in file: {input_data}")
+        logging.error("Anthropic: Invalid JSON format in file")
         return f"Anthropic: Invalid JSON format in file: {input_data}"
     except Exception as e:
-        logging.error(f"Anthropic: Error in processing: {str(e)}")
+        logging.error(
+            "Anthropic: Error in processing; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Anthropic: Error occurred while processing summary with Anthropic: {str(e)}"
 
 
