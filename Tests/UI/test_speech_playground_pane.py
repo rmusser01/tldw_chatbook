@@ -82,6 +82,17 @@ async def _speech_screen(app):
     return screen
 
 
+def _build_layout_test_app(monkeypatch: pytest.MonkeyPatch):
+    """Mount real app CSS without starting an unrelated provider request."""
+
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_load_provider_catalog",
+        lambda self, *args, **kwargs: None,
+    )
+    return _build_test_app()
+
+
 def _generated_artifact(
     tmp_path,
     *,
@@ -106,13 +117,16 @@ def _generated_artifact(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(120, 40), (80, 24)])
-async def test_the_primary_action_is_above_the_fold(size):
+async def test_the_primary_action_is_above_the_fold(
+    size,
+    monkeypatch: pytest.MonkeyPatch,
+):
     """The defect this phase exists to fix.
 
     `Generate Speech` rendered at y=60 in a 34-row viewport -- 21 rows below
     the fold, reachable only by scrolling ~2.5 screens.
     """
-    app = _build_test_app()
+    app = _build_layout_test_app(monkeypatch)
     async with app.run_test(size=size) as pilot:
         screen = await _speech_screen(app)
         await pilot.pause()
@@ -131,7 +145,10 @@ async def test_the_primary_action_is_above_the_fold(size):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(120, 40), (80, 24)])
-async def test_no_control_is_clipped_by_its_container(size):
+async def test_no_control_is_clipped_by_its_container(
+    size,
+    monkeypatch: pytest.MonkeyPatch,
+):
     """Containment, not just self-rendering.
 
     `render_line(0).text` reads a widget in its OWN coordinate space, so it
@@ -140,7 +157,7 @@ async def test_no_control_is_clipped_by_its_container(size):
     ending at 107 and every self-oriented check called it clean. Assert the
     region is inside its parent.
     """
-    app = _build_test_app()
+    app = _build_layout_test_app(monkeypatch)
     async with app.run_test(size=size) as pilot:
         screen = await _speech_screen(app)
         await pilot.pause()
@@ -376,9 +393,12 @@ async def test_save_profile_button_opens_the_name_dialog(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(120, 40), (80, 24)])
-async def test_no_chip_text_is_truncated(size):
+async def test_no_chip_text_is_truncated(
+    size,
+    monkeypatch: pytest.MonkeyPatch,
+):
     """The axes are what the user is comparing; they may not be cut off."""
-    app = _build_test_app()
+    app = _build_layout_test_app(monkeypatch)
     async with app.run_test(size=size) as pilot:
         screen = await _speech_screen(app)
         await pilot.pause()
@@ -394,10 +414,12 @@ async def test_no_chip_text_is_truncated(size):
 
 
 @pytest.mark.asyncio
-async def test_the_pane_scrolls_rather_than_clipping_when_stacked():
+async def test_the_pane_scrolls_rather_than_clipping_when_stacked(
+    monkeypatch: pytest.MonkeyPatch,
+):
     """`1fr` children compress instead of overflowing, which clips content
     that should scroll. The pane must be genuinely taller than its viewport."""
-    app = _build_test_app()
+    app = _build_layout_test_app(monkeypatch)
     # 60 cells, not 80. Hosted directly the pane gets the whole terminal
     # width, where inside the Lab frame it got the body minus rail and
     # inspector -- so 80 columns used to leave it under its own 64-cell
@@ -413,10 +435,12 @@ async def test_the_pane_scrolls_rather_than_clipping_when_stacked():
 
 
 @pytest.mark.asyncio
-async def test_the_axes_and_the_text_input_are_both_present():
+async def test_the_axes_and_the_text_input_are_both_present(
+    monkeypatch: pytest.MonkeyPatch,
+):
     """The comparison loop needs both: what you are varying, and what you
     are synthesizing."""
-    app = _build_test_app()
+    app = _build_layout_test_app(monkeypatch)
     async with app.run_test(size=(120, 40)) as pilot:
         screen = await _speech_screen(app)
         await pilot.pause()
