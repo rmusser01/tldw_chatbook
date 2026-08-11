@@ -127,7 +127,6 @@ from ...Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
     DEFAULT_CONSOLE_SESSION_TITLE,
     ConsoleLifecycleImpact,
-    ConsoleMessageRole,
 )
 from ...Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from ...Chat.console_context_policy import (
@@ -148,7 +147,7 @@ from ...Chat.console_session_settings import (
 )
 from ...Chat.console_turn_context import ConsoleTurnExecutionContext
 from ...Chat.provider_readiness import provider_config_key
-from ...config import coerce_bool_setting, get_cli_setting
+from ...config import coerce_bool_setting
 from ...Widgets.Console import ConsoleComposerUndoHistory, ConsoleRenameSessionModal
 from ...Widgets.Console.console_session_switcher_modal import ConsoleSwitcherChoice
 from ...Workspaces import ConsoleConversationBrowserRow
@@ -1127,8 +1126,15 @@ class ConsoleSessionController:
         console_config = (
             app_config.get("console", {}) if isinstance(app_config, Mapping) else {}
         )
+        chat_defaults = (
+            app_config.get("chat_defaults", {})
+            if isinstance(app_config, Mapping)
+            else {}
+        )
         if not isinstance(console_config, Mapping):
             console_config = {}
+        if not isinstance(chat_defaults, Mapping):
+            chat_defaults = {}
         workspace_id = self._ensure_console_chat_store().session_workspace_id(
             session_id
         )
@@ -1151,9 +1157,7 @@ class ConsoleSessionController:
             },
             rag_defaults={
                 "auto_retrieve_on_send": coerce_bool_setting(
-                    get_cli_setting(
-                        "chat_defaults", "rag_auto_retrieve_on_send", False
-                    ),
+                    chat_defaults.get("rag_auto_retrieve_on_send", False),
                     False,
                 ),
                 "source_types": tuple(self._rag_source_types_accessor()),

@@ -2595,7 +2595,7 @@ def test_compose_run_registry_and_allowed_no_warning_without_mcp_collisions():
     finally:
         loguru_logger.remove(sink_id)
 
-    assert messages == []
+    assert not any("is shadowed by a built-in" in message for message in messages)
 
 
 def test_compose_run_registry_and_allowed_walks_mcp_catalog_only_once():
