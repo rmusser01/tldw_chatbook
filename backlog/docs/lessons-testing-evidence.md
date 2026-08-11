@@ -2206,3 +2206,39 @@ being the only thing in the repo that built the real runtime class, and it
 caught the defect as a hard crash, not as a metric delta. (After the fix its
 deltas were +0.000 in all three modes exactly as predicted, which is why the
 crash, not the numbers, was the whole value of running it.)
+
+---
+
+## Retuning a numeric constant obliges you to grep its LITERAL VALUES, not just its symbol (TASK-4110, 2026-08-09/10)
+
+**Incident.** Shipping the RAG hybrid-fusion `rrf_k` default `60 -> 5` took
+three separate rounds to find every place the old value had leaked into prose,
+because each round only swept one surface:
+
+- **Task 5 round 3** grepped the SYMBOL (`rrf_k`, `DEFAULT_RRF_K`,
+  `resolve_rrf_k`) and found four docstrings/comments still asserting `k=60`
+  verbatim.
+- **Task 6** grepped a downstream literal VALUE, `0.016` — the fused-score
+  ceiling (`1/(60+1)`) that `k=60` produces arithmetically — and found a fifth
+  location, a module docstring that named no `rrf_k`-family symbol at all,
+  only the number the old constant happened to produce.
+- The **final whole-branch review** found the seventh and eighth — two
+  docstrings (`Event_Handlers/Chat_Events/chat_rag_events.py`,
+  `RAG_Search/pipeline_builder_simple.py`) whose precedence-chain prose read
+  "... -> active profile -> 60" — that neither earlier grep could have caught,
+  because a bare literal `60` sitting inside an English arrow chain matches
+  neither a symbol grep nor a `0.016`-shaped value grep.
+
+Eight stale locations, three different grep strategies, three review rounds,
+on a value everyone involved already knew had been retuned.
+
+**What to do.** When a numeric constant is retuned, a symbol-only grep is not
+a complete sweep. Enumerate every SHAPE the old value can still appear in and
+grep each one separately: the symbol itself; any literal downstream
+arithmetic consequence the docs may quote (a derived ratio, a ceiling, a
+percentage — here, `0.016`); and the bare literal in comparison/precedence
+prose ("-> 60", "an order of magnitude below X", "defaults to 60"). A
+docstring can assert a stale number while never naming the constant that used
+to produce it — that is exactly what lets it survive a symbol-only grep, and
+exactly why an inline-literal arrow chain needs a human reading the prose, not
+a tool, to catch on the first pass.

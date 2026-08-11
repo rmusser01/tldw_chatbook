@@ -329,7 +329,8 @@ def _rrf_merge_parallel_results(
     param -> ``[AppRAGSearchConfig.rag.retriever] hybrid_alpha`` -> 0.7.
 
     k precedence (TASK-4110 review, mirrors alpha's): step
-    ``config.rrf_k`` -> the active profile's ``search.rrf_k`` -> 60
+    ``config.rrf_k`` -> the active profile's ``search.rrf_k`` -> shipped
+    default (``config.DEFAULT_HYBRID_RRF_K``, 5)
     (``resolve_rrf_k``'s own fallback chain). Before this, ``rrf_k`` had NO
     profile fallback while ``alpha`` did, so a default change would move
     this (Chat RAG) hybrid path without moving
