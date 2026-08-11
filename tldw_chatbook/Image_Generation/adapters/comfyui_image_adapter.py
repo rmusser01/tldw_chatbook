@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import io
 import json
+import queue
 import re
 import secrets
+import threading
 import time
 import warnings
 from copy import deepcopy
@@ -48,6 +50,8 @@ _REFERENCE_EXTENSION = {
     "image/webp": ".webp",
 }
 _SUPPORTED_PNG_MODES = frozenset({"1", "L", "LA", "P", "RGB", "RGBA"})
+_BODY_CONTROL_POLL_SECONDS = 0.01
+_BODY_READER_JOIN_SECONDS = 0.05
 
 _EXPECTED_NODE_CLASSES = {
     "114": "LoadImage",
@@ -343,6 +347,108 @@ def _require_identity_content_encoding(response: httpx.Response) -> None:
         raise ValueError("encoded response is not supported")
 
 
+class _BodyChunkSupervisor:
+    """Keep blocking response iteration behind a bounded daemon handoff."""
+
+    def __init__(
+        self,
+        response: httpx.Response,
+        *,
+        cancel_event: Any,
+        deadline: float | None,
+        phase: ComfyUIImageEditPhase,
+    ) -> None:
+        self._response = response
+        self._cancel_event = cancel_event
+        self._deadline = deadline
+        self._phase = phase
+        self._stop = threading.Event()
+        self._read_requested = threading.Event()
+        self._items: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=1)
+        self._thread = threading.Thread(
+            target=self._read,
+            name="comfyui-response-body",
+            daemon=True,
+        )
+
+    def __enter__(self) -> _BodyChunkSupervisor:
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc: Any) -> None:
+        self._stop.set()
+        self._read_requested.set()
+        try:
+            self._response.close()
+        except Exception:
+            pass
+        self._drain()
+        self._thread.join(_BODY_READER_JOIN_SECONDS)
+        self._drain()
+
+    def __iter__(self) -> _BodyChunkSupervisor:
+        return self
+
+    def __next__(self) -> bytes:
+        _check_stream_control(self._cancel_event, self._deadline, self._phase)
+        self._read_requested.set()
+        while True:
+            _check_stream_control(self._cancel_event, self._deadline, self._phase)
+            wait_seconds = _BODY_CONTROL_POLL_SECONDS
+            if self._deadline is not None:
+                remaining = self._deadline - time.monotonic()
+                if remaining <= 0:
+                    raise _DeadlineExpired(self._phase)
+                wait_seconds = min(wait_seconds, remaining)
+            try:
+                kind, value = self._items.get(timeout=wait_seconds)
+            except queue.Empty:
+                continue
+            if kind == "chunk":
+                return value
+            if kind == "end":
+                raise StopIteration
+            raise value
+
+    def _offer(self, item: tuple[str, Any]) -> bool:
+        while not self._stop.is_set():
+            try:
+                self._items.put(item, timeout=_BODY_CONTROL_POLL_SECONDS)
+            except queue.Full:
+                continue
+            return True
+        return False
+
+    def _read(self) -> None:
+        try:
+            chunks = iter(self._response.iter_bytes())
+            while not self._stop.is_set():
+                if not self._read_requested.wait(_BODY_CONTROL_POLL_SECONDS):
+                    continue
+                self._read_requested.clear()
+                if self._stop.is_set():
+                    return
+                try:
+                    chunk = next(chunks)
+                except StopIteration:
+                    self._offer(("end", None))
+                    return
+                except BaseException as exc:
+                    self._offer(("error", exc))
+                    return
+                if self._stop.is_set() or not self._offer(("chunk", chunk)):
+                    return
+        except BaseException as exc:
+            self._offer(("error", exc))
+
+    def _drain(self) -> None:
+        while True:
+            try:
+                self._items.get_nowait()
+            except queue.Empty:
+                return
+
+
 def _read_bounded_json(
     response: httpx.Response,
     *,
@@ -373,31 +479,41 @@ def _read_bounded_json(
     declared = _declared_length(response)
     if declared is not None and declared > COMFYUI_MAX_JSON_BYTES:
         raise ValueError("JSON response exceeds limit")
-    chunks = iter(response.iter_bytes())
-    while True:
-        recovered = check_control()
-        if recovered is not None:
-            return recovered
-        try:
-            chunk = next(chunks)
-        except StopIteration:
+    with _BodyChunkSupervisor(
+        response,
+        cancel_event=cancel_event,
+        deadline=deadline,
+        phase=phase,
+    ) as chunks:
+        while True:
             recovered = check_control()
             if recovered is not None:
                 return recovered
-            break
-        except httpx.TransportError:
+            try:
+                chunk = next(chunks)
+            except StopIteration:
+                recovered = check_control()
+                if recovered is not None:
+                    return recovered
+                break
+            except (ImageGenerationCancelled, _DeadlineExpired):
+                recovered = check_control()
+                if recovered is not None:
+                    return recovered
+                raise
+            except httpx.TransportError:
+                recovered = check_control()
+                if recovered is not None:
+                    return recovered
+                raise ValueError("JSON response body transport failed") from None
+            if not capture_prompt_id_on_control:
+                _check_stream_control(cancel_event, deadline, phase)
+            if len(chunk) > COMFYUI_MAX_JSON_BYTES - len(collected):
+                raise ValueError("JSON response exceeds limit")
+            collected.extend(chunk)
             recovered = check_control()
             if recovered is not None:
                 return recovered
-            raise ValueError("JSON response body transport failed") from None
-        if not capture_prompt_id_on_control:
-            _check_stream_control(cancel_event, deadline, phase)
-        if len(chunk) > COMFYUI_MAX_JSON_BYTES - len(collected):
-            raise ValueError("JSON response exceeds limit")
-        collected.extend(chunk)
-        recovered = check_control()
-        if recovered is not None:
-            return recovered
     if not collected and allow_empty:
         return {}
     if not collected:
@@ -778,22 +894,27 @@ def _stream_png(
     if content_type != "image/png":
         raise ValueError("invalid PNG content type")
     collected = bytearray()
-    chunks = iter(response.iter_bytes())
-    while True:
-        _check_stream_control(cancel_event, deadline, phase)
-        try:
-            chunk = next(chunks)
-        except StopIteration:
+    with _BodyChunkSupervisor(
+        response,
+        cancel_event=cancel_event,
+        deadline=deadline,
+        phase=phase,
+    ) as chunks:
+        while True:
             _check_stream_control(cancel_event, deadline, phase)
-            break
-        except httpx.TransportError:
+            try:
+                chunk = next(chunks)
+            except StopIteration:
+                _check_stream_control(cancel_event, deadline, phase)
+                break
+            except httpx.TransportError:
+                _check_stream_control(cancel_event, deadline, phase)
+                raise ValueError("PNG response body transport failed") from None
             _check_stream_control(cancel_event, deadline, phase)
-            raise ValueError("PNG response body transport failed") from None
-        _check_stream_control(cancel_event, deadline, phase)
-        if len(chunk) > max_bytes - len(collected):
-            raise ValueError("PNG response exceeds limit")
-        collected.extend(chunk)
-        _check_stream_control(cancel_event, deadline, phase)
+            if len(chunk) > max_bytes - len(collected):
+                raise ValueError("PNG response exceeds limit")
+            collected.extend(chunk)
+            _check_stream_control(cancel_event, deadline, phase)
     data = bytes(collected)
     if not data.startswith(_PNG_SIGNATURE):
         raise ValueError("invalid PNG signature")

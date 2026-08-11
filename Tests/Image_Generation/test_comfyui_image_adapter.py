@@ -7,6 +7,7 @@ import io
 import json
 import re
 import threading
+import time
 from dataclasses import replace
 from typing import Any
 
@@ -69,6 +70,31 @@ class FailingChunkStream(httpx.SyncByteStream):
     def __iter__(self):
         self.on_read()
         raise httpx.ReadTimeout(self.detail)
+
+
+class BlockingChunkStream(httpx.SyncByteStream):
+    def __init__(self, first_chunk: bytes, *, on_block=None) -> None:
+        self.first_chunk = first_chunk
+        self.on_block = on_block
+        self.second_read_started = threading.Event()
+        self.release = threading.Event()
+        self.closed = threading.Event()
+        self.finished = threading.Event()
+
+    def __iter__(self):
+        try:
+            yield self.first_chunk
+            self.second_read_started.set()
+            if self.on_block is not None:
+                self.on_block()
+            if not self.release.wait(0.3):
+                raise httpx.ReadTimeout("sentinel-blocking-stream-fallback")
+        finally:
+            self.finished.set()
+
+    def close(self) -> None:
+        self.closed.set()
+        self.release.set()
 
 
 class AdvancingClock:
@@ -1721,6 +1747,100 @@ def test_body_iterator_transport_failure_rechecks_cancellation_before_deadline()
         _make_adapter(script).generate(_request(cancel_event=event))
 
     assert private_detail not in str(exc.value)
+    assert base.calls.count(("POST", "/queue")) == 1
+
+
+@pytest.mark.parametrize(
+    ("failing_path", "first_chunk", "phase"),
+    [
+        ("/history/opaque-prompt-id", b"{", "history_polling"),
+        ("/view", PNG_SIGNATURE, "output_download"),
+    ],
+)
+def test_blocking_body_read_obeys_hard_deadline_and_closes_stream(
+    failing_path: str,
+    first_chunk: bytes,
+    phase: str,
+) -> None:
+    stream = BlockingChunkStream(first_chunk)
+    base = SuccessfulScript()
+
+    def script(request: httpx.Request) -> httpx.Response:
+        if request.url.path == failing_path:
+            base.calls.append((request.method, request.url.path))
+            base.requests.append(request)
+            headers = {"content-type": "image/png"} if failing_path == "/view" else {}
+            return httpx.Response(200, stream=stream, headers=headers)
+        return base(request)
+
+    started = time.perf_counter()
+    with pytest.raises(ComfyUIImageEditError) as exc:
+        _make_adapter(
+            script,
+            config=_config(
+                comfyui_image_request_timeout_seconds=5.0,
+                comfyui_image_total_deadline_seconds=0.08,
+            ),
+        ).generate(_request())
+    elapsed = time.perf_counter() - started
+
+    _assert_phase(exc, phase)
+    assert elapsed < 0.25
+    assert stream.second_read_started.is_set()
+    assert stream.closed.is_set()
+    assert stream.finished.wait(0.1)
+    assert base.calls.count(("POST", "/queue")) == 1
+
+
+def test_blocking_body_read_before_prompt_times_out_without_delete() -> None:
+    stream = BlockingChunkStream(b"{")
+    calls: list[str] = []
+
+    def script(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        assert request.url.path == "/object_info"
+        return httpx.Response(200, stream=stream)
+
+    started = time.perf_counter()
+    with pytest.raises(ComfyUIImageEditError) as exc:
+        _make_adapter(
+            script,
+            config=_config(
+                comfyui_image_request_timeout_seconds=5.0,
+                comfyui_image_total_deadline_seconds=0.08,
+            ),
+        ).generate(_request())
+    elapsed = time.perf_counter() - started
+
+    _assert_phase(exc, "remote_schema_preflight")
+    assert elapsed < 0.25
+    assert stream.second_read_started.is_set()
+    assert stream.closed.is_set()
+    assert stream.finished.wait(0.1)
+    assert calls == ["/object_info"]
+
+
+def test_blocking_body_read_wakes_prompt_scoped_cancellation_promptly() -> None:
+    event = threading.Event()
+    stream = BlockingChunkStream(b"{", on_block=event.set)
+    base = SuccessfulScript()
+
+    def script(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/history/opaque-prompt-id":
+            base.calls.append((request.method, request.url.path))
+            base.requests.append(request)
+            return httpx.Response(200, stream=stream)
+        return base(request)
+
+    started = time.perf_counter()
+    with pytest.raises(ImageGenerationCancelled):
+        _make_adapter(script).generate(_request(cancel_event=event))
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 0.25
+    assert stream.second_read_started.is_set()
+    assert stream.closed.is_set()
+    assert stream.finished.wait(0.1)
     assert base.calls.count(("POST", "/queue")) == 1
 
 
