@@ -210,6 +210,7 @@ class PreparedProviderRequest:
     messages: tuple[Mapping[str, Any], ...] = field(repr=False)
     messages_payload: tuple[Mapping[str, Any], ...] = field(repr=False)
     tools: tuple[Mapping[str, Any], ...] = field(repr=False)
+    response_format: Mapping[str, Any] | None = field(repr=False)
     capacity: ConsoleRequestCapacity
     accounting: ConsoleRequestTokenAccounting
     dropped_units: int = 0
@@ -231,6 +232,11 @@ class PreparedProviderRequest:
         if not isinstance(frozen_tools, tuple):  # pragma: no cover
             raise TypeError("Frozen tools must remain a tuple.")
         object.__setattr__(self, "tools", frozen_tools)
+        if self.response_format is not None:
+            frozen_response_format = freeze_json(self.response_format)
+            if not isinstance(frozen_response_format, Mapping):  # pragma: no cover
+                raise TypeError("Frozen response format must remain a mapping.")
+            object.__setattr__(self, "response_format", frozen_response_format)
         if not isinstance(self.capacity, ConsoleRequestCapacity):
             raise TypeError("capacity must be a ConsoleRequestCapacity.")
         if not isinstance(self.accounting, ConsoleRequestTokenAccounting):
@@ -555,6 +561,7 @@ def prepare_provider_request(
     per_image_tokens: int = DEFAULT_PER_IMAGE_TOKENS,
     count_fn: Callable[[list[dict[str, Any]], str], int] | None = None,
     apply_safety_window: bool = True,
+    response_format: Mapping[str, Any] | None = None,
 ) -> PreparedProviderRequest:
     """Window, serialize once, and account one exact provider request."""
 
@@ -615,6 +622,7 @@ def prepare_provider_request(
         messages=counted if wire_style == "single_preamble" else payload,
         messages_payload=payload,
         tools=selected.tools,
+        response_format=response_format,
         capacity=capacity,
         accounting=accounting,
         dropped_units=dropped_units,

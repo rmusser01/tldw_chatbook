@@ -2605,3 +2605,28 @@ what a suite would do against a live endpoint, do not reason about it: **bind a 
 server on the port and read what it receives.** Recording connects tells you a socket
 opened; recording requests tells you the verb, the path and the body — which is the
 difference between "reads something" and "writes to your server".
+
+---
+
+## A capability decision is only as pinned as the final adapter kwargs (2026-08-11)
+
+**The trap.** Checking a resolved provider/model/endpoint and then attaching a
+provider-specific request feature does not prove that the checked endpoint is the one the
+adapter will call. A lower layer may reload configuration or fall back to its own endpoint
+after the capability decision has already been made.
+
+**What happened.** task-15263 added strict JSON Schema enforcement for the visual
+compaction evaluator's documented OpenAI GPT-4o routes. The initial implementation checked
+`ConsoleProviderResolution.base_url`, but the prepared-request dispatcher did not forward
+OpenAI's resolved base URL; `chat_with_openai` could therefore reload a configured endpoint
+later. The report could have claimed `provider_json_schema` based on the official endpoint
+while the final call went to a custom OpenAI-compatible proxy. Self-review caught the gap
+before the PR. The evaluator-only prepared request now pins the checked endpoint into the
+final adapter kwargs, and a test asserts both the immutable response format and exact
+`api_base_url`. A mutation that removed the endpoint guard made the custom-proxy case fail.
+
+**What to do.** For provider capability gates, test the final dispatched kwargs, not only
+the resolver result or an intermediate request object. If a lower adapter can reload config,
+make the capability-bearing request pin the checked endpoint (without changing unrelated
+callers), and mutation-test the unsupported route so fallback labeling cannot silently
+become an unsupported capability claim.

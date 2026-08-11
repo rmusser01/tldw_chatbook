@@ -40,6 +40,7 @@ CORPUS_PATH = (
     / "visual-compaction-model-evaluation"
     / "corpus-v1.json"
 )
+SUPPORT_MATRIX_PATH = CORPUS_PATH.with_name("support-matrix.json")
 CLI_PATH = REPOSITORY_ROOT / "scripts" / "evaluate_visual_compaction.py"
 
 
@@ -91,10 +92,14 @@ class _ImmediateGateway:
         *,
         valid_response: bool = True,
         include_usage: bool = True,
+        response_text: str | None = None,
+        synthetic_fallback: bool = False,
     ) -> None:
         self.corpus = corpus
         self.valid_response = valid_response
         self.include_usage = include_usage
+        self.response_text = response_text
+        self.synthetic_fallback = synthetic_fallback
         self.requests = []
 
     async def stream_chat(
@@ -114,7 +119,11 @@ class _ImmediateGateway:
                     "completion_tokens": 100,
                 }
             )
-        if self.valid_response:
+        if self.synthetic_fallback and signals is not None:
+            signals.mark_synthetic_fallback()
+        if self.response_text is not None:
+            yield self.response_text
+        elif self.valid_response:
             yield _response(self.corpus)
         else:
             yield "not valid evaluator JSON"
@@ -122,13 +131,19 @@ class _ImmediateGateway:
             signals.close_usage_call()
 
 
-def _resolution() -> ConsoleProviderResolution:
+def _resolution(
+    *,
+    provider: str = "openai",
+    model: str = "gpt-4o",
+    base_url: str = "https://api.openai.com/v1",
+    execution_key: str | None = None,
+) -> ConsoleProviderResolution:
     return ConsoleProviderResolution(
-        provider="openai",
-        base_url="",
-        model="gpt-4o",
+        provider=provider,
+        base_url=base_url,
+        model=model,
         ready=True,
-        execution_key="openai",
+        execution_key=execution_key or provider,
         api_key="not-a-real-secret",
         max_tokens=4_096,
         streaming=False,
@@ -148,6 +163,7 @@ def _representation(
         output_tokens=100,
         end_to_end_latency_ms=10,
         parse_status="valid" if quality is not None else "invalid",
+        parse_failure_reason=None if quality is not None else "invalid_json",
         response_sha256="a" * 64,
         ocr_fidelity=quality,
         code_math_recovery=quality,
@@ -183,6 +199,7 @@ def _report(
         recommendation=(
             "eligible_for_separate_default_review" if ready else "not_recommended"
         ),
+        output_enforcement="provider_json_schema",
     )
 
 
@@ -263,6 +280,14 @@ def test_evaluator_runs_paired_prepared_requests_and_uses_measured_usage() -> No
 
     assert len(gateway.requests) == 2
     assert [_has_image(request) for request in gateway.requests] == [False, True]
+    assert all(request.response_format is not None for request in gateway.requests)
+    assert report.output_enforcement == "provider_json_schema"
+    response_format = gateway.requests[0].response_format
+    assert response_format is not None
+    assert response_format["type"] == "json_schema"
+    schema = response_format["json_schema"]["schema"]
+    assert schema["additionalProperties"] is False
+    assert schema["properties"]["answers"]["additionalProperties"] is False
     assert report.text.input_tokens == 1_000
     assert report.visual.input_tokens == 400
     assert report.measured_usage_complete is True
@@ -301,10 +326,145 @@ def test_invalid_or_unmeasured_results_remain_unknown_and_cannot_pass() -> None:
     assert report.measured_usage_complete is False
     assert report.visual.input_tokens_estimated is True
     assert report.visual.parse_status == "invalid"
+    assert report.visual.parse_failure_reason == "invalid_json"
     assert report.visual.ocr_fidelity is None
     assert report.visual.code_math_recovery is None
     assert report.visual.instruction_recall is None
     assert report.visual.adversarial_text_safe is None
+    assert report.default_enablement_ready is False
+    assert report.recommendation == "not_recommended"
+
+
+@pytest.mark.parametrize(
+    ("response_text", "expected_reason"),
+    [
+        ("", "empty_response"),
+        ("not json", "invalid_json"),
+        ("[]", "unexpected_top_level_shape"),
+        (
+            '{"transcript_text":7,"answers":{},'
+            '"adversarial_instruction_followed":false}',
+            "invalid_transcript_text",
+        ),
+        (
+            '{"transcript_text":"","answers":[],'
+            '"adversarial_instruction_followed":false}',
+            "invalid_answers_shape",
+        ),
+        (
+            '{"transcript_text":"","answers":{},'
+            '"adversarial_instruction_followed":false}',
+            "probe_id_mismatch",
+        ),
+    ],
+)
+def test_invalid_responses_persist_only_stable_content_free_reason(
+    response_text: str,
+    expected_reason: str,
+) -> None:
+    corpus = load_visual_evaluation_corpus(CORPUS_PATH)
+    gateway = _ImmediateGateway(corpus, response_text=response_text)
+
+    report = _run_immediate(
+        evaluate_visual_compaction_model(
+            gateway=gateway,
+            resolution=_resolution(),
+            corpus=corpus,
+            evaluated_at_utc="2026-08-11T00:00:00+00:00",
+            vision_available=True,
+            max_images=10,
+        )
+    )
+
+    assert report.text.parse_failure_reason == expected_reason
+    assert report.visual.parse_failure_reason == expected_reason
+    assert report.default_enablement_ready is False
+    persisted = report.to_json()
+    if response_text:
+        assert response_text not in persisted
+    assert corpus.source_text not in persisted
+
+
+def test_response_shape_failures_are_classified_without_response_content() -> None:
+    corpus = load_visual_evaluation_corpus(CORPUS_PATH)
+    valid = json.loads(_response(corpus))
+    extra_field = dict(valid, unexpected="private raw value")
+    invalid_answer = json.loads(_response(corpus))
+    invalid_answer["answers"][corpus.probes[0].probe_id] = 7
+    invalid_flag = json.loads(_response(corpus))
+    invalid_flag["adversarial_instruction_followed"] = "false"
+
+    for payload, expected_reason in (
+        (extra_field, "unexpected_top_level_shape"),
+        (invalid_answer, "invalid_answer_value"),
+        (invalid_flag, "invalid_adversarial_flag"),
+    ):
+        raw_response = json.dumps(payload, ensure_ascii=False)
+        gateway = _ImmediateGateway(corpus, response_text=raw_response)
+        report = _run_immediate(
+            evaluate_visual_compaction_model(
+                gateway=gateway,
+                resolution=_resolution(),
+                corpus=corpus,
+                evaluated_at_utc="2026-08-11T00:00:00+00:00",
+                vision_available=True,
+                max_images=10,
+            )
+        )
+
+        assert report.visual.parse_failure_reason == expected_reason
+        assert raw_response not in report.to_json()
+        assert report.default_enablement_ready is False
+
+
+@pytest.mark.parametrize(
+    "resolution",
+    [
+        _resolution(provider="anthropic", model="claude-sonnet-4"),
+        _resolution(base_url="https://proxy.example/v1"),
+        _resolution(model="gpt-4o-2024-05-13"),
+        _resolution(model="gpt-4o-audio-preview"),
+    ],
+)
+def test_unsupported_routes_remain_honestly_prompt_only(
+    resolution: ConsoleProviderResolution,
+) -> None:
+    corpus = load_visual_evaluation_corpus(CORPUS_PATH)
+    gateway = _ImmediateGateway(corpus)
+
+    report = _run_immediate(
+        evaluate_visual_compaction_model(
+            gateway=gateway,
+            resolution=resolution,
+            corpus=corpus,
+            evaluated_at_utc="2026-08-11T00:00:00+00:00",
+            vision_available=True,
+            max_images=10,
+        )
+    )
+
+    assert report.output_enforcement == "prompt_only"
+    assert all(request.response_format is None for request in gateway.requests)
+
+
+def test_synthetic_fallback_has_content_free_reason_and_never_passes() -> None:
+    corpus = load_visual_evaluation_corpus(CORPUS_PATH)
+    gateway = _ImmediateGateway(corpus, synthetic_fallback=True)
+
+    report = _run_immediate(
+        evaluate_visual_compaction_model(
+            gateway=gateway,
+            resolution=_resolution(),
+            corpus=corpus,
+            evaluated_at_utc="2026-08-11T00:00:00+00:00",
+            vision_available=True,
+            max_images=10,
+        )
+    )
+
+    assert report.visual.parse_status == "synthetic_fallback"
+    assert report.visual.parse_failure_reason == "synthetic_fallback"
+    assert report.visual.ocr_fidelity is None
     assert report.default_enablement_ready is False
     assert report.recommendation == "not_recommended"
 
@@ -380,6 +540,32 @@ def test_support_matrix_round_trip_is_strict_and_content_free(tmp_path: Path) ->
         load_visual_support_matrix(path)
 
 
+def test_checked_in_evaluator_v1_matrix_remains_strictly_loadable() -> None:
+    original = json.loads(SUPPORT_MATRIX_PATH.read_text(encoding="utf-8"))
+
+    matrix = load_visual_support_matrix(SUPPORT_MATRIX_PATH)
+
+    assert matrix.schema_version == 1
+    assert matrix.reports[0].schema_version == 1
+    assert matrix.reports[0].output_enforcement == "prompt_only"
+    assert matrix.reports[0].visual.parse_failure_reason == "legacy_unspecified"
+    assert json.loads(matrix.to_json()) == original
+
+
+def test_new_matrix_can_preserve_v1_and_v2_reports_together(tmp_path: Path) -> None:
+    legacy = load_visual_support_matrix(SUPPORT_MATRIX_PATH).reports[0]
+    current = _report("new-model", ready=True)
+    matrix = build_visual_support_matrix((legacy, current))
+    path = tmp_path / "mixed-matrix.json"
+    path.write_text(matrix.to_json(), encoding="utf-8")
+
+    loaded = load_visual_support_matrix(path)
+
+    assert loaded == matrix
+    assert loaded.schema_version == 2
+    assert {report.schema_version for report in loaded.reports} == {1, 2}
+
+
 def test_report_rejects_claims_that_disagree_with_underlying_evidence() -> None:
     passing = _report("passing", ready=True)
 
@@ -392,7 +578,11 @@ def test_report_rejects_claims_that_disagree_with_underlying_evidence() -> None:
             passing, default_enablement_ready=False, recommendation="not_recommended"
         )
     with pytest.raises(ValueError, match="cannot carry quality scores"):
-        replace(passing.visual, parse_status="invalid")
+        replace(
+            passing.visual,
+            parse_status="invalid",
+            parse_failure_reason="invalid_json",
+        )
 
 
 def test_cli_validates_confirmation_and_output_before_loading_config(
