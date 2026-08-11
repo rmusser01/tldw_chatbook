@@ -1874,6 +1874,54 @@ def test_concurrent_creates_at_capacity_have_exactly_one_winner() -> None:
     assert snapshot["next_id"] == MAX_TODO_ITEMS + 1
 
 
+def test_terminal_id_race_has_one_winner_and_fixed_exhaustion_loser() -> None:
+    maximum = todo_store_module.MAX_TODO_NUMBER
+    store = SessionTodoStore.from_snapshot(
+        {
+            "next_id": maximum,
+            "tasks": [
+                {
+                    "id": str(task_number),
+                    "version": 1,
+                    "content": f"Existing {task_number}",
+                    "status": "pending",
+                }
+                for task_number in range(1, MAX_TODO_ITEMS)
+            ],
+        }
+    )
+    callbacks: list[list[dict[str, object]]] = []
+
+    results, errors = _run_forced_mutation_pair(
+        store,
+        lambda: store.create(
+            content="First terminal contender",
+            on_change=callbacks.append,
+        ),
+        lambda: store.create(
+            content="Second terminal contender",
+            on_change=callbacks.append,
+        ),
+        operation="setitem",
+    )
+
+    successes = [result for result in results if type(result) is dict]
+    failures = [error for error in errors if error is not None]
+    assert len(successes) == 1
+    assert successes[0]["id"] == str(maximum)
+    assert len(failures) == 1
+    assert type(failures[0]) is TodoStoreError
+    assert failures[0].args == ("task id space exhausted",)
+
+    snapshot = store.export_snapshot()
+    assert snapshot["next_id"] == maximum + 1
+    assert len(snapshot["tasks"]) == MAX_TODO_ITEMS
+    task_ids = [record["id"] for record in snapshot["tasks"]]
+    assert len(set(task_ids)) == MAX_TODO_ITEMS
+    assert task_ids.count(str(maximum)) == 1
+    assert callbacks == [snapshot["tasks"]]
+
+
 def test_callback_serializes_mutation_commit_and_return_while_reads_stay_available() -> (
     None
 ):
