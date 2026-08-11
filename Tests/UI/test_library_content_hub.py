@@ -216,7 +216,11 @@ async def test_library_stage_c_search_rag_promotes_query_scope_and_evidence_regi
 
         # A3: top-k surfaces on the Evidence heading, the single mode
         # surface is the toggle button, not a separate status line.
-        assert "Evidence · top 5 per source" in visible
+        # TASK-15020/B3: that depth is the ACTIVE RAG PROFILE's
+        # `search.default_top_k` -- 15 on the shipped default profile
+        # (`hybrid_basic`), which is what an isolated test profile resolves
+        # to -- not the old hardcoded 5.
+        assert "Evidence · top 15 per source" in visible
         assert not screen.query("#library-rag-query-status")
         assert "No evidence yet. Run Search/RAG to populate results." in visible
         assert screen.query_one("#library-rag-evidence-empty-guidance", Static)

@@ -181,12 +181,23 @@ read this corpus going quiet as "fusion is finished".
 **The bound on "nothing regressed".** It is a 49-document corpus in which
 every scored query except one was already answered at rank 1, so there was
 very little left to damage; and this harness measures at `k = 10`, while
-the Library Search/RAG surface defaults to `LIBRARY_RAG_DEFAULT_TOP_K = 5`
-(half the fused candidate window, since `_hybrid_search` fetches
-`top_k * hybrid_pool_multiplier` per leg). A hybrid number here is a
-statement about this corpus at k=10, not a promise about a large library at
-k=5. TASK-4110's live check answered the k=5 half separately, against a
-real 64-document library through the running TUI.
+the Library Search/RAG surface, at the time this was written, defaulted to a
+hardcoded `LIBRARY_RAG_DEFAULT_TOP_K = 5` (half the fused candidate window,
+since `_hybrid_search` fetches `top_k * hybrid_pool_multiplier` per leg). A
+hybrid number here was therefore a statement about this corpus at k=10, not a
+promise about a large library at k=5, and TASK-4110's live check answered the
+k=5 half separately, against a real 64-document library through the running
+TUI.
+
+**That surface-is-tighter bound is retired (TASK-15020/B3).** The window's
+depth is now the ACTIVE RAG PROFILE's `search.default_top_k` — 15 on the
+shipped default profile (`hybrid_basic`), and configurable in Settings —
+resolved through `library_rag_state.library_rag_profile_top_k`. The harness's
+k=10 is no longer *deeper* than the surface it stands in for, so a hybrid
+number here no longer needs the "but the real window only shows half of this"
+caveat. It is still a statement about *this corpus*, and a profile tuned
+below 10 (e.g. `fast_rag`, `long_context_rag` — both 5) puts a user back
+under the harness's window: the profile, not a constant, is what to check.
 
 Two mechanical effects behind the precision drops, so nobody re-derives
 them later:

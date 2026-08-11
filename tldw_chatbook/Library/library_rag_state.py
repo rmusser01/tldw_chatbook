@@ -1,4 +1,12 @@
-"""Pure display-state contracts for Library-native Search/RAG."""
+"""Pure display-state contracts for Library-native Search/RAG.
+
+One deliberate exception to "pure" (TASK-15020/B3): `library_rag_profile_
+top_k` reads the active RAG profile's result count, because the window's
+evidence depth is a user setting and a display state that cannot see it
+would have to keep hardcoding 5. The read is lazy, exception-safe, torch-
+free by construction (see that function), and everything downstream of it
+stays a pure function of the value it returns.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +16,7 @@ import re
 from types import MappingProxyType
 from typing import Any, Mapping, Sequence
 
+from loguru import logger
 from rich.markup import escape as escape_markup
 
 from tldw_chatbook.Library.library_rag_answer_service import LibraryRagAnswer
@@ -53,7 +62,15 @@ LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES: tuple[str, ...] = (
     "conversations",
     "prompts",
 )
-LIBRARY_RAG_DEFAULT_TOP_K = 5
+#: The evidence depth used when the active RAG profile cannot be read at all
+#: (TASK-15020/B3). This used to be `LIBRARY_RAG_DEFAULT_TOP_K` -- the window's
+#: actual, unconfigurable default -- while the Console's Library RAG entry
+#: points already read the profile (TASK-406/TASK-3170). Renamed with the
+#: behavior: it is now only the degraded answer, reached when
+#: `library_rag_profile_top_k` cannot resolve a positive number. Kept equal to
+#: the Console seam's own fallback (`CONSOLE_LIBRARY_RAG_FALLBACK_TOP_K`,
+#: pinned by the coupling test) so both surfaces degrade to the same depth.
+LIBRARY_RAG_FALLBACK_TOP_K = 5
 LIBRARY_RAG_RUN_ACTION_ID = "library-rag-run-query"
 LIBRARY_RAG_SERVICE_ERROR_SELECTOR = "library-rag-service-error"
 LIBRARY_RAG_EMPTY_STATE_SELECTOR = "library-rag-empty-state"
@@ -627,11 +644,74 @@ def _coerce_non_negative_int(value: Any) -> int:
         return 0
 
 
-def _coerce_positive_int(value: Any, fallback: int) -> int:
-    if not validate_number_range(value, min_val=1, max_val=LIBRARY_RAG_TOP_K_MAX):
-        return fallback
-    coerced = int(value)
-    return coerced if coerced > 0 else fallback
+def library_rag_profile_top_k() -> int:
+    """Return the ACTIVE RAG profile's result count (TASK-15020/B3).
+
+    The Search/RAG window's evidence depth used to be the literal 5 while the
+    Console's two Library RAG entry points already honored the profile
+    (TASK-406/TASK-3170) -- two surfaces over one retrieval stack disagreeing
+    about how deep a search goes, with only one of them configurable. This is
+    the ONE seam both now read: `chat_screen._console_library_rag_profile_
+    top_k` delegates here, and `Tests/Library/test_library_rag_state.py` pins
+    that they agree on both branches.
+
+    Reads `resolve_active_rag_top_k` -- the depth-only resolution -- NOT
+    `resolve_active_rag_config()`: the full resolution's env layer probes the
+    embedding device and imports torch (~0.9s), and this is called from a
+    display-state builder that the Library screen rebuilds on every render
+    and documents as never importing an optional Search/RAG dependency. See
+    that function's docstring; the no-torch property is pinned in
+    `Tests/RAG/test_active_config_resolution.py`.
+
+    Imported lazily for the same reason the Console seam does: the profile
+    manager is not something this module has any other reason to load.
+
+    Returns:
+        The profile's `search.default_top_k` when it resolves to a positive
+        integer, else `LIBRARY_RAG_FALLBACK_TOP_K` -- a broken/absent profile
+        must degrade to a usable depth, never raise inside a render.
+    """
+    try:
+        from ..RAG_Search.simplified.active_config import resolve_active_rag_top_k
+
+        value = int(resolve_active_rag_top_k())
+    except Exception as exc:
+        logger.debug(
+            "Library Search/RAG could not read the active RAG profile's "
+            "top_k (exception_category={}); using the fallback.",
+            type(exc).__name__,
+        )
+        return LIBRARY_RAG_FALLBACK_TOP_K
+    return value if value > 0 else LIBRARY_RAG_FALLBACK_TOP_K
+
+
+def _resolve_window_top_k(value: Any) -> int:
+    """Resolve the window's evidence depth: explicit value, else the profile.
+
+    B3 changes the DEFAULT only. An in-range caller-supplied count wins
+    unchanged and the profile is never consulted for it; anything unset or
+    outside `1..LIBRARY_RAG_TOP_K_MAX` resolves to the active profile's depth,
+    clamped to that same bound.
+
+    The clamp is deliberate: Settings accepts a profile `default_top_k` up to
+    100 (`settings_library_rag_defaults.MAX_RAG_RESULT_COUNT`) while this
+    window's own bound is 50, and a 100-deep profile means "as deep as you
+    can" -- discarding it back to the fallback 5 (what the pre-B3 coercion did
+    with any out-of-range number) would invert the user's intent. The
+    Console seam has no such bound and stays uncapped; this is the one
+    deliberate difference between the two, and it only exists above 50.
+
+    Args:
+        value: The caller-supplied count, or `None`/invalid for "unset".
+
+    Returns:
+        A depth within `1..LIBRARY_RAG_TOP_K_MAX`.
+    """
+    if validate_number_range(value, min_val=1, max_val=LIBRARY_RAG_TOP_K_MAX):
+        coerced = int(value)
+        if coerced > 0:
+            return coerced
+    return min(library_rag_profile_top_k(), LIBRARY_RAG_TOP_K_MAX)
 
 
 def library_rag_score_suffix(
@@ -1105,7 +1185,7 @@ class LibraryRagQueryState:
         *,
         query: Any = "",
         mode: Any = "rag",
-        top_k: Any = LIBRARY_RAG_DEFAULT_TOP_K,
+        top_k: Any = None,
         include_citations: bool = True,
         has_source_scope: bool = True,
         dependencies_ready: bool = True,
@@ -1118,7 +1198,14 @@ class LibraryRagQueryState:
         Args:
             query: User query text.
             mode: Search mode, either `rag` or `search`; invalid values default to `rag`.
-            top_k: Requested result count. Values outside the allowed range use the default.
+            top_k: Requested result count. `None` (the Library screen's own
+                case -- the canvas carries no depth control) and any value
+                outside `1..LIBRARY_RAG_TOP_K_MAX` resolve to the ACTIVE RAG
+                PROFILE's `default_top_k` (TASK-15020/B3), clamped to that
+                bound, and to `LIBRARY_RAG_FALLBACK_TOP_K` only when the
+                profile itself is unresolvable. An in-range explicit value is
+                used unchanged and never consults the profile -- see
+                `_resolve_window_top_k`.
             include_citations: Whether citation metadata should be requested/displayed.
             has_source_scope: Whether at least one source is selected.
             dependencies_ready: Whether Search/RAG optional dependencies are available.
@@ -1174,7 +1261,7 @@ class LibraryRagQueryState:
         normalized_query, unsafe_query = _sanitize_query(query)
         normalized_mode = _normalize_mode(mode)
         mode_label = "Search" if normalized_mode == "search" else "RAG Answer"
-        normalized_top_k = _coerce_positive_int(top_k, LIBRARY_RAG_DEFAULT_TOP_K)
+        normalized_top_k = _resolve_window_top_k(top_k)
         disabled_reason = ""
         owner = ""
         next_action = ""
