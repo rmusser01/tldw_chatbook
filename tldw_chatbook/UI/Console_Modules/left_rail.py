@@ -59,6 +59,10 @@ from ...Chat.console_session_settings import (
 )
 from ...Widgets.Console import ConsoleWorkspaceContextTray
 from ...Widgets.Console.console_image_viewer_modal import ClickableAvatarBox
+from ...Widgets.Console.console_inspector_section import (
+    ConsoleInspectorSection,
+    ConsoleInspectorSectionState,
+)
 from ...Widgets.Console.console_workspace_details import ConsoleWorkspaceDetailsTray
 from ...Widgets.destination_rail import (
     RAIL_SECTION_TOGGLE_PREFIX,
@@ -66,6 +70,7 @@ from ...Widgets.destination_rail import (
 )
 from ...Widgets.glyph_fallback import resolve_glyph
 from ...Workspaces.display_state import ConsoleWorkspaceContextState
+from .agent import CONSOLE_AGENT_FLEET_SECTION_ID
 from .frame import frame_console_region
 
 
@@ -115,7 +120,7 @@ class ConsoleLeftRail(Vertical):
         fleet_line: str,
         agent_status_line: str,
         agent_steps_text: str,
-        agent_subagents_text: str,
+        agent_fleet_section_state: ConsoleInspectorSectionState,
         agent_drilldown_active: bool,
         agent_full_log_available: bool,
         show_character_section: bool,
@@ -141,7 +146,14 @@ class ConsoleLeftRail(Vertical):
             fleet_line: The pinned fleet-summary line text; empty hides it.
             agent_status_line: Agent section status text.
             agent_steps_text: Agent section step list text.
-            agent_subagents_text: Agent section sub-agent list text.
+            agent_fleet_section_state: Rows + header summary (PR2b Task 4,
+                spec §7 states 1/2) for the ``ConsoleInspectorSection`` that
+                renders the conversation's own sub-agent fleet -- computed
+                by ``ConsoleAgentController._console_agent_fleet_section_
+                state``. Empty rows/summary hides the section entirely
+                (nothing to show, or a sub-agent drill-down is active and
+                the status/steps Statics already carry that one child's
+                own detail -- state 3, unchanged).
             agent_drilldown_active: Whether a sub-agent drill-down is
                 active, driving the "Back" button's visibility.
             agent_full_log_available: Whether the "View full log" button
@@ -184,7 +196,7 @@ class ConsoleLeftRail(Vertical):
         self._fleet_line = fleet_line
         self._agent_status_line = agent_status_line
         self._agent_steps_text = agent_steps_text
-        self._agent_subagents_text = agent_subagents_text
+        self._agent_fleet_section_state = agent_fleet_section_state
         self._agent_drilldown_active = agent_drilldown_active
         self._agent_full_log_available = agent_full_log_available
         self._show_character_section = show_character_section
@@ -517,12 +529,25 @@ class ConsoleLeftRail(Vertical):
                     classes="console-agent-section-steps",
                     markup=False,
                 )
-                yield Static(
-                    self._agent_subagents_text,
+                # PR2b Task 4: replaces the single joined-string Static
+                # that used to live here (spec §7's "combine the sub-agents
+                # into one line" version). The Task 3 component owns its
+                # own layout/CSS -- no `classes=` needed beyond what
+                # `ConsoleInspectorSection.__init__` already stamps
+                # (`console-inspector-section`).
+                fleet_section = ConsoleInspectorSection(
+                    title="Sub-agents",
+                    section_id=CONSOLE_AGENT_FLEET_SECTION_ID,
+                    rows=self._agent_fleet_section_state.rows,
+                    summary=self._agent_fleet_section_state.summary,
+                    collapsible=True,
+                    open=False,
                     id="console-agent-section-subagents",
-                    classes="console-agent-section-subagents",
-                    markup=False,
                 )
+                fleet_section.styles.display = (
+                    "block" if self._agent_fleet_section_state.rows else "none"
+                )
+                yield fleet_section
                 back_button = Button(
                     "Back",
                     id="console-agent-drilldown-back",

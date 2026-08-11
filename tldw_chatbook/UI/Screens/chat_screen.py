@@ -67,6 +67,7 @@ from ..Console_Modules.dictation import (
 from ..Console_Modules.hands_free import (
     ConsoleHandsFreeSession,
 )
+from ..Console_Modules.agent import CONSOLE_AGENT_FLEET_SECTION_ID
 from ..Console_Modules.prompt_queue import ConsolePromptDispatchStatus, ConsolePromptQueueRegion
 from ..Console_Modules.left_rail import ConsoleLeftRail
 from ..Console_Modules.message import ConsoleMessageController
@@ -460,6 +461,10 @@ from ...Widgets.Console.console_context_controls import (
 from ...Widgets.Console.console_image_viewer_modal import (
     AvatarViewRequested,
     ConsoleImageViewerModal,
+)
+from ...Widgets.Console.console_inspector_section import (
+    ConsoleInspectorSection,
+    ConsoleInspectorSectionState,
 )
 from ...Widgets.Console.console_command_popup import ConsoleCommandPopup
 from ...Widgets.Console.console_context_modal import ConsoleContextModal
@@ -1954,6 +1959,53 @@ class ChatScreen(BaseAppScreen):
         """
         self._toggle_console_rail_section(message.section_id)
 
+    @on(ConsoleInspectorSection.RowActivated)
+    def on_console_agent_fleet_row_activated(
+        self, message: ConsoleInspectorSection.RowActivated
+    ) -> None:
+        """Drill into the sub-agent a fleet row was clicked for (TASK-4).
+
+        Only the Agent rail's own fleet mini-section is a
+        ``ConsoleInspectorSection`` today (``CONSOLE_AGENT_FLEET_SECTION_
+        ID``) -- the ``section_id`` guard exists so a future sibling
+        section built on the same component (Changes/Sources/Workspace,
+        spec §7's stated direction) never gets routed here by accident.
+        Replaces the old cycling click handler (id-string matching on
+        ``#console-agent-section-subagents`` in ``on_click``) -- a row now
+        posts its own typed message with its own stable ``row_id``,
+        mirroring ``console_status_chips.py``'s chip-activation messages
+        rather than matching by DOM id.
+        """
+        if message.section_id != CONSOLE_AGENT_FLEET_SECTION_ID:
+            return
+        message.stop()
+        self._agent._drill_into_console_agent_subagent(message.row_id)
+
+    @on(ConsoleInspectorSection.RowCancelRequested)
+    def on_console_agent_fleet_row_cancel_requested(
+        self, message: ConsoleInspectorSection.RowCancelRequested
+    ) -> None:
+        """Cooperatively cancel a fleet row's child (PR2b Task 5).
+
+        Same ``section_id`` guard as the drill-in handler above, for the
+        same reason. Routes through ``ConsoleAgentController._cancel_
+        console_agent_fleet_row``, which itself routes through the
+        EXISTING cancellation path (``AgentService.cancel_subagent`` ->
+        ``_cancel_fleet_handles``) -- no second mechanism.
+
+        A burst of cancels (the user cancelling more than one row in quick
+        succession) each requests a coalesced fleet-section resync rather
+        than a synchronous one, so N cancels in the same UI tick still
+        produce exactly one ``_sync_console_agent_section`` run (task-5
+        coalescing) instead of N redundant ones.
+        """
+        if message.section_id != CONSOLE_AGENT_FLEET_SECTION_ID:
+            return
+        message.stop()
+        cancelled = self._agent._cancel_console_agent_fleet_row(message.row_id)
+        if cancelled:
+            self._request_console_agent_fleet_sync()
+
     @on(Button.Pressed, "#console-context-rail-collapse")
     def on_console_context_rail_collapse(self, event: Button.Pressed) -> None:
         """Collapse the Console context rail and persist the preference."""
@@ -3273,8 +3325,14 @@ class ChatScreen(BaseAppScreen):
         # `_sync_console_agent_section` itself -- it is that DOM write's
         # memo and nothing else's (wave-4 console decomposition, task 3).
         self._console_agent_section_last: (
-            tuple[str, str, str, str, bool, bool, bool] | None
+            tuple[str, str, ConsoleInspectorSectionState, str, bool, bool, bool]
+            | None
         ) = None
+        # PR2b Task 5: coalescing flag for `_request_console_agent_fleet_
+        # sync` -- mirrors `_console_control_bar_sync_scheduled` exactly
+        # (see that flag's own call site, `_request_console_control_bar_
+        # sync`, for the precedent this follows).
+        self._console_agent_fleet_sync_scheduled = False
         self._console_rail_system_line_last: tuple[str, bool] | None = None
         self._console_rail_prune_dispatched = False
         # The six Console controllers -- their construction and every
@@ -4127,6 +4185,36 @@ class ChatScreen(BaseAppScreen):
         self._sync_console_rail_system_line()
         self._sync_console_agent_section()
 
+    def _request_console_agent_fleet_sync(self) -> None:
+        """Coalesce Agent-fleet-section syncs into one trailing run (task-5).
+
+        Mirrors ``_request_console_control_bar_sync`` exactly -- a
+        scheduled-flag + ``call_after_refresh`` trailing run, not a timer.
+        That precedent's own docstring records the measurement that
+        motivated the shape (one screen push ran a ~47ms sync 14 times --
+        0.65s of a ~1.2s push, every caller individually justified, nothing
+        deduplicating them); this is the same shape applied to the Agent
+        fleet mini-section's own sync (``_sync_console_agent_section``)
+        instead, for its own bursty callers -- e.g. the per-row Cancel
+        handler below, which can fire several times in a row (a user
+        cancelling more than one child in quick succession) while only one
+        resync is ever needed to reflect all of them.
+
+        Requests landing before the trailing run fires fold into it; the
+        run always calls ``_sync_console_agent_section`` fresh (itself
+        still equality-guarded against the last applied payload), so the
+        last-writer semantics every caller relies on are preserved.
+        """
+        if self._console_agent_fleet_sync_scheduled:
+            return
+        self._console_agent_fleet_sync_scheduled = True
+        self.call_after_refresh(self._run_coalesced_console_agent_fleet_sync)
+
+    def _run_coalesced_console_agent_fleet_sync(self) -> None:
+        """Execute one coalesced Agent-fleet-section sync (task-5)."""
+        self._console_agent_fleet_sync_scheduled = False
+        self._sync_console_agent_section()
+
     def _sync_console_agent_section(self) -> None:
         """Apply the Agent rail's derived payload to the mounted widgets.
 
@@ -4141,6 +4229,17 @@ class ChatScreen(BaseAppScreen):
         The memo is written only after a successful apply, so a tick that
         raised part-way through the writes below is re-attempted next tick
         rather than recorded as painted.
+
+        PR2b Task 4: the third payload element is now a
+        ``ConsoleInspectorSectionState`` (rows + header summary) for the
+        ``ConsoleInspectorSection`` mounted at ``#console-agent-section-
+        subagents`` -- replacing the plain ``Static.update()`` this used to
+        do, ``sync_state`` patches the section's rows/summary in place when
+        possible (structural key unchanged) and only recomposes when the
+        row set itself changed shape, per that component's own discipline
+        (Task 3). The section is hidden entirely whenever there are no rows
+        to show -- no fleet at all, or drilled into one child whose own
+        detail the status/steps Statics above already carry (state 3).
         """
         payload = self._agent._console_agent_section_payload()
         if payload == self._console_agent_section_last:
@@ -4148,7 +4247,7 @@ class ChatScreen(BaseAppScreen):
         (
             status_line,
             steps_text,
-            subagents_text,
+            fleet_section_state,
             fleet_line,
             back_visible,
             section_open,
@@ -4157,8 +4256,12 @@ class ChatScreen(BaseAppScreen):
         try:
             self.query_one("#console-agent-section-status", Static).update(status_line)
             self.query_one("#console-agent-section-steps", Static).update(steps_text)
-            self.query_one("#console-agent-section-subagents", Static).update(
-                subagents_text
+            fleet_section = self.query_one(
+                "#console-agent-section-subagents", ConsoleInspectorSection
+            )
+            fleet_section.sync_state(fleet_section_state)
+            fleet_section.styles.display = (
+                "block" if fleet_section_state.rows else "none"
             )
             fleet_summary = self.query_one("#console-agent-fleet-summary", Static)
             fleet_summary.update(fleet_line)
@@ -8151,8 +8254,21 @@ class ChatScreen(BaseAppScreen):
                     SimpleNamespace(role="user", content=staged_text, usage=None)
                 ]
             provider, model, _settings = self._active_console_provider_model_display()
+            # PR2b Task 5 (cost rollup): the active conversation's LIVE
+            # sub-agent fleet spend, folded into the snapshot's token total
+            # (never priced -- see `ConsoleCostSnapshot.fleet_tokens`'s
+            # docstring for why). Read straight off the SAME live source
+            # the fleet rail rows themselves read
+            # (`_console_agent_fleet_token_total` sums `bridge.fleet_
+            # snapshot(...)`'s `FleetHandle.total_tokens`), so the chip and
+            # the rail can never disagree about a conversation's fleet
+            # spend.
+            fleet_tokens = self._agent._console_agent_fleet_token_total()
             snapshot = build_cost_snapshot(
-                snapshot_messages, provider=provider, model=model
+                snapshot_messages,
+                provider=provider,
+                model=model,
+                fleet_tokens=fleet_tokens,
             )
 
             controller = self._console_chat_controller
@@ -13638,8 +13754,15 @@ class ChatScreen(BaseAppScreen):
                 system_line_text, system_line_dim = (
                     self._console_rail_system_line_state()
                 )
-                agent_status_line, agent_steps_text, agent_subagents_text = (
+                # PR2b Task 4: the third element (the old joined sub-agents
+                # string) is no longer painted -- the fleet mini-section's
+                # rows/summary are derived independently, straight from the
+                # bridge, by `_console_agent_fleet_section_state`.
+                agent_status_line, agent_steps_text, _agent_subagents_text = (
                     self._agent._console_agent_section_lines()
+                )
+                agent_fleet_section_state = (
+                    self._agent._console_agent_fleet_section_state()
                 )
                 show_character_section = resolve_show_character_avatar(
                     getattr(getattr(self, "app_instance", None), "app_config", {}) or {}
@@ -13679,7 +13802,7 @@ class ChatScreen(BaseAppScreen):
                     fleet_line=fleet_line,
                     agent_status_line=agent_status_line,
                     agent_steps_text=agent_steps_text,
-                    agent_subagents_text=agent_subagents_text,
+                    agent_fleet_section_state=agent_fleet_section_state,
                     agent_drilldown_active=bool(self._console_agent_drilldown_run_id),
                     agent_full_log_available=(
                         self._agent._console_agent_full_log_available()
@@ -19005,10 +19128,6 @@ class ChatScreen(BaseAppScreen):
         if getattr(target, "id", None) == "console-rail-system-line":
             event.stop()
             self.run_worker(self._open_console_system_prompt_editor(), exclusive=False)
-            return
-        if getattr(target, "id", None) == "console-agent-section-subagents":
-            event.stop()
-            self._agent._toggle_console_agent_drilldown_from_subagents_click()
             return
         try:
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)

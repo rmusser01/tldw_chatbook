@@ -43,13 +43,10 @@ reply:
 
 - Status line: `Agent: idle`, or `Agent: running · step N` while working.
 - One `·`-prefixed line per step.
-- One line per sub-agent, prefixed `✓` (done), `●` (running), `⚠` (stuck), or
-  `✗` (error/cancelled). Several of these can read `●` at once — sub-agents
-  the supervisor spawned in the same reply run in parallel, not one at a
-  time; see [Parallel sub-agents](#parallel-sub-agents-the-fleet). **Click a
-  sub-agent line to drill in** — the status line becomes `Sub-agent ·
-  <status> (Back)` with that run's own step lines; the **Back** button
-  returns to the main run.
+- A **Sub-agents** panel appears once the reply has spawned at least one
+  sub-agent — see [The fleet panel](#the-fleet-panel--three-states) below
+  for its three states (collapsed summary, expanded rows, drilled into one
+  child), how to cancel a child, and how its token spend shows up.
 - **View full log** opens the "Full run log — <run id>" window: the complete,
   untruncated record ("what the model actually saw, before the Console's
   display cap trimmed it"). **Close** or **Esc** dismisses it.
@@ -184,6 +181,79 @@ own task concurrently. The Agent rail shows this directly: several
   (fleet off), and anything that isn't a number at all (letters, a blank)
   falls back to the default of `3` (fleet on) — either way the run
   proceeds instead of erroring.
+
+#### The fleet panel — three states
+
+The **Sub-agents** panel inside the Agent rail section has its own header
+(title + chevron), independent of the Agent section's own collapse state —
+it only appears once the reply has spawned at least one sub-agent, and it
+reaches a real terminal status (done/error/stuck/cancelled) for each child
+**while the turn is still running**, not only after the whole reply
+finishes.
+
+1. **Collapsed** (its default state the first time it appears). Just the
+   header: "Sub-agents" plus a right-aligned summary — one status glyph per
+   child, in spawn order (e.g. `●●✓`), then "N working, M done". "Working"
+   means still running; done/error/stuck/cancelled all count toward "done"
+   here.
+2. **Expanded** — click the chevron: one two-line row per child.
+   - Primary line: status glyph, the child's name/task, and — for a child
+     still live in the current process — an elapsed segment (`· 12s`,
+     `· 1m 4s`). A historical/resumed row (a conversation reopened after a
+     restart, or one this process never ran live) shows no elapsed segment;
+     see *Known gaps* below.
+   - Secondary line: the child's last step, result, or error text, dimmed,
+     with the child's measured token spend appended once it finishes — see
+     *Token spend*, below. Both are **transient**: they come from the live
+     fleet, so when the whole turn ends every row falls back to the sparser
+     historical rendering (name and task only). See *Known gaps*.
+3. **Drilled in** — click a specific row: the whole Agent section switches
+   to that one child's own view (`Sub-agent · <status> (Back)` plus its own
+   step lines), and the Sub-agents panel itself is hidden while you're
+   drilled in. **Back** returns to the overview. Each row resolves directly
+   to its own run — clicking never cycles you through other sub-agent runs
+   first.
+
+**Cancel one child.** Focus a still-running row (Tab into the panel, or
+click a row then Tab) and press **Delete** — this cooperatively cancels
+just that child and withdraws (denies) any of its own approval cards still
+pending, the same mechanism **Stop** uses for a whole run; a sibling child
+keeps running, untouched. A row for a finished, errored, or already-
+cancelled child — or any historical/resumed row — doesn't offer this
+gesture at all, since there's nothing left to stop.
+
+**Token spend.** A live child's measured token spend (prompt and
+completion combined) appears on its row once it finishes — but only while
+some part of the turn is still live; see *Known gaps* for what happens to
+the row afterwards. The same figure is folded into the Console cost chip's
+token total — the chip's
+tooltip breaks it out separately as "Sub-agents: N tok (not priced)". It
+never becomes a dollar figure: the measurement is one combined number with
+no input/output split, so there is no honest per-model rate to price it
+at — an unpriced count was chosen over either fabricating a dollar amount
+or discounting the primary transcript's own already-priced total just
+because a fleet ran underneath it.
+
+**Known gaps** (filed, not fixed):
+- Historical/resumed rows never show elapsed time. The timestamps exist in
+  the run database, but the code path that rebuilds a resumed row doesn't
+  read them yet (task-15200). The same task also covers `stuck` and
+  `cancelled` rows not getting their own status color — they still render
+  distinctly by glyph (`⚠`/`✗`), just not by color, so they're
+  distinguishable but not visually called out.
+- Row detail is transient, not durable. Elapsed time, the secondary line
+  and the token count are read from the live fleet, which is discarded the
+  moment the whole turn finishes — so seconds after a reply completes,
+  every row in that run reverts to name-and-task only, in the same session,
+  without a restart. Verified live during PR 2b's own verification pass
+  (task-15200 covers restoring the elapsed time and the secondary line from
+  the run database; the token count cannot be restored that way at all —
+  `agent_runs` has no column for it — so that dimension stays live-only
+  until the schema gains one).
+- There is no "View all" tail, and expanding the panel does not scroll it
+  into view. With a dozen-plus children, or several rail sections open
+  above it, you may need to scroll the rail manually to reach the last
+  rows (task-15201).
 
 ### Skills
 
@@ -334,4 +404,12 @@ once, both appeared in the Agent rail with their own handle ids and
 results, the reply incorporated both, `sqlite3` showed two terminal child
 run rows, and Stop mid-fleet cancelled two live children with zero rows
 left `running`; the rest of this page's content unchanged from the prior
-stamp).*
+stamp). Fleet panel (three states, per-row drill-in and cancel, token
+spend) added @ 41cfc5ca4 — 2026-08-11 (fleet PR2b Task 6: driven live —
+the collapsed summary showed `2 working, 0 done`, expanding gave one
+two-line row per child, a row flipped `● -> ✓` while the turn banner still
+read Running, and clicking the second row drilled straight into that
+child. Two checks NOT confirmed live and reported as such: Delete-to-cancel
+(lost the race against child completion across ~7 attempts; covered by
+passing tests) and a durable token figure on a finished row — which
+surfaced the transience now documented under Known gaps).*
