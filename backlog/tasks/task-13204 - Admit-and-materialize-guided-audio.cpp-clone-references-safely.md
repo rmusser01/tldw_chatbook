@@ -1,9 +1,10 @@
 ---
 id: TASK-13204
 title: Admit and materialize guided audio.cpp clone references safely
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-09 17:39'
+updated_date: '2026-08-11 03:31'
 labels:
   - tts
   - audio-cpp
@@ -38,3 +39,20 @@ Add typed clone capability admission and generation-scoped private reference mat
 - [ ] #7 Raw request bodies and reference paths remain absent from diagnostics/logs; all validation, capability, generation-loss, transport, and cleanup failures are normalized outside the exception graph with stable safe recovery guidance.
 - [ ] #8 Tests cover admission/edit/delete races, incompatible sources/recipes, exact payload shape, lease retention, every terminal cleanup path, stale-directory attacks, and privacy mutation guards.
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Define an explicit recipe-level native-voice/reference combination policy and fail closed on undeclared combinations.
+2. Extend exact character/default profile resolution to read and freeze the canonical private reference under repository generation and profile revision fences before provider work.
+3. Add a lazy POSIX owner-private materializer with opaque operation directories, retained ownership locks, exact cleanup, and proof-based startup orphan cleanup.
+4. Add typed native clone request fields and admit them only against the exact compatible Guided Managed app-owned audio.cpp process generation.
+5. Bind materialization to the existing admitted-operation and response-held adapter lease so every completion, cancellation, replacement, exit, and shutdown path cleans only after the adapter can no longer read it.
+6. Add privacy, source/recipe/process race, terminal cleanup, and mutation-guard tests; update implementation-truth documentation and complete review/verification gates.
+
+ADR required: no new ADR
+
+ADR path: `backlog/decisions/051-private-tts-clone-reference-assets.md`
+
+Reason: ADR-051 already fixes the typed admission, Guided Managed-only local-path authority, private operation materialization, ownership-lock, and definitive-cleanup boundaries implemented by this task. ADR-023 and ADR-028 remain the existing lifecycle and profile-ownership authorities.
+
+Detailed plan: `Docs/superpowers/plans/2026-08-10-task-13204-guided-clone-admission-materialization.md`
