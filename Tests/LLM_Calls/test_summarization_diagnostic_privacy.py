@@ -549,17 +549,27 @@ class RuntimeSentinelCase:
     module: str
     category: str
     canary: str
-    invoke: Callable[[pytest.MonkeyPatch], object]
+    invoke: Callable[[pytest.MonkeyPatch, Path], object]
     assert_contract: Callable[[object], None]
     expected_event: str
 
 
-RUNTIME_SENTINEL_CASES = (
+def _ignore_runtime_tmp_path(
+    invoke: Callable[[pytest.MonkeyPatch], object],
+) -> Callable[[pytest.MonkeyPatch, Path], object]:
+    def wrapped(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> object:
+        del tmp_path
+        return invoke(monkeypatch)
+
+    return wrapped
+
+
+LOCAL_RUNTIME_SENTINEL_CASES = (
     RuntimeSentinelCase(
         "local",
         "input",
         LOCAL_INPUT_CANARY,
-        _invoke_local_input,
+        _ignore_runtime_tmp_path(_invoke_local_input),
         _assert_fixed_summary,
         "Local LLM: Type of data:",
     ),
@@ -567,7 +577,7 @@ RUNTIME_SENTINEL_CASES = (
         "local",
         "prompt",
         LOCAL_PROMPT_CANARY,
-        _invoke_local_prompt,
+        _ignore_runtime_tmp_path(_invoke_local_prompt),
         _assert_fixed_llama_summary,
         "Llama Summarize: Prompt prepared; character_count=",
     ),
@@ -575,7 +585,7 @@ RUNTIME_SENTINEL_CASES = (
         "local",
         "credential",
         LOCAL_CREDENTIAL_CANARY,
-        _invoke_local_credential,
+        _ignore_runtime_tmp_path(_invoke_local_credential),
         _assert_existing_kobold_summary,
         "Kobold: Credential state resolved",
     ),
@@ -583,7 +593,7 @@ RUNTIME_SENTINEL_CASES = (
         "local",
         "path",
         LOCAL_PATH_CANARY,
-        _invoke_local_path,
+        _ignore_runtime_tmp_path(_invoke_local_path),
         _assert_existing_llama_summary,
         "Llama: API endpoint configured",
     ),
@@ -591,7 +601,7 @@ RUNTIME_SENTINEL_CASES = (
         "local",
         "response",
         LOCAL_RESPONSE_CANARY,
-        _invoke_local_response,
+        _ignore_runtime_tmp_path(_invoke_local_response),
         _assert_empty_stream,
         "Local LLM: Failed to decode streamed JSON",
     ),
@@ -599,7 +609,7 @@ RUNTIME_SENTINEL_CASES = (
         "local",
         "exception",
         LOCAL_EXCEPTION_CANARY,
-        _invoke_local_exception,
+        _ignore_runtime_tmp_path(_invoke_local_exception),
         _assert_local_exception_contract,
         "Local LLM: Processing failed; exception_type=RuntimeError",
     ),
@@ -869,58 +879,60 @@ def _assert_general_exception_contract(result: object) -> None:
     )
 
 
-@dataclass(frozen=True)
-class GeneralRuntimeSentinelCase:
-    category: str
-    canary: str
-    invoke: Callable[[pytest.MonkeyPatch, Path], object]
-    assert_contract: Callable[[object], None]
-    expected_event: str
-
-
 GENERAL_RUNTIME_SENTINEL_CASES = (
-    GeneralRuntimeSentinelCase(
+    RuntimeSentinelCase(
+        "general",
         "input",
         GENERAL_INPUT_CANARY,
         _invoke_general_input,
         _assert_general_input_contract,
         "Skipping segment due to missing text key or wrong type",
     ),
-    GeneralRuntimeSentinelCase(
+    RuntimeSentinelCase(
+        "general",
         "prompt",
         GENERAL_PROMPT_CANARY,
         _invoke_general_prompt,
         _assert_general_prompt_contract,
         "OpenAI: Request options prepared",
     ),
-    GeneralRuntimeSentinelCase(
+    RuntimeSentinelCase(
+        "general",
         "credential",
         GENERAL_CREDENTIAL_CANARY,
         _invoke_general_credential,
         _assert_general_credential_contract,
         "Anthropic: Using API key provided as parameter",
     ),
-    GeneralRuntimeSentinelCase(
+    RuntimeSentinelCase(
+        "general",
         "path",
         GENERAL_PATH_CANARY,
         _invoke_general_path,
         _assert_general_path_contract,
         "Input resolved as file path",
     ),
-    GeneralRuntimeSentinelCase(
+    RuntimeSentinelCase(
+        "general",
         "response",
         GENERAL_RESPONSE_CANARY,
         _invoke_general_response,
         _assert_general_response_contract,
         "Summarization completed successfully. Final Length:",
     ),
-    GeneralRuntimeSentinelCase(
+    RuntimeSentinelCase(
+        "general",
         "exception",
         GENERAL_EXCEPTION_CANARY,
         _invoke_general_exception,
         _assert_general_exception_contract,
         "Unexpected error calling summarize_func; step=1 exception_type=RuntimeError",
     ),
+)
+
+RUNTIME_SENTINEL_CASES = (
+    *LOCAL_RUNTIME_SENTINEL_CASES,
+    *GENERAL_RUNTIME_SENTINEL_CASES,
 )
 
 
@@ -2343,11 +2355,12 @@ def test_local_custom_module_has_no_pending_private_sites() -> None:
 )
 def test_runtime_sentinel_hides_private_value(
     case: RuntimeSentinelCase,
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     with _capture_stdlib_and_loguru(caplog) as captured:
-        result = case.invoke(monkeypatch)
+        result = case.invoke(monkeypatch, tmp_path)
         case.assert_contract(result)
 
     assert case.canary not in captured.text
@@ -3675,25 +3688,6 @@ def test_no_pending_general_core_sites() -> None:
         f"general_core has {len(pending)} pending private diagnostics: "
         f"{[site['site_id'] for site in pending]}"
     )
-
-
-@pytest.mark.parametrize(
-    "case",
-    GENERAL_RUNTIME_SENTINEL_CASES,
-    ids=lambda case: f"general-{case.category}",
-)
-def test_general_core_six_category_matrix_hides_private_value(
-    case: GeneralRuntimeSentinelCase,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    with _capture_stdlib_and_loguru(caplog) as captured:
-        result = case.invoke(monkeypatch, tmp_path)
-
-    case.assert_contract(result)
-    assert case.canary not in captured.text
-    assert case.expected_event in captured.text
 
 
 def test_analyze_nested_generator_exception_is_consumed_without_private_diagnostic(
