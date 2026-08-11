@@ -841,15 +841,19 @@ def library_rag_results_body_children(state: LibraryRagPanelState) -> list[Widge
     Returns:
         The widgets to mount directly below the Evidence heading.
     """
-    # Task 8: the coverage note, when there is one, is the very first thing
-    # under the heading -- ahead of the row list. It is prepended to EVERY
-    # branch: `state.coverage_note` used to be non-empty only alongside
-    # `state.results`, but a routing disclosure (RAG-port P0: "this profile
-    # ran keyword-only", "scope forced semantic") survives the zero-row
-    # outcome, and zero rows is exactly when it is most diagnostic -- the
-    # quiet no-match line otherwise reads as a verdict on an index the
-    # search never queried. Branches whose state has nothing to disclose
-    # prepend an empty list, i.e. are unchanged.
+    # Task 8: the coverage note, when there is one, sits ahead of the row
+    # list -- directly under the heading on every branch except the results
+    # branch below, where task-2859's "N results for 'query'." headline
+    # comes first. It is prepended to EVERY branch: `state.coverage_note`
+    # used to be non-empty only alongside `state.results`, but a routing
+    # disclosure (RAG-port P0: "this profile ran keyword-only", "no keyword
+    # leg for the selected sources") survives the zero-row outcome, and zero
+    # rows is exactly when it is most diagnostic -- the quiet no-match line
+    # otherwise reads as a verdict on an index the search never queried.
+    # Branches whose state has nothing to disclose prepend an empty list,
+    # i.e. are unchanged. (The scope divert that used to be the second
+    # example here retired with TASK-15020/B1: a scoped hybrid search now
+    # runs hybrid, so nothing can emit that disclosure.)
     note_children: list[Widget] = list(library_rag_coverage_note_children(state))
     if state.results:
         # task-2859 item 10: "N results for 'query'" headline -- the
