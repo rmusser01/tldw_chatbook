@@ -2079,3 +2079,101 @@ Keep positive wire waits long enough for full-suite scheduling contention while
 leaving negative "nothing arrived" grace windows deliberately short. Verify the
 helper with the same xdist distribution flags used by CI; an isolated serial pass
 does not exercise report transport.
+## A forecast-equals-receipt governance test proves nothing about the backend it does not drive (TASK-14827, 2026-08-10)
+
+**Incident.** The 14820-14826 arc rebuilt the Library ingest forecast so the
+commit line, consent line, tooling fold and Start gate all derive from one
+`IngestForecast`, and pinned it with
+`test_forecast_counts_equal_the_real_receipt_for_a_mixed_folder`: real
+pre-flight, real submit, real DB, forecast counts asserted equal to the actual
+job outcomes file by file. Strong evidence — for the LOCAL backend, the only one
+it drives. In the same review round, TWO server-path divergences were found by
+reading, not by the suite. (1) Local tooling gaps were subtracted from a
+server-bound forecast, so five .mp3 on a machine without the audio extra read
+"0 will import · 5 will fail (need tooling)" for a batch the server would have
+transcribed in full. (2) An unsupported file was forecast "will skip" while
+`build_server_ingest_kwargs` raised and the job landed as `✗ failed`. Both sat
+inside the arc's own governed area, with 1,900 tests green.
+
+**The second trap, which the first fix walked into.** The two backends refuse
+DIFFERENT sets, so "ask the backend" is not a formality. Locally, unsupported
+means `get_type_group(...) == UNSUPPORTED_GROUP`. The server additionally
+refuses everything it has no media type for — raster images, deliberately left
+server-unmapped — while NOT refusing a web page, because the submit path routes
+pages to the clipper before the ingest-jobs mapping is ever consulted. A
+predicate derived from either backend alone is wrong in both directions: reuse
+the local verdict and images are promised as imports; ask
+`server_media_type_for` alone and every server-mode URL import is condemned. The
+fix asks the same functions the submit path asks, in the same order.
+
+**The rule.** When a screen makes a promise about an outcome and more than one
+backend can deliver that outcome, the governance test is per BACKEND, not per
+screen. A second such test is cheap: keep everything real down to the narrowest
+seam that cannot run in a test — here `TLDWAPIClient`, i.e. the network — so the
+real request builder, the real response schemas, the real registry and the real
+reconciler all participate. Bind every call to the stand-in against
+`inspect.signature` of the real client method so the double cannot absorb a
+drifting call site, and state in the test docstring exactly what the stub decides
+(this one accepts everything handed to it, so it proves what the app SENDS and
+what it refuses to send — never what a real server does with a file it received).
+Anything the stub would have to invent is a fixture you must leave out and name:
+this fixture holds no 0-byte file, because the app sends one and only the server
+decides.
+
+---
+
+## An `await event.wait()` on a fire-and-forget task hangs on the task's OWN exception — and the timeout dump names nothing (2026-08-10, TASK-3316)
+
+**Incident.** `Tests/UI/test_screen_navigation.py::test_file_notes_collections_
+source_transition_blocks_mutation_through_recompose` hung forever on dev, so
+pytest-timeout's `thread` method killed the whole pytest process and **every
+test after it in the file never ran** (the task-1466 class). The test drives the
+screen coroutine as a background task and then waits for a signal only that
+coroutine can set:
+
+```python
+source_switch = asyncio.create_task(screen._select_library_rail_row(...))
+await sync_returned.wait()          # unbounded
+```
+
+The coroutine never got there. Its stub `_flush_library_note_save` returned
+`None`, matching the seam's `-> None` signature at the time the test was written
+(`eb036a6a1`, 2026-07-27). PR #1439 (`6b4ccf475`, on dev 2026-08-08) retyped the
+seam to `NoteFlushOutcome` and made the caller read `note_flush.kind` — so the
+awaited path died on `AttributeError: 'NoneType' object has no attribute 'kind'`
+one line in. A `create_task` result nobody retrieves swallows that exception
+whole, and the signal became unreachable. **This predates the media-ingest arcs:**
+running the test from `git archive` copies of both sides of that merge is
+decisive — `86e511781` (its first parent) *1 passed in 3.64s*, `6b4ccf475`
+*hang → process killed*.
+
+**The trap that cost the most time.** task-1466's advice, "the timeout stack dump
+names it", does NOT hold here. The dump showed only `MainThread` idle in
+`selectors.select` under `run_forever` — the test coroutine is *suspended at an
+await*, so it has no frames on any thread stack. The dump is silent about which
+`await` and silent about the exception. The only thing that talks is bounding the
+wait and asking the task: `await asyncio.wait({waiter, task}, timeout=...)`, then
+`task.result()`. That turned a 300-second process-killing silence into
+`AttributeError` in 0.9s.
+
+**The rule.** A test that awaits a condition a *background task* must produce has
+two failure modes fused into one hang: the task can return early, and the task
+can raise. Bound the wait at its source and settle both — if the task is done and
+the signal is not set, re-raise its exception (or report the silent early return)
+instead of waiting. The bound is not belt-and-braces; it is the only thing that
+converts "the run died and you do not know why" into a named failure. Mutation
+proof for this one: restoring the stale `return None` with the bound in place
+fails in 2.2s naming `AttributeError`, where before it hung.
+
+**Two corollaries, both paid for here.**
+1. *A monkeypatched stub is a copy of a contract with no type checker behind it.*
+   Nothing warns when production retypes the seam; the stub keeps the old shape
+   and fails at the call site, which may be somewhere nothing is watching. When
+   you change a seam's return type, grep the tests for stubs of that name — the
+   same PR left `test_screen_navigation.py` with three of them.
+2. *You cannot know a file's pass count while it contains a hang.* Bounding this
+   one test took the file from "died at test 12" to `126 passed` — and revealed
+   two more hard failures (`_library_note_dirty` became a read-only property; the
+   prompt editor's guarded exit now needs a running App) that had been invisible
+   for days behind the hang, plus one load-sensitive flake. "That file is green"
+   was never true; it was never finishing.

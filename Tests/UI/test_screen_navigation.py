@@ -1105,6 +1105,95 @@ async def test_navigation_keypress_during_splash_is_safely_ignored():
 from Tests.UI.app_factory import _build_test_app  # noqa: F401,E402
 
 
+# task-3316: several tests below drive a screen/app coroutine as a background
+# `asyncio.create_task` and then wait on an `asyncio.Event` that only that
+# coroutine can set. A bare `await event.wait()` is UNBOUNDED, so any product
+# change that makes the coroutine return early -- or raise, which a
+# fire-and-forget task swallows silently -- turns the test into a permanent
+# hang. Under this repo's `timeout_method = thread` a hung test cannot be
+# cancelled: pytest-timeout dumps stacks and kills the ENTIRE pytest process,
+# so every test after it in the file is silently never run (the task-1466
+# lesson class). Bound the wait at its source and surface the background
+# task's real failure instead.
+_BACKGROUND_SIGNAL_TIMEOUT_SECONDS = 10.0
+
+
+async def _wait_for_background_signal(
+    signal: asyncio.Event,
+    task: asyncio.Task,
+    *,
+    what: str,
+    timeout: float = _BACKGROUND_SIGNAL_TIMEOUT_SECONDS,
+) -> None:
+    """Await ``signal``, bounded, reporting why ``task`` never set it.
+
+    Returns as soon as ``signal`` is set. If ``task`` finishes first the
+    signal can never arrive, so its exception is re-raised (or its silent
+    early return reported) rather than waited on forever.
+
+    Args:
+        signal: Event the background task is expected to set.
+        task: The background task that owns the signal.
+        what: Human-readable description used in failure messages.
+        timeout: Seconds to wait before failing the test.
+
+    Raises:
+        AssertionError: If the task returned without signalling, or neither
+            the signal nor the task settled within ``timeout``.
+    """
+    waiter = asyncio.ensure_future(signal.wait())
+    try:
+        await asyncio.wait(
+            {waiter, task},
+            timeout=timeout,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+    finally:
+        if not waiter.done():
+            waiter.cancel()
+    if signal.is_set():
+        return
+    if task.done():
+        # Re-raises whatever the fire-and-forget task swallowed; a task that
+        # raised or returned early can never set the signal.
+        task.result()
+        raise AssertionError(
+            f"{what} finished without signalling -- the awaited path returned "
+            "early instead of reaching the signalling step"
+        )
+    raise AssertionError(
+        f"timed out after {timeout}s waiting for {what}; the task is still "
+        "running and the signal was never set"
+    )
+
+
+async def _await_background_task(
+    task: asyncio.Task,
+    *,
+    what: str,
+    timeout: float = _BACKGROUND_SIGNAL_TIMEOUT_SECONDS,
+):
+    """Await a background task with a bound so a stall fails instead of hangs.
+
+    Args:
+        task: The background task to await.
+        what: Human-readable description used in the failure message.
+        timeout: Seconds to wait before cancelling and failing.
+
+    Returns:
+        The task's result.
+
+    Raises:
+        AssertionError: If the task does not finish within ``timeout``.
+    """
+    try:
+        return await asyncio.wait_for(task, timeout=timeout)
+    except asyncio.TimeoutError:
+        raise AssertionError(
+            f"timed out after {timeout}s awaiting {what}"
+        ) from None
+
+
 def test_local_watchlists_service_db_factory_resolves_the_same_path_as_the_eager_subscriptions_db():
     """task-1631: `_build_test_app`'s `get_subscriptions_db_path` patch must
     stay in effect for the WHOLE test, not just `TldwCli.__init__`.
@@ -1433,11 +1522,13 @@ async def test_file_notes_mutation_admitted_during_flush_vetoes_navigation(
     navigation = asyncio.create_task(
         app.handle_screen_navigation(NavigateToScreen("chat"))
     )
-    await flush_started.wait()
+    await _wait_for_background_signal(
+        flush_started, navigation, what="the outgoing screen's flush"
+    )
     mutation = owner.try_acquire_mutation(binding)
     assert mutation is not None
     finish_flush.set()
-    await navigation
+    await _await_background_task(navigation, what="the vetoed navigation")
 
     assert switched == []
     assert app.screen is outgoing
@@ -1541,6 +1632,10 @@ async def test_file_notes_collections_source_transition_blocks_mutation_through_
     tmp_path,
 ):
     """Files-to-Collections keeps source admission through actual recompose."""
+    from tldw_chatbook.Library.library_notes_session import (
+        NoteFlushOutcome,
+        NoteFlushOutcomeKind,
+    )
     from tldw_chatbook.Library.library_shell_state import (
         LIBRARY_ROW_BROWSE_COLLECTIONS,
         LIBRARY_ROW_BROWSE_NOTES,
@@ -1574,7 +1669,12 @@ async def test_file_notes_collections_source_transition_blocks_mutation_through_
         sync_returned.set()
 
     async def flush_note():
-        return None
+        # task-3316: this stub MUST honour ``_flush_library_note_save``'s
+        # contract. It was authored against the old ``-> None`` signature and
+        # kept returning None after PR #1439 retyped the seam to
+        # NoteFlushOutcome, so the awaited path died on
+        # ``NoneType.kind`` inside the fire-and-forget task below.
+        return NoteFlushOutcome(NoteFlushOutcomeKind.PERMITTED)
 
     async def flush_editor():
         return True
@@ -1600,7 +1700,9 @@ async def test_file_notes_collections_source_transition_blocks_mutation_through_
     source_switch = asyncio.create_task(
         screen._select_library_rail_row(LIBRARY_ROW_BROWSE_COLLECTIONS)
     )
-    await sync_returned.wait()
+    await _wait_for_background_signal(
+        sync_returned, source_switch, what="the Collections snapshot refresh"
+    )
     await asyncio.sleep(0)
 
     assert recompose_started.is_set()
@@ -1610,7 +1712,7 @@ async def test_file_notes_collections_source_transition_blocks_mutation_through_
     assert admission.reason == "transition_active"
 
     finish_recompose.set()
-    await source_switch
+    await _await_background_task(source_switch, what="the Collections source switch")
     after_recompose = owner.try_acquire_mutation(binding)
     assert after_recompose is not None
     after_recompose.release()
@@ -1655,11 +1757,13 @@ async def test_file_notes_mutation_admitted_during_source_flush_vetoes_switch(
     source_switch = asyncio.create_task(
         screen._show_library_database_notes(EventProbe())
     )
-    await flush_started.wait()
+    await _wait_for_background_signal(
+        flush_started, source_switch, what="the File Notes workspace flush"
+    )
     mutation = owner.try_acquire_mutation(binding)
     assert mutation is not None
     finish_flush.set()
-    await source_switch
+    await _await_background_task(source_switch, what="the vetoed source switch")
 
     assert screen._library_notes_source == "files"
     recompose.assert_not_awaited()
@@ -2447,6 +2551,10 @@ async def test_action_library_note_editor_back_honors_dirty_guard():
     """task-2856 AC2: Escape from the note editor reuses the SAME guarded
     exit as the "‹ Back to list" button -- a dirty edit that survives the
     flush vetoes the exit exactly like it vetoes the button."""
+    from tldw_chatbook.Library.library_notes_session import (
+        NoteFlushOutcome,
+        NoteFlushOutcomeKind,
+    )
     from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_NOTES
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
@@ -2455,10 +2563,13 @@ async def test_action_library_note_editor_back_honors_dirty_guard():
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
     screen._library_notes_source = "database"
     screen._library_notes_view = "editor"
-    screen._library_note_dirty = True
 
+    # task-3316: "still dirty after the flush" is expressed by the flush
+    # OUTCOME now -- ``_library_note_dirty`` became a read-only property over
+    # the session coordinator's snapshot, so the exit gate reads
+    # ``NoteFlushOutcome.kind`` rather than a screen flag.
     async def flush_still_dirty():
-        return None  # leaves _library_note_dirty True, unlike a real save
+        return NoteFlushOutcome(NoteFlushOutcomeKind.BLOCKED)
 
     screen._flush_library_note_save = flush_still_dirty
     refresh_calls = []
@@ -2470,18 +2581,18 @@ async def test_action_library_note_editor_back_honors_dirty_guard():
     assert refresh_calls == []
 
     async def flush_clean():
-        screen._library_note_dirty = False
+        return NoteFlushOutcome(NoteFlushOutcomeKind.PERMITTED)
 
     screen._flush_library_note_save = flush_clean
     screen._refresh_local_source_snapshot = lambda: None
     focus_calls = []
-    screen.call_after_refresh = lambda callback: focus_calls.append(callback)
+    screen.call_after_refresh = lambda callback, *args: focus_calls.append(callback)
 
     await screen.action_library_note_editor_back()
 
     assert screen._library_notes_view == "list"
     assert refresh_calls == [True]
-    assert focus_calls == [screen._focus_library_list_entry]
+    assert focus_calls == [screen._restore_library_notes_focus_identity]
 
 
 @pytest.mark.asyncio
@@ -2516,13 +2627,24 @@ async def test_action_library_prompt_editor_back_honors_dirty_guard():
         lambda: setattr(screen, "_library_prompts_view", "list")
     )
     screen._refresh_local_source_snapshot = lambda: None
+    # task-3316: the guarded exit now re-requests the Prompts page through
+    # the browse controller, which needs a running App. This screen is
+    # deliberately unmounted, so stand in for that request -- the exit's
+    # veto/reset/focus contract is what this test asserts.
+    browse_requests = []
+    screen._request_library_prompts_browse = (
+        lambda scope, **kwargs: browse_requests.append(scope)
+    )
     focus_calls = []
-    screen.call_after_refresh = lambda callback: focus_calls.append(callback)
+    screen.call_after_refresh = lambda callback, *args: focus_calls.append(callback)
 
     await screen.action_library_prompt_editor_back()
 
     assert screen._library_prompts_view == "list"
-    assert refresh_calls == [True]
+    # The exit's redraw is now carried by the prompts-page refetch it
+    # requests (whose reply recomposes), not by a direct ``refresh`` call.
+    assert len(browse_requests) == 1, "the exit must refetch the prompts page"
+    assert refresh_calls == []
     assert focus_calls == [screen._focus_library_list_entry]
 
 

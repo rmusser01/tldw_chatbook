@@ -3683,3 +3683,171 @@ def test_a_chain_entry_that_only_restates_the_summary_is_still_dropped():
         error=summary,
     )
     assert not [line for line in lines if line.startswith("Underlying:")], lines
+
+
+# ===========================================================================
+# task-14827: the SERVER path refuses a different set than the LOCAL one
+# ===========================================================================
+
+
+def _mixed_server_preflight() -> PreflightResult:
+    """One file per fate on the SERVER path.
+
+    ``notes.txt`` maps to the server's ``document`` type; ``diagram.png``
+    has no server media type at all (task-3307 deliberately left images
+    server-unmapped); ``weird.xyz`` is unclassifiable anywhere.
+    """
+    return PreflightResult(
+        type_groups={
+            "generic": ["/tmp/mixed/notes.txt"],
+            "image": ["/tmp/mixed/diagram.png"],
+            "unsupported": ["/tmp/mixed/weird.xyz"],
+        },
+        warnings=[],
+        errors=[],
+        total_size=3 * 128,
+        truncated=False,
+        total_files=3,
+    )
+
+
+def test_server_forecast_counts_a_refused_file_as_a_failure_not_a_skip():
+    """(task-14827 AC#1) ``build_server_ingest_kwargs`` raises
+    ``ServerIngestUnsupported`` for both of these, and
+    ``_submit_server_ingest_job`` turns that into an immediately FAILED,
+    permanent row -- so forecasting them as "will skip" contradicted the
+    receipt the same way task-14820 existed to stop."""
+    from tldw_chatbook.Library.library_ingest_state import build_ingest_forecast
+
+    forecast = build_ingest_forecast(
+        _mixed_server_preflight(), targets_server=True
+    )
+    assert forecast is not None
+    assert forecast.will_skip == 0, (
+        "the server path skips nothing -- every source it cannot map is "
+        "failed with a reason"
+    )
+    assert forecast.will_fail_refused == 2
+    assert forecast.will_fail == 2
+    assert forecast.will_import == 1
+
+
+def test_server_forecast_line_says_the_server_refused_them_not_that_nothing_can():
+    """(task-14827 AC#1) A file the SERVER will not take is not a file
+    nothing can read: ``diagram.png`` imports fine locally with an OCR
+    backend. The copy must name the backend that is refusing."""
+    from tldw_chatbook.Library.library_ingest_state import (
+        build_ingest_forecast,
+        forecast_summary_line,
+    )
+
+    line = forecast_summary_line(
+        build_ingest_forecast(_mixed_server_preflight(), targets_server=True)
+    )
+    assert line == (
+        "1 will be sent to the server · 2 will fail (unsupported by the "
+        "server) · server tooling isn't checked from here"
+    ), line
+    assert "will skip" not in line, line
+
+
+def test_local_forecast_still_skips_what_only_the_server_refuses():
+    """Guard: the two backends refuse DIFFERENT sets, so the local
+    forecast must not inherit the server's verdict. Locally the image is
+    an import candidate and only the unrecognised extension is skipped."""
+    from tldw_chatbook.Library.library_ingest_state import (
+        build_ingest_forecast,
+        forecast_summary_line,
+    )
+
+    forecast = build_ingest_forecast(_mixed_server_preflight())
+    assert forecast is not None
+    assert (forecast.will_import, forecast.will_skip) == (2, 1)
+    assert forecast.will_fail_refused == 0
+    assert forecast_summary_line(forecast) == "2 will import · 1 will skip"
+
+
+def test_server_forecast_counts_a_page_url_as_sent_because_it_goes_to_the_clipper():
+    """A page has no ingest-jobs media type, but ``submit_library_ingest_job``
+    routes it to the web clipper before ``build_server_ingest_kwargs`` is
+    ever asked -- so it is sent, not refused. A forecast that consulted
+    ``server_media_type_for`` alone would condemn every server-mode URL
+    import."""
+    from tldw_chatbook.Library.library_ingest_state import build_ingest_forecast
+
+    preflight = PreflightResult(
+        type_groups={"web": ["https://example.com/post"]},
+        warnings=[],
+        errors=[],
+        total_size=0,
+        truncated=False,
+        total_files=1,
+        source_is_url=True,
+    )
+    forecast = build_ingest_forecast(preflight, targets_server=True)
+    assert forecast is not None
+    assert (forecast.will_import, forecast.will_fail_refused) == (1, 0)
+
+
+def test_server_mode_names_refused_files_as_failing_not_skipped():
+    """(task-14827 AC#1) The named-files line is part of the forecast the
+    user reads. "will be skipped" is the local pipeline's promise; the
+    server records a failure row for the same file."""
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(
+            path="/tmp/mixed", preflight=_mixed_server_preflight()
+        ),
+        runtime_source="server",
+        ingest_backend="server",
+        server_ingest_available=True,
+    )
+    assert state.ingest_backend == "server"
+    assert "skipped" not in state.unsupported_line, state.unsupported_line
+    assert state.unsupported_line == (
+        "1 unsupported file will fail: weird.xyz."
+    ), state.unsupported_line
+
+
+def test_local_mode_keeps_the_skipped_wording_for_unsupported_files():
+    """Guard for the local half of the same line (task-2220 owner ruling:
+    skipped, not "recorded as failures" -- the pipeline never attempts
+    these)."""
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(
+            path="/tmp/mixed", preflight=_mixed_server_preflight()
+        ),
+    )
+    assert state.unsupported_line == (
+        "1 unsupported file will be skipped: weird.xyz."
+    ), state.unsupported_line
+
+
+def test_server_mode_stops_presenting_local_tooling_gaps_as_blockers():
+    """(task-14827 AC#3) The tooling wall, its ⚠ summary and its "Copy
+    install command" button all describe THIS machine's inventory. During
+    a server-targeted import that machine does no work, so installing
+    those extras changes nothing about the run -- the wall becomes one
+    quiet line that says so."""
+    state = _server_state()
+    assert state.warning_lines == [], state.warning_lines
+    assert state.warning_commands == (), state.warning_commands
+    assert state.advisory_lines == (
+        "1 local component isn't installed — that affects imports on this "
+        "machine only; this one runs on the server.",
+    ), state.advisory_lines
+
+
+def test_local_mode_keeps_the_tooling_wall():
+    """Guard: the same selection on the local backend still gets the full
+    warning wall and its install command."""
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(
+            path="/tmp/podcasts", preflight=_audio_preflight()
+        ),
+    )
+    assert state.warning_lines
+    assert state.warning_commands == ('pip install -e ".[audio]"',)
+    assert state.advisory_lines == ()

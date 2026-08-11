@@ -425,6 +425,63 @@ async def _wait_for_display(screen, pilot, selector, *, attempts=120):
     )
 
 
+def _widget_text(widget) -> str:
+    """Render a widget's visible text for a poll loop's failure message."""
+    for attribute in ("label", "renderable"):
+        if hasattr(widget, attribute):
+            return str(getattr(widget, attribute))
+    return repr(widget)
+
+
+async def _wait_for_widget_state(
+    screen,
+    pilot,
+    selector,
+    predicate,
+    *,
+    what,
+    attempts=150,
+    interval=0.02,
+    describe=_widget_text,
+):
+    """Poll ``selector`` until ``predicate(widget)`` holds, tolerating gaps.
+
+    (task-14800) When the change a poll loop waits for is DELIVERED BY a
+    recompose, the node it reads is transiently unmounted for one or more
+    ticks. A bare ``query_one`` in the loop body raises ``NoMatches`` in that
+    window instead of retrying, so the test dies on the gap -- naming the
+    wrong defect -- long before its own attempt budget is reached. Query
+    tolerantly here, keep the budget as the ONLY failure signal, and report
+    the last value actually observed so a real stall still says what it saw.
+
+    Args:
+        screen: Screen to query.
+        pilot: Textual pilot used to pause between attempts.
+        selector: CSS selector for the polled widget.
+        predicate: Called with the matched widget; truthy ends the wait.
+        what: Failure sentence used when the budget runs out.
+        attempts: Maximum number of polls.
+        interval: Seconds to pause between polls.
+        describe: Renders the observed widget for the failure message.
+
+    Returns:
+        The matched widget once ``predicate`` holds.
+
+    Raises:
+        AssertionError: If the predicate never holds within the budget.
+    """
+    last_observed = "<no node matched the selector>"
+    for _ in range(attempts):
+        matches = screen.query(selector)
+        if matches:
+            widget = matches.first()
+            last_observed = describe(widget)
+            if predicate(widget):
+                return widget
+        await pilot.pause(interval)
+    raise AssertionError(f"{what} (last observed: {last_observed!r})")
+
+
 async def _wait_for_condition(
     pilot, predicate, *, timeout=15.0, message, interval=0.02
 ) -> None:
@@ -8893,13 +8950,14 @@ async def test_library_shell_note_autosave_fires_after_debounce(monkeypatch):
 
         assert service.save_calls[-1]["content"] == "alpha budget line, autosaved"
 
-        status = ""
-        for _ in range(150):
-            status = str(screen.query_one("#library-note-status").renderable)
-            if "Saved" in status:
-                break
-            await pilot.pause(0.02)
-        assert "Saved" in status
+        status_widget = await _wait_for_widget_state(
+            screen,
+            pilot,
+            "#library-note-status",
+            lambda widget: "Saved" in str(widget.renderable),
+            what="Autosave never reported Saved on the note status line",
+        )
+        assert "Saved" in str(status_widget.renderable)
 
 
 @pytest.mark.asyncio
@@ -15359,15 +15417,20 @@ async def test_library_shell_ingest_canvas_clear_finished_empties_done_and_faile
         # (task-2015) Clearing now takes an arming press plus a confirming
         # press -- one accidental press must not destroy the receipts. Poll
         # for the armed label before the second press: the arm recompose is
-        # async (task-699 state-then-DOM lesson).
+        # async (task-699 state-then-DOM lesson). (task-14800) The button is
+        # a child of ``LibraryIngestQueuePanel``, which every job tick
+        # recomposes, so it is transiently unmounted mid-poll -- query
+        # tolerantly and let the budget be the failure signal.
         screen.query_one("#library-ingest-clear-finished", Button).press()
-        for _ in range(_INGEST_POLL_ATTEMPTS):
-            button = screen.query_one("#library-ingest-clear-finished", Button)
-            if "again" in str(button.label).lower():
-                break
-            await pilot.pause(_INGEST_POLL_INTERVAL)
-        else:
-            raise AssertionError("first press never armed the button")
+        await _wait_for_widget_state(
+            screen,
+            pilot,
+            "#library-ingest-clear-finished",
+            lambda widget: "again" in str(widget.label).lower(),
+            what="first press never armed the button",
+            attempts=_INGEST_POLL_ATTEMPTS,
+            interval=_INGEST_POLL_INTERVAL,
+        )
         # (task-2160) Step past the double-click dead zone -- this
         # is a deliberate second press, not the same gesture.
         screen._library_ingest_clear_finished_armed_at -= 1.0
@@ -18122,14 +18185,18 @@ async def test_library_ingest_clear_finished_requires_second_press(tmp_path):
         screen.query_one("#library-ingest-clear-finished", Button).press()
         # Poll for the armed label -- the arm's context-preserving recompose
         # is async, and a single pause under full-suite load is not enough
-        # (the task-699 state-then-DOM lesson).
-        for _ in range(_INGEST_POLL_ATTEMPTS):
-            button = screen.query_one("#library-ingest-clear-finished", Button)
-            if "again" in str(button.label).lower():
-                break
-            await pilot.pause(_INGEST_POLL_INTERVAL)
-        else:
-            raise AssertionError("first press never armed the button")
+        # (the task-699 state-then-DOM lesson). (task-14800) Tolerate the
+        # recompose gap: the queue panel that owns this button recomposes on
+        # every job tick, so a bare query_one here can hit an empty window.
+        await _wait_for_widget_state(
+            screen,
+            pilot,
+            "#library-ingest-clear-finished",
+            lambda widget: "again" in str(widget.label).lower(),
+            what="first press never armed the button",
+            attempts=_INGEST_POLL_ATTEMPTS,
+            interval=_INGEST_POLL_INTERVAL,
+        )
         assert harness.library_ingest_jobs.counts()["done"] == 1, (
             "first press must arm, not clear"
         )
