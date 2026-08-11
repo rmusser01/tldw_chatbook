@@ -22,7 +22,8 @@ A host must provide, beyond the controls themselves:
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, cast
 from uuid import uuid4
 
 from loguru import logger
@@ -32,7 +33,11 @@ from textual.widgets import Button, Input, RichLog, Select, Switch, TextArea
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSPlaygroundGenerateEvent,
 )
-from tldw_chatbook.TTS import STTSPlaygroundRequest
+from tldw_chatbook.TTS import (
+    STTSPlaygroundProfilePreview,
+    STTSPlaygroundRequest,
+    TTSPlaygroundSelectionPreset,
+)
 from tldw_chatbook.TTS.adapter_types import TTSRegistryClosedError
 from tldw_chatbook.TTS.effective_settings import (
     TTS_REQUEST_OPTION_KEYS,
@@ -67,6 +72,56 @@ class SpeechSynthesisMixin:
         self._provider_ids: frozenset[str] = frozenset()
         #: The in-flight generation, or None when idle.
         self._generation_operation_id: Any = None
+
+    def _profile_preview_for_request(self) -> STTSPlaygroundProfilePreview | None:
+        """Project only bounded identity for a reference-bearing preview."""
+
+        preset = self._profile_preset
+        if type(preset) is not TTSPlaygroundSelectionPreset:
+            return None
+        if (
+            preset.profile_id is None
+            or preset.repository_generation is None
+            or preset.profile_revision is None
+        ):
+            return None
+        return STTSPlaygroundProfilePreview(
+            profile_id=preset.profile_id,
+            repository_generation=preset.repository_generation,
+            profile_revision=preset.profile_revision,
+        )
+
+    def _build_playground_request(
+        self,
+        *,
+        operation_id: str,
+        provider: str,
+        model: str,
+        text: str,
+        voice_id: str | None,
+        response_format: str,
+        speed: float,
+        options: Mapping[str, Any],
+        studio_draft: TTSStudioDraftSelection | None,
+        studio_preferences: StudioTTSPreferencesSnapshot | None,
+    ) -> STTSPlaygroundRequest:
+        """Build one immutable request without exposing profile reference data."""
+
+        return STTSPlaygroundRequest(
+            operation_id=operation_id,
+            provider_id=provider,
+            model_id=model,
+            text=text,
+            voice_id=voice_id,
+            response_format=response_format,
+            speed=speed,
+            options=options,
+            studio_draft=studio_draft,
+            studio_preferences=(
+                studio_preferences if studio_draft is not None else None
+            ),
+            profile_preview=self._profile_preview_for_request(),
+        )
 
     def _effective_generation_selection(self) -> tuple[object, object]:
         """The (provider_id, model_id) pair the readiness gate should judge.
@@ -490,6 +545,10 @@ class SpeechSynthesisMixin:
         studio_preferences = getattr(self, "studio_preferences", None)
         studio_draft = None
         if type(studio_preferences) is StudioTTSPreferencesSnapshot:
+            canonical_studio_preferences = cast(
+                StudioTTSPreferencesSnapshot,
+                studio_preferences,
+            )
             allowed_options = TTS_REQUEST_OPTION_KEYS[provider]
             studio_options = {
                 key: value
@@ -507,7 +566,7 @@ class SpeechSynthesisMixin:
                     speed=speed,
                     provider_options=studio_options,
                 ),
-                base_revision=studio_preferences.revision,
+                base_revision=canonical_studio_preferences.revision,
                 preview=bool(getattr(self, "_profile_preset", None)),
             )
 
@@ -518,19 +577,17 @@ class SpeechSynthesisMixin:
         except NoMatches:
             pass
 
-        request = STTSPlaygroundRequest(
+        request = self._build_playground_request(
             operation_id=str(uuid4()),
-            provider_id=provider,
-            model_id=model,
+            provider=provider,
+            model=model,
             text=text,
             voice_id=voice_id,
             response_format=format,
             speed=speed,
             options=extra_params,
             studio_draft=studio_draft,
-            studio_preferences=(
-                studio_preferences if studio_draft is not None else None
-            ),
+            studio_preferences=studio_preferences,
         )
         self._generation_operation_id = request.operation_id
         self._profile_save_suppressed = True

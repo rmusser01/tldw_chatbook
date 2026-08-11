@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Dict, NamedTuple, Optional
+from uuid import UUID
 
 from loguru import logger
 from rich.markup import escape
@@ -25,6 +26,7 @@ from tldw_chatbook.TTS import (
     OpenAISpeechRequest,
     STTSGeneratedAudio,
     STTSPlaygroundRequest,
+    TTSCloneReference,
     TTSPreferencesSnapshot,
     TTSRequest,
     TTSRequestedSelectionSnapshot,
@@ -981,11 +983,35 @@ class STTSEventHandler:
         response = None
         effective = None
         primary_error: BaseException | None = None
+        profile_reference_resolver = None
+        if snapshot.profile_preview is not None:
+
+            async def resolve_profile_reference(
+                profile_id: UUID,
+                repository_generation: int,
+                profile_revision: int,
+            ) -> TTSCloneReference:
+                loader = getattr(self.app, "_ensure_tts_profile_service", None)
+                if not callable(loader):
+                    raise RuntimeError("TTS profile service is unavailable")
+                profile_service = await loader()
+                if profile_service is None:
+                    raise RuntimeError("TTS profile service is unavailable")
+                return await profile_service.get_reference(
+                    profile_id,
+                    expected_generation=repository_generation,
+                    expected_revision=profile_revision,
+                )
+
+            profile_reference_resolver = resolve_profile_reference
         try:
             response, effective = await self._stts_service.synthesize_effective(
                 text=snapshot.text,
                 studio_draft=snapshot.studio_draft,
                 studio_preferences=snapshot.studio_preferences,
+                clone_audition=snapshot.clone_audition,
+                profile_preview=snapshot.profile_preview,
+                profile_reference_resolver=profile_reference_resolver,
                 progress_sink=progress_sink,
             )
             chunks = [chunk async for chunk in response.byte_stream]

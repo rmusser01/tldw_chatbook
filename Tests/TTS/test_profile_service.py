@@ -4599,6 +4599,61 @@ def test_preview_preset_copies_only_persisted_selection_and_availability() -> No
     assert not hasattr(tts_service, "synthesis_calls")
 
 
+def test_reference_profile_preview_carries_only_exact_repository_identity() -> None:
+    service, repository, tts_service = _service()
+    reference = _reference()
+    loaded = LoadedTTSProfile(
+        repository_generation=repository.generation,
+        profile=_profile(reference=reference.summary, revision=4),
+    )
+    availability = TTSProfileAvailability(
+        profile_id=loaded.profile.profile_id,
+        state="available",
+        recovery_action="none",
+    )
+
+    preset = service.preview_preset(loaded, availability)
+
+    assert preset.profile_id == loaded.profile.profile_id
+    assert preset.repository_generation == loaded.repository_generation
+    assert preset.profile_revision == loaded.profile.revision
+    assert not hasattr(preset, "reference")
+    assert not hasattr(preset, "wav_bytes")
+    assert not hasattr(preset, "reference_text")
+    assert not hasattr(preset, "source_path")
+    rendered = repr(preset)
+    assert reference.reference_text not in rendered
+    assert reference.sha256 not in rendered
+    assert reference.wav_bytes.decode() not in rendered
+    assert repository.calls == []
+    assert tts_service.capability_calls == []
+
+
+def test_reference_preview_identity_is_all_or_none_and_exactly_typed() -> None:
+    values: dict[str, object] = {
+        "provider_id": "audio_cpp",
+        "model_id": "model-a",
+        "voice_id": None,
+        "response_format": "wav",
+        "speed": 1.0,
+        "options": {},
+        "availability": "available",
+    }
+
+    with pytest.raises(ValueError, match="preview identity"):
+        TTSPlaygroundSelectionPreset(
+            **values,  # type: ignore[arg-type]
+            profile_id=_PROFILE_ID,
+        )
+    with pytest.raises(TypeError, match="repository_generation"):
+        TTSPlaygroundSelectionPreset(
+            **values,  # type: ignore[arg-type]
+            profile_id=_PROFILE_ID,
+            repository_generation=True,  # type: ignore[arg-type]
+            profile_revision=1,
+        )
+
+
 def test_preview_preset_forces_unsupported_profile_unavailable_before_enrichment() -> (
     None
 ):

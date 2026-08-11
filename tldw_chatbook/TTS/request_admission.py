@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal, Protocol, TypeAlias, cast
 from uuid import UUID
 
 from tldw_chatbook.TTS._async_lifecycle import join_retained_task
@@ -35,9 +35,16 @@ from tldw_chatbook.TTS.legacy_bridge import (
     openai_internal_model_id,
     resolve_legacy_route,
 )
-from tldw_chatbook.TTS.playground_types import TTSRequestedSelectionSnapshot
+from tldw_chatbook.TTS.playground_types import (
+    STTSPlaygroundCloneSnapshot,
+    STTSPlaygroundProfilePreview,
+    TTSRequestedSelectionSnapshot,
+)
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
-from tldw_chatbook.TTS.profile_reference_types import TTSCloneReference
+from tldw_chatbook.TTS.profile_reference_types import (
+    CanonicalTTSCloneReference,
+    TTSCloneReference,
+)
 from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferencesSnapshot
 
 if TYPE_CHECKING:
@@ -64,6 +71,36 @@ class _ResolvedTTSCloneExecution:
 
     def __repr__(self) -> str:
         return "_ResolvedTTSCloneExecution(<private>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _ResolvedTransientTTSCloneExecution:
+    """Exact transient canonical authority without fabricated profile identity."""
+
+    reference: CanonicalTTSCloneReference
+
+    def __post_init__(self) -> None:
+        if type(self.reference) is not CanonicalTTSCloneReference:
+            raise TypeError("Transient clone reference is invalid")
+
+    def __repr__(self) -> str:
+        return "_ResolvedTransientTTSCloneExecution(<private>)"
+
+
+_ResolvedTTSCloneExecutionAuthority: TypeAlias = (
+    _ResolvedTTSCloneExecution | _ResolvedTransientTTSCloneExecution
+)
+
+
+class TTSProfileReferenceResolver(Protocol):
+    """Resolve one exact profile identity without exposing it to the UI."""
+
+    def __call__(
+        self,
+        profile_id: UUID,
+        repository_generation: int,
+        profile_revision: int,
+    ) -> Awaitable[TTSCloneReference]: ...
 
 
 class _WriterPreferredGate:
@@ -196,6 +233,9 @@ class TTSRequestAdmissionCoordinator:
         default_profile: TTSDefaultProfileSelection | None = None,
         studio_draft: TTSStudioDraftSelection | None = None,
         studio_preferences: StudioTTSPreferencesSnapshot | None = None,
+        clone_audition: STTSPlaygroundCloneSnapshot | None = None,
+        profile_preview: STTSPlaygroundProfilePreview | None = None,
+        profile_reference_resolver: TTSProfileReferenceResolver | None = None,
         progress_sink: ProgressSink | None = None,
     ) -> tuple[TTSAudioResponse, TTSEffectiveSelectionSnapshot]:
         """Resolve one owner-coherent snapshot, admit it, and synthesize."""
@@ -219,6 +259,22 @@ class TTSRequestAdmissionCoordinator:
             type(studio_preferences) is not StudioTTSPreferencesSnapshot
         ):
             raise TypeError("Saved Studio TTS preferences are invalid")
+        if clone_audition is not None and (
+            type(clone_audition) is not STTSPlaygroundCloneSnapshot
+        ):
+            raise TypeError("Clone audition is invalid")
+        if profile_preview is not None and (
+            type(profile_preview) is not STTSPlaygroundProfilePreview
+        ):
+            raise TypeError("Profile preview is invalid")
+        if (profile_preview is None) is not (profile_reference_resolver is None):
+            raise TypeError("Profile preview requires one private reference resolver")
+        if profile_reference_resolver is not None and not callable(
+            profile_reference_resolver
+        ):
+            raise TypeError("Profile reference resolver is invalid")
+        if clone_audition is not None and profile_preview is not None:
+            raise TypeError("Clone audition and profile preview are mutually exclusive")
 
         studio_request = studio_draft is not None or studio_preferences is not None
         if studio_request and (
@@ -229,7 +285,24 @@ class TTSRequestAdmissionCoordinator:
             raise TypeError("Studio TTS resolution cannot use non-Studio layers")
         if studio_request and studio_preferences is None:
             raise TypeError("Studio TTS resolution requires saved preferences")
+        if clone_audition is not None and not studio_request:
+            raise TypeError("Clone audition requires Studio TTS resolution")
+        if profile_preview is not None and not studio_request:
+            raise TypeError("Profile preview requires Studio TTS resolution")
+        if clone_audition is not None or profile_preview is not None:
+            if (
+                studio_draft is None
+                or studio_draft.selection.provider_id != "audio_cpp"
+                or studio_draft.selection.model_mode != "exact"
+                or studio_draft.selection.model_id is None
+            ):
+                raise TypeError("Clone synthesis requires exact audio.cpp Studio state")
+        if profile_preview is not None:
+            assert studio_draft is not None
+            if not studio_draft.preview:
+                raise TypeError("Profile preview requires a Studio preview draft")
 
+        preview_execution: _ResolvedTTSCloneExecution | None = None
         higher_scope_provider = next(
             (
                 provider_id
@@ -265,6 +338,12 @@ class TTSRequestAdmissionCoordinator:
         operation: _AdmittedTTSOperation | None = None
         try:
             reservation = await self._service._reserve_operation_capacity()
+            if profile_preview is not None:
+                assert profile_reference_resolver is not None
+                preview_execution = await self._resolve_profile_preview_reference(
+                    profile_preview,
+                    profile_reference_resolver,
+                )
             while True:
                 projected_provider = self._effective_settings.project_provider(
                     global_preferences=self._preferences,
@@ -279,10 +358,14 @@ class TTSRequestAdmissionCoordinator:
                         projected_provider,
                         deliberate=True,
                     ):
-                        clone_candidate = self._profile_clone_candidate(
-                            explicit=explicit,
-                            character_profile=character_profile,
-                            default_profile=default_profile,
+                        clone_candidate = (
+                            clone_audition is not None
+                            or preview_execution is not None
+                            or self._profile_clone_candidate(
+                                explicit=explicit,
+                                character_profile=character_profile,
+                                default_profile=default_profile,
+                            )
                         )
                         if projected_provider == "audio_cpp" and clone_candidate:
                             await self._service._preflight_audio_cpp_clone_source()
@@ -384,6 +467,8 @@ class TTSRequestAdmissionCoordinator:
                             selection,
                             character_profile=character_profile,
                             default_profile=default_profile,
+                            clone_audition=clone_audition,
+                            profile_preview_execution=preview_execution,
                         )
                         operation = await self._service._admit_reserved(
                             request,
@@ -413,6 +498,38 @@ class TTSRequestAdmissionCoordinator:
         return response, selection
 
     @staticmethod
+    async def _resolve_profile_preview_reference(
+        preview: STTSPlaygroundProfilePreview,
+        resolver: TTSProfileReferenceResolver,
+    ) -> _ResolvedTTSCloneExecution:
+        """Resolve private profile authority before any provider admission."""
+
+        failed = False
+        reference: object = None
+        try:
+            reference = await resolver(
+                preview.profile_id,
+                preview.repository_generation,
+                preview.profile_revision,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            failed = True
+        if failed or type(reference) is not TTSCloneReference:
+            raise TTSEffectiveResolutionError(
+                code="revision_incoherent",
+                axis="profile_reference",
+                source=TTSSelectionSource.STUDIO_DRAFT,
+            ) from None
+        return _ResolvedTTSCloneExecution(
+            profile_id=preview.profile_id,
+            repository_generation=preview.repository_generation,
+            profile_revision=preview.profile_revision,
+            reference=cast(TTSCloneReference, reference),
+        )
+
+    @staticmethod
     def _profile_clone_candidate(
         *,
         explicit: TTSSelectionOverrides | None,
@@ -434,10 +551,41 @@ class TTSRequestAdmissionCoordinator:
         *,
         character_profile: TTSCharacterProfileSelection | None,
         default_profile: TTSDefaultProfileSelection | None,
-    ) -> _ResolvedTTSCloneExecution | None:
+        clone_audition: STTSPlaygroundCloneSnapshot | None,
+        profile_preview_execution: _ResolvedTTSCloneExecution | None,
+    ) -> _ResolvedTTSCloneExecutionAuthority | None:
         """Select a reference only when one profile owns provider and model."""
         if selection.provider_id != "audio_cpp":
             return None
+        if clone_audition is not None:
+            if (
+                selection.sources["provider_id"]
+                is not TTSSelectionSource.STUDIO_DRAFT
+                or selection.sources["model_id"]
+                is not TTSSelectionSource.STUDIO_DRAFT
+            ):
+                raise TTSEffectiveResolutionError(
+                    code="revision_incoherent",
+                    axis="clone_audition",
+                    source=TTSSelectionSource.STUDIO_DRAFT,
+                )
+            return _ResolvedTransientTTSCloneExecution(
+                reference=clone_audition.canonical_reference,
+            )
+        if profile_preview_execution is not None:
+            if (
+                not selection.studio_preview
+                or selection.sources["provider_id"]
+                is not TTSSelectionSource.STUDIO_DRAFT
+                or selection.sources["model_id"]
+                is not TTSSelectionSource.STUDIO_DRAFT
+            ):
+                raise TTSEffectiveResolutionError(
+                    code="revision_incoherent",
+                    axis="profile_reference",
+                    source=TTSSelectionSource.STUDIO_DRAFT,
+                )
+            return profile_preview_execution
         source_pair = (
             selection.sources["provider_id"],
             selection.sources["model_id"],

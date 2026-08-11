@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import stat
 from collections.abc import AsyncIterator, Mapping
+from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -21,7 +22,9 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
 )
 from tldw_chatbook.TTS import (
     ProviderHealth,
+    STTSPlaygroundCloneSnapshot,
     STTSGeneratedAudio,
+    STTSPlaygroundProfilePreview,
     STTSPlaygroundRequest,
     TTSModelInfo,
     TTSOperationError,
@@ -29,6 +32,7 @@ from tldw_chatbook.TTS import (
     TTSProviderDescriptor,
     TTSRequest,
     TTSRequestedSelectionSnapshot,
+    CanonicalTTSCloneReference,
 )
 from tldw_chatbook.TTS.adapter_types import (
     TTSProviderReconfiguringError,
@@ -886,6 +890,129 @@ async def test_handler_dispatches_native_generation_and_delivers_artifact() -> N
     finally:
         if artifact is not None:
             artifact.path.unlink(missing_ok=True)
+
+
+@pytest.mark.asyncio
+async def test_studio_profile_preview_forwards_only_identity_and_private_resolver() -> (
+    None
+):
+    response = _Response(_CountingStream((b"RIFF", b"audio")))
+    service = _StudioService(response, effective_model_id="clone-model")
+    profile_reference = object()
+    profile_service = SimpleNamespace(
+        get_reference=AsyncMock(return_value=profile_reference)
+    )
+    app = SimpleNamespace(
+        _ensure_tts_profile_service=AsyncMock(return_value=profile_service),
+        notify=lambda *_args, **_kwargs: None,
+    )
+    handler = STTSEventHandler(app=app)
+    handler._stts_service = service
+    preview = STTSPlaygroundProfilePreview(
+        profile_id=UUID("77777777-7777-4777-8777-777777777777"),
+        repository_generation=8,
+        profile_revision=5,
+    )
+    preferences = StudioTTSPreferencesSnapshot(revision=3)
+    snapshot = STTSPlaygroundRequest(
+        operation_id="profile-preview-op",
+        provider_id="audio_cpp",
+        model_id="clone-model",
+        text="preview text",
+        voice_id=None,
+        response_format="wav",
+        studio_draft=TTSStudioDraftSelection(
+            selection=TTSSelectionOverrides(
+                provider_id="audio_cpp",
+                model_mode="exact",
+                model_id="clone-model",
+                voice_mode="server_default",
+                response_format="wav",
+                speed=1.0,
+                provider_options={},
+            ),
+            base_revision=3,
+            preview=True,
+        ),
+        studio_preferences=preferences,
+        profile_preview=preview,
+    )
+
+    artifact = await handler._generate_studio_effective(snapshot, None)
+
+    try:
+        assert len(service.calls) == 1
+        call = service.calls[0]
+        assert call["profile_preview"] is preview
+        resolver = call["profile_reference_resolver"]
+        assert callable(resolver)
+        assert profile_reference not in call.values()
+        resolved = await resolver(  # type: ignore[operator]
+            preview.profile_id,
+            preview.repository_generation,
+            preview.profile_revision,
+        )
+        assert resolved is profile_reference
+        profile_service.get_reference.assert_awaited_once_with(
+            preview.profile_id,
+            expected_generation=preview.repository_generation,
+            expected_revision=preview.profile_revision,
+        )
+    finally:
+        artifact.path.unlink(missing_ok=True)
+
+
+@pytest.mark.asyncio
+async def test_studio_clone_audition_forwards_exact_canonical_snapshot() -> None:
+    response = _Response(_CountingStream((b"RIFF", b"audio")))
+    service = _StudioService(response, effective_model_id="clone-model")
+    handler = _handler(service)
+    wav = b"RIFF\x24\x00\x00\x00WAVEfmt private-reference"
+    clone = STTSPlaygroundCloneSnapshot(
+        draft_revision=6,
+        canonical_reference=CanonicalTTSCloneReference(
+            wav_bytes=wav,
+            reference_text="Private transcript",
+            sha256=sha256(wav).hexdigest(),
+            byte_length=len(wav),
+            duration_ms=500,
+            sample_rate_hz=24_000,
+            channels=1,
+            sample_encoding="pcm_s16le",
+        ),
+    )
+    preferences = StudioTTSPreferencesSnapshot(revision=3)
+    snapshot = STTSPlaygroundRequest(
+        operation_id="clone-audition-op",
+        provider_id="audio_cpp",
+        model_id="clone-model",
+        text="preview text",
+        voice_id=None,
+        response_format="wav",
+        studio_draft=TTSStudioDraftSelection(
+            selection=TTSSelectionOverrides(
+                provider_id="audio_cpp",
+                model_mode="exact",
+                model_id="clone-model",
+                voice_mode="server_default",
+                response_format="wav",
+                speed=1.0,
+                provider_options={},
+            ),
+            base_revision=3,
+        ),
+        studio_preferences=preferences,
+        clone_audition=clone,
+    )
+
+    artifact = await handler._generate_studio_effective(snapshot, None)
+
+    try:
+        assert service.calls[0]["clone_audition"] is clone
+        assert "profile_reference_resolver" in service.calls[0]
+        assert service.calls[0]["profile_reference_resolver"] is None
+    finally:
+        artifact.path.unlink(missing_ok=True)
 
 
 @pytest.mark.asyncio

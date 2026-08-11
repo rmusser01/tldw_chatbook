@@ -12,7 +12,11 @@ import pytest
 
 from Tests.TTS.adapter_fakes import FakeAdapter
 from tldw_chatbook.TTS import TTS_Generation as generation_module
-from tldw_chatbook.TTS import TTSRequestedSelectionSnapshot
+from tldw_chatbook.TTS import (
+    STTSPlaygroundCloneSnapshot,
+    STTSPlaygroundProfilePreview,
+    TTSRequestedSelectionSnapshot,
+)
 from tldw_chatbook.TTS.adapter_registry import (
     ReconfigureResult,
     TTSAdapterLease,
@@ -55,6 +59,7 @@ from tldw_chatbook.TTS.profile_reference_materialization import (
     TTSCloneReferenceMaterializer,
 )
 from tldw_chatbook.TTS.profile_reference_types import (
+    CanonicalTTSCloneReference,
     TTSCloneReference,
     TTSCloneReferenceSummary,
 )
@@ -496,6 +501,20 @@ def _clone_reference() -> TTSCloneReference:
         reference_text="Private reference transcript",
         sha256=hashlib.sha256(wav).hexdigest(),
         wav_bytes=wav,
+    )
+
+
+def _canonical_clone_reference() -> CanonicalTTSCloneReference:
+    stored = _clone_reference()
+    return CanonicalTTSCloneReference(
+        wav_bytes=stored.wav_bytes,
+        reference_text=stored.reference_text,
+        sha256=stored.sha256,
+        byte_length=stored.summary.byte_length,
+        duration_ms=stored.summary.duration_ms,
+        sample_rate_hz=stored.summary.sample_rate_hz,
+        channels=stored.summary.channels,
+        sample_encoding=stored.summary.sample_encoding,
     )
 
 
@@ -953,6 +972,266 @@ async def test_effective_admission_retains_character_profile_sources_and_revisio
 
 
 @pytest.mark.asyncio
+async def test_closed_service_rejects_profile_preview_before_reference_read(
+    tmp_path: Any,
+) -> None:
+    adapter = _CloneCapturingAdapter()
+    saved = StudioTTSPreferencesSnapshot(revision=2)
+    service, _registry = _native_service(
+        adapter,
+        _snapshot(model_id="clone-model"),
+        studio_preferences_loader=lambda: saved,
+    )
+    service._clone_materializer = TTSCloneReferenceMaterializer(
+        tmp_path / "clone-runtime"
+    )
+    await service.close()
+    await service.wait_closed()
+    resolver_calls = 0
+
+    async def resolver(
+        _profile_id: UUID,
+        _repository_generation: int,
+        _profile_revision: int,
+    ) -> TTSCloneReference:
+        nonlocal resolver_calls
+        resolver_calls += 1
+        return _clone_reference()
+
+    saved = StudioTTSPreferencesSnapshot(revision=2)
+    draft = TTSStudioDraftSelection(
+        selection=TTSSelectionOverrides(
+            provider_id="audio_cpp",
+            model_mode="exact",
+            model_id="clone-model",
+            voice_mode="server_default",
+            response_format="wav",
+            speed=1.0,
+            provider_options={},
+        ),
+        base_revision=saved.revision,
+        preview=True,
+    )
+
+    with pytest.raises(TTSRegistryClosedError):
+        await service.synthesize_effective(
+            text="Profile preview.",
+            studio_draft=draft,
+            studio_preferences=saved,
+            profile_preview=STTSPlaygroundProfilePreview(
+                profile_id=UUID("99999999-9999-4999-8999-999999999999"),
+                repository_generation=1,
+                profile_revision=1,
+            ),
+            profile_reference_resolver=resolver,
+        )
+
+    assert resolver_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_profile_preview_reference_stays_private_below_service_admission(
+    tmp_path: Any,
+) -> None:
+    adapter = _CloneCapturingAdapter()
+    saved = StudioTTSPreferencesSnapshot(revision=2)
+    service, registry = _native_service(
+        adapter,
+        _snapshot(model_id="clone-model"),
+        studio_preferences_loader=lambda: saved,
+    )
+    service._clone_materializer = TTSCloneReferenceMaterializer(
+        tmp_path / "clone-runtime"
+    )
+    preview = STTSPlaygroundProfilePreview(
+        profile_id=UUID("88888888-8888-4888-8888-888888888888"),
+        repository_generation=9,
+        profile_revision=6,
+    )
+    resolved_reference = _clone_reference()
+    resolver_calls: list[tuple[UUID, int, int]] = []
+
+    async def resolver(
+        profile_id: UUID,
+        repository_generation: int,
+        profile_revision: int,
+    ) -> TTSCloneReference:
+        resolver_calls.append(
+            (profile_id, repository_generation, profile_revision)
+        )
+        return resolved_reference
+
+    draft = TTSStudioDraftSelection(
+        selection=TTSSelectionOverrides(
+            provider_id="audio_cpp",
+            model_mode="exact",
+            model_id="clone-model",
+            voice_mode="server_default",
+            response_format="wav",
+            speed=1.0,
+            provider_options={},
+        ),
+        base_revision=saved.revision,
+        preview=True,
+    )
+    response: TTSAudioResponse | None = None
+    try:
+        response, _selection = await service.synthesize_effective(
+            text="Profile preview.",
+            studio_draft=draft,
+            studio_preferences=saved,
+            profile_preview=preview,
+            profile_reference_resolver=resolver,
+        )
+
+        assert resolver_calls == [(preview.profile_id, 9, 6)]
+        assert len(adapter.clone_requests) == 1
+        materialization = adapter.clone_requests[0].materialization
+        assert materialization.reference_text == resolved_reference.reference_text
+        assert materialization.voice_ref.read_bytes() == resolved_reference.wav_bytes
+        assert registry._total_leases() == 1
+
+        await response.aclose()
+        response = None
+        assert not materialization.voice_ref.exists()
+        assert registry._total_leases() == 0
+    finally:
+        if response is not None:
+            await response.aclose()
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_stale_profile_preview_resolves_before_registry_or_provider_work(
+    tmp_path: Any,
+) -> None:
+    adapter = _CloneCapturingAdapter()
+    saved = StudioTTSPreferencesSnapshot(revision=2)
+    service, registry = _native_service(
+        adapter,
+        _snapshot(model_id="clone-model"),
+        studio_preferences_loader=lambda: saved,
+    )
+    service._clone_materializer = TTSCloneReferenceMaterializer(
+        tmp_path / "clone-runtime"
+    )
+    preview = STTSPlaygroundProfilePreview(
+        profile_id=UUID("66666666-6666-4666-8666-666666666666"),
+        repository_generation=7,
+        profile_revision=4,
+    )
+    resolver_calls: list[tuple[UUID, int, int]] = []
+
+    async def stale_resolver(
+        profile_id: UUID,
+        repository_generation: int,
+        profile_revision: int,
+    ) -> TTSCloneReference:
+        resolver_calls.append(
+            (profile_id, repository_generation, profile_revision)
+        )
+        raise RuntimeError("PRIVATE_STALE_PROFILE_DETAIL")
+
+    draft = TTSStudioDraftSelection(
+        selection=TTSSelectionOverrides(
+            provider_id="audio_cpp",
+            model_mode="exact",
+            model_id="clone-model",
+            voice_mode="server_default",
+            response_format="wav",
+            speed=1.0,
+            provider_options={},
+        ),
+        base_revision=saved.revision,
+        preview=True,
+    )
+    try:
+        with pytest.raises(TTSEffectiveResolutionError) as caught:
+            await service.synthesize_effective(
+                text="Profile preview.",
+                studio_draft=draft,
+                studio_preferences=saved,
+                profile_preview=preview,
+                profile_reference_resolver=stale_resolver,
+            )
+
+        assert caught.value.code == "revision_incoherent"
+        assert caught.value.axis == "profile_reference"
+        assert resolver_calls == [
+            (preview.profile_id, 7, 4),
+        ]
+        assert registry.expected_revisions == []
+        assert registry._total_leases() == 0
+        assert adapter.ensure_ready_calls == 0
+        assert adapter.catalog_calls == 0
+        assert adapter.events == []
+        assert not (tmp_path / "clone-runtime").exists()
+        assert "PRIVATE_STALE_PROFILE_DETAIL" not in repr(caught.value)
+        assert service._operation_limit._value == 4
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_transient_clone_uses_existing_typed_materialization_lifetime(
+    tmp_path: Any,
+) -> None:
+    adapter = _CloneCapturingAdapter()
+    saved = StudioTTSPreferencesSnapshot(revision=2)
+    service, registry = _native_service(
+        adapter,
+        _snapshot(model_id="clone-model"),
+        studio_preferences_loader=lambda: saved,
+    )
+    materializer = TTSCloneReferenceMaterializer(tmp_path / "clone-runtime")
+    service._clone_materializer = materializer
+    clone_audition = STTSPlaygroundCloneSnapshot(
+        draft_revision=3,
+        canonical_reference=_canonical_clone_reference(),
+    )
+    draft = TTSStudioDraftSelection(
+        selection=TTSSelectionOverrides(
+            provider_id="audio_cpp",
+            model_mode="exact",
+            model_id="clone-model",
+            voice_mode="server_default",
+            response_format="wav",
+            speed=1.0,
+            provider_options={},
+        ),
+        base_revision=saved.revision,
+    )
+    response: TTSAudioResponse | None = None
+    try:
+        response, selection = await service.synthesize_effective(
+            text="Transient clone.",
+            studio_draft=draft,
+            studio_preferences=saved,
+            clone_audition=clone_audition,
+        )
+
+        assert selection.provider_id == "audio_cpp"
+        assert len(adapter.clone_requests) == 1
+        materialization = adapter.clone_requests[0].materialization
+        assert materialization.reference_text == "Private reference transcript"
+        assert materialization.voice_ref.read_bytes() == _clone_reference().wav_bytes
+        assert registry._total_leases() == 1
+
+        await response.aclose()
+        response = None
+
+        assert not materialization.voice_ref.exists()
+        assert registry._total_leases() == 0
+    finally:
+        if response is not None:
+            await response.aclose()
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
 async def test_character_clone_materialization_lives_through_response_cleanup(
     tmp_path: Any,
 ) -> None:
@@ -1162,6 +1441,70 @@ async def test_clone_direct_resource_release_cannot_bypass_response_cleanup(
         adapter.allow_cleanup.set()
         if response is not None:
             await response.aclose()
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_transient_clone_source_rejection_precedes_provider_evidence(
+    tmp_path: Any,
+) -> None:
+    adapter = _RejectedCloneSourceAdapter()
+    registry = _RecordingRegistry(
+        specs=(
+            TTSProviderSpec(
+                descriptor=TTSProviderDescriptor("audio_cpp", "audio.cpp", True),
+                factory=lambda _config: adapter,
+                initial_config={},
+                exclusive_reconfigure=True,
+            ),
+        ),
+        aliases={},
+    )
+    native_reads = 0
+
+    async def native_reader(*args: Any) -> TTSNativeCapabilitySnapshot:
+        nonlocal native_reads
+        native_reads += 1
+        return await _accepted_native_capability_reader(registry)(*args)
+
+    saved = StudioTTSPreferencesSnapshot(revision=2)
+    service = TTSService(
+        registry,
+        preferences_snapshot=_snapshot(model_id="clone-model"),
+        studio_preferences_loader=lambda: saved,
+        native_capability_reader=native_reader,
+        clone_materializer=TTSCloneReferenceMaterializer(tmp_path / "runtime"),
+    )
+    draft = TTSStudioDraftSelection(
+        selection=TTSSelectionOverrides(
+            provider_id="audio_cpp",
+            model_mode="exact",
+            model_id="clone-model",
+            voice_mode="server_default",
+            response_format="wav",
+            speed=1.0,
+            provider_options={},
+        ),
+        base_revision=saved.revision,
+    )
+    try:
+        with pytest.raises(RuntimeError, match="rejected clone source"):
+            await service.synthesize_effective(
+                text="hello",
+                studio_draft=draft,
+                studio_preferences=saved,
+                clone_audition=STTSPlaygroundCloneSnapshot(
+                    draft_revision=3,
+                    canonical_reference=_canonical_clone_reference(),
+                ),
+            )
+        assert native_reads == 0
+        assert adapter.ensure_ready_calls == 0
+        assert adapter.catalog_calls == 0
+        assert not (tmp_path / "runtime").exists()
+        assert registry._total_leases() == 0
+    finally:
         await service.close()
         await service.wait_closed()
 

@@ -65,7 +65,11 @@ from tldw_chatbook.TTS.audio_cpp_supervisor import (
     _AudioCppGenerationChanged,
 )
 from tldw_chatbook.TTS.legacy_bridge import resolve_legacy_route
-from tldw_chatbook.TTS.playground_types import TTSRequestedSelectionSnapshot
+from tldw_chatbook.TTS.playground_types import (
+    STTSPlaygroundCloneSnapshot,
+    STTSPlaygroundProfilePreview,
+    TTSRequestedSelectionSnapshot,
+)
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.effective_settings import (
     NativeCapabilityReader,
@@ -82,7 +86,8 @@ from tldw_chatbook.TTS.profile_reference_materialization import (
 )
 from tldw_chatbook.TTS.request_admission import (
     TTSRequestAdmissionCoordinator,
-    _ResolvedTTSCloneExecution,
+    TTSProfileReferenceResolver,
+    _ResolvedTTSCloneExecutionAuthority,
 )
 from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferencesSnapshot
 
@@ -404,7 +409,7 @@ class _AdmittedTTSOperation:
         ],
         observe_cleanup: Callable[[asyncio.Task[None]], None],
         audio_cpp_preparation: _AudioCppPreparation | None,
-        clone_execution: _ResolvedTTSCloneExecution | None,
+        clone_execution: _ResolvedTTSCloneExecutionAuthority | None,
         clone_materializer: TTSCloneReferenceMaterializer | None,
     ) -> None:
         self._request = request
@@ -875,7 +880,7 @@ class TTSService:
         reservation: _OperationCapacityReservation,
         *,
         expected_configuration_revision: int | None = None,
-        clone_execution: _ResolvedTTSCloneExecution | None = None,
+        clone_execution: _ResolvedTTSCloneExecutionAuthority | None = None,
     ) -> _AdmittedTTSOperation:
         """Acquire a provider lease using capacity reserved by this service."""
         try:
@@ -1710,6 +1715,9 @@ class TTSService:
         default_profile: TTSDefaultProfileSelection | None = None,
         studio_draft: TTSStudioDraftSelection | None = None,
         studio_preferences: StudioTTSPreferencesSnapshot | None = None,
+        clone_audition: STTSPlaygroundCloneSnapshot | None = None,
+        profile_preview: STTSPlaygroundProfilePreview | None = None,
+        profile_reference_resolver: TTSProfileReferenceResolver | None = None,
         progress_sink: ProgressSink | None = None,
     ) -> tuple[TTSAudioResponse, TTSEffectiveSelectionSnapshot]:
         """Resolve owner-scoped settings and synthesize one admitted request."""
@@ -1721,6 +1729,9 @@ class TTSService:
             default_profile=default_profile,
             studio_draft=studio_draft,
             studio_preferences=studio_preferences,
+            clone_audition=clone_audition,
+            profile_preview=profile_preview,
+            profile_reference_resolver=profile_reference_resolver,
             progress_sink=progress_sink,
         )
 

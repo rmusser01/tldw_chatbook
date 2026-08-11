@@ -33,6 +33,8 @@ from tldw_chatbook.TTS.character_request_resolver import (
 )
 from tldw_chatbook.TTS.playground_types import (
     STTSGeneratedAudio,
+    STTSPlaygroundCloneSnapshot,
+    STTSPlaygroundProfilePreview,
     STTSPlaygroundRequest,
     TTSRequestedSelectionSnapshot,
 )
@@ -119,6 +121,8 @@ __all__ = [
     "ProgressSink",
     "ProviderHealth",
     "STTSGeneratedAudio",
+    "STTSPlaygroundCloneSnapshot",
+    "STTSPlaygroundProfilePreview",
     "STTSPlaygroundRequest",
     "TTSAudioResponse",
     "TTSConfigMutation",

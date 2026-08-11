@@ -809,6 +809,9 @@ class TTSPlaygroundSelectionPreset:
     speed: float
     options: Mapping[str, Any] = field(default_factory=dict)
     availability: ProfileAvailabilityState = "unverified"
+    profile_id: UUID | None = None
+    repository_generation: int | None = None
+    profile_revision: int | None = None
 
     def __post_init__(self) -> None:
         draft = TTSProfileDraft(
@@ -821,6 +824,24 @@ class TTSPlaygroundSelectionPreset:
             options=self.options,
         )
         state = _validate_availability_state(self.availability)
+        identity = (
+            self.profile_id,
+            self.repository_generation,
+            self.profile_revision,
+        )
+        if any(value is not None for value in identity):
+            if any(value is None for value in identity):
+                raise ValueError("Reference preview identity must be complete")
+            if type(self.profile_id) is not UUID:
+                raise TypeError("profile_id must be a UUID")
+            if type(self.repository_generation) is not int:
+                raise TypeError("repository_generation must be an integer")
+            if self.repository_generation < 0:
+                raise ValueError("repository_generation must be nonnegative")
+            if type(self.profile_revision) is not int:
+                raise TypeError("profile_revision must be an integer")
+            if self.profile_revision < 1:
+                raise ValueError("profile_revision must be positive")
         object.__setattr__(self, "provider_id", draft.provider_id)
         object.__setattr__(self, "model_id", draft.model_id)
         object.__setattr__(self, "voice_id", draft.voice_id)
@@ -2303,6 +2324,11 @@ class TTSProfileService:
             speed=profile.speed,
             options=profile.options,
             availability=effective_availability,
+            profile_id=(profile.profile_id if profile.reference is not None else None),
+            repository_generation=(
+                loaded.repository_generation if profile.reference is not None else None
+            ),
+            profile_revision=(profile.revision if profile.reference is not None else None),
         )
 
     @staticmethod
