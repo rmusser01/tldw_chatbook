@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable
 from threading import Lock
 
 MAX_TODO_ITEMS = 50
@@ -9,8 +11,10 @@ MAX_TODO_CONTENT_CHARS = 500
 TODO_STATUSES = ("pending", "in_progress", "completed")
 
 TodoRecord = dict[str, object]
+TodoChangeCallback = Callable[[list[TodoRecord]], None]
 
 _MISSING = object()
+_LOG = logging.getLogger(__name__)
 
 
 class TodoStoreError(ValueError):
@@ -50,6 +54,12 @@ def _task_id_number(task_id: str) -> int:
     return number
 
 
+def _validate_expected_version(value: object) -> int:
+    if type(value) is not int or value < 1:
+        raise TodoStoreError("expected_version must be an integer at least 1")
+    return value
+
+
 class SessionTodoStore:
     """Own stable-ID task records for one in-process Console session."""
 
@@ -57,13 +67,40 @@ class SessionTodoStore:
         self._tasks: dict[str, TodoRecord] = {}
         self._next_id = 1
         self._state_lock = Lock()
+        self._mutation_lock = Lock()
 
-    def create(self, *, content: object, active_form: object = _MISSING) -> TodoRecord:
+    def _snapshot_locked(self) -> list[TodoRecord]:
+        return [dict(record) for record in self._tasks.values()]
+
+    def _mutate(
+        self,
+        commit: Callable[[], TodoRecord],
+        on_change: TodoChangeCallback | None,
+    ) -> TodoRecord:
+        with self._mutation_lock:
+            with self._state_lock:
+                result = commit()
+                snapshot = self._snapshot_locked()
+            if on_change is not None:
+                try:
+                    on_change(snapshot)
+                except Exception:
+                    _LOG.warning("Session todo change callback failed.")
+            return dict(result)
+
+    def create(
+        self,
+        *,
+        content: object,
+        active_form: object = _MISSING,
+        on_change: TodoChangeCallback | None = None,
+    ) -> TodoRecord:
         """Create a pending task.
 
         Args:
             content: Required bounded task content.
             active_form: Optional bounded active-form label.
+            on_change: Optional synchronous callback for the committed snapshot.
 
         Returns:
             A defensive copy of the created task record.
@@ -78,7 +115,7 @@ class SessionTodoStore:
                 active_form, field="activeForm", allow_blank=True
             )
 
-        with self._state_lock:
+        def commit() -> TodoRecord:
             if len(self._tasks) >= MAX_TODO_ITEMS:
                 raise TodoStoreError("task limit reached")
             task_id = str(self._next_id)
@@ -92,7 +129,108 @@ class SessionTodoStore:
                 record["activeForm"] = valid_active_form
             self._tasks[task_id] = record
             self._next_id += 1
-            return dict(record)
+            return record
+
+        return self._mutate(commit, on_change)
+
+    def update(
+        self,
+        *,
+        task_id: object,
+        expected_version: object,
+        content: object = _MISSING,
+        status: object = _MISSING,
+        active_form: object = _MISSING,
+        on_change: TodoChangeCallback | None = None,
+    ) -> TodoRecord:
+        """Apply a compare-and-swap task patch or deletion.
+
+        Args:
+            task_id: Canonical positive decimal task ID.
+            expected_version: Exact current positive integer version.
+            content: Optional replacement content.
+            status: Optional task status or the ``deleted`` command.
+            active_form: Optional replacement label; ``None`` removes it.
+            on_change: Optional synchronous callback for the committed snapshot.
+
+        Returns:
+            A defensive updated record or deletion tombstone.
+
+        Raises:
+            TodoStoreError: If validation, lookup, CAS, or invariants fail.
+        """
+        valid_task_id = _validate_task_id(task_id)
+        valid_expected_version = _validate_expected_version(expected_version)
+        if content is _MISSING and status is _MISSING and active_form is _MISSING:
+            raise TodoStoreError("at least one mutation field is required")
+
+        valid_status: str | object = _MISSING
+        if status is not _MISSING:
+            if type(status) is not str or status not in (*TODO_STATUSES, "deleted"):
+                raise TodoStoreError("invalid task status")
+            valid_status = status
+
+        if valid_status == "deleted" and (
+            content is not _MISSING or active_form is not _MISSING
+        ):
+            raise TodoStoreError("delete must be the only mutation field")
+
+        valid_content: str | object = _MISSING
+        if content is not _MISSING:
+            valid_content = _validate_text(
+                content,
+                field="content",
+                allow_blank=False,
+            )
+
+        valid_active_form: str | None | object = _MISSING
+        if active_form is not _MISSING:
+            if active_form is None:
+                valid_active_form = None
+            else:
+                valid_active_form = _validate_text(
+                    active_form,
+                    field="activeForm",
+                    allow_blank=True,
+                )
+
+        def commit() -> TodoRecord:
+            record = self._tasks.get(valid_task_id)
+            if record is None:
+                raise TodoStoreError("task not found")
+            if record["version"] != valid_expected_version:
+                raise TodoStoreError("task version conflict; use todo_get and retry")
+
+            new_version = valid_expected_version + 1
+            if valid_status == "deleted":
+                del self._tasks[valid_task_id]
+                return {
+                    "id": valid_task_id,
+                    "deleted": True,
+                    "version": new_version,
+                }
+
+            updated = dict(record)
+            if valid_content is not _MISSING:
+                updated["content"] = valid_content
+            if valid_status is not _MISSING:
+                updated["status"] = valid_status
+            if valid_active_form is None:
+                updated.pop("activeForm", None)
+            elif valid_active_form is not _MISSING:
+                updated["activeForm"] = valid_active_form
+
+            if updated["status"] == "in_progress" and any(
+                other_id != valid_task_id and other_record["status"] == "in_progress"
+                for other_id, other_record in self._tasks.items()
+            ):
+                raise TodoStoreError("another task is already in_progress")
+
+            updated["version"] = new_version
+            self._tasks[valid_task_id] = updated
+            return updated
+
+        return self._mutate(commit, on_change)
 
     def get(self, task_id: object) -> TodoRecord:
         """Return one task record.

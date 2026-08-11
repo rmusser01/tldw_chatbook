@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import logging
+import multiprocessing
+from queue import Queue
+from threading import Barrier, Event, Thread, current_thread
+from typing import Any, Callable
+
 import pytest
 
 from tldw_chatbook.Agents.session_todo_store import (
@@ -25,6 +31,84 @@ class _DictSubclass(dict[str, object]):
 
 class _ListSubclass(list[object]):
     pass
+
+
+class _ObservedLock:
+    """Observe one named thread immediately before real lock acquisition."""
+
+    def __init__(
+        self,
+        lock: Any,
+        *,
+        thread_name: str,
+        before_acquire: Callable[[], None],
+    ) -> None:
+        self._lock = lock
+        self._thread_name = thread_name
+        self._before_acquire = before_acquire
+
+    def __enter__(self) -> object:
+        if current_thread().name == self._thread_name:
+            self._before_acquire()
+        return self._lock.__enter__()
+
+    def __exit__(self, *args: object) -> object:
+        return self._lock.__exit__(*args)
+
+
+def _run_concurrently(
+    *actions: Callable[[], object],
+) -> tuple[list[object | None], list[BaseException | None]]:
+    """Release named worker actions together and return their outcomes."""
+    barrier = Barrier(len(actions) + 1)
+    results: list[object | None] = [None] * len(actions)
+    errors: list[BaseException | None] = [None] * len(actions)
+
+    def run(index: int, action: Callable[[], object]) -> None:
+        barrier.wait()
+        try:
+            results[index] = action()
+        except BaseException as exc:
+            errors[index] = exc
+
+    threads = [
+        Thread(target=run, args=(index, action), name=f"concurrent-{index}")
+        for index, action in enumerate(actions)
+    ]
+    for thread in threads:
+        thread.start()
+    barrier.wait()
+    for thread in threads:
+        thread.join(5)
+    assert not [thread.name for thread in threads if thread.is_alive()]
+    return results, errors
+
+
+def _callback_read_process(result_queue: Any) -> None:
+    """Exercise callback reads in a spawn-safe subprocess."""
+    store = SessionTodoStore()
+
+    def read_from_callback(snapshot: list[dict[str, object]]) -> None:
+        threaded_records: Queue[list[dict[str, object]]] = Queue()
+        reader = Thread(
+            target=lambda: threaded_records.put(store.list_after(None)),
+            name="callback-reader",
+        )
+        reader.start()
+        direct_record = store.get("1")
+        reader.join(2)
+        if reader.is_alive():
+            result_queue.put(("reader-deadlocked", None))
+            return
+        result_queue.put(
+            (
+                direct_record,
+                threaded_records.get_nowait(),
+                snapshot,
+            )
+        )
+
+    store.create(content="Readable", on_change=read_from_callback)
 
 
 def _valid_snapshot() -> dict[str, object]:
@@ -659,3 +743,530 @@ def test_snapshot_errors_do_not_reflect_payload_values() -> None:
         )
 
     assert secret not in str(error.value)
+
+
+def test_update_applies_only_supplied_fields_and_increments_version() -> None:
+    store = SessionTodoStore()
+    store.create(content="Original", active_form="Working")
+
+    updated = store.update(
+        task_id="1",
+        expected_version=1,
+        status="completed",
+    )
+
+    assert updated == {
+        "id": "1",
+        "version": 2,
+        "content": "Original",
+        "status": "completed",
+        "activeForm": "Working",
+    }
+
+
+def test_same_value_update_is_a_successful_versioned_mutation() -> None:
+    snapshots: list[list[dict[str, object]]] = []
+    store = SessionTodoStore()
+    store.create(content="Unchanged")
+
+    updated = store.update(
+        task_id="1",
+        expected_version=1,
+        content="Unchanged",
+        on_change=snapshots.append,
+    )
+
+    assert updated["version"] == 2
+    assert snapshots == [[updated]]
+
+
+def test_update_none_removes_active_form() -> None:
+    store = SessionTodoStore()
+    store.create(content="Task", active_form="Working")
+
+    updated = store.update(
+        task_id="1",
+        expected_version=1,
+        active_form=None,
+    )
+
+    assert updated == {
+        "id": "1",
+        "version": 2,
+        "content": "Task",
+        "status": "pending",
+    }
+
+
+def test_delete_is_versioned_and_returns_the_exact_tombstone() -> None:
+    snapshots: list[list[dict[str, object]]] = []
+    store = SessionTodoStore()
+    store.create(content="Delete me")
+
+    deleted = store.update(
+        task_id="1",
+        expected_version=1,
+        status="deleted",
+        on_change=snapshots.append,
+    )
+
+    assert deleted == {"id": "1", "deleted": True, "version": 2}
+    assert snapshots == [[]]
+    with pytest.raises(TodoStoreError, match="^task not found$"):
+        store.get("1")
+    with pytest.raises(TodoStoreError, match="^task not found$"):
+        store.update(task_id="1", expected_version=1, content="Too late")
+
+
+@pytest.mark.parametrize(
+    "extra_fields",
+    [
+        {"content": "combined"},
+        {"active_form": None},
+        {"content": "combined", "active_form": "combined"},
+    ],
+)
+def test_delete_command_must_be_the_only_mutation_field(
+    extra_fields: dict[str, object],
+) -> None:
+    callback_snapshots: list[list[dict[str, object]]] = []
+    store = SessionTodoStore()
+    original = store.create(content="Keep me")
+
+    with pytest.raises(TodoStoreError, match="delete"):
+        store.update(
+            task_id="1",
+            expected_version=999,
+            status="deleted",
+            on_change=callback_snapshots.append,
+            **extra_fields,
+        )
+
+    assert store.get("1") == original
+    assert callback_snapshots == []
+
+
+def test_stale_update_uses_a_fixed_nonreflective_retry_error() -> None:
+    secret_content = "PRIVATE-CONTENT-13216"
+    callbacks: list[list[dict[str, object]]] = []
+    store = SessionTodoStore()
+    store.create(content="Original")
+    winner = store.update(
+        task_id="1",
+        expected_version=1,
+        content=secret_content,
+    )
+
+    with pytest.raises(TodoStoreError) as error:
+        store.update(
+            task_id="1",
+            expected_version=1,
+            content="STALE-CALLER-CONTENT",
+            on_change=callbacks.append,
+        )
+
+    assert str(error.value) == "task version conflict; use todo_get and retry"
+    assert secret_content not in str(error.value)
+    assert "STALE-CALLER-CONTENT" not in str(error.value)
+    assert store.get("1") == winner
+    assert callbacks == []
+
+
+def test_only_one_live_task_may_be_in_progress() -> None:
+    callback_snapshots: list[list[dict[str, object]]] = []
+    store = SessionTodoStore()
+    store.create(content="First")
+    second = store.create(content="Second")
+    store.update(task_id="1", expected_version=1, status="in_progress")
+
+    with pytest.raises(TodoStoreError, match="in_progress"):
+        store.update(
+            task_id="2",
+            expected_version=1,
+            status="in_progress",
+            on_change=callback_snapshots.append,
+        )
+
+    assert store.get("2") == second
+    assert callback_snapshots == []
+
+
+@pytest.mark.parametrize(
+    "update_kwargs",
+    [
+        {},
+        {"content": ""},
+        {"content": "bad\ud800"},
+        {"active_form": b"bytes"},
+        {"active_form": "bad\ud800"},
+        {"status": "unknown"},
+    ],
+)
+def test_update_validation_failures_are_atomic_and_emit_no_callback(
+    update_kwargs: dict[str, object],
+) -> None:
+    callbacks: list[list[dict[str, object]]] = []
+    store = SessionTodoStore()
+    store.create(content="Original")
+    before = store.export_snapshot()
+
+    with pytest.raises(TodoStoreError):
+        store.update(
+            task_id="1",
+            expected_version=1,
+            on_change=callbacks.append,
+            **update_kwargs,
+        )
+
+    assert store.export_snapshot() == before
+    assert callbacks == []
+
+
+@pytest.mark.parametrize(
+    "expected_version",
+    [None, True, 0, -1, 1.0, "1", _IntSubclass(1)],
+)
+def test_update_rejects_invalid_expected_versions_without_mutation(
+    expected_version: object,
+) -> None:
+    callbacks: list[list[dict[str, object]]] = []
+    store = SessionTodoStore()
+    original = store.create(content="Original")
+
+    with pytest.raises(TodoStoreError, match="expected_version"):
+        store.update(
+            task_id="1",
+            expected_version=expected_version,
+            content="Replacement",
+            on_change=callbacks.append,
+        )
+
+    assert store.get("1") == original
+    assert callbacks == []
+
+
+def test_update_not_found_is_atomic_and_emits_no_callback() -> None:
+    callbacks: list[list[dict[str, object]]] = []
+    store = SessionTodoStore()
+    before = store.export_snapshot()
+
+    with pytest.raises(TodoStoreError, match="^task not found$"):
+        store.update(
+            task_id="99",
+            expected_version=1,
+            content="Missing",
+            on_change=callbacks.append,
+        )
+
+    assert store.export_snapshot() == before
+    assert callbacks == []
+
+
+def test_create_update_and_delete_each_emit_exactly_one_callback() -> None:
+    snapshots: list[list[dict[str, object]]] = []
+    store = SessionTodoStore()
+
+    store.create(content="Task", on_change=snapshots.append)
+    store.update(
+        task_id="1",
+        expected_version=1,
+        status="completed",
+        on_change=snapshots.append,
+    )
+    store.update(
+        task_id="1",
+        expected_version=2,
+        status="deleted",
+        on_change=snapshots.append,
+    )
+
+    assert len(snapshots) == 3
+    assert snapshots[0][0]["version"] == 1
+    assert snapshots[1][0]["version"] == 2
+    assert snapshots[2] == []
+
+
+def test_create_validation_and_capacity_failures_emit_no_callback() -> None:
+    callbacks: list[list[dict[str, object]]] = []
+    store = SessionTodoStore()
+
+    with pytest.raises(TodoStoreError):
+        store.create(content="", on_change=callbacks.append)
+    for index in range(MAX_TODO_ITEMS):
+        store.create(content=f"Task {index}")
+    with pytest.raises(TodoStoreError, match="limit"):
+        store.create(content="Over capacity", on_change=callbacks.append)
+
+    assert callbacks == []
+
+
+def test_successive_callback_snapshots_follow_commit_order_and_are_defensive() -> None:
+    snapshots: list[list[dict[str, object]]] = []
+    store = SessionTodoStore()
+
+    def mutate_first_snapshot(snapshot: list[dict[str, object]]) -> None:
+        snapshots.append([dict(record) for record in snapshot])
+        snapshot[0]["content"] = "outside mutation"
+        snapshot.clear()
+
+    store.create(content="Original", on_change=mutate_first_snapshot)
+    store.update(
+        task_id="1",
+        expected_version=1,
+        status="completed",
+        on_change=snapshots.append,
+    )
+
+    assert snapshots == [
+        [
+            {
+                "id": "1",
+                "version": 1,
+                "content": "Original",
+                "status": "pending",
+            }
+        ],
+        [
+            {
+                "id": "1",
+                "version": 2,
+                "content": "Original",
+                "status": "completed",
+            }
+        ],
+    ]
+    assert store.get("1")["content"] == "Original"
+
+
+def test_callback_failure_commits_returns_and_logs_one_fixed_safe_warning(
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    sentinel = (
+        "content=PRIVATE-TASK-FRAGMENT "
+        "credential=sk-live-CREDENTIAL-FRAGMENT "
+        "path=/Users/alice/.ssh/PRIVATE-PATH-FRAGMENT"
+    )
+    store = SessionTodoStore()
+
+    def fail_callback(snapshot: list[dict[str, object]]) -> None:
+        raise RuntimeError(f"{sentinel} snapshot={snapshot!r}")
+
+    with caplog.at_level(
+        logging.WARNING,
+        logger="tldw_chatbook.Agents.session_todo_store",
+    ):
+        created = store.create(content="PRIVATE-TASK-FRAGMENT", on_change=fail_callback)
+
+    assert created == store.get("1")
+    records = [
+        record
+        for record in caplog.records
+        if record.name == "tldw_chatbook.Agents.session_todo_store"
+    ]
+    assert len(records) == 1
+    record = records[0]
+    assert record.msg == "Session todo change callback failed."
+    assert record.args == ()
+    assert record.exc_info is None
+    assert record.exc_text is None
+    assert record.stack_info is None
+    captured = capsys.readouterr()
+    exposed = " ".join(
+        (
+            record.getMessage(),
+            repr(record.args),
+            repr(record.exc_info),
+            repr(record.exc_text),
+            repr(record.stack_info),
+            captured.out,
+            captured.err,
+        )
+    )
+    for fragment in (
+        "PRIVATE-TASK-FRAGMENT",
+        "CREDENTIAL-FRAGMENT",
+        "PRIVATE-PATH-FRAGMENT",
+        "sk-live",
+        ".ssh",
+    ):
+        assert fragment not in exposed
+
+
+def test_concurrent_creates_allocate_distinct_present_tasks() -> None:
+    store = SessionTodoStore()
+
+    results, errors = _run_concurrently(
+        lambda: store.create(content="First"),
+        lambda: store.create(content="Second"),
+    )
+
+    assert errors == [None, None]
+    assert {result["id"] for result in results if type(result) is dict} == {"1", "2"}
+    assert {record["content"] for record in store.list_after(None)} == {
+        "First",
+        "Second",
+    }
+
+
+def test_concurrent_jointly_valid_updates_to_different_tasks_both_commit() -> None:
+    store = SessionTodoStore()
+    store.create(content="First")
+    store.create(content="Second")
+
+    _, errors = _run_concurrently(
+        lambda: store.update(task_id="1", expected_version=1, content="First done"),
+        lambda: store.update(task_id="2", expected_version=1, content="Second done"),
+    )
+
+    assert errors == [None, None]
+    assert store.get("1")["content"] == "First done"
+    assert store.get("2")["content"] == "Second done"
+
+
+def test_concurrent_same_task_cas_has_one_winner_and_one_fixed_conflict() -> None:
+    store = SessionTodoStore()
+    store.create(content="Original")
+
+    results, errors = _run_concurrently(
+        lambda: store.update(task_id="1", expected_version=1, content="First"),
+        lambda: store.update(task_id="1", expected_version=1, content="Second"),
+    )
+
+    assert len([result for result in results if result is not None]) == 1
+    failures = [error for error in errors if error is not None]
+    assert len(failures) == 1
+    assert type(failures[0]) is TodoStoreError
+    assert str(failures[0]) == "task version conflict; use todo_get and retry"
+    winner = store.get("1")
+    assert winner["version"] == 2
+    assert winner["content"] in {"First", "Second"}
+
+
+def test_concurrent_in_progress_transitions_allow_only_one_winner() -> None:
+    store = SessionTodoStore()
+    store.create(content="First")
+    store.create(content="Second")
+
+    results, errors = _run_concurrently(
+        lambda: store.update(task_id="1", expected_version=1, status="in_progress"),
+        lambda: store.update(task_id="2", expected_version=1, status="in_progress"),
+    )
+
+    assert len([result for result in results if result is not None]) == 1
+    assert len([error for error in errors if type(error) is TodoStoreError]) == 1
+    assert [record["status"] for record in store.list_after(None)].count(
+        "in_progress"
+    ) == 1
+
+
+def test_concurrent_creates_at_capacity_have_exactly_one_winner() -> None:
+    store = SessionTodoStore()
+    for index in range(MAX_TODO_ITEMS - 1):
+        store.create(content=f"Existing {index}")
+
+    results, errors = _run_concurrently(
+        lambda: store.create(content="First contender"),
+        lambda: store.create(content="Second contender"),
+    )
+
+    assert len([result for result in results if result is not None]) == 1
+    failures = [error for error in errors if error is not None]
+    assert len(failures) == 1
+    assert type(failures[0]) is TodoStoreError
+    assert str(failures[0]) == "task limit reached"
+    snapshot = store.export_snapshot()
+    assert len(snapshot["tasks"]) == MAX_TODO_ITEMS
+    assert snapshot["next_id"] == MAX_TODO_ITEMS + 1
+
+
+def test_callback_serializes_mutation_commit_and_return_while_reads_stay_available() -> (
+    None
+):
+    entered = Event()
+    release = Event()
+    second_waiting_on_mutation_lock = Event()
+    second_done = Event()
+    store = SessionTodoStore()
+    store._mutation_lock = _ObservedLock(  # type: ignore[attr-defined]
+        store._mutation_lock,  # type: ignore[attr-defined]
+        thread_name="second-mutation",
+        before_acquire=second_waiting_on_mutation_lock.set,
+    )
+
+    def blocked(snapshot: list[dict[str, object]]) -> None:
+        assert snapshot[0]["content"] == "First"
+        entered.set()
+        release.wait(5)
+
+    first = Thread(
+        target=lambda: store.create(content="First", on_change=blocked),
+        name="first-mutation",
+    )
+
+    def second_mutation() -> None:
+        store.create(content="Second")
+        second_done.set()
+
+    second = Thread(target=second_mutation, name="second-mutation")
+    first.start()
+    try:
+        assert entered.wait(2)
+        second.start()
+        assert second_waiting_on_mutation_lock.wait(2)
+        assert store.get("1")["content"] == "First"
+        assert [record["id"] for record in store.list_after(None)] == ["1"]
+        assert not second_done.is_set()
+    finally:
+        release.set()
+        first.join(5)
+        if second.ident is not None:
+            second.join(5)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert second_done.is_set()
+    assert [record["id"] for record in store.list_after(None)] == ["1", "2"]
+
+
+def test_reads_and_mutations_enter_the_real_state_lock() -> None:
+    observed = Event()
+    store = SessionTodoStore()
+    store.create(content="Task")
+    store._state_lock = _ObservedLock(  # type: ignore[assignment]
+        store._state_lock,
+        thread_name=current_thread().name,
+        before_acquire=observed.set,
+    )
+
+    store.get("1")
+    assert observed.is_set()
+    observed.clear()
+
+    store.create(content="Second")
+    assert observed.is_set()
+
+
+def test_callback_can_read_directly_and_from_another_thread_without_deadlock() -> None:
+    context = multiprocessing.get_context("spawn")
+    result_queue = context.Queue()
+    process = context.Process(target=_callback_read_process, args=(result_queue,))
+
+    process.start()
+    process.join(5)
+    if process.is_alive():
+        process.terminate()
+        process.join(5)
+        pytest.fail("task callback deadlocked while reading the store")
+
+    assert process.exitcode == 0
+    direct_record, threaded_records, callback_snapshot = result_queue.get(timeout=2)
+    expected = {
+        "id": "1",
+        "version": 1,
+        "content": "Readable",
+        "status": "pending",
+    }
+    assert direct_record == expected
+    assert threaded_records == [expected]
+    assert callback_snapshot == [expected]
