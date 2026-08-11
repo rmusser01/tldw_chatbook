@@ -112,13 +112,22 @@ history and the current AST inventory:
    `Docs/security/task-15103-diagnostic-review.json`.
 
 The review artifact records the exact incident and final base revisions plus
-one row for every changed diagnostic. Each row carries the owner path, stable
-before and after call identities (method, content digest, and duplicate
-ordinal, with `null` for an addition or deletion), introducing commit,
-disposition, rationale, permitted dynamic fields, and their proven provenance.
-It also records the starting and reviewed-final complete call-count/digest pair
+one row for every changed diagnostic multiset atom. An atom carries the owner
+path, method, full content digest, multiplicity delta, optional qualified scope
+for navigation, disposition, rationale, permitted dynamic fields, and their
+proven provenance. Rewrites are represented by a change group containing one
+or more removed atoms and one or more added atoms; additions and deletions need
+only one side. This does not claim a unique identity for indistinguishable
+duplicate calls or treat pure relocation as a review event when the canonical
+inventory deliberately does not.
+
+Each change group records an exact introducing commit when Git proves one, or
+the narrowest verified commit range when rebases, copies, duplicates, or
+intermediate rewrites make single-commit provenance non-unique. The artifact
+also records the starting and reviewed-final complete call-count/digest pair
 for each of the 17 owners. Removed and rewritten historical calls therefore
-remain reviewable rather than disappearing behind aggregate counts.
+remain reviewable rather than disappearing behind aggregate counts or false
+one-to-one pairings.
 
 The final task Implementation Notes retain the exact ledger hash and reconcile
 its per-owner and per-disposition totals. A mismatch, ambiguous call, missing
@@ -128,14 +137,22 @@ silently absorbed.
 ### Permanent review boundary
 
 `Tests/Architecture/test_persistent_diagnostic_inventory.py` remains the
-canonical source-level guard. Its reviewed metadata map is extended for the
-TASK-15103 call sites that survive the audit. Each entry identifies a fixed
-diagnostic label, exact permitted dynamic expressions, and the provenance that
-makes each value ADR-029 metadata rather than private content. An expression
-named `status`, `provider`, `operation`, or similar is not safe by spelling
-alone. It must be code-bounded, reduced to a closed enum, or proven through the
-real production boundary not to carry an adversarial private sentinel. The
-guard rejects:
+canonical source-level guard. Existing pre-TASK-15103 entries stay in their
+current reviewed map; TASK-15103 policy data lives only in
+`Docs/security/task-15103-diagnostic-review.json`, and the guard loads the
+surviving reviewed calls from that artifact instead of duplicating their
+labels, fields, and provenance in a second constant.
+
+The guard reuses the already mutation-hardened, alias-aware diagnostic-call
+extractor in `Tests/LLM_Calls/summarization_diagnostic_guard.py`; it does not
+grow a second shallow parser for dynamic message forms, logger aliases,
+`.bind()`, `.opt()`, or exception capture. Each TASK-15103 ledger entry
+identifies a fixed diagnostic label, exact permitted dynamic expressions, and
+the provenance that makes each value ADR-029 metadata rather than private
+content. An expression named `status`, `provider`, `operation`, or similar is
+not safe by spelling alone. It must be code-bounded, reduced to a closed enum,
+or proven through the real production boundary not to carry an adversarial
+private sentinel. The guard rejects:
 
 - wholly dynamic messages plus raw positional, f-string, percent-format,
   `.format`, concatenation, keyword, or bound private expressions;
@@ -179,10 +196,22 @@ No helper or abstraction is added unless multiple repaired sites require the
 same nontrivial policy transformation. Fixed call-site replacements are the
 default.
 
-If computing replacement metadata could add evaluation or change a historical
-failure point, a direct regression test first pins the existing behavior.
-Tests call the production function and substitute only its real configuration,
-transport, filesystem, or provider seam.
+Rendering a value that ADR-029 prohibits from persistent diagnostics is not a
+supported behavior contract: the repair must remove that rendering even when a
+custom value's `__str__` has side effects or raises. The task does not recreate
+an implicit logging-time failure merely to preserve prohibited evaluation. It
+does preserve the surrounding method's branch selection, state mutation,
+returns, raised or returned operational errors, ordering, and collaborator
+calls.
+
+If computing replacement metadata could add evaluation or change any of those
+legitimate behaviors, a direct regression test first pins the existing
+contract. For a method owned by `TldwCli` or another framework class, the test
+may invoke the exact unbound production method as a function with a narrow
+state record and signature-checked real collaborator seams. That is a function
+unit test: it does not instantiate, subclass, mount, or run an application.
+Tests otherwise substitute only the real configuration, transport, filesystem,
+or provider seam.
 
 ### Inventory acceptance
 
