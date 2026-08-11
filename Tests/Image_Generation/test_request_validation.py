@@ -1,7 +1,7 @@
 from io import BytesIO
 
 import pytest
-from PIL import Image
+from PIL import Image, PngImagePlugin
 
 from tldw_chatbook.Image_Generation.capabilities import ResolvedReferenceImage
 
@@ -181,6 +181,26 @@ def test_reference_image_empty_content_refused(rv):
     assert "reference image has no content bytes" in _messages(issues)
 
 
+@pytest.mark.parametrize("content", ["not-bytes", object()])
+def test_reference_image_non_bytes_content_is_refused(rv, content):
+    bad = {
+        "backend": "fal",
+        "prompt": "cat",
+        "extra_params": {},
+        "reference_image": _ref(content=content, bytes_len=1),
+    }
+
+    issues = rv.validate_image_generation_request(bad)
+
+    assert issues == [
+        rv.ImageGenerationValidationIssue(
+            code="image_params_invalid",
+            message="reference image content must be bytes",
+            path="reference_image",
+        )
+    ]
+
+
 def test_reference_image_multiple_problems_all_reported_no_content_variant(rv):
     # Unsupported backend + bad mime + no content, all at once -- the checks
     # must not short-circuit each other. (Oversize and no-content are now
@@ -242,13 +262,14 @@ def test_reference_image_declared_mime_must_match_signature(rv):
 
 
 def test_reference_image_truncated_decode_is_refused(rv):
-    encoded = _image_bytes(size=(8, 8))
-    content = encoded[: len(encoded) // 2]
+    buffer = BytesIO()
+    Image.effect_noise((64, 64), 100).convert("RGB").save(buffer, format="PNG")
+    content = buffer.getvalue()[:-25]
     bad = {
         "backend": "fal",
         "prompt": "cat",
         "extra_params": {},
-        "reference_image": _ref(content=content, bytes_len=len(content), width=8, height=8),
+        "reference_image": _ref(content=content, bytes_len=len(content), width=64, height=64),
     }
 
     assert "reference image could not be decoded" in _messages(
@@ -285,16 +306,20 @@ def test_reference_image_unsupported_mode_is_refused(rv):
     )
 
 
-@pytest.mark.parametrize("dimension", [0, 9000])
-def test_reference_image_declared_dimensions_are_bounded(rv, dimension):
+@pytest.mark.parametrize(
+    ("field", "dimension"),
+    [("width", 0), ("width", 9000), ("height", 0), ("height", 9000)],
+    ids=["width-zero", "width-over-cap", "height-zero", "height-over-cap"],
+)
+def test_reference_image_declared_dimensions_are_bounded(rv, field, dimension):
     bad = {
         "backend": "fal",
         "prompt": "cat",
         "extra_params": {},
-        "reference_image": _ref(width=dimension),
+        "reference_image": _ref(**{field: dimension}),
     }
 
-    assert "reference image width out of range" in _messages(
+    assert f"reference image {field} out of range" in _messages(
         rv.validate_image_generation_request(bad)
     )
 
@@ -324,6 +349,88 @@ def test_reference_image_decoded_pixel_cap_is_enforced(rv):
 
     assert "reference image dimensions exceed max pixels" in _messages(
         rv.validate_image_generation_request(bad, config=config)
+    )
+
+
+def _assert_header_cap_precedes_load(
+    rv,
+    monkeypatch,
+    *,
+    size,
+    max_width,
+    max_height,
+    max_pixels,
+    expected_message,
+):
+    from types import SimpleNamespace
+
+    content = _image_bytes(size=size)
+    config = SimpleNamespace(
+        max_prompt_length=10_000,
+        max_width=max_width,
+        max_height=max_height,
+        max_pixels=max_pixels,
+        max_steps=100,
+    )
+    load_calls = []
+    original_load = PngImagePlugin.PngImageFile.load
+
+    def spy_load(image, *args, **kwargs):
+        load_calls.append(True)
+        return original_load(image, *args, **kwargs)
+
+    monkeypatch.setattr(PngImagePlugin.PngImageFile, "load", spy_load)
+    bad = {
+        "backend": "fal",
+        "prompt": "cat",
+        "extra_params": {},
+        "reference_image": _ref(
+            content=content,
+            bytes_len=len(content),
+            width=None,
+            height=None,
+        ),
+    }
+
+    issues = rv.validate_image_generation_request(bad, config=config)
+
+    assert expected_message in _messages(issues)
+    assert load_calls == []
+
+
+def test_reference_image_over_width_cap_is_rejected_before_decode_load(rv, monkeypatch):
+    _assert_header_cap_precedes_load(
+        rv,
+        monkeypatch,
+        size=(4, 2),
+        max_width=3,
+        max_height=10,
+        max_pixels=100,
+        expected_message="reference image width out of range",
+    )
+
+
+def test_reference_image_over_height_cap_is_rejected_before_decode_load(rv, monkeypatch):
+    _assert_header_cap_precedes_load(
+        rv,
+        monkeypatch,
+        size=(2, 4),
+        max_width=10,
+        max_height=3,
+        max_pixels=100,
+        expected_message="reference image height out of range",
+    )
+
+
+def test_reference_image_over_pixel_cap_is_rejected_before_decode_load(rv, monkeypatch):
+    _assert_header_cap_precedes_load(
+        rv,
+        monkeypatch,
+        size=(4, 4),
+        max_width=10,
+        max_height=10,
+        max_pixels=15,
+        expected_message="reference image dimensions exceed max pixels",
     )
 
 

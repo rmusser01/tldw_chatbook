@@ -188,6 +188,27 @@ def test_run_generation_comfyui_invalid_reference_precedes_adapter_construction(
         )
 
 
+@pytest.mark.parametrize("content", ["not-bytes", object()])
+def test_run_generation_non_bytes_reference_precedes_adapter_construction(monkeypatch, content):
+    from tldw_chatbook.Image_Generation import worker
+    from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
+
+    class FakeReg:
+        def resolve_backend(self, name):
+            return "comfyui"
+
+        def get_adapter(self, name):
+            raise AssertionError("adapter must not be constructed before validation")
+
+    monkeypatch.setattr(worker, "get_registry", lambda: FakeReg())
+    reference = _make_reference_image(content=content, bytes_len=1)
+
+    with pytest.raises(ImageGenerationError, match="content must be bytes"):
+        worker.run_generation(
+            worker.build_request(backend="comfyui", prompt="edit", reference_image=reference)
+        )
+
+
 def test_run_generation_optional_reference_backend_still_allows_text_to_image(monkeypatch):
     from tldw_chatbook.Image_Generation import worker
     from tldw_chatbook.Image_Generation.adapters.base import ImageGenResult
