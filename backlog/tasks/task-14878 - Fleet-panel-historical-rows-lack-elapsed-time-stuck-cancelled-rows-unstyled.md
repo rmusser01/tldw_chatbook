@@ -4,6 +4,7 @@ title: 'Fleet panel: historical rows lack elapsed time; stuck/cancelled rows uns
 status: To Do
 assignee: []
 created_date: '2026-08-11 04:01'
+updated_date: '2026-08-11 13:43'
 labels: []
 dependencies: []
 priority: low
@@ -20,3 +21,9 @@ Two cosmetic gaps disclosed and accepted during supervisor-fleet PR 2b Task 4. (
 - [ ] #1 Historical/resumed fleet rows show an elapsed time derived from the run's DB timestamps
 - [ ] #2 stuck and cancelled rows have their own color variants, distinct from running and from the default foreground
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-08-11, PR2b Task 6 live verification: the gap is BROADER than this task's original scoping. It is not only historical/resumed (post-restart) rows — the moment the WHOLE TURN ends, fleet_snapshot() empties and every row in that run reverts, same session and seconds later, from the live rendering (elapsed + secondary line + token count) to the sparse historical one (name/task only). Observed live: rows that had shown elapsed, result text and a token figure lost all three within seconds of the reply completing. So restoring this detail from the run DB fixes the common same-session case, not just the restart case. Docs corrected to describe the transience honestly rather than claiming durable token spend.
+<!-- SECTION:NOTES:END -->

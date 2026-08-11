@@ -202,9 +202,11 @@ finishes.
      `· 1m 4s`). A historical/resumed row (a conversation reopened after a
      restart, or one this process never ran live) shows no elapsed segment;
      see *Known gaps* below.
-   - Secondary line: the child's last step, result, or error text, dimmed.
-     Once a live child finishes, its measured token spend is appended here
-     — see *Token spend*, below.
+   - Secondary line: the child's last step, result, or error text, dimmed,
+     with the child's measured token spend appended once it finishes — see
+     *Token spend*, below. Both are **transient**: they come from the live
+     fleet, so when the whole turn ends every row falls back to the sparser
+     historical rendering (name and task only). See *Known gaps*.
 3. **Drilled in** — click a specific row: the whole Agent section switches
    to that one child's own view (`Sub-agent · <status> (Back)` plus its own
    step lines), and the Sub-agents panel itself is hidden while you're
@@ -221,8 +223,10 @@ cancelled child — or any historical/resumed row — doesn't offer this
 gesture at all, since there's nothing left to stop.
 
 **Token spend.** A live child's measured token spend (prompt and
-completion combined) appears on its row once it finishes, and the same
-figure is folded into the Console cost chip's token total — the chip's
+completion combined) appears on its row once it finishes — but only while
+some part of the turn is still live; see *Known gaps* for what happens to
+the row afterwards. The same figure is folded into the Console cost chip's
+token total — the chip's
 tooltip breaks it out separately as "Sub-agents: N tok (not priced)". It
 never becomes a dollar figure: the measurement is one combined number with
 no input/output split, so there is no honest per-model rate to price it
@@ -237,6 +241,12 @@ because a fleet ran underneath it.
   `cancelled` rows not getting their own status color — they still render
   distinctly by glyph (`⚠`/`✗`), just not by color, so they're
   distinguishable but not visually called out.
+- Row detail is transient, not durable. Elapsed time, the secondary line
+  and the token count are read from the live fleet, which is discarded the
+  moment the whole turn finishes — so seconds after a reply completes,
+  every row in that run reverts to name-and-task only, in the same session,
+  without a restart. Verified live during PR 2b's own verification pass
+  (task-14878 covers restoring this detail from the run database).
 - There is no "View all" tail, and expanding the panel does not scroll it
   into view. With a dozen-plus children, or several rail sections open
   above it, you may need to scroll the rail manually to reach the last
