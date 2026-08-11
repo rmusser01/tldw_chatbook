@@ -2756,3 +2756,80 @@ because the rendered blocks were concrete subclasses.
 CSS class selector. Then verify both `get_component_rich_style()` and final
 compositor segments. Span-level or stylesheet-compilation tests alone do not
 prove that Textual registered or painted a component.
+
+---
+
+## A mechanism sentence is an ORACLE — read your prose against your own tables (TASK-15020, 2026-08-11)
+
+**Incident, twice in one arc, and the second time the prose had already
+shipped.**
+
+1. **Paper arithmetic the code refutes by 1 ULP.** Task 6 measured the RAG
+   eval's scoped category flipping 0.000 -> 1.000 and wrote the mechanism
+   into `golden.toml`, `README.md` and a test comment: the FTS-only row
+   "exactly ties" the semantic leg's rank 9, so the tie-break convention
+   decides placement. False as the shipped code evaluates it.
+   `reciprocal_rank_fusion` computes `(1.0 - alpha) * fts_rrf`, and
+   `1.0 - 0.7` is `0.30000000000000004`, so the FTS-only row scores exactly
+   `0.05` against the semantic row's `0.7/14 = 0.049999999999999996` — a
+   **strict win by 6.94e-18**. The tie-break never runs. The paper form
+   `0.3 * (1/6)` IS bit-identical to the semantic value, which is where the
+   phantom tie came from. The *same arc's predecessor* (the weighting arc)
+   had already learned a 1-ULP lesson; it recurred one arc later, in prose.
+2. **A claim contradicted by a table in the same document.** The same
+   section said the class is "FTS-only" and would read 0.000 at the old
+   `rrf_k=60`. Re-running the counterfactual gave **0.286**: two of the
+   seven targets sit at vector rank 12 and 20, inside the over-fetched
+   pool, and reach rank 1 at `rrf_k=60`. The author's own rank vector
+   `(3,4,9,9,9,9,9)` could never have come from FTS-only arithmetic — the
+   contradiction was already printed above the sentence.
+3. **A filed task pointing its own fix at the wrong lever.** Task 7 filed
+   TASK-15400 blaming the keyword leg's silence on function words in an
+   implicit-AND MATCH. Measured across all 60 golden queries: a
+   stopword-trimmed AND rescues **1 of 40**; OR-of-tokens rescues **34**.
+   The dominant cause is AND-strictness over CONTENT words — visible in the
+   author's own token table, in the same report, unread against the
+   author's own prose. A filed task is an oracle for whoever implements it,
+   and as filed it would have sent them at a 1-in-40 lever.
+
+**What to do.** Treat any sentence asserting a MECHANISM — in a docstring,
+a fixture comment, a README, a test comment, or a filed task's description
+— as an assertion that must be checked against the running system, at the
+same standard as an `assert`. Specifically: never state a numeric mechanism
+in paper arithmetic; **read the provenance the engine already records**
+(here, `metadata["hybrid_fusion"]` carried `fts_rank`, `vector_rank` and
+the fused scores all along). And before shipping an explanation, read it
+back against the tables in your own document — in all three incidents the
+refuting data was already on the page. Distinct from the stale-prose trap
+(see "Retuning a numeric constant obliges you to grep its LITERAL VALUES"):
+that prose went stale, this prose was wrong when written.
+
+---
+
+## A declared divergence no test can distinguish from its own removal is a comment, not a decision (TASK-15020, 2026-08-11)
+
+**Incident.** Task 8 made the Library RAG window's depth follow the active
+profile, and deliberately kept one difference from the Console seam that
+now shares its resolution: the window clamps a >50 profile down to
+`LIBRARY_RAG_TOP_K_MAX`, while Console stays uncapped. It was stated in the
+report, in the code comment, and covered by a test — of the *clamped* arm
+only. The reviewer mutated the SHARED seam to clamp unconditionally
+(`min(value, LIBRARY_RAG_TOP_K_MAX)` in `library_rag_profile_top_k`),
+erasing the divergence outright. **199 tests stayed green.** A difference
+the author had chosen on purpose could be deleted by anyone, at any time,
+with the whole suite agreeing. The fix was one test asserting BOTH arms
+together — profile 100 gives Console 100 and the window 50 — after which
+the reviewer's exact mutation reds precisely that test (1 failed / 153
+passed).
+
+**What to do.** When you deliberately make two call sites behave
+differently, the pin is not "test the interesting arm" — it is **one test
+that asserts the pair**, so the assertion states the DIFFERENCE rather than
+one of its sides. Then mutate toward *sameness* (make both arms agree) and
+confirm red; the usual mutation habit of breaking the guarded behaviour
+misses this class entirely, because unifying two arms breaks neither arm's
+own test. Applies to any intentional asymmetry: a clamp on one path, a
+stricter timeout for one caller, a feature gated in one surface and not
+another. Sibling of "Mutation-test every guard you add" and "A guard test
+must be PROVEN to discriminate", with the twist that here the thing left
+unpinned was a DESIGN DECISION, not a behaviour.

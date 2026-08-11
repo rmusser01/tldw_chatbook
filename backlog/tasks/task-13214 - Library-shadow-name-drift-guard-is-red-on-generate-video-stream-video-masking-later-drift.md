@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-08-10 00:29'
+updated_date: '2026-08-11 19:48'
 labels: []
 dependencies: []
 priority: high
@@ -23,3 +24,9 @@ Tests/Library/test_library_skills_state.py::test_shadow_name_set_stays_in_sync_w
 - [ ] #2 The guard passes on a clean dev checkout
 - [ ] #3 The assertion reports ALL uncovered names across the three sources in one failure rather than short-circuiting on the first subset, so one gap cannot mask another
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Still red at 2026-08-11 on feat/rag-p2a-instrument-renewal (785ce369c) — re-verified directly, not inferred. Met again during TASK-15020/B1 while running Tests/Library whole (1742 passed, 1 failed); nothing in that arc's diff is in the test's import path. Sibling pre-existing failures surfaced in the same sweep and filed separately: TASK-15500 (scope-pipeline notify copy, 4 tests) and TASK-15501 (Console left-rail composition). Recording the second independent sighting because AC#3's masking argument is what makes this High: while this guard is red, no one adding a console command or runtime tool gets a drift signal.
+<!-- SECTION:NOTES:END -->
