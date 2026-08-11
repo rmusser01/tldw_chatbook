@@ -436,6 +436,62 @@ def test_snapshot_rejects_duplicate_task_ids() -> None:
         SessionTodoStore.from_snapshot({"next_id": 2, "tasks": [record, dict(record)]})
 
 
+def test_snapshot_rejects_reversed_task_id_order() -> None:
+    with pytest.raises(TodoStoreError) as error:
+        SessionTodoStore.from_snapshot(
+            {
+                "next_id": 4,
+                "tasks": [
+                    {
+                        "id": "3",
+                        "version": 1,
+                        "content": "Later",
+                        "status": "pending",
+                    },
+                    {
+                        "id": "1",
+                        "version": 1,
+                        "content": "Earlier",
+                        "status": "completed",
+                    },
+                ],
+            }
+        )
+
+    assert str(error.value) == "task ids out of order"
+
+
+def test_snapshot_rejects_non_increasing_task_id_order() -> None:
+    with pytest.raises(TodoStoreError) as error:
+        SessionTodoStore.from_snapshot(
+            {
+                "next_id": 5,
+                "tasks": [
+                    {
+                        "id": "1",
+                        "version": 1,
+                        "content": "First",
+                        "status": "completed",
+                    },
+                    {
+                        "id": "4",
+                        "version": 1,
+                        "content": "Third",
+                        "status": "pending",
+                    },
+                    {
+                        "id": "2",
+                        "version": 1,
+                        "content": "Second",
+                        "status": "pending",
+                    },
+                ],
+            }
+        )
+
+    assert str(error.value) == "task ids out of order"
+
+
 @pytest.mark.parametrize(
     "version",
     [None, True, 0, -1, 1.0, "1", _IntSubclass(1)],
