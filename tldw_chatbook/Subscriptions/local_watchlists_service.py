@@ -6,6 +6,8 @@ import asyncio
 import json
 import inspect
 import hashlib
+import sqlite3
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
@@ -313,6 +315,11 @@ class LocalWatchlistsService:
     ):
         self._db_factory = db_factory
         self._db_instance: SubscriptionsDB | None = None
+        # Guards `_db_instance` only -- see `_db` for why a lock is needed at
+        # all. Plain `Lock`, not `RLock`: a factory that re-entered `_db()`
+        # would recurse forever anyway, and a deadlock is a louder failure
+        # than the silent double-construction this exists to prevent.
+        self._db_lock = threading.Lock()
         self.notification_dispatcher = notification_dispatcher
         self.notification_app = notification_app
         self.run_executor = run_executor
@@ -334,8 +341,9 @@ class LocalWatchlistsService:
         spied database mid-test), and a stale cached instance would leave that
         assignment silently inert.
         """
-        self._db_factory = factory
-        self._db_instance = None
+        with self._db_lock:
+            self._db_factory = factory
+            self._db_instance = None
 
     def _db(self) -> SubscriptionsDB:
         """The service's database, constructed at most once.
@@ -357,15 +365,31 @@ class LocalWatchlistsService:
         also why an in-memory database must NOT hop -- each connection would
         be a private empty database -- which that helper enforces.
 
-        The cache itself needs no lock: it is always primed from the caller's
-        thread (every hop is handed the database as an argument), so the one
-        hop body that calls this again on a worker thread --
-        `_evaluate_alert_rules_for_run`, reached from `record_run_result`
-        after that method has already resolved it -- only ever reads it.
+        The cache IS locked, because this is genuinely called from more than
+        one thread and the first call is not guaranteed to be the loop's
+        (review round 1, Important). `list_home_run_snapshot` below is a
+        synchronous method that calls `_db()` itself, and Home runs it inside
+        `asyncio.to_thread` (`Home/active_work_adapter.py`'s
+        `_compute_active_work_fields`) -- so a Home dashboard build on a
+        worker thread can reach an unprimed cache at the same moment the
+        event loop does. Unlocked double-checked assignment would then call a
+        CONSTRUCTING factory twice, which is precisely the second
+        `_initialize_schema` hazard this task exists to remove: a connection
+        opened during the second schema rewrite caches a view missing the
+        tables it is rewriting (see `app.py`'s `_backfill_subscription_items_
+        fts` for the measured incident). The lock is taken once per service
+        for real; after that it is an uncontended acquire in front of an
+        attribute read.
         """
-        if self._db_instance is None:
-            self._db_instance = self._db_factory()
-        return self._db_instance
+        if self._db_instance is not None:
+            return self._db_instance
+        with self._db_lock:
+            # Re-checked under the lock: the thread that waited here while
+            # another built the instance must return THAT one, not build a
+            # second.
+            if self._db_instance is None:
+                self._db_instance = self._db_factory()
+            return self._db_instance
 
     async def list_sources(
         self, *, limit: int = 100, offset: int = 0, q: str | None = None
@@ -849,6 +873,13 @@ class LocalWatchlistsService:
     async def launch_run(
         self, *, source_id: Any = None, job_id: Any = None
     ) -> dict[str, Any]:
+        """Insert a `queued` run row for one source and return it.
+
+        Raises:
+            KeyError: `source_id` does not name a subscription -- including
+                the case where it stopped naming one part-way through this
+                call (see below).
+        """
         resolved_source_id = int(source_id if source_id is not None else job_id)
         db = self._db()
         # task-15463: both statements hop to a worker thread. The KeyError is
@@ -859,9 +890,26 @@ class LocalWatchlistsService:
         )
         if subscription is None:
             raise KeyError(f"Subscription not found: {resolved_source_id}")
-        run_id = await run_db_off_loop(
-            db, self._insert_queued_run, db, resolved_source_id, self._utc_now()
-        )
+        try:
+            run_id = await run_db_off_loop(
+                db, self._insert_queued_run, db, resolved_source_id, self._utc_now()
+            )
+        except sqlite3.IntegrityError as exc:
+            # Review round 1, Minor 3. The existence check above and this
+            # INSERT are now two awaits apart rather than two straight-line
+            # statements, so the window in which the user can delete the
+            # source between them is real rather than theoretical -- a
+            # scheduled check and a Delete Source press land on different
+            # threads. `local_watchlist_runs.source_id` carries
+            # `FOREIGN KEY ... REFERENCES subscriptions(id)` and every
+            # connection sets `PRAGMA foreign_keys = ON`, so the loser of
+            # that race got a raw `IntegrityError` where callers (the
+            # scheduled-check handler, the Check Now path) were written
+            # against `KeyError`. Mapped back to the documented contract, with
+            # the original chained so the cause is not lost.
+            raise KeyError(
+                f"Subscription not found: {resolved_source_id}"
+            ) from exc
         return await self.get_run(run_id)
 
     @staticmethod
@@ -1002,6 +1050,32 @@ class LocalWatchlistsService:
             # caller further up the stack (there is none in the check-now
             # path today, but `execute_run` is not a private implementation
             # detail of it) would correctly expect.
+            #
+            # task-15463 changed what "safe" costs here, and the honest
+            # version is this (review round 1, Minor 4). Before, every await
+            # inside `record_run_failure` was a coroutine doing SYNCHRONOUS
+            # sqlite -- none of them ever yielded to the loop, so once this
+            # handler was entered the terminal write was effectively atomic.
+            # It now takes about five real suspension points (its own
+            # `record_check_error` hop, then `record_run_result`'s `get_run`,
+            # UPDATE, alert-rule read and final `get_run`). The
+            # single-cancel case this branch exists for -- the user switching
+            # tabs -- is unaffected: that cancel has already been delivered,
+            # the loop is alive, and the hops complete in about a
+            # millisecond. What is genuinely new is that a SECOND
+            # cancellation, in practice only interpreter/loop shutdown
+            # cancelling every task, can now interrupt the recovery write and
+            # leave the row reading `running`.
+            #
+            # Deliberately NOT shielded. `asyncio.shield` would not make the
+            # write land: the outer await still raises at once, the inner
+            # task is left detached, and the same shutdown that cancelled us
+            # destroys it -- trading a stale row for a stale row plus a
+            # "Task was destroyed but it is pending" warning and a write we
+            # can no longer log the failure of. A row left at `running` by a
+            # process that is exiting is visible in the Runs pane and can be
+            # re-run; the failure mode is bounded and honest, which a
+            # background write racing the interpreter is not.
             try:
                 await self.record_run_failure(
                     run_id,

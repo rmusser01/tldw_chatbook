@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -149,6 +150,55 @@ async def test_the_service_resolves_its_db_factory_exactly_once(tmp_path):
     )
 
 
+def test_concurrent_threads_still_construct_the_database_exactly_once(tmp_path):
+    """`_db()` is called from more than one thread, and not always the loop's.
+
+    Review round 1, Important. `list_home_run_snapshot` is synchronous and
+    calls `_db()` itself, and Home runs it under `asyncio.to_thread`
+    (`Home/active_work_adapter.py::_compute_active_work_fields`) -- so a
+    worker thread can reach an unprimed cache at the same moment the event
+    loop does. Unlocked, that double-constructs, which for a CONSTRUCTING
+    factory means a second `_initialize_schema` running while other threads
+    hold connections: the exact schema-cache poisoning this task removed.
+
+    The factory below sleeps inside the construction to widen the window --
+    without the lock this fails with 8 constructions, not a rare flake.
+    """
+    db = SubscriptionsDB(tmp_path / "subs.db", "test")
+    constructions: list[int] = []
+    lock = threading.Lock()
+
+    def slow_counting_factory() -> SubscriptionsDB:
+        with lock:
+            constructions.append(threading.get_ident())
+        time.sleep(0.05)
+        return db
+
+    service = LocalWatchlistsService(db_factory=slow_counting_factory)
+    resolved: list[SubscriptionsDB] = []
+    start = threading.Barrier(8)
+
+    def hammer() -> None:
+        start.wait()
+        instance = service._db()
+        with lock:
+            resolved.append(instance)
+
+    threads = [threading.Thread(target=hammer) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert len(constructions) == 1, (
+        "eight threads racing an unprimed cache must produce ONE "
+        f"SubscriptionsDB, not {len(constructions)}"
+    )
+    assert len(resolved) == 8 and all(instance is db for instance in resolved), (
+        "every waiting thread must be handed the one constructed instance"
+    )
+
+
 @pytest.mark.asyncio
 async def test_reassigning_db_factory_repoints_the_service(tmp_path):
     """The injectable factory seam survives the caching.
@@ -173,6 +223,36 @@ async def test_reassigning_db_factory_repoints_the_service(tmp_path):
         "assigning a new db_factory must take effect on the next call -- the "
         "cached instance has to be dropped with the factory that produced it"
     )
+
+
+@pytest.mark.asyncio
+async def test_a_source_deleted_mid_launch_still_raises_keyerror(tmp_path):
+    """The `launch_run` contract survives its own widened window.
+
+    Review round 1, Minor 3. The existence check and the INSERT are now two
+    awaits apart, so a source can be deleted between them -- and
+    `local_watchlist_runs.source_id` is a foreign key with
+    `PRAGMA foreign_keys = ON`, so the INSERT raises `IntegrityError` where
+    every caller was written against `KeyError`. Simulated here by deleting
+    the row from inside the existence-check hop, which is exactly the state
+    the loser of that race observes.
+    """
+    db = SubscriptionsDB(tmp_path / "subs.db", "test")
+    source_id = db.add_subscription(
+        name="Doomed", type="rss", source="https://example.com/feed"
+    )
+    service = LocalWatchlistsService(db_factory=lambda: db)
+    real_get = db.get_subscription
+
+    def delete_after_read(subscription_id):
+        row = real_get(subscription_id)
+        db.delete_subscription(int(subscription_id))
+        return row
+
+    db.get_subscription = delete_after_read
+
+    with pytest.raises(KeyError):
+        await service.launch_run(source_id=source_id)
 
 
 # --- AC#2: nothing synchronous on the loop ----------------------------------

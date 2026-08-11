@@ -6739,9 +6739,17 @@ class TldwCli(
         the poisoned connection survives, and the write that lands on it just
         fails. One instance, one schema initialization, no window.
 
-        ``close()`` below stays: it closes only the calling thread's
-        connection (``SubscriptionsDB.close``), so it releases this worker's
-        connection without touching anyone else's.
+        ``close()`` below stays, and what it does is worth stating exactly.
+        ``SubscriptionsDB.close`` closes only the CALLING thread's connection
+        and clears that thread's slot. This body runs on a **pooled** thread
+        (Textual's thread workers run on asyncio's default executor, which is
+        shared with every ``asyncio.to_thread`` hop in the app), so the
+        connection it closes belongs to a pool thread that will later serve
+        other watchlists work on this same shared instance. That is safe for
+        exactly one reason: the ``conn`` property re-opens lazily, so the next
+        hop scheduled onto that thread gets a fresh connection instead of a
+        closed one. It is not safe to "improve" this into a close of the
+        instance itself.
         """
         db = None
         db_path = get_subscriptions_db_path()
