@@ -1065,6 +1065,8 @@ Then run:
   tldw_chatbook/Chat/console_chat_controller.py \
   tldw_chatbook/Chat/console_agent_bridge.py \
   tldw_chatbook/UI/Console_Modules/session.py \
+  tldw_chatbook/MCP/local_store.py \
+  tldw_chatbook/MCP/hub_tool_catalog.py \
   Tests/Agents/test_session_todo_store.py \
   Tests/Agents/test_local_tool_provider.py \
   Tests/Agents/test_local_tools_integration.py \
@@ -1078,6 +1080,9 @@ Then run:
   Tests/MCP/test_local_server_tools.py \
   Tests/MCP/test_control_plane_permissions.py \
   Tests/MCP/test_gateway_runtime_tools.py \
+  Tests/MCP/test_local_store.py \
+  Tests/MCP/test_hub_tool_catalog.py \
+  Tests/MCP/test_mcp_documentation_contract.py \
   Tests/UI/test_mcp_workbench.py
 ../../.venv/bin/python -m ruff format --check \
   tldw_chatbook/Agents/session_todo_store.py \
@@ -1087,6 +1092,8 @@ Then run:
   tldw_chatbook/Chat/console_chat_controller.py \
   tldw_chatbook/Chat/console_agent_bridge.py \
   tldw_chatbook/UI/Console_Modules/session.py \
+  tldw_chatbook/MCP/local_store.py \
+  tldw_chatbook/MCP/hub_tool_catalog.py \
   Tests/Agents/test_session_todo_store.py \
   Tests/Agents/test_local_tool_provider.py \
   Tests/Agents/test_local_tools_integration.py \
@@ -1100,6 +1107,9 @@ Then run:
   Tests/MCP/test_local_server_tools.py \
   Tests/MCP/test_control_plane_permissions.py \
   Tests/MCP/test_gateway_runtime_tools.py \
+  Tests/MCP/test_local_store.py \
+  Tests/MCP/test_hub_tool_catalog.py \
+  Tests/MCP/test_mcp_documentation_contract.py \
   Tests/UI/test_mcp_workbench.py
 ../../.venv/bin/python -m mypy \
   tldw_chatbook/Agents/session_todo_store.py \
@@ -1108,7 +1118,9 @@ Then run:
   tldw_chatbook/Chat/console_chat_store.py \
   tldw_chatbook/Chat/console_chat_controller.py \
   tldw_chatbook/Chat/console_agent_bridge.py \
-  tldw_chatbook/UI/Console_Modules/session.py
+  tldw_chatbook/UI/Console_Modules/session.py \
+  tldw_chatbook/MCP/local_store.py \
+  tldw_chatbook/MCP/hub_tool_catalog.py
 ../../.venv/bin/python -m bandit -q \
   tldw_chatbook/Agents/session_todo_store.py \
   tldw_chatbook/Agents/local_tool_provider.py \
@@ -1116,10 +1128,14 @@ Then run:
   tldw_chatbook/Chat/console_chat_store.py \
   tldw_chatbook/Chat/console_chat_controller.py \
   tldw_chatbook/Chat/console_agent_bridge.py \
-  tldw_chatbook/UI/Console_Modules/session.py
+  tldw_chatbook/UI/Console_Modules/session.py \
+  tldw_chatbook/MCP/local_store.py \
+  tldw_chatbook/MCP/hub_tool_catalog.py
 ../../.venv/bin/python -m compileall -q \
   tldw_chatbook/Agents tldw_chatbook/LLM_Calls tldw_chatbook/Chat \
-  tldw_chatbook/UI/Console_Modules
+  tldw_chatbook/UI/Console_Modules \
+  tldw_chatbook/MCP/local_store.py \
+  tldw_chatbook/MCP/hub_tool_catalog.py
 git diff --check origin/dev...HEAD
 git diff --check
 ```
@@ -1141,7 +1157,7 @@ Review the exact committed diff against the approved design and ADR-032. Any tra
 
 - [ ] **Step 6: Close TASK-13216 only after all evidence is final**
 
-Use the Backlog CLI to check all six ACs, add concise Implementation Notes, and mark Done. The notes must name the store/provider/navigation/marker changes, the two-lock trade-off, exact test/static evidence, mutation evidence, and ADR-032 addendum. Add a lessons entry only for a real reusable trap encountered during implementation.
+Use the Backlog CLI to check all seven ACs, add concise Implementation Notes, and mark Done. The notes must name the store/provider/navigation/marker changes, the two-lock trade-off, exact test/static evidence, mutation evidence, and ADR-032 addendum. Add a lessons entry only for a real reusable trap encountered during implementation.
 
 - [ ] **Step 7: Commit closeout records**
 
