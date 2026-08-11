@@ -1901,7 +1901,12 @@ class ConsoleMessageController:
         )
         self.app_instance.notify(
             "Saved message as a Chatbook artifact. It appears under Artifacts.",
-            severity="information",
+            # FB-07 (TASK-2154) moved every Save-as confirmation to "success";
+            # Chatbook was missed and kept "information" for four days because
+            # the test that pinned all four destinations called a seam
+            # decomposition wave 3 had already moved, so it never ran
+            # (task-14920).
+            severity="success",
         )
 
     def _clear_console_original_attempt_preview(self, message_id: str) -> None:

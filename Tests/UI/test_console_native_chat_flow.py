@@ -13,6 +13,8 @@ import pytest
 from textual import on
 from textual.app import App
 from textual.content import Content
+from textual.css.query import NoMatches
+from textual.pilot import OutOfBounds
 from textual.widgets import Button, Checkbox, Input, Static, TextArea
 
 from Tests.UI.background_signals import wait_for_background_signal, wait_for_signal
@@ -1902,6 +1904,70 @@ async def _click_console_workspace_conversation_for_session(
     )
 
 
+async def _scroll_console_rail_row_into_view(pilot, row) -> None:
+    """Scroll one left-rail row into the visible screen region before clicking.
+
+    task-14920: task-14810 split the Console left rail into peer disclosure
+    sections (Sessions, Workspaces, Conversations, Model, ...) inside the
+    ``#console-left-rail-body`` ``VerticalScroll``. All of them open by
+    default, so at the 160x48 harness size the rail's virtual height is ~99
+    rows against a 29-row viewport and the Conversations section starts ~20
+    rows below the fold. ``pilot.click`` addresses SCREEN coordinates and
+    raises ``OutOfBounds`` for anything outside the visible region, so the
+    click has to be preceded by the same scroll a real user performs.
+
+    Scrolling (rather than switching to ``Button.press()``) is deliberate: it
+    keeps these tests asserting that a real hit-tested click on the row
+    activates it, which is the claim they were written to pin. Measured on
+    ``b4c5105ed``: the row moves from y=70 to y=37 and ``pilot.click``
+    returns True.
+    """
+    row.scroll_visible(animate=False, force=True)
+    await pilot.pause()
+
+
+async def _click_after_scrolling_into_view(
+    console,
+    pilot,
+    selector: str,
+    *,
+    attempts: int = 40,
+) -> None:
+    """Scroll a widget into view and click it, re-trying while layout settles.
+
+    task-14920: the same screen-coordinate problem as
+    ``_scroll_console_rail_row_into_view``, but for the transcript. A single
+    ``scroll_visible()`` followed by a fixed ``pilot.pause`` is not enough when
+    a later recompose (image prep landing, the guidance setup card) moves the
+    target again: the click then raises ``OutOfBounds``. Re-scroll and re-click
+    until the click is delivered, so the assertion that follows is still about
+    a REAL hit-tested click.
+
+    The click's return value is deliberately NOT required to be ``True``: a
+    container whose top-left cell belongs to a child (an inline image row here)
+    reports ``False`` while still delivering the event, which is the semantics
+    the caller had before this helper existed. Only the coordinate failure is
+    retried.
+    """
+    for _ in range(attempts):
+        try:
+            widget = console.query_one(selector)
+        except NoMatches:
+            await pilot.pause(0.05)
+            continue
+        widget.scroll_visible(animate=False, force=True)
+        await pilot.pause()
+        try:
+            await pilot.click(selector)
+            return
+        except (OutOfBounds, NoMatches):
+            pass
+        await pilot.pause(0.05)
+    raise AssertionError(
+        f"Click on {selector!r} never landed inside the visible screen region."
+    )
+
+
 async def _click_console_workspace_conversation_for_id(
     console,
     pilot,
@@ -1920,25 +1986,40 @@ async def _click_console_workspace_conversation_for_id(
     ``_click_console_workspace_conversation_for_session`` and re-click until the
     press is delivered (``pilot.click`` returns ``True``).
     """
+    out_of_bounds: OutOfBounds | None = None
     for _ in range(attempts):
-        row_id: str | None = None
+        row_widget = None
         for row in console.query(".console-workspace-conversation-row"):
             if getattr(row, "conversation_id", None) == conversation_id:
-                row_id = str(row.id)
+                row_widget = row
                 break
-        if row_id is not None and await pilot.click(f"#{row_id}"):
-            return row_id
+        if row_widget is not None:
+            await _scroll_console_rail_row_into_view(pilot, row_widget)
+            row_id = str(row_widget.id)
+            try:
+                if await pilot.click(f"#{row_id}"):
+                    return row_id
+            except OutOfBounds as error:
+                # A rebuild mid-retry can move the row again; retry rather
+                # than abort, but keep the error for the failure message.
+                out_of_bounds = error
+            except NoMatches:
+                # The rail rebuilt between the scroll and the click; the next
+                # attempt re-queries. The loop still has to land a real click.
+                pass
         await pilot.pause(0.05)
     rows = [
         (
             getattr(row, "id", ""),
             getattr(row, "conversation_id", None),
+            getattr(row, "region", None),
             _widget_text(row),
         )
         for row in console.query(".console-workspace-conversation-row")
     ]
     raise AssertionError(
-        f"Workspace conversation row for {conversation_id!r} not found. Rows: {rows!r}"
+        f"Workspace conversation row for {conversation_id!r} not clicked "
+        f"(last out-of-bounds: {out_of_bounds!r}). Rows: {rows!r}"
     )
 
 
@@ -1953,6 +2034,7 @@ async def _click_console_workspace_conversation_for_row_key(
     for _ in range(attempts):
         for row in console.query(".console-workspace-conversation-row"):
             if getattr(row, "row_key", None) == row_key:
+                await _scroll_console_rail_row_into_view(pilot, row)
                 row_id = str(row.id)
                 await pilot.click(f"#{row_id}")
                 return row_id
@@ -4101,10 +4183,24 @@ async def test_console_workspace_authority_rows_are_structured_for_scanning():
         )
 
 
-class _CharacterHandoffStore:
-    """Capture character-session identity at greeting persistence time."""
+class _CharacterHandoffStore(ConsoleChatStore):
+    """Capture character-session identity at greeting persistence time.
+
+    task-14920: this used to be a hand-rolled stub that implemented only
+    ``create_session`` and ``append_message``. When TASK a6cc05d8b ("seed
+    dynamic character chat templates") moved the greeting seam from
+    ``store.append_message(...)`` to ``store.seed_character_roleplay(...)``,
+    the stub silently lost the method -- and the handoff wraps the seed call
+    in ``except Exception``, so the resulting ``AttributeError`` was swallowed
+    and four tests observed "no greeting was ever appended" instead of a
+    broken double. Subclassing the real ``ConsoleChatStore`` (persistence
+    ``None`` = in-memory only) keeps the greeting rendering and the
+    identity-at-append capture pinned to production behaviour rather than to
+    a hand-copied imitation of it, so the next seam move fails loudly here.
+    """
 
     def __init__(self) -> None:
+        super().__init__()
         self.create_kwargs: dict | None = None
         self.session: ConsoleChatSession | None = None
         self.messages: list[dict] = []
@@ -4112,10 +4208,10 @@ class _CharacterHandoffStore:
 
     def create_session(self, **kwargs):
         self.create_kwargs = dict(kwargs)
-        self.session = ConsoleChatSession(id="handoff-session", **kwargs)
+        self.session = super().create_session(**kwargs)
         return self.session
 
-    def append_message(self, session_id, *, role, content, persist):
+    def append_message(self, session_id, *, role, content, persist=False, **kwargs):
         assert self.session is not None
         self.identity_at_append = {
             "runtime_backend": self.session.runtime_backend,
@@ -4132,6 +4228,13 @@ class _CharacterHandoffStore:
                 "content": content,
                 "persist": persist,
             }
+        )
+        return super().append_message(
+            session_id,
+            role=role,
+            content=content,
+            persist=persist,
+            **kwargs,
         )
 
 
@@ -4397,7 +4500,7 @@ async def test_local_character_handoff_uses_db_authority_and_scoped_card_service
     assert store.identity_at_append["character_ref"] == store.session.character_ref()
     assert store.messages == [
         {
-            "session_id": "handoff-session",
+            "session_id": store.session.id,
             "role": ConsoleMessageRole.ASSISTANT,
             "content": "Hello User, I am Elara.",
             "persist": True,
@@ -6429,6 +6532,34 @@ async def _wait_for_browser_conversation_row(console, pilot, conversation_id: st
     raise AssertionError(f"Browser row {conversation_id!r} not found. Rows: {rows!r}")
 
 
+async def _wait_for_browser_render(pilot, predicate, describe) -> None:
+    """Wait for a browser-rail render condition on the same wall-clock deadline.
+
+    task-14920: the TASK-1900 diagnosis above ("on a busy machine each pause
+    overruns AND the render itself takes longer, so the budget shrinks exactly
+    when it needs to grow") applies to every browser-rail assertion made after
+    a single fixed ``pilot.pause``, not only to "has the row appeared". Two
+    such assertions were observed failing in a whole-file run under load while
+    passing 8/8 in isolation; this is the same deadline, reused, so the
+    assertion that follows keeps its original claim and only stops guessing at
+    a settle time.
+
+    Args:
+        pilot: The Console `Pilot`, used to let the event loop settle.
+        predicate: Zero-arg callable returning True once the render landed.
+        describe: Zero-arg callable returning failure context for the message.
+
+    Raises:
+        AssertionError: If the condition never held within the deadline.
+    """
+    deadline = time.monotonic() + _BROWSER_ROW_RENDER_TIMEOUT
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        await pilot.pause(0.05)
+    raise AssertionError(f"Browser render never settled: {describe()}")
+
+
 class _InputChangedEvent:
     def __init__(self, value: str) -> None:
         self.value = value
@@ -7282,14 +7413,25 @@ async def test_console_conversation_browser_starred_section_updates_from_row_act
             console, pilot, "#console-workspace-conversation-search"
         )
         _browser_star_button(console, "star-target").press()
-        await pilot.pause(0.1)
+
+        def _star_target_rows() -> list[str]:
+            return [
+                _widget_text(row)
+                for row in console.query(".console-workspace-conversation-row")
+                if getattr(row, "conversation_id", None) == "star-target"
+            ]
+
+        # task-14920: `pilot.pause(0.1)` was a guess at how long the rail takes
+        # to rebuild into its starred + workspace sections; under whole-file
+        # load it is not long enough and the rows list is still empty.
+        await _wait_for_browser_render(
+            pilot,
+            lambda: len(_star_target_rows()) >= 2,
+            lambda: f"star-target rows never reached 2: {_star_target_rows()!r}",
+        )
 
         assert marks.is_starred("star-target") is True
-        rows = [
-            _widget_text(row)
-            for row in console.query(".console-workspace-conversation-row")
-            if getattr(row, "conversation_id", None) == "star-target"
-        ]
+        rows = _star_target_rows()
         assert len(rows) >= 2
         assert any("Star Target" in row for row in rows)
 
@@ -8115,6 +8257,18 @@ async def test_console_workspace_conversation_search_shows_local_rows_before_slo
                 await pilot.pause(0.05)
             assert app.chat_conversation_scope_service.started.is_set()
 
+            # task-14920: the local rows land a render pass after the worker
+            # starts, so asserting immediately is a race under whole-file load.
+            # The window is still the one under test -- `release` is only set
+            # in the `finally` below, so the persisted search cannot have
+            # returned while this waits (asserted right after).
+            await _wait_for_browser_render(
+                pilot,
+                lambda: "1 match" in _visible_text(console),
+                lambda: "'1 match' never rendered while the persisted search "
+                f"was still pending: {_visible_text(console)[:400]!r}",
+            )
+            assert not app.chat_conversation_scope_service.release.is_set()
             assert "1 match" in _visible_text(console)
             row_texts = _console_workspace_conversation_texts(console)
             assert any(
@@ -10806,10 +10960,12 @@ async def test_save_image_button_reflects_the_real_screen_ephemeral_accessor():
             assert console.query(f"#console-image-{message.id}"), (
                 "image row never appeared"
             )
-            message_widget = console.query_one(f"#console-message-{message.id}")
-            message_widget.scroll_visible(animate=False)
-            await pilot.pause(0.2)
-            await pilot.click(f"#console-message-{message.id}")
+            # task-14920: `scroll_visible()` + a fixed 0.2s pause raced a later
+            # transcript recompose and this click raised OutOfBounds in roughly
+            # two whole-file runs in five, on dev and unchanged code alike.
+            await _click_after_scrolling_into_view(
+                console, pilot, f"#console-message-{message.id}"
+            )
             save_selector = f"console-message-action-save-image-{message.id}"
             await _wait_for_selector(console, pilot, f"#{save_selector}")
 
@@ -11780,10 +11936,15 @@ async def test_console_save_as_savers_confirm_at_success_severity():
         )
         await console._sync_native_console_chat_ui()
 
+        # task-14920: decomposition wave 3 (391b7bf69) moved the Save-as
+        # destinations onto `ConsoleMessageController` and left a ChatScreen
+        # delegator for `_as_note` only, so the other three are reached
+        # through `_message`. This test was written after that move and had
+        # therefore never once run green.
         await console._save_console_message_as_note(message.id)
-        await console._save_console_message_as_media(message.id)
-        await console._save_console_message_as_prompt(message.id)
-        await console._save_console_message_as_chatbook(message.id)
+        await console._message._save_console_message_as_media(message.id)
+        await console._message._save_console_message_as_prompt(message.id)
+        await console._message._save_console_message_as_chatbook(message.id)
 
     success_toasts = [m for m, severity in notifications if severity == "success"]
     assert "Saved message as Note." in success_toasts
@@ -11867,7 +12028,10 @@ async def test_console_settings_save_fires_success_toast():
                 modal = host.screen_stack[-1]
                 break
         assert modal is not None, "ConsoleSettingsModal never opened"
-        settings = console._ensure_active_console_session_settings()
+        # task-14920: decomposition wave 2 (4de93c10d) moved this seam onto
+        # `ConsoleSessionController` without a ChatScreen delegator; this
+        # test was written afterwards and had never run green.
+        settings = console._session._ensure_active_console_session_settings()
         modal.dismiss(settings)
         await pilot.pause(0.5)
 

@@ -26,6 +26,7 @@ from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
     CharacterCardTTSInspection,
 )
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Constants import (
     LIBRARY_MODE_CONVERSATIONS,
@@ -8635,29 +8636,32 @@ class TestPersonaHumanIdentityRemoval:
                 expected_server_id=expected_server_id
             )
 
-        class _CapturingStore:
+        class _CapturingStore(ConsoleChatStore):
+            """Real in-memory Console store that records what was appended.
+
+            task-14920: this was a hand-rolled stub implementing only
+            ``create_session``/``append_message``. Once the handoff started
+            seeding the greeting through
+            ``ConsoleChatStore.seed_character_roleplay`` (commit a6cc05d8b),
+            the stub no longer had the method production calls, and the
+            handoff's ``except Exception`` swallowed the ``AttributeError``
+            -- so this test silently asserted "no greeting" instead of
+            failing on a stale double. Subclassing the real store keeps the
+            greeting expansion under production's control.
+            """
+
             def __init__(self):
+                super().__init__()
                 self.session = None
                 self.messages = []
 
-            def create_session(
-                self,
-                *,
-                title,
-                workspace_id,
-                settings,
-                **identity,
-            ):
-                self.session = SimpleNamespace(
-                    id="session-1",
-                    title=title,
-                    workspace_id=workspace_id,
-                    settings=settings,
-                    **identity,
-                )
+            def create_session(self, **kwargs):
+                self.session = super().create_session(**kwargs)
                 return self.session
 
-            def append_message(self, session_id, *, role, content, persist):
+            def append_message(
+                self, session_id, *, role, content, persist=False, **kwargs
+            ):
                 self.messages.append(
                     {
                         "session_id": session_id,
@@ -8665,6 +8669,13 @@ class TestPersonaHumanIdentityRemoval:
                         "content": content,
                         "persist": persist,
                     }
+                )
+                return super().append_message(
+                    session_id,
+                    role=role,
+                    content=content,
+                    persist=persist,
+                    **kwargs,
                 )
 
         runtime_app = SimpleNamespace(
