@@ -4241,13 +4241,7 @@ class SettingsScreen(BaseAppScreen):
     ) -> None:
         raw_config = SettingsConfigAdapter().load()
         sections, deletions = image_gen_diff_to_sections(draft_values, raw_config)
-        adapter = SettingsConfigAdapter()
-        ok = True
-        if sections:
-            ok = adapter.save_sections(sections) and ok
-        for section, keys in deletions.items():
-            if keys:
-                ok = adapter.delete_values(section, keys) and ok
+        ok = save_settings_to_cli_config(sections, delete_keys=deletions)
         if ok:
             reset_image_generation_runtime()
         self.app.call_from_thread(self._apply_image_gen_save_result, ok, warnings)

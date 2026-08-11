@@ -9,7 +9,10 @@ from typing import Any
 from loguru import logger
 
 from tldw_chatbook.Image_Generation.adapters.base import ImageGenerationAdapter
-from tldw_chatbook.Image_Generation.config import get_image_generation_config
+from tldw_chatbook.Image_Generation.config import (
+    _IMAGE_GENERATION_RUNTIME_LOCK,
+    get_image_generation_config,
+)
 
 
 class ImageAdapterRegistry:
@@ -29,6 +32,7 @@ class ImageAdapterRegistry:
 
     def __init__(self, config_override: dict[str, Any] | None = None) -> None:
         config = get_image_generation_config()
+        self.config = config
         default_backend = config.default_backend
         enabled_backends = list(config.enabled_backends)
         if config_override:
@@ -136,11 +140,13 @@ _registry: ImageAdapterRegistry | None = None
 
 def get_registry() -> ImageAdapterRegistry:
     global _registry
-    if _registry is None:
-        _registry = ImageAdapterRegistry()
-    return _registry
+    with _IMAGE_GENERATION_RUNTIME_LOCK:
+        if _registry is None:
+            _registry = ImageAdapterRegistry()
+        return _registry
 
 
 def reset_registry() -> None:
     global _registry
-    _registry = None
+    with _IMAGE_GENERATION_RUNTIME_LOCK:
+        _registry = None

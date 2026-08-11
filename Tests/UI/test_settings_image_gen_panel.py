@@ -1541,9 +1541,9 @@ async def test_failed_image_gen_persistence_does_not_reset_runtime(
         raising=False,
     )
     monkeypatch.setattr(
-        settings_screen_module.SettingsConfigAdapter,
-        "save_sections",
-        lambda self, sections: False,
+        settings_screen_module,
+        "save_settings_to_cli_config",
+        lambda section_values, *, delete_keys=None: False,
     )
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -1559,6 +1559,92 @@ async def test_failed_image_gen_persistence_does_not_reset_runtime(
         await pilot.click("#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Failed to save Image Gen defaults.")
 
+    assert resets == []
+
+
+@pytest.mark.asyncio
+async def test_mixed_image_gen_write_delete_failure_is_atomic_and_does_not_reset(
+    scratch_config, monkeypatch, tmp_path
+):
+    scratch_config(
+        """
+[image_generation]
+default_backend = "comfyui"
+enabled_backends = ["comfyui"]
+
+[image_generation.comfyui]
+base_url = "http://127.0.0.1:8188"
+default_seed = 7
+"""
+    )
+    resets: list[None] = []
+    atomic_calls = []
+    real_atomic_save = settings_screen_module.save_settings_to_cli_config
+
+    def fail_atomic_mutation(section_values, *, delete_keys=None):
+        atomic_calls.append((section_values, delete_keys))
+        return False
+
+    def old_split_write(_self, section_values):
+        return real_atomic_save(section_values)
+
+    monkeypatch.setattr(
+        settings_screen_module,
+        "reset_image_generation_runtime",
+        lambda: resets.append(None),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        settings_screen_module.SettingsConfigAdapter,
+        "save_sections",
+        old_split_write,
+    )
+    monkeypatch.setattr(
+        settings_screen_module.SettingsConfigAdapter,
+        "delete_values",
+        lambda _self, _section, _keys: False,
+    )
+    monkeypatch.setattr(
+        settings_screen_module,
+        "save_settings_to_cli_config",
+        fail_atomic_mutation,
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_image_gen(pilot)
+        panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+        panel.query_one(
+            "#settings-imagegen-field-comfyui-base_url", Input
+        ).value = "http://127.0.0.1:8288"
+        panel.query_one(
+            "#settings-imagegen-field-comfyui-default_seed", Input
+        ).value = ""
+        await pilot.pause()
+        await pilot.click("#settings-imagegen-save")
+        await _wait_for_settings_text(
+            screen, pilot, "Failed to save Image Gen defaults."
+        )
+
+    with open(tmp_path / "config.toml", "rb") as stream:
+        saved = tomllib.load(stream)
+    comfyui = saved["image_generation"]["comfyui"]
+    assert comfyui == {
+        "base_url": "http://127.0.0.1:8188",
+        "default_seed": 7,
+    }
+    assert atomic_calls == [
+        (
+            {
+                "image_generation.comfyui": {
+                    "base_url": "http://127.0.0.1:8288"
+                }
+            },
+            {"image_generation.comfyui": ["default_seed"]},
+        )
+    ]
     assert resets == []
 
 

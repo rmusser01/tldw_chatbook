@@ -14,7 +14,6 @@ from tldw_chatbook.Image_Generation.capabilities import (
 )
 from tldw_chatbook.Image_Generation.adapter_registry import get_registry
 from tldw_chatbook.Image_Generation.config import (
-    get_image_generation_config,
     normalize_comfyui_image_origin,
 )
 
@@ -144,8 +143,8 @@ def _resolve_supported_formats(name: str) -> list[str] | None:
     return sorted(cleaned) if cleaned else None
 
 def list_image_models_for_catalog() -> list[dict[str, Any]]:
-    cfg = get_image_generation_config()
     registry = get_registry()
+    cfg = registry.config
     enabled_backends = set(cfg.enabled_backends or [])
     names = registry.list_backend_names(include_disabled=False)
     if not names:

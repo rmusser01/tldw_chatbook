@@ -1,3 +1,5 @@
+import threading
+
 import pytest
 
 
@@ -102,6 +104,152 @@ def test_listing_then_worker_share_refreshed_registry_and_config_snapshot(monkey
 
     assert [entry["name"] for entry in entries] == ["comfyui"]
     assert registry.get_registry() is listing_registry
+    assert listing_registry.config is image_config.get_image_generation_config()
     assert result.content == b"png"
     assert constructed_with == [image_config.get_image_generation_config()]
     assert constructed_with[0].comfyui_image_base_url == "http://127.0.0.1:8288"
+
+
+def test_runtime_reset_waits_for_inflight_config_load_before_clearing(monkeypatch):
+    from tldw_chatbook.Image_Generation import config as image_config
+
+    image_config.reset_image_generation_runtime()
+    load_started = threading.Event()
+    release_load = threading.Event()
+    reset_started = threading.Event()
+    reset_done = threading.Event()
+    loaded = []
+    calls = 0
+
+    def blocking_load():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            load_started.set()
+            assert release_load.wait(5)
+            origin = "http://127.0.0.1:8188"
+        else:
+            origin = "http://127.0.0.1:8288"
+        return {"comfyui_image_base_url": origin}, {}
+
+    monkeypatch.setattr(image_config, "_load_image_generation_section", blocking_load)
+
+    load_thread = threading.Thread(
+        target=lambda: loaded.append(
+            image_config.get_image_generation_config(reload=True)
+        ),
+        daemon=True,
+    )
+
+    def reset_runtime():
+        reset_started.set()
+        image_config.reset_image_generation_runtime()
+        reset_done.set()
+
+    reset_thread = threading.Thread(target=reset_runtime, daemon=True)
+    load_thread.start()
+    assert load_started.wait(5)
+    reset_thread.start()
+    assert reset_started.wait(5)
+    reset_returned_before_release = reset_done.wait(0.2)
+    release_load.set()
+    load_thread.join(5)
+    reset_thread.join(5)
+
+    assert not load_thread.is_alive()
+    assert not reset_thread.is_alive()
+    assert not reset_returned_before_release
+    assert loaded[0].comfyui_image_base_url == "http://127.0.0.1:8188"
+    fresh = image_config.get_image_generation_config()
+    assert fresh.comfyui_image_base_url == "http://127.0.0.1:8288"
+    assert fresh is not loaded[0]
+
+
+def test_runtime_reset_waits_for_inflight_registry_construction_before_clearing(
+    monkeypatch,
+):
+    from tldw_chatbook.Image_Generation import adapter_registry as registry
+    from tldw_chatbook.Image_Generation import config as image_config
+
+    image_config.reset_image_generation_runtime()
+    construction_started = threading.Event()
+    release_construction = threading.Event()
+    reset_started = threading.Event()
+    reset_done = threading.Event()
+    constructed = []
+
+    class BlockingRegistry:
+        def __init__(self):
+            constructed.append(self)
+            if len(constructed) == 1:
+                construction_started.set()
+                assert release_construction.wait(5)
+
+    monkeypatch.setattr(registry, "ImageAdapterRegistry", BlockingRegistry)
+    returned = []
+    registry_thread = threading.Thread(
+        target=lambda: returned.append(registry.get_registry()), daemon=True
+    )
+
+    def reset_runtime():
+        reset_started.set()
+        image_config.reset_image_generation_runtime()
+        reset_done.set()
+
+    reset_thread = threading.Thread(target=reset_runtime, daemon=True)
+    registry_thread.start()
+    assert construction_started.wait(5)
+    reset_thread.start()
+    assert reset_started.wait(5)
+    reset_returned_before_release = reset_done.wait(0.2)
+    release_construction.set()
+    registry_thread.join(5)
+    reset_thread.join(5)
+
+    assert not registry_thread.is_alive()
+    assert not reset_thread.is_alive()
+    assert not reset_returned_before_release
+    fresh = registry.get_registry()
+    assert fresh is not returned[0]
+    assert constructed == [returned[0], fresh]
+
+
+def test_concurrent_first_registry_callers_share_one_instance(monkeypatch):
+    from tldw_chatbook.Image_Generation import adapter_registry as registry
+
+    registry.reset_registry()
+    construction_started = threading.Event()
+    second_construction_started = threading.Event()
+    release_construction = threading.Event()
+    constructed = []
+
+    class BlockingRegistry:
+        def __init__(self):
+            constructed.append(self)
+            if len(constructed) == 1:
+                construction_started.set()
+                assert release_construction.wait(5)
+            else:
+                second_construction_started.set()
+
+    monkeypatch.setattr(registry, "ImageAdapterRegistry", BlockingRegistry)
+    returned = []
+    first = threading.Thread(
+        target=lambda: returned.append(registry.get_registry()), daemon=True
+    )
+    second = threading.Thread(
+        target=lambda: returned.append(registry.get_registry()), daemon=True
+    )
+    first.start()
+    assert construction_started.wait(5)
+    second.start()
+    second_started_before_release = second_construction_started.wait(0.2)
+    release_construction.set()
+    first.join(5)
+    second.join(5)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert not second_started_before_release
+    assert len(constructed) == 1
+    assert returned == [constructed[0], constructed[0]]

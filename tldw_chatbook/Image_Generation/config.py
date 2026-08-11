@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import threading
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit
@@ -363,6 +364,7 @@ class ImageGenerationConfig:
 
 
 _config_cache: ImageGenerationConfig | None = None
+_IMAGE_GENERATION_RUNTIME_LOCK = threading.RLock()
 
 
 def _coerce_int(value: Any, default: int) -> int:
@@ -547,7 +549,9 @@ def _get_config_value(section: dict[str, str], key: str) -> str | None:
     return value or None
 
 
-def get_image_generation_config(*, reload: bool = False) -> ImageGenerationConfig:
+def _get_image_generation_config_unlocked(
+    *, reload: bool = False
+) -> ImageGenerationConfig:
     global _config_cache
     if _config_cache is not None and not reload:
         return _config_cache
@@ -726,14 +730,22 @@ def get_image_generation_config(*, reload: bool = False) -> ImageGenerationConfi
     return config
 
 
+def get_image_generation_config(*, reload: bool = False) -> ImageGenerationConfig:
+    """Return one process-wide config snapshot, serialized with runtime reset."""
+    with _IMAGE_GENERATION_RUNTIME_LOCK:
+        return _get_image_generation_config_unlocked(reload=reload)
+
+
 def reset_image_generation_config_cache() -> None:
     global _config_cache
-    _config_cache = None
+    with _IMAGE_GENERATION_RUNTIME_LOCK:
+        _config_cache = None
 
 
 def reset_image_generation_runtime() -> None:
     """Clear the config cache, then the lazily imported adapter registry."""
-    reset_image_generation_config_cache()
-    from tldw_chatbook.Image_Generation.adapter_registry import reset_registry
+    with _IMAGE_GENERATION_RUNTIME_LOCK:
+        reset_image_generation_config_cache()
+        from tldw_chatbook.Image_Generation.adapter_registry import reset_registry
 
-    reset_registry()
+        reset_registry()
