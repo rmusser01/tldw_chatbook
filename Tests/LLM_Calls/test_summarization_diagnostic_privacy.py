@@ -346,6 +346,7 @@ GENERAL_EXCEPTION_CANARY = "GENERAL_EXCEPTION_CANARY_3796"
 GENERAL_ANALYZE_STREAM_EXCEPTION_CANARY = "GENERAL_ANALYZE_STREAM_EXCEPTION_CANARY_3796"
 GENERAL_OPENAI_ENDPOINT_CANARY = "http://GENERAL_OPENAI_ENDPOINT_CANARY_3796.invalid/v1"
 GENERAL_OPENAI_STREAM_CANARY = "GENERAL_OPENAI_STREAM_CANARY_3796"
+GENERAL_OPENAI_STREAM_EXCEPTION_CANARY = "GENERAL_OPENAI_STREAM_EXCEPTION_CANARY_3796"
 GENERAL_OPENAI_EXCEPTION_CANARY = "GENERAL_OPENAI_EXCEPTION_CANARY_3796"
 GENERAL_ANTHROPIC_RESPONSE_CANARY = "GENERAL_ANTHROPIC_RESPONSE_CANARY_3796"
 GENERAL_ANTHROPIC_STREAM_CANARY = "GENERAL_ANTHROPIC_STREAM_CANARY_3796"
@@ -3821,6 +3822,60 @@ def test_general_openai_malformed_stream_is_fully_consumed_without_private_diagn
     assert response.closed is True
     assert GENERAL_OPENAI_STREAM_CANARY not in captured.text
     assert "OpenAI Stream: Response event rejected" in captured.text
+
+
+def test_general_openai_stream_iterator_exception_preserves_lazy_error_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class IteratorFailingResponse(_FakeResponse):
+        def iter_lines(self) -> Iterator[bytes]:
+            self.iter_lines_started = True
+            raise RuntimeError(GENERAL_OPENAI_STREAM_EXCEPTION_CANARY)
+            yield b"unreachable"
+
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_provider_settings(),
+    )
+    response = IteratorFailingResponse()
+    post_calls = _install_signature_bound_general_session_post(
+        monkeypatch,
+        response,
+    )
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        stream = general_summarization.summarize_with_openai(
+            "fixed-general-openai-key",
+            "fixed input",
+            "fixed prompt",
+            streaming=True,
+        )
+        assert inspect.isgenerator(stream)
+        assert response.iter_lines_started is False
+        assert response.closed is False
+        chunks = list(stream)
+
+    assert chunks == [
+        f"Error during streaming: {GENERAL_OPENAI_STREAM_EXCEPTION_CANARY}"
+    ]
+    assert len(post_calls) == 1
+    post_args, post_kwargs = post_calls[0]
+    assert post_args == ("http://openai.invalid/v1/chat/completions",)
+    assert post_kwargs["stream"] is True
+    assert post_kwargs["timeout"] == 5
+    assert post_kwargs["json"]["stream"] is True
+    assert post_kwargs["json"]["messages"] == [
+        {"role": "system", "content": "You are a helpful AI assistant."},
+        {"role": "user", "content": "fixed input \n\n\n\nfixed prompt"},
+    ]
+    assert response.iter_lines_started is True
+    assert response.closed is True
+    assert GENERAL_OPENAI_STREAM_EXCEPTION_CANARY not in captured.text
+    assert (
+        "OpenAI Stream: Streaming failed; exception_type=RuntimeError" in captured.text
+    )
+    assert not [record for record in captured.caplog.records if record.exc_info]
 
 
 def test_general_openai_missing_summary_shape_hides_response_body(
