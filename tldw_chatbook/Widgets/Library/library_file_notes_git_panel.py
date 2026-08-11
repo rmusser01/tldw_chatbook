@@ -15,11 +15,20 @@ from textual.app import ComposeResult
 from textual.await_complete import AwaitComplete
 from textual.binding import Binding
 from textual.containers import Container, Grid, Horizontal, Vertical, VerticalScroll
-from textual.events import Resize
+from textual.events import DescendantFocus, Resize
 from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widget import Widget
-from textual.widgets import Button, Input, Label, ListItem, ListView, Static, TextArea
+from textual.widgets import (
+    Button,
+    Collapsible,
+    Input,
+    Label,
+    ListItem,
+    ListView,
+    Static,
+    TextArea,
+)
 
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_DISABLED_ACTION_MARKER,
@@ -782,9 +791,13 @@ class LibraryFileNotesGitPanel(Vertical):
         text-wrap: wrap;
     }
 
-    #file-notes-git-push-review-lead {
+    .file-notes-git-push-review-heading {
         text-style: bold;
-        margin-bottom: 1;
+        margin-top: 1;
+    }
+
+    #file-notes-git-push-review-what-changes-heading {
+        margin-top: 0;
     }
 
     #file-notes-git-push-review-notes {
@@ -794,9 +807,40 @@ class LibraryFileNotesGitPanel(Vertical):
         background: $surface-darken-1;
     }
 
+    #file-notes-git-push-review-technical {
+        height: auto;
+        min-height: 1;
+        margin: 1 0 0 0;
+        border: none;
+        background: transparent;
+    }
+
+    #file-notes-git-push-review-technical > CollapsibleTitle {
+        height: 1;
+        min-height: 1;
+        padding: 0 1;
+        border: none;
+        background: $surface-darken-1;
+        color: $text;
+    }
+
+    #file-notes-git-push-review-technical > CollapsibleTitle:focus {
+        border: none;
+        outline: heavy $accent;
+        background: $accent 20%;
+        color: $text;
+        text-style: bold underline;
+    }
+
+    #file-notes-git-push-review-technical > Contents {
+        height: auto;
+        padding: 1 0 0 0;
+        background: transparent;
+    }
+
     #file-notes-git-push-review-details {
         width: auto;
-        margin: 1 0;
+        margin: 1 0 0 0;
     }
 
     #file-notes-git-push-result-title {
@@ -1495,27 +1539,51 @@ class LibraryFileNotesGitPanel(Vertical):
                     id="file-notes-git-push-review-surface",
                     classes="file-notes-git-push-phase",
                 ):
-                    for widget_id in (
-                        "lead",
-                        "subject",
-                        "candidate",
-                        "transition",
-                        "local-branch",
-                        "remote",
-                        "ref",
-                        "endpoint",
-                        "counts",
-                    ):
+                    yield Static(
+                        "What changes",
+                        id="file-notes-git-push-review-what-changes-heading",
+                        classes=(
+                            "file-notes-git-push-copy "
+                            "file-notes-git-push-review-heading"
+                        ),
+                        markup=False,
+                    )
+                    for widget_id in ("lead", "subject"):
                         yield Static(
                             "",
                             id=f"file-notes-git-push-review-{widget_id}",
                             classes="file-notes-git-push-copy",
                             markup=False,
                         )
-                    yield Button(
-                        "Endpoint Details",
-                        id="file-notes-git-push-review-details",
-                        compact=True,
+                    yield Static(
+                        "Where it goes",
+                        id="file-notes-git-push-review-destination-heading",
+                        classes=(
+                            "file-notes-git-push-copy "
+                            "file-notes-git-push-review-heading"
+                        ),
+                        markup=False,
+                    )
+                    yield Static(
+                        "",
+                        id="file-notes-git-push-review-destination",
+                        classes="file-notes-git-push-copy",
+                        markup=False,
+                    )
+                    yield Static(
+                        "Exact scope",
+                        id="file-notes-git-push-review-scope-heading",
+                        classes=(
+                            "file-notes-git-push-copy "
+                            "file-notes-git-push-review-heading"
+                        ),
+                        markup=False,
+                    )
+                    yield Static(
+                        "",
+                        id="file-notes-git-push-review-counts",
+                        classes="file-notes-git-push-copy",
+                        markup=False,
                     )
                     yield TextArea(
                         "",
@@ -1524,19 +1592,50 @@ class LibraryFileNotesGitPanel(Vertical):
                         soft_wrap=True,
                         tab_behavior="focus",
                     )
-                    for widget_id in (
-                        "lease",
-                        "transport",
-                        "local-hooks",
-                        "remote-effects",
-                        "later-edits",
-                        "objects",
-                    ):
+                    yield Static(
+                        "Side effects",
+                        id="file-notes-git-push-review-effects-heading",
+                        classes=(
+                            "file-notes-git-push-copy "
+                            "file-notes-git-push-review-heading"
+                        ),
+                        markup=False,
+                    )
+                    for widget_id in ("effects", "later-edits"):
                         yield Static(
                             "",
                             id=f"file-notes-git-push-review-{widget_id}",
                             classes="file-notes-git-push-copy",
                             markup=False,
+                        )
+                    with Collapsible(
+                        title="Technical details",
+                        collapsed=True,
+                        id="file-notes-git-push-review-technical",
+                    ):
+                        for widget_id in (
+                            "candidate",
+                            "transition",
+                            "local-branch",
+                            "remote",
+                            "ref",
+                            "endpoint",
+                            "lease",
+                            "transport",
+                            "authentication",
+                            "local-hooks",
+                            "objects",
+                        ):
+                            yield Static(
+                                "",
+                                id=f"file-notes-git-push-review-{widget_id}",
+                                classes="file-notes-git-push-copy",
+                                markup=False,
+                            )
+                        yield Button(
+                            "Endpoint details",
+                            id="file-notes-git-push-review-details",
+                            compact=True,
                         )
 
                 with Vertical(
@@ -1603,6 +1702,18 @@ class LibraryFileNotesGitPanel(Vertical):
     def on_mount(self) -> None:
         self._sync_commit_footer_layout(self.size.width)
         self.call_after_refresh(self._finish_mount)
+
+    def on_descendant_focus(self, event: DescendantFocus) -> None:
+        """Keep expanded push-review controls inside the compact viewport."""
+        if (
+            self._push_phase == "review"
+            and event.widget.id == "file-notes-git-push-review-details"
+        ):
+            event.widget.scroll_visible(
+                animate=False,
+                force=True,
+                immediate=True,
+            )
 
     def _finish_mount(self) -> None:
         """Project child-dependent state after the composed rows are mounted."""
@@ -1846,11 +1957,22 @@ class LibraryFileNotesGitPanel(Vertical):
         branch = destination.destination_ref.removeprefix("refs/heads/")
         values = {
             "lead": (
-                "Push 1 commit created from "
-                f"{candidate.included_note_count} session notes to "
-                f"{review.configured_remote_label}/{branch}."
+                "Pushes 1 reviewed commit created from "
+                f"{candidate.included_note_count} session notes."
             ),
-            "subject": f"Subject: {candidate.subject}",
+            "subject": f"Commit subject: {candidate.subject}",
+            "destination": f"{review.configured_remote_label}/{branch}",
+            "counts": (
+                f"{candidate.included_note_count} session notes: "
+                + " · ".join(
+                    f"{change_type} {count}"
+                    for change_type, count in projection.availability.change_counts
+                )
+            ),
+            "effects": "Remote hooks, branch policy, CI, or mirrors may run.",
+            "later-edits": (
+                "Later note edits remain local and are not added to this commit."
+            ),
             "candidate": f"Candidate OID: {candidate.candidate_oid}",
             "transition": f"Parent transition: {candidate.transition}",
             "local-branch": f"Local branch: {candidate.local_branch_ref}",
@@ -1861,30 +1983,22 @@ class LibraryFileNotesGitPanel(Vertical):
             "endpoint": (
                 f"Sanitized endpoint: {_push_destination_summary(destination)}"
             ),
-            "counts": "Included changes: "
-            + " · ".join(
-                f"{change_type} {count}"
-                for change_type, count in projection.availability.change_counts
-            ),
             "lease": f"Expected-parent lease: {review.exact_lease}",
             "transport": (
-                "Secure transport: HTTPS with certificate verification; "
-                "existing noninteractive authentication only; terminal "
-                "prompts disabled"
+                "Transport: HTTPS with certificate verification"
+                if destination.certificate_verification_required
+                else "Transport: SSH with strict snapshotted host trust"
+            ),
+            "authentication": (
+                "Authentication: existing noninteractive credentials only; "
+                "terminal prompts disabled"
                 if destination.certificate_verification_required
                 else (
-                    "Secure transport: SSH with strict snapshotted host trust; "
-                    "existing SSH agent only; identity files disabled; "
-                    "terminal prompts disabled"
+                    "Authentication: existing SSH agent only; identity files "
+                    "disabled; terminal prompts disabled"
                 )
             ),
             "local-hooks": "Local pre-push hooks will not run",
-            "remote-effects": (
-                "Remote hooks, branch policy, CI, or mirrors may run"
-            ),
-            "later-edits": (
-                "Later note edits remain local and are not added to this commit"
-            ),
             "objects": (
                 "Git publishes the reviewed commit and required Git objects; "
                 "this list is provenance, not a separate note-transfer selection"
@@ -1909,6 +2023,10 @@ class LibraryFileNotesGitPanel(Vertical):
         )
         note_surface.load_text(notes)
         note_surface.styles.height = max(2, min(8, len(candidate.included_notes)))
+        self.query_one(
+            "#file-notes-git-push-review-technical",
+            Collapsible,
+        ).collapsed = True
         self._show_push_phase("review", operation_id)
         self._focus_push_control("#file-notes-git-push-back")
 

@@ -3044,3 +3044,24 @@ cancel and drain those registered tasks before tearing down screens or persisten
 Use barriers to prove both success-wins (durable append exactly once) and
 cancellation-wins (no card), and mutation-check that the test fails if shielding,
 event propagation, or shutdown draining is removed.
+
+---
+
+## Keyboard focus does not prove a nested compact control is visible (TASK-15506, 2026-08-11)
+
+**Incident.** TASK-15506 moved File Notes push provenance into a collapsed
+`Collapsible` inside the push workflow's `VerticalScroll`. At 40x20, expanding
+the disclosure and pressing Tab moved focus to the nested Endpoint details
+button, so a focus-only regression passed. The button was still absent from
+`Screen._compositor.visible_widgets`: Textual had scrolled only far enough to
+show the disclosure's earlier content, leaving the focused action below the
+fixed footer. A normal non-animated `scroll_visible()` call still stopped
+short. Scrolling the exact focused descendant with `force=True` and
+`immediate=True` brought it into the compositor deterministically.
+
+**What to do.** For controls nested inside disclosures within a compact scroll
+owner, assert both `has_focus` and compositor visibility. If framework focus
+navigation leaves the control outside the viewport, handle descendant focus
+at the narrow owning component and call `scroll_visible(animate=False,
+force=True, immediate=True)` on the exact control. Do not infer reachability
+from focus state or a nonzero layout region alone.
