@@ -2659,3 +2659,38 @@ preconditions (each setup line asserts one fact of the attribution), and it
 pins the upstream behavior — if a dependency bump fixes the bug, the
 state-construction test fails loudly and tells you the workaround can be
 retired, which no timing-based replay could ever do.
+## Moving a config read onto the app-config snapshot silently DEFAULTS it in every `_build_test_app` test — including passing ones (TASK-15210, 2026-08-11)
+
+`ChatScreen._maybe_auto_retrieve_for_send` used to read the auto-RAG toggle live via
+`get_cli_setting("chat_defaults", "rag_auto_retrieve_on_send")`. Task-14803 (commit
+`5be9e6a04`) moved that read onto the frozen per-turn `ConsoleTurnExecutionContext`, whose
+`rag_defaults` are built from `app.app_config`. Both sources agree in the shipping app.
+They do not agree in `Tests/UI`.
+
+`Tests/UI/app_factory._build_test_app` patches `tldw_chatbook.app.load_settings` to return
+a synthetic `{"tldw_api": ..., "first_run": ...}` — **no `[chat_defaults]`, no `[console]`**.
+Production then behaves *correctly*: `_provider_readiness_app_config` only re-sources from
+`load_settings()` when the snapshot carries the `general`/`logging` markers only a real
+disk load emits, and this one does not, so it hands back the synthetic dict verbatim. Net
+effect: `save_setting_to_cli_config(...)` still writes the toggle, `get_cli_setting` still
+reads it True, and the code under test sees False.
+
+Measured, not inferred: instrumenting one mounted test printed
+`get_cli_setting=True` / `app_config chat_defaults.rag_auto_retrieve_on_send='MISSING'` /
+`resolved ctx rag_defaults={'auto_retrieve_on_send': False, ...}` in the same run. The live
+app assigns `self.app_config = load_settings()` (app.py), whose result carries both the
+toggle and both markers — so the shipping path was fine and only the harness was blind.
+
+**The part that cost the most.** One test went red and was triaged. Its sibling,
+`test_send_proceeds_when_auto_retrieve_fails`, stayed GREEN — because with retrieval never
+firing, the exploding backend it installs is never called and the test degenerates into
+"an ordinary send works". A moved read does not announce itself by failing; it can just as
+easily hollow out a passing test, and nothing in a green run points at it.
+
+**What to do.** When you move a read from a live settings accessor onto a snapshot,
+grep the tests that *enable* that setting and check they enable it through the new source —
+a `save_setting_to_cli_config` + `_build_test_app` pair no longer reaches the code. Give
+the mounted test the app's real shape (`app.app_config = load_settings()`, exactly what
+`app.py` does) rather than teaching the product to fall back. And any test whose subject is
+"X still works when Y fails" should assert **that Y was actually attempted** — here,
+`exploding_search.await_count == 1` — or it cannot tell "handled" from "never happened".

@@ -79,6 +79,12 @@ _SHADOWED_BUILTIN_NAMES = frozenset(
         # signal-erosion the guard exists to prevent.
         "rewind",
         "generate-image",
+        # task-15210: and again, exactly as task-580 predicted -- the video
+        # commands (commits d6c2e9756 /generate-video, 72a2ff3c5
+        # /stream-video) were registered without updating this set, so the
+        # drift guard sat red until something ran the file whole.
+        "generate-video",
+        "stream-video",
         # The sandbox-rooted file tools. These are CONFIG-GATED (off by
         # default), so the drift guard -- which builds a BuiltinToolProvider
         # with default config -- cannot see them and would not have caught

@@ -13,6 +13,7 @@ from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from tldw_chatbook.Chat.console_command_grammar import default_console_registry
 from tldw_chatbook.Chat.console_command_suggestions import CommandSuggestion
 from tldw_chatbook.Chat.console_skill_resolver import SkillCommandCandidate
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
@@ -75,14 +76,25 @@ async def test_slash_opens_popup_and_typing_filters():
         await pilot.press("/")
         await pilot.pause()
         assert popup.is_open
-        assert _popup_labels(popup) == [
+        # The offered rows ARE the registered commands, in registry order.
+        # Pinning the list literally is what broke this test: /generate-video
+        # (task-3401.5) and /stream-video (task-3401.11) registered two more
+        # built-ins and the six-item literal here sat red until something ran
+        # the file whole. The claim was never "there are six" -- it was "the
+        # popup offers the registered commands" -- so assert that, plus the
+        # six this test was written for, and let honest additions through.
+        labels = _popup_labels(popup)
+        assert labels == [
+            f"/{name}" for name in default_console_registry().available_names()
+        ]
+        assert {
             "/prompt",
             "/system",
             "/skills",
             "/prefill",
             "/generate-image",
             "/rewind",
-        ]
+        } <= set(labels)
 
         await pilot.press("s", "y", "s")
         await pilot.pause()
