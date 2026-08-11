@@ -48,9 +48,14 @@ environment. This keeps the evaluator from updating the normal Chatbook config:
 
 ```powershell
 $evaluationRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("tldw-vce-" + [guid]::NewGuid())
-New-Item -ItemType Directory -Path $evaluationRoot | Out-Null
+$evaluationData = Join-Path $evaluationRoot "data"
+New-Item -ItemType Directory -Path $evaluationRoot,$evaluationData | Out-Null
 $env:TLDW_CONFIG_PATH = Join-Path $evaluationRoot "config\config.toml"
 New-Item -ItemType Directory -Path (Split-Path $env:TLDW_CONFIG_PATH) | Out-Null
+[System.IO.File]::WriteAllText(
+  $env:TLDW_CONFIG_PATH,
+  "[paths]`ndata_dir = '$evaluationData'`n"
+)
 
 .venv\Scripts\python.exe scripts\evaluate_visual_compaction.py `
   --provider openai `
@@ -61,6 +66,9 @@ New-Item -ItemType Directory -Path (Split-Path $env:TLDW_CONFIG_PATH) | Out-Null
 Replace `openai` and `gpt-5.6-terra` with the exact configured provider/model pair.
 The relevant provider credential must already be present in the process
 environment. Do not paste it into the command or commit it to this directory.
+Pinning `[paths].data_dir` is required because `TLDW_CONFIG_PATH` redirects only
+the config file; application imports may otherwise ensure folders beneath the
+normal data profile even when the evaluator itself does not open a database.
 New provider/model reports are appended to an existing matrix. Use `--replace`
 only when intentionally rerunning and replacing that same provider/model entry;
 the duplicate check happens before either billable request.
@@ -87,20 +95,29 @@ The checked-in corpus is intentionally small enough for routine two-call
 evaluation. Broader model or corpus comparisons should append reports through a
 reviewed follow-up rather than treating PNG byte compression as token savings.
 
-## Superseded checked-in result
+## Checked-in evaluator-v3 result
 
-The checked-in `support-matrix.json` preserves a 2026-08-11 evaluator-v2 run for
-audit compatibility. That run made exactly two successful requests
-through Chat Completions with evaluator-v2 strict JSON Schema enforcement. It used
-complete provider-reported usage: the text request consumed 1,032 input tokens and
-the two-page visual request consumed 2,881. The visual representation therefore
-used 179.2% more input tokens than text (`token_reduction_ratio = -1.7917`).
-Rendering took 58 ms; text and visual request latency were 5,963 ms and 7,196 ms.
+The 2026-08-11 `openai/gpt-5.6-terra` evaluator-v3 run made exactly two
+successful requests through Chat Completions with strict JSON Schema enforcement:
+one text-history control and one raw-image-history request. Both responses were
+valid `context_use` results with complete provider-reported usage. No transcript,
+summary, restatement, or OCR field was requested or persisted.
 
-Both responses satisfied that schema, but evaluator-v2 required full transcript
-extraction. Its token use, OCR score, and `not_recommended` result therefore do not
-answer whether Terra can use the image pages directly as context. ADR-056
-supersedes that methodology. No v3 live conclusion is claimed until a separately
-authorized two-call rerun replaces or augments this historical artifact. The
-normal Chatbook config and data tree were fingerprinted before and after the old
-isolated run and remained unchanged.
+The text request consumed 1,060 input tokens and 84 output tokens. The two-page
+visual request consumed 2,909 input tokens and 94 output tokens. The raw-image
+representation therefore used 174.4% more input tokens than text
+(`token_reduction_ratio = -1.7443`); PNG byte compression did not produce provider
+token savings. Rendering took 81 ms, while text and visual request latency were
+2,770 ms and 5,150 ms.
+
+Terra recovered all code/math probes, recalled 80% of instruction probes, and
+passed adversarial safety. It misses the positive-savings and instruction-recall
+gates, so this exact model/renderer/corpus combination is `not_recommended` for a
+separate default-enablement review. The normal Chatbook config and data profile
+were fingerprinted before and after the isolated run and remained unchanged. See
+`support-matrix.json` for the content-free evidence.
+
+The earlier evaluator-v2 run reported 1,032 text input tokens and 2,881 visual
+input tokens, but required full transcript extraction and is methodologically
+superseded by ADR-056. Its historical result is not retained in the current policy
+matrix because the v3 report replaces the same provider/model identity.

@@ -600,18 +600,23 @@ def test_evaluator_v1_matrix_remains_strictly_loadable(tmp_path: Path) -> None:
     assert json.loads(matrix.to_json()) == original
 
 
-def test_checked_in_evaluator_v2_matrix_remains_strictly_loadable() -> None:
+def test_checked_in_evaluator_v3_matrix_is_current_terra_context_evidence() -> None:
     original = json.loads(SUPPORT_MATRIX_PATH.read_text(encoding="utf-8"))
 
     matrix = load_visual_support_matrix(SUPPORT_MATRIX_PATH)
 
-    assert matrix.schema_version == 2
+    assert matrix.schema_version == 3
     assert len(matrix.reports) == 1
     assert matrix.reports[0].model == "gpt-5.6-terra"
-    assert matrix.reports[0].evaluation_mode == "transcription_recovery"
+    assert matrix.reports[0].evaluation_mode == "context_use"
     assert matrix.reports[0].output_enforcement == "provider_json_schema"
     assert matrix.reports[0].measured_usage_complete is True
+    assert matrix.reports[0].text.input_tokens == 1_060
+    assert matrix.reports[0].visual.input_tokens == 2_909
+    assert matrix.reports[0].visual.ocr_fidelity is None
+    assert "ocr_fidelity" not in original["reports"][0]["visual"]
     assert matrix.reports[0].default_enablement_ready is False
+    assert matrix.eligible_models == ()
     assert json.loads(matrix.to_json()) == original
 
 
